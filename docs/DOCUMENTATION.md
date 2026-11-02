@@ -131,6 +131,8 @@ Current how-to docs:
   (#9274)
 - [Live-history release transaction runbook](RELEASE_TRANSACTION.md) - exact
   two-repository release lifecycle, J/K transport, receipts, and stop rules
+- [0.11 RC authority reconciliation](release/0.11.0/rc-authority-reconciliation.md) -
+  dated public inventory, historical RC authority and conditional handoff
 - [Source-promotion preflight](SOURCE_PROMOTION_PREFLIGHT.md)
 - [Back-sync verifier](BACK_SYNC_VERIFIER.md)
 - [Installation verification](INSTALLATION_VERIFICATION.md)

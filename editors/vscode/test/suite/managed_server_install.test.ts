@@ -41,6 +41,81 @@ suite('Managed Server Installation', () => {
     assert.strictEqual(await readManagedServerInstallation(request), undefined);
   });
 
+  test('bound requests stamp and reuse the admitted manifest digest', async () => {
+    const digest = 'a'.repeat(64);
+    const request: ManagedServerInstallRequest = { ...installRequest(root, '1.2.3'), expectedManifestSha256: digest };
+    const admitted = operations('binary-v1', '1.2.3');
+    const selectedManifestUrl =
+      'https://github.com/EffortlessMetrics/ripr/releases/download/v1.2.3-rc.1/ripr-server-manifest-v1.2.3.json';
+    const withStamp: ManagedServerInstallOperations = {
+      ...admitted,
+      resolveArchive: async () => ({
+        ...(await admitted.resolveArchive()),
+        admittedManifestSha256: digest,
+        selectedManifestUrl,
+        manifestSelection: 'fallback_exact_after_preferred_absent',
+        preferredManifestObservation: 'direct_not_found',
+        fallbackManifestObservation: 'accepted'
+      })
+    };
+    const installed = await installManagedServer(request, withStamp);
+    assert.strictEqual(installed.receipt.manifestSha256, digest);
+    assert.strictEqual(installed.receipt.selectedManifestUrl, selectedManifestUrl);
+    assert.strictEqual(installed.receipt.manifestSelection, 'fallback_exact_after_preferred_absent');
+    assert.strictEqual(installed.receipt.preferredManifestObservation, 'direct_not_found');
+    assert.strictEqual(installed.receipt.fallbackManifestObservation, 'accepted');
+
+    const cached = await readManagedServerInstallation(request);
+    assert.notStrictEqual(cached, undefined);
+    assert.strictEqual(cached?.receipt.manifestSha256, digest);
+    assert.strictEqual(cached?.receipt.selectedManifestUrl, selectedManifestUrl);
+    assert.strictEqual(cached?.receipt.manifestSelection, 'fallback_exact_after_preferred_absent');
+    assert.strictEqual(cached?.receipt.preferredManifestObservation, 'direct_not_found');
+    assert.strictEqual(cached?.receipt.fallbackManifestObservation, 'accepted');
+
+    const combined = combineActiveManagedServerIdentity({ binaryVersion: 'ripr active' }, installed);
+    assert.strictEqual(combined.selectedManifestUrl, selectedManifestUrl);
+    assert.strictEqual(combined.manifestSelection, 'fallback_exact_after_preferred_absent');
+    assert.strictEqual(combined.preferredManifestObservation, 'direct_not_found');
+    assert.strictEqual(combined.fallbackManifestObservation, 'accepted');
+  });
+
+  test('bound requests reject unstamped and mismatched receipts', async () => {
+    const digest = 'b'.repeat(64);
+    const request: ManagedServerInstallRequest = { ...installRequest(root, '1.2.3'), expectedManifestSha256: digest };
+
+    await installManagedServer(installRequest(root, '1.2.3'), operations('binary-v1', '1.2.3'));
+    assert.strictEqual(await readManagedServerInstallation(request), undefined);
+
+    const other: ManagedServerInstallRequest = { ...installRequest(root, '1.2.3'), expectedManifestSha256: 'c'.repeat(64) };
+    assert.strictEqual(await readManagedServerInstallation(other), undefined);
+  });
+
+  test('bound installs fail closed without an admission stamp', async () => {
+    const request: ManagedServerInstallRequest = { ...installRequest(root, '1.2.3'), expectedManifestSha256: 'd'.repeat(64) };
+    await assert.rejects(
+      installManagedServer(request, operations('binary-v1', '1.2.3')),
+      /expected manifest digest/
+    );
+  });
+
+  test('bound installs reject a mismatched admission stamp before extraction', async () => {
+    let extracted = false;
+    const request: ManagedServerInstallRequest = { ...installRequest(root, '1.2.3'), expectedManifestSha256: 'd'.repeat(64) };
+    const mismatched = operations('binary-v1', '1.2.3', async () => {
+      extracted = true;
+    });
+    const operationsWithWrongStamp: ManagedServerInstallOperations = {
+      ...mismatched,
+      resolveArchive: async () => ({ ...(await mismatched.resolveArchive()), admittedManifestSha256: 'e'.repeat(64) })
+    };
+    await assert.rejects(
+      installManagedServer(request, operationsWithWrongStamp),
+      /expected manifest digest/
+    );
+    assert.strictEqual(extracted, false);
+  });
+
   test('concurrent installs stage once and converge on one completed installation', async () => {
     const request = installRequest(root, '2.0.0');
     let extractCalls = 0;
@@ -409,6 +484,28 @@ suite('Managed Server Installation', () => {
     assert.strictEqual(combined.binaryVersion, 'ripr active-probe');
     assert.strictEqual(combined.assetDigest, installation.receipt.archiveSha256);
     assert.strictEqual(combined.installationState, 'complete');
+  });
+
+  test('distribution-bound cache rejects unstamped and foreign receipts', async () => {
+    const legacy = installRequest(root, '7.0.0');
+    const installed = await installManagedServer(legacy, operations('legacy-binary', '7.0.0'));
+    assert.strictEqual(installed.receipt.distributionIdentity, undefined);
+
+    const home = { ...legacy, distributionIdentity: 'sha256:home-generation' };
+    assert.strictEqual(await readManagedServerInstallation(home), undefined);
+
+    const foreign = { ...legacy, distributionIdentity: 'sha256:foreign-generation' };
+    const reinstalled = await installManagedServer(foreign, operations('foreign-binary', '7.0.0'));
+    assert.strictEqual(reinstalled.receipt.distributionIdentity, 'sha256:foreign-generation');
+    assert.strictEqual(
+      (await readManagedServerInstallation(foreign))?.executablePath,
+      reinstalled.executablePath
+    );
+    assert.strictEqual(
+      await readManagedServerInstallation({ ...legacy, distributionIdentity: 'sha256:other-generation' }),
+      undefined
+    );
+    assert.ok(await readManagedServerInstallation(legacy));
   });
 
   test('authoritative provisioning guide matches the completed receipt contract', async () => {

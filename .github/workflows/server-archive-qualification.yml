@@ -313,6 +313,17 @@ jobs:
           $candidateHead = (& git rev-parse HEAD).Trim()
           if ($versionExit -ne 0 -or $versionOutput -ne "ripr $expectedBinaryVersion ($candidateHead)") { throw "archive binary version check failed" }
 
+      - name: Verify per-archive build receipt is staged for the manifest job
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          version="${QUALIFICATION_VERSION#v}"
+          receipt="dist/ripr-server-v${version}-${TARGET}.receipt.json"
+          test -f "${receipt}"
+          jq -e --arg version "${version}" --arg target "${TARGET}" '.schema_version == "0.2" and .target == $target and .version == $version' "${receipt}" >/dev/null
+
       - name: Upload qualified server artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -445,9 +456,9 @@ jobs:
           while IFS= read -r target; do
             archive="tar.gz"
             [[ "${target}" == "x86_64-pc-windows-msvc" ]] && archive="zip"
-            expected_files+=("ripr-server-v${version}-${target}.${archive}" "ripr-server-v${version}-${target}.${archive}.sha256")
+            expected_files+=("ripr-server-v${version}-${target}.${archive}" "ripr-server-v${version}-${target}.${archive}.sha256" "ripr-server-v${version}-${target}.receipt.json")
           done < <(jq -r '.[]' <<< "${EXPECTED_TARGETS}")
-          expected_files+=("ripr-server-manifest-v${version}.json" "SHA256SUMS")
+          expected_files+=("ripr-server-manifest-v${version}.json" "ripr-server-assembly-v${version}.receipt.json" "SHA256SUMS")
           printf '%s\n' "${expected_files[@]}" | sort > expected-dist-files.txt
           find dist -mindepth 1 -maxdepth 1 ! -type f -print -quit | grep -q . && exit 1 || true
           find dist -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort > actual-dist-files.txt
@@ -455,9 +466,20 @@ jobs:
           manifest="dist/ripr-server-manifest-v${version}.json"
           test -f "${manifest}"
           jq -e --arg version "${version}" --arg repository "${REPOSITORY}" --argjson targets "${EXPECTED_TARGETS}" '
-            .version == $version and
+            .schema_version == "2" and
+            .product_version == $version and
+            .source_repository == $repository and
+            .producer.schema == "server-manifest/2" and
+            (.target_set.targets == ($targets | sort)) and
             (.assets | keys == ($targets | sort)) and
-            (all(.assets[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.url | startswith("https://github.com/" + $repository + "/releases/download/v" + $version + "/"))))
+            ([.. | objects | select(has("url") or has("version"))] | length == 0) and
+            (all(.assets | to_entries[]; . as $entry |
+              ($entry.value.sha256 | test("^[0-9a-f]{64}$")) and
+              ($entry.value.subject | startswith("ripr-server-v" + $version + "-" + $entry.key + ".")) and
+              ($entry.value.receipt.path == ("ripr-server-v" + $version + "-" + $entry.key + ".receipt.json")) and
+              ($entry.value.receipt.target == $entry.key) and
+              ($entry.value.receipt.schema_version == "0.2") and
+              ($entry.value.receipt.sha256 | test("^[0-9a-f]{64}$"))))
           ' "${manifest}" >/dev/null
           while IFS= read -r target; do
             archive="tar.gz"
@@ -466,7 +488,9 @@ jobs:
             actual_sha="$(sha256sum "dist/${file}" | awk '{print $1}')"
             test "${actual_sha}" = "$(tr -d '[:space:]' < "dist/${file}.sha256")"
             test "${actual_sha}" = "$(jq -r --arg target "${target}" '.assets[$target].sha256' "${manifest}")"
-            test "$(jq -r --arg target "${target}" '.assets[$target].url' "${manifest}")" = "https://github.com/${REPOSITORY}/releases/download/v${version}/${file}"
+            test "$(jq -r --arg target "${target}" '.assets[$target].subject' "${manifest}")" = "${file}"
+            receipt="ripr-server-v${version}-${target}.receipt.json"
+            test "$(sha256sum "dist/${receipt}" | awk '{print $1}')" = "$(jq -r --arg target "${target}" '.assets[$target].receipt.sha256' "${manifest}")"
           done < <(jq -r '.[]' <<< "${EXPECTED_TARGETS}")
 
       - name: Assemble retained payload and producer identities
@@ -567,7 +591,7 @@ jobs:
             --slurpfile payload_identities payload-identities.json \
             --slurpfile producer_builds producer-builds.json \
             --argjson targets '["x86_64-pc-windows-msvc","x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-apple-darwin","aarch64-apple-darwin"]' \
-            '{schema_version: 4, status: "qualified_payload_and_archive_shape", candidate_sha: $candidate_sha, candidate_ref: $candidate_ref, version: $version, targets: $targets, execution: {selected: 5, executed: 5, failed: 0, not_run: 0}, archive_readback_verified: true, build_identities: $build_identities[0], payload_identities: $payload_identities[0], producer_builds: $producer_builds[0], manifest_sha256: $manifest_sha256, sha256sums_sha256: $checksums_sha256, ruleset: {mode: $ruleset_mode, source_url: $ruleset_source_url, response_sha256: $ruleset_response_sha256, repository: $repository, id: $ruleset_id}, actions_artifacts_only: true, release_assets_created: false, repository_contents_written: false, secrets_required: false, limitations: ["Actions artifact retention is not a public release", "Manifest URLs are prospective and were not fetched", "Native runtime compatibility remains unqualified under EffortlessMetrics/ripr-swarm#4489"]}' \
+            '{schema_version: 4, status: "qualified_payload_and_archive_shape", candidate_sha: $candidate_sha, candidate_ref: $candidate_ref, version: $version, targets: $targets, execution: {selected: 5, executed: 5, failed: 0, not_run: 0}, archive_readback_verified: true, build_identities: $build_identities[0], payload_identities: $payload_identities[0], producer_builds: $producer_builds[0], manifest_sha256: $manifest_sha256, sha256sums_sha256: $checksums_sha256, ruleset: {mode: $ruleset_mode, source_url: $ruleset_source_url, response_sha256: $ruleset_response_sha256, repository: $repository, id: $ruleset_id}, actions_artifacts_only: true, release_assets_created: false, repository_contents_written: false, secrets_required: false, limitations: ["Actions artifact retention is not a public release", "The v2 manifest is placement-independent: it carries no URLs and nothing was fetched", "Native runtime compatibility remains unqualified under EffortlessMetrics/ripr-swarm#4489"]}' \
             > dist/server-archive-qualification-receipt.json
           cp payload-identities.json dist/final-native-payload-identities.json
           cp producer-builds.json dist/final-native-producer-builds.json

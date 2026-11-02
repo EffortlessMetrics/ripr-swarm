@@ -8,7 +8,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-pub(crate) const REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION: &str = "0.1";
+pub(crate) const REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION: &str = "0.2";
 
 /// Named limitation category for a review-guidance dispatch refused at the
 /// memory ceiling (#4388). Consumers match this category — not error prose —
@@ -28,12 +28,34 @@ pub(crate) struct ReviewCommentsReceiptLimitation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ReviewCommentsPhaseEvidence {
+    pub(crate) phase: String,
+    pub(crate) duration_ms: u64,
+    pub(crate) reused: bool,
+    pub(crate) subject_count: Option<usize>,
+    pub(crate) stop_reason: String,
+    pub(crate) input_identity_digest: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ReviewCommentsFailure {
+    pub(crate) phase: String,
+    pub(crate) category: String,
+    pub(crate) message: String,
+    pub(crate) secondary_diagnostics: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ReviewCommentsRunReceipt {
     pub(crate) schema_version: &'static str,
     pub(crate) status: &'static str,
     pub(crate) root_identity: String,
     pub(crate) base_sha: String,
     pub(crate) head_sha: String,
+    pub(crate) requested_mode: String,
+    pub(crate) analysis_identity: Option<crate::app::review_comments::ReviewAnalysisIdentity>,
+    pub(crate) phase_evidence: Vec<ReviewCommentsPhaseEvidence>,
+    pub(crate) primary_failure: Option<ReviewCommentsFailure>,
     pub(crate) configured_timeout_ms: u64,
     pub(crate) last_completed_phase: Option<String>,
     pub(crate) active_phase: Option<String>,

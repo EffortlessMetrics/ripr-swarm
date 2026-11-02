@@ -71,6 +71,9 @@
     "static_gap_fallback": {
       "$ref": "#/$defs/static_gap_fallback"
     },
+    "review_input": {
+      "$ref": "#/$defs/review_input"
+    },
     "inputs": {
       "description": "Supplied-input disclosure. Present only on routes that consume an explicit artifact instead of rerunning diff analysis; `--gap-ledger` mode emits `inputs.gap_ledger`.",
       "$ref": "#/$defs/inputs"
@@ -296,7 +299,34 @@
     }
   ],
   "$defs": {
-    "inputs": {
+    "review_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "findings", "projection_sha256", "reviewed_count"],
+      "properties": {
+        "schema_version": { "const": "ripr.review_input.v1" },
+        "root": { "type": "string", "minLength": 1 },
+        "root_identity": { "type": "string", "minLength": 1 },
+        "base_sha": { "type": "string", "minLength": 1 },
+        "head_sha": { "type": "string", "minLength": 1 },
+        "head_tree": { "type": "string", "minLength": 1 },
+        "canonical_diff_sha256": { "type": "string", "minLength": 1 },
+        "producer_check_sha256": { "type": "string", "minLength": 1 },
+        "check_sha256": { "type": "string", "minLength": 1 },
+        "mode": { "type": "string", "minLength": 1 },
+        "analysis_complete": { "type": "boolean" },
+        "total_finding_count": { "type": "integer", "minimum": 0 },
+        "projected_finding_count": { "type": "integer", "minimum": 0 },
+        "reviewed_count": { "type": "integer", "minimum": 0 },
+        "projection_limit": { "type": "integer", "minimum": 0 },
+        "projection_truncated": { "type": "boolean" },
+        "projection_selection_policy": { "type": "string", "minLength": 1 },
+        "projection_selection_policy_version": { "type": "string", "minLength": 1 },
+        "projection_sha256": { "type": "string", "minLength": 1 },
+        "analysis_outcome": { "$ref": "#/$defs/analysis_outcome_projection" },
+        "findings": { "type": "array" }
+      }
+    },    "inputs": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -717,6 +747,10 @@
         "root_identity",
         "base_sha",
         "head_sha",
+        "requested_mode",
+        "analysis_identity",
+        "phase_evidence",
+        "primary_failure",
         "configured_timeout_ms",
         "last_completed_phase",
         "active_phase",
@@ -729,7 +763,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "0.1"
+          "const": "0.2"
         },
         "status": {
           "enum": [
@@ -750,6 +784,42 @@
         "head_sha": {
           "type": "string",
           "minLength": 1
+        },
+        "requested_mode": {
+          "enum": ["instant", "draft", "fast", "deep", "ready"]
+        },
+        "analysis_identity": {
+          "type": ["object", "null"]
+        },
+        "phase_evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["phase", "duration_ms", "reused", "subject_count", "stop_reason", "input_identity_digest"],
+            "properties": {
+              "phase": { "type": "string", "minLength": 1 },
+              "duration_ms": { "type": "integer", "minimum": 0 },
+              "reused": { "type": "boolean" },
+              "subject_count": { "type": ["integer", "null"], "minimum": 0 },
+              "stop_reason": { "type": "string", "minLength": 1 },
+              "input_identity_digest": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "primary_failure": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["phase", "category", "message", "secondary_diagnostics"],
+          "properties": {
+            "phase": { "type": "string", "minLength": 1 },
+            "category": { "type": "string", "minLength": 1 },
+            "message": { "type": "string", "minLength": 1 },
+            "secondary_diagnostics": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
         },
         "configured_timeout_ms": {
           "type": "integer",

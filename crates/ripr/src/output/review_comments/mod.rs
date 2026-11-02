@@ -12,6 +12,7 @@ use crate::output::gap_decision_ledger::GapRecord;
 #[cfg(test)]
 use crate::testing::cwd_placeholder::project_cwd_text;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -20,6 +21,10 @@ mod publish_plan;
 mod render;
 mod scope;
 
+pub(crate) use crate::review_input::{
+    ReviewFindingProjectionV1 as ReviewFindingProjection,
+    ReviewRelatedTestProjectionV1 as ReviewRelatedTestProjection,
+};
 pub(crate) use scope::ReviewCommentsAnalysisScope;
 use scope::ReviewPlacement;
 
@@ -40,6 +45,63 @@ use publish_plan::suggested_test_intent;
 pub(crate) const REVIEW_COMMENTS_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const DEFAULT_REVIEW_MAX_INLINE_COMMENTS: usize = 3;
 pub(crate) const DEFAULT_REVIEW_MAX_SUMMARY_ITEMS: usize = 10;
+pub(crate) const REVIEW_INPUT_SCHEMA_VERSION: &str =
+    crate::review_input::REVIEW_INPUT_SCHEMA_VERSION;
+pub(crate) const REVIEW_INPUT_MAX_BYTES: usize = 128 * 1024;
+
+pub(crate) fn review_input_projection(
+    root: &Path,
+    config: &RiprConfig,
+    selection: &AgentBriefSelection<'_>,
+) -> Result<Value, String> {
+    let entries = selection
+        .top_seams
+        .iter()
+        .map(|selected| {
+            let seam = &selected.seam.seam;
+            let evidence_bytes = serde_json::to_vec(&selected.seam.evidence)
+                .map_err(|err| format!("serialize review evidence digest input: {err}"))?;
+            let related_test = selected.seam.evidence.related_tests.first().map(|test| {
+                ReviewRelatedTestProjection {
+                    name: test.test_name.clone(),
+                    file: display_path(&test.file),
+                    line: test.line as u64,
+                }
+            });
+            Ok(ReviewFindingProjection {
+                stable_id: seam.id().as_str().to_string(),
+                file: display_path(seam.file()),
+                line: Some(seam.display_line() as u64),
+                severity: config
+                    .severity()
+                    .for_seam(selected.seam.class)
+                    .as_str()
+                    .to_string(),
+                finding_class: selected.seam.class.as_str().to_string(),
+                summary: selected.why_now.evidence.clone(),
+                evidence_digest: format!("sha256:{:x}", Sha256::digest(evidence_bytes)),
+                related_test,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let entries_value = serde_json::to_value(entries)
+        .map_err(|err| format!("serialize review input projection: {err}"))?;
+    let bytes = serde_json::to_vec(&entries_value)
+        .map_err(|err| format!("serialize review input digest input: {err}"))?;
+    if bytes.len() > REVIEW_INPUT_MAX_BYTES {
+        return Err(format!(
+            "review input projection exceeds {} byte limit",
+            REVIEW_INPUT_MAX_BYTES
+        ));
+    }
+    Ok(json!({
+        "schema_version": REVIEW_INPUT_SCHEMA_VERSION,
+        "root": display_path(root),
+        "reviewed_count": entries_value.as_array().map_or(0, Vec::len),
+        "projection_sha256": format!("sha256:{:x}", Sha256::digest(&bytes)),
+        "findings": entries_value,
+    }))
+}
 
 // Closed selection-reason vocabulary (SPEC-0068). No free-text reason outside this set
 // may ship on the working-set selection path without amending the spec.
@@ -133,6 +195,7 @@ pub(crate) fn render_review_comments_json_with_scope(
     if let Some(warning) = causal_projection_warning {
         warnings.push(warning);
     }
+    let review_input = review_input_projection(context.root, context.config, selection)?;
 
     for selected in actionable.iter().take(DEFAULT_REVIEW_MAX_SUMMARY_ITEMS) {
         let recommendation = review_recommendation_json(
@@ -217,6 +280,7 @@ pub(crate) fn render_review_comments_json_with_scope(
         "head": context.head,
         "mode": context.mode.as_str(),
         "analysis_scope": scope_json,
+        "review_input": review_input,
         "rendering_limits": {
             "max_inline_comments": DEFAULT_REVIEW_MAX_INLINE_COMMENTS,
             "max_summary_items": DEFAULT_REVIEW_MAX_SUMMARY_ITEMS,
@@ -1318,6 +1382,25 @@ mod tests {
         assert_eq!(value["summary"]["comments"], 1);
         assert_eq!(value["comments"][0]["placement"]["mode"], "exact_seam_line");
         assert_eq!(
+            value["review_input"]["schema_version"],
+            REVIEW_INPUT_SCHEMA_VERSION
+        );
+        assert_eq!(value["review_input"]["reviewed_count"], 1);
+        assert!(
+            value["review_input"]["projection_sha256"]
+                .as_str()
+                .is_some_and(|digest| digest.starts_with("sha256:"))
+        );
+        assert_eq!(
+            value["review_input"]["findings"][0]["stable_id"],
+            "8f7fa8644fd12280"
+        );
+        assert_eq!(
+            value["review_input"]["findings"][0]["file"],
+            "src/pricing.rs"
+        );
+        assert_eq!(value["review_input"]["findings"][0]["line"], 88);
+        assert_eq!(
             value["comments"][0]["source_location"],
             serde_json::json!({
                 "status": "resolved",
@@ -1398,6 +1481,31 @@ mod tests {
                 }
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn review_input_projection_is_compact_and_fails_closed_at_byte_limit() -> Result<(), String> {
+        let mut entry = classified(88);
+        entry.evidence.related_tests.clear();
+        let config = RiprConfig::default();
+        let value = review_input_projection(Path::new("."), &config, &selection(&[entry]))?;
+        assert_eq!(value["reviewed_count"], 1);
+        assert!(value["findings"][0]["related_test"].is_null());
+
+        let mut oversized = Vec::new();
+        for line in 1..=10 {
+            oversized.push(classified(line));
+        }
+        let mut oversized_selection = selection(&oversized);
+        for selected in &mut oversized_selection.top_seams {
+            selected.why_now.evidence = "x".repeat(20_000);
+        }
+        let error = match review_input_projection(Path::new("."), &config, &oversized_selection) {
+            Ok(_) => return Err("oversized renderer input must fail closed".to_string()),
+            Err(error) => error,
+        };
+        assert!(error.contains("byte limit"), "{error}");
         Ok(())
     }
 

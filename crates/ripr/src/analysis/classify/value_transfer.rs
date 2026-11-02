@@ -399,6 +399,19 @@ fn eval_method_chain(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>
             "expression `{text}` is not a supported operation chain"
         )));
     }
+    // A `?` try operator is never evaluated: the chain may propagate
+    // `None`/`Err`, so the value is statically unknown. Report the
+    // complete operation instead of a fragment of the final segment
+    // (#1724 review: `rest.rfind(close)?` reported `close)?`).
+    if segments
+        .iter()
+        .skip(1)
+        .any(|segment| segment.trim_end().ends_with('?'))
+    {
+        return Err(unsupported(&format!(
+            "expression `{text}` is not a supported operation chain"
+        )));
+    }
     let mut value = eval_expression(segments[0], inputs, steps)?;
     for segment in &segments[1..] {
         value = apply_method(value, segment, inputs, steps)?;
@@ -904,7 +917,9 @@ fn parse_index_literal(text: &str) -> Option<usize> {
     trimmed.parse().ok()
 }
 
-fn is_identifier(text: &str) -> bool {
+// Shared bare-identifier predicate so the guard producer (`activation`)
+// and the evaluator apply the same identifier rule.
+pub(in crate::analysis) fn is_identifier(text: &str) -> bool {
     !text.is_empty()
         && text
             .chars()
@@ -1229,6 +1244,18 @@ mod tests {
         assert_eq!(
             exact("input.rfind(delim).map_or(0, |idx| idx)", present),
             TypedValue::Index(1)
+        );
+    }
+
+    #[test]
+    fn try_operator_reports_the_complete_operation() {
+        // #1724 review: `rest.rfind(close)?` reported the malformed edge
+        // `close)?`. A `?` try operator is never evaluated, so the outcome
+        // stays Unsupported — but the edge must name the complete operation.
+        let table = &[("rest", "\"ab\""), ("close", "'b'")];
+        assert_eq!(
+            unsupported_edge("rest.rfind(close)?", table),
+            "expression `rest.rfind(close)?` is not a supported operation chain"
         );
     }
 

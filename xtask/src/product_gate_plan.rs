@@ -699,6 +699,26 @@ mod tests {
 
     /// Keys that change which tests nextest selects or how it retries them,
     /// wherever they appear in the parsed config, quoted or inline.
+    /// A reviewed override only reserves the whole runner for one named test
+    /// (`threads-required = "num-test-threads"`); every test still runs with
+    /// unchanged retries and timeouts. Any other override key, or a filter with
+    /// no such reservation, still narrows or re-policies the selection.
+    fn is_scheduling_only_overrides(value: &toml::Value) -> bool {
+        let Some(items) = value.as_array() else {
+            return false;
+        };
+        !items.is_empty()
+            && items.iter().all(|item| {
+                item.as_table().is_some_and(|table| {
+                    table
+                        .keys()
+                        .all(|key| key == "filter" || key == "threads-required")
+                        && table.get("threads-required").and_then(toml::Value::as_str)
+                            == Some("num-test-threads")
+                })
+            })
+    }
+
     fn collect_selection_keys(value: &toml::Value, path: &str, violations: &mut Vec<String>) {
         match value {
             toml::Value::Table(table) => {
@@ -708,10 +728,15 @@ mod tests {
                     } else {
                         format!("{path}.{key}")
                     };
-                    if key == "default-filter" || key == "overrides" {
+                    if key == "default-filter"
+                        || (key == "overrides" && !is_scheduling_only_overrides(child))
+                    {
                         violations.push(format!(
                             "nextest config declares `{child_path}`, which narrows or re-policies the selected tests"
                         ));
+                    }
+                    if key == "overrides" && is_scheduling_only_overrides(child) {
+                        continue;
                     }
                     collect_selection_keys(child, &child_path, violations);
                 }
