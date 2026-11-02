@@ -23,9 +23,9 @@ jobs:
     name: rust-tests-junit
     if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: ubuntu-latest
-    # #7142: the measured all-features workload exhausted 30m before its last
-    # subject and doctests; retain a bounded envelope with explicit variance.
-    timeout-minutes: 40
+    # #7142: main run 41429803780 reached 26525/26527 before the 40-minute cap;
+    # reserve bounded finalization for doctests, JUnit upload and terminal evidence.
+    timeout-minutes: 50
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
@@ -61,22 +61,63 @@ jobs:
         run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
       - name: Run Rust tests with JUnit output
+        id: rust-tests
+        timeout-minutes: 44
         env:
           # The suite binary is built --all-features; keep the fixture corpus's
           # default-feature build out of that target/debug/ripr (#11602).
           RIPR_FIXTURE_BINARY_ISOLATE: "1"
-        run: cargo nextest run --workspace --all-features --profile ci
+        run: |
+          mkdir -p target/nextest/ci
+          rm -f target/nextest/ci/junit.xml target/nextest/ci/run-context.txt target/test-analytics-nextest.log
+          checkout_sha="$(git rev-parse HEAD)"
+          {
+            printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf 'profile=ci\ncommand=cargo nextest run --workspace --all-features --profile ci\n'
+            cargo nextest --version
+            rustc --version
+            cargo --version
+            printf 'input_blobs (Cargo.lock, nextest.toml, test-analytics.yml):\n'
+            git hash-object Cargo.lock .config/nextest.toml .github/workflows/test-analytics.yml
+          } > target/nextest/ci/run-context.txt
+          set +e
+          cargo nextest run --workspace --all-features --profile ci 2>&1 | tee target/test-analytics-nextest.log
+          test_exit=${PIPESTATUS[0]}
+          set -e
+          printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
+          if [ "$test_exit" -eq 0 ] && ! grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml; then
+            echo "::error::nextest succeeded without a fresh JUnit report naming at least one test"
+            exit 1
+          fi
+          exit "$test_exit"
 
       - name: Run doc tests
+        if: success()
         run: cargo test --workspace --doc
 
+      - name: Write bounded nextest terminal evidence
+        if: always() && steps.rust-tests.outcome != 'skipped'
+        run: |
+          {
+            echo "### Test Analytics nextest"
+            echo "step outcome: ${{ steps.rust-tests.outcome }}"
+            echo "nextest_exit: $(grep -E '^nextest_exit=' target/nextest/ci/run-context.txt 2>/dev/null || echo missing)"
+            echo
+            echo '```'
+            sed -E 's/\x1b\[[0-9;]*m//g' target/test-analytics-nextest.log 2>/dev/null | grep -aE '^(Summary|SLOW|TIMEOUT|FAIL)|starting [0-9]+ tests| PASS .* \([0-9]+/[0-9]+\)' | tail -40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload test results artifact
-        if: always()
+        if: always() && steps.rust-tests.outcome != 'skipped'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rust-junit
-          path: target/nextest/ci/junit.xml
-          if-no-files-found: warn
+          path: |
+            target/nextest/ci/junit.xml
+            target/nextest/ci/run-context.txt
+            target/test-analytics-nextest.log
+          if-no-files-found: error
           retention-days: 5
 
       - name: Upload test results to Codecov
