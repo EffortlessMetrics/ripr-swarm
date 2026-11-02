@@ -85,7 +85,7 @@ fn findings_at(
         let index = build_index(&root, std::slice::from_ref(&path))?;
         if manifest == MANIFEST
             && source == SOURCE
-            && path == PathBuf::from("src/lib.rs")
+            && path.as_path() == std::path::Path::new("src/lib.rs")
             && extra.is_empty()
         {
             assert!(
