@@ -156,7 +156,7 @@ export function firstPrSummaryPacket(packet: RiprFirstPrPacketStatus): string {
     lines.push(`Current evidence strength: ${packet.currentEvidenceStrength}`);
   }
   if (packet.missingDiscriminator) {
-    lines.push(`Missing discriminator: ${packet.missingDiscriminator}`);
+    lines.push(`Missing check: ${packet.missingDiscriminator}`);
   }
   if (packet.focusedProofIntent) {
     lines.push(`Focused proof intent: ${packet.focusedProofIntent}`);
@@ -205,7 +205,7 @@ export function firstPrRepairPacket(packet: RiprFirstPrPacketStatus): string {
     lines.push(`Current evidence strength: ${packet.currentEvidenceStrength}`);
   }
   if (packet.missingDiscriminator) {
-    lines.push(`Missing discriminator: ${packet.missingDiscriminator}`);
+    lines.push(`Missing check: ${packet.missingDiscriminator}`);
   }
   if (packet.focusedProofIntent) {
     lines.push(`Focused proof intent: ${packet.focusedProofIntent}`);
@@ -317,7 +317,7 @@ export function firstPrTopRepairableGapLines(packet: RiprFirstPrPacketStatus): s
     lines.push(`Current evidence strength: ${packet.currentEvidenceStrength}`);
   }
   if (packet.missingDiscriminator) {
-    lines.push(`Missing discriminator: ${packet.missingDiscriminator}`);
+    lines.push(`Missing check: ${packet.missingDiscriminator}`);
   }
   if (packet.focusedProofIntent) {
     lines.push(`Focused proof intent: ${packet.focusedProofIntent}`);
