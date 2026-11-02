@@ -2201,6 +2201,54 @@ pub(crate) fn validate_issue_lifecycle_intake_fixture_corpus(
     Ok(())
 }
 
+pub(crate) fn validate_verification_run_snapshot_binding_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/verification_run_snapshot_binding");
+    let corpus_path = root.join("corpus.json");
+    if !corpus_path.exists() {
+        violations.push(format!(
+            "verification run snapshot binding fixture corpus is missing {}",
+            normalize_path(&corpus_path)
+        ));
+        return Ok(());
+    }
+    let body = read_text_lossy(&corpus_path)?;
+    let value: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            violations.push(format!(
+                "verification run snapshot binding corpus is invalid JSON: {error}"
+            ));
+            return Ok(());
+        }
+    };
+    let Some(schema_version) = value.get("schema_version").and_then(|v| v.as_str()) else {
+        violations.push(
+            "verification run snapshot binding corpus must declare schema_version".to_string(),
+        );
+        return Ok(());
+    };
+    if schema_version != "verification_run_snapshot_binding_corpus.v1" {
+        violations.push(format!(
+            "verification run snapshot binding corpus schema_version must be verification_run_snapshot_binding_corpus.v1, got `{schema_version}`"
+        ));
+    }
+    let Some(cases) = value.get("cases").and_then(|v| v.as_array()) else {
+        violations.push(
+            "verification run snapshot binding corpus must declare a cases array".to_string(),
+        );
+        return Ok(());
+    };
+    if cases.len() != 10 {
+        violations.push(format!(
+            "verification run snapshot binding corpus must contain ten hostile cases, got {}",
+            cases.len()
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_issue_lifecycle_contract_plan_fixture_corpus(
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
