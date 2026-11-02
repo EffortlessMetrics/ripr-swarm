@@ -7,8 +7,8 @@
 //! the test runs only in `b`, with the fake macro. ripr cannot place the file
 //! while an `include!` is unresolved, so the finding is a named limitation, not
 //! a gap, and nothing is credited. Each control changes one thing about that
-//! shape and keeps the gap. `--mode ready` is required: draft mode does not
-//! index `b`.
+//! shape and keeps the gap. Ready mode indexes every member; draft mode must
+//! still withhold when other members are unindexed (#10149).
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -225,12 +225,12 @@ fn main() {
         })
     }
 
-    fn run(&self, diff: bool) -> Result<Value, String> {
+    fn run_with_mode(&self, diff: bool, mode: &str) -> Result<Value, String> {
         let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
         command
             .args(["check", "--root"])
             .arg(&self.root)
-            .args(["--mode", "ready", "--quiet", "--format"])
+            .args(["--mode", mode, "--quiet", "--format"])
             .arg(if diff { "json" } else { "repo-exposure-json" })
             .env("RIPR_CACHE_DIR", self.root.join("cache"));
         if diff {
@@ -250,9 +250,36 @@ fn main() {
             .map_err(|error| format!("instrument: stdout is not JSON: {error}"))
     }
 
-    /// The one finding of the mutated `Widget::read` line.
-    fn finding(&self) -> Result<Value, String> {
-        let document = self.run(true)?;
+    fn run_with_relative_root(&self, diff: bool, mode: &str) -> Result<Value, String> {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+        command
+            .current_dir(&self.root)
+            .args(["check", "--root", "."])
+            .args(["--mode", mode, "--quiet", "--format"])
+            .arg(if diff { "json" } else { "repo-exposure-json" })
+            .env("RIPR_CACHE_DIR", self.root.join("cache"));
+        if diff {
+            command.arg("--diff").arg(&self.diff);
+        }
+        let output = command
+            .output()
+            .map_err(|error| format!("run ripr failed: {error}"))?;
+        if !matches!(output.status.code(), Some(0 | 1)) {
+            return Err(format!(
+                "instrument: ripr exited {:?}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("instrument: stdout is not JSON: {error}"))
+    }
+
+    fn run(&self, diff: bool) -> Result<Value, String> {
+        self.run_with_mode(diff, "ready")
+    }
+
+    fn finding_from(&self, document: &Value) -> Result<Value, String> {
         let findings = document
             .get("findings")
             .and_then(Value::as_array)
@@ -266,6 +293,10 @@ fn main() {
                 "premise: one finding on the owner line, got {other:?}"
             )),
         }
+    }
+
+    fn finding(&self) -> Result<Value, String> {
+        self.finding_from(&self.run(true)?)
     }
 
     /// The repo-exposure seam of `Widget::read`.
@@ -344,6 +375,20 @@ fn an_unplaced_standard_assertion_over_the_owner_call_is_a_named_limitation() ->
         !control.to_string().contains("receiver_unestablished:"),
         "{control}"
     );
+    Ok(())
+}
+
+/// Draft mode indexes only the changed package, so an unindexed member's
+/// generated mount must still withhold the gap (#10149).
+#[test]
+fn draft_mode_withholds_the_unplaced_generated_mount_control() -> Result<(), String> {
+    let workspace = Workspace::create(Placement::Generated, CONTROL)?;
+    let finding = workspace.finding_from(&workspace.run_with_mode(true, "draft")?)?;
+    assert_eq!(text(&finding, "/classification")?, "static_unknown");
+    assert_eq!(limit(&finding), Some(LIMIT), "{finding}");
+    let relative = workspace.finding_from(&workspace.run_with_relative_root(true, "draft")?)?;
+    assert_eq!(text(&relative, "/classification")?, "static_unknown");
+    assert_eq!(limit(&relative), Some(LIMIT), "{relative}");
     Ok(())
 }
 

@@ -2598,11 +2598,35 @@ struct TargetRoots {
     binary_macro_roots: SyncMemo<BTreeMap<PathBuf, Option<BTreeSet<PathBuf>>>>,
 }
 
+fn workspace_has_unindexed_members(index: &RustIndex) -> bool {
+    let Some(root) = index
+        .workspace_authority
+        .as_ref()
+        .map(|authority| authority.root.as_path())
+    else {
+        return false;
+    };
+    index.workspace_member_dirs.iter().any(|member_dir| {
+        let member_canon = member_dir
+            .canonicalize()
+            .unwrap_or_else(|_| member_dir.to_path_buf());
+        let Some(relative) = member_canon.strip_prefix(root).ok() else {
+            return false;
+        };
+        !index.files().iter().any(|(path, _)| {
+            let path = path.as_path();
+            let path = path.strip_prefix("./").unwrap_or(path);
+            path.starts_with(relative)
+        })
+    })
+}
+
 impl TargetRoots {
     fn new(index: &RustIndex) -> Self {
         // A lexical-fallback file records no module declarations, so its
         // children get no edge either.
         let disabled = !index.include_limitations.is_empty()
+            || workspace_has_unindexed_members(index)
             || index.files().iter().any(|(_, facts)| {
                 facts.used_lexical_fallback
                     || facts

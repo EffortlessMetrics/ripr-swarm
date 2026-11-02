@@ -20855,6 +20855,7 @@ name = "An inherent receiver blocked only by an assertion macro ripr cannot veri
 spec = "docs/specs/RIPR-SPEC-0352-inherent-receiver-unestablished-limit.md"
 tests = [
   "crates/ripr/tests/receiver_unestablished_limit.rs::an_unplaced_standard_assertion_over_the_owner_call_is_a_named_limitation",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::draft_mode_withholds_the_unplaced_generated_mount_control",
   "crates/ripr/tests/receiver_unestablished_limit.rs::the_repository_consumer_credits_nothing_for_the_unplaced_call",
   "crates/ripr/tests/receiver_unestablished_limit.rs::a_receiver_that_does_not_resolve_even_with_the_macro_trusted_keeps_its_gap",
   "crates/ripr/tests/receiver_unestablished_limit.rs::available_placement_keeps_the_rebound_root_gap_and_the_plain_credit",
