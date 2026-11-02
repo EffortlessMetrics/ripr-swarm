@@ -424,11 +424,136 @@ fn patches_builtin(lines: &[&str], index: usize, name: &str, modules: &[String])
                     .chars()
                     .next_back()
                     .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
-                let rest = &compact[start + target.len()..];
-                boundary && rest.starts_with('=') && !rest.starts_with("==")
+                boundary && rebinds_target(&compact, target)
             })
         })
     })
+}
+
+/// Whether the line rebinds `target` (`builtins.name`, `builtins["name"]`;
+/// whitespace already removed) as an assignment store (#12222): a plain,
+/// chained or annotated `target = f`, or a slot in a tuple, list or
+/// parenthesized target list. Each `;` statement is read on its own, a
+/// comment or string never counts, and a use inside a call, subscript key or
+/// right-hand side, a comparison and a bare annotation bind nothing.
+fn rebinds_target(compact: &str, target: &str) -> bool {
+    split_top(strip_comment(compact), b';')
+        .into_iter()
+        .any(|statement| {
+            let segments = split_assignments(statement);
+            segments.len() > 1
+                && segments[..segments.len() - 1]
+                    .iter()
+                    .any(|segment| is_store_slot(segment, target))
+        })
+}
+
+/// Whether `segment` (one assignment target) stores into `target`, directly,
+/// annotated (`target:type`), starred, or inside a bracketed target group.
+fn is_store_slot(segment: &str, target: &str) -> bool {
+    split_top(segment, b',').into_iter().any(|element| {
+        let element = element.trim_start_matches('*');
+        let group = element
+            .strip_prefix('(')
+            .and_then(|inner| inner.strip_suffix(')'))
+            .or_else(|| {
+                element
+                    .strip_prefix('[')
+                    .and_then(|inner| inner.strip_suffix(']'))
+            });
+        if let Some(inner) = group
+            && closes_cleanly(inner)
+        {
+            return is_store_slot(inner, target);
+        }
+        split_top(element, b':')[0] == target
+    })
+}
+
+/// Whether the brackets in `text` never close more than they open and end balanced.
+fn closes_cleanly(text: &str) -> bool {
+    let mut depth = 0usize;
+    for byte in text.bytes() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => match depth.checked_sub(1) {
+                Some(next) => depth = next,
+                None => return false,
+            },
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+/// `text` up to the first `#` outside a string.
+fn strip_comment(text: &str) -> &str {
+    let (mut quote, mut escaped) = (0u8, false);
+    for (index, byte) in text.bytes().enumerate() {
+        if quote != 0 {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote {
+                quote = 0;
+            }
+        } else if byte == b'"' || byte == b'\'' {
+            quote = byte;
+        } else if byte == b'#' {
+            return &text[..index];
+        }
+    }
+    text
+}
+
+/// Splits `text` at `separator` outside brackets and strings. Every
+/// separator is ASCII, so each slice sits on a character boundary.
+fn split_top(text: &str, separator: u8) -> Vec<&str> {
+    split_where(text, |bytes, index| bytes[index] == separator)
+}
+
+/// Splits at each plain assignment `=`: not part of `==`, `!=`, `<=`, `>=`,
+/// `:=` or an augmented operator (`+=`, `|=`, ...).
+fn split_assignments(text: &str) -> Vec<&str> {
+    split_where(text, |bytes, index| {
+        bytes[index] == b'='
+            && bytes.get(index + 1) != Some(&b'=')
+            && index
+                .checked_sub(1)
+                .is_none_or(|at| !b"=!<>:+-*/%&|^@~".contains(&bytes[at]))
+    })
+}
+
+fn split_where(text: &str, splits: impl Fn(&[u8], usize) -> bool) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let (mut depth, mut quote, mut from) = (0usize, 0u8, 0usize);
+    let mut escaped = false;
+    let mut parts = Vec::new();
+    for (index, &byte) in bytes.iter().enumerate() {
+        if quote != 0 {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote {
+                quote = 0;
+            }
+            continue;
+        }
+        match byte {
+            b'"' | b'\'' => quote = byte,
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && splits(bytes, index) => {
+                parts.push(&text[from..index]);
+                from = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[from..]);
+    parts
 }
 
 fn alternative_matches(pattern: &str, value: &str, builtins: bool) -> Option<bool> {
