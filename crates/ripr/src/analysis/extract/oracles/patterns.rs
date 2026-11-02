@@ -77,10 +77,7 @@ fn contains_member_access(text: &str) -> bool {
 }
 
 pub(super) fn is_snapshot_assertion(line: &str) -> bool {
-    let expect_test_comparison = (line.contains("expect![[") || line.contains("expect_file!["))
-        && (line.contains(".assert_eq(")
-            || line.contains(".assert_debug_eq(")
-            || line.contains(".assert_json_eq("));
+    let expect_test_comparison = crate::analysis::syntax::ra::is_expect_test_comparison_line(line);
     let known_snapshot_macros = [
         "assert_snapshot!",
         "assert_yaml_snapshot!",
@@ -2815,6 +2812,22 @@ mod issue_12359_tests {
             r#"assert_eq!(parse("x"), Err(_));"#,
         ] {
             assert!(!is_exact_error_variant_assertion(line), "{line}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod issue_7878_tests {
+    use super::is_snapshot_assertion;
+
+    #[test]
+    fn single_bracket_expect_test_comparison_is_a_snapshot_assertion() {
+        for line in [
+            r#"expect!["w12"].assert_eq(&render(4));"#,
+            r#"expect! [["w12"]].assert_eq (&render(4));"#,
+            r#"expect_file!["w.txt"].assert_eq(&render(4));"#,
+        ] {
+            assert!(is_snapshot_assertion(line), "{line}");
         }
     }
 }
