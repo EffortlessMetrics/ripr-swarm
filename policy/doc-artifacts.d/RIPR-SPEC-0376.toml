@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0376"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0376-language-availability-resolver.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "The shared language-availability resolver and the doctor detected_languages availability fields shipped (#11675, #11834, #12016) with no spec; the spec pins the enablement policy, the nine-state vocabulary, the non-claims and the known consumer gap."

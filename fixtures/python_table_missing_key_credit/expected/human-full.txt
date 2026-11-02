@@ -46,7 +46,7 @@ Evidence
   - related test tests/test_table.py:4 test_missing_key_reads_the_fallback uses strong exact value oracle: assert price(3) == 5
 
 Weakness
-  - Related Python test reaches `<module>` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  - Related Python test reaches `<module>` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check
 
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior

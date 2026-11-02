@@ -1019,6 +1019,9 @@ fn ts_mask_lexically(
     // it is division (`i++ / 2`), never a regex start.
     let mut postfix_op = false;
     let mut op_after_operand = false;
+    // A `!` that directly follows an operand is a non-null assertion
+    // (`n! / 2`), so a `/` after it is division too (#7483).
+    let mut postfix_not = false;
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
     let mut chars = text.chars().peekable();
@@ -1058,6 +1061,7 @@ fn ts_mask_lexically(
                     }
                     '/' if regex_allowed
                         && !postfix_op
+                        && !postfix_not
                         && operand_expected(prev, &word, word_after_dot) =>
                     {
                         mode = Mode::Regex { in_class: false };
@@ -1087,6 +1091,12 @@ fn ts_mask_lexically(
                 if matches!(mode, Mode::LineComment | Mode::BlockComment) {
                     after_space = true;
                     continue;
+                }
+                if c == '!' {
+                    postfix_not = (postfix_not && prev == Some('!'))
+                        || !operand_expected(prev, &word, word_after_dot);
+                } else if !c.is_whitespace() {
+                    postfix_not = false;
                 }
                 if (c == '+' || c == '-') && !after_space && prev == Some(c) {
                     postfix_op = op_after_operand && !postfix_op;
@@ -1202,6 +1212,7 @@ fn ts_mask_lexically(
             dots = 0;
             postfix_op = false;
             op_after_operand = false;
+            postfix_not = false;
         }
     }
     out
@@ -1697,6 +1708,10 @@ pub(crate) struct TsBoundaryRowContext<'a> {
     pub(crate) workspace_root: Option<&'a Path>,
     /// RIPR-SPEC-0249 rule 1 class pins that read strong for this change.
     pub(crate) pin_facts: Option<&'a PinFacts>,
+    /// The whole edit negates one equality operator of the changed
+    /// comparison (#12281): every input that reaches it takes the other
+    /// branch, so a `typeof` guard is flipped by an input of any kind.
+    pub(crate) equality_negation: bool,
 }
 
 /// One related test's activation of the changed predicate boundary (#5527).
@@ -1776,6 +1791,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         alias_map,
         workspace_root,
         pin_facts,
+        equality_negation,
     } = *context;
     let (left, right, nullish_boundary) = match boundary {
         TsPredicateBoundary::NotPredicate => return TypeScriptPredicateActivation::NotApplicable,
@@ -1867,7 +1883,15 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             let witnessed = if let Some(operand) = left.strip_prefix("typeof ") {
                 // #11196: a `typeof <param> == "<kind>"` guard is witnessed by
                 // an input of that kind, never by the kind's name as a string.
-                typeof_kind_input_reaches_read_argument(&arguments, operand, right, owner)
+                // #12281: when the edit only negates the guard's operator, an
+                // input of any statically written kind takes the other branch.
+                typeof_kind_input_reaches_read_argument(
+                    &arguments,
+                    operand,
+                    right,
+                    owner,
+                    equality_negation,
+                )
             } else if nullish_boundary {
                 // #4104-E2 repair (review thread PRRT_kwDOSiSx0c6mUkkI):
                 // for a nullish-coalescing boundary only the NULLISH
@@ -3566,9 +3590,12 @@ fn ts_observed_local_owner_call_arguments(
         .strip_prefix("await ")
         .map(str::trim)
         .unwrap_or(initializer.trim());
-    // The initializer must be one owner call spanning the whole text.
+    // The initializer must be one owner call spanning the whole text. A call
+    // nested in its arguments (`price(price(6000, 0), 7)`, #7470) is allowed:
+    // the matches come back in text order and the span check below pins the
+    // first one as the outermost call, whose arguments the assertion observes.
     let argument_lists = owner_call_arguments(stripped, owner_name, owner_receivers);
-    if argument_lists.len() != 1 {
+    if argument_lists.is_empty() {
         return None;
     }
     let after_name = if let Some(rest) = stripped.strip_prefix(owner_name) {
@@ -4925,15 +4952,22 @@ fn last_identifier_segment(operand: &str) -> &str {
 /// `true` when the argument at the parameter a `typeof <param> == "<kind>"`
 /// guard reads is written as a value of exactly that kind (#11196): a function
 /// for `"function"`, a number literal for `"number"`. An input of another kind
-/// can still flip a changed operator, but it cannot tell an edited kind apart,
-/// and the kind's name as a string literal is a string input, not the kind it
-/// names. The parameter must be named by the owner's own signature, and a
-/// type assertion on the argument does not change the value it carries.
+/// cannot tell an edited kind apart, and the kind's name as a string literal
+/// is a string input, not the kind it names. The parameter must be named by
+/// the owner's own signature, and a type assertion on the argument does not
+/// change the value it carries.
+///
+/// `equality_negation` (#12281): when the whole edit negates the guard's
+/// equality operator, every input takes the other branch, so an argument
+/// written with any statically readable kind (`42` against `"function"`)
+/// witnesses the flip. An argument whose kind the text does not fix (an
+/// identifier, a call) still credits nothing.
 fn typeof_kind_input_reaches_read_argument(
     arguments: &[String],
     operand: &str,
     kind: &str,
     owner: &TypeScriptOwner,
+    equality_negation: bool,
 ) -> bool {
     let kind = kind.trim().trim_matches(['"', '\'']);
     let Some(position) = owner
@@ -4946,7 +4980,7 @@ fn typeof_kind_input_reaches_read_argument(
     arguments
         .get(position)
         .and_then(|argument| super::typeof_kind::literal_argument_typeof_kind(argument))
-        .is_some_and(|argument_kind| argument_kind == kind)
+        .is_some_and(|argument_kind| equality_negation || argument_kind == kind)
 }
 
 /// `true` when the boundary literal reaches the argument position the changed
@@ -5788,42 +5822,75 @@ fn unresolved_assertions_only(
 /// marker in either never counts. An unrelated callback, and other
 /// `Unresolved` causes (a shadowed `expect`, a no-op helper), stay actionable
 /// gaps.
+///
+/// A third shape is a floating `expect(<owner call>).resolves|rejects...`
+/// (#11535, RIPR-SPEC-0246 rule 4): jest-derived and conservative for vitest,
+/// where an un-awaited, un-returned assertion may not fail the test. Known
+/// over-demotions toward `static_unknown`: `expect.assertions(n)` tests, an
+/// expression-bodied subtest, and a function-reference callback.
 pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -> bool {
     let masked = mask_comments_and_strings(body);
-    let calls_owner = |text: &str| {
-        text.match_indices(owner_name).any(|(at, _)| {
-            let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
-            let mut before = text[..at].chars().rev().peekable();
-            // A member call (`this.owner(`, `ns.owner(`, `a?.owner(`) ties the
-            // same way a bare call does when its whole receiver is an
-            // identifier chain; a call or index step anywhere in it
-            // (`f().owner(`, `a[0].b.owner(`, `f().a.owner(`) is some other
-            // receiver.
-            let boundary = match before.next() {
-                None => true,
-                Some('.') => {
-                    before.next_if_eq(&'?');
-                    loop {
-                        if before.next_if(|c| word(*c)).is_none() {
-                            break false;
-                        }
-                        while before.next_if(|c| word(*c)).is_some() {}
-                        match before.peek() {
-                            Some('.') => {
-                                before.next();
-                                before.next_if_eq(&'?');
-                            }
-                            Some(')' | ']') => break false,
-                            _ => break true,
-                        }
-                    }
-                }
-                Some(c) => !word(c),
-            };
-            let after = &text[at + owner_name.len()..];
-            boundary && (after.starts_with('(') || generic_call_args(after))
-        })
-    };
+    floating_promise_assertion_on_owner(&masked, owner_name)
+        || body_asserts_in_then_callback(&masked, owner_name)
+}
+
+/// A floating `expect(<owner call>).resolves...` / `.rejects...` with no
+/// `await` or `return` before it: the promise settles after the test body
+/// ends, so the extractor withholds its credit (it cannot fail the test) and
+/// the test reads `static_unknown` rather than an actionable gap, like the
+/// `.then` shapes. `masked` has comments and strings blanked.
+fn floating_promise_assertion_on_owner(masked: &str, owner_name: &str) -> bool {
+    masked.match_indices("expect").any(|(at, _)| {
+        // `expect(` or `expect.soft(`.
+        let after = &masked[at + "expect".len()..];
+        let callee_len = if after.starts_with('(') {
+            "expect".len()
+        } else if after.starts_with(".soft(") {
+            "expect.soft".len()
+        } else {
+            return false;
+        };
+        if masked[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+        {
+            return false;
+        }
+        // An awaited, returned or arrow-returned assertion is not floating.
+        let before = masked[..at].trim_end();
+        if before.ends_with("=>")
+            || ["await", "return"].iter().any(|word| {
+                before.strip_suffix(word).is_some_and(|rest| {
+                    !rest
+                        .chars()
+                        .next_back()
+                        .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+                })
+            })
+        {
+            return false;
+        }
+        let open = at + callee_len;
+        let Some(close) = balanced_close_offset(&masked[open + 1..]).map(|c| open + 1 + c) else {
+            return false;
+        };
+        let chain = masked[close + 1..].trim_start();
+        // `expect(x).not.resolves...` keeps the async modifier after `.not`.
+        let after_dot = chain.strip_prefix('.').map(str::trim_start);
+        let async_chain = after_dot
+            .map(|rest| {
+                rest.strip_prefix("not")
+                    .and_then(|tail| tail.trim_start().strip_prefix('.'))
+                    .map_or(rest, str::trim_start)
+            })
+            .is_some_and(|rest| rest.starts_with("resolves") || rest.starts_with("rejects"));
+        async_chain && text_calls_owner(&masked[open..=close], owner_name)
+    })
+}
+
+fn body_asserts_in_then_callback(masked: &str, owner_name: &str) -> bool {
+    let calls_owner = |text: &str| text_calls_owner(text, owner_name);
     [".then(", "forEach(async"].iter().any(|marker| {
         masked.match_indices(marker).any(|(start, _)| {
             let Some(offset) = marker.find('(') else {
@@ -5845,7 +5912,7 @@ pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -
                     _ => {}
                 }
             }
-            let tied_to_owner = calls_owner(&masked[receiver_start(&masked, start)..start])
+            let tied_to_owner = calls_owner(&masked[receiver_start(masked, start)..start])
                 || masked.get(open..end).is_some_and(calls_owner);
             tied_to_owner
                 && masked.get(open..end).is_some_and(|span| {
@@ -5861,6 +5928,43 @@ pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -
                     })
                 })
         })
+    })
+}
+
+/// Whether `text` calls `owner_name` directly or through an identifier
+/// receiver chain (see [`body_asserts_in_unmodeled_callback`]).
+fn text_calls_owner(text: &str, owner_name: &str) -> bool {
+    text.match_indices(owner_name).any(|(at, _)| {
+        let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
+        let mut before = text[..at].chars().rev().peekable();
+        // A member call (`this.owner(`, `ns.owner(`, `a?.owner(`) ties the
+        // same way a bare call does when its whole receiver is an
+        // identifier chain; a call or index step anywhere in it
+        // (`f().owner(`, `a[0].b.owner(`, `f().a.owner(`) is some other
+        // receiver.
+        let boundary = match before.next() {
+            None => true,
+            Some('.') => {
+                before.next_if_eq(&'?');
+                loop {
+                    if before.next_if(|c| word(*c)).is_none() {
+                        break false;
+                    }
+                    while before.next_if(|c| word(*c)).is_some() {}
+                    match before.peek() {
+                        Some('.') => {
+                            before.next();
+                            before.next_if_eq(&'?');
+                        }
+                        Some(')' | ']') => break false,
+                        _ => break true,
+                    }
+                }
+            }
+            Some(c) => !word(c),
+        };
+        let after = &text[at + owner_name.len()..];
+        boundary && (after.starts_with('(') || generic_call_args(after))
     })
 }
 
@@ -7104,6 +7208,16 @@ pub(crate) fn classify_resolved_owner(
         typescript_changed_boundary_text(file, &probe_shape.family, old_line_text, line_text);
     let boundary_text = boundary_text.as_ref();
     let predicate_boundary = ts_predicate_boundary(&probe_shape, boundary_text);
+    // #12281: the negation sends every input down the other branch only when
+    // every call evaluates the guard, so it must also be the first statement
+    // of the owner's own body.
+    let boundary_is_equality_negation =
+        typescript_changed_boundary_is_equality_negation(
+            file,
+            &probe_shape.family,
+            old_line_text,
+            line_text,
+        ) && typescript_changed_line_is_first_body_statement(owner, line);
     // #11256: a boundary operand no test call can set names its own limitation.
     let named_limitations_from_derived_operand: Vec<TypeScriptNamedLimitation> =
         derived_boundary_operand_limitation(owner, &predicate_boundary)
@@ -7121,6 +7235,7 @@ pub(crate) fn classify_resolved_owner(
             alias_map,
             workspace_root,
             pin_facts: Some(&pin_facts),
+            equality_negation: boundary_is_equality_negation,
         };
         ts_predicate_boundary_row_activation(&context, candidate)
     };
@@ -7302,7 +7417,7 @@ pub(crate) fn classify_resolved_owner(
             StageState::Yes,
             vec![format!(
                 // #7752: the article follows the oracle-kind label ("an `exact_value`").
-                "Related test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.",
+                "Related test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.",
                 owner.name,
                 crate::domain::indefinite_article(strongest_kind.as_str()),
                 strongest_kind.as_str()
@@ -7379,7 +7494,7 @@ pub(crate) fn classify_resolved_owner(
             StageState::Unknown,
             StageState::Unknown,
             vec![format!(
-                "Related tests reach `{}` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); the discriminator is not established either way.",
+                "Related tests reach `{}` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); whether a test checks the changed behavior is not established either way.",
                 owner.name
             )],
         )
@@ -9631,7 +9746,7 @@ fn module_entry_reach_summary(
     };
     if discriminator_unknown {
         return format!(
-            "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so the discriminator is not established either way.",
+            "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so whether a test checks the changed behavior is not established either way.",
             owner.name, entries
         );
     }

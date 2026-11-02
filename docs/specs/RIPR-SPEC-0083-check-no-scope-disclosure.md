@@ -109,7 +109,7 @@ is set to `true`. The renderers read this field. The analyzed-file discriminator
 ### Human output
 
 The empty-findings headline for a nothing-in-scope result is "Nothing to check:
-no changed Rust, Python or TypeScript source was available to analyze, so ripr
+no changed source file in a language ripr analyzes was available, so ripr
 examined no behavior." It replaces "No findings: ripr checked no changed
 behavior." (#11396); the note below carries the detail.
 

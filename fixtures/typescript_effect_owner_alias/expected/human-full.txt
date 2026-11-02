@@ -85,7 +85,7 @@ TypeScript repair packet (advisory)
   next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `log contains "audit"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
+  TypeScript preview advisory: add or strengthen a focused assertion for the missing check `log contains "audit"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_effect_owner_alias/input --diff <cwd>/fixtures/typescript_effect_owner_alias/diff.patch --mode fast probe:src_receipt.ts:typescript_preview:eb6f83d9
   ripr context --root <cwd>/fixtures/typescript_effect_owner_alias/input --diff <cwd>/fixtures/typescript_effect_owner_alias/diff.patch --mode fast --at probe:src_receipt.ts:typescript_preview:eb6f83d9

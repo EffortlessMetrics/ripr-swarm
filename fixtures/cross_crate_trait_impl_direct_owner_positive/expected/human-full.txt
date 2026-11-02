@@ -16,17 +16,16 @@ Shared evidence and guidance
   E1 [findings 1, 3]: reach yes: Related tests appear to reach size_hint: size_hint_caps_at_remaining
   E2 [findings 1, 3]: infection yes: Reachable tests can plausibly activate this changed behavior
   E3 [findings 1, 3]: observation yes: A related test observes a value or effect near the changed behavior
-  E4 [findings 1, 3]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
-  E5 [findings 1, 3]: related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(9)), Some(5)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  E6 [findings 1, 3]: related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(2)), Some(2)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  E7 [findings 1, 3]: related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(None), Some(5)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  E8 [findings 1, 3]: related test util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) uses strong exact value oracle: assert_eq!(t.limit(), 4); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  E9 [findings 1, 3]: source assertion argument value 5 at util/tests/stream_owner.rs:6
-  E10 [findings 1, 3]: source function argument value upper = 9 at util/tests/stream_owner.rs:6
-  E11 [findings 1, 3]: source assertion argument value 2 at util/tests/stream_owner.rs:7
-  E12 [findings 1, 3]: source function argument value upper = 2 at util/tests/stream_owner.rs:7
-  E13 [findings 1, 3]: source assertion argument value 4 at util/src/io/take.rs:8
-  E14 [findings 1, 3]: source assertion argument value 5 at util/tests/stream_owner.rs:8
+  E4 [findings 1, 3]: related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(9)), Some(5)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E5 [findings 1, 3]: related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(Some(2)), Some(2)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E6 [findings 1, 3]: related test util/tests/stream_owner.rs:5 size_hint_caps_at_remaining uses strong exact value oracle: assert_eq!(Take::new(5).size_hint(None), Some(5)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E7 [findings 1, 3]: related test util/src/io/take.rs:6 util/src/io/take.rs - limit (line 6) uses strong exact value oracle: assert_eq!(t.limit(), 4); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E8 [findings 1, 3]: source assertion argument value 5 at util/tests/stream_owner.rs:6
+  E9 [findings 1, 3]: source function argument value upper = 9 at util/tests/stream_owner.rs:6
+  E10 [findings 1, 3]: source assertion argument value 2 at util/tests/stream_owner.rs:7
+  E11 [findings 1, 3]: source function argument value upper = 2 at util/tests/stream_owner.rs:7
+  E12 [findings 1, 3]: source assertion argument value 4 at util/src/io/take.rs:8
+  E13 [findings 1, 3]: source assertion argument value 5 at util/tests/stream_owner.rs:8
 
 Finding 1: WARNING ./util/src/stream/take.rs:15
   id: probe:util_src_stream_take.rs:match_arm:6d8e610d
@@ -44,9 +43,10 @@ Static exposure
 Evidence
   shared evidence: E1, E2
   - propagation yes: Changed behavior appears to influence match arm result: Some(x)
-  shared evidence: E3, E4
+  shared evidence: E3
+  - discriminator weak: Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed arm; a test that only shares its file or module, and calls nothing that reaches the function, cannot confirm the arm
   - local flow reaches match arm result: Some(x) (line 15)
-  shared evidence: E5, E6, E7, E8, E9, E10, E11, E12, E13, E14
+  shared evidence: E4, E5, E6, E7, E8, E9, E10, E11, E12, E13
 Weakness
   - No strong discriminator was detected
 Next step
@@ -113,9 +113,10 @@ Static exposure
 Evidence
   shared evidence: E1, E2
   - propagation yes: Complete propagation witness reaches returned value: Some(x) if x <= self.remaining => Some(x)
-  shared evidence: E3, E4
+  shared evidence: E3
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: Some(x) if x <= self.remaining => Some(x) (line 16)
-  shared evidence: E5, E6, E7, E8, E9, E10, E11, E12, E13, E14
+  shared evidence: E4, E5, E6, E7, E8, E9, E10, E11, E12, E13
 Weakness
   - No strong discriminator was detected
 Next step

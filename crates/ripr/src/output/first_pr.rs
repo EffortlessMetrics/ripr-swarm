@@ -181,7 +181,7 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
             options.root
         ));
     }
-    print_side_effect_disclosure(&options);
+    print_side_effect_disclosure(&repo, &options);
 
     let resolution = omitted_base_resolution(&repo, &options);
     // A missing packet is answered before a base failure (#4285): `--check`
@@ -265,10 +265,10 @@ fn omitted_base_resolution(
 /// `--check` (validate-only) and custom `--out-dir` runs report their actual
 /// write behavior rather than always claiming the defaults. Rendered after
 /// `parse_options` and before any filesystem write.
-fn print_side_effect_disclosure(options: &FirstPrOptions) {
+fn print_side_effect_disclosure(repo: &Path, options: &FirstPrOptions) {
     println!("ripr first-pr - side effects and cost disclosure");
     if options.run_chain {
-        print_run_chain_disclosure(options);
+        print_run_chain_disclosure(&resolve_path(repo, &options.root), options);
         return;
     }
     // first-pr composes existing artifacts; it runs no analysis, so it has
@@ -290,13 +290,28 @@ fn print_side_effect_disclosure(options: &FirstPrOptions) {
 
 /// The `--run-chain` disclosure (#11720). Unlike the default, this
 /// invocation runs analysis, so it says so and names what it writes.
-fn print_run_chain_disclosure(options: &FirstPrOptions) {
+fn print_run_chain_disclosure(root: &Path, options: &FirstPrOptions) {
+    // Python and TypeScript roots without a Cargo manifest build the ledger
+    // from one `ripr check` run, not from a repo-exposure scan or review cards.
+    let (steps, first_artifact) = if uses_check_output_gap_ledger(root) {
+        (
+            "check run, gap ledger, review cards",
+            options
+                .check_output
+                .as_deref()
+                .unwrap_or(DEFAULT_CHECK_OUTPUT),
+        )
+    } else {
+        (
+            "repo-exposure scan, gap ledger, review cards",
+            DEFAULT_REPO_EXPOSURE,
+        )
+    };
     println!(
-        "  cost class:      runs analysis for each missing artifact (repo-exposure scan, gap ledger, review cards); scales with repository size"
+        "  cost class:      runs analysis for each missing artifact ({steps}); scales with repository size"
     );
     println!(
-        "  writes to:       each missing artifact ({}, {}, {}) and {}/",
-        DEFAULT_REPO_EXPOSURE,
+        "  writes to:       each missing artifact ({first_artifact}, {}, {}) and {}/",
         options.gap_ledger,
         options.review_comments,
         options.out_dir.trim_end_matches('/')
@@ -3582,7 +3597,7 @@ mod tests {
         assert!(!FirstPrOptions::default().preflight);
         assert_eq!(
             parse_options(&["--gap-ledger".to_string(), "".to_string()]),
-            Err("first-pr --gap-ledger requires a non-empty value".to_string())
+            Err("first-pr --gap-ledger requires a non-empty value; pass a value right after --gap-ledger".to_string())
         );
         match parse_options(&["--gap-ledgr".to_string()]) {
             Err(unknown)

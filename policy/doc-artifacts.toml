@@ -1914,3 +1914,11 @@ path = "docs/specs/RIPR-SPEC-0356-uncompiled-rust-files-contribute-no-tests.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #8999 records the uncompiled-file contract: a Rust file that no Cargo target, manifest path, module declaration or include can compile contributes no related test and no lexical-fallback limitation, and any doubt keeps it indexed as before."
+
+[[artifact]]
+id = "RIPR-SPEC-0352"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0352-inherent-receiver-unestablished-limit.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records the inherent-receiver unestablished contract: a gap whose only refusal is an assertion macro binding that cannot be verified because target-root placement is unavailable reads static_unknown under rust_inherent_receiver_unestablished, credits nothing, and keeps every real receiver mismatch and every available-placement rebinding as a gap."

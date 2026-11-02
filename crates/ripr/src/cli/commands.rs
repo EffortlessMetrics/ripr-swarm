@@ -9,7 +9,6 @@ use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::CONFIG_FILE_NAME;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::output;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use crate::cli::commands_options::*;
@@ -33,6 +32,11 @@ mod config_command;
 mod context;
 #[path = "commands/feedback.rs"]
 mod feedback_command;
+#[path = "commands/kani_report.rs"]
+mod kani_report;
+#[path = "commands/lsp.rs"]
+mod lsp;
+pub(super) use lsp::lsp;
 #[path = "commands/policy.rs"]
 mod policy_commands;
 #[path = "commands/receipt.rs"]
@@ -92,7 +96,7 @@ fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {
     crate::atomic_file::ensure_relative_output_contained(path)?;
     output::file_write::write(path, rendered.as_bytes()).map_err(|err| {
         format!(
-            "write output {} failed: {err}",
+            "write output {} failed: {err}; check you can write to that path, then rerun",
             output::outcome::display_path(path)
         )
     })
@@ -153,6 +157,8 @@ pub(super) use doctor::doctor;
 
 #[path = "commands/gate.rs"]
 mod gate;
+#[cfg(kani)]
+mod gate_exit_kani;
 pub(super) use gate::gate;
 
 #[path = "commands/init.rs"]
@@ -168,7 +174,7 @@ mod init_agents;
 #[path = "commands/init_workflow.rs"]
 mod init_workflow;
 #[cfg(test)]
-use init_workflow::generated_github_actions_workflow;
+use init_workflow::{generated_github_actions_workflow, generated_gitlab_ci_yaml};
 
 #[path = "commands/pilot.rs"]
 mod pilot;
@@ -538,6 +544,7 @@ pub(super) fn reports(args: &[String]) -> Result<(), String> {
         "ci-packet" => ci_packet::ci_packet(rest),
         "ci-summary" => ci_summary::ci_summary(rest),
         "gap-ledger" => gap_decision_ledger(rest),
+        "kani" => kani_report::run(rest),
         "ts-limitations" => typescript_limitations(rest),
         "ts-false-actionable" => typescript_false_actionable(rest),
         _ => Err(unknown_value(
@@ -548,6 +555,7 @@ pub(super) fn reports(args: &[String]) -> Result<(), String> {
                 "ci-packet",
                 "ci-summary",
                 "gap-ledger",
+                "kani",
                 "ts-limitations",
                 "ts-false-actionable",
             ],
@@ -3199,11 +3207,17 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     let mut committed = false;
     // #8739: same meaning as `ripr check --quiet`: stderr progress only.
     let mut quiet = false;
+    // #12104: `--format human` (default) or `agent`.
+    let mut format = app::ExplainFormat::Human;
     let mut root_explicitly_provided = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--quiet" => quiet = true,
+            "--format" => {
+                i += 1;
+                format = parse_explain_format(expect_value(args, i, "--format")?)?;
+            }
             "--root" => {
                 i += 1;
                 input.root = PathBuf::from(expect_value(args, i, "--root")?);
@@ -3328,7 +3342,16 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // looked like a hang. The same stderr-only stage lines `ripr check`
     // projects disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
+    // `explain` has no machine output format (its stdout is the human or
+    // markdown explanation), so only `--quiet` / `RIPR_QUIET` silence it; the
+    // machine-format default that `check` and `pilot` adopt has nothing to key on.
+    if from_artifact.is_some()
+        && input.suppression_policy.is_some()
+        && format == app::ExplainFormat::Agent
+    {
+        return Err("`ripr explain --format agent` cannot apply `--suppression-policy` to a `--from` replay, so a suppressed finding could print as open; drop `--from` or `--suppression-policy`".to_string());
+    }
+    let progress = (!crate::cli::progress::progress_silenced(quiet, false)).then(|| {
         crate::cli::progress::CliProgressSink::for_stderr(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),
             crate::cli::progress::ProgressPolicy::STANDARD,
@@ -3345,6 +3368,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
             artifact_path,
             asserted_base.as_deref(),
             explicit.mode,
+            format,
         )?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
@@ -3355,7 +3379,10 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 explicit.mode,
                 worktree,
                 worktree_from_default,
-                progress_sink,
+                app::ExplainRun {
+                    format,
+                    sink: progress_sink,
+                },
             )?
         }
     };
@@ -3368,6 +3395,23 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     }
     println!("{rendered}");
     Ok(())
+}
+
+/// `ripr explain --format`: the human explanation or the compact agent lines
+/// (#12104). `json` is deliberately not offered: `ripr context` is the JSON
+/// route for one finding, and the refusal says so.
+fn parse_explain_format(value: &str) -> Result<app::ExplainFormat, String> {
+    match value {
+        "human" | "text" => Ok(app::ExplainFormat::Human),
+        "agent" => Ok(app::ExplainFormat::Agent),
+        "json" => Err(
+            "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
+                .to_string(),
+        ),
+        other => Err(format!(
+            "unknown explain format `{other}`; expected `human` or `agent`"
+        )),
+    }
 }
 
 /// The selector-less `explain`/`context` error. `listing` lists finding ids
@@ -3474,56 +3518,6 @@ pub(super) fn drill_in_scope_conflict(
         ));
     }
     Ok(())
-}
-
-pub(super) fn lsp(args: &[String]) -> Result<(), String> {
-    lsp_with_serve(args, || {
-        write_lsp_terminal_hint(
-            std::io::stdin().is_terminal(),
-            &mut std::io::stderr().lock(),
-        );
-        crate::lsp::serve()
-    })
-}
-
-/// A person who typed `ripr lsp --stdio` at a prompt would otherwise see a
-/// silent hang; an editor pipes stdin, so the hint never reaches one. stderr
-/// only (stdout carries LSP framing), and best effort so an unwritable stderr
-/// cannot keep the server from starting (issue #10347).
-fn write_lsp_terminal_hint(stdin_is_terminal: bool, stderr: &mut impl std::io::Write) {
-    if stdin_is_terminal {
-        let _ = writeln!(
-            stderr,
-            "ripr lsp: waiting for an editor on stdin (this is a language server, not an interactive command); start it from your editor, or press Ctrl-D to exit."
-        );
-    }
-}
-
-/// Argument dispatch for `ripr lsp`, separated from the blocking stdio
-/// transport so unit tests can prove accepted-argument/dispatch semantics
-/// without entering the real server (issue #1387: the server owns tokio
-/// stdin/stdout and waits indefinitely while stdin stays open, so a test
-/// that calls `lsp(&["--stdio"])` hangs). Production always passes
-/// `crate::lsp::serve`; tests inject a nonblocking stub.
-fn lsp_with_serve(
-    args: &[String],
-    serve: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
-    for arg in args {
-        match arg.as_str() {
-            "--stdio" => {}
-            "--version" | "-V" => {
-                println!("ripr-lsp {}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
-            }
-            "--help" | "-h" => {
-                help::print_lsp_help();
-                return Ok(());
-            }
-            other => return Err(unknown_argument("lsp", other)),
-        }
-    }
-    serve()
 }
 
 /// `ripr pr-summary` — binary-first PR readiness summary (Campaign 31 item 8).
@@ -3837,15 +3831,15 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--records"])),
-            Err("missing value for --records".to_string())
+            Err("missing value for --records; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--repo-exposure"])),
-            Err("missing value for --repo-exposure".to_string())
+            Err("missing value for --repo-exposure; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--check-output"])),
-            Err("missing value for --check-output".to_string())
+            Err("missing value for --check-output; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&[
@@ -3863,7 +3857,7 @@ mod tests {
         assert_eq!(
             reports(&args(&["unknown"])),
             Err(
-                "unknown reports subcommand \"unknown\". Accepted: index, ci-packet, ci-summary, gap-ledger, ts-limitations, ts-false-actionable."
+                "unknown reports subcommand \"unknown\". Accepted: index, ci-packet, ci-summary, gap-ledger, kani, ts-limitations, ts-false-actionable."
                     .to_string()
             )
         );
@@ -3906,7 +3900,7 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["ts-limitations", "--check-output"])),
-            Err("missing value for --check-output".to_string())
+            Err("missing value for --check-output; pass a value right after it".to_string())
         );
     }
 
@@ -3986,7 +3980,7 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["ts-false-actionable", "--corpus"])),
-            Err("missing value for --corpus".to_string())
+            Err("missing value for --corpus; pass a value right after it".to_string())
         );
     }
 
@@ -4972,7 +4966,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_operations_options(&args(&[])),
-            Err("policy operations requires --policy-readiness <path>".to_string())
+            Err("policy operations requires --policy-readiness <path>; add `--policy-readiness <path>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_operations_options(&args(&["--policy-readiness", ""])),
@@ -4984,7 +4978,9 @@ mod tests {
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&[])),
-            Err("policy promote requires --to <mode>".to_string())
+            Err(
+                "policy promote requires --to <mode>; add `--to <mode>` to the command".to_string()
+            )
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "strict"])),
@@ -5002,7 +4998,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "visible-only"])),
-            Err("policy promote requires --operations <path>".to_string())
+            Err("policy promote requires --operations <path>; add `--operations <path>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "visible-only", "--operations", ""])),
@@ -5017,7 +5013,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&[])),
-            Err("policy preview-promote requires --language <language>".to_string())
+            Err("policy preview-promote requires --language <language>; add `--language <language>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&["--language", "ruby"])),
@@ -5035,7 +5031,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&["--language", "typescript"])),
-            Err("policy preview-promote requires --class <class>".to_string())
+            Err("policy preview-promote requires --class <class>; add `--class <class>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&[
@@ -5084,7 +5080,10 @@ mod tests {
         );
         assert_eq!(
             parse_policy_history_options(&args(&[])),
-            Err("policy history requires --current <path>".to_string())
+            Err(
+                "policy history requires --current <path>; add `--current <path>` to the command"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_policy_history_options(&args(&["--current", ""])),
@@ -7875,11 +7874,11 @@ language = "rust"
     fn init_requires_root_value() {
         assert_eq!(
             init(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             init(&args(&["--ci"])),
-            Err("missing value for --ci".to_string())
+            Err("missing value for --ci; pass a value right after it".to_string())
         );
     }
 
@@ -7890,11 +7889,12 @@ language = "rust"
             Err("unknown init argument \"--wat\". Run `ripr init --help`.".to_string())
         );
         assert_eq!(
-            init(&args(&["--ci", "gitlab"])),
-            Err(
-                "unknown init --ci provider \"gitlab\". Did you mean `github`? Accepted: github."
-                    .to_string()
-            )
+            init(&args(&["--ci", "jenkins"])),
+            Err("unknown init --ci provider \"jenkins\". Accepted: github, gitlab.".to_string())
+        );
+        assert_eq!(
+            parse_init_options(&args(&["--ci", "gitlab"])).map(|options| options.ci),
+            Ok(Some(InitCi::Gitlab))
         );
     }
 
@@ -8284,6 +8284,9 @@ language = "rust"
         assert!(workflow.contains("RIPR_UPLOAD_SARIF"));
         assert!(workflow.contains("RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}"));
         assert!(workflow.contains("RIPR_GATE_BASELINE: ${{ vars.RIPR_GATE_BASELINE || '' }}"));
+        assert!(
+            workflow.contains("RIPR_PILOT_TIMEOUT_MS: ${{ vars.RIPR_PILOT_TIMEOUT_MS || '' }}")
+        );
         assert!(workflow.contains("RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}"));
         assert!(workflow.contains("pull-requests: write"));
         assert!(workflow.contains("run: ripr reports ci-packet --root ."));
@@ -8323,6 +8326,19 @@ language = "rust"
         assert!(!workflow.contains("RIPR_GATE_MODE: \"baseline-check\""));
         assert!(!workflow.contains("RIPR_GATE_MODE: \"calibrated-gate\""));
         Ok(())
+    }
+
+    #[test]
+    fn init_generated_gitlab_ci_is_advisory_merge_request_flow() {
+        let yaml = generated_gitlab_ci_yaml();
+        assert!(yaml.contains("allow_failure: true"));
+        assert!(yaml.contains(r#"$CI_PIPELINE_SOURCE == "merge_request_event""#));
+        assert!(yaml.contains("ripr check --root . --base"));
+        assert!(!yaml.contains("ripr check --root . --head"));
+        assert!(yaml.contains("ripr review-comments --root ."));
+        assert!(yaml.contains("paths:\n      - target/ripr/"));
+        assert!(!yaml.contains("RIPR_GATE_MODE"));
+        assert!(!yaml.contains("ripr reports ci-packet"));
     }
 
     #[test]
@@ -8564,8 +8580,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 214,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, #11753 added the label-event job condition, and #6245 added the Windows x64 zip route and fail-closed archive checks to the install step"
+            line_count <= 216,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, #11753 added the label-event job condition, #11205 added the optional pilot-timeout binding, and #6245 added the Windows x64 zip route and fail-closed archive checks to the install step"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -8890,19 +8906,6 @@ language = "rust"
     }
 
     #[test]
-    fn lsp_version_returns_ok() {
-        assert_eq!(lsp(&args(&["--version"])), Ok(()));
-    }
-
-    #[test]
-    fn lsp_rejects_unknown_arguments() {
-        assert_eq!(
-            lsp(&args(&["--bad"])),
-            Err("unknown lsp argument \"--bad\". Run `ripr lsp --help`.".to_string())
-        );
-    }
-
-    #[test]
     fn explain_requires_selector() {
         assert_eq!(
             explain(&args(&[])),
@@ -8986,23 +8989,23 @@ language = "rust"
     fn explain_requires_values_for_value_flags() {
         assert_eq!(
             explain(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--base"])),
-            Err("missing value for --base".to_string())
+            Err("missing value for --base; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--diff"])),
-            Err("missing value for --diff".to_string())
+            Err("missing value for --diff; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--perl-facts"])),
-            Err("missing value for --perl-facts".to_string())
+            Err("missing value for --perl-facts; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--suppression-policy"])),
-            Err("missing value for --suppression-policy".to_string())
+            Err("missing value for --suppression-policy; pass a value right after it".to_string())
         );
     }
 
@@ -9060,86 +9063,6 @@ language = "rust"
             !matches!(&result, Err(message) if message.contains("cannot be combined with --diff")),
             "`--from` + `--base` + `--diff` is the reuse-verification path, not a diff-source conflict: {result:?}"
         );
-    }
-
-    #[test]
-    fn lsp_accepts_stdio_flag() {
-        // Must not enter the real blocking stdio server (issue #1387: it
-        // owns tokio stdin/stdout and waits indefinitely while stdin stays
-        // open). The injected stub proves `--stdio` is accepted and
-        // dispatches to the transport.
-        let entered = std::cell::Cell::new(false);
-        assert_eq!(
-            lsp_with_serve(&args(&["--stdio"]), || {
-                entered.set(true);
-                Ok(())
-            }),
-            Ok(())
-        );
-        assert!(
-            entered.get(),
-            "expected --stdio to dispatch to the transport"
-        );
-    }
-
-    #[test]
-    fn lsp_default_args_enter_transport() {
-        let entered = std::cell::Cell::new(false);
-        assert_eq!(
-            lsp_with_serve(&args(&[]), || {
-                entered.set(true);
-                Ok(())
-            }),
-            Ok(())
-        );
-        assert!(
-            entered.get(),
-            "expected default args to dispatch to the transport"
-        );
-    }
-
-    #[test]
-    fn lsp_propagates_transport_errors() {
-        assert_eq!(
-            lsp_with_serve(&args(&["--stdio"]), || Err("transport down".to_string())),
-            Err("transport down".to_string())
-        );
-    }
-
-    #[test]
-    fn lsp_terminal_hint_is_written_only_for_terminal_stdin() {
-        let mut shown = Vec::new();
-        write_lsp_terminal_hint(true, &mut shown);
-        let text = String::from_utf8_lossy(&shown);
-        assert!(
-            text.starts_with("ripr lsp: waiting for an editor on stdin"),
-            "{text}"
-        );
-        assert!(text.contains("Ctrl-D"), "{text}");
-        assert_eq!(text.matches('\n').count(), 1, "single line: {text}");
-
-        let mut piped = Vec::new();
-        write_lsp_terminal_hint(false, &mut piped);
-        assert!(piped.is_empty());
-    }
-
-    #[test]
-    fn lsp_terminal_hint_survives_an_unwritable_stderr() {
-        struct Closed;
-        impl std::io::Write for Closed {
-            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-                Err(std::io::ErrorKind::BrokenPipe.into())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Err(std::io::ErrorKind::BrokenPipe.into())
-            }
-        }
-        write_lsp_terminal_hint(true, &mut Closed);
-    }
-
-    #[test]
-    fn lsp_version_returns_ok_with_short_flag() {
-        assert_eq!(lsp(&args(&["-V"])), Ok(()));
     }
 
     pub(super) fn outcome_before_json() -> &'static str {

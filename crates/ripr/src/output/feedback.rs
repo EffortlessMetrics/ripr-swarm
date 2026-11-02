@@ -61,11 +61,11 @@ fn receipt_value(receipt: &FeedbackReceipt, status: &str) -> Value {
 
 pub(crate) fn rendered_receipt_from_value(value: &Value) -> Result<FeedbackReceipt, String> {
     if value.get("kind").and_then(Value::as_str) != Some("usefulness_feedback_receipt") {
-        return Err("feedback receipt kind must be usefulness_feedback_receipt".to_string());
+        return Err("feedback receipt kind must be usefulness_feedback_receipt; regenerate the input with the command that wrote it, then rerun".to_string());
     }
     if value.get("schema_version").and_then(Value::as_str) != Some(FEEDBACK_SCHEMA_VERSION) {
         return Err(format!(
-            "feedback receipt schema_version must be {FEEDBACK_SCHEMA_VERSION}"
+            "feedback receipt schema_version must be {FEEDBACK_SCHEMA_VERSION}; regenerate the input with the command that wrote it, then rerun"
         ));
     }
     let reason = FeedbackReason::parse(required_str(value, "reason")?)?;
@@ -101,7 +101,7 @@ fn required_str<'a>(value: &'a Value, field: &str) -> Result<&'a str, String> {
     value
         .get(field)
         .and_then(Value::as_str)
-        .ok_or_else(|| format!("feedback receipt missing string field `{field}`"))
+        .ok_or_else(|| format!("feedback receipt missing string field `{field}`; regenerate the input with the command that wrote it, then rerun"))
 }
 
 fn optional_str<'a>(value: &'a Value, field: &str) -> Result<Option<&'a str>, String> {
@@ -109,7 +109,7 @@ fn optional_str<'a>(value: &'a Value, field: &str) -> Result<Option<&'a str>, St
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(text)) => Ok(Some(text.as_str())),
         Some(_) => Err(format!(
-            "feedback receipt field `{field}` must be a string or null"
+            "feedback receipt field `{field}` must be a string or null; regenerate the input with the command that wrote it, then rerun"
         )),
     }
 }
@@ -119,7 +119,9 @@ fn parse_reference_state(value: &str) -> Result<ReferenceState, String> {
         "current" => Ok(ReferenceState::Current),
         "historical" => Ok(ReferenceState::Historical),
         "mismatched" => Ok(ReferenceState::Mismatched),
-        other => Err(format!("unknown feedback reference_state {other:?}")),
+        other => Err(format!(
+            "unknown feedback reference_state {other:?}; regenerate the input with the command that wrote it, then rerun"
+        )),
     }
 }
 

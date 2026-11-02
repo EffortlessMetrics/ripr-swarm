@@ -633,7 +633,7 @@ fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -
     expect_exit(stale_ok, false, "repair of an unrelated stale id")?;
     need(
         &stale,
-        "stale or maps to no current seam",
+        "stale or maps to no current gap",
         "unrelated id keeps stale-id guidance",
     )?;
     if stale.contains("covers Rust files only") {
@@ -923,6 +923,205 @@ fn python_receipt_route_consumes_the_bound_verify_and_refuses_forgery() -> Resul
         if workflow.join(format!("{label}.receipt.json")).exists() {
             return Err(format!("a receipt was written over the {label} verify"));
         }
+    }
+    decoy_untouched(&decoy)
+}
+
+/// Splits a POSIX shell command into words. Supports exactly what `ripr`
+/// prints: whitespace-separated words, single-quoted spans, and the `\'`
+/// escape used between spans to embed a single quote (`'a'\''b'` is `a'b`).
+/// Any other backslash, or an unterminated quote, is an error.
+#[cfg(all(feature = "lang-python", unix))]
+fn shell_words(command: &str) -> Result<Vec<String>, String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut started = false;
+    let mut quoted = false;
+    let mut chars = command.chars();
+    while let Some(ch) = chars.next() {
+        match (quoted, ch) {
+            (true, '\'') => quoted = false,
+            (true, other) => current.push(other),
+            (false, '\'') => {
+                quoted = true;
+                started = true;
+            }
+            (false, '\\') => match chars.next() {
+                Some('\'') => {
+                    current.push('\'');
+                    started = true;
+                }
+                other => {
+                    return Err(format!("unsupported escape `\\{other:?}` in: {command}"));
+                }
+            },
+            (false, ch) if ch.is_whitespace() => {
+                if started {
+                    words.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            (false, other) => {
+                current.push(other);
+                started = true;
+            }
+        }
+    }
+    if quoted {
+        return Err(format!("unterminated single quote in: {command}"));
+    }
+    if started {
+        words.push(current);
+    }
+    Ok(words)
+}
+
+/// #4518: the Python `first-pr` receipt route. The `Receipt path:` line equals
+/// the printed receipt command's `--out`; the `Receipt status` line names all
+/// three values; and the exact printed command, run from the selected root,
+/// records `not_run` at that path while `passed` and `failed` stay separate
+/// records of the supplied verify outcome that carry no static closure. An
+/// unknown status is refused and writes nothing.
+#[cfg(all(feature = "lang-python", unix))]
+#[test]
+fn python_first_pr_receipt_path_matches_out_and_statuses_stay_separate() -> Result<(), String> {
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_python", "head", "pyfp", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, packet) = ripr(
+        &decoy,
+        &[
+            "first-pr",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD~1",
+            "--run-chain",
+        ],
+    )?;
+    expect_exit(ok, true, "first-pr --run-chain")?;
+    need(&packet, "State: top gap", "first-pr selects the Python gap")?;
+
+    let receipt_line = packet
+        .lines()
+        .find_map(|line| line.strip_prefix("Receipt after verify: `"))
+        .and_then(|line| line.strip_suffix('`'))
+        .ok_or_else(|| format!("first-pr printed no receipt command:\n{packet}"))?;
+    let path_line = packet
+        .lines()
+        .find_map(|line| line.strip_prefix("Receipt path: `"))
+        .and_then(|line| line.strip_suffix('`'))
+        .ok_or_else(|| format!("first-pr printed no receipt path:\n{packet}"))?;
+    let status_line = packet
+        .lines()
+        .find_map(|line| line.strip_prefix("Receipt status: "))
+        .ok_or_else(|| format!("first-pr printed no receipt status step:\n{packet}"))?;
+
+    // The printed command is `(cd -P -- <root> && ripr receipt write ...)`.
+    let inner = receipt_line
+        .strip_prefix('(')
+        .and_then(|line| line.strip_suffix(')'))
+        .ok_or_else(|| format!("receipt command is not a subshell: {receipt_line}"))?;
+    let words = shell_words(inner)?;
+    let word_after = |flag: &str| -> Result<String, String> {
+        let at = words
+            .iter()
+            .position(|word| word == flag)
+            .ok_or_else(|| format!("receipt command has no {flag}: {receipt_line}"))?;
+        words
+            .get(at + 1)
+            .cloned()
+            .ok_or_else(|| format!("receipt command {flag} has no value: {receipt_line}"))
+    };
+    let out = word_after("--out")?;
+    let gap = word_after("--gap")?;
+    let verify_command = word_after("--verify-command")?;
+    if word_after("--status")? != "not_run" {
+        return Err(format!("printed receipt is not `not_run`: {receipt_line}"));
+    }
+    if gap != "gap:python:pricing/core.py:bulk_discount_rate:predicate_boundary:predicate:units>=20"
+    {
+        return Err(format!("receipt command names another gap: {gap}"));
+    }
+    if !verify_command.starts_with("python -m pytest ") {
+        return Err(format!(
+            "verify is not module-form pytest: {verify_command}"
+        ));
+    }
+    if path_line != out {
+        return Err(format!(
+            "Receipt path `{path_line}` differs from the command --out `{out}`"
+        ));
+    }
+    for status in ["not_run", "passed", "failed"] {
+        need(
+            status_line,
+            &format!("--status {status}"),
+            "receipt status step names every value",
+        )?;
+    }
+
+    // Run the exact printed command from the selected root (its `cd`).
+    let write = |status: &str, out: &str| -> Result<std::process::Output, String> {
+        ripr_output(
+            &root,
+            &[
+                "receipt",
+                "write",
+                "--gap",
+                &gap,
+                "--verify-command",
+                &verify_command,
+                "--status",
+                status,
+                "--out",
+                out,
+            ],
+        )
+    };
+    let read = |relative: &str| -> Result<serde_json::Value, String> {
+        let text = std::fs::read_to_string(root.join(relative))
+            .map_err(|error| format!("receipt not written at `{relative}`: {error}"))?;
+        serde_json::from_str(&text).map_err(|error| format!("receipt json: {error}"))
+    };
+    if root.join(&out).exists() {
+        return Err("the receipt existed before the command ran".to_string());
+    }
+    let written = write("not_run", &out)?;
+    expect_exit(written.status.success(), true, "printed receipt command")?;
+    let printed = read(&out)?;
+    if printed["verify_status"] != "not_run" || printed["canonical_gap_id"] != gap.as_str() {
+        return Err(format!("printed receipt records another state: {printed}"));
+    }
+
+    for status in ["passed", "failed"] {
+        let target = format!("{out}.{status}");
+        let written = write(status, &target)?;
+        expect_exit(written.status.success(), true, status)?;
+        let receipt = read(&target)?;
+        if receipt["verify_status"] != status {
+            return Err(format!("`--status {status}` recorded: {receipt}"));
+        }
+        // Verify status is the only outcome axis: no closure or movement.
+        for key in ["bound_gap", "closed", "movement", "outcome"] {
+            if receipt.get(key).is_some() {
+                return Err(format!("{status} receipt carries static field `{key}`"));
+            }
+        }
+    }
+    if read(&out)?["verify_status"] != "not_run" {
+        return Err("a later receipt rewrote the not_run record".to_string());
+    }
+
+    // An unknown status is refused with its reason and writes nothing.
+    let refused_out = format!("{out}.bogus");
+    let refused = write("bogus", &refused_out)?;
+    let (_, refused_err) = text_of(&refused);
+    expect_exit(refused.status.success(), false, "unknown receipt status")?;
+    need(&refused_err, "invalid --status", "unknown status is named")?;
+    need(&refused_err, "bogus", "unknown status value is named")?;
+    if root.join(&refused_out).exists() {
+        return Err("a receipt was written for an unknown status".to_string());
     }
     decoy_untouched(&decoy)
 }
@@ -4824,5 +5023,365 @@ fn python_printed_verify_runs_in_selected_root_from_foreign_cwd() -> Result<(), 
         return Err(format!("full-output action failed: {result:?}"));
     }
     decoy_untouched(&decoy)?;
+    Ok(())
+}
+
+/// A git repository built from inline file contents (#12281): `base` is
+/// committed first, then `head` is written over it and committed, so the
+/// subject of each case is bound to the source text in this file.
+#[cfg(feature = "lang-typescript")]
+fn inline_typescript_repo(
+    label: &str,
+    base: &[(&str, &str)],
+    head: &[(&str, &str)],
+) -> Result<(TempDirGuard, PathBuf, PathBuf, String), String> {
+    let guard = temp_dir(label)?;
+    let launch = guard.0.clone();
+    let root = launch.join("repo");
+    let write = |files: &[(&str, &str)]| -> Result<(), String> {
+        for (path, text) in files {
+            let target = root.join(path);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| format!("{path}: {error}"))?;
+            }
+            std::fs::write(&target, text).map_err(|error| format!("{path}: {error}"))?;
+        }
+        Ok(())
+    };
+    write(base)?;
+    fixture_git_ok(&root, &["init", "-q", "-b", "main"])?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+    fixture_git_ok(&root, &["config", "commit.gpgsign", "false"])?;
+    fixture_git_ok(&root, &["config", "user.name", "fixture"])?;
+    fixture_git_ok(&root, &["config", "user.email", "fixture@example.invalid"])?;
+    fixture_git_ok(&root, &["add", "-A"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+    let base_sha = fixture_git_output(&root, &["rev-parse", "HEAD"])?
+        .trim()
+        .to_string();
+    write(head)?;
+    fixture_git_ok(&root, &["add", "-A"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "head"])?;
+    Ok((guard, launch, root, base_sha))
+}
+
+#[cfg(feature = "lang-typescript")]
+const TYPEOF_PACKAGE_JSON: &str = "{\n  \"name\": \"typeof-guard\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"scripts\": { \"test\": \"vitest run\" },\n  \"devDependencies\": { \"vitest\": \"5.0.5\" }\n}\n";
+#[cfg(feature = "lang-typescript")]
+const TYPEOF_RIPR_TOML: &str = "[languages]\nenabled = [\"rust\", \"typescript\"]\n";
+#[cfg(feature = "lang-typescript")]
+const TYPEOF_TYPES: &str = "export type Resolvable<T> = T | (() => T);\n";
+#[cfg(feature = "lang-typescript")]
+const TYPEOF_BASE_UTILS: &str = "import type { Resolvable } from \"./types.ts\";\n\nexport function resolveValue<T>(input: Resolvable<T>): T | Promise<T> {\n  return typeof input === \"function\" ? (input as any)() : input;\n}\n";
+/// The citty `test/utils.test.ts` `resolveValue()` block: two immutable
+/// locals, `value` then `result`, observed through `result`.
+#[cfg(feature = "lang-typescript")]
+const TYPEOF_CITTY_TEST: &str = "import { describe, it, expect } from \"vitest\";\nimport { resolveValue } from \"../src/_utils.ts\";\nimport type { Resolvable } from \"../src/types.ts\";\n\ndescribe(\"resolveValue()\", () => {\n  it(\"should resolve a non-function value correctly\", () => {\n    const value: Resolvable<number> = 42;\n    const result = resolveValue(value);\n    expect(result).toBe(42);\n  });\n\n  it(\"should resolve a function value correctly\", () => {\n    const value: Resolvable<number> = () => 42;\n    const result = resolveValue(value);\n    expect(result).toBe(42);\n  });\n});\n";
+
+/// #12281 negative control: the citty false start. Negating the whole
+/// `typeof` condition sends `resolveValue(42)` down the other branch, so the
+/// existing exact assertion already notices the edit: `check` reads
+/// `exposed`, prints no start, and the before phase refuses the gap.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn negated_typeof_guard_with_citty_local_bindings_offers_no_start() -> Result<(), String> {
+    let base = [
+        ("package.json", TYPEOF_PACKAGE_JSON),
+        ("ripr.toml", TYPEOF_RIPR_TOML),
+        ("src/types.ts", TYPEOF_TYPES),
+        ("src/_utils.ts", TYPEOF_BASE_UTILS),
+        ("test/utils.test.ts", TYPEOF_CITTY_TEST),
+    ];
+    let flipped = TYPEOF_BASE_UTILS.replace("typeof input ===", "typeof input !==");
+    if flipped == TYPEOF_BASE_UTILS {
+        return Err("the head must flip the guard operator".to_string());
+    }
+    let head = [("src/_utils.ts", flipped.as_str())];
+    let (_guard, launch, root, base_sha) =
+        inline_typescript_repo("ts-typeof-negation", &base, &head)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, check) = ripr(
+        &launch,
+        &["check", "--root", &root_arg, "--base", &base_sha],
+    )?;
+    expect_exit(ok, true, "check of the negated guard")?;
+    need(
+        &check,
+        "Changed behavior: return typeof input !== \"function\" ? (input as any)() : input;",
+        "parsed subject",
+    )?;
+    need(&check, "src/_utils.ts:4", "changed line")?;
+    need(
+        &check,
+        "Static exposure: exposed",
+        "negated guard reads exposed",
+    )?;
+    if gap_start_tokens(&check).is_some() {
+        return Err(format!("check printed a repair start:\n{check}"));
+    }
+    let gap = selected_typescript_gap(&check)?;
+    let (ok, before) = ripr(
+        &launch,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base_sha, "--root", &root_arg,
+            "--phase", "before",
+        ],
+    )?;
+    expect_exit(ok, false, "before phase on the negated guard")?;
+    need(&before, "no repair attempt was started", "refusal")?;
+    if attempt_manifests(&root)? != 0 {
+        return Err(format!("a refused start published an attempt:\n{before}"));
+    }
+    Ok(())
+}
+
+/// #12281 positive control: changing the kind the guard tests (`"function"`
+/// to `"object"`) leaves `resolveValue(42)` on the same branch under both
+/// versions, and no test passes a function or an object, so the gap is real:
+/// `check` prints the start and the before phase accepts it.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn changed_typeof_kind_with_no_kind_input_still_starts() -> Result<(), String> {
+    let number_only_test = TYPEOF_CITTY_TEST.replace(
+        "\n  it(\"should resolve a function value correctly\", () => {\n    const value: Resolvable<number> = () => 42;\n    const result = resolveValue(value);\n    expect(result).toBe(42);\n  });\n",
+        "",
+    );
+    if number_only_test == TYPEOF_CITTY_TEST {
+        return Err("the positive must drop the function-value test".to_string());
+    }
+    let base = [
+        ("package.json", TYPEOF_PACKAGE_JSON),
+        ("ripr.toml", TYPEOF_RIPR_TOML),
+        ("src/types.ts", TYPEOF_TYPES),
+        ("src/_utils.ts", TYPEOF_BASE_UTILS),
+        ("test/utils.test.ts", number_only_test.as_str()),
+    ];
+    let kind_edit = TYPEOF_BASE_UTILS.replace("=== \"function\"", "=== \"object\"");
+    if kind_edit == TYPEOF_BASE_UTILS {
+        return Err("the head must change the guarded kind".to_string());
+    }
+    let head = [("src/_utils.ts", kind_edit.as_str())];
+    let (_guard, launch, root, base_sha) = inline_typescript_repo("ts-typeof-kind", &base, &head)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, check) = ripr(
+        &launch,
+        &["check", "--root", &root_arg, "--base", &base_sha],
+    )?;
+    expect_exit(ok, true, "check of the kind edit")?;
+    need(
+        &check,
+        "Changed behavior: return typeof input === \"object\" ? (input as any)() : input;",
+        "parsed subject",
+    )?;
+    need(&check, "Static exposure: weak", "kind edit reads weak")?;
+    need(&check, "typeof input == \"object\"", "named missing check")?;
+    let (gap, base) =
+        gap_start_tokens(&check).ok_or_else(|| format!("check printed no start:\n{check}"))?;
+    if base != base_sha {
+        return Err(format!("start names base {base}, expected {base_sha}"));
+    }
+    let (ok, before) = ripr(
+        &launch,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "before phase on the kind edit")?;
+    if attempt_manifests(&root)? != 1 {
+        return Err(format!(
+            "an accepted start must publish one attempt:\n{before}"
+        ));
+    }
+    Ok(())
+}
+
+/// #12281 re-review: a negated `typeof` clause of a condition written over
+/// several lines is one operand among others, whichever line holds it.
+/// `f(42, false)` returns the same value under both versions, so each case
+/// must keep needing an input of the kind: the finding is never `exposed`.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn negated_typeof_clause_of_a_multi_line_condition_is_not_exposed() -> Result<(), String> {
+    let cases = [
+        (
+            "if-continuation",
+            "export function f(input: unknown, flag: boolean): unknown {\n  if (\n    flag &&\n    typeof input === \"function\"\n  ) {\n    return (input as any)();\n  }\n  return input;\n}\n",
+            "    typeof input !== \"function\"",
+            "42",
+        ),
+        (
+            "return-continuation",
+            "export function f(input: unknown, flag: boolean): unknown {\n  return flag &&\n    typeof input === \"function\" ? (input as any)() : input;\n}\n",
+            "    typeof input !== \"function\" ? (input as any)() : input;",
+            "42",
+        ),
+        (
+            "if-first-line",
+            "export function f(input: unknown, flag: boolean): unknown {\n  if (typeof input === \"function\" &&\n    flag) {\n    return (input as any)();\n  }\n  return input;\n}\n",
+            "  if (typeof input !== \"function\" &&",
+            "42",
+        ),
+        (
+            "return-first-line",
+            "export function f(input: unknown, flag: boolean): unknown {\n  return typeof input === \"function\" &&\n    flag ? (input as any)() : input;\n}\n",
+            "  return typeof input !== \"function\" &&",
+            "42",
+        ),
+    ];
+    for (label, base_source, changed_line, expected) in cases {
+        let test_source = format!(
+            "import {{ describe, it, expect }} from \"vitest\";\nimport {{ f }} from \"../src/f.ts\";\n\ndescribe(\"f\", () => {{\n  it(\"keeps the flag-off result\", () => {{\n    expect(f(42, false)).toBe({expected});\n  }});\n}});\n"
+        );
+        let head_source = base_source.replacen("typeof input ===", "typeof input !==", 1);
+        if head_source == base_source || !head_source.contains(changed_line) {
+            return Err(format!(
+                "{label}: head must flip the clause on `{changed_line}`"
+            ));
+        }
+        let base = [
+            ("package.json", TYPEOF_PACKAGE_JSON),
+            ("ripr.toml", TYPEOF_RIPR_TOML),
+            ("src/f.ts", base_source),
+            ("test/f.test.ts", test_source.as_str()),
+        ];
+        let head = [("src/f.ts", head_source.as_str())];
+        let (_guard, launch, root, base_sha) =
+            inline_typescript_repo(&format!("ts-typeof-{label}"), &base, &head)?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let (ok, check) = ripr(
+            &launch,
+            &["check", "--root", &root_arg, "--base", &base_sha],
+        )?;
+        expect_exit(ok, true, label)?;
+        need(
+            &check,
+            &format!("Changed behavior: {}", changed_line.trim()),
+            label,
+        )?;
+        if check.contains("Static exposure: exposed") {
+            return Err(format!("{label}: a negated clause read exposed:\n{check}"));
+        }
+        need(&check, "Static exposure: weak", label)?;
+    }
+    Ok(())
+}
+
+/// #12281 re-review: the negated guard credits an input of another kind only
+/// when every call evaluates it. An earlier statement that returns, throws
+/// or loops first, or a block, loop or callback around the guard, means the
+/// test input may never reach it, so each case keeps needing an input of the
+/// kind and is never `exposed`. A first-statement guard still credits.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn negated_typeof_guard_credits_only_as_the_first_body_statement() -> Result<(), String> {
+    // (label, base source, changed line after the flip, test body, exposed?)
+    let cases = [
+        (
+            "early-if-return",
+            "export function f(input: unknown): unknown {\n  if (typeof input === \"number\") return input;\n  if (typeof input === \"function\") return (input as any)();\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(f(42)).toBe(42);",
+            false,
+        ),
+        (
+            "else-if",
+            "export function f(input: unknown): unknown {\n  if (typeof input === \"number\") {\n    return input;\n  } else if (typeof input === \"function\") {\n    return (input as any)();\n  }\n  return input;\n}\n",
+            "} else if (typeof input !== \"function\") {",
+            "expect(f(42)).toBe(42);",
+            false,
+        ),
+        (
+            "switch-before",
+            "export function f(input: unknown): unknown {\n  switch (typeof input) {\n    case \"number\":\n      return input;\n  }\n  if (typeof input === \"function\") return (input as any)();\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(f(42)).toBe(42);",
+            false,
+        ),
+        (
+            "throw-before",
+            "export function f(input: unknown): unknown {\n  if (input === 42) throw new Error(\"x\");\n  if (typeof input === \"function\") return (input as any)();\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(() => f(42)).toThrow(\"x\");",
+            false,
+        ),
+        (
+            "loop-return-before",
+            "export function f(input: unknown): unknown {\n  for (const k of [1]) {\n    return input;\n  }\n  if (typeof input === \"function\") return (input as any)();\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(f(42)).toBe(42);",
+            false,
+        ),
+        (
+            "nested-in-if",
+            "export function f(input: unknown, flag: boolean): unknown {\n  if (flag) {\n    if (typeof input === \"function\") return (input as any)();\n  }\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(f(42, false)).toBe(42);",
+            false,
+        ),
+        (
+            "nested-in-loop",
+            "export function f(input: unknown, n: number): unknown {\n  for (let i = 0; i < n; i++) {\n    if (typeof input === \"function\") return (input as any)();\n  }\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(f(42, 0)).toBe(42);",
+            false,
+        ),
+        (
+            "nested-in-callback",
+            "export function f(input: unknown): unknown {\n  [].forEach(() => {\n    if (typeof input === \"function\") input = (input as any)();\n  });\n  return input;\n}\n",
+            "if (typeof input !== \"function\") input = (input as any)();",
+            "expect(f(42)).toBe(42);",
+            false,
+        ),
+        (
+            "first-statement-if",
+            "export function f(input: unknown): unknown {\n  if (typeof input === \"function\") return (input as any)();\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(f(42)).toBe(42);",
+            true,
+        ),
+    ];
+    let mut outcomes = Vec::new();
+    for (label, base_source, changed_line, assertion, exposed) in cases {
+        let head_source = base_source.replacen(
+            "typeof input === \"function\"",
+            "typeof input !== \"function\"",
+            1,
+        );
+        if head_source == base_source || !head_source.contains(changed_line) {
+            return Err(format!(
+                "{label}: head must flip the guard on `{changed_line}`"
+            ));
+        }
+        let test_source = format!(
+            "import {{ describe, it, expect }} from \"vitest\";\nimport {{ f }} from \"../src/f.ts\";\n\ndescribe(\"f\", () => {{\n  it(\"keeps the number result\", () => {{\n    {assertion}\n  }});\n}});\n"
+        );
+        let base = [
+            ("package.json", TYPEOF_PACKAGE_JSON),
+            ("ripr.toml", TYPEOF_RIPR_TOML),
+            ("src/f.ts", base_source),
+            ("test/f.test.ts", test_source.as_str()),
+        ];
+        let head = [("src/f.ts", head_source.as_str())];
+        let (_guard, launch, root, base_sha) =
+            inline_typescript_repo(&format!("ts-first-{label}"), &base, &head)?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let (ok, check) = ripr(
+            &launch,
+            &["check", "--root", &root_arg, "--base", &base_sha],
+        )?;
+        expect_exit(ok, true, label)?;
+        need(&check, &format!("Changed behavior: {changed_line}"), label)?;
+        let reads_exposed = check.contains("Static exposure: exposed");
+        let reads_weak = check.contains("Static exposure: weak");
+        outcomes.push(format!(
+            "{label}: exposed={reads_exposed} weak={reads_weak}"
+        ));
+        if exposed != reads_exposed || (!exposed && !reads_weak) {
+            return Err(format!(
+                "{label}: expected exposed={exposed} (else weak), got:\n{check}\nso far: {outcomes:?}"
+            ));
+        }
+    }
     Ok(())
 }

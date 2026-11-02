@@ -89,7 +89,7 @@ Stop reasons:
     Next: Add a test that calls the changed code and asserts an exact result.
 
 Next step
-  Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
   ripr explain --root <cwd>/fixtures/error_path_operand_error_lexeme/input --diff <cwd>/fixtures/error_path_operand_error_lexeme/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
   ripr context --root <cwd>/fixtures/error_path_operand_error_lexeme/input --diff <cwd>/fixtures/error_path_operand_error_lexeme/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379

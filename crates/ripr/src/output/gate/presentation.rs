@@ -52,7 +52,7 @@ pub(crate) fn render_gate_decision_json(report: &GateDecisionReport) -> Result<S
         object.insert("analysis_scope".to_string(), scope.clone());
     }
     serde_json::to_string_pretty(&document)
-        .map_err(|err| format!("failed to render gate decision JSON: {err}"))
+        .map_err(|err| format!("failed to render gate decision JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 /// Subject identity block (#5263): which build produced the decision and
@@ -200,7 +200,13 @@ pub(crate) fn render_gate_decision_markdown(report: &GateDecisionReport) -> Stri
 }
 
 pub(crate) fn gate_decision_should_fail(report: &GateDecisionReport) -> bool {
-    report.status == super::GATE_STATUS_BLOCKED || report.status == super::GATE_STATUS_CONFIG_ERROR
+    status_fails_gate(&report.status)
+}
+
+/// The closed fail set: only `blocked` and `config_error` fail the gate
+/// (exit 3 and exit 2). Every other token, known or not, does not.
+pub(super) fn status_fails_gate(status: &str) -> bool {
+    status == super::GATE_STATUS_BLOCKED || status == super::GATE_STATUS_CONFIG_ERROR
 }
 
 pub(crate) fn gate_decision_status(report: &GateDecisionReport) -> &str {

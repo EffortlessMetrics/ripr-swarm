@@ -346,6 +346,36 @@ fn current_meta() -> Value {
     })
 }
 
+/// A model-fixable argument problem is an `isError: true` tool result with
+/// the typed `invalid_argument` failure (#11621), never a JSON-RPC error that
+/// hosts may flatten. `detail` names the problem; `recovery` names the fix.
+fn require_invalid_argument(response: &Value, label: &str) -> Result<(), String> {
+    let failure = |key: &str| {
+        response
+            .pointer(&format!("/result/structuredContent/failure/{key}"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    };
+    if response.get("error").is_some()
+        || response.pointer("/result/isError") != Some(&json!(true))
+        || failure("code") != "invalid_argument"
+        || failure("detail").is_empty()
+        || failure("recovery").is_empty()
+        || response
+            .pointer("/result/structuredContent/failure/data")
+            .is_none_or(|data| !data.is_object())
+        || !response
+            .pointer("/result/content/0/text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.starts_with("invalid_argument:"))
+    {
+        return Err(format!(
+            "{label} must be an invalid_argument tool result: {response}"
+        ));
+    }
+    Ok(())
+}
+
 fn line(value: Value) -> Result<Vec<u8>, String> {
     let mut encoded = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
     encoded.push(b'\n');
@@ -417,15 +447,6 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
             json!("unknown-tool"),
             -32602,
         ),
-        (
-            tool_call(
-                "bad-language",
-                "ripr_list_gaps",
-                json!({"language": "cobol"}),
-            )?,
-            json!("bad-language"),
-            -32602,
-        ),
     ];
     let timeout = Duration::from_secs(30);
     let mut session = SequentialStdio::spawn(&root)?;
@@ -453,6 +474,32 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
                 .to_owned(),
         );
     }
+    // A bad enum token on a known tool is a typed tool failure, not a
+    // protocol error: the model sees the vocabulary it must use (#11621).
+    let bad_language = session.raw_exchange(
+        &tool_call(
+            "bad-language",
+            "ripr_list_gaps",
+            json!({"language": "cobol"}),
+        )?,
+        timeout,
+    )?;
+    require_invalid_argument(&bad_language, "unknown language")?;
+    let detail = bad_language
+        .pointer("/result/structuredContent/failure/detail")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if bad_language.get("id") != Some(&json!("bad-language"))
+        || !detail.contains("unknown language \"cobol\"")
+        || !detail.contains("rust")
+        || !detail.contains("perl")
+        || bad_language
+            .pointer("/result/structuredContent/failure/data/allowed")
+            .and_then(Value::as_array)
+            .is_none_or(|allowed| !allowed.contains(&json!("rust")))
+    {
+        return Err(format!("unknown language failure drifted: {bad_language}"));
+    }
     // Every rejection left the session up and answering.
     let alive = session.raw_exchange(
         &line(json!({"jsonrpc": "2.0", "id": "alive", "method": "ping"}))?,
@@ -466,9 +513,6 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
         || !messages[6].contains("expected `protocolVersion`")
         || messages[7] != "Method not found: nope/never"
         || !messages[8].starts_with("unknown tool")
-        || !messages[9].contains("unknown language \"cobol\"")
-        || !messages[9].contains("rust")
-        || !messages[9].contains("perl")
     {
         return Err(format!("rejection messages drifted: {messages:?}"));
     }
@@ -919,7 +963,7 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
             }
         );
         let message = rejected
-            .pointer("/error/message")
+            .pointer("/result/structuredContent/failure/detail")
             .and_then(Value::as_str)
             .unwrap_or_default();
         let message_matches = if *kind == "integer" {
@@ -927,22 +971,14 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
         } else {
             message == expected_message
         };
-        if rejected.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
-            || !message_matches
-            || rejected.get("result").is_some()
-        {
+        require_invalid_argument(rejected, &format!("{tool}.{field} null"))?;
+        if !message_matches || rejected.get("id") != Some(&json!(format!("{index}-null"))) {
             return Err(format!(
-                "{tool}.{field} null must be correlated Invalid Params before session lookup: {rejected}"
+                "{tool}.{field} null must be a correlated invalid_argument failure before session lookup: {rejected}"
             ));
         }
     }
-    if reply("wrong-type")?
-        .pointer("/error/code")
-        .and_then(Value::as_i64)
-        != Some(-32602)
-    {
-        return Err("boolean paging limit must remain Invalid Params".into());
-    }
+    require_invalid_argument(reply("wrong-type")?, "boolean paging limit")?;
     let recovered = reply("recovery")?;
     if recovered.get("error").is_some()
         || recovered
@@ -1872,14 +1908,17 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
     if responses.len() != 6 {
         return Err(format!("expected 6 MCP responses, got {}", responses.len()));
     }
-    let expected: [(&str, i64); 3] = [
-        ("unknown-tool", -32602),
-        ("with-arguments", -32602),
-        ("unknown-resource", -32602),
-    ];
-    for (index, (id, code)) in expected.iter().enumerate() {
-        let response = &responses[index + 1];
-        if response.pointer("/error/code").and_then(Value::as_i64) != Some(*code) {
+    // An argument problem on a known tool is a typed tool failure; an unknown
+    // tool and an unknown resource stay protocol errors (no tool result
+    // exists for either) (#11621).
+    require_invalid_argument(&responses[2], "status with an argument")?;
+    let expected: [(&str, i64); 2] = [("unknown-tool", -32602), ("unknown-resource", -32602)];
+    for (id, code) in expected {
+        let response = responses
+            .iter()
+            .find(|response| response.pointer("/id").and_then(Value::as_str) == Some(id))
+            .ok_or_else(|| format!("missing rejection for {id}"))?;
+        if response.pointer("/error/code").and_then(Value::as_i64) != Some(code) {
             return Err(format!(
                 "rejection for {id} must retain error code {code}: {response}"
             ));
@@ -3788,7 +3827,7 @@ fn read_resource_document(
 }
 
 /// An unknown `class` token used to narrow to an empty page that read like
-/// "no such gaps". It is now invalid params naming the vocabulary, while every
+/// "no such gaps". It is now an `invalid_argument` tool failure naming the vocabulary, while every
 /// real wire token still passes validation (before or after a refresh).
 #[test]
 fn list_gaps_rejects_unknown_class_tokens_with_the_vocabulary() -> Result<(), String> {
@@ -3804,14 +3843,18 @@ fn list_gaps_rejects_unknown_class_tokens_with_the_vocabulary() -> Result<(), St
             json!({ "class": bad }),
             REPLY_TIMEOUT,
         )?;
+        require_invalid_argument(&reply, &format!("class {bad:?}"))?;
         let message = reply
-            .pointer("/error/message")
+            .pointer("/result/structuredContent/failure/detail")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
-            || !message.contains("weakly_exposed")
+        if !message.contains("weakly_exposed")
+            || reply
+                .pointer("/result/structuredContent/failure/data/allowed")
+                .and_then(Value::as_array)
+                .is_none_or(|allowed| !allowed.contains(&json!("weakly_exposed")))
         {
-            return Err(format!("class {bad:?} must be invalid params: {reply}"));
+            return Err(format!("class {bad:?} must name the vocabulary: {reply}"));
         }
     }
     let refresh = session.call_tool("refresh-class", "ripr_refresh", json!({}), REPLY_TIMEOUT)?;
@@ -3848,8 +3891,8 @@ fn list_gaps_rejects_unknown_class_tokens_with_the_vocabulary() -> Result<(), St
     Ok(())
 }
 
-/// The invalid-params message echoes the caller's class token; it must stay
-/// bounded (a near-cap or escape-heavy token must not push the error past the
+/// The invalid-argument detail echoes the caller's class token; it must stay
+/// bounded (a near-cap or escape-heavy token must not push the failure past the
 /// writer's 128 KiB response cap and turn it into -32603) and correlated.
 #[test]
 fn list_gaps_bounds_the_echoed_unknown_class_token() -> Result<(), String> {
@@ -3873,18 +3916,17 @@ fn list_gaps_bounds_the_echoed_unknown_class_token() -> Result<(), String> {
         let bytes = serde_json::to_vec(&reply)
             .map_err(|error| error.to_string())?
             .len();
+        require_invalid_argument(&reply, &format!("{label} class"))?;
         let message = reply
-            .pointer("/error/message")
+            .pointer("/result/structuredContent/failure/detail")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
-            || reply.get("id") != Some(&json!(id))
+        if reply.get("id") != Some(&json!(id))
             || !message.contains("weakly_exposed")
             || bytes > 8 * 1024
         {
             return Err(format!(
-                "{label} class must be a bounded correlated -32602 (bytes={bytes}): code={:?} id={:?}",
-                reply.pointer("/error/code"),
+                "{label} class must be a bounded correlated invalid_argument failure (bytes={bytes}): id={:?}",
                 reply.get("id")
             ));
         }
@@ -3923,8 +3965,10 @@ fn call_tool_with_raw_arguments(
 /// "must be a non-negative integer" sentence that also answered `limit:
 /// 18446744073709551616` (which is non-negative and an integer) and `-1`
 /// (which the sentence did not name as the problem). `ripr_list_gaps` accepts
-/// up to this platform's `usize::MAX` (the effective bound `data.maximum`, the
-/// message and the recovery all name); `ripr_list_repair_attempts` caps at 256.
+/// up to the 500-item working-set bound (the effective bound `data.maximum`, the
+/// message and the recovery all name; #11621 replaced the `usize::MAX` cap);
+/// `ripr_list_repair_attempts` caps at 256. Each refusal is an
+/// `invalid_argument` tool failure carrying that data.
 #[test]
 fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<(), String> {
     const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
@@ -3934,9 +3978,9 @@ fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<()
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
     let too_large = "is larger than the largest accepted integer";
     let whole = "must be a whole JSON integer";
-    let platform_max = u64::try_from(usize::MAX).unwrap_or(u64::MAX);
-    // (tool, literal, message fragment, expected data.maximum); the
-    // effective maximum is capped at this platform's usize::MAX
+    let platform_max = 500_u64;
+    // (tool, literal, message fragment, expected data.maximum); list_gaps
+    // is capped at the working-set bound
     let cases: [(&str, &str, &str, u64); 12] = [
         (
             "ripr_list_gaps",
@@ -3983,17 +4027,20 @@ fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<()
             tool,
             &format!("{{\"limit\":{literal}}}"),
         )?;
+        require_invalid_argument(&reply, &format!("{tool} limit {literal}"))?;
         let message = reply
-            .pointer("/error/message")
+            .pointer("/result/structuredContent/failure/detail")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let data = reply.pointer("/error/data").cloned().unwrap_or(Value::Null);
-        let recovery = data
-            .pointer("/recovery")
+        let data = reply
+            .pointer("/result/structuredContent/failure/data")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let recovery = reply
+            .pointer("/result/structuredContent/failure/recovery")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
-            || !message.contains(fragment)
+        if !message.contains(fragment)
             || message.contains("non-negative integer")
             || data.pointer("/argument") != Some(&json!("limit"))
             || data.pointer("/minimum") != Some(&json!(1))
@@ -4005,16 +4052,31 @@ fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<()
             ));
         }
     }
-    // The largest accepted value is a valid request, not an error.
+    // The largest accepted value is a valid request, not an error; one past
+    // it is refused (the cap is a real bound, not usize::MAX).
     let reply = call_tool_with_raw_arguments(
         &mut session,
         "max-limit",
         "ripr_list_gaps",
         &format!("{{\"limit\":{platform_max}}}"),
     )?;
-    if reply.get("error").is_some() {
-        return Err(format!("usize::MAX is an accepted limit: {reply}"));
+    // Accepted means the argument validated: the call may still fail for an
+    // unrelated reason (no snapshot here), but never as invalid_argument.
+    if reply.get("error").is_some()
+        || reply.pointer("/result/structuredContent/failure/code")
+            == Some(&json!("invalid_argument"))
+    {
+        return Err(format!(
+            "the working-set bound is an accepted limit: {reply}"
+        ));
     }
+    let reply = call_tool_with_raw_arguments(
+        &mut session,
+        "over-limit",
+        "ripr_list_gaps",
+        &format!("{{\"limit\":{}}}", platform_max + 1),
+    )?;
+    require_invalid_argument(&reply, "limit one past the working-set bound")?;
     // The session survives the whole sweep.
     let reply = session.call_tool("after", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
     if reply.get("error").is_some() {
@@ -4749,7 +4811,7 @@ fn refresh_base_argument_recovers_a_repository_without_a_main_default_branch() -
         return Err("an option-shaped base reached Git as an option".to_string());
     }
 
-    // Argument shapes stay typed invalid params.
+    // Argument shapes are typed `invalid_argument` tool failures.
     for bad in [
         json!({ "base": "" }),
         json!({ "base": 7 }),
@@ -4757,9 +4819,7 @@ fn refresh_base_argument_recovers_a_repository_without_a_main_default_branch() -
         json!({ "other": 1 }),
     ] {
         let reply = session.call_tool("bad-args", "ripr_refresh", bad.clone(), timeout)?;
-        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
-            return Err(format!("{bad} must be invalid params: {reply}"));
-        }
+        require_invalid_argument(&reply, &format!("{bad}"))?;
     }
     Ok(())
 }
@@ -6106,9 +6166,7 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
         json!({ "source": ["worktree"] }),
     ] {
         let reply = session.call_tool("bad-source", "ripr_refresh", bad.clone(), TIMEOUT)?;
-        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
-            return Err(format!("{bad} must be invalid params: {reply}"));
-        }
+        require_invalid_argument(&reply, &format!("{bad}"))?;
     }
     drop(session);
 

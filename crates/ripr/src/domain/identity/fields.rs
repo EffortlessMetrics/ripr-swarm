@@ -50,3 +50,6 @@ fn surface_matches(registered: &str, observed: &str) -> bool {
         .strip_suffix(registered)
         .is_some_and(|prefix| prefix.ends_with('/') || prefix.ends_with('\\'))
 }
+
+#[cfg(kani)]
+mod kani_proofs;

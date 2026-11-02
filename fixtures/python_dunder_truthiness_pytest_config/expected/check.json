@@ -26,16 +26,16 @@
        },
       "ripr": {
         "reach": {"state":"weak","confidence":"low","summary":"1 heuristic Python test link(s) found for owner `__bool__`; relation is uncertain"},
-        "infect": {"state":"unknown","confidence":"low","summary":"Static limit `dynamic_dispatch` prevents a safe Python infection claim."},
-        "propagate": {"state":"unknown","confidence":"low","summary":"Static limit `dynamic_dispatch` prevents a safe Python propagation claim."},
+        "infect": {"state":"unknown","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python infection claim."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python propagation claim."},
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 1)"},
-        "discriminate": {"state":"unknown","confidence":"low","summary":"Static limit `dynamic_dispatch` prevents a safe Python discriminator claim."}
+        "discriminate": {"state":"unknown","confidence":"low","summary":"Static limit `decorator_indirection` prevents a safe Python discriminator claim."}
        },
-      "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `__bool__`; relation is uncertain", "infection unknown: Static limit `dynamic_dispatch` prevents a safe Python infection claim.", "propagation unknown: Static limit `dynamic_dispatch` prevents a safe Python propagation claim.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator unknown: Static limit `dynamic_dispatch` prevents a safe Python discriminator claim.", "related test tests/test_money.py:4 test_truthiness uses no oracle"],
+      "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `__bool__`; relation is uncertain", "infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim.", "propagation unknown: Static limit `decorator_indirection` prevents a safe Python propagation claim.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator unknown: Static limit `decorator_indirection` prevents a safe Python discriminator claim.", "related test tests/test_money.py:4 test_truthiness uses no oracle"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: Money.__bool__", "owner_kind: method", "static_limit dynamic_dispatch: dunder method `Money.__bool__` is invoked implicitly by Python syntax on a constructed instance", "test_framework: pytest (test_truthiness)", "test_verify_command: python -m pytest tests/test_money.py::test_truthiness (test_truthiness)", "related_test_relation: dunder_protocol (test_truthiness)", "related_test_uncertain: dunder_protocol (test_truthiness)"],
-      "missing": ["Static limit `dynamic_dispatch`: `Money.__bool__` is a dunder method Python invokes through operator or `with` syntax; related tests build `Money` instances, but the preview adapter does not bind the syntax to the instance or evaluate the assertion against the dunder's result, so it does not grade this edit as a gap."],
+      "evidence": ["owner: Money.__bool__", "owner_kind: method", "static_limit decorator_indirection: test activation for `test_truthiness` is controlled by `pytest.collection(python_functions)`", "test_framework: pytest (test_truthiness)", "test_verify_command: python -m pytest tests/test_money.py::test_truthiness (test_truthiness)", "related_test_relation: test_activation_unestablished (test_truthiness)", "related_test_uncertain: test_activation_unestablished (test_truthiness)"],
+      "missing": ["Static limit `decorator_indirection`: related test `test_truthiness` uses `pytest.collection(python_functions)`; static evidence does not establish that its body runs and an assertion failure fails verification. Add an independent active test or inspect the activation condition."],
       "assertion_texts": {
       },
       "activation": {
@@ -59,7 +59,7 @@
           "oracle": ""
         }
       ],
-      "stop_reasons": ["dynamic_dispatch_unresolved"],
+      "stop_reasons": ["static_probe_unknown"],
       "oracle_kind": "unknown",
       "oracle_strength": "unknown",
       "recommended_next_step": "",
@@ -67,7 +67,7 @@
       "language": "python",
       "language_status": "preview",
       "owner_kind": "method",
-      "static_limit_kind": "dynamic_dispatch",
+      "static_limit_kind": "decorator_indirection",
       "changed_sink": "cents",
       "oracle_alignment": "unknown",
       "alignment_reason": "no_strong_oracle",

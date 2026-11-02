@@ -20,12 +20,12 @@ Start here:
   Next step: The indexed related tests do not establish a call to the changed owner. Inspect
     existing tests, doctests and examples before changing assertions; they may already constrain the
     changed behavior. Add or strengthen a test only if that inspection finds a gap
-  Evidence: reach weak · infection yes · propagation yes · observation no · discriminator no
+  Evidence: reach weak · infection yes · propagation yes · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -38,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_trait_default_shadow/input --diff <cwd>/fixtures/rust_trait_default_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:f04fc840
   ripr context --root <cwd>/fixtures/rust_trait_default_shadow/input --diff <cwd>/fixtures/rust_trait_default_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:f04fc840
-  no repair start offered: ripr found 2 seams in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
+  no repair start offered: ripr found 2 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 No test stub here: the owner is a trait default method or nested function, sits in an impl local to a block or whose self type is not a plain path, sits behind a cfg a plain `cargo test` build may not enable, or takes a typed `self` receiver
 Write this test by hand: call the function with an input that reaches the changed line and assert the exact value it returns; then rerun `ripr check`.
 

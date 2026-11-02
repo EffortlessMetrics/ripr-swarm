@@ -114,7 +114,7 @@ export function retainHostDiagnostics(
   const logBudget = MAX_HOST_DIAGNOSTICS_BYTES - MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES;
   const logsRoot = path.join(diagnosticsDir, HOST_LOG_DIR_NAME);
 
-  if (fs.existsSync(logDir) && fs.statSync(logDir).isDirectory()) {
+  if (isContainedDirectory(input.artifactRoot, logDir)) {
     for (const relative of listRelativeFiles(logDir)) {
       const remaining = logBudget - bytesWritten;
       if (remaining <= 0) {
@@ -238,6 +238,32 @@ function serializeIdentity(input: {
     copied_file_count: input.copiedFiles.length,
     identity_truncated: true
   })}\n`;
+}
+
+/**
+ * The log directory is copied only when it is a real directory under the
+ * artifact root: no `..`, no absolute escape, and no symlink or junction in
+ * any component below the root. Same containment as the matrix receipt path.
+ */
+function isContainedDirectory(artifactRoot: string, directory: string): boolean {
+  const root = path.resolve(artifactRoot);
+  const target = path.resolve(directory);
+  const relative = path.relative(root, target);
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return false;
+  }
+  try {
+    let current = root;
+    for (const part of relative.split(path.sep)) {
+      current = path.join(current, part);
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        return false;
+      }
+    }
+    return fs.lstatSync(target).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function retainMatrixReceipt(

@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `cargo xtask warm-ab` takes `--external-pins <corpus ids>` and the nightly size-scaling job passes `rust-analyzer,tokio,servo`: each scoreboard pin is cloned, built against a baseline and a candidate binary on one runner, and judged by the same ratio gate as the ripr-swarm pins, so a regression on the large-Rust rows can fail instead of being reported as "runner class differs" (#11876). An id the scoreboard corpus does not declare is an error.

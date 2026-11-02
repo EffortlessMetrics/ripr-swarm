@@ -76,7 +76,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `host == "localhost"`
+  Python preview: strengthen the existing related test with a field/object assertion for the missing check `host == "localhost"`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input --diff <cwd>/fixtures/python_adversarial_dict_field_sibling_key/diff.patch --mode fast probe:src_conf.py:python_preview:932c667d
   ripr context --root <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input --diff <cwd>/fixtures/python_adversarial_dict_field_sibling_key/diff.patch --mode fast --at probe:src_conf.py:python_preview:932c667d

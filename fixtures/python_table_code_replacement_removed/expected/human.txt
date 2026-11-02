@@ -19,17 +19,16 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Gap ID (for scripts): gap:python:rates/table.py:<module>:predicate_boundary:predicate:rates=silver_6
   Changed behavior: RATES = {"silver": 6}
-  Discriminator (observed, advisory): Related Python test reaches `<module>` with an `exact_value`
-    oracle. Static evidence suggests the changed behavior is observed under an exact-value
-    discriminator
+  Check (observed, advisory): Related Python test reaches `<module>` with an `exact_value` oracle.
+    Static evidence suggests the changed behavior is observed under an exact-value check
   Related test: tests/test_table.py:4 test_silver_price
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
-  Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator yes
+  Evidence: reach yes · infection yes · propagation weak · observation yes · assertion yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -42,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_table_code_replacement_removed/input --diff <cwd>/fixtures/python_table_code_replacement_removed/diff.patch --mode fast probe:rates_table.py:python_preview:742c3f98
   ripr context --root <cwd>/fixtures/python_table_code_replacement_removed/input --diff <cwd>/fixtures/python_table_code_replacement_removed/diff.patch --mode fast --at probe:rates_table.py:python_preview:742c3f98
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `rates/table.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 More:
   Full evidence: rerun with --format human-full

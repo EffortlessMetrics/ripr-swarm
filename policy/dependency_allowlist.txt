@@ -32,6 +32,7 @@ benchmarks/agentic/**/Cargo.toml|fixture_input|agentic-benchmarks|Controlled age
 benchmarks/targeted_rerun_benchmark/**/Cargo.toml|fixture_input|targeted-rerun|Controlled SPEC-0123 benchmark workspace manifest.
 crates/**/Cargo.toml|rust_package_manifest|rust|Cargo package manifests.
 crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.lock|fixture_input|analysis-fixtures|Exact proptest 1.11.0 provider graph for the registered singleton property and native discrimination controls (#10839).
+crates/ripr/tests/fixtures/proptest_empty_string/input/Cargo.lock|fixture_input|analysis-fixtures|Exact proptest 1.11.0 graph and local generator for the unchanged real empty-property integration fixture (#10843); no product dependency change.
 .github/ovsx/package-lock.json|editor_extension_lockfile|lsp/editor|Pinned npm graph for the ovsx publisher (publish-extension.yml Open VSX job).
 .github/ovsx/package.json|editor_extension_manifest|lsp/editor|Manifest pinning the ovsx publisher.
 editors/vscode/package-lock.json|editor_extension_lockfile|lsp/editor|Pinned npm dependency graph for the VS Code extension.

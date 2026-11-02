@@ -78,7 +78,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `value matching `case _``
+  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `value matching `case _``
 Drill in:
   ripr explain --root <cwd>/fixtures/python_unreached_match_arm/input --diff <cwd>/fixtures/python_unreached_match_arm/diff.patch --mode fast probe:src_kind.py:python_preview:5f2246ab
   ripr context --root <cwd>/fixtures/python_unreached_match_arm/input --diff <cwd>/fixtures/python_unreached_match_arm/diff.patch --mode fast --at probe:src_kind.py:python_preview:5f2246ab

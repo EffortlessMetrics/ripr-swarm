@@ -1,4 +1,5 @@
 mod candidate_relation;
+mod canonical_item;
 mod causal_delta;
 mod classification;
 mod command_spec;
@@ -9,6 +10,8 @@ mod diagnostic_witness;
 mod evidence;
 mod evidence_state;
 pub(crate) mod executed_control;
+pub(crate) mod external_verification;
+pub(crate) mod external_verification_native;
 mod feedback;
 mod finding_test_evidence;
 mod fix_instruction;
@@ -24,6 +27,7 @@ mod language_capability_drift;
 mod limit_guidance;
 mod next_action;
 mod probe;
+mod refusal_remedy;
 mod repair_card;
 mod summary;
 mod support;
@@ -32,6 +36,7 @@ mod test_evidence_summary;
 mod verification_result;
 
 pub use candidate_relation::CandidateRelation;
+pub use canonical_item::{CanonicalItemId, CanonicalItemParseError};
 pub use causal_delta::{
     AttributionBasis, CanonicalDelta, CanonicalEvidenceState, ComparisonConfidence,
     ComparisonCoverage, DeltaAttribution, GapState, compare_fixture_delta,
@@ -84,7 +89,11 @@ pub(crate) use feedback::{
     FeedbackReason, FeedbackReceipt, ReferenceState, ResultIdentity, ReviewStatus,
     classify_reference,
 };
-pub use fix_instruction::{FixInstructionState, FixInstructionSummary};
+pub use fix_instruction::{
+    FixInstructionIdentityContext, FixInstructionState, FixInstructionSummary,
+    InstructionIdentityParseError, InstructionInstanceId, InstructionSemanticId,
+    InstructionSnapshotCurrentness,
+};
 pub use git_candidate::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
     GitHashFormat, GitObjectId, GitTreeish,
@@ -127,6 +136,7 @@ pub use probe::{
     RelatedTest, RelatedTestMiss, RelatedTestMissSupport, RelatedTestRole,
     SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
 };
+pub(crate) use refusal_remedy::RefusalRemedy;
 pub use repair_card::{
     AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,
     DEFAULT_REPAIR_CARD_MAX_INLINE_DETAIL_BYTES, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,
@@ -144,8 +154,10 @@ pub use repair_card::{
 pub(crate) use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub(crate) use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
 pub(crate) use probe::boundary_input_observed_with_weak_oracle;
+pub(crate) use probe::declared_const_name;
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};
+pub(crate) use test_evidence_identity::normalize_transport_path;
 pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};
 pub(crate) use verification_result::CommandSpecDigest;
 pub use verification_result::{

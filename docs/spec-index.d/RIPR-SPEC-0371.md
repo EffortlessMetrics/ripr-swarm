@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0371](../specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md) | proposed | Kani bounded model checking lane: per-harness VERIFIED, FAILED or NOT-ESTABLISHED, never a pass by absence, and an explicit statement of what a bounded proof does not claim |

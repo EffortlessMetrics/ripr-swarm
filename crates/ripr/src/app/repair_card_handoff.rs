@@ -28,8 +28,9 @@ use crate::analysis::repair_route::{
 };
 use crate::config::RiprConfig;
 use crate::domain::{
-    AgentCardRefusalKind, CardCurrentnessGoal, CommandSpec, DiagnosticWitness, EditCageGoal,
-    FindingCanonicalGap, FixInstructionSummary, FocusedExecutionGoal, MutationConfirmationGoal,
+    AgentCardRefusalKind, CanonicalItemId, CardCurrentnessGoal, CommandSpec, DiagnosticWitness,
+    EditCageGoal, FindingCanonicalGap, FixInstructionIdentityContext, FixInstructionSummary,
+    FocusedExecutionGoal, InstructionSnapshotCurrentness, MutationConfirmationGoal,
     RepairCardBudget, RepairCardDetailFamily, RepairCardDetailState, RepairCardDoneWhen,
     RepairCardSnapshot, RepairCardSnapshotCurrentness, RepairCardSubject, RepairCardV1,
     StaticMovementGoal, repair_card_route_exposable,
@@ -468,6 +469,7 @@ pub(crate) fn assemble_repair_card(
         .map(FixInstructionSummary::from_witness)
         .unwrap_or_else(FixInstructionSummary::unavailable);
     instruction.has_suggested_assertion |= seam_assertion.is_some();
+    attach_fix_instruction_identities(&mut instruction, facts);
 
     // Edit cage: the exact derivation the seam packet states (#4330), so the
     // card cannot promise a different edit surface than the attempt enforces.
@@ -624,6 +626,29 @@ pub(crate) fn assemble_repair_card(
         budget: RepairCardBudget::default(),
     })
     .map_err(AgentCardError::budget_overflow)
+}
+
+fn attach_fix_instruction_identities(
+    instruction: &mut FixInstructionSummary,
+    facts: &SeamCardFacts<'_>,
+) {
+    let canonical_item = facts
+        .finding_gap_id
+        .and_then(|gap_id| CanonicalItemId::from_canonical_gap_id(gap_id).ok());
+    let snapshot_currentness = match facts.currentness {
+        RepairCardSnapshotCurrentness::Current => InstructionSnapshotCurrentness::Current,
+        RepairCardSnapshotCurrentness::AcceptedDirtyDraft => {
+            InstructionSnapshotCurrentness::AcceptedDirtyDraft
+        }
+    };
+    let context = FixInstructionIdentityContext {
+        canonical_item: canonical_item.as_ref(),
+        workspace_identity: Some(facts.workspace_identity),
+        repository_head: Some(facts.repository_head),
+        snapshot_currentness: Some(snapshot_currentness),
+        witness: facts.witness,
+    };
+    instruction.attach_identities(&context);
 }
 
 /// Whether the rendered packet envelope actually surfaces this seam. The
@@ -1059,7 +1084,7 @@ fn workspace_identity_naming_route(
         }
     }
     Err(format!(
-        "agent card cannot name the portable workspace identity for seam `{}`: no admitted test-target evidence names it; run `{packet_route}` for the full evidence packet",
+        "agent card cannot name the portable workspace identity for gap `{}`: no admitted test-target evidence names it; run `{packet_route}` for the full evidence packet",
         entry.seam.id().as_str()
     ))
 }

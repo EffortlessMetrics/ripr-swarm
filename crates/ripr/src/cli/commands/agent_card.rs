@@ -130,11 +130,12 @@ fn render_agent_card_refusal(
             "seam_id": options.seam_id,
             "message": message,
             "remedy_route": refusal_remedy_route(&options.root, &options.seam_id, kind),
+            "remedy": crate::domain::RefusalRemedy::from_prose(message),
         }
     });
     serde_json::to_string_pretty(&document)
         .map(|rendered| format!("{rendered}\n"))
-        .map_err(|error| format!("serialize agent card refusal document failed: {error}"))
+        .map_err(|error| format!("serialize agent card refusal document failed: {error}; report this as a ripr bug with the command you ran"))
 }
 
 /// The typed remedy route of one refusal kind: the opposite-remedy pairs the
@@ -386,7 +387,10 @@ pub(crate) fn agent_card_prose_lines(
     }
     lines.push(done_when_line(&card.done_when));
     for stop in &card.stop_conditions {
-        lines.push(format!("  stop: {stop}"));
+        lines.push(format!(
+            "  stop: {}",
+            crate::output::human::plain_repair_card_user_wording(stop)
+        ));
     }
     // Group only references with identical destination, state and reason.
     // Each family remains named, and a stale or missing reference cannot be
@@ -468,7 +472,7 @@ pub(crate) fn agent_card_plain_lines(
     paste_root: Option<&std::path::Path>,
     hold: Option<&CardStartHold>,
 ) -> Vec<String> {
-    let mut lines = vec![format!("Repair brief for gap {}", card.subject.seam_id)];
+    let mut lines = vec!["Repair brief for this gap".to_string()];
     lines.push(format!("  Changed behavior: {}", card.changed_behavior));
     // One verdict: the shared start gate (`hold`) outranks the card's own
     // evidence readiness, so "ready" is only printed when `ripr repair`
@@ -645,6 +649,9 @@ pub(crate) fn agent_card_plain_lines(
             format!("  Limits: {shown}; and {more} more (see --verbose)")
         });
     }
+    // The raw gap id is a copy-paste handle, not a title: it sits below the
+    // actionable lines, next to the machine-readable route that takes it.
+    lines.push(format!("  Repair ID: {}", card.subject.seam_id));
     lines.push("  This is a suggestion; ripr has not run or verified anything.".to_string());
     lines.push(format!(
         "  Machine-readable details (JSON): {packet_command}"
@@ -936,6 +943,8 @@ mod tests {
                 has_fix_site: true,
                 has_suggested_assertion: false,
                 limitation_kinds: Vec::new(),
+                instruction_semantic_id: None,
+                instruction_instance_id: None,
             },
             readiness: RepairCardReadinessFacts {
                 repair_ready: true,
@@ -1203,8 +1212,8 @@ mod tests {
         Ok(())
     }
 
-    /// #10693: the default brief is short, plain, and projects the same typed
-    /// fields; the ledger rows and internal vocabulary are `--verbose` only.
+    /// #10693: a card that is not ready names its missing evidence in plain
+    /// words and the default brief stays within its line cap.
     #[test]
     fn plain_brief_not_ready_uses_plain_words_and_stays_capped() -> Result<(), String> {
         let mut card = prose_test_card();
@@ -1347,6 +1356,9 @@ mod tests {
         Ok(())
     }
 
+    /// #10693: the default brief is short, plain, and projects the same typed
+    /// fields; the ledger rows and internal vocabulary are `--verbose` only.
+    /// The title is a plain label; the raw gap id is demoted to a `Repair ID:` row.
     #[test]
     fn plain_brief_is_short_and_free_of_ledger_vocabulary() -> Result<(), String> {
         let mut card = prose_test_card();
@@ -1360,7 +1372,8 @@ mod tests {
         );
         let text = lines.join("\n");
         for needle in [
-            "Repair brief for gap ",
+            "Repair brief for this gap",
+            "  Repair ID: ",
             "  Files you may change: tests/t.rs",
             "  Do not change: src/lib.rs",
             "  Done when: ",

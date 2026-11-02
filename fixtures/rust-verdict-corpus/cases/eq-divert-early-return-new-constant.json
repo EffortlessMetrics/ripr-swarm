@@ -6,7 +6,7 @@
     "file": "src/lib.rs",
     "line": 22
   },
-  "edit_kind": "behavior_change",
+  "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "equality_row_diverted_before_the_changed_line",
   "hard_case": null,
@@ -17,11 +17,11 @@
     "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
     "mutants": [
       {
-        "replacement": "if n == 6 { 1 } else { 0 }",
-        "mutated_line": null,
+        "replacement": "if n == 2 { 1 } else { 0 }",
+        "mutated_line": "if n == 2 { 1 } else { 0 }",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: the edit changes which input takes the branch, but no executed assertion observes it"
+        "equivalence_review": "not equivalent: early_new(2) yields 1 instead of 0"
       }
     ]
   },
@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "Row 6 equals the new constant but returns 9 from the `n > 3` early return before the equality, so the swap changes nothing the test sees. A row on the new constant that an earlier return handles must not credit it either.",
+  "reasoning": "Row 6 equals the new constant but returns 9 from the `n > 3` early return before the equality, so the swap changes nothing the test sees. A row on the new constant that an earlier return handles must not credit it either. The edit itself is behavior-preserving: the compared constant (5 or 6) is shadowed by the earlier branch for every input, so the truth comes from a reachable mutant of the same line (constant 2), which the single diverted row cannot notice.",
   "labeling_observation": {
     "ripr_commit": "fd684cecd",
     "full_checkout_verdict": "limited",

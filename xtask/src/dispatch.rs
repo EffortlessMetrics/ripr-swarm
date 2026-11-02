@@ -204,6 +204,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckLocalContext => super::check_local_context(),
         XtaskCommand::CheckFilePolicy => super::check_file_policy(),
         XtaskCommand::CheckCoveredBy => super::check_covered_by(),
+        XtaskCommand::Kani(args) => super::kani_lane::run_lane(&args),
         XtaskCommand::RustConversionCandidates => super::rust_conversion_candidates(),
         XtaskCommand::CheckExecutableFiles => super::check_executable_files(),
         XtaskCommand::CheckTextEncoding => super::check_text_encoding(),
@@ -242,7 +243,20 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckBadgeDiffPolicy => super::check_badge_diff_policy(),
         XtaskCommand::CheckGeneratedClean => super::check_generated_clean(),
         XtaskCommand::CheckVerificationContracts(args) => {
-            super::verification_contracts::check_verification_contracts(&args)
+            super::verification_contracts::check_verification_contracts_with_hooks(
+                &args,
+                |root| {
+                    let summary =
+                        super::schema_producer_sweep::verification_corpus_gate_check(root)?;
+                    Ok(super::verification_contracts::CorpusGateCounts {
+                        producer_discovered: summary.producer_discovered,
+                        producer_validated: summary.producer_validated,
+                        edge_validated: summary.edge_validated,
+                        summary_lines: summary.summary_lines,
+                    })
+                },
+                super::schema_producer_sweep::contract_subjects_owned_by_corpus_gate,
+            )
         }
         XtaskCommand::SchemaProducerSweep(args) => {
             super::schema_producer_sweep::schema_producer_sweep(&args)

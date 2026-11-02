@@ -48,7 +48,7 @@
         {"kind":"call_effect","text":"notifier(\"receipt.sent\", order_id)","line":2}
       ],
       "evidence": ["owner: send_receipt", "owner_kind: function", "test_framework: pytest (test_send_receipt_notifies_callback)", "test_verify_command: python -m pytest tests/test_notify.py::test_send_receipt_notifies_callback (test_send_receipt_notifies_callback)", "related_test_relation: syntactic_call (test_send_receipt_notifies_callback)", "test_oracle: mock_expectation medium (test_send_receipt_notifies_callback)", "test_oracle_shape: mock_expectation (test_send_receipt_notifies_callback)"],
-      "missing": ["Related Python test reaches `send_receipt` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `send_receipt` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {

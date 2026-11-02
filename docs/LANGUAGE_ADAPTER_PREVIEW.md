@@ -348,7 +348,7 @@ analysis. Repo-mode analysis differs per adapter:
   Alongside the disclosure string, each repo-mode run reports typed per-language
   file accounting (#6466: discovered, selected, skipped, omitted, and the first
   fired cap) into the internal language outcome. Two caps are named with their
-  stage: `RIPR_TS_MAX_WORKSPACE_FILES` (discovery, TypeScript walk entries) and
+  stage: `RIPR_TS_MAX_WORKSPACE_FILES` (discovery, TypeScript candidate source files, with a 5x total-entry backstop) and
   `RIPR_MAX_REPO_INDEX_FILES` (selection, TypeScript and Python). Counts that
   would only be lower bounds after truncated or unreadable discovery are
   unknown, never zero; this does not change the public `LanguageRun` wire.

@@ -510,6 +510,15 @@ impl RustIndex {
             .map(|receipt| std::sync::Arc::clone(&receipt.name_scopes))
     }
 
+    /// One proved singleton input, supplied only with the exact live property
+    /// receipt. This does not rewrite its String or shared-borrow type.
+    pub(crate) fn proptest_singleton_value(&self, test: &TestFact) -> Option<(&str, &str)> {
+        self.proptest_receipt(test)?
+            .singleton_value
+            .as_ref()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+    }
+
     fn proptest_receipt(&self, test: &TestFact) -> Option<&super::proptest::ProptestReceipt> {
         self.proptest_receipts
             .get(&(test.file.clone(), test.start_line, test.name.clone()))

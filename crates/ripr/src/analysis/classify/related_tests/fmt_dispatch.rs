@@ -280,18 +280,26 @@ pub(super) fn test_dispatches_to_fmt(
     if same_fmt_impls != 1 {
         return false;
     }
+    // Only code the test can run formats anything: a `to_string()` in a
+    // literal `if false` block, a never-called closure or nested fn, or after
+    // a `return` reaches nothing.
+    // Typing evidence still reads the whole body: a dead closure that
+    // captures a receiver (`let f = move || e;`) is a use that makes `e`
+    // uncertain whether or not `f` ever runs.
+    let live = super::fmt_live::live_body(&test.body);
+    let scan = mask_comments_and_strings(&live);
     let masked = mask_comments_and_strings(&test.body);
     (fmt_trait == FmtTrait::Display
         && !context.competing_to_string
-        && to_string_dispatch(&masked, &self_type, &context.constructors))
-        || macro_dispatch(&test.body, &masked, fmt_trait, &self_type, context)
+        && to_string_dispatch(&scan, &masked, &self_type, &context.constructors))
+        || macro_dispatch(&test.body, &scan, &masked, fmt_trait, &self_type, context)
 }
 
 /// `value.to_string()` where `value` is typed as `self_type` by the strict
 /// rule below (constructor literal or typed `let`).
-fn to_string_dispatch(masked: &str, self_type: &str, constructors: &[String]) -> bool {
+fn to_string_dispatch(scan: &str, masked: &str, self_type: &str, constructors: &[String]) -> bool {
     let mut search = 0usize;
-    while let Some(at) = masked[search..].find(".to_string").map(|at| search + at) {
+    while let Some(at) = scan[search..].find(".to_string").map(|at| search + at) {
         search = at + 1;
         if to_string_dispatch_at(masked, at, self_type, constructors) {
             return true;
@@ -672,25 +680,30 @@ fn trait_of(name: &str) -> Option<FmtTrait> {
     }
 }
 
+/// `scan` is the live-code view of the masked body (dead regions blanked):
+/// only a macro call found there reaches. `masked` is the full masked body:
+/// the typing evidence (lets, escapes, captures) is read from all of it, so
+/// blanking dead code never removes a use that makes a receiver uncertain.
 fn macro_dispatch(
     raw: &str,
+    scan: &str,
     masked: &str,
     fmt_trait: FmtTrait,
     self_type: &str,
     context: &FmtContext,
 ) -> bool {
-    if raw.len() != masked.len() {
+    if raw.len() != masked.len() || scan.len() != masked.len() {
         return false;
     }
-    let bytes = masked.as_bytes();
+    let bytes = scan.as_bytes();
     let mut search = 0usize;
-    while let Some(bang) = masked[search..].find('!').map(|at| search + at) {
+    while let Some(bang) = scan[search..].find('!').map(|at| search + at) {
         search = bang + 1;
-        let name_start = masked[..bang]
+        let name_start = scan[..bang]
             .bytes()
             .rposition(|byte| !is_ident_byte(byte))
             .map_or(0, |at| at + 1);
-        let name = masked.get(name_start..bang).unwrap_or("");
+        let name = scan.get(name_start..bang).unwrap_or("");
         let Some(&(_, format_index)) = FORMAT_MACROS.iter().find(|(known, _)| *known == name)
         else {
             continue;
@@ -699,12 +712,12 @@ fn macro_dispatch(
             continue;
         }
         // A path-qualified macro is the std one only through `std::`/`core::`.
-        let qualifier = masked.get(..name_start).unwrap_or("");
+        let qualifier = scan.get(..name_start).unwrap_or("");
         if qualifier.ends_with("::") && !std_rooted(qualifier) {
             continue;
         }
-        let after = masked[bang + 1..].trim_start();
-        let open = masked.len() - after.len();
+        let after = scan[bang + 1..].trim_start();
+        let open = scan.len() - after.len();
         if bytes.get(open) != Some(&b'(') {
             continue;
         }

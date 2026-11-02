@@ -11,7 +11,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_formatter.py:python_preview:93f32878",
+      "id": "probe:src_formatter.py:python_preview:v1-9b65c2a2",
       "canonical_gap_id": "gap:python:src/formatter.py:Formatter.__call__:predicate_boundary:predicate:any_c<for_c_in_key",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -28,7 +28,7 @@
       "severity": "info",
       "confidence": 0.60,
       "probe": {
-        "id": "probe:src_formatter.py:python_preview:93f32878",
+        "id": "probe:src_formatter.py:python_preview:v1-9b65c2a2",
         "family": "predicate",
         "delta": "control",
         "file": "src/formatter.py",
@@ -48,7 +48,7 @@
         {"kind":"unknown","text":"if any(c < \" \" for c in key):","line":4}
       ],
       "evidence": ["owner: Formatter.__call__", "owner_kind: method", "boundary_activation_unresolved: no strong related test call to `__call__` binds a literal argument, so static evidence cannot place an input at the changed boundary of `any(c < \" \" for c in key)`", "test_framework: pytest (test_rejects_space_in_key)", "test_verify_command: python -m pytest tests/test_render.py::test_rejects_space_in_key (test_rejects_space_in_key)", "related_test_relation: construct_call (test_rejects_space_in_key)", "test_oracle: exact_error_variant strong (test_rejects_space_in_key)", "test_oracle_shape: exception_assertion (test_rejects_space_in_key)"],
-      "missing": ["Related Python test reaches `__call__` with an `exact_error_variant` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `__call__` with an `exact_error_variant` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {

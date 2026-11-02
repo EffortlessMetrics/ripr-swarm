@@ -112,6 +112,12 @@ pub(crate) const GOVERNED_ENUMS: &[GovernedEnum] = &[
         "crates/ripr/src/domain/repair_card.rs",
     ),
     governed(
+        "refusal_remedy_kind",
+        "refusal_remedy_kind",
+        "RemedyKind",
+        "crates/ripr/src/domain/refusal_remedy.rs",
+    ),
+    governed(
         "next_action_class",
         "next_action_class",
         "NextActionClass",
@@ -481,6 +487,33 @@ mod profile {
                 "source emits `state_write` but docs does not list it".to_string(),
                 "docs lists `rust_state_write` but source does not emit it".to_string(),
             ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_report_field_contract_is_documented() -> Result<(), String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let doc = std::fs::read_to_string(root.join("docs/OUTPUT_SCHEMA.md"))
+            .map_err(|err| format!("read docs/OUTPUT_SCHEMA.md: {err}"))?;
+        assert!(
+            doc.contains("## Diff Report"),
+            "docs/OUTPUT_SCHEMA.md must include a ## Diff Report section (#5083)"
+        );
+        assert!(
+            doc.contains("kind: \"ripr_diff\""),
+            "Diff Report section must document kind ripr_diff"
+        );
+        assert!(
+            doc.contains("diff_complete_full_repo_limited")
+                && doc.contains("diff_incomplete_full_repo_limited"),
+            "Diff Report section must document run_status value sets"
+        );
+        let registry = std::fs::read_to_string(root.join("policy/output_contracts.txt"))
+            .map_err(|err| format!("read policy/output_contracts.txt: {err}"))?;
+        assert!(
+            registry.contains("kind|ripr_diff|"),
+            "policy/output_contracts.txt must register kind|ripr_diff"
         );
         Ok(())
     }

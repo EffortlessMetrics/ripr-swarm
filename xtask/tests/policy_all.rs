@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[path = "../../tools/repo-policy/tests/common/git_environment.rs"]
 mod git_environment;
 
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
+
 const CHECKS: &[(&str, &str)] = &[
     ("check-static-language", "static-language.md"),
     ("check-no-panic-family", "no-panic-family.md"),
@@ -87,10 +90,10 @@ impl Fixture {
     }
 
     fn run(&self, check: &str) -> Result<std::process::Output, String> {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
-        command.arg(check).current_dir(&self.0);
-        git_environment::isolate_git_environment(&mut command);
-        command.output().map_err(|error| error.to_string())
+        xtask_bin::output(|command| {
+            command.arg(check).current_dir(&self.0);
+            git_environment::isolate_git_environment(command);
+        })
     }
 
     fn reports(&self) -> PathBuf {
@@ -121,14 +124,23 @@ impl Fixture {
                     "leaf stdout changed: {check}"
                 );
             } else {
-                let error = String::from_utf8_lossy(&output.stderr);
+                // On Windows the driver may print a one-line, advisory relocation
+                // notice (a running xtask.exe can be briefly unreplaceable) before
+                // the leaf error. It is harness noise, not part of the leaf error
+                // contract, and it is absent from the aggregate (#12045).
+                let error = String::from_utf8_lossy(&output.stderr)
+                    .lines()
+                    .filter(|line| !line.contains("driver relocation unavailable"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 let error = error
                     .trim()
                     .strip_prefix("xtask: ")
                     .ok_or("leaf driver error prefix missing")?;
                 assert!(
                     String::from_utf8_lossy(&aggregate.stderr).contains(error),
-                    "leaf error changed: {check}"
+                    "leaf error changed: {check}\n--- leaf rerun stderr ---\n{error}\n--- aggregate stderr ---\n{}",
+                    String::from_utf8_lossy(&aggregate.stderr)
                 );
             }
             assert_eq!(

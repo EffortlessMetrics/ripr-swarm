@@ -78,7 +78,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `start == 0`
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `start == 0`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_while_counter_past_bound/input --diff <cwd>/fixtures/python_while_counter_past_bound/diff.patch --mode fast probe:src_steps.py:python_preview:bc3d08af
   ripr context --root <cwd>/fixtures/python_while_counter_past_bound/input --diff <cwd>/fixtures/python_while_counter_past_bound/diff.patch --mode fast --at probe:src_steps.py:python_preview:bc3d08af

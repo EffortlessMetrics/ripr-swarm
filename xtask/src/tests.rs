@@ -7596,13 +7596,13 @@ jobs:
   dependency-review:
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8362,14 +8362,14 @@ fn workflow_runtime_policy_rejects_dependency_review_over_allowlisted_count() {
 jobs:
   dependency-review:
     steps:
-      - uses: actions/dependency-review-action@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8378,7 +8378,7 @@ jobs:
         workflow_runtime_violations(".github/workflows/security.yml", workflow, &allowlist);
 
     assert!(violations.iter().any(|violation| {
-        violation.contains("uses `actions/dependency-review-action@v4` 2 time(s), allowed 1")
+        violation.contains("uses `actions/dependency-review-action@` 2 time(s), allowed 1")
     }));
 }
 
@@ -9525,8 +9525,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
     );
     assert_ne!(
         skippable_result, workflow,
@@ -9539,6 +9539,78 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         "a skippable result reports success when skipped: {:?}",
         routed_rust_ready_event_contract_violations(&skippable_result)
     );
+    for (what, from, to, needle) in [
+        (
+            "the extension e2e result step",
+            "      - name: Require the extension e2e result for the admitted head\n        id: vscode\n",
+            "      - name: Read something else\n        id: other\n",
+            "require the extension e2e result for the admitted head",
+        ),
+        (
+            "the summary branch that fails the Result",
+            "[ \"$VSCODE_CHECK_RESULT\" != success ]",
+            "[ \"$VSCODE_CHECK_RESULT\" = never ]",
+            "fail the Result when the selected extension e2e did not succeed",
+        ),
+        (
+            "the e2e job of this run",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: [vscode-select]\n",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: []\n",
+            "run the extension e2e as a job of this run",
+        ),
+        (
+            "the label selection",
+            "case \",$LABELS,\" in *,full-ci,*|*,vscode,*) return 0 ;; esac",
+            "case \",$LABELS,\" in *,never,*) return 0 ;; esac",
+            "select the extension e2e from the admitted diff and the full-ci and vscode labels",
+        ),
+        (
+            "the e2e job call and its selection condition",
+            "    if: ${{ !cancelled() && needs.vscode-select.result == 'success' && needs.vscode-select.outputs.selected == 'true' }}\n    uses: ./.github/workflows/vscode-e2e.yml\n",
+            "    if: ${{ !cancelled() }}\n    uses: ./.github/workflows/noop.yml\n",
+            "run the extension e2e only when selected",
+        ),
+        (
+            "the Result's reading of this run's results",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-e2e.result }}\n",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-select.result }}\n",
+            "read this run's own selection and e2e results",
+        ),
+        (
+            "the selection's admitted head and labels",
+            "          HEAD_SHA: ${{ needs.admission.outputs.head }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "          HEAD_SHA: ${{ github.sha }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "classify the admitted head and labels",
+        ),
+        (
+            "the Result's dependency on the extension jobs",
+            "docs-gate, vscode-select, vscode-e2e]",
+            "docs-gate]",
+            "make the Result depend on the extension selection and e2e jobs",
+        ),
+        (
+            "the selected-and-succeeded pass",
+            "true:success)",
+            "true:never)",
+            "pass a selected extension e2e only when it succeeded",
+        ),
+        (
+            "the unselected-and-skipped pass",
+            "false:skipped)",
+            "false:never)",
+            "pass an unselected extension e2e only when it was skipped",
+        ),
+    ] {
+        let mutated = workflow.replacen(from, to, 1);
+        assert_ne!(mutated, workflow, "fixture must remove {what}");
+        assert!(
+            routed_rust_ready_event_contract_violations(&mutated)
+                .iter()
+                .any(|violation| violation.contains(needle)),
+            "removing {what} must be rejected (#12122): {:?}",
+            routed_rust_ready_event_contract_violations(&mutated)
+        );
+    }
     for job in ["route", "detect-docs-only", "admission"] {
         let unguarded = workflow.replace(
             "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'\n",
@@ -17825,6 +17897,21 @@ fn dogfood_typescript_preview_repair_loop_receipts_are_checked() -> Result<(), S
         );
         assert!(
             scenarios.iter().any(|scenario| {
+                scenario.gap_state == "already_observed"
+                    && scenario.outcome == "already_observed_unchanged"
+            }),
+            "TypeScript preview repair-loop receipts should retain a positive already_observed control"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .filter(|scenario| scenario.must_not_claim_already_observed)
+                .count()
+                >= 2,
+            "TypeScript preview repair-loop receipts should pin spurious already_observed guards"
+        );
+        assert!(
+            scenarios.iter().any(|scenario| {
                 scenario.name == "typescript_complete_boundary_packet_closed"
                     && scenario.repair_packet_ready
                     && scenario.gap_state == "actionable"
@@ -18381,6 +18468,7 @@ fn valid_typescript_preview_repair_loop_scenario() -> DogfoodTypescriptPreviewRe
             must_have_receipt_command: true,
             must_not_invent_verify_command: true,
             must_not_emit_repair_packet: true,
+            must_not_claim_already_observed: false,
             authority_boundary: "preview_advisory_only".to_string(),
             expected_test_or_observer_shape: "exact equality-boundary assertion".to_string(),
             verify_command: "npm test -- discount".to_string(),
@@ -19081,8 +19169,7 @@ jobs:
 RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.
 
 ### Start here
-- Open `target/ripr/reports/start-here.md` first when it exists.
-- Gate authority: `ripr gate evaluate` remains the pass/fail source only when `RIPR_GATE_MODE` is configured.
+- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
 - {GENERATED_CI_FIRST_ACTION_REPAIR}
 - {GENERATED_CI_FIRST_PR_REPAIR}
 - {GENERATED_CI_FRONT_PANEL_REPAIR}
@@ -19142,6 +19229,43 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
         mutated.errors
     );
     assert!(!mutated.start_here);
+
+    // Dropping the gate boundary wording must fail the scenario (#12261).
+    let no_gate = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "missing-gate-authority",
+        command,
+        10,
+        workflow,
+        &summary.replace("remains pass/fail authority", "remains the decision source"),
+    );
+    assert!(!no_gate.gate_authority_boundary);
+    assert!(
+        no_gate
+            .errors
+            .iter()
+            .any(|error| error.contains("gate-decision authority")),
+        "{:?}",
+        no_gate.errors
+    );
+
+    let no_gate_command = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "missing-gate-command",
+        command,
+        10,
+        workflow,
+        &summary.replace("ripr gate evaluate", "the gate"),
+    );
+    assert!(!no_gate_command.gate_authority_boundary);
+
+    // Unconditional gate authority (no explicit-configuration condition) must fail.
+    let unconditional = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "unconditional-gate-authority",
+        command,
+        10,
+        workflow,
+        &summary.replace(" when explicitly configured", ""),
+    );
+    assert!(!unconditional.gate_authority_boundary);
 
     // Workflow text that still carries the retired shell cannot satisfy the
     // summary properties.
@@ -29452,18 +29576,28 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
 }
 
 fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
+    // Each phase is announced on stderr before it starts. When the child outlives
+    // its tool-build deadline the parent's diagnostic carries this stream, so a
+    // stall names the check it was inside instead of an anonymous TIMEOUT (#12035).
+    fn phase(name: &str, check: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        eprintln!("policy facade phase: {name}");
+        check()
+    }
     with_repo_cwd(|| {
-        check_static_language()?;
-        check_no_panic_family()?;
-        check_allow_attributes()?;
-        check_local_context()?;
-        check_file_policy()?;
-        assert_packet_coverage_report()?;
-        check_executable_files()?;
-        check_workflows()?;
-        check_droid_review_config()?;
-        check_process_policy()?;
-        check_network_policy()
+        phase("check_static_language", check_static_language)?;
+        phase("check_no_panic_family", check_no_panic_family)?;
+        phase("check_allow_attributes", check_allow_attributes)?;
+        phase("check_local_context", check_local_context)?;
+        phase("check_file_policy", check_file_policy)?;
+        phase(
+            "assert_packet_coverage_report",
+            assert_packet_coverage_report,
+        )?;
+        phase("check_executable_files", check_executable_files)?;
+        phase("check_workflows", check_workflows)?;
+        phase("check_droid_review_config", check_droid_review_config)?;
+        phase("check_process_policy", check_process_policy)?;
+        phase("check_network_policy", check_network_policy)
     })
 }
 
@@ -49139,7 +49273,7 @@ fn vscode_job_block(workflow: &str) -> Result<&str, String> {
     const HEADER: &str = "\n  vscode:\n";
     let start = workflow
         .find(HEADER)
-        .ok_or_else(|| "ci.yml is missing the vscode job".to_string())?;
+        .ok_or_else(|| "vscode-e2e.yml is missing the vscode job".to_string())?;
     let mut offset = start + HEADER.len();
     while offset < workflow.len() {
         let rest = &workflow[offset..];
@@ -49194,8 +49328,13 @@ fn vscode_host_diagnostics_contract_violations(job: &str) -> Vec<String> {
     if upload.contains("if: always()") || upload.contains("if: success()") {
         violations.push("diagnostics upload must not run on success".to_string());
     }
-    if !upload.contains("actions/upload-artifact@v7") {
-        violations.push("diagnostics upload must use actions/upload-artifact@v7".to_string());
+    // The repo pins first-party actions to a commit SHA with the major in the
+    // trailing comment (`actions/upload-artifact@<sha> # v7.x.y`).
+    let pinned_v7 = upload
+        .lines()
+        .any(|line| line.contains("actions/upload-artifact@") && line.contains("# v7"));
+    if !pinned_v7 {
+        violations.push("diagnostics upload must use actions/upload-artifact v7".to_string());
     }
     if !upload.contains("target/ripr/vscode-test-host-diagnostics/") {
         violations
@@ -49280,8 +49419,10 @@ fn vscode_host_diagnostics_contract_rejects_success_uploads_and_exit_laundering(
 #[test]
 fn vscode_host_diagnostics_ci_job_retains_failure_only() -> Result<(), String> {
     let root = repo_root()?;
-    let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
-        .map_err(|err| format!("read ci.yml: {err}"))?;
+    // #12252: the e2e job lives in the reusable workflow both ci.yml and the
+    // routed run call.
+    let workflow = fs::read_to_string(root.join(".github/workflows/vscode-e2e.yml"))
+        .map_err(|err| format!("read vscode-e2e.yml: {err}"))?;
     let job = vscode_job_block(&workflow)?;
     let violations = vscode_host_diagnostics_contract_violations(job);
     assert!(
@@ -52396,6 +52537,31 @@ fn require_proof_pack_violation(violations: &[String], needle: &str) -> Result<(
             "expected violation containing `{needle}`, got {violations:?}"
         ))
     }
+}
+
+#[test]
+fn check_proof_packs_rejects_output_contracts_lane_missing_pack_command() -> Result<(), String> {
+    let manifest = ci_document(
+        "policy/proof-packs.toml",
+        include_str!("../../policy/proof-packs.toml"),
+    )?;
+    let mut lane_commands = std::collections::BTreeMap::new();
+    lane_commands.insert(
+        "output-contracts".to_string(),
+        [
+            "cargo xtask check-output-contracts",
+            "cargo xtask check-fixture-contracts",
+            "cargo xtask check-generated",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    );
+    let violations = super::proof_pack_output_contracts_lane_violations(&manifest, &lane_commands);
+    require_proof_pack_violation(
+        &violations,
+        "requires `cargo xtask goldens check` but ci_lane `output-contracts`",
+    )
 }
 
 #[test]

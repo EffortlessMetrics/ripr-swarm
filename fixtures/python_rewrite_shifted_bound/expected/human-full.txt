@@ -79,7 +79,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == 100`
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `amount == 100`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_rewrite_shifted_bound/input --diff <cwd>/fixtures/python_rewrite_shifted_bound/diff.patch --mode fast probe:shop.py:python_preview:d0041328
   ripr context --root <cwd>/fixtures/python_rewrite_shifted_bound/input --diff <cwd>/fixtures/python_rewrite_shifted_bound/diff.patch --mode fast --at probe:shop.py:python_preview:d0041328

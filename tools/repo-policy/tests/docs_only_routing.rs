@@ -57,6 +57,22 @@ fn shell(name: &str) -> TestResult<String> {
     Ok(script)
 }
 
+fn vscode_step_shell() -> TestResult<String> {
+    let (_, tail) = job("result")?
+        .split_once("      - name: Require the extension e2e result for the admitted head\n")
+        .ok_or("production extension e2e step exists")?;
+    let (step, _) = tail
+        .split_once("      - name: Summarize routed result\n")
+        .ok_or("summary step follows the extension e2e step")?;
+    let (_, body) = step.split_once("        run: |\n").ok_or("shell block")?;
+    Ok(body
+        .lines()
+        .take_while(|line| line.is_empty() || line.starts_with("          "))
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
 fn capability_shell() -> TestResult<String> {
     let source = job("docs-gate")?;
     let marker = "      - name: Capability registry checks (SUPPORT_TIERS.md, preview guide or spec change)\n";
@@ -759,7 +775,34 @@ fn routed_result_admitted(
     docs: &str,
     docs_gate: &str,
     heavy: &str,
-    (admission_result, admission_status): (&str, &str),
+    admission: (&str, &str),
+) -> TestResult<bool> {
+    // The extension e2e step (#12122) runs only for an admitted merge-ready
+    // request; elsewhere it is skipped and the summary does not read it.
+    let vscode = if admission == ("success", "admitted") {
+        "success"
+    } else {
+        "skipped"
+    };
+    routed_result_with_vscode(
+        fixture,
+        event,
+        detector,
+        docs,
+        docs_gate,
+        heavy,
+        (admission.0, admission.1, vscode),
+    )
+}
+
+fn routed_result_with_vscode(
+    fixture: &Fixture,
+    event: &str,
+    detector: &str,
+    docs: &str,
+    docs_gate: &str,
+    heavy: &str,
+    (admission_result, admission_status, vscode): (&str, &str, &str),
 ) -> TestResult<bool> {
     let source = result_step()?;
     let (setup, _) = source.split_once("        run: |\n").ok_or("result step")?;
@@ -814,6 +857,7 @@ fn routed_result_admitted(
                 "skipped"
             },
         ),
+        ("VSCODE_CHECK_RESULT", vscode),
         ("ADMISSION_RESULT", admission_result),
         ("ADMISSION_STATUS", admission_status),
     ]);
@@ -849,6 +893,36 @@ fn actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies(
         "{first_decision}"
     );
     assert!(source.contains("'Merge-ready Nonrequest'"));
+    Ok(())
+}
+
+#[test]
+fn actual_result_block_fails_a_pull_request_whose_selected_extension_e2e_did_not_succeed()
+-> TestResult {
+    let fixture = Fixture::new()?;
+    assert!(routed_result_with_vscode(
+        &fixture,
+        "pull_request",
+        "success",
+        "true",
+        "success",
+        "skipped",
+        ("success", "admitted", "success"),
+    )?);
+    for outcome in ["failure", "cancelled", "skipped"] {
+        assert!(
+            !routed_result_with_vscode(
+                &fixture,
+                "pull_request",
+                "success",
+                "true",
+                "success",
+                "skipped",
+                ("success", "admitted", outcome),
+            )?,
+            "a {outcome} extension e2e step must fail the Result (#12122)"
+        );
+    }
     Ok(())
 }
 
@@ -918,5 +992,203 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
             )?);
         }
     }
+    Ok(())
+}
+
+// #12252: the extension e2e is a reusable-workflow job of the same run, so the
+// Result reads its own run's `needs` results. The verdict step and the surface
+// selection are executed here, not only pinned as text.
+fn run_vscode_verdict(select: &str, selected: &str, e2e: &str) -> TestResult<bool> {
+    let fixture = Fixture::new()?;
+    let env = [
+        ("SELECT_RESULT", select),
+        ("SELECTED", selected),
+        ("E2E_RESULT", e2e),
+    ];
+    Ok(fixture
+        .run(&vscode_step_shell()?, &env, None)?
+        .status
+        .success())
+}
+
+#[test]
+fn extension_e2e_verdict_passes_only_for_a_succeeded_selected_run_or_an_unselected_skip()
+-> TestResult {
+    assert!(run_vscode_verdict("success", "true", "success")?);
+    assert!(run_vscode_verdict("success", "false", "skipped")?);
+    for (select, selected, e2e) in [
+        // selection itself did not conclude
+        ("failure", "false", "skipped"),
+        ("cancelled", "false", "skipped"),
+        ("skipped", "false", "skipped"),
+        ("skipped", "true", "success"),
+        ("", "", ""),
+        // selected but the e2e did not succeed
+        ("success", "true", "failure"),
+        ("success", "true", "cancelled"),
+        ("success", "true", "skipped"),
+        ("success", "true", ""),
+        // unselected but the e2e ran, or anything unrecognised
+        ("success", "false", "success"),
+        ("success", "false", "failure"),
+        ("success", "false", ""),
+        ("success", "", "skipped"),
+        ("success", "", "success"),
+        ("success", "maybe", "success"),
+    ] {
+        assert!(
+            !run_vscode_verdict(select, selected, e2e)?,
+            "select={select:?} selected={selected:?} e2e={e2e:?} must fail the Result"
+        );
+    }
+    Ok(())
+}
+
+fn vscode_select(fixture: &Fixture, base: &str, head: &str, labels: &str) -> TestResult<String> {
+    let output = fixture.run(
+        &shell("vscode-select")?,
+        &[("BASE_SHA", base), ("HEAD_SHA", head), ("LABELS", labels)],
+        None,
+    )?;
+    assert!(
+        output.status.success(),
+        "selection must not fail: {output:?}"
+    );
+    let outputs = fs::read_to_string(fixture.root.join(".git/actions-output"))?;
+    let values = outputs
+        .lines()
+        .filter_map(|line| line.strip_prefix("selected="))
+        .collect::<Vec<_>>();
+    assert_eq!(values.len(), 1, "exactly one selection output: {outputs}");
+    Ok(values[0].to_owned())
+}
+
+#[test]
+fn extension_surface_selection_selects_the_surface_labels_and_every_doubt() -> TestResult {
+    let fixture = Fixture::new()?;
+    let base = fixture.git(&["rev-parse", "HEAD"])?;
+    let with_change = |path: &str| -> TestResult<String> {
+        fixture.git(&["checkout", "-q", "-B", "work", &base])?;
+        fixture.write(path, "changed\n")?;
+        fixture.commit()
+    };
+    let docs = with_change("docs/other.md")?;
+    let ext = with_change("editors/vscode/src/extension.ts")?;
+    let ci = with_change(".github/workflows/ci.yml")?;
+    let e2e = with_change(".github/workflows/vscode-e2e.yml")?;
+    let routed = with_change(".github/workflows/routed-rust.yml")?;
+    // Unrelated change: not selected, so the e2e is skipped for this head.
+    assert_eq!(
+        vscode_select(&fixture, &base, &docs, "merge-ready")?,
+        "false"
+    );
+    for head in [&ext, &ci, &e2e, &routed] {
+        assert_eq!(vscode_select(&fixture, &base, head, "merge-ready")?, "true");
+    }
+    // Labels select regardless of the diff, and whole-label matching only.
+    for labels in ["merge-ready,full-ci", "vscode,merge-ready", "full-ci"] {
+        assert_eq!(vscode_select(&fixture, &base, &docs, labels)?, "true");
+    }
+    assert_eq!(
+        vscode_select(
+            &fixture,
+            &base,
+            &docs,
+            "merge-ready,full-ci-extra,not-vscode"
+        )?,
+        "false"
+    );
+    // Every doubt selects: missing, malformed or unknown identities, an empty diff.
+    assert_eq!(vscode_select(&fixture, "", &docs, "merge-ready")?, "true");
+    assert_eq!(vscode_select(&fixture, &base, "", "merge-ready")?, "true");
+    assert_eq!(
+        vscode_select(&fixture, "nothex", &docs, "merge-ready")?,
+        "true"
+    );
+    assert_eq!(
+        vscode_select(&fixture, &base, &"0".repeat(40), "merge-ready")?,
+        "true"
+    );
+    assert_eq!(
+        vscode_select(&fixture, &base, &base, "merge-ready")?,
+        "true"
+    );
+    Ok(())
+}
+
+#[test]
+fn extension_surface_selection_sees_deletions_renames_odd_names_and_ambiguous_bases() -> TestResult
+{
+    let fixture = Fixture::new()?;
+    fixture.write("editors/vscode/src/old.ts", "export {};\n")?;
+    fixture.write("editors/vscode/odd\nname \"q\".ts", "export {};\n")?;
+    let base = fixture.commit()?;
+    // Deleting an extension file selects.
+    fs::remove_file(fixture.root.join("editors/vscode/src/old.ts"))?;
+    let deleted = fixture.commit()?;
+    assert_eq!(
+        vscode_select(&fixture, &base, &deleted, "merge-ready")?,
+        "true"
+    );
+    // Renaming an extension file out of the tree selects; without
+    // `--no-renames` only the new name outside the tree would be listed.
+    fixture.git(&["checkout", "-q", "-B", "moved", &base])?;
+    fs::create_dir_all(fixture.root.join("docs"))?;
+    fs::rename(
+        fixture.root.join("editors/vscode/src/old.ts"),
+        fixture.root.join("docs/moved.ts"),
+    )?;
+    let moved = fixture.commit()?;
+    assert_eq!(
+        vscode_select(&fixture, &base, &moved, "merge-ready")?,
+        "true"
+    );
+    // A newline-and-quote filename inside the tree stays intact and selects.
+    fixture.git(&["checkout", "-q", "-B", "odd", &base])?;
+    fs::write(
+        fixture.root.join("editors/vscode/odd\nname \"q\".ts"),
+        "export const changed = 1;\n",
+    )?;
+    let odd = fixture.commit()?;
+    assert_eq!(vscode_select(&fixture, &base, &odd, "merge-ready")?, "true");
+    // Lookalike paths outside the tree do not select.
+    fixture.git(&["checkout", "-q", "-B", "look", &base])?;
+    fixture.write("editors/vscode-notes/readme.md", "x\n")?;
+    fixture.write("docs/editors/vscode/readme.md", "x\n")?;
+    let look = fixture.commit()?;
+    assert_eq!(
+        vscode_select(&fixture, &base, &look, "merge-ready")?,
+        "false"
+    );
+    // Criss-cross history has two merge bases; a three-dot diff could hide an
+    // extension change, so the selection must not trust it.
+    let tree = fixture.git(&["rev-parse", &format!("{base}^{{tree}}")])?;
+    let left = fixture.git(&["commit-tree", &tree, "-p", &base, "-m", "left"])?;
+    let right = fixture.git(&["commit-tree", &tree, "-p", &base, "-m", "right"])?;
+    let ml = fixture.git(&["commit-tree", &tree, "-p", &left, "-p", &right, "-m", "ml"])?;
+    let mr = fixture.git(&["commit-tree", &tree, "-p", &right, "-p", &left, "-m", "mr"])?;
+    assert_eq!(
+        fixture
+            .git(&["merge-base", "--all", &ml, &mr])?
+            .lines()
+            .count(),
+        2,
+        "real criss-cross fixture"
+    );
+    assert_eq!(vscode_select(&fixture, &ml, &mr, "merge-ready")?, "true");
+    // A merge-base lookup that errors also selects.
+    let failing = fixture.wrapper("if [ \"$1\" = merge-base ]; then exit 2; fi")?;
+    let output = fixture.run(
+        &shell("vscode-select")?,
+        &[
+            ("BASE_SHA", &base),
+            ("HEAD_SHA", &look),
+            ("LABELS", "merge-ready"),
+        ],
+        Some(&failing),
+    )?;
+    assert!(output.status.success());
+    let outputs = fs::read_to_string(fixture.root.join(".git/actions-output"))?;
+    assert!(outputs.contains("selected=true"), "{outputs}");
     Ok(())
 }

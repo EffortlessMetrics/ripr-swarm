@@ -1,4 +1,5 @@
 use super::*;
+use crate::analysis::facts::SourceText;
 use crate::analysis::rust_index::summarize_file;
 use crate::domain::{DeltaKind, OracleStrength, ProbeId, SourceLocation, SymbolId};
 use std::path::{Path, PathBuf};
@@ -712,4 +713,36 @@ fn static_observer_roots_may_carry_written_state() {
         ),
         "uppercase type paths must stay refused"
     );
+}
+
+#[test]
+fn whole_object_admits_tokenizes_each_test_body_once() {
+    use crate::analysis::classify::effect_carrier::TEST_BODY_TOKENIZE_COUNT;
+
+    TEST_BODY_TOKENIZE_COUNT.with(|count| count.set(0));
+    let index = index(&[(LIB, LEDGER), ("tests/ledger.rs", LEDGER_TESTS)]);
+    let test = the_test(&index);
+    let carrier = establish(&index, "self.refresh_low_stock(sku);");
+    assert!(
+        carrier.is_some(),
+        "ledger carrier must establish for tokenize memo test"
+    );
+    let Some(carrier) = carrier else {
+        return;
+    };
+    let history = whole_object("assert_eq!(inv.history(), Vec::new());");
+    let copy = whole_object("assert_eq!(copy, fresh);");
+    const PAD: &str = "01234567890123456789012345678901";
+    let body_a = format!("let mut inv = Inventory::new(5); {PAD}a");
+    let body_b = format!("let mut inv = Inventory::new(5); {PAD}b");
+    assert_eq!(body_a.len(), body_b.len());
+    let mut test_a = test.clone();
+    test_a.body = SourceText::owned(&body_a);
+    let mut test_b = test.clone();
+    test_b.body = SourceText::owned(&body_b);
+    let _ = carrier.admits(&test_a, &history);
+    let _ = carrier.admits(&test_a, &copy);
+    TEST_BODY_TOKENIZE_COUNT.with(|count| assert_eq!(count.get(), 1));
+    let _ = carrier.admits(&test_b, &history);
+    TEST_BODY_TOKENIZE_COUNT.with(|count| assert_eq!(count.get(), 2));
 }

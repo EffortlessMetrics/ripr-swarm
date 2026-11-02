@@ -11,6 +11,7 @@ mod mut_parameter;
 mod name_scope;
 mod nesting;
 mod owner_pin;
+mod parent_module_cfg_gate;
 mod passthrough_item_macros;
 mod pattern_pin;
 mod proptest;
@@ -30,13 +31,13 @@ pub(crate) use owner_pin::{
     MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
     constant_table_call_column, constant_table_column, constant_table_column_around,
     direct_literal_call_column, empty_local_macro_invocation_ranges,
-    empty_macro_binding_ambiguities, err_return_guard_key, local_empty_macro_names,
-    macro_binding_scan, macro_call_is_statement, node_has_macro_escape, owner_pin_assertions,
-    owner_pin_matches_assertions, owner_reference_count, qualified_matches_paths,
-    returns_leave_the_function, skipping_table_column, source_binds_value_name,
-    source_declares_value_name, source_imported_claims_macros, standard_derive_names,
-    supported_targeted_item_context, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
-    use_rebinds_crate_name,
+    empty_macro_binding_ambiguities, err_return_guard_key, literal_root_macro_exports,
+    local_empty_macro_names, macro_binding_scan, macro_call_is_statement, node_has_macro_escape,
+    owner_pin_assertions, owner_pin_matches_assertions, owner_reference_count,
+    qualified_matches_paths, returns_leave_the_function, skipping_table_column,
+    source_binds_value_name, source_declares_value_name, source_imported_claims_macros,
+    standard_derive_names, supported_targeted_item_context, trusted_macro_binding_site_sets,
+    trusted_macro_binding_sites, use_rebinds_crate_name,
 };
 pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};
@@ -59,12 +60,13 @@ pub(crate) use macro_scope::{
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
 pub(crate) use name_scope::{
     NameScope, NameScopes, UseBinding, fn_call_has_local_binding, function_type_param_names,
-    name_scope_for_file, name_scope_for_items, name_scopes_for_fn,
+    name_scope_for_file, name_scope_for_items, name_scopes_for_fn, use_item_bindings,
 };
 pub(crate) use nesting::{
     block_comment_only_lines, non_code_token_end, parse_clean_source_file, rust_nesting_refusal,
     string_literal_continuation_lines,
 };
+pub(crate) use parent_module_cfg_gate::owner_gated_by_parent_mod_declarations;
 pub(crate) use ra::drop_in_assertion_leaf;
 pub(crate) use ra::parser_oracles_for_function;
 #[cfg(test)]

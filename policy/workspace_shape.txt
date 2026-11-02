@@ -6,6 +6,8 @@ cargo_manifest|benchmarks/targeted_rerun_benchmark/**/Cargo.toml|controlled SPEC
 cargo_manifest|crates/ripr/Cargo.toml|published package manifest
 cargo_manifest|crates/ripr/tests/data/**/Cargo.toml|source-role conformance corpus fixture manifests (#3534)
 cargo_manifest|crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml|analysis-fixtures owned locked proptest provider and native-discrimination fixture (#10839)
+cargo_manifest|crates/ripr/tests/fixtures/proptest_empty_string/input/Cargo.toml|analysis-fixtures owned unchanged Perl-LSP empty-property integration subject (#10843)
+cargo_manifest|crates/ripr/tests/fixtures/proptest_empty_string/input/perl-test-generators/Cargo.toml|analysis-fixtures owned standalone manifest for the unchanged original Unicode generator (#10843)
 cargo_manifest|editors/vscode/test-fixtures/**/Cargo.toml|VS Code extension test fixture workspace manifest
 cargo_manifest|editors/zed/Cargo.toml|Zed extension crate; its own workspace, compiled to wasm32-wasip2 by Zed (#4460)
 cargo_manifest|fixtures/**/Cargo.toml|fixture input workspace manifests

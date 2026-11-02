@@ -322,18 +322,29 @@ fn split_guard(pattern: &str) -> Option<(&str, bool)> {
 /// Whether `int`, `float`, `str` and `bool` still name the builtins: no
 /// parameter, assignment, `def`/`class`, import or star import of the file
 /// rebinds one, so a `case int()` class pattern means what it spells.
-fn builtin_classes_intact(owner: &PythonOwner, owner_source: &str) -> bool {
-    const BUILTINS: [&str; 4] = ["int", "float", "str", "bool"];
+pub(super) fn builtin_classes_intact(owner: &PythonOwner, owner_source: &str) -> bool {
+    builtin_names_intact(owner, owner_source, &["int", "float", "str", "bool"])
+}
+
+/// Whether every name in `builtins` still names the builtin in the owner's
+/// file (same rebinding rules as [`builtin_classes_intact`]).
+pub(super) fn builtin_names_intact(
+    owner: &PythonOwner,
+    owner_source: &str,
+    builtins: &[&str],
+) -> bool {
     if owner
         .parameters
         .iter()
-        .any(|parameter| BUILTINS.contains(&parameter.name.as_str()))
+        .any(|parameter| builtins.contains(&parameter.name.as_str()))
     {
         return false;
     }
     let lines: Vec<&str> = owner_source.lines().collect();
-    BUILTINS.iter().all(|name| {
+    let modules = builtin_module_names(&lines);
+    builtins.iter().all(|name| {
         !lines.iter().any(|line| binds_name(line.trim(), name))
+            && !(0..lines.len()).any(|index| patches_builtin(&lines, index, name, &modules))
             && !lines.iter().any(|line| {
                 let trimmed = line.trim();
                 let names_it = mentions_identifier(trimmed, name);
@@ -350,6 +361,73 @@ fn builtin_classes_intact(owner: &PythonOwner, owner_source: &str) -> bool {
                     .any(|prefix| trimmed.starts_with(prefix)))
                     || (trimmed.starts_with("from ") && trimmed.ends_with("import *"))
             })
+    })
+}
+
+/// The names the file can reach the builtins module by: `builtins`,
+/// `__builtins__`, and any `import builtins as <alias>` (#12206).
+fn builtin_module_names(lines: &[&str]) -> Vec<String> {
+    let mut modules = vec!["builtins".to_string(), "__builtins__".to_string()];
+    for line in lines {
+        let Some(imports) = line.trim().strip_prefix("import ") else {
+            continue;
+        };
+        for part in imports.split(',') {
+            let mut words = part.split_whitespace();
+            if let (Some("builtins"), Some("as"), Some(alias)) =
+                (words.next(), words.next(), words.next())
+            {
+                modules.push(alias.to_string());
+            }
+        }
+    }
+    modules
+}
+
+/// Whether the line at `index` rewrites the builtin `name` through the
+/// builtins module (`builtins.isinstance = f`, `__builtins__["isinstance"] =
+/// f`, `setattr(builtins, ..)`, `vars(builtins)[..] = f`), which no local
+/// binding shows (#12183, #12206). A `setattr`, `vars(` or `__dict__` line
+/// with a module name on it or in the next three lines (a call split across
+/// lines) is refused whatever it sets, because the written name may be
+/// computed. Whitespace is dropped before matching an assignment, so
+/// `builtins . isinstance = f` reads the same. A refusal only withholds a
+/// demotion: the guard reads as unknown and the arm keeps its credit.
+fn patches_builtin(lines: &[&str], index: usize, name: &str, modules: &[String]) -> bool {
+    let names_module = |text: &str| {
+        modules
+            .iter()
+            .any(|module| mentions_identifier(text, module))
+    };
+    let line = lines[index].trim();
+    if (line.contains("setattr") || line.contains("__dict__") || line.contains("vars("))
+        && lines[index..(index + 4).min(lines.len())]
+            .iter()
+            .any(|following| names_module(following))
+    {
+        return true;
+    }
+    if !names_module(line) {
+        return false;
+    }
+    let compact: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+    modules.iter().any(|module| {
+        [
+            format!("{module}.{name}"),
+            format!("{module}[\"{name}\"]"),
+            format!("{module}['{name}']"),
+        ]
+        .iter()
+        .any(|target| {
+            compact.match_indices(target.as_str()).any(|(start, _)| {
+                let boundary = compact[..start]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
+                let rest = &compact[start + target.len()..];
+                boundary && rest.starts_with('=') && !rest.starts_with("==")
+            })
+        })
     })
 }
 
@@ -409,7 +487,7 @@ fn is_capture_name(text: &str) -> bool {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ScalarKind {
+pub(super) enum ScalarKind {
     None,
     Bool,
     Int,
@@ -417,7 +495,7 @@ enum ScalarKind {
     Str,
 }
 
-fn scalar_kind(value: &str) -> Option<ScalarKind> {
+pub(super) fn scalar_kind(value: &str) -> Option<ScalarKind> {
     match value {
         "None" => return Some(ScalarKind::None),
         "True" | "False" => return Some(ScalarKind::Bool),

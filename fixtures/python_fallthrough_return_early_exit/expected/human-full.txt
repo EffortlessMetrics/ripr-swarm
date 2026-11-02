@@ -77,7 +77,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `not (total > 1000)`
+  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `not (total > 1000)`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_fallthrough_return_early_exit/input --diff <cwd>/fixtures/python_fallthrough_return_early_exit/diff.patch --mode fast probe:src_quote.py:python_preview:ca5fb9df
   ripr context --root <cwd>/fixtures/python_fallthrough_return_early_exit/input --diff <cwd>/fixtures/python_fallthrough_return_early_exit/diff.patch --mode fast --at probe:src_quote.py:python_preview:ca5fb9df

@@ -86,7 +86,7 @@ TypeScript repair packet (advisory)
   next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == DISCOUNT_THRESHOLD`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
+  TypeScript preview advisory: add or strengthen a focused assertion for the missing check `amount == DISCOUNT_THRESHOLD`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
 Drill in:
   ripr explain --root <cwd>/fixtures/ts_repair_packet_boundary_constant_unresolved/input --diff <cwd>/fixtures/ts_repair_packet_boundary_constant_unresolved/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:17445ecf
   ripr context --root <cwd>/fixtures/ts_repair_packet_boundary_constant_unresolved/input --diff <cwd>/fixtures/ts_repair_packet_boundary_constant_unresolved/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:17445ecf

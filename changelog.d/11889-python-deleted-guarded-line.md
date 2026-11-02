@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python: a line deleted from inside a guarded arm (`if total > 1000:` and its body, for example) no longer reads `exposed` when no strong test input satisfies the guard. The deleted line ran under no observed input, so it is now `weakly_exposed` with the guarding condition named as the missing discriminator. A conjunction with one false comparison is also read as false when another conjunct is not a comparison. Unreadable guards, `or`/`not` conditions and changed owner headers keep their verdict (#11889).

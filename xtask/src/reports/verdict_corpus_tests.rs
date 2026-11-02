@@ -1699,13 +1699,13 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
     // example 10 is in the numpy subject (#7819). Examples 1 to 34 have `py-spec0233-exNN-` cases (the prefix of the
     // spec's draft number, RIPR-SPEC-0233); 35 to 40 were written from the
     // library cases that cite them, 41 from `py-fixtures-deposit` and 42 from
-    // `py-fixtures-fee-boundary`.
+    // `py-fixtures-fee-boundary`, 43 from the `py-coarse-*` cases.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0238")
         .ok_or("RIPR-SPEC-0238 is not in scope in the python ledger")?;
-    assert_eq!(spec.in_scope_examples, 42);
+    assert_eq!(spec.in_scope_examples, 43);
     assert!(spec.uncovered.is_empty(), "uncovered: {:?}", spec.uncovered);
     assert_eq!(spec.waived, 0);
     assert!(
@@ -2160,19 +2160,18 @@ fn validate_spellings_parse_language_without_out_or_cases() -> Result<(), String
 }
 
 #[test]
-fn declared_validation_keeps_every_ledger_but_perl_mandatory() -> Result<(), String> {
-    // The declared funnel is the single coverage-mode decision: a Perl
-    // corpus without a ledger validates structurally with no coverage
-    // attached (#8775), while every
-    // other corpus keeps its spec-example ledger mandatory (#6686 review for
-    // Rust, #7650 for TypeScript and Python) — deleting that ledger fails
-    // instead of dropping the coverage floor from `check-all`. (The gated
-    // half needs the repo-relative specs tree, so the `validate` and
-    // `check-all` CLI runs prove it, not a unit test.)
+fn declared_validation_keeps_every_ledger_mandatory() -> Result<(), String> {
+    // The declared funnel requires every committed corpus's spec-example
+    // ledger (#6686 review for Rust, #7650 for TypeScript and Python, #8775
+    // for Perl): deleting that ledger fails instead of dropping the coverage
+    // floor from `check-all`. (Full gated validation needs the repo-relative
+    // specs tree, so the `validate` and `check-all` CLI runs prove it, not
+    // a unit test.)
     for (name, source) in [
         ("verdict-declared-rust-ledger", repo_corpus_dir()),
         ("verdict-declared-ts-ledger", typescript_corpus_dir()),
         ("verdict-declared-py-ledger", python_corpus_dir()),
+        ("verdict-declared-perl-ledger", perl_corpus_dir()),
     ] {
         // Keep the source directory name: the coverage mode is keyed on it,
         // so a copy named anything else would read as the Rust corpus.
@@ -2185,20 +2184,6 @@ fn declared_validation_keeps_every_ledger_but_perl_mandatory() -> Result<(), Str
             .ok_or_else(|| format!("{name}: a corpus without its spec-example ledger validated"))?;
         assert!(err.contains(coverage::LEDGER_FILE), "{name}: {err}");
     }
-
-    // Perl carries a ledger now, so it is gated (the gated validation needs
-    // the repo-relative specs tree, so the `check-all` run proves it); the
-    // ledgerless fallback stays only until #8775 makes the ledger mandatory
-    // there too.
-    let perl = perl_corpus_dir();
-    assert_eq!(corpus_coverage_mode(&perl), CorpusCoverage::Gated);
-    let leaf = perl.file_name().ok_or("corpus dir has no name")?;
-    let copy = crate::tests::temp_dir("verdict-declared-perl-ledgerless").join(leaf);
-    crate::tests::copy_dir_recursive(&perl, &copy)?;
-    fs::remove_file(copy.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
-    let (corpus, coverage) = validated_corpus_declared(&copy)?;
-    assert!(coverage.is_none());
-    assert!(!corpus.cases.is_empty());
     Ok(())
 }
 
@@ -2232,8 +2217,11 @@ fn tampered_perl(edit: impl Fn(&mut Value)) -> Result<Vec<String>, String> {
 
 #[test]
 fn committed_perl_corpus_is_valid_and_covers_each_test_library() -> Result<(), String> {
+    // Like the Python corpus test: resolve spec examples from the repository
+    // that owns fixtures/perl-verdict-corpus/, not from CWD (#7134).
     let dir = perl_corpus_dir();
-    let corpus = validated_corpus_without_coverage(&dir)?;
+    let _coverage = coverage::spec_example_coverage_for_corpus(&dir)?;
+    let corpus = load_corpus(&dir)?;
     for library in ["testmore", "test2", "testexception"] {
         assert!(
             corpus.subjects.iter().any(|s| s
@@ -2528,6 +2516,19 @@ fn measured(subject: &CaseSubject, kind: &str) -> Value {
                 "identity": {"input_identity": format!("sha256:{}", subject.diff_sha256)},
             }
         },
+        "language_completeness": {
+            "schema_version": "language_completeness.v1",
+            "mode": "diff",
+            "completeness": "complete",
+            "total_findings": 0,
+            "languages": [{
+                "language": subject.language,
+                "status": "complete_zero",
+                "findings": 0,
+                "limitations": [],
+                "disclosure": "silent",
+            }],
+        },
         "findings": [],
     })
 }
@@ -2607,6 +2608,39 @@ fn case_output_requires_affirmative_expected_language_evidence() -> Result<(), S
     let mut unbound = measured(&subject, "complete_no_findings");
     unbound["analysis_outcome"]["outcome"]["identity"] = json!({});
     refused("an unbound result", unbound, "input identity")?;
+
+    // Per-language completeness (#11272): the aggregate can read complete while
+    // the expected language's own row is not evidence of a run.
+    for status in [
+        "unavailable",
+        "invalid",
+        "failed",
+        "unsupported",
+        "not_selected",
+        "no_current_scope",
+    ] {
+        let mut skipped = measured(&subject, "complete_no_findings");
+        skipped["language_completeness"]["languages"][0]["status"] = json!(status);
+        refused(status, skipped, status)?;
+    }
+    for status in ["complete", "complete_zero", "partial"] {
+        let mut evidenced = measured(&subject, "complete_no_findings");
+        evidenced["language_completeness"]["languages"][0]["status"] = json!(status);
+        admit(&evidenced)?;
+    }
+    let mut no_projection = measured(&subject, "complete_no_findings");
+    no_projection
+        .as_object_mut()
+        .ok_or("measured output is not an object")?
+        .remove("language_completeness");
+    refused(
+        "a result without the projection",
+        no_projection,
+        "language_completeness",
+    )?;
+    let mut sibling_only = measured(&subject, "complete_no_findings");
+    sibling_only["language_completeness"]["languages"][0]["language"] = json!("perl");
+    refused("a sibling language's row", sibling_only, "no single row")?;
     Ok(())
 }
 

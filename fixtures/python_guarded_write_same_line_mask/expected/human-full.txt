@@ -76,7 +76,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `self.last == <expected value>`
+  Python preview: strengthen the existing related test with a field/object assertion for the missing check `self.last == <expected value>`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_guarded_write_same_line_mask/input --diff <cwd>/fixtures/python_guarded_write_same_line_mask/diff.patch --mode fast probe:shapes_noter.py:python_preview:d1ecfa8a
   ripr context --root <cwd>/fixtures/python_guarded_write_same_line_mask/input --diff <cwd>/fixtures/python_guarded_write_same_line_mask/diff.patch --mode fast --at probe:shapes_noter.py:python_preview:d1ecfa8a

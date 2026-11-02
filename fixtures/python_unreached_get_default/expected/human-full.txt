@@ -77,7 +77,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `tier not in RATE_TABLE`
+  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `tier not in RATE_TABLE`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_unreached_get_default/input --diff <cwd>/fixtures/python_unreached_get_default/diff.patch --mode fast probe:src_rates.py:python_preview:0a52360f
   ripr context --root <cwd>/fixtures/python_unreached_get_default/input --diff <cwd>/fixtures/python_unreached_get_default/diff.patch --mode fast --at probe:src_rates.py:python_preview:0a52360f

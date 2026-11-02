@@ -171,3 +171,51 @@ Updated:
 - `expected/human.txt`
 
 Note (#10700): `expected/human.txt` also moves its repair-refusal opening from the no-gap-id wording to `nothing to repair here`; that move is #10702/#10885 behavior, not caused by confidence_basis, and its transitional entry was removed in this bless.
+
+## Pending — typescript_conditional_assertion_credit (15)
+
+Reason:
+RIPR-SPEC-0027: plain wording for the conditional-credit recovery text (glossary: discriminator -> check)
+
+Command:
+`cargo xtask goldens bless typescript_conditional_assertion_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_conditional_assertion_credit (16)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_conditional_assertion_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_conditional_assertion_credit (17)
+
+Reason:
+RIPR-SPEC-0118 / #10692: observed-assertion label replaces Discriminator in the default check digest; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_conditional_assertion_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_conditional_assertion_credit (18)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless typescript_conditional_assertion_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

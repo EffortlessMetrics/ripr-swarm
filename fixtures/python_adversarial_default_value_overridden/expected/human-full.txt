@@ -76,7 +76,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `call `render` without `verbose``
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `call `render` without `verbose``
 Drill in:
   ripr explain --root <cwd>/fixtures/python_adversarial_default_value_overridden/input --diff <cwd>/fixtures/python_adversarial_default_value_overridden/diff.patch --mode fast probe:src_render.py:python_preview:bc1138cb
   ripr context --root <cwd>/fixtures/python_adversarial_default_value_overridden/input --diff <cwd>/fixtures/python_adversarial_default_value_overridden/diff.patch --mode fast --at probe:src_render.py:python_preview:bc1138cb

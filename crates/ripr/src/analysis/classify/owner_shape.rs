@@ -77,6 +77,11 @@ fn has_non_test_caller(owner: &FunctionSummary, index: &RustIndex) -> bool {
 /// by its inner fragments so a non-assert call cannot hide inside a control
 /// header.
 fn body_is_assertion_dominated(body: &str) -> bool {
+    let (assert_statements, other_statements) = count_assert_and_other_statements(body);
+    assert_statements >= 1 && other_statements == 0
+}
+
+fn count_assert_and_other_statements(body: &str) -> (usize, usize) {
     let mut assert_statements = 0usize;
     let mut other_statements = 0usize;
     let mut statement = String::new();
@@ -111,7 +116,7 @@ fn body_is_assertion_dominated(body: &str) -> bool {
         record_statement(&statement, &mut assert_statements, &mut other_statements);
     }
 
-    assert_statements >= 1 && other_statements == 0
+    (assert_statements, other_statements)
 }
 
 fn record_statement(statement: &str, assert_statements: &mut usize, other_statements: &mut usize) {
@@ -128,14 +133,7 @@ enum StatementKind {
     Ignorable,
 }
 
-fn classify_statement(statement: &str) -> StatementKind {
-    if let Some(kind) = classify_compound_statement(statement) {
-        return kind;
-    }
-    if contains_assert_family_call(statement) {
-        return StatementKind::Assert;
-    }
-    let mut rest = statement;
+fn strip_fn_modifiers(mut rest: &str) -> &str {
     loop {
         let stripped = rest
             .strip_prefix("pub(crate) ")
@@ -148,6 +146,64 @@ fn classify_statement(statement: &str) -> StatementKind {
             None => break,
         }
     }
+    rest
+}
+
+/// A one-line `fn … { … }` item is accumulated as a single statement; classify
+/// only the braced body instead of treating the signature as ignorable after a
+/// whole-text assert match (#11546).
+fn classify_inline_fn_body(statement: &str) -> Option<StatementKind> {
+    let rest = strip_fn_modifiers(statement);
+    if !rest.starts_with("fn ") || !rest.contains('{') || !rest.ends_with('}') {
+        return None;
+    }
+    let open = rest.find('{')?;
+    let close = rest.rfind('}')?;
+    if open >= close {
+        return None;
+    }
+    let (assert_statements, other_statements) =
+        count_assert_and_other_in_braced_body(&rest[open + 1..close]);
+    Some(if other_statements > 0 {
+        StatementKind::Other
+    } else if assert_statements >= 1 {
+        StatementKind::Assert
+    } else {
+        StatementKind::Ignorable
+    })
+}
+
+/// Statement boundaries inside a one-line `{ … }` fn body: split on `;` before
+/// treating a trailing `}` as completion, so `assert!(…); if … { … }` is not one
+/// assert-dominated statement (#11546).
+fn count_assert_and_other_in_braced_body(inner: &str) -> (usize, usize) {
+    let mut assert_statements = 0usize;
+    let mut other_statements = 0usize;
+    let mut rest = inner.trim();
+    while let Some(pos) = rest.find(';') {
+        let statement = rest[..=pos].trim();
+        if !statement.is_empty() {
+            record_statement(statement, &mut assert_statements, &mut other_statements);
+        }
+        rest = rest[pos + 1..].trim_start();
+    }
+    if !rest.is_empty() {
+        record_statement(rest, &mut assert_statements, &mut other_statements);
+    }
+    (assert_statements, other_statements)
+}
+
+fn classify_statement(statement: &str) -> StatementKind {
+    if let Some(kind) = classify_compound_statement(statement) {
+        return kind;
+    }
+    if let Some(kind) = classify_inline_fn_body(statement) {
+        return kind;
+    }
+    if contains_assert_family_call(statement) {
+        return StatementKind::Assert;
+    }
+    let rest = strip_fn_modifiers(statement);
     // The enclosing `fn` signature, declarations, and control-flow headers do
     // not count for or against dominance.
     let ignorable = rest.starts_with("fn ")
@@ -214,7 +270,25 @@ fn contains_assert_family_call(text: &str) -> bool {
     ASSERT_FAMILY_MACROS
         .iter()
         .any(|needle| contains_word_call(text, needle))
-        || text.contains(".expect(")
+        || contains_expect_as_assert(text)
+}
+
+/// `.expect(` counts only for setup-style unwraps (`let` bindings or a direct
+/// `receiver.expect(`), not for tail value expressions like
+/// `x.checked_add(2).expect("overflow")` (#11546).
+fn contains_expect_as_assert(text: &str) -> bool {
+    if !text.contains(".expect(") {
+        return false;
+    }
+    let trimmed = text.trim();
+    if trimmed.starts_with("let ") {
+        return true;
+    }
+    let Some(pos) = trimmed.find(".expect(") else {
+        return false;
+    };
+    let prefix = &trimmed[..pos];
+    !prefix.contains('.')
 }
 
 /// Word-boundary match so `my_assert!(` does not count as `assert!(`. The
@@ -495,6 +569,47 @@ mod tests {
         assert!(
             !is_assertion_shaped_owner(&owner, &index),
             "zero assert-family statements is never assertion-shaped"
+        );
+        Ok(())
+    }
+
+    // #11546: one-line fn items must not read as assertion-dominated oracles.
+    #[test]
+    fn one_line_debug_assert_clamp_is_not_assertion_dominated() -> Result<(), String> {
+        let body =
+            "pub fn clamp(x: i32) -> i32 { debug_assert!(x >= 0); if x > 9 { 9 } else { x } }\n";
+        assert!(
+            !body_is_assertion_dominated(body),
+            "debug_assert plus control/value logic on one line is not an oracle"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn one_line_assert_clamp_is_not_assertion_dominated() -> Result<(), String> {
+        let body = "pub fn clamp(x: i32) -> i32 { assert!(x >= 0); if x > 9 { 9 } else { x } }\n";
+        assert!(
+            !body_is_assertion_dominated(body),
+            "assert! plus control/value logic on one line is not an oracle"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn one_line_tail_expect_is_not_assertion_dominated() -> Result<(), String> {
+        let body = "fn add_two(x: i32) -> i32 { x.checked_add(2).expect(\"overflow\") }\n";
+        assert!(
+            !body_is_assertion_dominated(body),
+            "a tail `.expect` return is ordinary logic, not an assertion helper"
+        );
+        let owner = function("src/lib.rs", "add_two", body, false, Vec::new());
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            ..Default::default()
+        });
+        assert!(
+            !is_assertion_shaped_owner(&owner, &index),
+            "tail expect must not trigger the assertion-helper reframe"
         );
         Ok(())
     }

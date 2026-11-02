@@ -92,7 +92,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  Strengthen the related assertion so it discriminates the changed behavior
+  Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
   ripr explain --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast probe:src_lib.rs:match_arm:26dbc5a7
   ripr context --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:match_arm:26dbc5a7
@@ -131,7 +131,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  ripr did not credit the `assert_eq!` in selected at src/lib.rs:12; the "not credited" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass
+  Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
   ripr explain --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:377f287f
   ripr context --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:377f287f

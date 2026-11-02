@@ -526,6 +526,8 @@
             "changed_file_absent_from_worktree",
             "producer_timeout",
             "producer_failure",
+            "eol_only_churn",
+            "verification_only_change",
             "unevaluated_condition"
           ]
         },

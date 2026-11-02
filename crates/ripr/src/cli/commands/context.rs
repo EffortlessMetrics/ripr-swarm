@@ -255,7 +255,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // stderr-only stage lines `ripr check` projects (throttled heartbeats
     // included) disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
+    let progress = (!crate::cli::progress::progress_silenced(quiet, true)).then(|| {
         crate::cli::progress::CliProgressSink::for_stderr(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),
             crate::cli::progress::ProgressPolicy::STANDARD,
@@ -499,23 +499,23 @@ mod tests {
     fn context_requires_values_for_value_flags() {
         assert_eq!(
             context(&args(&["--at"])),
-            Err("missing value for --at".to_string())
+            Err("missing value for --at; pass a value right after it".to_string())
         );
         assert_eq!(
             context(&args(&["--finding"])),
-            Err("missing value for --finding".to_string())
+            Err("missing value for --finding; pass a value right after it".to_string())
         );
         assert_eq!(
             context(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             context(&args(&["--perl-facts"])),
-            Err("missing value for --perl-facts".to_string())
+            Err("missing value for --perl-facts; pass a value right after it".to_string())
         );
         assert_eq!(
             context(&args(&["--suppression-policy"])),
-            Err("missing value for --suppression-policy".to_string())
+            Err("missing value for --suppression-policy; pass a value right after it".to_string())
         );
     }
 

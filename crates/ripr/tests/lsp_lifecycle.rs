@@ -160,12 +160,24 @@ struct LspSession {
 
 impl LspSession {
     fn spawn() -> Result<Self, String> {
+        Self::spawn_with_env(&[])
+    }
+
+    /// Same stdio server as [`Self::spawn`], with extra child environment.
+    /// Existing callers, including `gap_corpus_currentness`, keep using
+    /// [`Self::spawn`] so this helper does not ripple into that module.
+    fn spawn_with_env(env: &[(&str, &str)]) -> Result<Self, String> {
         let binary = env!("CARGO_BIN_EXE_ripr");
-        let mut child = Command::new(binary)
+        let mut command = Command::new(binary);
+        command
             .args(["lsp", "--stdio"])
             // Cases already run in parallel. Keep a real multi-thread runtime
             // without multiplying host-sized or inherited scheduler pools.
-            .env("TOKIO_WORKER_THREADS", "2")
+            .env("TOKIO_WORKER_THREADS", "2");
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Tracing output is not part of the wire contract; dropping
@@ -2642,4 +2654,283 @@ fn list_actionable_items_wire_journey_around_refresh() -> Result<(), String> {
         ));
     }
     shutdown_exit_and_wait(&mut session)
+}
+
+// ── #11832: language-neutral changed-line budget over the real LSP wire ──
+
+/// Baseline plus six added Python lines. The parser budget counts added and
+/// removed payloads, so a lowered `RIPR_MAX_DIFF_CHANGED_LINES=5` must stop
+/// before analysis; the same diff under 1000 must not trip this ceiling.
+const OVERSIZED_PYTHON_BASELINE: &str = "def score():\n    return 0\n";
+const OVERSIZED_PYTHON_CHANGED: &str = "def score():\n    return 0\ndef extra_a():\n    return 1\ndef extra_b():\n    return 2\ndef extra_c():\n    return 3\n";
+const OVERSIZED_PYTHON_RELATIVE: &str = "pkg/app.py";
+
+fn build_one_file_python_worktree_diff(root: &Path) -> Result<PathBuf, String> {
+    let relative = Path::new(OVERSIZED_PYTHON_RELATIVE);
+    let parent = root.join(
+        relative
+            .parent()
+            .ok_or_else(|| "python fixture path has no parent".to_string())?,
+    );
+    fs::create_dir_all(&parent)
+        .map_err(|err| format!("create python fixture parent failed: {err}"))?;
+    let file = root.join(relative);
+    fs::write(&file, OVERSIZED_PYTHON_BASELINE)
+        .map_err(|err| format!("write python baseline failed: {err}"))?;
+    run_compat_git(root, &["init", "-q"])?;
+    run_compat_git(root, &["config", "user.email", "ripr@example.invalid"])?;
+    run_compat_git(root, &["config", "user.name", "RIPR Test"])?;
+    run_compat_git(root, &["add", OVERSIZED_PYTHON_RELATIVE])?;
+    run_compat_git(root, &["commit", "-q", "-m", "baseline"])?;
+    fs::write(&file, OVERSIZED_PYTHON_CHANGED)
+        .map_err(|err| format!("write python change failed: {err}"))?;
+    Ok(file)
+}
+
+fn is_terminal_analysis_state(state: Option<&str>) -> bool {
+    matches!(
+        state,
+        Some("succeeded" | "failed" | "cancelled" | "stopped")
+    )
+}
+
+/// Open and save the changed Python file, then return the last terminal
+/// `ripr/analysisStatus` plus every `textDocument/publishDiagnostics` seen
+/// while waiting. Uses the existing bounded await helpers, not a sleep.
+fn open_save_and_read_terminal_status(
+    session: &mut LspSession,
+    root_uri: &str,
+    file_uri: &str,
+) -> Result<(serde_json::Value, Vec<serde_json::Value>), String> {
+    let initialize = session.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "rootUri": root_uri,
+            "initializationOptions": {
+                "baseRef": "HEAD",
+                "checkMode": "instant",
+                "diagnosticProfile": "full"
+            },
+            "capabilities": {},
+        }),
+    )?;
+    expect_result(&initialize, "initialize")?;
+    session.notify("initialized", Some(serde_json::json!({})))?;
+    session.notify(
+        "textDocument/didOpen",
+        Some(serde_json::json!({
+            "textDocument": {
+                "uri": file_uri,
+                "languageId": "python",
+                "version": 1,
+                "text": OVERSIZED_PYTHON_CHANGED,
+            }
+        })),
+    )?;
+    session.notify(
+        "textDocument/didSave",
+        Some(serde_json::json!({
+            "textDocument": { "uri": file_uri },
+            "text": OVERSIZED_PYTHON_CHANGED,
+        })),
+    )?;
+
+    let deadline = Instant::now() + ANALYSIS_TIMEOUT;
+    let mut published = Vec::new();
+    let mut terminal: Option<serde_json::Value> = None;
+    while terminal.is_none() {
+        let message = session.await_message(deadline, "terminal ripr/analysisStatus")?;
+        if message.get("method").and_then(serde_json::Value::as_str)
+            == Some("textDocument/publishDiagnostics")
+        {
+            published.push(message);
+            continue;
+        }
+        if message.get("method").and_then(serde_json::Value::as_str) == Some("ripr/analysisStatus")
+            && is_terminal_analysis_state(
+                message
+                    .pointer("/params/state")
+                    .and_then(serde_json::Value::as_str),
+            )
+        {
+            terminal = Some(message);
+        }
+    }
+    // Same settle pattern as `collect_notifications`: a later didSave
+    // terminal status, if the server emits one, replaces the first.
+    let settle_deadline = Instant::now() + STARTUP_SETTLE;
+    while let Ok(message) = session.await_message(settle_deadline, "analysis settle window") {
+        if message.get("method").and_then(serde_json::Value::as_str)
+            == Some("textDocument/publishDiagnostics")
+        {
+            published.push(message);
+            continue;
+        }
+        if message.get("method").and_then(serde_json::Value::as_str) == Some("ripr/analysisStatus")
+            && is_terminal_analysis_state(
+                message
+                    .pointer("/params/state")
+                    .and_then(serde_json::Value::as_str),
+            )
+        {
+            terminal = Some(message);
+        }
+    }
+    let status = terminal
+        .ok_or_else(|| "expected a terminal ripr/analysisStatus after open/save".to_string())?;
+    let params = status
+        .get("params")
+        .cloned()
+        .ok_or_else(|| format!("ripr/analysisStatus must carry params: {status}"))?;
+    Ok((params, published))
+}
+
+fn names_changed_line_budget(value: &serde_json::Value) -> bool {
+    value.to_string().contains("RIPR_MAX_DIFF_CHANGED_LINES")
+}
+
+fn python_file_finding_diagnostics<'a>(
+    published: &'a [serde_json::Value],
+    file_uri: &str,
+) -> Vec<&'a serde_json::Value> {
+    published
+        .iter()
+        .filter(|message| {
+            message
+                .pointer("/params/uri")
+                .and_then(serde_json::Value::as_str)
+                == Some(file_uri)
+        })
+        .filter_map(|message| message.pointer("/params/diagnostics"))
+        .filter_map(serde_json::Value::as_array)
+        .flatten()
+        .filter(|diagnostic| {
+            let code = diagnostic.get("code").and_then(serde_json::Value::as_str);
+            if matches!(
+                code,
+                Some("ripr-scope-diff-oversized" | "ripr-diagnostic-analysis-pending")
+            ) {
+                return false;
+            }
+            diagnostic
+                .pointer("/data/kind")
+                .and_then(serde_json::Value::as_str)
+                != Some("delivery_limitation")
+        })
+        .collect()
+}
+
+fn assert_typed_limited_changed_line_budget(
+    status: &serde_json::Value,
+    published: &[serde_json::Value],
+    file_uri: &str,
+) -> Result<(), String> {
+    if status.get("run_status").and_then(serde_json::Value::as_str) != Some("limited") {
+        return Err(format!(
+            "over-budget non-Rust diff must report run_status=limited, got: {status}"
+        ));
+    }
+    match status.get("analysis_outcome") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(outcome) => {
+            let kind = outcome.get("kind").and_then(serde_json::Value::as_str);
+            if matches!(
+                kind,
+                Some(
+                    "complete_no_findings"
+                        | "complete_with_findings"
+                        | "no_scope"
+                        | "no_changed_lines"
+                        | "no_behavioral_candidates"
+                )
+            ) {
+                return Err(format!(
+                    "over-budget non-Rust diff must not report a complete analysis_outcome kind, got: {status}"
+                ));
+            }
+        }
+    }
+    if !names_changed_line_budget(status) {
+        return Err(format!(
+            "limited outcome must name the RIPR_MAX_DIFF_CHANGED_LINES budget: {status}"
+        ));
+    }
+    let components = status
+        .get("components")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("limited outcome must carry components: {status}"))?;
+    let diff = components.iter().find(|component| {
+        component
+            .get("component")
+            .and_then(serde_json::Value::as_str)
+            == Some("diff")
+    });
+    let Some(diff) = diff else {
+        return Err(format!(
+            "limited outcome must carry a diff component: {status}"
+        ));
+    };
+    if diff.get("kind").and_then(serde_json::Value::as_str) != Some("diff_scope_oversized") {
+        return Err(format!(
+            "diff component kind must be diff_scope_oversized: {status}"
+        ));
+    }
+    if diff
+        .get("findings_trustworthy")
+        .and_then(serde_json::Value::as_bool)
+        != Some(false)
+    {
+        return Err(format!(
+            "over-budget diff must mark findings untrustworthy: {status}"
+        ));
+    }
+    let findings = python_file_finding_diagnostics(published, file_uri);
+    if !findings.is_empty() {
+        return Err(format!(
+            "over-budget non-Rust diff must not publish complete finding diagnostics for {file_uri}: {findings:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn assert_not_limited_by_changed_line_budget(status: &serde_json::Value) -> Result<(), String> {
+    if names_changed_line_budget(status) {
+        return Err(format!(
+            "control diff under RIPR_MAX_DIFF_CHANGED_LINES=1000 must not name that budget: {status}"
+        ));
+    }
+    if status
+        .pointer("/analysis_outcome/kind")
+        .and_then(serde_json::Value::as_str)
+        == Some("analysis_failed")
+    {
+        return Err(format!(
+            "control diff must not fail analysis from this budget: {status}"
+        ));
+    }
+    Ok(())
+}
+
+/// #11832: a one-file non-Rust worktree diff over a lowered changed-line
+/// budget yields the typed limited LSP result; the same diff under a higher
+/// budget is not limited by this ceiling.
+#[test]
+fn oversized_non_rust_diff_over_changed_line_budget_is_typed_limited() -> Result<(), String> {
+    let root = unique_compat_fixture_root("oversized-changed-line")?;
+    let file = build_one_file_python_worktree_diff(&root.path)?;
+    let root_uri = compat_file_uri(&root.path)?;
+    let file_uri = compat_file_uri(&file)?;
+
+    let mut limited = LspSession::spawn_with_env(&[("RIPR_MAX_DIFF_CHANGED_LINES", "5")])?;
+    let (limited_status, limited_published) =
+        open_save_and_read_terminal_status(&mut limited, &root_uri, &file_uri)?;
+    assert_typed_limited_changed_line_budget(&limited_status, &limited_published, &file_uri)?;
+    shutdown_exit_and_wait(&mut limited)?;
+
+    let mut control = LspSession::spawn_with_env(&[("RIPR_MAX_DIFF_CHANGED_LINES", "1000")])?;
+    let (control_status, _) =
+        open_save_and_read_terminal_status(&mut control, &root_uri, &file_uri)?;
+    assert_not_limited_by_changed_line_budget(&control_status)?;
+    shutdown_exit_and_wait(&mut control)
 }

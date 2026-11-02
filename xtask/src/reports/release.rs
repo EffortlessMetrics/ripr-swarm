@@ -1075,6 +1075,16 @@ fn run_git_output_in_dir(root: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn create_external_cli_fixture(root: &Path) -> Result<(String, String), String> {
+    create_external_cli_fixture_with_seams(root, 1)
+}
+
+/// `seams` independent boundary predicates, each with one positive-value test,
+/// so the base-to-head change yields that many eligible seams. The release
+/// journey uses one; #12081 uses more than the default packet bound (3).
+fn create_external_cli_fixture_with_seams(
+    root: &Path,
+    seams: usize,
+) -> Result<(String, String), String> {
     fs::create_dir_all(root.join("src"))
         .map_err(|err| format!("create external CLI fixture source failed: {err}"))?;
     fs::create_dir_all(root.join("tests"))
@@ -1084,16 +1094,38 @@ fn create_external_cli_fixture(root: &Path) -> Result<(String, String), String> 
         "[package]\nname = \"external-cli-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     )
     .map_err(|err| format!("write external CLI fixture manifest failed: {err}"))?;
-    fs::write(
-        root.join("src/lib.rs"),
-        "pub fn classify(value: i32) -> i32 {\n    if value > 0 { 1 } else { 0 }\n}\n",
-    )
-    .map_err(|err| format!("write external CLI fixture base source failed: {err}"))?;
-    fs::write(
-        root.join("tests/behavior.rs"),
-        "#[test]\nfn positive_value_is_classified() {\n    assert_eq!(external_cli_fixture::classify(1), 1);\n}\n",
-    )
-    .map_err(|err| format!("write external CLI fixture test failed: {err}"))?;
+    let source = |comparison: &str| -> String {
+        (0..seams)
+            .map(|index| {
+                let name = if index == 0 {
+                    "classify".to_string()
+                } else {
+                    format!("classify_{index}")
+                };
+                format!(
+                    "pub fn {name}(value: i32) -> i32 {{\n    if value {comparison} 0 {{ 1 }} else {{ 0 }}\n}}\n"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    fs::write(root.join("src/lib.rs"), source(">"))
+        .map_err(|err| format!("write external CLI fixture base source failed: {err}"))?;
+    let tests: String = (0..seams)
+        .map(|index| {
+            let name = if index == 0 {
+                "classify".to_string()
+            } else {
+                format!("classify_{index}")
+            };
+            format!(
+                "#[test]\nfn {name}_positive_value_is_classified() {{\n    assert_eq!(external_cli_fixture::{name}(1), 1);\n}}\n"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(root.join("tests/behavior.rs"), tests)
+        .map_err(|err| format!("write external CLI fixture test failed: {err}"))?;
     run_git_output_in_dir(root, &["init", "--quiet"])?;
     run_git_output_in_dir(
         root,
@@ -1104,11 +1136,8 @@ fn create_external_cli_fixture(root: &Path) -> Result<(String, String), String> 
     run_git_output_in_dir(root, &["commit", "--no-gpg-sign", "--quiet", "-m", "base"])?;
     let base = run_git_output_in_dir(root, &["rev-parse", "HEAD"])?;
 
-    fs::write(
-        root.join("src/lib.rs"),
-        "pub fn classify(value: i32) -> i32 {\n    if value >= 0 { 1 } else { 0 }\n}\n",
-    )
-    .map_err(|err| format!("write external CLI fixture head source failed: {err}"))?;
+    fs::write(root.join("src/lib.rs"), source(">="))
+        .map_err(|err| format!("write external CLI fixture head source failed: {err}"))?;
     run_git_output_in_dir(root, &["add", "."])?;
     run_git_output_in_dir(root, &["commit", "--no-gpg-sign", "--quiet", "-m", "head"])?;
     let head = run_git_output_in_dir(root, &["rev-parse", "HEAD"])?;
@@ -1395,81 +1424,15 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
                 "packaged CLI context did not retain the requested finding identity".to_string(),
             );
         }
-        let pilot_out = fixture_root.join("pilot-output");
-        let pilot_out_text = pilot_out.to_string_lossy().into_owned();
-        let pilot_args = vec![
-            "pilot".to_string(),
-            "--root".to_string(),
-            root_text,
-            "--out".to_string(),
-            pilot_out_text,
-            "--timeout-ms".to_string(),
-            "30000".to_string(),
-        ];
-        let pilot = run_command_in_dir(
+        let (retained_packet, retained_summary) = run_packaged_pilot(
             &binary_text,
-            &pilot_args,
+            &root_text,
             &fixture_root,
-            "installed packaged CLI pilot",
+            &report_dir,
+            &[],
+            &mut commands,
+            &mut details,
         )?;
-        record_journey_command(&mut commands, "pilot", &pilot_args, &pilot);
-        if !pilot.success {
-            return Err("packaged CLI pilot failed".to_string());
-        }
-        let packet = pilot_out.join("agent-seam-packets.json");
-        let summary = pilot_out.join("pilot-summary.json");
-        for path in [&packet, &summary] {
-            if !path.is_file() {
-                return Err(format!(
-                    "packaged CLI pilot did not write {}",
-                    crate::normalize_path(path)
-                ));
-            }
-            let text = fs::read_to_string(path)
-                .map_err(|err| format!("read packaged CLI pilot artifact failed: {err}"))?;
-            let value: Value = serde_json::from_str(&text)
-                .map_err(|err| format!("packaged CLI pilot artifact is malformed JSON: {err}"))?;
-            if path == &packet {
-                let run_status =
-                    value
-                        .get("run_status")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| {
-                            "packaged CLI pilot packet artifact omitted run_status".to_string()
-                        })?;
-                if run_status != "complete" {
-                    return Err(format!(
-                        "packaged CLI pilot did not complete: run_status={run_status}"
-                    ));
-                }
-                let packets_total = value
-                    .get("packets_total")
-                    .and_then(Value::as_u64)
-                    .ok_or_else(|| {
-                        "packaged CLI pilot packet artifact omitted numeric packets_total"
-                            .to_string()
-                    })?;
-                details.push(format!("pilot run status: {run_status}"));
-                details.push(format!("pilot packets: {packets_total}"));
-            } else {
-                let status = value
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "packaged CLI pilot summary omitted status".to_string())?;
-                if status != "complete" {
-                    return Err(format!(
-                        "packaged CLI pilot summary was not complete: status={status}"
-                    ));
-                }
-                details.push(format!("pilot summary status: {status}"));
-            }
-        }
-        let retained_packet = report_dir.join("packaged-cli-agent-seam-packets.json");
-        let retained_summary = report_dir.join("packaged-cli-pilot-summary.json");
-        fs::copy(&packet, &retained_packet)
-            .map_err(|err| format!("retain packaged CLI packet failed: {err}"))?;
-        fs::copy(&summary, &retained_summary)
-            .map_err(|err| format!("retain packaged CLI summary failed: {err}"))?;
         Ok(PublicCliJourney {
             base,
             head,
@@ -1560,6 +1523,109 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
             },
         ),
     }
+}
+
+/// The packaged-CLI pilot step: run the installed `ripr pilot`, validate its
+/// packet and summary artifacts, and retain them beside the readiness report.
+/// Split out so a fixture that makes the packet bound fire can drive the real
+/// binary through the same gate (#12081).
+fn run_packaged_pilot(
+    binary_text: &str,
+    root_text: &str,
+    fixture_root: &Path,
+    report_dir: &Path,
+    envs: &[(&str, &str)],
+    commands: &mut Vec<Value>,
+    details: &mut Vec<String>,
+) -> Result<(PathBuf, PathBuf), String> {
+    let pilot_out = fixture_root.join("pilot-output");
+    let pilot_out_text = pilot_out.to_string_lossy().into_owned();
+    let pilot_args = vec![
+        "pilot".to_string(),
+        "--root".to_string(),
+        root_text.to_string(),
+        "--out".to_string(),
+        pilot_out_text,
+        "--timeout-ms".to_string(),
+        "30000".to_string(),
+    ];
+    // The two budget controls are cleared so an ambient value cannot change
+    // which status this step observes; `envs` re-sets what a caller needs.
+    let cleared: Vec<&str> = ["RIPR_PILOT_PACKET_BUDGET", "RIPR_PILOT_SEAM_BUDGET"]
+        .into_iter()
+        .filter(|name| !envs.iter().any(|(set, _)| set == name))
+        .collect();
+    let output = crate::run::capture_output_in_dir_with_envs(
+        binary_text,
+        &pilot_args,
+        fixture_root,
+        "installed packaged CLI pilot",
+        envs,
+        &cleared,
+    )?;
+    let pilot = CommandResult {
+        status: output.status.code(),
+        success: output.status.success(),
+        stdout: output.stdout,
+        stderr: output.stderr,
+    };
+    record_journey_command(commands, "pilot", &pilot_args, &pilot);
+    if !pilot.success {
+        return Err("packaged CLI pilot failed".to_string());
+    }
+    let packet = pilot_out.join("agent-seam-packets.json");
+    let summary = pilot_out.join("pilot-summary.json");
+    for path in [&packet, &summary] {
+        if !path.is_file() {
+            return Err(format!(
+                "packaged CLI pilot did not write {}",
+                crate::normalize_path(path)
+            ));
+        }
+        let text = fs::read_to_string(path)
+            .map_err(|err| format!("read packaged CLI pilot artifact failed: {err}"))?;
+        let value: Value = serde_json::from_str(&text)
+            .map_err(|err| format!("packaged CLI pilot artifact is malformed JSON: {err}"))?;
+        if path == &packet {
+            let run_status = value
+                .get("run_status")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    "packaged CLI pilot packet artifact omitted run_status".to_string()
+                })?;
+            if !pilot_packet_run_status_is_complete(run_status) {
+                return Err(format!(
+                    "packaged CLI pilot did not complete: run_status={run_status}"
+                ));
+            }
+            let packets_total = value
+                .get("packets_total")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    "packaged CLI pilot packet artifact omitted numeric packets_total".to_string()
+                })?;
+            details.push(format!("pilot run status: {run_status}"));
+            details.push(format!("pilot packets: {packets_total}"));
+        } else {
+            let status = value
+                .get("status")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "packaged CLI pilot summary omitted status".to_string())?;
+            if status != "complete" {
+                return Err(format!(
+                    "packaged CLI pilot summary was not complete: status={status}"
+                ));
+            }
+            details.push(format!("pilot summary status: {status}"));
+        }
+    }
+    let retained_packet = report_dir.join("packaged-cli-agent-seam-packets.json");
+    let retained_summary = report_dir.join("packaged-cli-pilot-summary.json");
+    fs::copy(&packet, &retained_packet)
+        .map_err(|err| format!("retain packaged CLI packet failed: {err}"))?;
+    fs::copy(&summary, &retained_summary)
+        .map_err(|err| format!("retain packaged CLI summary failed: {err}"))?;
+    Ok((retained_packet, retained_summary))
 }
 
 fn clear_packaged_cli_artifacts(report_dir: &Path) -> Result<(), String> {
@@ -1768,6 +1834,15 @@ fn installed_command_surface_check(binary: &Path) -> ReleaseReadinessCheck {
             vec![format!("missing: {}", missing.join(", "))],
         )
     }
+}
+
+/// Whether a pilot `agent-seam-packets.json` `run_status` is a finished run
+/// (#12065). `packet_bound_applied` is a presentation cut of the packet file
+/// (#11951): the analysis completed and the file discloses the cut, so it
+/// passes the gate. `seam_limit_applied`, `limited_declined_files` and every
+/// other status mean the run itself was limited and still fail.
+fn pilot_packet_run_status_is_complete(run_status: &str) -> bool {
+    matches!(run_status, "complete" | "packet_bound_applied")
 }
 
 fn pilot_fixture_check(binary: &Path) -> ReleaseReadinessCheck {
@@ -3754,6 +3829,117 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn pilot_packet_run_status_accepts_complete_and_the_packet_bound_only() {
+        use super::pilot_packet_run_status_is_complete;
+        assert!(pilot_packet_run_status_is_complete("complete"));
+        assert!(pilot_packet_run_status_is_complete("packet_bound_applied"));
+        for limited in [
+            "seam_limit_applied",
+            "limited_declined_files",
+            "incomplete",
+            "",
+            "Complete",
+        ] {
+            assert!(
+                !pilot_packet_run_status_is_complete(limited),
+                "{limited:?} must keep failing the release gate"
+            );
+        }
+    }
+
+    /// Builds the real `ripr` binary next to the running test executable
+    /// (`target/<profile>/deps/xtask-*` -> `target/<profile>/ripr`).
+    fn built_ripr_binary() -> Result<String, String> {
+        let exe = std::env::current_exe().map_err(|err| format!("resolve test binary: {err}"))?;
+        let profile_dir = exe
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| "test binary has no profile directory".to_string())?
+            .to_path_buf();
+        let mut build_args = vec!["build", "-q", "-p", "ripr", "--bin", "ripr"];
+        if profile_dir
+            .file_name()
+            .is_some_and(|name| name == "release")
+        {
+            build_args.push("--release");
+        }
+        let build = super::run_command("cargo", &build_args)
+            .map_err(|err| format!("build ripr for the pilot gate test: {err}"))?;
+        if !build.success {
+            return Err("cargo build -p ripr --bin ripr failed (instrument failure)".to_string());
+        }
+        let name = if cfg!(windows) { "ripr.exe" } else { "ripr" };
+        let path = profile_dir.join(name);
+        if !path.is_file() {
+            return Err(format!("built ripr binary not found at {}", path.display()));
+        }
+        Ok(path.to_string_lossy().into_owned())
+    }
+
+    /// #12081: run the packaged-CLI pilot step against the real binary on a
+    /// fixture with more eligible seams than the default packet bound (3).
+    /// The producer and the gate helper are pinned separately elsewhere; this
+    /// joins them end to end.
+    #[test]
+    fn packaged_pilot_step_passes_when_the_packet_bound_really_fires_and_fails_on_a_seam_limit()
+    -> Result<(), String> {
+        let binary = built_ripr_binary()?;
+        let root = super::external_cli_fixture_root()?;
+        let report_dir = root.join("report");
+        let result = (|| -> Result<(), String> {
+            super::create_external_cli_fixture_with_seams(&root, 6)?;
+            fs::create_dir_all(&report_dir).map_err(|err| err.to_string())?;
+            let root_text = root.to_string_lossy().into_owned();
+
+            let mut commands = Vec::new();
+            let mut details = Vec::new();
+            let (packet, _summary) = super::run_packaged_pilot(
+                &binary,
+                &root_text,
+                &root,
+                &report_dir,
+                &[],
+                &mut commands,
+                &mut details,
+            )?;
+            let packet: Value =
+                serde_json::from_str(&fs::read_to_string(&packet).map_err(|err| err.to_string())?)
+                    .map_err(|err| err.to_string())?;
+            // The bound really fired: more eligible seams than the cut kept.
+            assert_eq!(packet["run_status"], "packet_bound_applied", "{packet}");
+            assert_eq!(packet["packets_total"], 3, "{packet}");
+            assert!(
+                details.contains(&"pilot run status: packet_bound_applied".to_string()),
+                "{details:?}"
+            );
+
+            // Discriminating negative: a run that genuinely hits the seam
+            // limit keeps failing the same step.
+            let mut commands = Vec::new();
+            let mut details = Vec::new();
+            let limited = super::run_packaged_pilot(
+                &binary,
+                &root_text,
+                &root,
+                &report_dir,
+                &[("RIPR_PILOT_SEAM_BUDGET", "2")],
+                &mut commands,
+                &mut details,
+            );
+            let error = limited.err().ok_or_else(|| {
+                "a seam-limited pilot run must fail the packaged-CLI pilot step".to_string()
+            })?;
+            assert!(
+                error.contains("did not complete: run_status=seam_limit_applied"),
+                "{error}"
+            );
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&root);
+        result
+    }
 
     #[test]
     fn latency_status_reasons_are_forwarded_into_readiness_detail() -> Result<(), String> {

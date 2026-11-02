@@ -11,8 +11,8 @@ mod source_role;
 pub(crate) use assertion_dependency::{
     AnyhowIdentity, JsonRootEligibilityMemo, LiteralJsonIdentity, MetadataProbeFailure,
     config_snapshot_identity, eligible_json_root, eligible_manifest, eligible_proptest_root,
-    verified_anyhow_identity, verified_json_identity, verified_proptest_identity,
-    verified_proptest_identity_result,
+    locked_at_audited_version, verified_anyhow_identity, verified_json_identity,
+    verified_proptest_identity, verified_proptest_identity_result,
 };
 pub(crate) use cargo_input_identity::cargo_input_identity;
 pub(crate) use cargo_targets::{
@@ -39,5 +39,6 @@ pub(crate) use discover::{
     supplement_absent_file_limitations, worktree_contains_regular_source_file,
 };
 pub(crate) use select::{
-    select_rust_files_for_mode_with_dependent_packages, with_module_context_files,
+    module_parent_candidates, select_rust_files_for_mode_with_dependent_packages,
+    with_module_context_files,
 };

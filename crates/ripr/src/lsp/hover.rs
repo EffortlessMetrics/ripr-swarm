@@ -12,7 +12,7 @@ use crate::output::agent_seam_packets::{
 };
 use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
-use crate::output::human::plain_observation_wording;
+use crate::output::human::{plain_observation_wording, plain_stop_condition};
 use crate::output::preview_actionability::{PreviewActionability, preview_actionability_for};
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use serde_json::Value;
@@ -571,7 +571,7 @@ fn push_gap_repair_route(lines: &mut Vec<String>, data: &Value) {
         if !stops.is_empty() {
             lines.push("- stop if:".to_string());
             for stop in stops {
-                lines.push(format!("  - {stop}"));
+                lines.push(format!("  - {}", plain_stop_condition(stop)));
             }
         }
     }
@@ -691,6 +691,10 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
     let mut lines = vec![hover_header(&classification), String::new()];
     push_preview_boundary(&mut lines, finding);
     push_preview_actionability(&mut lines, finding);
+    if let Some(disclosure) = finding.source_currentness_disclosure() {
+        lines.push(format!("**Source:** {disclosure}"));
+        lines.push(String::new());
+    }
     lines.extend([
         diagnostic.message.clone(),
         String::new(),
@@ -993,8 +997,90 @@ fn stage_line(name: &str, stage: &StageEvidence) -> String {
     format!(
         "* {name} {}: {}",
         stage.state.as_str(),
-        plain_observation_wording(&stage.summary)
+        plain_hover_summary(&plain_observation_wording(&stage.summary))
     )
+}
+
+/// Producer summaries that append the user's own source text (a sink
+/// expression, test names, a matched literal) after the first `": "`. The tail
+/// of these is never rewritten. A colon elsewhere separates a label from
+/// producer prose (`Discriminator unconfirmed: ...`) and is rewritten.
+const SOURCE_TEXT_AFTER_COLON_PREFIXES: &[&str] = &[
+    "Changed behavior appears to influence ",
+    "Complete propagation witness reaches ",
+    "No complete owner-bound propagation witness found for ",
+    "Propagation witness is incomplete for ",
+    "Related tests appear to reach ",
+    "No test is seen calling ",
+    "Related tests exercise the wrapper seam's converted callee",
+    "Detected test input literal matching changed boundary",
+];
+
+/// Hover-only glossary pass over a producer stage summary (#12213). The
+/// summary strings are shared with JSON, SARIF and the CLI Evidence line (which
+/// the glossary exempts), so they are not rewritten at the source; the editor
+/// hover shows "check" where the producer wrote "discriminator". Whole words
+/// only, so identifiers like `missing_discriminators` are never touched.
+///
+/// Backticked spans, bracketed literal lists and the source-text tail of the known producer forms
+/// above are never rewritten: a hover must not tell someone to look for a name
+/// their code does not contain. An unbalanced backtick means source text may
+/// hold a lone backtick, so the summary is then left verbatim.
+fn plain_hover_summary(text: &str) -> String {
+    if text.matches('`').count() % 2 == 1 {
+        return text.to_string();
+    }
+    let tail_start = if SOURCE_TEXT_AFTER_COLON_PREFIXES
+        .iter()
+        .any(|prefix| text.starts_with(prefix))
+    {
+        text.find(": ").map_or(text.len(), |at| at + 2)
+    } else {
+        text.len()
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut word = String::new();
+    let mut in_code = false;
+    let mut bracket_depth = 0usize;
+    let flush = |word: &mut String, out: &mut String, verbatim: bool| {
+        match word.as_str() {
+            _ if verbatim => out.push_str(word),
+            "discriminator" => out.push_str("check"),
+            "Discriminator" => out.push_str("Check"),
+            "discriminators" => out.push_str("checks"),
+            "Discriminators" => out.push_str("Checks"),
+            _ => out.push_str(word),
+        }
+        word.clear();
+    };
+    for (at, c) in text.char_indices() {
+        if c.is_alphanumeric() || c == '_' {
+            word.push(c);
+            continue;
+        }
+        // `word` ended just before `at`, so the tail test uses its start.
+        let word_start = at - word.len();
+        flush(
+            &mut word,
+            &mut out,
+            in_code || bracket_depth > 0 || word_start >= tail_start,
+        );
+        match c {
+            '`' => in_code = !in_code,
+            // The producer lists literals as `[a, b]`; they are source text.
+            '[' if !in_code => bracket_depth += 1,
+            ']' if !in_code => bracket_depth = bracket_depth.saturating_sub(1),
+            _ => {}
+        }
+        out.push(c);
+    }
+    let word_start = text.len() - word.len();
+    flush(
+        &mut word,
+        &mut out,
+        in_code || bracket_depth > 0 || word_start >= tail_start,
+    );
+    out
 }
 
 /// The producer's `discriminate` stage grades the strongest related oracle.
@@ -1016,15 +1102,15 @@ fn discriminator_stage_line(finding: &Finding) -> String {
         .collect::<Vec<_>>();
     if missing.is_empty() {
         format!(
-            "* discriminator not established ({}); related oracle: {}",
+            "* missing check not established ({}); related oracle: {}",
             finding.class.as_str(),
-            plain_observation_wording(&stage.summary)
+            plain_hover_summary(&plain_observation_wording(&stage.summary))
         )
     } else {
         format!(
-            "* discriminator missing: {}; related oracle: {}",
+            "* missing check: {}; related oracle: {}",
             missing.join(", "),
-            plain_observation_wording(&stage.summary)
+            plain_hover_summary(&plain_observation_wording(&stage.summary))
         )
     }
 }
@@ -1542,6 +1628,16 @@ fn seam_next_step_for(entry: &ClassifiedSeam) -> String {
             "Assert the exact error variant via `matches!` or `assert_matches!`.".to_string()
         }
         SeamKind::ReturnValue => "Add an exact-value assertion on the returned value.".to_string(),
+        // #11398: a field write in a method changes the value the method
+        // was called on; there is no returned struct to compare.
+        SeamKind::FieldConstruction if crate::analysis::is_field_write_seam(&entry.seam) => {
+            use crate::analysis::FieldWriteRead;
+            match crate::analysis::field_write_read(&entry.seam) {
+                Some(FieldWriteRead::CallResult) => "Call the method, then assert the exact value of the changed field on the value the call returns (a by-value method writes a moved copy).".to_string(),
+                Some(FieldWriteRead::Unspecified) => "Call the method, then assert the exact value of the changed field.".to_string(),
+                _ => "Call the method, then assert the exact value of the changed field on the value it was called on.".to_string(),
+            }
+        }
         SeamKind::FieldConstruction => {
             "Assert on the specific field or use whole-object equality.".to_string()
         }
@@ -1640,6 +1736,46 @@ mod seam_hover_tests {
             evidence,
             class: SeamGripClass::WeaklyGripped,
         }
+    }
+
+    /// #12061: the hover words a field write by the receiver mode the seam
+    /// records: a borrowed receiver is read on the value it was called on, a
+    /// by-value receiver (a moved copy) on the value the call returns, and an
+    /// unrecorded mode names neither.
+    #[test]
+    fn field_write_next_step_follows_the_receiver_mode() {
+        let step = |borrows: Option<bool>| {
+            let mut entry = weakly_gripped_classified();
+            entry.seam = RepoSeam::new(
+                "src/req.rs",
+                "req::Req::timeout",
+                SeamKind::FieldConstruction,
+                10,
+                11,
+                "self.timeout = t * 2",
+                RequiredDiscriminator::FieldValue {
+                    field: "self.timeout = t * 2".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+            .with_owner_borrows_receiver(borrows);
+            seam_next_step_for(&entry)
+        };
+        let borrowed = step(Some(true));
+        assert!(
+            borrowed.contains("on the value it was called on"),
+            "{borrowed}"
+        );
+        let by_value = step(Some(false));
+        assert!(
+            by_value.contains("on the value the call returns") && !by_value.contains("called on"),
+            "{by_value}"
+        );
+        let unrecorded = step(None);
+        assert!(
+            !unrecorded.contains("called on") && !unrecorded.contains("call returns"),
+            "{unrecorded}"
+        );
     }
 
     fn sample_diagnostic() -> Diagnostic {
@@ -1756,6 +1892,28 @@ mod seam_hover_tests {
             language_view: None,
             rust_diagnostic_origins: Default::default(),
         }
+    }
+
+    #[test]
+    fn gap_diagnostic_hover_renders_the_python_stop_condition_in_plain_words() -> Result<(), String>
+    {
+        // The real producer sentence (pinned against the producer in
+        // `python_repair_card`'s drift test), rendered through the hover.
+        let mut diagnostic = sample_gap_diagnostic();
+        if let Some(data) = diagnostic.data.as_mut() {
+            data["repair_route"]["stop_conditions"] = serde_json::json!([
+                "Stop if the expected value for the missing discriminator is ambiguous."
+            ]);
+        }
+        let hover = diagnostic_hover_response(&diagnostic);
+        let md = extract_markup(&hover)?;
+        if !md.contains("Stop if the expected value for the missing check is ambiguous.") {
+            return Err(format!("plain stop condition missing from hover:\n{md}"));
+        }
+        if md.contains("missing discriminator") {
+            return Err(format!("jargon stop condition reached the hover:\n{md}"));
+        }
+        Ok(())
     }
 
     #[test]
@@ -2683,6 +2841,47 @@ mod top_limitation_parity_tests {
     }
 
     #[test]
+    fn a_base_side_finding_is_never_offered_as_a_repair_route_on_any_surface() -> Result<(), String>
+    {
+        // #11821: a finding whose source is not a candidate edit target
+        // (`base_deleted`) must not become a stronger route on any surface.
+        let mut finding = test_finding()?;
+        finding.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+
+        let item = GapItem::from_finding(&finding, Path::new("."))?;
+        let document = item.limitation_document("snap");
+        let kind = document
+            .pointer("/limitation/kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("no limitation kind: {document}"))?;
+        assert_eq!(kind, "not_candidate_actionable");
+        assert_ne!(
+            document
+                .pointer("/limitation/stage")
+                .and_then(Value::as_str),
+            Some("none"),
+            "a base-side item must carry a limitation on MCP"
+        );
+
+        let cli = crate::output::human::render_finding(&finding);
+        assert!(
+            cli.contains("base_deleted \u{2014} base-side evidence, not a candidate edit target"),
+            "the CLI must say the source is not a candidate edit target:\n{cli}"
+        );
+
+        let hover = hover_text(&finding);
+        assert!(
+            hover.contains("no bounded repair instruction available"),
+            "hover must not offer a repair instruction for a base-side item:\n{hover}"
+        );
+        assert!(
+            !hover.contains("ripr repair"),
+            "hover must not offer a repair command for a base-side item:\n{hover}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_limited_finding_never_reads_as_repair_ready_on_any_surface() -> Result<(), String> {
         let mut finding = test_finding()?;
         finding.static_limit_kind = Some(StaticLimitKind::UnsupportedSyntax);
@@ -2700,5 +2899,149 @@ mod top_limitation_parity_tests {
             "hover must disclose the same limit the MCP result names:\n{hover}"
         );
         Ok(())
+    }
+
+    /// A ledger-derived limitation item (no repair route, analyzer limitation)
+    /// reaches the editor through two stored-field readers: hover and the
+    /// code-action note. They must name the same kind and detail, and neither
+    /// may turn the limitation into a repair offer.
+    #[test]
+    fn a_ledger_limitation_reads_the_same_in_hover_and_the_code_action_note() {
+        let data = serde_json::json!({
+            "source": "gap_decision_ledger",
+            "gap_state": "static_limitation",
+            "repairability": "analyzer_limitation",
+            "static_limit_kind": "rust_assertion_context_unresolved",
+            "static_limit_detail": "The assertion macro could not be read.",
+            "repair_route": Value::Null,
+        });
+        let diagnostic = Diagnostic {
+            source: Some("ripr".to_string()),
+            message: "limited".to_string(),
+            data: Some(data.clone()),
+            ..Diagnostic::default()
+        };
+        let hover = gap_diagnostic_hover_markdown(&diagnostic, &data);
+        let note = crate::lsp::actions::static_limit_note(&data).unwrap_or_default();
+        for surface in [&hover, &note] {
+            assert!(
+                surface.contains("Static limit: rust_assertion_context_unresolved"),
+                "kind missing:\n{surface}"
+            );
+            assert!(
+                surface.contains("The assertion macro could not be read."),
+                "stored detail missing:\n{surface}"
+            );
+            assert!(
+                !surface.contains("ripr repair"),
+                "a limitation must not offer a repair command:\n{surface}"
+            );
+        }
+        assert!(
+            note.contains("Boundary: static evidence only; advisory action."),
+            "the code-action note keeps its advisory boundary:\n{note}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod plain_hover_summary_tests {
+    use super::plain_hover_summary;
+
+    #[test]
+    fn rewrites_producer_prose_but_not_user_source_text() {
+        assert_eq!(
+            plain_hover_summary("the equality-boundary discriminator is missing"),
+            "the equality-boundary check is missing"
+        );
+        // Known forms that append source text: the tail stays verbatim.
+        assert_eq!(
+            plain_hover_summary("Complete propagation witness reaches return value: discriminator"),
+            "Complete propagation witness reaches return value: discriminator"
+        );
+        assert_eq!(
+            plain_hover_summary(
+                "Related tests appear to reach f: discriminator_holds, discriminator"
+            ),
+            "Related tests appear to reach f: discriminator_holds, discriminator"
+        );
+        // Backticked source text stays verbatim.
+        assert_eq!(
+            plain_hover_summary("no strong discriminator for `discriminator`"),
+            "no strong check for `discriminator`"
+        );
+        // A lone backtick may belong to source text: leave the line alone.
+        assert_eq!(
+            plain_hover_summary("no strong discriminator for `x"),
+            "no strong discriminator for `x"
+        );
+    }
+
+    #[test]
+    fn protects_bracketed_literals_and_name_token_tails() {
+        assert_eq!(
+            plain_hover_summary(
+                "Tests have literals [\"discriminator\", 3], but no detected value matches changed boundary [4]; no discriminator found"
+            ),
+            "Tests have literals [\"discriminator\", 3], but no detected value matches changed boundary [4]; no check found"
+        );
+        assert_eq!(
+            plain_hover_summary(
+                "No test is seen calling f; tests share only its file or a name token: discriminator_ok, discriminator"
+            ),
+            "No test is seen calling f; tests share only its file or a name token: discriminator_ok, discriminator"
+        );
+    }
+
+    #[test]
+    fn every_source_text_prefix_still_appears_in_a_producer() {
+        // The prefix list is a reviewed allowlist; if a producer rewords its
+        // summary the entry stops protecting anything, so fail loudly (#12284).
+        // Production code only: test fixtures in the same files repeat the
+        // wording and would mask a production reword.
+        let producers = [
+            include_str!("../analysis/classify/flow.rs"),
+            include_str!("../analysis/classify/reach.rs"),
+            include_str!("../analysis/classify/infection.rs"),
+            include_str!("../domain/classification.rs"),
+        ]
+        .map(|source| {
+            // Cut at the real test module: producers carry earlier item-level
+            // `#[cfg(test)]` attributes that a bare first-match cut would hit.
+            source
+                .split("#[cfg(test)]\nmod tests {")
+                .next()
+                .unwrap_or(source)
+        })
+        .join("\n");
+        for prefix in super::SOURCE_TEXT_AFTER_COLON_PREFIXES {
+            assert!(
+                producers.contains(prefix),
+                "no producer emits {prefix:?}; update SOURCE_TEXT_AFTER_COLON_PREFIXES"
+            );
+        }
+    }
+
+    #[test]
+    fn rewrites_producer_prose_after_a_label_colon() {
+        // Real producer summaries (boundary_pairing.rs, Python static limit):
+        // the colon separates a label from producer prose, which is rewritten.
+        assert_eq!(
+            plain_hover_summary(
+                "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"
+            ),
+            "Check unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that check"
+        );
+        assert_eq!(
+            plain_hover_summary(
+                "Static limit `x`: cannot prove whether the generated cases include the changed discriminator."
+            ),
+            "Static limit `x`: cannot prove whether the generated cases include the changed check."
+        );
+        // A Rust path colon is not a label colon.
+        assert_eq!(
+            plain_hover_summary("std::cmp::max discriminator"),
+            "std::cmp::max check"
+        );
     }
 }

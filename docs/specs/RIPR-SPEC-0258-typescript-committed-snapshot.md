@@ -245,13 +245,18 @@ existing rules and limits.
   computed key built at run time (`["pro" + "jects"]`) is not read and a
   delegating config written that way keeps the credit. A config above the
   repository boundary is not read.
-- A config that inherits from another file is not followed: a `preset:`
-  option, or a spread of an imported base config
-  (`...require("./jest.base")`, `...baseConfig`), may carry a snapshot
-  override this walk never read. Such a config keeps the credit unless the
-  file itself names an override. A key built from a variable
-  (`[name]: ...`, `config[name] = ...`) is not read either. Both are tracked
-  as known limits, not refused.
+- A `preset:` option that is not a plain `ts-jest` preset refuses (#10139).
+  A spread on the root config object
+  (`...require("./jest.base")`, `...baseConfig`) and a root key built from a
+  variable (`[name]: ...`) refuse too, since the unread base may carry a
+  snapshot override (#9940). Spreads in arrays
+  (`[...defaults.moduleFileExtensions]`) and in nested objects
+  (`transform: { ...preset }`) are not root keys and keep the credit. A
+  regex literal, a `function` keyword, a block arrow body, or a string or
+  comment the scan cannot close refuses, since the root could hide behind it. A member
+  assignment through a variable key (`config[name] = ...`) and a base merged
+  through a call (`mergeConfig(base, {...})`) are not read and keep the
+  credit; both stay tracked as known limits.
 - A comment between a member dot and its key on an earlier line
   (`config. // c` then `projects = ...`) is not seen; same-line block
   comments are.

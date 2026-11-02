@@ -802,20 +802,24 @@ fn non_source_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<
         ));
     }
     let summary = summary.join(", ");
-    let verdict = if truncated_paths.is_empty() {
-        "Nothing was analyzed: ripr cannot analyze non-source files, so this is not a statement about changed behavior.".to_string()
-    } else {
-        let listed = truncated_paths
-            .iter()
-            .take(MAX_NAMED_PATHS)
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!(
-            "Path(s) ending in `.` with no extension ({listed}) usually mean a truncated \
-             `+++` header, so this empty result is not a clean pass — verify the diff input."
-        )
-    };
+    if truncated_paths.is_empty() {
+        // #11396: the stderr note is the only disclosure JSON and explicit-scope
+        // runs get, so it keeps the non-claim in plain words; the human headline
+        // adds the verdict for the default scope.
+        return Some(format!(
+            "ripr: diff contained {non_source_count} non-source file(s) ({summary}). Nothing was analyzed, so this says nothing about whether changed behavior is tested."
+        ));
+    }
+    let listed = truncated_paths
+        .iter()
+        .take(MAX_NAMED_PATHS)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let verdict = format!(
+        "Path(s) ending in `.` with no extension ({listed}) usually mean a truncated \
+         `+++` header, so this empty result is not a clean pass — verify the diff input."
+    );
     Some(format!(
         "ripr: diff contained {non_source_count} non-source file(s) ({summary}); \
          no analyzable Rust, TypeScript, Python, or Perl files found. {verdict}"
@@ -1182,7 +1186,7 @@ const DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT: usize = 2_000;
 pub(crate) const DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV: &str =
     "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES";
 
-fn diff_changed_python_line_limit() -> Result<usize, String> {
+pub(crate) fn diff_changed_python_line_limit() -> Result<usize, String> {
     diff_changed_python_line_limit_from_env(diff_limit_env(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV))
 }
 
@@ -1196,7 +1200,7 @@ fn diff_changed_python_line_limit_from_env(
     )
 }
 
-fn diff_changed_typescript_line_limit() -> Result<usize, String> {
+pub(crate) fn diff_changed_typescript_line_limit() -> Result<usize, String> {
     diff_changed_typescript_line_limit_from_env(diff_limit_env(
         DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
     ))
@@ -1240,7 +1244,7 @@ fn changed_language_line_count(
 /// Whether `language`'s adapter would count `path` at all: routed to the
 /// language and not refused by its generated-name / excluded-directory
 /// authorities ahead of counting.
-fn language_admits_changed_path(
+pub(crate) fn language_admits_changed_path(
     path: &std::path::Path,
     language: LanguageId,
     language_config: &crate::config::LanguagesConfig,
@@ -2243,7 +2247,14 @@ fn run_pipeline_for_diff_text_with_language_config(
         // partial; see the limitation push above.
         AnalysisOutcomeKind::PartialWithLimitations
     } else if changed_files.is_empty() {
-        AnalysisOutcomeKind::NoScope
+        // #6606: a supplied Perl (or other supplied-evidence) finding can
+        // survive an empty Rust diff. NoScope requires zero counts; findings
+        // must not be dropped behind that validation failure.
+        if findings.is_empty() {
+            AnalysisOutcomeKind::NoScope
+        } else {
+            AnalysisOutcomeKind::CompleteWithFindings
+        }
     } else if changed_line_count == 0 {
         AnalysisOutcomeKind::NoChangedLines
     } else if findings.is_empty() && candidate_line_count == 0 {
@@ -6045,7 +6056,7 @@ mod tests {
              diff --git a/calc.py b/calc.py\n\
              --- /dev/null\n\
              +++ b/calc.py\n\
-             @@ -0,0 +2 @@\n\
+             @@ -0,0 +1,2 @@\n\
              +def double(x):\n\
              +    return x * 2\n",
         )?;

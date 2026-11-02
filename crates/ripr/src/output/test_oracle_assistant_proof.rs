@@ -217,7 +217,7 @@ pub(crate) fn render_test_oracle_assistant_proof_json(
             ci_blocking_default: false,
         },
     })
-    .map_err(|err| format!("render test-oracle assistant proof JSON failed: {err}"))
+    .map_err(|err| format!("render test-oracle assistant proof JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_test_oracle_assistant_proof_markdown(

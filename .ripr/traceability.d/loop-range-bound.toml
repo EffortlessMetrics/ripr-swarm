@@ -1,0 +1,15 @@
+# Registers the changed loop range bound contract (#11399, extends #6485).
+[[behavior]]
+id = "RIPR-SPEC-0370"
+name = "a changed for-header range bound is never exposed by a pin whose argument leaves the old and new ranges equal"
+spec = "docs/specs/RIPR-SPEC-0370-loop-range-bound-change.md"
+tests = [
+  "crates/ripr/tests/loop_range_bound.rs::a_pin_on_an_empty_range_never_grades_the_changed_bound_exposed",
+  "crates/ripr/tests/loop_range_bound.rs::a_bound_or_computed_pin_never_grades_the_changed_bound_exposed",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/loop_accumulator.rs",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

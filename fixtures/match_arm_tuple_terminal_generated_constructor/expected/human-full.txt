@@ -103,7 +103,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  Strengthen the related assertion so it discriminates the changed behavior
+  Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
   ripr explain --root <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/diff.patch --mode fast probe:src_work_queue.rs:match_arm:bb954c10
   ripr context --root <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/diff.patch --mode fast --at probe:src_work_queue.rs:match_arm:bb954c10
