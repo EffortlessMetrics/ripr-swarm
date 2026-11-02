@@ -1663,7 +1663,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                     options,
                     oracle_policy,
                     preview_changed_files,
-                    &language_config.python.handwritten_files,
+                    &language_config.python,
                 )
             }),
             LanguageId::Perl => contain_adapter_panic(options, *language, || {
@@ -1970,6 +1970,15 @@ fn run_pipeline_for_diff_text_with_language_config(
                      override — declaring the path in `[{config_section}] handwritten_files` \
                      cannot admit it; if it is actually hand-written, rename it so the name \
                      no longer marks it generated and re-run the analysis."
+                ),
+            ),
+            PreviewSkipClass::ConfiguredPattern => (
+                AnalysisRecoveryKind::DeclarePreviewExcludedPatterns,
+                format!(
+                    "Not analyzed by the {name} preview adapter: {listed}. These paths match \
+                     `[{config_section}] excluded_file_patterns`; remove or narrow a pattern if \
+                     that skip is inaccurate, or keep the pattern to omit fixture or data files \
+                     from preview-language indexing."
                 ),
             ),
         };
@@ -2845,6 +2854,7 @@ where
 enum PreviewSkipClass {
     GeneratedName,
     ExcludedDirectory,
+    ConfiguredPattern,
 }
 
 fn detect_preview_skipped_paths<'a, I>(
@@ -2870,6 +2880,8 @@ where
         let generated_name = preview_skip_generated_name(language, &changed.path);
         let skip_class = if generated_name {
             PreviewSkipClass::GeneratedName
+        } else if preview_skip_configured_pattern(language, &changed.path, language_config) {
+            PreviewSkipClass::ConfiguredPattern
         } else {
             PreviewSkipClass::ExcludedDirectory
         };
@@ -2913,6 +2925,26 @@ fn preview_skip_generated_name(language: LanguageId, path: &std::path::Path) -> 
         LanguageId::Rust | LanguageId::Perl | LanguageId::TypeScript | LanguageId::JavaScript => {
             false
         }
+    }
+}
+
+fn preview_skip_configured_pattern(
+    language: LanguageId,
+    path: &std::path::Path,
+    language_config: &crate::config::LanguagesConfig,
+) -> bool {
+    match language {
+        LanguageId::Python => crate::config::path_matches_preview_excluded_patterns(
+            &language_config.python.excluded_file_patterns,
+            path,
+        ),
+        LanguageId::TypeScript | LanguageId::JavaScript => {
+            crate::config::path_matches_preview_excluded_patterns(
+                &language_config.typescript.excluded_file_patterns,
+                path,
+            )
+        }
+        LanguageId::Rust | LanguageId::Perl => false,
     }
 }
 
@@ -3051,13 +3083,14 @@ fn is_excluded_from_preview_analysis(
 ) -> bool {
     match language {
         LanguageId::TypeScript | LanguageId::JavaScript => {
-            is_excluded_from_typescript_preview_analysis(
-                path,
-                &language_config.typescript.handwritten_files,
-            )
+            is_excluded_from_typescript_preview_analysis(path, language_config)
         }
         LanguageId::Python => {
             crate::config::is_detectable_generated_python_path(path)
+                || crate::config::path_matches_preview_excluded_patterns(
+                    &language_config.python.excluded_file_patterns,
+                    path,
+                )
                 || (crate::config::is_detectable_excluded_python_path(path)
                     && !crate::config::is_declared_handwritten_python_path(
                         &language_config.python.handwritten_files,
@@ -3074,11 +3107,18 @@ fn is_excluded_from_preview_analysis(
 /// diff in a rust-only build as in a full build (#10730).
 fn is_excluded_from_typescript_preview_analysis(
     path: &std::path::Path,
-    handwritten: &[String],
+    language_config: &crate::config::LanguagesConfig,
 ) -> bool {
     crate::config::is_detectable_generated_typescript_path(path)
+        || crate::config::path_matches_preview_excluded_patterns(
+            &language_config.typescript.excluded_file_patterns,
+            path,
+        )
         || (crate::config::is_detectable_excluded_typescript_path(path)
-            && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
+            && !crate::config::is_declared_handwritten_typescript_path(
+                &language_config.typescript.handwritten_files,
+                path,
+            ))
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -3128,10 +3168,10 @@ fn analyze_python_diff(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     changed_files: &[diff::ChangedFile],
-    handwritten: &[String],
+    python_config: &crate::config::PythonLanguageConfig,
 ) -> Result<LanguageDiffResult, String> {
     let _ = oracle_policy;
-    PythonAdapter::analyze_diff_with_handwritten_env(options, changed_files, handwritten)
+    PythonAdapter::analyze_diff_with_handwritten_env(options, changed_files, python_config)
 }
 
 #[cfg(not(feature = "lang-python"))]
@@ -3139,7 +3179,7 @@ fn analyze_python_diff(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
     _changed_files: &[diff::ChangedFile],
-    _handwritten: &[String],
+    _python_config: &crate::config::PythonLanguageConfig,
 ) -> Result<LanguageDiffResult, String> {
     unavailable_language(LanguageId::Python)
 }

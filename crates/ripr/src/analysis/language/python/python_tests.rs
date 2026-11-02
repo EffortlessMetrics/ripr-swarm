@@ -2769,7 +2769,7 @@ fn collect_workspace_python_files_skips_excluded_directories() -> Result<(), Str
         write_file(&root.join(rel), "x = 1\n")?;
     }
 
-    let files = collect_workspace_python_files_with_handwritten(&root, &[]);
+    let files = collect_workspace_python_files_with_handwritten(&root, &[], &[]);
     let cleanup = std::fs::remove_dir_all(&root);
 
     for expected in included.iter() {
@@ -2806,7 +2806,7 @@ fn collect_workspace_python_files_returns_empty_for_missing_root() {
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
-    assert!(collect_workspace_python_files_with_handwritten(&missing, &[]).is_empty());
+    assert!(collect_workspace_python_files_with_handwritten(&missing, &[], &[]).is_empty());
 }
 
 #[test]
@@ -2824,7 +2824,7 @@ fn declared_handwritten_python_file_under_excluded_dir_is_walked() -> Result<(),
     write_file(&root.join("src/keep.py"), "y = 2\n")?;
     let declared = vec!["build/lib/pipeline.py".to_string()];
 
-    let files = collect_workspace_python_files_with_handwritten(&root, &declared);
+    let files = collect_workspace_python_files_with_handwritten(&root, &declared, &[]);
     let cleanup = std::fs::remove_dir_all(&root);
 
     if !files
@@ -2866,7 +2866,7 @@ fn vendor_only_tree_neither_enables_python_nor_enters_diff_inputs() -> Result<()
     write_file(&root.join("vendor/dep.py"), "VALUE = 1\n")?;
     write_file(&root.join("src/vendor/dep.py"), "VALUE = 2\n")?;
 
-    let files = collect_workspace_python_files_with_handwritten(&root, &[]);
+    let files = collect_workspace_python_files_with_handwritten(&root, &[], &[]);
     let detection_enabled = crate::config::detect_python_project(&root);
     let cleanup = std::fs::remove_dir_all(&root);
 
@@ -2881,6 +2881,43 @@ fn vendor_only_tree_neither_enables_python_nor_enters_diff_inputs() -> Result<()
         return Err("vendor-only Python must not enable Python detection".to_string());
     }
     cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    Ok(())
+}
+
+#[test]
+fn excluded_file_patterns_prune_fixture_paths_from_workspace_walk() -> Result<(), String> {
+    let root = unique_tempdir("preview-excluded-patterns")?;
+    write_file(
+        &root.join("tests/syntax-tests/highlighted/app.py"),
+        "VALUE = 1\n",
+    )?;
+    write_file(&root.join("src/app.py"), "VALUE = 2\n")?;
+
+    let without = collect_workspace_python_files_with_handwritten(&root, &[], &[]);
+    let with = collect_workspace_python_files_with_handwritten(
+        &root,
+        &[],
+        &["tests/syntax-tests/**".to_string()],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+
+    if !without
+        .iter()
+        .any(|path| path.ends_with("tests/syntax-tests/highlighted/app.py"))
+    {
+        return Err("fixture path should be discovered before exclusion".to_string());
+    }
+    if with
+        .iter()
+        .any(|path| path.starts_with("tests/syntax-tests"))
+    {
+        return Err(format!(
+            "excluded_file_patterns must drop fixture paths, still saw {with:?}"
+        ));
+    }
+    if !with.iter().any(|path| path.ends_with("src/app.py")) {
+        return Err("excluded_file_patterns must not drop unrelated sources".to_string());
+    }
     Ok(())
 }
 
@@ -4213,6 +4250,7 @@ fn visit_workspace_returns_silently_when_directory_is_unreadable() {
     super::workspace::visit_workspace_with_handwritten(
         Path::new("/definitely-not-a-real-dir-ripr"),
         Path::new("/definitely-not-a-real-dir-ripr"),
+        &[],
         &[],
         &mut |file| out.push(file),
     );

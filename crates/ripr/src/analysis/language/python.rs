@@ -1243,18 +1243,35 @@ fn parse_budget_limitation(
     }) else {
         return Ok(None);
     };
+    let portable = normalized_path(relative);
+    let probable_fixture = crate::config::is_probable_fixture_or_data_path(relative);
+    let bounded_detail = if probable_fixture {
+        format!("{portable} looks like a fixture or data file; {detail}")
+    } else {
+        detail
+    };
+    let recovery = if probable_fixture {
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::DeclarePreviewExcludedPatterns,
+            format!(
+                "The Python preview adapter hit a parse budget on {portable}, which looks like fixture or data content you typically should not rewrite. Add a repository-relative glob under `[languages.python] excluded_file_patterns` (for example `tests/syntax-tests/**`) to omit it from preview-language indexing, then re-run the analysis."
+            ),
+        )?
+    } else {
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::Retry,
+            "Split or simplify the deeply nested Python expression, operator chain, or elif chain, then re-run the analysis.",
+        )?
+    };
     Ok(Some(
         AnalysisLimitation::new(
             AnalysisLimitationKind::LanguageScopeUnsupported,
             AnalysisStage::LanguageAdapter,
-            AnalysisRecovery::new(
-                AnalysisRecoveryKind::Retry,
-                "Split or simplify the deeply nested Python expression, operator chain, or elif chain, then re-run the analysis.",
-            )?,
+            recovery,
         )
-        .with_path(normalized_path(relative))?
+        .with_path(portable)?
         .with_affected_items(1)?
-        .with_detail(detail)?,
+        .with_detail(bounded_detail)?,
     ))
 }
 
@@ -1369,7 +1386,12 @@ impl PythonAdapter {
         changed_files: &[ChangedFile],
         walk_limits: PythonDiffWalkLimits,
     ) -> Result<LanguageDiffResult, String> {
-        Self::analyze_diff_with_handwritten(options, changed_files, walk_limits, &[])
+        Self::analyze_diff_with_handwritten(
+            options,
+            changed_files,
+            walk_limits,
+            &crate::config::PythonLanguageConfig::default(),
+        )
     }
 
     /// [`analyze_diff_with_handwritten`] with the environment-resolved walk
@@ -1378,26 +1400,25 @@ impl PythonAdapter {
     pub(crate) fn analyze_diff_with_handwritten_env(
         options: &AnalysisOptions,
         changed_files: &[ChangedFile],
-        handwritten: &[String],
+        python_config: &crate::config::PythonLanguageConfig,
     ) -> Result<LanguageDiffResult, String> {
         Self::analyze_diff_with_handwritten(
             options,
             changed_files,
             PythonDiffWalkLimits::from_env(),
-            handwritten,
+            python_config,
         )
     }
 
-    /// [`analyze_diff_with_limits`] plus the `[languages.python]
-    /// handwritten_files` declarations (#7386): exact repository-relative
-    /// paths admitted past the built-in excluded-directory conventions, so a
-    /// hand-written source under a `build/`, `dist/` or `env/` directory is
-    /// walked, read and counted instead of silently dropped.
+    /// [`analyze_diff_with_limits`] plus the `[languages.python]`
+    /// declarations (#7386, #5380): exact hand-written paths admitted past
+    /// excluded-directory conventions and configured exclusion globs omitted
+    /// from preview indexing.
     pub(in crate::analysis::language::python) fn analyze_diff_with_handwritten(
         options: &AnalysisOptions,
         changed_files: &[ChangedFile],
         walk_limits: PythonDiffWalkLimits,
-        handwritten: &[String],
+        python_config: &crate::config::PythonLanguageConfig,
     ) -> Result<LanguageDiffResult, String> {
         // A previous run's facts are freed before this run builds its own
         // (sequential callers; see `teardown` for concurrent ones).
@@ -1414,9 +1435,13 @@ impl PythonAdapter {
             WorkspaceFileSelection::new(walk_limits.max_workspace_files, |file: &Path| {
                 changed_walk_paths.contains(&normalized_path(file))
             });
-        visit_workspace_with_handwritten(&options.root, &options.root, handwritten, &mut |file| {
-            selection.push(file)
-        });
+        visit_workspace_with_handwritten(
+            &options.root,
+            &options.root,
+            &python_config.handwritten_files,
+            &python_config.excluded_file_patterns,
+            &mut |file| selection.push(file),
+        );
         let (mut workspace_files, mut refused_files) = selection.finish();
         // Past the cap, spend it on the files whose text can reach the diff
         // instead of the earliest paths (#10785). The second walk holds every
@@ -1429,7 +1454,8 @@ impl PythonAdapter {
             visit_workspace_with_handwritten(
                 &options.root,
                 &options.root,
-                handwritten,
+                &python_config.handwritten_files,
+                &python_config.excluded_file_patterns,
                 &mut |file| discovered.push(file),
             );
             reach = workspace_reach::admit_by_reach(
@@ -1740,9 +1766,13 @@ impl PythonAdapter {
             .filter(|changed| {
                 matches!(route(&changed.path), Some(LanguageId::Python))
                     && !is_detectable_generated_python_path(&changed.path)
+                    && !crate::config::path_matches_preview_excluded_patterns(
+                        &python_config.excluded_file_patterns,
+                        &changed.path,
+                    )
                     && (!is_detectable_excluded_python_path(&changed.path)
                         || crate::config::is_declared_handwritten_python_path(
-                            handwritten,
+                            &python_config.handwritten_files,
                             &changed.path,
                         ))
             })
