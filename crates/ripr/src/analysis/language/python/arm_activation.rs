@@ -425,10 +425,50 @@ fn patches_builtin(lines: &[&str], index: usize, name: &str, modules: &[String])
                     .next_back()
                     .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
                 let rest = &compact[start + target.len()..];
-                boundary && rest.starts_with('=') && !rest.starts_with("==")
+                boundary && rebinds_target(&compact, start, rest)
             })
         })
     })
+}
+
+/// Whether the target at `start` (followed by `rest`, whitespace removed) is
+/// rebound by an assignment on its line (#12222): a plain or chained `= f`, an
+/// annotated `: object = f`, or a slot in a tuple, list or multi-target list
+/// left of the first `=`. A comparison (`==`), a read on the right-hand side
+/// and a bare annotation without a value bind nothing.
+fn rebinds_target(compact: &str, start: usize, rest: &str) -> bool {
+    if rest.starts_with('=') {
+        return !rest.starts_with("==");
+    }
+    let assignment = first_assignment(compact);
+    if start == 0 && rest.starts_with(':') {
+        return assignment.is_some_and(|eq| eq > start);
+    }
+    assignment.is_some_and(|eq| start < eq && rest.starts_with([',', ')', ']']))
+}
+
+/// Byte index of the first `=` that assigns: not part of `==`, `!=`, `<=`,
+/// `>=`, `:=` or a keyword argument inside brackets.
+fn first_assignment(compact: &str) -> Option<usize> {
+    let bytes = compact.as_bytes();
+    let mut depth = 0usize;
+    for (index, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'=' if depth == 0 => {
+                let previous = index.checked_sub(1).map(|at| bytes[at]);
+                let next = bytes.get(index + 1).copied();
+                let comparison = matches!(previous, Some(b'=' | b'!' | b'<' | b'>' | b':'))
+                    || next == Some(b'=');
+                if !comparison {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn alternative_matches(pattern: &str, value: &str, builtins: bool) -> Option<bool> {

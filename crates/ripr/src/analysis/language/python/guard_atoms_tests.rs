@@ -361,6 +361,13 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "__builtins__['isinstance'] = checker\n\n\n",
         "import builtins\nbuiltins . isinstance = checker\n\n\n",
         "import builtins\nsetattr(\n    builtins,\n    'isinstance',\n    checker,\n)\n\n\n",
+        // #12222: annotated, tuple, list and chained targets rebind it too.
+        "import builtins as b\nb.isinstance: object = checker\n\n\n",
+        "import builtins as b\nb.isinstance, other = checker, None\n\n\n",
+        "import builtins as b\nother, b.isinstance = None, checker\n\n\n",
+        "import builtins as b\n(other, b.isinstance) = (None, checker)\n\n\n",
+        "import builtins as b\n[b.isinstance, other] = [checker, None]\n\n\n",
+        "import builtins as b\nother = b.isinstance = checker\n\n\n",
     ];
     for patch in patches {
         let owner = format!("{patch}{arm}");
@@ -376,6 +383,12 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "import builtins as b\nlimit = b.len(CHECKS)\n\n\n",
         "import builtins as b\nsame = b.isinstance == checker\n\n\n",
         "values = vars(CONFIG)\n\n\n",
+        // #12222 controls: a bare annotation, a read in a tuple on the right,
+        // a keyword argument and a comparison inside a tuple bind nothing.
+        "import builtins as b\nb.isinstance: object\n\n\n",
+        "import builtins as b\nchecks = (b.isinstance, b.len)\n\n\n",
+        "import builtins as b\nchecks = dict(first=b.isinstance, second=b.len)\n\n\n",
+        "import builtins as b\nsame, other = b.isinstance == checker, 1\n\n\n",
     ] {
         let owner = format!("{harmless}{arm}");
         assert_eq!(
