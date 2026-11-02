@@ -12,7 +12,8 @@
 //! The carrier is established once per probe and only for the narrow shape
 //! where the written state is statically bounded:
 //!
-//! 1. The changed expression is exactly `self.callee(args)` with no `?`, no
+//! 1. The changed expression is exactly `self.callee(args)` or `callee(self)`
+//!    (a single `self` argument to a free function), with no `?` and no
 //!    `&mut` argument, inside a method of an inherent or trait impl in a
 //!    parser-backed file.
 //! 2. `callee` resolves to exactly one `&mut self` method of the same self
@@ -676,6 +677,10 @@ pub(in crate::analysis) struct EffectStateCarrier {
     /// that calls one can move the written state into any field before it
     /// asserts (`inv.reorder()` turning `low_stock` into log entries).
     mutating_readers: BTreeSet<String>,
+    /// The owner method whose call on a test binding may feed the assertion
+    /// (`receive`, `add`, ...). Used with `binding_untouched_after_owner_call`
+    /// (#6579 / #7688 review).
+    owner_name: String,
     /// Tokenized test bodies keyed by `(file, start_line, body hash)`.
     body_token_cache: TestBodyTokenCache,
 }
@@ -719,9 +724,9 @@ impl EffectStateCarrier {
             return None;
         }
         let self_ty = container_self_type(&owner.item.container)?;
-        let callee_name = self_call_name(&probe.expression)?;
         let methods = SelfTypeMethods::collect(&self_ty, index);
-        let callee = methods.resolve(&callee_name)?;
+        let (callee, callee_name) =
+            resolve_effect_callee(&probe.expression, &self_ty, index, &methods)?;
         let (signature, _) = split_signature(callee)?;
         if !mut_self_without_return(&signature) {
             return None;
@@ -826,6 +831,7 @@ impl EffectStateCarrier {
             self_fields,
             any_method,
             mutating_readers,
+            owner_name: owner.name.clone(),
             body_token_cache: RefCell::new(BTreeMap::new()),
         })
     }
@@ -860,6 +866,9 @@ impl EffectStateCarrier {
         if !matches!(assertion.kind, OracleKind::WholeObjectEquality) {
             return true;
         }
+        if !self.owner_binding_untouched_for_assertion(test, assertion) {
+            return false;
+        }
         let body = self.test_body_tokens(test);
         if self.calls_mutating_reader(&body) {
             return true;
@@ -873,6 +882,78 @@ impl EffectStateCarrier {
             return true;
         }
         self.may_carry(&tokenize(&assertion.text), &body, 0)
+    }
+
+    /// #6579 / #7688 review: refuse a whole-object equality when the test
+    /// rewrote the owner-fed binding between the owner call and the assertion.
+    fn owner_binding_untouched_for_assertion(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+    ) -> bool {
+        let bindings = self.bindings_calling_owner_before_assertion(test, assertion.line);
+        if bindings.is_empty() {
+            return true;
+        }
+        bindings.iter().all(|binding| {
+            super::reveal::binding_untouched_after_owner_call(
+                &test.body,
+                test.start_line,
+                binding,
+                &self.owner_name,
+                assertion.line,
+            )
+        })
+    }
+
+    fn bindings_calling_owner_before_assertion(
+        &self,
+        test: &TestSummary,
+        read_line: usize,
+    ) -> BTreeSet<String> {
+        let masked = mask_comments_and_strings(&test.body);
+        let ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+        let needle = format!(".{}(", self.owner_name);
+        let mut bindings = BTreeSet::new();
+        for (at, _) in masked.match_indices(&needle) {
+            if !masked[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|before| ident(before) || before == '.')
+            {
+                continue;
+            }
+            let prefix = masked[..at].trim_end();
+            let binding = prefix
+                .rsplit_once(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .map_or(prefix, |(_, name)| name)
+                .trim();
+            if binding.is_empty() || binding == "Self" {
+                continue;
+            }
+            if super::reveal::owner_call_precedes_read(
+                &test.body,
+                test.start_line,
+                binding,
+                &self.owner_name,
+                read_line,
+            ) {
+                bindings.insert(binding.to_string());
+            }
+        }
+        let self_needle = format!("self.{}(", self.owner_name);
+        if masked.contains(&self_needle)
+            && super::reveal::owner_call_precedes_read(
+                &test.body,
+                test.start_line,
+                "self",
+                &self.owner_name,
+                read_line,
+            )
+        {
+            bindings.insert("self".to_string());
+        }
+        bindings
     }
 
     /// Whether the test calls a `&mut self` reader (`inv.reorder()`,
@@ -1083,6 +1164,110 @@ fn is_screaming_case(name: &str) -> bool {
         && name
             .chars()
             .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+}
+
+/// Resolve the callee whose effect state the carrier bounds.
+fn resolve_effect_callee<'a>(
+    expression: &str,
+    self_ty: &str,
+    index: &'a RustIndex,
+    methods: &SelfTypeMethods<'a>,
+) -> Option<(&'a FunctionSummary, String)> {
+    if let Some(name) = self_call_name(expression) {
+        let callee = methods.resolve(&name)?;
+        return Some((callee, name));
+    }
+    let name = free_self_argument_call_name(expression)?;
+    let callee = resolve_free_mut_self_callee(&name, self_ty, index, methods)?;
+    Some((callee, name))
+}
+
+/// `callee` for an expression that is exactly `callee(self)`.
+fn free_self_argument_call_name(expression: &str) -> Option<String> {
+    let trimmed = expression.trim().trim_end_matches(';').trim_end();
+    let tokens = tokenize(trimmed);
+    if ident(&tokens, 0) == Some("self") || !punct(&tokens, 1, '(') {
+        return None;
+    }
+    let name = ident(&tokens, 0)?;
+    let close = matching_close(&tokens, 1)?;
+    if close + 1 != tokens.len() {
+        return None;
+    }
+    let args = &tokens[2..close];
+    (args == [Tok::Ident("self".to_string())]).then(|| name.to_string())
+}
+
+fn resolve_free_mut_self_callee<'a>(
+    name: &str,
+    self_ty: &str,
+    index: &'a RustIndex,
+    methods: &SelfTypeMethods<'a>,
+) -> Option<&'a FunctionSummary> {
+    if methods.contested.contains(name) {
+        return None;
+    }
+    let candidates: Vec<_> = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.name == name
+                && !function.item.has_self_param
+                && matches!(
+                    function.item.container,
+                    FunctionContainer::Free | FunctionContainer::Unknown
+                )
+        })
+        .collect();
+    match candidates.as_slice() {
+        [only] => {
+            let (signature, _) = split_signature(only)?;
+            (free_fn_takes_mut_self(&signature, self_ty) && fn_signature_has_no_return(&signature))
+                .then_some(*only)
+        }
+        _ => None,
+    }
+}
+
+/// Whether the first parameter of a free `fn` is `&mut` of the owner's self type.
+fn free_fn_takes_mut_self(signature: &[Tok], self_ty: &str) -> bool {
+    let Some(base) = base_type_name(self_ty) else {
+        return false;
+    };
+    let Some(open) = signature.iter().position(|token| *token == Tok::Punct('(')) else {
+        return false;
+    };
+    let index = open + 1;
+    if punct(signature, index, ')') {
+        return false;
+    }
+    let mut depth = 0isize;
+    let mut end = index;
+    while let Some(token) = signature.get(end) {
+        match token {
+            Tok::Punct('(' | '[' | '<') => depth += 1,
+            Tok::Punct(')' | ']' | '>') if depth == 0 => break,
+            Tok::Punct(')' | ']' | '>') => depth -= 1,
+            Tok::Punct(',') if depth == 0 => break,
+            _ => {}
+        }
+        end += 1;
+    }
+    let param = &signature[index..end];
+    let mut_borrow = param
+        .windows(2)
+        .any(|pair| pair[0] == Tok::Punct('&') && pair[1] == Tok::Ident("mut".to_string()));
+    let names_type = param
+        .iter()
+        .any(|token| matches!(token, Tok::Ident(name) if name == &base));
+    mut_borrow && names_type
+}
+
+fn fn_signature_has_no_return(signature: &[Tok]) -> bool {
+    !signature
+        .iter()
+        .enumerate()
+        .any(|(index, _)| punct(signature, index, '-') && punct(signature, index + 1, '>'))
 }
 
 /// `callee` for an expression that is exactly `self.callee(args)`.

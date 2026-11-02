@@ -746,3 +746,138 @@ fn whole_object_admits_tokenizes_each_test_body_once() {
     let _ = carrier.admits(&test_b, &history);
     TEST_BODY_TOKENIZE_COUNT.with(|count| assert_eq!(count.get(), 2));
 }
+
+/// #6579: a free `callee(self)` helper with `&mut Inventory` uses the same
+/// carrier as `self.refresh_low_stock(sku)`.
+const LEDGER_FREE_HELPER: &str = r#"use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    Received { sku: String, qty: u32 },
+    Shipped { sku: String, qty: u32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Receipt {
+    pub sku: String,
+    pub qty: u32,
+    pub remaining: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Inventory {
+    stock: BTreeMap<String, u32>,
+    log: Vec<Event>,
+    shipped_total: u64,
+    low_stock: BTreeSet<String>,
+    low_threshold: u32,
+}
+
+fn refresh_low_stock_fn(inv: &mut Inventory, sku: &str) {
+    if inv.on_hand(sku) < inv.low_threshold {
+        inv.low_stock.insert(sku.to_string());
+    } else {
+        inv.low_stock.remove(sku);
+    }
+}
+
+impl Inventory {
+    pub fn new(low_threshold: u32) -> Self {
+        Self {
+            low_threshold,
+            ..Self::default()
+        }
+    }
+
+    pub fn receive(&mut self, sku: &str, qty: u32) {
+        *self.stock.entry(sku.to_string()).or_insert(0) += qty;
+        self.log.push(Event::Received { sku: sku.to_string(), qty });
+        refresh_low_stock_fn(self, sku);
+    }
+
+    pub fn on_hand(&self, sku: &str) -> u32 {
+        self.stock.get(sku).copied().unwrap_or(0)
+    }
+
+    pub fn history(&self) -> &[Event] {
+        &self.log
+    }
+
+    fn refresh_low_stock(&mut self, sku: &str) {
+        if self.on_hand(sku) < self.low_threshold {
+            self.low_stock.insert(sku.to_string());
+        } else {
+            self.low_stock.remove(sku);
+        }
+    }
+}
+"#;
+
+const LEDGER_FREE_TESTS: &str = r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn history_after_receive() {
+        let mut inv = Inventory::new(5);
+        inv.receive("BOLT-M8", 10);
+        assert_eq!(inv.history(), &[Event::Received { sku: "BOLT-M8".to_string(), qty: 10 }]);
+    }
+}
+"#;
+
+#[test]
+fn free_self_argument_call_establishes_carrier_and_refuses_unrelated_projection() {
+    let index = index(&[
+        (LIB, LEDGER_FREE_HELPER),
+        ("tests/free.rs", LEDGER_FREE_TESTS),
+    ]);
+    let carrier = establish(&index, "refresh_low_stock_fn(self, sku)");
+    assert!(
+        carrier.is_some(),
+        "free `callee(self)` must establish the same carrier shape"
+    );
+    let Some(carrier) = carrier else {
+        return;
+    };
+    let test = the_test(&index);
+    assert!(
+        !carrier.admits(
+            test,
+            &whole_object(
+                r#"assert_eq!(inv.history(), &[Event::Received { sku: "BOLT-M8".to_string(), qty: 10 }]);"#
+            ),
+        ),
+        "history must not carry a free-helper write to low_stock"
+    );
+}
+
+#[test]
+fn whole_object_refused_when_owner_fed_binding_is_rewritten_before_assertion() {
+    const REWRITE: &str = r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rewrite_check() {
+        let mut inv = Inventory::new(5);
+        let fresh = Inventory::new(5);
+        inv.receive("BOLT-M8", 10);
+        inv.stock.insert("OTHER".to_string(), 99);
+        assert_eq!(inv, fresh);
+    }
+}
+"#;
+    let index = index(&[(LIB, LEDGER), ("tests/rewrite.rs", REWRITE)]);
+    let test = the_test(&index);
+    let carrier = establish(&index, "self.refresh_low_stock(sku);").expect("ledger carrier");
+    let assertion = test
+        .assertions
+        .iter()
+        .find(|fact| fact.text.contains("assert_eq!(inv, fresh)"))
+        .expect("rewrite fixture assertion");
+    assert!(
+        !carrier.admits(test, assertion),
+        "a statement that names the binding between the owner call and the assertion must refuse"
+    );
+}
