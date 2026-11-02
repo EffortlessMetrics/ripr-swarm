@@ -490,7 +490,10 @@ pub(crate) fn retain_finding_plan_projection(finding: &Finding, input: AdapterIn
         adapter_input: input,
         commands: Vec::new(),
     };
-    let plan = project_plan_from_finding(finding, &plan_input);
+    let plan = crate::app::change_verification_plan::build_change_verification_plan_from_finding(
+        finding,
+        &plan_input,
+    );
     debug_assert!(
         plan.as_ref().is_ok_and(|value| value.digest_matches()),
         "change verification plan digest must match canonical bytes"
