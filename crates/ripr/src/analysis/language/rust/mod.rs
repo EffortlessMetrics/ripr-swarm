@@ -4,8 +4,9 @@
 //!
 //! `mod.rs` is the stable `analysis::language::rust` façade. Probe-family
 //! lexical extraction lives in [`probes`]; Rust-local oracle/assertion
-//! limitations live in [`oracles`]. Index, repository, and diff-pipeline
-//! extraction remain here until later RA slices. Call sites keep the
+//! limitations live in [`oracles`]; repository discovery and repo-mode analysis
+//! live in [`repo`]. Index construction and diff-pipeline extraction remain
+//! here until later RA slices. Call sites keep the
 //! `analysis::language::rust` path.
 //!
 //! This adapter hosts the existing Rust analysis pipeline behind the
@@ -20,6 +21,7 @@ pub(crate) mod oracles;
 mod probe_shape;
 pub(crate) mod probes;
 mod proof_harness;
+mod repo;
 
 pub(crate) use probe_shape::producer_gap_names_seam_shape;
 pub(crate) use probes::{
@@ -38,9 +40,7 @@ use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
 use crate::analysis::workspace::limitations_for_absent_changed_files;
 use crate::config::OraclePolicy;
-use crate::domain::{
-    ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
-};
+use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
 use rayon::prelude::*;
 
 /// Stack of a classify worker; matches the `--budget` analysis thread.
@@ -94,20 +94,8 @@ const DIFF_NARROW_INDEX_FILES: usize = 1200;
 /// hard limit keeps narrowing below it exactly as before.
 const DIFF_NARROW_INDEX_FILES_ENV: &str = "RIPR_DIFF_NARROW_INDEX_FILES";
 
-/// Hard analysis-cost guard for the repo-scoped path (#2109): the diff path
-/// caps its working set at [`DIFF_INDEX_FILE_LIMIT`], and the repo path now
-/// has the same guard so `ripr check --mode deep|ready` on a large monorepo
-/// fails closed with a named `repo_scope_oversized` error instead of loading
-/// and indexing the entire workspace unbounded.
-///
-/// Raised in lockstep with [`DIFF_INDEX_FILE_LIMIT`] for the same measured
-/// repo-growth reason; `RIPR_MAX_REPO_INDEX_FILES` remains the operator
-/// override.
-const REPO_INDEX_FILE_LIMIT: usize = 1200;
-
-/// Env override for [`REPO_INDEX_FILE_LIMIT`].
-const REPO_INDEX_FILE_LIMIT_ENV: &str = "RIPR_MAX_REPO_INDEX_FILES";
-
+/// Hard analysis-cost guard for the repo-scoped path (#2109): moved to [`repo`].
+/// Diff path caps remain below.
 /// Env override for [`DIFF_INDEX_FILE_LIMIT`]. Operators on larger, well-resourced
 /// runners raise it; CI can lower it to exercise the guard.
 const DIFF_INDEX_FILE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_INDEX_FILES";
@@ -275,12 +263,6 @@ fn diff_index_file_limit_from_env(
     value: Result<String, std::env::VarError>,
 ) -> Result<usize, String> {
     positive_limit_from_env(DIFF_INDEX_FILE_LIMIT_ENV, DIFF_INDEX_FILE_LIMIT, value)
-}
-
-fn repo_index_file_limit_from_env(
-    value: Result<String, std::env::VarError>,
-) -> Result<usize, String> {
-    positive_limit_from_env(REPO_INDEX_FILE_LIMIT_ENV, REPO_INDEX_FILE_LIMIT, value)
 }
 
 /// How many files the full selection indexes once the admitted open files
@@ -649,23 +631,6 @@ fn may_be_unreached(
         _ => file_name.trim_end_matches(".rs"),
     };
     !mentioned.mentions(&owning_manifest_dir(root, path, manifests), module_name)
-}
-
-/// Fail closed when a repo-scoped working set exceeds the guard (#2109).
-/// The repair route names only effective continuations: a diff-based run
-/// (`--base`/`--diff`) or raising the limit. A "narrower mode" is NOT
-/// offered — repo-scoped analysis does not select files by mode, so that
-/// retry would hit the same guard.
-fn enforce_repo_index_file_limit(file_count: usize, scope_limit: usize) -> Result<(), String> {
-    if file_count <= scope_limit {
-        return Ok(());
-    }
-    Err(format!(
-        "repo_scope_oversized: {file_count} indexed Rust files exceed the \
-         {REPO_INDEX_FILE_LIMIT_ENV} limit ({scope_limit}); analysis was not run to protect \
-         runner memory. Repair route: narrow the scope with a diff-based run (--base/--diff), \
-         or raise the limit via {REPO_INDEX_FILE_LIMIT_ENV}=<number>."
-    ))
 }
 
 pub(crate) fn diff_changed_rust_line_limit() -> Result<usize, String> {
@@ -1584,6 +1549,34 @@ fn apply_rust_no_static_path_limit(
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_trait_dispatch_ambiguity_limit(finding, &owner_name, &ambiguity);
     }
+}
+
+/// Repo-mode post-classify limits shared by [`repo`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "policy:3745-ra2: mirrors the repo loop seam"
+)]
+fn apply_repo_classified_finding(
+    finding: &mut Finding,
+    probe: &Probe,
+    index: &RustIndex,
+    property_macro_mentions: &oracles::PropertyMacroMentionIndex<'_>,
+    transitive_reach: &classify::TransitiveReachIndex,
+    dependency_edges: &classify::DependencyEdgeContext<'_>,
+    path: &Path,
+    pre_cap_syntax_only: Option<bool>,
+) {
+    apply_rust_no_static_path_limit(
+        finding,
+        probe,
+        index,
+        property_macro_mentions,
+        transitive_reach,
+        Some(dependency_edges),
+    );
+    classifier::withhold_proc_macro_no_path_as_unknown(finding, index);
+    apply_probe_and_oracle_limits(finding, probe, index, None, pre_cap_syntax_only);
+    probes::apply_verus_macro_region_limit_in_repo_file(finding, probe, index, path);
 }
 
 /// RIPR-SPEC-0114 (#11719): the owner is called from an impl of an
@@ -3435,213 +3428,6 @@ impl LanguageAdapter for RustAdapter {
     }
 }
 
-impl RustAdapter {
-    pub(crate) fn analyze_repo_with_rust_config(
-        &self,
-        options: &AnalysisOptions,
-        oracle_policy: &OraclePolicy,
-        rust_config: &crate::config::RustLanguageConfig,
-    ) -> Result<LanguageRepoResult, String> {
-        let _syntax_memo = crate::analysis::syntax::run_memo::enter();
-        let rust_files = workspace::discover_rust_files(&options.root)?;
-        let generated_sources = GeneratedRustSources::for_repo(&options.root, rust_config);
-        let skipped_files = rust_files
-            .iter()
-            .filter(|path| generated_sources.contains(path))
-            .count();
-        let analyzable_rust_files = rust_files
-            .iter()
-            .filter(|path| !generated_sources.contains(path))
-            .cloned()
-            .collect::<Vec<_>>();
-        // Fail closed before the whole-workspace load (#2109): an
-        // over-limit repo analysis is a named error with a repair route,
-        // not an unbounded read+index that can exhaust host memory.
-        let scope_limit = repo_index_file_limit_from_env(std::env::var(REPO_INDEX_FILE_LIMIT_ENV))?;
-        enforce_repo_index_file_limit(analyzable_rust_files.len(), scope_limit)?;
-        // Producer-owned source role (#3283): the repo production set
-        // routes through the same role as diff seeding — layout plus
-        // declared Cargo targets plus the production-like opt-in.
-        let repo_source_role_context = {
-            let mut context = workspace::context_for_files(
-                &options.root,
-                analyzable_rust_files.iter().map(|path| path.as_path()),
-            );
-            context.production_like_targets = options.production_like_targets.clone();
-            // Cargo-validated file-wide harness evidence (#3608).
-            context.harness_targets = rust_index::validated_file_wide_harness_targets(
-                &options.root,
-                &options.test_harnesses,
-            );
-            context
-        };
-        let production_files = analyzable_rust_files
-            .iter()
-            .filter(|path| {
-                workspace::classify_with(path, &repo_source_role_context)
-                    .seeds_production_findings()
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-
-        // Index all discovered Rust files (production + tests + benches +
-        // examples). The classifier's `find_related_tests` looks up tests
-        // in the index; without test files the repo headline silently
-        // inflates `no_static_path` for owners that *are* exercised by
-        // integration tests under `tests/` or `examples/`. Probe seeding
-        // stays production-only so test bodies do not generate findings.
-        // Use the content-addressed per-file fact cache (#1912).
-        let mut rust_consumed_sources =
-            crate::analysis::consumed_source::ConsumedRustSources::default();
-        let loaded_rust_files = analyzable_rust_files
-            .iter()
-            .map(|file| {
-                let full = options.root.join(file);
-                let bytes = std::fs::read(&full)
-                    .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
-                rust_consumed_sources.record(file, Some(&bytes));
-                Ok((file.clone(), bytes))
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        let cached = rust_index::build_analysis_index_from_loaded_files(
-            &options.root,
-            &loaded_rust_files,
-            &options.test_harnesses,
-        )?;
-        #[cfg(test)]
-        {
-            rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
-        }
-        let mut index = cached.index;
-        if let Some(disclosure) = rust_index::lexical_fallback_disclosure(&index) {
-            eprintln!("{disclosure}");
-        }
-        if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
-            eprintln!("{disclosure}");
-        }
-        if let Some(disclosure) = rust_index::module_composition_disclosure(&index) {
-            eprintln!("{disclosure}");
-        }
-        rust_index::apply_oracle_policy(&mut index, oracle_policy);
-        let mut related_test_candidate_index = None;
-        let property_macro_mentions =
-            oracles::PropertyMacroMentionIndex::new(&index, &options.root);
-        let transitive_reach = classify::TransitiveReachIndex::new(&index);
-
-        let mut findings = Vec::new();
-        let value_origins = std::sync::Mutex::new(crate::value_origins::ValueOrigins::default());
-        let mut parser_spans = BTreeMap::new();
-
-        // #2972: one path-dependency edge context per repo pass. Repo mode
-        // indexes the whole workspace, so the admit precondition holds by
-        // construction here.
-        let manifest_dir_prefixes =
-            crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&options.root);
-        let dependency_adjacency = workspace::PathDependencyAdjacency::build(
-            &crate::analysis::seam_cache::workspace_graph_provenance(&options.root),
-        );
-        let unindexed_manifests = BTreeSet::new();
-        let dependency_edges = classify::DependencyEdgeContext {
-            adjacency: &dependency_adjacency,
-            manifest_dir_prefixes: &manifest_dir_prefixes,
-            index: &index,
-            unindexed_manifests: &unindexed_manifests,
-            root: &options.root,
-        };
-
-        for path in &production_files {
-            let probes = analysis_probes::probes_for_repo_file_seeded(&options.root, path, &index);
-            for seeded in probes {
-                seeded.record_span(&mut parser_spans);
-                let probe = seeded.probe;
-                let related_test_candidate_index =
-                    related_test_candidate_index.get_or_insert_with(|| {
-                        classify::RelatedTestCandidateIndex::new(&index)
-                            .with_analysis_root(&options.root)
-                    });
-                let (mut finding, pre_cap_syntax_only) =
-                    classifier::classify_probe_with_candidate_index_and_origins_with_direct_rows(
-                        &probe,
-                        &index,
-                        true,
-                        Some(&dependency_edges),
-                        related_test_candidate_index,
-                        &transitive_reach,
-                        None,
-                        Some(&value_origins),
-                    );
-                finding.language = Some(LanguageId::Rust);
-                // Repo mode seeds probes from the current tree, so every
-                // finding's source is candidate-side by construction
-                // (#3280).
-                finding.source_currentness = SourceCurrentness::CandidateCurrent;
-                // `language_status` is omitted for Rust per RIPR-SPEC-0026.
-                // RIPR-SPEC-0114 + 0115 + 0117: no_static_path limitation
-                // disclosure for repo-mode (same logic as diff-mode).
-                apply_rust_no_static_path_limit(
-                    &mut finding,
-                    &probe,
-                    &index,
-                    &property_macro_mentions,
-                    &transitive_reach,
-                    Some(&dependency_edges),
-                );
-                classifier::withhold_proc_macro_no_path_as_unknown(&mut finding, &index);
-                apply_probe_and_oracle_limits(
-                    &mut finding,
-                    &probe,
-                    &index,
-                    None,
-                    pre_cap_syntax_only,
-                );
-                // RIPR-SPEC-0369 (#12006): name the file's `verus!` region.
-                probes::apply_verus_macro_region_limit_in_repo_file(
-                    &mut finding,
-                    &probe,
-                    &index,
-                    path,
-                );
-                // #5268: same producer-owned canonical gap identity as the
-                // diff loop, behind the same typed static-limitation gate.
-                if finding.static_limit_kind.is_none() {
-                    finding.canonical_gap = probe_shape::canonical_rust_gap_for(
-                        path,
-                        probe.owner.as_ref(),
-                        &probe.family,
-                        &probe.expression,
-                    );
-                }
-                push_retained_finding(&mut findings, finding);
-            }
-        }
-
-        let rust_diagnostic_origins = origins_for_rust_findings(
-            &findings,
-            &OriginBuildContext {
-                root: &options.root,
-                loaded_files: &loaded_rust_files,
-                index: &index,
-                parser_spans: &parser_spans,
-            },
-        );
-
-        Ok(LanguageRepoResult {
-            value_origins: value_origins.into_inner().unwrap_or_default(),
-            findings,
-            harness_projections: super::super::harness_projection::projections_from_index(
-                &index,
-                &options.test_harnesses,
-            ),
-            production_files: production_files.len(),
-            skipped_files,
-            partial_reason: None,
-            file_accounting: Default::default(),
-            rust_diagnostic_origins,
-            rust_consumed_sources,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -3650,17 +3436,16 @@ mod tests {
         PARTIAL_DIFF_FILE_BUDGET_DEFAULT, PARTIAL_DIFF_FILE_BUDGET_ENV,
         PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_LINE_BUDGET_DEFAULT,
         PARTIAL_DIFF_LINE_BUDGET_ENV, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffBudgets,
-        PartialDiffScope, PartialDiffStopReason, REPO_INDEX_FILE_LIMIT, REPO_INDEX_FILE_LIMIT_ENV,
-        RustAdapter, apply_probe_and_oracle_limits, changed_rust_line_count, dependent_scope,
-        diff_changed_rust_line_limit_from_env, diff_identity_from_changed_files,
-        diff_index_file_limit_from_env, diff_narrow_index_files_from_env,
-        enforce_changed_rust_line_limit, enforce_repo_index_file_limit, is_binary_source_path,
+        PartialDiffScope, PartialDiffStopReason, RustAdapter, apply_probe_and_oracle_limits,
+        changed_rust_line_count, dependent_scope, diff_changed_rust_line_limit_from_env,
+        diff_identity_from_changed_files, diff_index_file_limit_from_env,
+        diff_narrow_index_files_from_env, enforce_changed_rust_line_limit, is_binary_source_path,
         is_cargo_binary_invocation, is_diff_scope_oversized, is_generated_rust_file,
         is_generated_rust_file_with_patterns, limitations_for_absent_changed_files,
         partial_diff_budgets_from_env, partition_canonical_form,
-        replace_witnessed_no_path_infection_summary, repo_index_file_limit_from_env,
-        select_partial_diff_partition, select_partial_diff_partition_with_identity,
-        selection_with_open_files, sha256_hex, with_forced_diff_limit_env,
+        replace_witnessed_no_path_infection_summary, select_partial_diff_partition,
+        select_partial_diff_partition_with_identity, selection_with_open_files, sha256_hex,
+        with_forced_diff_limit_env,
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
@@ -7347,51 +7132,6 @@ fn absent_delimiter_boundary_returns_head() {
             ),
             Err(message) => message,
         }
-    }
-
-    #[test]
-    fn repo_index_file_limit_env_parsing() -> Result<(), String> {
-        // Default applies when unset; valid override wins; invalid fails
-        // closed (#2109).
-        // Independent decision pin for the guard-raise default; see the diff
-        // guard test for the rationale.
-        assert_eq!(REPO_INDEX_FILE_LIMIT, 1200);
-        let unset = repo_index_file_limit_from_env(Err(std::env::VarError::NotPresent))
-            .map_err(|err| format!("default should parse: {err}"))?;
-        assert_eq!(
-            unset, REPO_INDEX_FILE_LIMIT,
-            "default must be the {REPO_INDEX_FILE_LIMIT_ENV} guard"
-        );
-        let raised = repo_index_file_limit_from_env(Ok("5000".to_string()))
-            .map_err(|err| format!("valid override should parse: {err}"))?;
-        assert_eq!(raised, 5000);
-        for bad in ["", "  ", "lots", "1.5", "0", "-5"] {
-            if repo_index_file_limit_from_env(Ok(bad.to_string())).is_ok() {
-                return Err(format!("invalid override {bad:?} must fail closed"));
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn enforce_repo_index_file_limit_is_fail_closed_exactly_over_the_guard() -> Result<(), String> {
-        // Exactly at the limit passes; one file over fails with the named
-        // error, the guard identity, and the repair route (#2109 review).
-        enforce_repo_index_file_limit(800, 800)
-            .map_err(|err| format!("exactly-at-limit must pass: {err}"))?;
-        let err = match enforce_repo_index_file_limit(801, 800) {
-            Err(err) => err,
-            Ok(()) => return Err("one over the limit must fail".to_string()),
-        };
-        for needle in [
-            "repo_scope_oversized",
-            "801 indexed Rust files",
-            "RIPR_MAX_REPO_INDEX_FILES",
-            "--base/--diff",
-        ] {
-            assert!(err.contains(needle), "error missing `{needle}`: {err}");
-        }
-        Ok(())
     }
 
     #[test]
