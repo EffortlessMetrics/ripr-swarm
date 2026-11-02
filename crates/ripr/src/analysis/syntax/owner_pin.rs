@@ -1621,21 +1621,37 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
     )
 }
 
-/// The claims macros `source` names by a `use claims::name;` (or
-/// `use claims::{name, ..};`) import, under their own names. A source that
+/// The claims macros a `use claims::name;` import makes reach the test on
+/// `test_lines` (1-based, inclusive), under their own names. A source that
 /// does not parse cleanly imports nothing provable. The import's manifest
 /// verdict and shadowing are the binding scan's, which already treats an
 /// unverified or foreign import of a trusted name as a binding site.
-pub(crate) fn source_imported_claims_macros(source: &str) -> Vec<&'static str> {
+///
+/// The import must be in scope where the test asserts (#12462): at the file
+/// root, in a module that encloses the test, or directly in the test's own
+/// body. An import in another function, in a sibling module, or in a nested
+/// block does not resolve the macro there, and a `cfg`-gated import (other
+/// than the plain test gate) may be compiled out. With no known test span
+/// only file-root imports count, so an unplaceable test fails closed. An
+/// enclosing module's import is counted without reading whether the test's
+/// own module re-imports it (`use super::*`); a file that lacks it does not
+/// compile, the same credit-for-uncompilable-input class as before.
+pub(crate) fn source_imported_claims_macros(
+    source: &str,
+    test_lines: Option<(usize, usize)>,
+) -> Vec<&'static str> {
     let Some(parse) = parse_clean_source_file(source) else {
         return Vec::new();
     };
-    let uses: Vec<ast::UseTree> = parse
-        .tree()
-        .syntax()
+    let root = parse.tree().syntax().clone();
+    let test_fn = test_lines
+        .and_then(|(first, last)| line_span(source, first, last))
+        .and_then(|span| innermost_fn_covering(&root, span));
+    let uses: Vec<ast::UseTree> = root
         .descendants()
         .filter_map(ast::UseTree::cast)
         .filter(|item| item.use_tree_list().is_none() && item.rename().is_none())
+        .filter(|item| import_reaches_test(item, test_fn.as_ref()))
         .collect();
     CLAIMS_MACRO_NAMES
         .into_iter()
@@ -1643,7 +1659,91 @@ pub(crate) fn source_imported_claims_macros(source: &str) -> Vec<&'static str> {
         .collect()
 }
 
+/// The claims macros whose call yields the `Ok`/`Some` payload, as the
+/// payload route reads them. A subset of [`CLAIMS_MACRO_NAMES`].
+pub(crate) const CLAIMS_PAYLOAD_MACRO_NAMES: [&str; 2] = ["assert_ok", "assert_some"];
+
 const CLAIMS_MACRO_NAMES: [&str; 4] = ["assert_err", "assert_none", "assert_ok", "assert_some"];
+
+/// The byte span of source lines `first..=last` (1-based), without the final
+/// line break, or `None` when the lines are not in `source`.
+fn line_span(source: &str, first: usize, last: usize) -> Option<ra_ap_syntax::TextRange> {
+    if first == 0 || last < first {
+        return None;
+    }
+    let mut offset = 0usize;
+    let mut span_start = None;
+    for (index, line) in source.split_inclusive('\n').enumerate() {
+        let number = index + 1;
+        if number == first {
+            span_start = Some(offset);
+        }
+        if number == last {
+            let end = offset + line.trim_end_matches(['\n', '\r']).len();
+            return Some(ra_ap_syntax::TextRange::new(
+                TextSize::try_from(span_start?).ok()?,
+                TextSize::try_from(end).ok()?,
+            ));
+        }
+        offset += line.len();
+    }
+    None
+}
+
+/// The smallest `fn` item whose text range holds all of `span`: the test.
+fn innermost_fn_covering(root: &SyntaxNode, span: ra_ap_syntax::TextRange) -> Option<SyntaxNode> {
+    root.descendants()
+        .filter(|node| ast::Fn::can_cast(node.kind()))
+        .filter(|node| node.text_range().contains_range(span))
+        .min_by_key(|node| node.text_range().len())
+}
+
+/// Whether the `use` holding `tree` is in scope in the body of `test_fn`.
+fn import_reaches_test(tree: &ast::UseTree, test_fn: Option<&SyntaxNode>) -> bool {
+    let Some(item) = tree.syntax().ancestors().find_map(ast::Use::cast) else {
+        return false;
+    };
+    // Any `cfg`/`cfg_attr` other than the plain test gate may compile the
+    // import out; the test's own gating is judged where the test is.
+    let gated = item.attrs().any(|attr| {
+        matches!(
+            attr.meta(),
+            Some(ast::Meta::CfgMeta(_) | ast::Meta::CfgAttrMeta(_))
+        ) && !crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(
+            &attr.syntax().text().to_string(),
+        )
+    });
+    if gated {
+        return false;
+    }
+    let Some(container) = item.syntax().parent() else {
+        return false;
+    };
+    match container.kind() {
+        ra_ap_syntax::SyntaxKind::SOURCE_FILE => true,
+        ra_ap_syntax::SyntaxKind::ITEM_LIST => {
+            // A module's items are visible to every item inside it.
+            let Some(test_fn) = test_fn else {
+                return false;
+            };
+            container
+                .parent()
+                .is_some_and(|module| module.text_range().contains_range(test_fn.text_range()))
+        }
+        ra_ap_syntax::SyntaxKind::STMT_LIST => {
+            // Only the test fn's own body block; a nested block or another
+            // function's body does not reach the assertion.
+            let Some(test_fn) = test_fn else {
+                return false;
+            };
+            container
+                .parent()
+                .and_then(|block| block.parent())
+                .is_some_and(|owner| &owner == test_fn)
+        }
+        _ => false,
+    }
+}
 
 /// Words that let tokens bind or import a name, or pull in unseen items,
 /// once a macro expansion parses them as items.

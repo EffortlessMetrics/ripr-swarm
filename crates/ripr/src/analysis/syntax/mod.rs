@@ -39,7 +39,9 @@ pub(crate) use owner_pin::{
     standard_derive_names, supported_targeted_item_context, trusted_macro_binding_site_sets,
     trusted_macro_binding_sites, use_rebinds_crate_name,
 };
-pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
+pub(crate) use owner_pin::{
+    CLAIMS_PAYLOAD_MACRO_NAMES, decimal_u8, literal_check_syntax, literal_owner_syntax,
+};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};
 pub(crate) mod ra;
 

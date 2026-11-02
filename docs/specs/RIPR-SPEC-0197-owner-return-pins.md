@@ -1617,11 +1617,19 @@ unless it has the named variant, and yield the payload, so
    (`ErrVariant`, or a field gate wrapped in `Err`) is the opposite direction,
    since the macro panics on that exit before any comparison.
 
-Accepted limitation: the import is read at file granularity, as `expect!`'s is.
-A `use claims::assert_ok;` inside one inner module admits the name for a test
-elsewhere in the file that has no such import in scope; such a subject does not
-compile, so the credit is for a test that cannot run. Scoping the import to the
-asserting test's module chain is a follow-up.
+Import scope (#12462): the claims import must be in scope where the test
+asserts. It counts at the file root, in a module that encloses the test, or
+directly in the test's own body. An import in another function, in a sibling
+module, or in a nested block of the body does not count, and an import under
+any `cfg` or `cfg_attr` other than the plain `#[cfg(test)]` is treated as
+compiled out. A doc example has no test span in its own source, so only
+file-root imports count there. The test side's binding scan reads the manifest
+verdict and shadowing as before.
+
+Accepted limitation: an enclosing module's import counts without reading
+whether the test's own module re-imports it (`use super::*`). A file that
+lacks that re-import does not compile, so the credit would be for a test that
+cannot run. `expect!`'s import keeps its file-granular read.
 
 ### Bool-owner pins
 
