@@ -4408,14 +4408,12 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn strongly_gripped_packet_keeps_discriminate_yes() -> Result<(), String> {
-        let json = render_agent_seam_packets_json(&[strongly_gripped_classified()], None);
-        if !json.contains("\"discriminate\": \"yes\"") {
-            return Err(format!("strongly_gripped should keep yes: {json}"));
-        }
-        Ok(())
-    }
+    // No strongly-gripped keep-yes test at this surface: strongly-gripped
+    // seams are not repair-queue-visible, so packets never carry one
+    // (`given_strongly_gripped_seam_when_packets_are_requested_then_no_actionable_packet_is_emitted`).
+    // The keep-yes control lives on the repo-exposure surface
+    // (`json_keeps_discriminate_yes_for_strongly_gripped_seam`) and in the
+    // shared-token unit tests in `gap_vocabulary`.
 
     #[test]
     fn missing_discriminators_carry_value_and_reason_objects() -> Result<(), String> {
