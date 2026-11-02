@@ -6,8 +6,6 @@
 
 use std::fmt;
 
-use crate::core_error::CoreError;
-
 /// Stable wire/LSP component-outcome kind (no trailing colon).
 pub(crate) const DIFF_SCOPE_OVERSIZED_KIND: &str = "diff_scope_oversized";
 
@@ -18,8 +16,9 @@ const DIFF_FILE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_INDEX_FILES";
 const DIFF_CHANGED_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_LINES";
 const DIFF_INDEX_FILE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_INDEX_FILES";
 const DIFF_CHANGED_RUST_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_RUST_LINES";
-const DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES";
-const DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES";
+pub(crate) const DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES";
+pub(crate) const DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV: &str =
+    "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES";
 
 /// How the oversized input reached the guard (#4861).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

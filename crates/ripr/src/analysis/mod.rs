@@ -34,9 +34,6 @@ pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
 // consumers outside `analysis` ask it instead of matching attribute text.
 pub(crate) use facts::cfg_predicates::attribute_is_plain_test_gate;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
-pub(crate) use pipeline::{
-    DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
-};
 mod probe_read_trace;
 mod probes;
 pub(crate) mod repair_route;

@@ -381,7 +381,7 @@ mod tests {
             &CoreError::from(
                 crate::diff_scope_guard::DiffScopeOversized::preview_language_changed_lines(
                     "Python",
-                    crate::analysis::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+                    crate::diff_scope_guard::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
                     2100,
                     3,
                     2000,
@@ -410,7 +410,7 @@ mod tests {
             &CoreError::from(
                 crate::diff_scope_guard::DiffScopeOversized::preview_language_changed_lines(
                     "TypeScript",
-                    crate::analysis::DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+                    crate::diff_scope_guard::DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
                     2100,
                     5,
                     2000,

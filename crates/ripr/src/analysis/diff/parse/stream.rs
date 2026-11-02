@@ -5,9 +5,8 @@ use std::path::{Path, PathBuf};
 use crate::core_error::CoreError;
 
 use super::{
-    ChangedFile, DIFF_CHANGED_LINE_LIMIT_ENV, DIFF_FILE_LIMIT_ENV, MAX_DIFF_PATH_COMPONENTS,
-    ParsedDiff, is_new_path_marker, parse_old_path_marker, parser_state,
-    path_marker_exceeds_depth_bound,
+    ChangedFile, MAX_DIFF_PATH_COMPONENTS, ParsedDiff, is_new_path_marker, parse_old_path_marker,
+    parser_state, path_marker_exceeds_depth_bound,
 };
 
 #[cfg(test)]

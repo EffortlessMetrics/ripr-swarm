@@ -3788,7 +3788,7 @@ mod tests {
         run_git_checked(&dir, &["commit", "-m", "python enabled, small diff"])?;
         let invalid = crate::analysis::language::with_forced_diff_limit_env(
             &[(
-                crate::analysis::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+                crate::diff_scope_guard::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
                 "not-a-number",
             )],
             || another_base_candidate(&dir, None),
