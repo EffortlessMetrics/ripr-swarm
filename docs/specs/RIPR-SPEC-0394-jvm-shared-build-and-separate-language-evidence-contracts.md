@@ -26,7 +26,9 @@ Support-tier impact:
 - This spec does not enable JVM languages, promote support tiers, arm default
   gates, badges, baselines, RIPR Zero blocking, or publication. All Java,
   Kotlin, and Scala evidence governed here remains preview/advisory per language,
-  framework, and mode until separate promotion work cites proof.
+  framework, and mode until separate promotion work cites proof. The canonical
+  support-tier boundary remains
+  [support tiers](../status/SUPPORT_TIERS.md).
 - Clojure and Spock campaigns reuse only the shared substrate facts named in
   this document; they never inherit Java routing, owners, test semantics,
   findings completeness, or support tier from this spec.
@@ -66,16 +68,28 @@ scala
 ```
 
 There is no synthetic `jvm` language code, combined owner namespace, or shared
-semantic support row. File routing maps:
+semantic support row. File routing maps production and test sources by extension **after** build-script
+exclusion:
 
 | Extension | Wire language |
 | --- | --- |
 | `.java` | `java` |
-| `.kt`, `.kts` | `kotlin` |
+| `.kt` | `kotlin` |
 | `.scala` | `scala` |
 
-Build scripts (`pom.xml`, Gradle build files, `build.sbt`) feed **substrate
-facts** only; they do not select a single semantic language for the repository.
+Build configuration paths feed **substrate facts** only and MUST NOT enter
+semantic adapters, even when their extension matches Kotlin or Scala:
+
+- Maven: `pom.xml`
+- Gradle: `build.gradle`, `build.gradle.kts`, `settings.gradle`,
+  `settings.gradle.kts`, convention plugin sources under `buildSrc/` and
+  `gradle/` when they are build-logic roots
+- sbt: `build.sbt`, `project/*.scala`, `project/*.sbt`
+
+The `.kts` extension on `build.gradle.kts` and `.scala` under `project/` are
+substrate inputs, not Kotlin/Scala production owners. Only source roots
+declared by the substrate (for example `src/main/kotlin`, `src/test/java`) map
+to semantic adapters.
 
 ### Three machine-readable contracts
 
@@ -201,13 +215,21 @@ Parameterized, dynamic/generated, nested, tagged, disabled, ignored, pending,
 and platform-limited tests retain explicit uncertainty fields; they MUST NOT
 collapse to a single “active test” boolean.
 
-### Cross-language relations
+### Cross-module and cross-language relations
 
-Cross-module or cross-language production/test relations require a registered
-edge under [RIPR-SPEC-0378](RIPR-SPEC-0378-cross-language-edge-registry-v1.md)
+**Same wire language, different module:** Test-to-production reach within one
+wire language (for example a Java test module calling a Java class in another
+Maven module) uses substrate module linkage plus an evidenced call path and test
+activation under [#5542](https://github.com/EffortlessMetrics/ripr-swarm/issues/5542).
+It does **not** use [RIPR-SPEC-0378](RIPR-SPEC-0378-cross-language-edge-registry-v1.md)
+edges, because that registry rejects same-language positive edges.
+
+**Different wire languages:** Cross-language production/test relations require a
+registered edge under RIPR-SPEC-0378
 ([#5559](https://github.com/EffortlessMetrics/ripr-swarm/issues/5559)). Java
 calling Kotlin or Scala (and reverse) uses JVM signature identity in the edge
-payload; co-location or shared classpath is insufficient.
+payload; co-location, shared classpath, or same-module cohabitation alone is
+insufficient.
 
 ### Clojure and Spock reuse boundaries
 
