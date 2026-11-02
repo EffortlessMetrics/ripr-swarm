@@ -240,9 +240,29 @@ pub(crate) fn placeholder_row(
     }
 }
 
+/// Every catalog identity appears exactly once in the report rows.
+pub(crate) fn catalog_identities_match(rows: &[RepairAttemptCloseoutMatrixRow]) -> bool {
+    let catalog = scenario_catalog();
+    if rows.len() != catalog.len() {
+        return false;
+    }
+    let expected: std::collections::BTreeSet<&str> = catalog
+        .iter()
+        .map(|definition| definition.identity)
+        .collect();
+    let found: std::collections::BTreeSet<&str> = rows
+        .iter()
+        .map(|row| row.scenario_identity.as_str())
+        .collect();
+    expected == found
+}
+
 pub(crate) fn aggregate_closeout(
     rows: &[RepairAttemptCloseoutMatrixRow],
 ) -> CloseoutMatrixAggregate {
+    if !catalog_identities_match(rows) {
+        return CloseoutMatrixAggregate::Incomplete;
+    }
     let complete = rows.iter().all(|row| {
         matches!(
             row.result,
@@ -320,9 +340,8 @@ mod tests {
         BeforeArtifactSource, BeginRepairAttemptOptions, RepairAttemptManifest,
         RepairAttemptStoreAccess, TERMINAL_RECEIPT_ROLE, TERMINAL_VERIFY_ROLE,
         begin_repair_attempt_with, edit_cage_policy_from_packet, finish_repair_attempt,
-        load_repair_attempt_manifest, load_repair_attempt_manifest_from, quoted_store_flag,
-        resolve_awaiting_repair_attempt, resolve_store, retain_terminal_evidence,
-        write_edit_cage_baseline,
+        load_repair_attempt_manifest, resolve_awaiting_repair_attempt, resolve_store,
+        retain_terminal_evidence, write_edit_cage_baseline,
     };
     use crate::edit_cage::HeadMovement;
     use crate::testing::fixture_git::fixture_git_ok as run_git;
@@ -535,51 +554,19 @@ mod tests {
             let _ = std::fs::remove_dir_all(&root);
         }
 
-        // Scenario 2: explicit store round trip (restart simulated by reload).
+        // Scenario 2: restart + foreign CWD requires a later CLI/integration slice.
         {
-            let root = git_repo("matrix-normal-2")?;
-            let alt = Path::new("target/ripr/alt-attempts");
-            let prepared = prepare_attempt(&root, "seam:matrix-2", "two", Some(alt))?;
-            let attempt_id = prepared.manifest.repair_attempt_id.clone();
-            if prepared.manifest.store.is_none() {
-                return Err("scenario 2 lost explicit store identity".to_string());
-            }
-            let reloaded = load_repair_attempt_manifest_from(&root, Some(alt), &attempt_id)?;
-            if reloaded.store.is_none() {
-                return Err("scenario 2 reload dropped store".to_string());
-            }
-            let store_flag = quoted_store_flag(Some(alt));
-            if !prepared.manifest.next_command.contains(&store_flag) {
-                return Err("scenario 2 next command omitted store flag".to_string());
-            }
-            rows.push(RepairAttemptCloseoutMatrixRow {
-                scenario_identity: "normal.explicit_store_restart_foreign_cwd".to_string(),
-                repository_identity: Some("git-test-repo".to_string()),
-                store_identity: Some("target/ripr/alt-attempts".to_string()),
-                attempt_identity: Some(attempt_id.as_str().to_string()),
-                before_state: Some("awaiting_edit".to_string()),
-                after_state: None,
-                fault_or_movement_injected: Some(
-                    "simulated fresh process via manifest reload".to_string(),
-                ),
-                observed_status: Some("awaiting_edit".to_string()),
-                observed_currentness: Some("current".to_string()),
-                observed_movement: None,
-                observed_evidence_state: Some("explicit store identity round-tripped".to_string()),
-                expected_next_or_recovery_action: Some("after phase".to_string()),
-                artifact_and_process_disposition: Some(
-                    "foreign CWD/hosted Windows receipt deferred to later slice".to_string(),
-                ),
-                platform_host_class: platform.clone(),
-                result: CloseoutMatrixResult::Pass,
-                limitations: vec![
-                    "Foreign CWD and cross-process restart are not exercised in slice 1."
-                        .to_string(),
-                ],
-                non_claims: vec!["Does not claim Windows path receipt.".to_string()],
-                owning_issue_on_failure: None,
-            });
-            let _ = std::fs::remove_dir_all(&root);
+            let definition = scenario_catalog()
+                .iter()
+                .find(|definition| {
+                    definition.identity == "normal.explicit_store_restart_foreign_cwd"
+                })
+                .ok_or_else(|| "scenario 2 missing from catalog".to_string())?;
+            rows.push(placeholder_row(
+                definition,
+                &platform,
+                "R3 slice 1: explicit store across process restart and foreign CWD not yet demonstrated; in-process reload alone is insufficient.",
+            ));
         }
 
         // Scenario 3: finish A and B, inspect independently.
@@ -606,15 +593,23 @@ mod tests {
                     None,
                     &attempt.manifest.repair_attempt_id,
                 )?;
-                if matches!(
-                    status.attempt.status_class,
-                    "corrupt_or_unavailable" | "awaiting_edit" | "prepared"
-                ) {
+                let class = status.attempt.status_class;
+                let currentness = status.attempt.currentness;
+                let terminal = matches!(class, "finished_current" | "finished_historical");
+                let currentness_ok = (class == "finished_current" && currentness == "current")
+                    || (class == "finished_historical" && currentness == "historical");
+                if !terminal || !currentness_ok {
                     return Err(format!(
-                        "scenario 3 attempt stayed non-terminal: {}",
-                        status.attempt.status_class
+                        "scenario 3 attempt not terminal with matching currentness: {class}/{currentness}"
                     ));
                 }
+            }
+            let first_status =
+                build_agent_attempt_status(&root, &root, None, &first.manifest.repair_attempt_id)?;
+            let second_status =
+                build_agent_attempt_status(&root, &root, None, &second.manifest.repair_attempt_id)?;
+            if first_status.attempt.attempt_id == second_status.attempt.attempt_id {
+                return Err("scenario 3 cross-linked attempt ids".to_string());
             }
             rows.push(RepairAttemptCloseoutMatrixRow {
                 scenario_identity: "normal.finish_a_finish_b_restart_independent".to_string(),
@@ -773,16 +768,27 @@ mod tests {
             .iter()
             .filter(|row| row.result == CloseoutMatrixResult::Pass)
             .count();
-        if exercised != 5 {
-            return Err(format!("expected 5 passing rows, got {exercised}"));
+        if exercised != 4 {
+            return Err(format!("expected 4 passing rows, got {exercised}"));
+        }
+        let missing = report
+            .rows
+            .iter()
+            .filter(|row| row.result == CloseoutMatrixResult::MissingEvidence)
+            .count();
+        if missing != 21 {
+            return Err(format!("expected 21 missing rows, got {missing}"));
         }
         let json = render_closeout_json(&report)?;
         let markdown = render_closeout_markdown(&report);
         if !json.contains("normal.default_store_before_edit_after_status") {
             return Err("json report missing scenario 1".to_string());
         }
-        if !markdown.contains("Aggregate") {
-            return Err("markdown report missing aggregate".to_string());
+        let aggregate_markdown = format!("Aggregate: {:?}", report.aggregate);
+        if !markdown.contains(&aggregate_markdown) {
+            return Err(format!(
+                "markdown report missing aggregate line {aggregate_markdown:?}"
+            ));
         }
         Ok(())
     }
@@ -795,6 +801,11 @@ mod tests {
                 .map_err(|error| format!("decode json report failed: {error}"))?;
         assert_eq!(json.aggregate, report.aggregate);
         assert_eq!(json.rows.len(), report.rows.len());
+        let markdown = render_closeout_markdown(&report);
+        let aggregate_markdown = format!("Aggregate: {:?}", report.aggregate);
+        if !markdown.contains(&aggregate_markdown) {
+            return Err("markdown aggregate disagrees with report DTO".to_string());
+        }
         Ok(())
     }
 
@@ -807,10 +818,38 @@ mod tests {
             .iter()
             .filter(|row| row.result == CloseoutMatrixResult::MissingEvidence)
             .count();
-        if missing != 20 {
-            return Err(format!("expected 20 missing rows, got {missing}"));
+        if missing != 21 {
+            return Err(format!("expected 21 missing rows, got {missing}"));
         }
         Ok(())
+    }
+
+    #[test]
+    fn aggregate_closeout_requires_full_catalog_even_when_subset_rows_pass() {
+        let partial = vec![RepairAttemptCloseoutMatrixRow {
+            scenario_identity: "normal.default_store_before_edit_after_status".to_string(),
+            repository_identity: None,
+            store_identity: None,
+            attempt_identity: None,
+            before_state: None,
+            after_state: None,
+            fault_or_movement_injected: None,
+            observed_status: None,
+            observed_currentness: None,
+            observed_movement: None,
+            observed_evidence_state: None,
+            expected_next_or_recovery_action: None,
+            artifact_and_process_disposition: None,
+            platform_host_class: "linux/test".to_string(),
+            result: CloseoutMatrixResult::Pass,
+            limitations: Vec::new(),
+            non_claims: Vec::new(),
+            owning_issue_on_failure: None,
+        }];
+        assert_eq!(
+            aggregate_closeout(&partial),
+            CloseoutMatrixAggregate::Incomplete
+        );
     }
 
     #[test]
