@@ -939,6 +939,35 @@ fn pilot_summary_ranks_a_true_gap_ahead_of_withheld_limitations() {
     assert!(terminal.contains("src/c.rs:4"), "{terminal}");
 }
 
+fn classified_with_propagate_state(
+    class: SeamGripClass,
+    file: &str,
+    line: usize,
+    propagate: StageState,
+) -> ClassifiedSeam {
+    let mut entry = classified_with(class, file, line, vec![missing()], vec![related_test()]);
+    entry.evidence.propagate = stage(propagate);
+    entry
+}
+
+#[test]
+fn pilot_ranking_uses_is_static_limited_not_class_alone_for_gap_classes() {
+    // #5497 policy single authority: a gap-class seam with an unknown stage
+    // is withheld like evidence-record actionability, not ranked on class alone.
+    let limited_gap_class = classified_with_propagate_state(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        10,
+        StageState::Unknown,
+    );
+    let true_gap = classified_in_owner(SeamGripClass::Ungripped, "src/b.rs", "b::g", 11);
+    let entries = [limited_gap_class, true_gap];
+    let ranked = top_actionable_seams(&entries, 5, None);
+    assert_eq!(ranked.len(), 1);
+    assert_eq!(ranked[0].class, SeamGripClass::Ungripped);
+    assert_eq!(withheld_static_limitations(&entries), 1);
+}
+
 #[test]
 fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
     // #5497: nothing ranks, but the withheld seams are named, not dropped.
@@ -2279,16 +2308,17 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
     use crate::output::agent_seam_packets::targeted_test_brief_outline_for_classified_seam;
 
     let artifacts = pilot_artifacts();
-    for (test_files, eligible, offered_expected) in [
-        (&["tests/pricing.rs"][..], true, true),
+    for (test_files, eligible, offered_expected, rankable) in [
+        (&["tests/pricing.rs"][..], true, true, true),
         (
             &["tests/pricing.rs", "tests/pricing.test.ts"][..],
+            false,
             false,
             false,
         ),
         // Eligible, but the recommended test is an inline module in a
         // production file, which `agent repair` refuses as an edit target.
-        (&["src/pricing.rs"][..], true, false),
+        (&["src/pricing.rs"][..], true, false, true),
     ] {
         let test_file = test_files.join(" + ");
         let entry = route_ready_entry(test_files);
@@ -2327,9 +2357,25 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
             serde_json::from_str(&json).map_err(|e| format!("parse pilot JSON: {e}\n{json}"))?;
         let md = render_pilot_summary_md(&entries, pilot_context(&artifacts));
 
-        // Both must be the ranked top seam, or the negative half is vacuous.
-        if !terminal.contains(&format!("gap {}: ", entries[0].seam.id().as_str())) {
-            return Err(format!("{test_file}: must be the top seam\n{terminal}"));
+        if rankable {
+            // Both must be the ranked top seam, or the negative half is vacuous.
+            if !terminal.contains(&format!("gap {}: ", entries[0].seam.id().as_str())) {
+                return Err(format!("{test_file}: must be the top seam\n{terminal}"));
+            }
+        } else {
+            assert_eq!(
+                summary["withheld_static_limitations_total"], 1,
+                "{test_file}: cross-language static limitation must be withheld\n{json}"
+            );
+            assert_eq!(
+                summary["top_actionable_seams"],
+                serde_json::json!([]),
+                "{test_file}\n{json}"
+            );
+            assert!(
+                terminal.contains("none ranked: 1 seam were withheld"),
+                "{test_file}\n{terminal}"
+            );
         }
         let offered = [
             terminal.contains(&format!("  repair this gap: {command}\n")),

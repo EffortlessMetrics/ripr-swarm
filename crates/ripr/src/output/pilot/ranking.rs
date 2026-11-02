@@ -1,6 +1,7 @@
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::seams::SeamGripClass;
 use crate::output::agent_seam_packets::suggested_assertion_for_classified_seam;
+use crate::output::evidence_record::is_static_limited;
 use crate::output::path::display_path;
 use crate::output::pilot::PilotCurrentChange;
 use crate::output::pilot::commands::has_repair_route;
@@ -27,7 +28,7 @@ pub(crate) fn top_actionable_seams<'a>(
     // cannot widen what is offered.
     let mut actionable = classified
         .iter()
-        .filter(|entry| class_rank(entry.class).is_some())
+        .filter(|entry| is_pilot_rankable(entry))
         .map(|entry| {
             (
                 (
@@ -56,7 +57,7 @@ pub(super) fn actionable_in_change(
 ) -> usize {
     classified
         .iter()
-        .filter(|entry| class_rank(entry.class).is_some() && current_change.touches(entry))
+        .filter(|entry| is_pilot_rankable(entry) && current_change.touches(entry))
         .count()
 }
 
@@ -153,7 +154,7 @@ impl<'a> RankKey<'a> {
 pub(super) fn withheld_static_limitations(classified: &[ClassifiedSeam]) -> usize {
     classified
         .iter()
-        .filter(|entry| entry.class.is_static_limitation())
+        .filter(|entry| counts_as_withheld_static_limitation(entry))
         .count()
 }
 
@@ -162,21 +163,34 @@ pub(super) fn withheld_static_limitations(classified: &[ClassifiedSeam]) -> usiz
 pub(super) fn routable_total(classified: &[ClassifiedSeam]) -> usize {
     classified
         .iter()
-        .filter(|entry| class_rank(entry.class).is_some() && has_repair_route(entry))
+        .filter(|entry| is_pilot_rankable(entry) && has_repair_route(entry))
         .count()
 }
 
 pub(super) fn actionable_total(classified: &[ClassifiedSeam]) -> usize {
     classified
         .iter()
-        .filter(|entry| class_rank(entry.class).is_some())
+        .filter(|entry| is_pilot_rankable(entry))
         .count()
 }
 
 /// Whether pilot can recommend this seam. The seam budget uses the same
 /// predicate, so a changed seam kept past the cut is one ranking can use.
 pub(super) fn is_actionable(entry: &ClassifiedSeam) -> bool {
-    class_rank(entry.class).is_some()
+    is_pilot_rankable(entry)
+}
+
+/// Pilot ranks gap classes whose evidence is not statically limited. The same
+/// [`is_static_limited`] predicate that owns evidence-record actionability
+/// also withholds a gap-class seam when any stage is unknown or opaque, so
+/// ranking cannot disagree with canonical limitation admission (#5497).
+fn is_pilot_rankable(entry: &ClassifiedSeam) -> bool {
+    class_rank(entry.class).is_some() && !is_static_limited(entry)
+}
+
+fn counts_as_withheld_static_limitation(entry: &ClassifiedSeam) -> bool {
+    entry.class.is_static_limitation()
+        || (class_rank(entry.class).is_some() && is_static_limited(entry))
 }
 
 /// Pilot ranks gap classes only. A class that names a static limitation
@@ -184,6 +198,8 @@ pub(super) fn is_actionable(entry: &ClassifiedSeam) -> bool {
 /// classes) is withheld from the ranking and counted by
 /// [`withheld_static_limitations`] instead, so pilot never offers a seam
 /// whose evidence it could not establish as the gap to test first (#5497).
+/// Gap-class seams that [`is_static_limited`] marks as static limitations
+/// are withheld the same way.
 fn class_rank(class: SeamGripClass) -> Option<u8> {
     if class.is_static_limitation() {
         return None;
