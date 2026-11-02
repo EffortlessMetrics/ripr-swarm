@@ -441,7 +441,10 @@ row, `row[key]`, `row?.key`, an assignment, a declaration or shadowing
 parameter is refused. Every `row.key` read, scalar or container, resolves only when the
 callback is exactly one `expect(..).matcher(..)` statement and the read is
 a direct argument of the call that is the whole argument of `expect(` or of
-the matcher call. A second statement, or a read wrapped in parentheses, a
+the matcher call. A complete `//` or `/* */` comment before, after or
+between the parts of that one statement is not code and does not count as a
+second statement (#12494); a comment inside the call's brackets, or an
+unterminated one, still refuses. A second statement, or a read wrapped in parentheses, a
 comma list, `void`, `delete`, an array, an operator, a further member
 (`t.out.toString()`, `(t.input).pop()`) or an argument of any other call
 (`Object.assign(t.input, ..)`, `fix(t.input)`) refuses the table. A

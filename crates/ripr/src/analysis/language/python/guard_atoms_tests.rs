@@ -379,6 +379,11 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         // An escaped quote inside a string must not hide a later statement.
         "import builtins as b\nlabel = \"say \\\"hi\\\"\"; b.isinstance = checker\n\n\n",
         "import builtins as b\nlabel = 'it\\'s'; b.isinstance, other = checker, None\n\n\n",
+        // #12593: assignment targets split across lines or continued with `\`.
+        "import builtins as b\n(other,\n b.isinstance) = (None, checker)\n\n\n",
+        "import builtins as b\n[other,\n b.isinstance] = [None, checker]\n\n\n",
+        "import builtins as b\nb.isinstance = \\\n    checker\n\n\n",
+        "import builtins as b\n(\n    b.isinstance,\n    other,\n) = (checker, None)\n\n\n",
     ];
     for patch in patches {
         let owner = format!("{patch}{arm}");
@@ -408,6 +413,9 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "import builtins as b\nb.isinstance, other; value = 1\n\n\n",
         "import builtins as b\nlabel = \"say \\\"b.isinstance = 1\\\"\"\n\n\n",
         "import builtins as b\nfor name in [b.isinstance, b.len]: count = 1\n\n\n",
+        // #12593 controls: multiline reads and continued expressions bind nothing.
+        "import builtins as b\nchecks = (b.isinstance,\n b.len)\n\n\n",
+        "import builtins as b\nsame = b.isinstance == \\\n    checker\n\n\n",
     ] {
         let owner = format!("{harmless}{arm}");
         assert_eq!(
