@@ -2739,3 +2739,51 @@ fn multiline_sibling_only_row_is_observation_unconfirmed() -> Result<(), String>
     );
     Ok(())
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// #5496 — production-classified findings for cross-surface parity tests
+// (`output::related_test_miss`, `lsp`, `mcp::gaps`, human digest). The
+// classifier matrix lives above; these exports pin the shared renderer on
+// real Python rows without packet indirection.
+// ──────────────────────────────────────────────────────────────────────
+
+const MOCK_AND_WEAK_TESTS: &str = "def test_mock():\n    cb = Mock()\n    score(cb)\n    cb.assert_called_once_with(1)\n\ndef test_weak():\n    assert score(1)\n";
+
+const MIXED_NO_CALL_PATH_AND_WEAK_TESTS: &str = "def test_score_is_importable():\n    assert callable(score)\n\ndef test_weak():\n    assert score(1)\n";
+
+/// Mock-oracle row keeps `miss: None`; the weak sibling carries
+/// `weak_assertion`. Used as the primary two-row surface-parity fixture.
+pub(crate) fn python_mock_and_weak_finding() -> Result<Finding, String> {
+    score_case(MOCK_AND_WEAK_TESTS)
+}
+
+/// Heuristic-only row plus a direct weak row; both carry distinct misses.
+pub(crate) fn python_mixed_no_call_path_and_weak_finding() -> Result<Finding, String> {
+    score_case(MIXED_NO_CALL_PATH_AND_WEAK_TESTS)
+}
+
+/// The two-row finding for surface parity: the explained row is `test_weak`,
+/// the withheld row is `test_mock`.
+pub(crate) fn python_direct_and_advisory_finding() -> Result<Finding, String> {
+    python_mock_and_weak_finding()
+}
+
+fn python_miss_matrix_cases() -> Result<Vec<Finding>, String> {
+    Ok(vec![
+        python_mock_and_weak_finding()?,
+        python_mixed_no_call_path_and_weak_finding()?,
+        score_case(
+            "def test_exact():\n    assert score(0) == 8\n\ndef test_weak():\n    assert score(1)\n",
+        )?,
+        score_case("def test_score():\n    score(0)\n")?,
+        score_case(
+            "from src.subject import other\n\ndef test_score():\n    score(0)\n    assert other(1) == 2\n",
+        )?,
+        reserve_case("def test_off():\n    assert can_reserve(5, 3) == True\n")?,
+    ])
+}
+
+/// Production-classified matrix findings for output-side invariance tests.
+pub(crate) fn python_miss_matrix_findings() -> Result<Vec<Finding>, String> {
+    python_miss_matrix_cases()
+}

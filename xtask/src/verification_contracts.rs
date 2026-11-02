@@ -129,7 +129,7 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     (
         "review-comments",
         &[producer(
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/mod.rs",
             "const REVIEW_COMMENTS_SCHEMA_VERSION: &str = \"",
             1,
         )],

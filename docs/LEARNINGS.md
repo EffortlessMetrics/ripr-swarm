@@ -758,7 +758,13 @@ reintroduce a line-at-a-time mutation scan; unmutated bindings, including a
 `let` on its own line inside a block, must keep pairing. Register a `let`
 only when the masked line still looks like one; `CallFact` text stays on the
 original line. Otherwise a string-interior `let got = gate(10);` can replace
-a real binding, while `gate("alpha")` must still pair.
+a real binding, while `gate("alpha")` must still pair. Whole-test voiding used
+to ignore assertion position (#7042 item 1): a mutation after the assertion
+voided an earlier valid pairing; voiding now stops at each assertion line.
+Bindings are tracked per brace depth (#7042 item 3) so an inner block's
+mutation of a shadow name does not void an outer boundary binding. Whole-body
+masking already applies to mutation scans (#7042 item 2): comment and string
+interiors must not void a live binding.
 
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 
