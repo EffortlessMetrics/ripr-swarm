@@ -44,6 +44,39 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
     (error_count == 0).then_some(parse)
 }
 
+/// [`parse_clean_source_file`] memoized per thread for small texts.
+///
+/// The shadow checks re-read one test body once per (seam, naming test,
+/// oracle) triple, and every read re-parsed the same text: the large-workspace
+/// cold pilot spent most of its time there (#10167 regression). Rowan trees
+/// are cheap to clone (an `Arc`), so the memo keeps the parse by full text and
+/// is capped in entries and text size so it cannot grow with the workspace.
+pub(crate) fn parse_clean_source_file_memoized(text: &str) -> Option<Parse<SourceFile>> {
+    const MAX_ENTRIES: usize = 512;
+    const MAX_TEXT_BYTES: usize = 64 * 1024;
+    if text.len() > MAX_TEXT_BYTES {
+        return parse_clean_source_file(text);
+    }
+    CLEAN_PARSE_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if let Some(hit) = memo.get(text) {
+            return hit.clone();
+        }
+        let parsed = parse_clean_source_file(text);
+        if memo.len() >= MAX_ENTRIES {
+            memo.clear();
+        }
+        memo.insert(text.to_string(), parsed.clone());
+        parsed
+    })
+}
+
+thread_local! {
+    static CLEAN_PARSE_MEMO: std::cell::RefCell<
+        std::collections::HashMap<String, Option<Parse<SourceFile>>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 /// Parse with the current edition, retrying as Rust 2021 when that fails.
 /// ripr does not read each crate's edition, and 2024 reserves `gen`, so a
 /// 2021 crate's `fn arbitrary(gen: &mut Gen)` is a syntax error under the
@@ -1364,5 +1397,23 @@ mod tests {
             block_comment_only_lines("x = '/'; /* c */\n/* d */\n").len(),
             1
         );
+    }
+}
+
+#[cfg(test)]
+mod memoized_parse_tests {
+    use super::{parse_clean_source_file, parse_clean_source_file_memoized};
+
+    #[test]
+    fn memoized_parse_matches_the_direct_parse_for_clean_and_broken_text() {
+        let clean = "fn a() { let x = 1; }";
+        let broken = "fn a( {";
+        for _ in 0..2 {
+            let memo = parse_clean_source_file_memoized(clean).map(|p| p.syntax_node().to_string());
+            let direct = parse_clean_source_file(clean).map(|p| p.syntax_node().to_string());
+            assert_eq!(memo, direct);
+            assert!(memo.is_some());
+            assert!(parse_clean_source_file_memoized(broken).is_none());
+        }
     }
 }
