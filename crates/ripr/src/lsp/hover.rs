@@ -167,7 +167,10 @@ pub(super) fn hover_response_without_evidence(
             kind,
             requested_base,
         } => {
-            let cause = kind.empty_scope_cause_sentence(requested_base.as_deref());
+            let cause = kind.empty_scope_cause_sentence(
+                requested_base.as_deref(),
+                crate::analysis_outcome::EmptyScopeDiffAuthority::SavedWorktree,
+            );
             format!(
                 "**ripr** {cause}. {}",
                 super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE

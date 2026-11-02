@@ -1742,10 +1742,10 @@ fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
     // `AnalysisOutcomeKind` owner; the LSP scope disclosure consumes the
     // same cause sentence, so the surfaces cannot drift. The bytes are the
     // pre-refactor hint wording, pinned by the tests below.
-    let why = snapshot
-        .outcome
-        .kind
-        .empty_scope_cause_sentence(session.desired_base.as_deref());
+    let why = snapshot.outcome.kind.empty_scope_cause_sentence(
+        session.desired_base.as_deref(),
+        crate::analysis_outcome::EmptyScopeDiffAuthority::CommittedSnapshot,
+    );
     Some(json!({
         "why": why,
         "pass_base": AnalysisOutcomeKind::EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE,

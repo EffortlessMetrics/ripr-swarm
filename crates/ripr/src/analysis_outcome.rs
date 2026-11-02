@@ -26,6 +26,18 @@ pub(crate) enum AnalysisOutcomeKind {
     AnalysisFailed,
 }
 
+/// Which bytes the empty-scope diff names when a base is explicit (#12416).
+///
+/// MCP's committed refresh and the LSP's saved-content capture are different
+/// inputs; only the default-base arms are shared verbatim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EmptyScopeDiffAuthority {
+    /// Committed snapshot refresh (MCP `empty_scope_hint` gate).
+    CommittedSnapshot,
+    /// Saved tracked worktree bytes the LSP analyzes (#3183, #5994).
+    SavedWorktree,
+}
+
 impl AnalysisOutcomeKind {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -66,19 +78,29 @@ impl AnalysisOutcomeKind {
         )
     }
 
-    /// #12416: the empty-scope cause sentence for a committed snapshot whose
-    /// outcome is `NoScope`, `NoChangedLines` or `NoBehavioralCandidates`
-    /// with zero items. One owner for the fact wording every agent-facing
-    /// projection shares: MCP's `empty_scope_hint.why` and the LSP scope
-    /// disclosure consume it byte-identically. `requested_base` is the base
-    /// the caller's user explicitly named (`None` = the loader's default
-    /// resolution); callers with no separate requested/effective distinction
-    /// pass their configured base.
-    pub(crate) fn empty_scope_cause_sentence(self, requested_base: Option<&str>) -> String {
+    /// #12416: the empty-scope cause sentence for a snapshot whose outcome is
+    /// `NoScope`, `NoChangedLines` or `NoBehavioralCandidates` with zero
+    /// items. One owner for the fact wording every agent-facing projection
+    /// shares. MCP's `empty_scope_hint.why` uses
+    /// [`EmptyScopeDiffAuthority::CommittedSnapshot`]; LSP scope disclosure
+    /// and hover use [`EmptyScopeDiffAuthority::SavedWorktree`] because the
+    /// editor analyzes saved bytes, not a git commit object.
+    /// `requested_base` is the base the caller's user explicitly named
+    /// (`None` = the loader's default resolution).
+    pub(crate) fn empty_scope_cause_sentence(
+        self,
+        requested_base: Option<&str>,
+        authority: EmptyScopeDiffAuthority,
+    ) -> String {
         match requested_base {
-            Some(base) => format!(
-                "the committed diff against requested base `{base}` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
-            ),
+            Some(base) => match authority {
+                EmptyScopeDiffAuthority::CommittedSnapshot => format!(
+                    "the committed diff against requested base `{base}` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
+                ),
+                EmptyScopeDiffAuthority::SavedWorktree => format!(
+                    "the saved diff against requested base `{base}` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
+                ),
+            },
             None => match self {
                 Self::NoBehavioralCandidates => "no base was passed, so the default base was used; the diff has changed lines but none holds a behavior candidate to analyze (a different base may widen it). This is not an all-clear".to_string(),
                 _ => "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear".to_string(),
@@ -724,23 +746,43 @@ mod tests {
     /// cause sentences or the verbatim retry routes.
     #[test]
     fn empty_scope_cause_sentences_and_mcp_routes_are_byte_stable() {
-        let named = AnalysisOutcomeKind::NoScope.empty_scope_cause_sentence(Some("origin/main"));
+        let named = AnalysisOutcomeKind::NoScope.empty_scope_cause_sentence(
+            Some("origin/main"),
+            EmptyScopeDiffAuthority::CommittedSnapshot,
+        );
         assert_eq!(
             named,
             "the committed diff against requested base `origin/main` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
         );
-        let default_empty = AnalysisOutcomeKind::NoScope.empty_scope_cause_sentence(None);
+        let saved_named = AnalysisOutcomeKind::NoScope.empty_scope_cause_sentence(
+            Some("origin/main"),
+            EmptyScopeDiffAuthority::SavedWorktree,
+        );
+        assert_eq!(
+            saved_named,
+            "the saved diff against requested base `origin/main` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
+        );
+        let default_empty = AnalysisOutcomeKind::NoScope.empty_scope_cause_sentence(
+            None,
+            EmptyScopeDiffAuthority::CommittedSnapshot,
+        );
         assert_eq!(
             default_empty,
             "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear"
         );
         // `no_changed_lines` shares the default-base cause arm.
         assert_eq!(
-            AnalysisOutcomeKind::NoChangedLines.empty_scope_cause_sentence(None),
+            AnalysisOutcomeKind::NoChangedLines.empty_scope_cause_sentence(
+                None,
+                EmptyScopeDiffAuthority::CommittedSnapshot,
+            ),
             default_empty
         );
         assert_eq!(
-            AnalysisOutcomeKind::NoBehavioralCandidates.empty_scope_cause_sentence(None),
+            AnalysisOutcomeKind::NoBehavioralCandidates.empty_scope_cause_sentence(
+                None,
+                EmptyScopeDiffAuthority::CommittedSnapshot,
+            ),
             "no base was passed, so the default base was used; the diff has changed lines but none holds a behavior candidate to analyze (a different base may widen it). This is not an all-clear"
         );
         // Every kind with a requested base shares the one requested-base arm.
@@ -749,9 +791,17 @@ mod tests {
             AnalysisOutcomeKind::NoChangedLines,
             AnalysisOutcomeKind::NoBehavioralCandidates,
         ] {
-            assert_eq!(kind.empty_scope_cause_sentence(Some("origin/main")), named);
+            assert_eq!(
+                kind.empty_scope_cause_sentence(
+                    Some("origin/main"),
+                    EmptyScopeDiffAuthority::CommittedSnapshot,
+                ),
+                named
+            );
             assert!(kind.is_empty_scope());
-            assert!(!kind.empty_scope_cause_sentence(None).is_empty());
+            assert!(!kind
+                .empty_scope_cause_sentence(None, EmptyScopeDiffAuthority::CommittedSnapshot)
+                .is_empty());
         }
         // Complete outcomes are real answers: never empty-scope.
         assert!(!AnalysisOutcomeKind::CompleteNoFindings.is_empty_scope());

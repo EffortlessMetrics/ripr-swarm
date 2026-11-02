@@ -5523,7 +5523,10 @@ pub(super) fn empty_scope_disclosure(
     if !kind.is_empty_scope() || has_items {
         return None;
     }
-    let mut sentence = kind.empty_scope_cause_sentence(requested_base);
+    let mut sentence = kind.empty_scope_cause_sentence(
+        requested_base,
+        crate::analysis_outcome::EmptyScopeDiffAuthority::SavedWorktree,
+    );
     sentence.push_str(". ");
     sentence.push_str(EMPTY_SCOPE_LSP_RETRY_ROUTE);
     Some(sentence)
@@ -13292,6 +13295,10 @@ mod list_actionable_items_tests {
         assert!(
             disclosure.contains("origin/main"),
             "a requested base must be named: {disclosure}"
+        );
+        assert!(
+            disclosure.contains("saved diff"),
+            "LSP scope disclosure must name saved worktree bytes, not a committed diff: {disclosure}"
         );
         assert!(disclosure.contains("not an all-clear"), "{disclosure}");
         Ok(())

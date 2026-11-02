@@ -7356,10 +7356,16 @@ tests = [
     "editors/vscode/test/suite/extension.test.ts::typed unavailable_languages status names the language in the status bar, not message text (#8585)",
     "editors/vscode/test/suite/extension.test.ts::closing an unsaved buffer restores the typed language-not-enabled status (#8585)",
     "editors/vscode/test/suite/extension.test.ts::language-not-enabled status keeps degraded component recovery and trust warning (#8585)",
+    "crates/ripr/src/lsp/backend.rs::list_actionable_items_tests::list_actionable_items_discloses_an_empty_scope",
+    "crates/ripr/src/lsp/backend.rs::list_actionable_items_tests::list_actionable_items_scope_disclosure_controls",
+    "crates/ripr/src/lsp/backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_names_an_empty_scope_instead_of_generic_advice",
+    "crates/ripr/src/lsp/tests.rs::refresh_completion_log_message_names_the_analysis_outcome_kind",
+    "crates/ripr/src/analysis_outcome.rs::tests::empty_scope_cause_sentences_and_mcp_routes_are_byte_stable",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/diagnostic_origin.rs",
+  "crates/ripr/src/analysis_outcome.rs",
   "crates/ripr/src/lsp/position.rs",
   "crates/ripr/src/lsp/progress.rs",
   "crates/ripr/src/lsp/backend.rs",
