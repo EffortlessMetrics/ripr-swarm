@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::verification_allocation_policy::{
     EvidenceStrengthV1, VerificationAllocationActionV1, VerificationAllocationLaterOwnerV1,
     VerificationAllocationPolicyV1, VerificationAllocationSubjectEvidenceV1, recommend_action,
-    validate_policy,
+    resolve_admitted_rule, validate_policy,
 };
 
 pub(crate) const VERIFICATION_ALLOCATION_ADAPTER_SCHEMA_VERSION: &str =
@@ -203,10 +203,15 @@ fn escalate(
     reason: &str,
 ) -> (CommandExecutionRecordV1, bool, String) {
     let outcome = adapter.run(command);
+    let disposition = if outcome.exit_code == 0 {
+        ExecutionDispositionV1::Escalated
+    } else {
+        ExecutionDispositionV1::Failed
+    };
     (
         CommandExecutionRecordV1 {
             command: command.to_string(),
-            disposition: ExecutionDispositionV1::Escalated,
+            disposition,
             exit_code: Some(outcome.exit_code),
             detail: format!("{reason}:{}", outcome.detail),
         },
@@ -215,28 +220,35 @@ fn escalate(
     )
 }
 
+fn snapshot_disabled_rules(
+    input: &VerificationAllocationAdapterInputV1,
+    state: &VerificationAllocationAdapterStateV1,
+) -> Vec<String> {
+    let mut disabled_rules = input.disabled_rules.clone();
+    disabled_rules.extend(state.disabled_rules.clone());
+    disabled_rules.sort();
+    disabled_rules.dedup();
+    disabled_rules
+}
+
 pub(crate) fn execute_verification_allocation_adapter(
     input: &VerificationAllocationAdapterInputV1,
     adapter: &dyn LocalCommandAdapter,
     state: &mut VerificationAllocationAdapterStateV1,
 ) -> Result<VerificationAllocationAdapterReceiptV1, String> {
-    let mut disabled_rules = input.disabled_rules.clone();
-    disabled_rules.extend(state.disabled_rules.clone());
-    disabled_rules.sort();
-    disabled_rules.dedup();
-
-    let base_receipt = |recommended: VerificationAllocationActionV1,
-                        rule_id: Option<String>,
-                        audit_selected: bool,
-                        audit_digest: String,
-                        targeted: CommandExecutionRecordV1,
-                        audit: CommandExecutionRecordV1,
-                        full_fallback: CommandExecutionRecordV1,
-                        deferred: CommandExecutionRecordV1,
-                        escalated: bool,
-                        escalation_reason: Option<String>,
-                        policy_generation: Option<u64>,
-                        policy_digest: Option<String>| {
+    let build_receipt = |recommended: VerificationAllocationActionV1,
+                         rule_id: Option<String>,
+                         audit_selected: bool,
+                         audit_digest: String,
+                         targeted: CommandExecutionRecordV1,
+                         audit: CommandExecutionRecordV1,
+                         full_fallback: CommandExecutionRecordV1,
+                         deferred: CommandExecutionRecordV1,
+                         escalated: bool,
+                         escalation_reason: Option<String>,
+                         policy_generation: Option<u64>,
+                         policy_digest: Option<String>,
+                         disabled_rules: Vec<String>| {
         VerificationAllocationAdapterReceiptV1 {
             schema_version: VERIFICATION_ALLOCATION_ADAPTER_SCHEMA_VERSION.to_string(),
             enablement: input.enablement,
@@ -258,14 +270,14 @@ pub(crate) fn execute_verification_allocation_adapter(
             deferred,
             escalated,
             escalation_reason,
-            disabled_rules: disabled_rules.clone(),
+            disabled_rules,
             claim_boundary: VERIFICATION_ALLOCATION_ADAPTER_CLAIM_BOUNDARY.to_string(),
             non_claims: vec![VERIFICATION_ALLOCATION_ADAPTER_CLAIM_BOUNDARY.to_string()],
         }
     };
 
     if input.enablement == AdapterEnablementV1::Disabled {
-        return Ok(base_receipt(
+        return Ok(build_receipt(
             VerificationAllocationActionV1::FullRequired,
             None,
             false,
@@ -278,26 +290,22 @@ pub(crate) fn execute_verification_allocation_adapter(
             None,
             None,
             None,
+            snapshot_disabled_rules(input, state),
         ));
     }
 
     validate_policy(&input.policy)?;
 
     let decision = recommend_action(&input.policy, &input.subject);
-    let rule = decision.rule_id.as_ref().and_then(|rule_id| {
-        input
-            .policy
-            .rules
-            .iter()
-            .find(|rule| &rule.rule_id == rule_id)
-    });
+    let rule = resolve_admitted_rule(&input.policy, &decision, &input.subject);
+    let disabled_rules = snapshot_disabled_rules(input, state);
 
     if let Some(rule) = rule
         && disabled_rules.iter().any(|id| id == &rule.rule_id)
     {
         let full_command = rule.full_audit_command.clone();
         let (full_fallback, escalated, reason) = escalate(&full_command, adapter, "rule_disabled");
-        return Ok(base_receipt(
+        return Ok(build_receipt(
             VerificationAllocationActionV1::FullRequired,
             Some(rule.rule_id.clone()),
             false,
@@ -310,6 +318,7 @@ pub(crate) fn execute_verification_allocation_adapter(
             Some(reason),
             Some(input.policy.generation),
             Some(input.policy.semantic_digest.clone()),
+            snapshot_disabled_rules(input, state),
         ));
     }
 
@@ -319,7 +328,7 @@ pub(crate) fn execute_verification_allocation_adapter(
             .unwrap_or_else(|| "cargo xtask ci-full".to_string());
         let (full_fallback, escalated, reason) =
             escalate(&full_command, adapter, "uncertain_evidence");
-        return Ok(base_receipt(
+        return Ok(build_receipt(
             VerificationAllocationActionV1::FullRequired,
             decision.rule_id.clone(),
             false,
@@ -332,11 +341,12 @@ pub(crate) fn execute_verification_allocation_adapter(
             Some(reason),
             Some(input.policy.generation),
             Some(input.policy.semantic_digest.clone()),
+            snapshot_disabled_rules(input, state),
         ));
     }
 
     let Some(rule) = rule else {
-        return Ok(base_receipt(
+        return Ok(build_receipt(
             decision.recommended_action,
             None,
             false,
@@ -349,6 +359,7 @@ pub(crate) fn execute_verification_allocation_adapter(
             Some("no_applicable_rule".to_string()),
             Some(input.policy.generation),
             Some(input.policy.semantic_digest.clone()),
+            snapshot_disabled_rules(input, state),
         ));
     };
 
@@ -365,7 +376,7 @@ pub(crate) fn execute_verification_allocation_adapter(
             let Some(owner) = rule.later_owner.as_ref() else {
                 let (full_fallback, escalated, reason) =
                     escalate(&rule.full_audit_command, adapter, "missing_later_owner");
-                return Ok(base_receipt(
+                return Ok(build_receipt(
                     VerificationAllocationActionV1::FullRequired,
                     Some(rule.rule_id.clone()),
                     audit_selected,
@@ -378,21 +389,50 @@ pub(crate) fn execute_verification_allocation_adapter(
                     Some(reason),
                     Some(input.policy.generation),
                     Some(input.policy.semantic_digest.clone()),
+                    snapshot_disabled_rules(input, state),
                 ));
             };
-            Ok(base_receipt(
+            let mut audit_record = not_run(&rule.full_audit_command);
+            if audit_selected {
+                let audit_outcome = adapter.run(&rule.full_audit_command);
+                audit_record = audited(&rule.full_audit_command, &audit_outcome);
+                if audit_outcome.exit_code != 0 {
+                    if !state.disabled_rules.contains(&rule.rule_id) {
+                        state.disabled_rules.push(rule.rule_id.clone());
+                    }
+                    let (full_fallback, escalated, reason) =
+                        escalate(&rule.full_audit_command, adapter, "audit_failed");
+                    return Ok(build_receipt(
+                        VerificationAllocationActionV1::FullRequired,
+                        Some(rule.rule_id.clone()),
+                        true,
+                        audit_digest,
+                        not_run(&rule.targeted_command),
+                        audit_record,
+                        full_fallback,
+                        not_run("defer"),
+                        escalated,
+                        Some(reason),
+                        Some(input.policy.generation),
+                        Some(input.policy.semantic_digest.clone()),
+                        snapshot_disabled_rules(input, state),
+                    ));
+                }
+            }
+            Ok(build_receipt(
                 VerificationAllocationActionV1::DeferToNightlyOrRelease,
                 Some(rule.rule_id.clone()),
                 audit_selected,
                 audit_digest,
                 not_run(&rule.targeted_command),
-                not_run(&rule.full_audit_command),
+                audit_record,
                 not_run(&rule.full_audit_command),
                 deferred_record(owner),
                 false,
                 None,
                 Some(input.policy.generation),
                 Some(input.policy.semantic_digest.clone()),
+                snapshot_disabled_rules(input, state),
             ))
         }
         VerificationAllocationActionV1::TargetedPlusAudit => {
@@ -401,7 +441,7 @@ pub(crate) fn execute_verification_allocation_adapter(
             if targeted_outcome.exit_code != 0 {
                 let (full_fallback, escalated, reason) =
                     escalate(&rule.full_audit_command, adapter, "targeted_failed");
-                return Ok(base_receipt(
+                return Ok(build_receipt(
                     VerificationAllocationActionV1::FullRequired,
                     Some(rule.rule_id.clone()),
                     audit_selected,
@@ -414,6 +454,7 @@ pub(crate) fn execute_verification_allocation_adapter(
                     Some(reason),
                     Some(input.policy.generation),
                     Some(input.policy.semantic_digest.clone()),
+                    snapshot_disabled_rules(input, state),
                 ));
             }
 
@@ -427,7 +468,7 @@ pub(crate) fn execute_verification_allocation_adapter(
                     }
                     let (full_fallback, escalated, reason) =
                         escalate(&rule.full_audit_command, adapter, "audit_failed");
-                    return Ok(base_receipt(
+                    return Ok(build_receipt(
                         VerificationAllocationActionV1::FullRequired,
                         Some(rule.rule_id.clone()),
                         true,
@@ -440,11 +481,12 @@ pub(crate) fn execute_verification_allocation_adapter(
                         Some(reason),
                         Some(input.policy.generation),
                         Some(input.policy.semantic_digest.clone()),
+                        snapshot_disabled_rules(input, state),
                     ));
                 }
             }
 
-            Ok(base_receipt(
+            Ok(build_receipt(
                 VerificationAllocationActionV1::TargetedPlusAudit,
                 Some(rule.rule_id.clone()),
                 audit_selected,
@@ -457,12 +499,13 @@ pub(crate) fn execute_verification_allocation_adapter(
                 None,
                 Some(input.policy.generation),
                 Some(input.policy.semantic_digest.clone()),
+                snapshot_disabled_rules(input, state),
             ))
         }
         VerificationAllocationActionV1::FullRequired => {
             let (full_fallback, escalated, reason) =
                 escalate(&rule.full_audit_command, adapter, "explicit_full");
-            Ok(base_receipt(
+            Ok(build_receipt(
                 VerificationAllocationActionV1::FullRequired,
                 Some(rule.rule_id.clone()),
                 audit_selected,
@@ -475,9 +518,10 @@ pub(crate) fn execute_verification_allocation_adapter(
                 Some(reason),
                 Some(input.policy.generation),
                 Some(input.policy.semantic_digest.clone()),
+                snapshot_disabled_rules(input, state),
             ))
         }
-        VerificationAllocationActionV1::UnsupportedNoRecommendation => Ok(base_receipt(
+        VerificationAllocationActionV1::UnsupportedNoRecommendation => Ok(build_receipt(
             VerificationAllocationActionV1::UnsupportedNoRecommendation,
             Some(rule.rule_id.clone()),
             audit_selected,
@@ -490,6 +534,7 @@ pub(crate) fn execute_verification_allocation_adapter(
             Some("unsupported_request".to_string()),
             Some(input.policy.generation),
             Some(input.policy.semantic_digest.clone()),
+            snapshot_disabled_rules(input, state),
         )),
     }
 }
@@ -575,6 +620,25 @@ mod adapter_semantics {
         }
     }
 
+    fn audit_forced_rule() -> Result<VerificationAllocationRuleV1, String> {
+        let subject = sample_subject();
+        for index in 0..128 {
+            let mut rule = sample_rule();
+            rule.audit_selection_token = format!("audit-token-{index}");
+            let policy = sample_policy_with_rule(rule.clone());
+            let digest = audit_subject_digest(
+                &policy,
+                &subject,
+                &rule.rule_id,
+                &rule.audit_selection_token,
+            );
+            if deterministic_audit_selected(&digest) {
+                return Ok(rule);
+            }
+        }
+        Err("no audit token selected a subject in fixture search".to_string())
+    }
+
     #[test]
     fn verification_allocation_adapter_disabled_performs_no_reduced_operation() -> Result<(), String>
     {
@@ -630,7 +694,10 @@ mod adapter_semantics {
         let mut state = VerificationAllocationAdapterStateV1::new();
         let receipt = execute_verification_allocation_adapter(
             &input,
-            &ScriptAdapter::new(&[("cargo clippy --workspace --all-targets", 0)]),
+            &ScriptAdapter::new(&[
+                ("cargo clippy --workspace --all-targets", 0),
+                ("cargo xtask ci-full", 0),
+            ]),
             &mut state,
         )?;
         assert!(receipt.escalated);
@@ -706,16 +773,8 @@ mod adapter_semantics {
     #[test]
     fn verification_allocation_adapter_audit_failure_disables_rule_for_later_subjects()
     -> Result<(), String> {
-        let policy = sample_policy_with_rule(sample_rule());
-        let digest = audit_subject_digest(
-            &policy,
-            &sample_subject(),
-            "rust-focused-clippy",
-            "audit-token-a",
-        );
-        if !deterministic_audit_selected(&digest) {
-            return Ok(());
-        }
+        let rule = audit_forced_rule()?;
+        let policy = sample_policy_with_rule(rule);
         let input = VerificationAllocationAdapterInputV1 {
             enablement: AdapterEnablementV1::Enabled,
             policy: policy.clone(),
@@ -733,6 +792,11 @@ mod adapter_semantics {
             &mut state,
         )?;
         assert!(receipt.escalated);
+        assert!(
+            receipt
+                .disabled_rules
+                .contains(&"rust-focused-clippy".to_string())
+        );
         assert!(
             state
                 .disabled_rules
@@ -821,6 +885,54 @@ mod adapter_semantics {
             ExecutionDispositionV1::Executed
         );
         assert_ne!(receipt.targeted.disposition, receipt.deferred.disposition);
+        Ok(())
+    }
+
+    #[test]
+    fn verification_allocation_adapter_failed_full_fallback_records_failed_disposition()
+    -> Result<(), String> {
+        let policy = sample_policy_with_rule(sample_rule());
+        let input = VerificationAllocationAdapterInputV1 {
+            enablement: AdapterEnablementV1::Enabled,
+            policy,
+            subject: sample_subject(),
+            requested_operation: VerificationAllocationActionV1::FullRequired,
+            disabled_rules: Vec::new(),
+        };
+        let mut state = VerificationAllocationAdapterStateV1::new();
+        let receipt = execute_verification_allocation_adapter(
+            &input,
+            &ScriptAdapter::new(&[("cargo clippy --workspace --all-targets", 2)]),
+            &mut state,
+        )?;
+        assert!(receipt.escalated);
+        assert_eq!(
+            receipt.full_fallback.disposition,
+            ExecutionDispositionV1::Failed
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn verification_allocation_adapter_rejects_duplicate_rule_ids() -> Result<(), String> {
+        let rejected = VerificationAllocationRuleV1 {
+            admission: RuleAdmissionStatusV1::Rejected,
+            targeted_command: "cargo test -p unrelated".to_string(),
+            ..sample_rule()
+        };
+        let admitted = sample_rule();
+        let mut policy = VerificationAllocationPolicyV1 {
+            schema_version: VERIFICATION_ALLOCATION_POLICY_SCHEMA_VERSION.to_string(),
+            generation: 1,
+            semantic_digest: String::new(),
+            rules: vec![rejected, admitted],
+            limitations: vec![],
+            non_claims: vec![VERIFICATION_ALLOCATION_POLICY_CLAIM_BOUNDARY.to_string()],
+        };
+        policy.semantic_digest = policy_semantic_digest(&policy);
+        if validate_policy(&policy).is_ok() {
+            return Err("expected duplicate rule_id rejection".to_string());
+        }
         Ok(())
     }
 }

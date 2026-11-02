@@ -134,6 +134,14 @@ pub(crate) fn validate_policy(policy: &VerificationAllocationPolicyV1) -> Result
                 rule.rule_id
             ));
         }
+        if let Some(owner) = &rule.later_owner
+            && (owner.lane_id.trim().is_empty() || owner.command.trim().is_empty())
+        {
+            return Err(format!(
+                "rule `{}` later_owner must name a non-empty lane_id and command",
+                rule.rule_id
+            ));
+        }
         if rule.admission == RuleAdmissionStatusV1::AdmittedForAdvisoryDesignReview
             && rule.behavior_families.is_empty()
         {
@@ -143,7 +151,29 @@ pub(crate) fn validate_policy(policy: &VerificationAllocationPolicyV1) -> Result
             ));
         }
     }
+    let mut seen_ids = std::collections::BTreeSet::new();
+    for rule in &policy.rules {
+        if !seen_ids.insert(rule.rule_id.clone()) {
+            return Err(format!("duplicate rule_id `{}`", rule.rule_id));
+        }
+    }
     Ok(())
+}
+
+pub(crate) fn resolve_admitted_rule<'a>(
+    policy: &'a VerificationAllocationPolicyV1,
+    decision: &VerificationAllocationDecisionV1,
+    subject: &VerificationAllocationSubjectEvidenceV1,
+) -> Option<&'a VerificationAllocationRuleV1> {
+    let rule_id = decision.rule_id.as_ref()?;
+    policy.rules.iter().find(|rule| {
+        &rule.rule_id == rule_id
+            && rule.admission == RuleAdmissionStatusV1::AdmittedForAdvisoryDesignReview
+            && rule
+                .behavior_families
+                .iter()
+                .any(|family| family == &subject.behavior_family)
+    })
 }
 
 pub(crate) fn recommend_action(
@@ -263,6 +293,35 @@ mod policy_semantics {
             decision.recommended_action,
             VerificationAllocationActionV1::FullRequired
         );
+        Ok(())
+    }
+
+    #[test]
+    fn verification_allocation_policy_rejects_blank_later_owner() -> Result<(), String> {
+        let rule = VerificationAllocationRuleV1 {
+            rule_id: "rust-focused-clippy".to_string(),
+            admission: RuleAdmissionStatusV1::AdmittedForAdvisoryDesignReview,
+            behavior_families: vec!["rust_analysis".to_string()],
+            targeted_command: "cargo clippy -p ripr".to_string(),
+            full_audit_command: "cargo clippy --workspace --all-targets".to_string(),
+            audit_selection_token: "audit-token-a".to_string(),
+            later_owner: Some(VerificationAllocationLaterOwnerV1 {
+                lane_id: String::new(),
+                command: String::new(),
+            }),
+        };
+        let mut policy = VerificationAllocationPolicyV1 {
+            schema_version: VERIFICATION_ALLOCATION_POLICY_SCHEMA_VERSION.to_string(),
+            generation: 1,
+            semantic_digest: String::new(),
+            rules: vec![rule],
+            limitations: vec![],
+            non_claims: vec![VERIFICATION_ALLOCATION_POLICY_CLAIM_BOUNDARY.to_string()],
+        };
+        policy.semantic_digest = policy_semantic_digest(&policy);
+        if validate_policy(&policy).is_ok() {
+            return Err("expected blank later_owner rejection".to_string());
+        }
         Ok(())
     }
 }
