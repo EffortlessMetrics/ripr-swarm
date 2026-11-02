@@ -1487,6 +1487,16 @@ GitHub code scanning:
 ripr init --ci github
 ```
 
+GitLab merge-request adopters can start with the smaller advisory slice:
+
+```bash
+ripr init --ci gitlab
+```
+
+That writes `.gitlab-ci.yml` with `allow_failure: true`, runs `ripr check` and
+`ripr review-comments` on merge-request pipelines, and uploads `target/ripr/**`
+artifacts. It does not publish MR comments, render SARIF, or configure gate modes.
+
 Copy the generated file, not a workflow from this page. Run
 `ripr init --ci github --dry-run` to print it without writing anything. It
 uploads `target/ripr` (pilot, workflow, agent, report and review artifacts) and `target/ci` as the `ripr-reports` artifact. The official GitHub
