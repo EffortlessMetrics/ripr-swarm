@@ -591,7 +591,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             changed_sink: alignment.changed_sink,
             observed_sink: Some(credit.assertion.text.clone()),
             oracle_alignment: "direct".to_string(),
-            alignment_reason: "strong_oracle_observes_module_value".to_string(),        superseded_alignment_reason: None,
+            alignment_reason: "strong_oracle_observes_module_value".to_string(),
+            superseded_alignment_reason: None,
             credited: Some(CreditedAssertion {
                 test_name: credit.test.name.clone(),
                 test_file: credit.test.file.clone(),
@@ -604,7 +605,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 changed_sink: alignment.changed_sink,
                 observed_sink: Some(credit.assertion.text.clone()),
                 oracle_alignment: "direct".to_string(),
-                alignment_reason: crate::domain::LIVE_PYTHON_TRUTHINESS_ALIGNMENT.to_string(),        superseded_alignment_reason: None,
+                alignment_reason: crate::domain::LIVE_PYTHON_TRUTHINESS_ALIGNMENT.to_string(),
+                superseded_alignment_reason: None,
                 credited: Some(CreditedAssertion {
                     test_name: credit.test.name.clone(),
                     test_file: credit.test.file.clone(),
@@ -633,7 +635,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             changed_sink: alignment.changed_sink,
             observed_sink: Some(credit.assertion.text.clone()),
             oracle_alignment: "direct".to_string(),
-            alignment_reason: "strong_oracle_observes_removed_type_guard".to_string(),        superseded_alignment_reason: None,
+            alignment_reason: "strong_oracle_observes_removed_type_guard".to_string(),
+            superseded_alignment_reason: None,
             credited: Some(CreditedAssertion {
                 test_name: credit.test.name.clone(),
                 test_file: credit.test.file.clone(),

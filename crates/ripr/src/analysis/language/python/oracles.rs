@@ -1039,34 +1039,61 @@ fn compare_observes_status_code(compare: &ast::ExprCompare) -> bool {
 
 fn compare_observes_field(compare: &ast::ExprCompare) -> bool {
     expr_observes_field(compare.left.as_ref())
-        || compare
-            .comparators
-            .iter()
-            .any(expr_observes_field)
+        || compare.comparators.iter().any(expr_observes_field)
 }
 
 fn compare_observes_exception_value(compare: &ast::ExprCompare) -> bool {
-    expr_observes_exception_value(compare.left.as_ref())
-        || compare
-            .comparators
+    let operands = std::iter::once(compare.left.as_ref()).chain(compare.comparators.iter());
+    let mut saw_exception = false;
+    for operand in operands {
+        if expr_observes_exception_value(operand) {
+            saw_exception = true;
+        } else if compare_operand_breaks_exception_exclusivity(operand) {
+            return false;
+        }
+    }
+    saw_exception
+}
+
+/// A compare operand that reads production behavior rather than only the
+/// captured exception (#6910 item 4; mixed `scale(2) == excinfo.value` stays
+/// eligible for return-family selection).
+fn compare_operand_breaks_exception_exclusivity(expr: &Expr) -> bool {
+    match expr {
+        Expr::Call(_) => true,
+        Expr::Attribute(attribute) => {
+            compare_operand_breaks_exception_exclusivity(attribute.value.as_ref())
+        }
+        Expr::Subscript(subscript) => {
+            if expr_observes_exception_value(expr) {
+                false
+            } else {
+                compare_operand_breaks_exception_exclusivity(subscript.value.as_ref())
+                    || compare_operand_breaks_exception_exclusivity(subscript.slice.as_ref())
+            }
+        }
+        Expr::BoolOp(bool_op) => bool_op
+            .values
             .iter()
-            .any(expr_observes_exception_value)
+            .any(compare_operand_breaks_exception_exclusivity),
+        _ => false,
+    }
 }
 
 fn expr_observes_exception_value(expr: &Expr) -> bool {
-    expr_full_name(expr).is_some_and(|name| {
-        name == "excinfo.value" || name.starts_with("excinfo.value.")
-    }) || match expr {
-        Expr::Attribute(attribute) => {
-            expr_full_name(attribute.value.as_ref()).is_some_and(|base| base == "excinfo")
-                && attribute.attr.as_str() == "value"
+    expr_full_name(expr)
+        .is_some_and(|name| name == "excinfo.value" || name.starts_with("excinfo.value."))
+        || match expr {
+            Expr::Attribute(attribute) => {
+                expr_full_name(attribute.value.as_ref()).is_some_and(|base| base == "excinfo")
+                    && attribute.attr.as_str() == "value"
+            }
+            Expr::Subscript(subscript) => {
+                expr_observes_exception_value(subscript.value.as_ref())
+                    || expr_observes_exception_value(subscript.slice.as_ref())
+            }
+            _ => false,
         }
-        Expr::Subscript(subscript) => {
-            expr_observes_exception_value(subscript.value.as_ref())
-                || expr_observes_exception_value(subscript.slice.as_ref())
-        }
-        _ => false,
-    }
 }
 
 fn expr_observes_output(expr: &Expr) -> bool {

@@ -95,7 +95,8 @@ impl SinkAlignment {
             changed_sink,
             observed_sink: None,
             oracle_alignment: "unknown".to_string(),
-            alignment_reason: "no_strong_oracle".to_string(),        superseded_alignment_reason: None,
+            alignment_reason: "no_strong_oracle".to_string(),
+            superseded_alignment_reason: None,
             credited: None,
         }
     }
@@ -897,7 +898,8 @@ pub(super) fn classify_sink_alignment_prepared(
             changed_sink,
             observed_sink,
             oracle_alignment: "orthogonal".to_string(),
-            alignment_reason: "strong_oracle_observes_different_sink".to_string(),        superseded_alignment_reason: None,
+            alignment_reason: "strong_oracle_observes_different_sink".to_string(),
+            superseded_alignment_reason: None,
             credited: None,
         };
     }
@@ -1370,7 +1372,8 @@ pub(super) fn classify_sink_alignment_prepared(
         changed_sink,
         observed_sink,
         oracle_alignment: oracle_alignment.to_string(),
-        alignment_reason: alignment_reason.to_string(),        superseded_alignment_reason: None,
+        alignment_reason: alignment_reason.to_string(),
+        superseded_alignment_reason: None,
         credited,
     }
 }

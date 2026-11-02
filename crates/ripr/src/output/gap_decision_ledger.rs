@@ -5630,9 +5630,7 @@ mod tests {
                     (_, Some("other_behavior_assertion_passed_over")) => {
                         family_selection += 1;
                         if eligible {
-                            return Err(format!(
-                                "passed-over fixture eligible: {name}"
-                            ));
+                            return Err(format!("passed-over fixture eligible: {name}"));
                         }
                     }
                     (Some("orthogonal"), Some("strong_oracle_observes_different_sink")) => {

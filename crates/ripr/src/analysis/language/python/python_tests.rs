@@ -1050,6 +1050,34 @@ def test_parse_error():
 }
 
 #[test]
+fn mixed_return_and_excinfo_compare_stays_non_exception_shaped() -> Result<(), String> {
+    let source = r#"
+import pytest
+
+from src.app import scale
+
+
+def test_mixed():
+    with pytest.raises(ValueError) as excinfo:
+        scale(-1)
+    assert scale(2) == excinfo.value.args[0]
+"#;
+    let tests = extract_tests(Path::new("tests/test_inline.py"), source);
+    let mixed = tests
+        .iter()
+        .flat_map(|test| test.assertions.iter())
+        .find(|assertion| assertion.text.contains("scale(2)"))
+        .ok_or_else(|| "missing mixed compare assertion".to_string())?;
+    if mixed.oracle_shape == PythonOracleShape::ExceptionAssertion {
+        return Err(format!(
+            "mixed return/excinfo compare must not be exception-only shaped: {:?}",
+            mixed.oracle_shape
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn unittest_oracle_shapes_use_assertion_arguments() -> Result<(), String> {
     let source = r#"
 import unittest

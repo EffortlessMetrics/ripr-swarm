@@ -841,7 +841,8 @@ fn changed_dict_key_limit_suppression_uses_the_classifier_focus() {
 /// finding keeps the strength-only alignment reason in a secondary field (#6910).
 #[test]
 fn family_selection_override_preserves_strength_only_alignment_reason() -> Result<(), String> {
-    let source = "def scale(x):\n    if x < 0:\n        raise ValueError(\"neg\")\n    return x * 3\n";
+    let source =
+        "def scale(x):\n    if x < 0:\n        raise ValueError(\"neg\")\n    return x * 3\n";
     let owners = extract_owners(Path::new("src/app.py"), source);
     let body = "    with pytest.raises(ValueError, match=\"neg\"):\n        scale(-1)\n    assert scale(2) > 0\n";
     let tests = vec![parse_test(body)];

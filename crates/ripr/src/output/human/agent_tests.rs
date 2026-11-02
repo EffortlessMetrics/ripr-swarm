@@ -59,7 +59,8 @@ fn finding(id: &str, class: ExposureClass, line: usize) -> Finding {
         changed_sink: None,
         observed_sink: None,
         oracle_alignment: None,
-        alignment_reason: None,        superseded_alignment_reason: None,
+        alignment_reason: None,
+        superseded_alignment_reason: None,
         source_currentness: SourceCurrentness::CandidateCurrent,
     }
 }
