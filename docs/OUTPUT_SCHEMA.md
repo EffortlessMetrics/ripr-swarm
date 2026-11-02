@@ -9767,6 +9767,21 @@ Success payload (200-level result object, no `protocol_version`,
   exceeds the listed entries.
 - `suppression_disclosure` — a sentence naming the withholding and the
   `diagnosticProfile: "full"` escape hatch; `null` when nothing is withheld.
+- `analysis_outcome` — #12416: the committed snapshot's typed producer
+  outcome, serialized exactly as the `analysis_outcome` member of
+  `ripr.collectWorkspaceStatus` (versioned `AnalysisOutcome`: `kind`,
+  counts, limitations, claim boundary); `null` when the snapshot carries no
+  typed outcome.
+- `scope_disclosure` — #12416: for an empty-scope snapshot only
+  (`kind` ∈ `no_scope` | `no_changed_lines` | `no_behavioral_candidates` AND
+  zero canonical items), one human sentence carrying the same
+  not-all-clear fact and cause wording as MCP's `empty_scope_hint` plus the
+  editor set-a-base recovery route (the `baseRef` session option or
+  `[lsp] base_ref` in `ripr.toml`, then `ripr.refresh`); `null` for a
+  populated or complete-clean scope (`complete_no_findings` and
+  `complete_with_findings` are real answers and stay silent). A different
+  fact from `suppression_disclosure` (which names withheld live findings);
+  never downgrades `status: "ok"`.
 - `budget_identity` — the snapshot profile budget identity string.
 - `complete_evidence_identity` — the complete-evidence identity string.
 - `continuation_or_inspect_route` — the route string for continuing or

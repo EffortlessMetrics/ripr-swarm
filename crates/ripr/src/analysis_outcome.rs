@@ -65,6 +65,46 @@ impl AnalysisOutcomeKind {
                 | Self::CompleteWithFindings
         )
     }
+
+    /// #12416: the empty-scope cause sentence for a committed snapshot whose
+    /// outcome is `NoScope`, `NoChangedLines` or `NoBehavioralCandidates`
+    /// with zero items. One owner for the fact wording every agent-facing
+    /// projection shares: MCP's `empty_scope_hint.why` and the LSP scope
+    /// disclosure consume it byte-identically. `requested_base` is the base
+    /// the caller's user explicitly named (`None` = the loader's default
+    /// resolution); callers with no separate requested/effective distinction
+    /// pass their configured base.
+    pub(crate) fn empty_scope_cause_sentence(self, requested_base: Option<&str>) -> String {
+        match requested_base {
+            Some(base) => format!(
+                "the committed diff against requested base `{base}` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
+            ),
+            None => match self {
+                Self::NoBehavioralCandidates => "no base was passed, so the default base was used; the diff has changed lines but none holds a behavior candidate to analyze (a different base may widen it). This is not an all-clear".to_string(),
+                _ => "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear".to_string(),
+            },
+        }
+    }
+
+    /// #12416: the MCP `ripr_refresh` base-widening retry route, verbatim.
+    /// MCP-owned surface phrasing housed in the single wording owner so the
+    /// hint cannot drift from the shared cause sentence above.
+    pub(crate) const EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE: &str = "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}";
+
+    /// #12416: the MCP `ripr_refresh` worktree-source retry route, verbatim.
+    /// Same single-owner rationale as `EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE`.
+    pub(crate) const EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE: &str = "for saved uncommitted tracked edits retry with {\"source\": \"worktree\"}; repair cards and readiness are offered only when the findings and the seam inventory are shown to have consumed the same source bytes, and are withheld with the cause otherwise";
+
+    /// #12416: whether this outcome names an empty analysis scope that a
+    /// clean zero-item projection must disclose rather than let read as an
+    /// all-clear. `CompleteNoFindings` and `CompleteWithFindings` are real
+    /// answers and must stay silent.
+    pub(crate) const fn is_empty_scope(self) -> bool {
+        matches!(
+            self,
+            Self::NoScope | Self::NoChangedLines | Self::NoBehavioralCandidates
+        )
+    }
 }
 
 impl AnalysisLimitationKind {
@@ -677,6 +717,53 @@ mod tests {
         for label in labels {
             assert!(!label.is_empty() && !label.contains('_'), "{label}");
         }
+    }
+
+    /// #12416: the shared empty-scope wording is pinned byte-identically so
+    /// the MCP `empty_scope_hint` refactor to this owner cannot drift the
+    /// cause sentences or the verbatim retry routes.
+    #[test]
+    fn empty_scope_cause_sentences_and_mcp_routes_are_byte_stable() {
+        let named = AnalysisOutcomeKind::NoScope.empty_scope_cause_sentence(Some("origin/main"));
+        assert_eq!(
+            named,
+            "the committed diff against requested base `origin/main` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
+        );
+        let default_empty = AnalysisOutcomeKind::NoScope.empty_scope_cause_sentence(None);
+        assert_eq!(
+            default_empty,
+            "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear"
+        );
+        // `no_changed_lines` shares the default-base cause arm.
+        assert_eq!(
+            AnalysisOutcomeKind::NoChangedLines.empty_scope_cause_sentence(None),
+            default_empty
+        );
+        assert_eq!(
+            AnalysisOutcomeKind::NoBehavioralCandidates.empty_scope_cause_sentence(None),
+            "no base was passed, so the default base was used; the diff has changed lines but none holds a behavior candidate to analyze (a different base may widen it). This is not an all-clear"
+        );
+        // Every kind with a requested base shares the one requested-base arm.
+        for kind in [
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+        ] {
+            assert_eq!(kind.empty_scope_cause_sentence(Some("origin/main")), named);
+            assert!(kind.is_empty_scope());
+            assert!(!kind.empty_scope_cause_sentence(None).is_empty());
+        }
+        // Complete outcomes are real answers: never empty-scope.
+        assert!(!AnalysisOutcomeKind::CompleteNoFindings.is_empty_scope());
+        assert!(!AnalysisOutcomeKind::CompleteWithFindings.is_empty_scope());
+        assert_eq!(
+            AnalysisOutcomeKind::EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE,
+            "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}"
+        );
+        assert_eq!(
+            AnalysisOutcomeKind::EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE,
+            "for saved uncommitted tracked edits retry with {\"source\": \"worktree\"}; repair cards and readiness are offered only when the findings and the seam inventory are shown to have consumed the same source bytes, and are withheld with the cause otherwise"
+        );
     }
 
     fn recovery() -> Result<AnalysisRecovery, String> {
