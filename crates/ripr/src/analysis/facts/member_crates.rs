@@ -796,26 +796,31 @@ impl MemberCrates {
             return Some(std::collections::BTreeSet::new());
         };
         let table = table.as_table()?;
+        // `visited` bounds the walk; `enabled` is what the walk credits.
+        // They differ only by the distinguished `default` name, which is
+        // walked but never credited as a feature, so a list that names
+        // `default` (directly or through a cycle) still terminates.
         let mut enabled = std::collections::BTreeSet::new();
+        let mut visited = std::collections::BTreeSet::new();
         let mut pending = vec!["default".to_string()];
         while let Some(name) = pending.pop() {
-            let Some(entry) = table.get(&name) else {
-                // A name with no `[features]` entry is an optional
-                // dependency's implicit feature; it is on when listed.
-                if name != "default" {
-                    enabled.insert(name);
-                }
-                continue;
-            };
-            if name != "default" && !enabled.insert(name.clone()) {
+            if !visited.insert(name.clone()) {
                 continue;
             }
+            if name != "default" {
+                enabled.insert(name.clone());
+            }
+            // A name with no `[features]` entry is an optional dependency's
+            // implicit feature; it is on when listed and walks no further.
+            let Some(entry) = table.get(&name) else {
+                continue;
+            };
             for member in entry.as_array()? {
                 let member = member.as_str()?;
                 if member.starts_with("dep:") || member.contains('/') {
                     continue;
                 }
-                if !enabled.contains(member) {
+                if !visited.contains(member) {
                     pending.push(member.to_string());
                 }
             }
