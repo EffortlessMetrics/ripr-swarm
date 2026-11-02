@@ -544,6 +544,22 @@ Proof: `match_arm_proximity_test_pinning_another_function_cannot_confirm`, the
 `match_arm_proximity_bound_other_function_not_credited` fixtures; the wrapper control
 above shows a call that reaches the owner is not withheld.
 
+The repo-seam grip view applies the same refusal to a `predicate_boundary` seam
+(#12434), gated differently. A related test whose only relation is proximity
+(`same_test_file`, `same_module`, and the other relations that do not establish
+reach) lends the seam no oracle strength when its assertion pins another
+indexed function, but only once some related test establishes reach of the
+owner (a direct or helper owner call, or a followed re-export). With no such
+test the proximity test keeps its credit and the seam stays
+`activation_unknown`, because the refusal would otherwise turn a missing reach
+into a `reachable_unrevealed` verdict. The gate reads every related test, not
+only the rank-limited set that is published. `match_arm` seams refuse
+unconditionally (#12132).
+
+Proof: `proximity_test_pinning_another_function_lends_a_predicate_boundary_no_oracle`
+and the `rust_repo_exposure_proximity_other_function` honesty case, whose
+`wait < 5` boundary pin is `none` beside the `same_test_file` relation.
+
 ## Owner-scoped tokens and self-computed expected values (#5830)
 
 A token confirms observation only when the shared word can name the same
