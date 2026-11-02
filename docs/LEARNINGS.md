@@ -3,6 +3,24 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-11-02: A step timeout below the job cap is not leftover time (#12338)
+
+Shard 3 of `windows-advisory-shards.yml` was cancelled at the 80-minute job
+cap with no log twice (runs 39854834481, 41359717895). The lane already had a
+44-minute nextest watchdog, a 55-minute step timeout, streamed `tail -F`
+output, and `always()` summarize/upload (#9812, #12096). None of those fire
+when warmup has already consumed most of the job: the step clock starts when
+the test step starts, the job clock started at checkout, and a job-cap cancel
+tears the runner down before `always()` upload. GitHub then returned
+BlobNotFound for the job log.
+
+Durable rules: (1) a watchdog that must leave an artifact has to bound itself
+by *remaining job time minus an upload reserve*, not by a fixed duration from
+step start; (2) write a heartbeat of in-flight SLOW/TIMEOUT rows during the
+wait so the next hang names a test even if the log blob is lost; (3) do not
+treat `timeout-minutes` on a step plus `if: always()` on upload as proof that
+a job-cap cancel will keep evidence.
+
 ## 2026-10-14: One path can spell three ways on Windows; compare at a shared owner (#7937)
 
 Fifteen lib tests failed deterministically on Windows at a Linux-green main.
