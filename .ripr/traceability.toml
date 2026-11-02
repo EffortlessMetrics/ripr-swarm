@@ -11847,7 +11847,7 @@ tests = [
   "crates/ripr/src/app/check_artifact/tests.rs::concurrent_writers_never_leave_a_torn_artifact",
   "crates/ripr/src/config.rs::tests::check_artifact_identity_fields_classify_every_config_field",
   "crates/ripr/src/config.rs::tests::check_artifact_config_identity_hash_tracks_finding_affecting_fields_only",
-  "crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain_and_context_reuse_byte_identical",
+  "crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_source_navigation",
   "crates/ripr/tests/cli_smoke.rs::explain_from_fails_closed_on_tampered_identity",
   "crates/ripr/tests/cli_smoke.rs::check_write_artifact_rejects_unsupported_run_shapes",
   "crates/ripr/tests/cli_smoke.rs::explain_from_consumes_artifact_written_with_non_default_mode",
@@ -17433,6 +17433,11 @@ tests = [
   "crates/ripr/src/analysis/classify/variant_field_pattern.rs::a_variant_another_production_site_builds_is_not_pinned_through_one_pattern",
   "crates/ripr/tests/variant_field_pattern.rs::a_variant_other_production_code_builds_stays_unconfirmed",
   "crates/ripr/tests/variant_field_pattern.rs::a_test_side_build_or_input_stays_unconfirmed",
+  "crates/ripr/tests/variant_field_pattern.rs::a_production_namesake_under_a_path_remap_stays_unconfirmed",
+  "crates/ripr/tests/variant_field_pattern.rs::a_foreign_glob_integration_import_stays_unconfirmed",
+  "crates/ripr/tests/variant_field_pattern.rs::a_foreign_glob_does_not_defeat_a_crate_qualified_owner_call",
+  "crates/ripr/tests/variant_field_pattern.rs::an_own_package_integration_test_import_is_exposed",
+  "crates/ripr/src/analysis/classify/reveal.rs::foreign_glob_defeats_bare_callee_without_own_import",
 ]
 fixtures = [
   "fixtures/rust_array_element_drop_exit",
