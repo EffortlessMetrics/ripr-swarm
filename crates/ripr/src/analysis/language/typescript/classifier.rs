@@ -461,7 +461,20 @@ pub(crate) fn ts_candidate_changed_sink_observation(
             ) {
                 return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
             }
-            merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
+            merged = merged.merge(
+                if ts_value_assertion_affirmatively_other_sink(
+                    observed,
+                    &owner_names,
+                    &changed_tokens,
+                    candidate.test,
+                    owner_is_method,
+                    &namespace_receivers,
+                ) {
+                    TypeScriptChangedSinkObservation::AffirmativelyOtherSink
+                } else {
+                    TypeScriptChangedSinkObservation::Unresolved
+                },
+            );
             continue;
         }
         // (1) Effect-shape oracle kinds confirm unconditionally: these ARE
@@ -582,6 +595,51 @@ pub(crate) fn ts_row_changed_sink_observation(
     ts_candidate_changed_sink_observation(input, candidate, Some(focus_assertion))
 }
 
+/// Whether a value-family assertion that failed to confirm still has positive
+/// evidence it observes a different sink (#5528). Derived members or calls on
+/// a local initialized from the owner stay unresolved.
+fn ts_value_assertion_affirmatively_other_sink(
+    observed: &str,
+    owner_names: &[&str],
+    changed_tokens: &[String],
+    test: &TypeScriptTest,
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> bool {
+    fn is_ident_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    }
+    let observed = observed.trim();
+    let root = observed
+        .as_bytes()
+        .iter()
+        .position(|b| !is_ident_byte(*b))
+        .map(|idx| &observed[..idx])
+        .filter(|root| {
+            !root.is_empty()
+                && root
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+        })
+        .unwrap_or(observed);
+    if ts_observed_local_aliases_owner_with_mutation(
+        root,
+        owner_names,
+        changed_tokens,
+        test,
+        owner_is_method,
+        namespace_receivers,
+        false,
+    ) {
+        return false;
+    }
+    let observed_code = ts_mask_literals_and_comments(observed);
+    !owner_names
+        .iter()
+        .any(|name| ts_references_identifier(&observed_code, name))
+}
+
 /// One-hop local aliasing credit for the value-family observation guard.
 ///
 /// Test code conventionally captures the owner call in a local and asserts
@@ -615,6 +673,26 @@ fn ts_observed_local_aliases_owner(
     test: &TypeScriptTest,
     owner_is_method: bool,
     namespace_receivers: &[String],
+) -> bool {
+    ts_observed_local_aliases_owner_with_mutation(
+        observed,
+        owner_names,
+        changed_tokens,
+        test,
+        owner_is_method,
+        namespace_receivers,
+        true,
+    )
+}
+
+fn ts_observed_local_aliases_owner_with_mutation(
+    observed: &str,
+    owner_names: &[&str],
+    changed_tokens: &[String],
+    test: &TypeScriptTest,
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+    reject_mutated_local: bool,
 ) -> bool {
     fn is_ident_byte(b: u8) -> bool {
         b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
@@ -675,7 +753,7 @@ fn ts_observed_local_aliases_owner(
                     // owner-initialized assignment matched — so a bare
                     // observed identifier with no such assignment never
                     // pays the mutation-scan cost.
-                    return !ts_test_local_is_mutated(test, ident);
+                    return !reject_mutated_local || !ts_test_local_is_mutated(test, ident);
                 }
             }
         }

@@ -826,6 +826,20 @@ fn sibling_calc_assertion_on_discount_change_is_not_observing() -> Result<(), St
 }
 
 #[test]
+fn derived_owner_local_member_stays_observation_unconfirmed() -> Result<(), String> {
+    let source = rejected_source(
+        "test('derived', () => {\n  const result = applyDiscount(100);\n  expect(result.toFixed(1)).toBe('90.0');\n});\n",
+    );
+    let finding = classify(&RETURN_CHANGE, &source)?;
+    weakly(&finding);
+    assert_eq!(
+        miss_of(&finding, "derived")?,
+        Some(RelatedTestMiss::ObservationUnconfirmed)
+    );
+    Ok(())
+}
+
+#[test]
 fn one_hop_alias_row_stays_exposed_without_miss() -> Result<(), String> {
     let source = rejected_source(
         "test('alias', () => {\n  const result = applyDiscount(100);\n  expect(result).toBe(90);\n});\n",
