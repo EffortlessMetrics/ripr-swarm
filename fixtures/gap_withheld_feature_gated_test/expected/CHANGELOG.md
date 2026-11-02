@@ -277,3 +277,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — gap_withheld_feature_gated_test (24)
+
+Reason:
+RIPR-SPEC-0224: split assertion_not_credited into assertion_proven_inert and assertion_admission_unproven (#5446)
+
+Command:
+`cargo xtask goldens bless gap_withheld_feature_gated_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

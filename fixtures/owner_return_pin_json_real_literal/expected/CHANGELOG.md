@@ -264,3 +264,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_real_literal (22)
+
+Reason:
+RIPR-SPEC-0224: split assertion_not_credited into assertion_proven_inert and assertion_admission_unproven (#5446)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_real_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

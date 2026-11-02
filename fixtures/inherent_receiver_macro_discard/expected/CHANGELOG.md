@@ -115,3 +115,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — inherent_receiver_macro_discard (10)
+
+Reason:
+RIPR-SPEC-0224: split assertion_not_credited into assertion_proven_inert and assertion_admission_unproven (#5446)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_macro_discard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

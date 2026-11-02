@@ -21,7 +21,7 @@ Start here:
     as the standard macro on the path that reaches this change (for example the file did not parse,
     the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a
     gap; this is a named limitation, not a coverage claim
-  Related test: tests/buf_tests.rs:10 pins (assertion not credited: ripr could not establish that this assertion counts here)
+  Related test: tests/buf_tests.rs:10 pins (assertion admission unproven: ripr could not establish that this assertion counts here)
   Next step: ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the
     standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed
     value; add a test only if none does

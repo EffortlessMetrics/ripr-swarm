@@ -133,3 +133,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_bool_assert_shadow_direct (11)
+
+Reason:
+RIPR-SPEC-0224: split assertion_not_credited into assertion_proven_inert and assertion_admission_unproven (#5446)
+
+Command:
+`cargo xtask goldens bless rust_bool_assert_shadow_direct --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

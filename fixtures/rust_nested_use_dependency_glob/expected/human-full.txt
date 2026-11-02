@@ -128,9 +128,9 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches returned value: x > 101 (line 2)
-  - related test tests/api.rs:12 at uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test tests/api.rs:7 high uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test tests/api.rs:2 low uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test tests/api.rs:12 at uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test tests/api.rs:7 high uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test tests/api.rs:2 low uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
   - source function argument value x = 50 at line 3
   - source function argument value x = 500 at line 8
   - source function argument value x = 101 at line 13

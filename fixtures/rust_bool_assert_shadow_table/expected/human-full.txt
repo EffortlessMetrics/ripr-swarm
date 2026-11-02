@@ -16,7 +16,7 @@ Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach can_ship: ships
   E2 [findings 1, 2]: propagation unknown: Propagation is not statically obvious from syntax-first analysis
   E3 [findings 1, 2]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
-  E4 [findings 1, 2]: related test tests/api.rs:10 ships uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  E4 [findings 1, 2]: related test tests/api.rs:10 ships uses no oracle; misses: assertion inert: this test's assertion does not run as a standard check here
   E5 [findings 1, 2]: source table row value false at line 11
   E6 [findings 1, 2]: source table row value true at line 11
   E7 [findings 1, 2]: source function argument value in_stock = false at line 13

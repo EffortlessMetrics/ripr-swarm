@@ -17,7 +17,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:can_ship:return_value:return_value:in_stock_paid
   Changed behavior: in_stock && paid
   Analyzer limit: ripr could not follow the changed value to something a test can check (a return value or side effect)
-  Related test: tests/api.rs:10 ships (assertion not credited: ripr could not establish that this assertion counts here)
+  Related test: tests/api.rs:10 ships (assertion inert: this test's assertion does not run as a standard check here)
   Next step: Trace the changed value to its output or effect, and inspect what the related test
     actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or
     strengthen a test only if this inspection finds a gap. Compare the original and changed

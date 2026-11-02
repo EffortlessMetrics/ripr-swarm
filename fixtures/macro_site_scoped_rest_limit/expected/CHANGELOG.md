@@ -232,3 +232,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — macro_site_scoped_rest_limit (18)
+
+Reason:
+RIPR-SPEC-0224: split assertion_not_credited into assertion_proven_inert and assertion_admission_unproven (#5446)
+
+Command:
+`cargo xtask goldens bless macro_site_scoped_rest_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

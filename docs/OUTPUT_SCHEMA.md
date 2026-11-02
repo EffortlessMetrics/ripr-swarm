@@ -2128,7 +2128,8 @@ The evidence-first fields are additive in schema `0.2`:
   reason, for example for an `exposed` finding's catching test. A populated
   `observation_unconfirmed` is an unknown, not an established miss. The
   per-test values (`no_call_path` on a name-only row, `no_assertion`,
-  `assertion_not_observing`, `assertion_not_credited`) can appear under any
+  `assertion_not_observing`, `assertion_not_credited`, `assertion_inert`,
+  `assertion_admission_unproven`) can appear under any
   class (RIPR-SPEC-0224); the class-level values (`weak_assertion`,
   `missing_input`, `missing_exact_assertion`, `observation_unconfirmed`)
   appear only under `weakly_exposed` and `reachable_unrevealed`, and
@@ -3654,7 +3655,9 @@ while `call_effect` remains the fallback for other observable calls.
 - `no_call_path`
 - `no_assertion`
 - `assertion_not_observing`
-- `assertion_not_credited`
+- `assertion_not_credited` (legacy artifacts)
+- `assertion_inert`
+- `assertion_admission_unproven`
 - `weak_assertion`
 - `missing_input`
 - `missing_exact_assertion`

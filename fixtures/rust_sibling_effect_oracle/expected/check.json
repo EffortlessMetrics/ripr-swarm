@@ -409,8 +409,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         },
         {
           "name": "module_note_line_byte_boundary_excludes_line_terminators",
@@ -421,8 +421,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         },
         {
           "name": "module_note_context_limit_counts_utf8_bytes",
@@ -433,8 +433,8 @@
           "oracle": "",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         },
         {
           "name": "module_note_contract_rejects_malformed_counts_reasons_and_paths",
@@ -445,8 +445,8 @@
           "oracle": "",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         },
         {
           "name": "module_note_orientation_sentence_accepts_optional_next_step",
@@ -457,8 +457,8 @@
           "oracle": "",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         },
         {
           "name": "read_prefix_rejects_non_regular_files",
@@ -469,8 +469,8 @@
           "oracle": "",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion does not run as a standard check here"
         },
         {
           "name": "unresolved_target_location_is_required_and_positive",
@@ -481,8 +481,8 @@
           "oracle": "",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         }
       ],
       "stop_reasons": [],
@@ -893,8 +893,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         },
         {
           "name": "module_note_line_byte_boundary_excludes_line_terminators",
@@ -905,8 +905,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         },
         {
           "name": "module_note_context_limit_counts_utf8_bytes",
@@ -917,8 +917,8 @@
           "oracle": "",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         },
         {
           "name": "module_note_contract_rejects_malformed_counts_reasons_and_paths",
@@ -929,8 +929,8 @@
           "oracle": "",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         },
         {
           "name": "module_note_orientation_sentence_accepts_optional_next_step",
@@ -941,8 +941,8 @@
           "oracle": "",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         },
         {
           "name": "read_prefix_rejects_non_regular_files",
@@ -953,8 +953,8 @@
           "oracle": "",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion does not run as a standard check here"
         },
         {
           "name": "unresolved_target_location_is_required_and_positive",
@@ -965,8 +965,8 @@
           "oracle": "",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         }
       ],
       "stop_reasons": [],

@@ -70,6 +70,14 @@ pub(crate) fn related_test_miss_reason(test: &RelatedTest, family: &ProbeFamily)
             "assertion not credited: ripr could not establish that this assertion counts here"
                 .to_string()
         }
+        RelatedTestMiss::AssertionInert => {
+            "assertion inert: this test's assertion does not run as a standard check here"
+                .to_string()
+        }
+        RelatedTestMiss::AssertionAdmissionUnproven => {
+            "assertion admission unproven: ripr could not establish that this assertion counts here"
+                .to_string()
+        }
         RelatedTestMiss::WeakAssertion => {
             "assertion too weak to tell the old behavior from the new".to_string()
         }

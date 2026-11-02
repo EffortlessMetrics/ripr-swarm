@@ -5216,7 +5216,9 @@ pub(in crate::analysis) fn only_proximity_oracles(related: &[RelatedTest]) -> bo
         });
         if related.relation_reason.is_none() || direct {
             if related.oracle.is_some()
-                || related.miss == Some(RelatedTestMiss::AssertionNotCredited)
+                || related
+                    .miss
+                    .is_some_and(RelatedTestMiss::is_assertion_refusal_miss)
             {
                 return false;
             }

@@ -19,7 +19,7 @@ Start here:
     as the standard macro on the path that reaches this change (for example the file did not parse,
     the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a
     gap; this is a named limitation, not a coverage claim
-  Related test: tests/weight_tests.rs:4 checks_weight (assertion not credited: ripr could not establish that this assertion counts here)
+  Related test: tests/weight_tests.rs:4 checks_weight (assertion admission unproven: ripr could not establish that this assertion counts here)
   Next step: ripr could not read whether the assertions in `checks_weight` (tests/weight_tests.rs:4)
     run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares
     the changed value; add a test only if none does
