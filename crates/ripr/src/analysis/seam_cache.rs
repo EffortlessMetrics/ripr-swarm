@@ -1516,6 +1516,11 @@ impl RepoFileFactCacheKey {
         }
     }
 
+    /// Workspace-relative path this key describes.
+    pub(crate) fn file_path(&self) -> &Path {
+        &self.file_path
+    }
+
     /// Digest of the bytes this key was built from, in the per-file form
     /// [`FilesContentHashBuilder::push_digest`] folds (#4996).
     pub(crate) fn content_hash(&self) -> &str {
