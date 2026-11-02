@@ -5384,7 +5384,8 @@ impl OwnerReturnPin {
                 expect_operands[1].as_str(),
                 Some(expect_operands[0].as_str()),
             )
-        } else if !is_guard && self.returns_bool && is_plain_macro(&assertion.text, "assert") {
+        } else if !is_guard && self.returns_bool && is_plain_or_std_macro(&assertion.text, "assert")
+        {
             // `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
             // `assert!(!owner(..))` is `assert_eq!(owner(..), false)`. The
             // message arguments never decide whether the test fails.
@@ -7057,6 +7058,27 @@ pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
     )
 }
 
+/// A method receiver written inline in the assertion operand: a struct
+/// literal or one parenthesized subexpression, not a binding name (#9092).
+fn inline_method_receiver(receiver: &str) -> bool {
+    let receiver = receiver.trim();
+    if let Some(inner) = group_inner(receiver, '(', ')') {
+        return inline_method_receiver(inner);
+    }
+    let Some(open) = receiver.find('{') else {
+        return false;
+    };
+    let head = receiver[..open].trim();
+    if !head.is_empty() && !is_plain_identifier(head) {
+        return false;
+    }
+    let masked = mask_comments_and_strings(receiver);
+    let Some(closing) = matching_close(&masked, open, b'{', b'}') else {
+        return false;
+    };
+    receiver[closing + 1..].trim().is_empty()
+}
+
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`
 /// with a plain identifier receiver and nothing chained after the call.
 fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
@@ -7091,18 +7113,22 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
             .is_empty()
             .then_some(CallShape::Associated(type_name));
     }
-    let call_start = if operand.starts_with(name) {
-        0
+    let (call_start, constructed) = if operand.starts_with(name) {
+        (0, false)
     } else {
         let dot = operand.find('.')?;
-        let receiver = &operand[..dot];
-        if !is_plain_identifier(receiver) || receiver == "self" {
+        let receiver = operand[..dot].trim();
+        if receiver == "self" || !operand[dot + 1..].starts_with(name) {
             return None;
         }
-        if !operand[dot + 1..].starts_with(name) {
+        let constructed = if is_plain_identifier(receiver) {
+            false
+        } else if inline_method_receiver(receiver) {
+            true
+        } else {
             return None;
-        }
-        dot + 1
+        };
+        (dot + 1, constructed)
     };
     let after_name = &operand[call_start + name.len()..];
     if !after_name.starts_with('(') {
@@ -7116,6 +7142,8 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     }
     Some(if call_start == 0 {
         CallShape::Bare
+    } else if constructed {
+        CallShape::Constructed(&operand[..call_start - 1])
     } else {
         CallShape::Method(&operand[..call_start - 1])
     })
