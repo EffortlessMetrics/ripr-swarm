@@ -114,7 +114,9 @@ impl LanguageId {
             LanguageId::JavaScript => cfg!(feature = "lang-typescript"),
             LanguageId::Python => cfg!(feature = "lang-python"),
             LanguageId::Perl => cfg!(feature = "lang-perl"),
-            LanguageId::Go => cfg!(feature = "lang-go"),
+            // Reserved identity only: `lang-go` compiles the placeholder module but
+            // no adapter runs until a later slice (#6349).
+            LanguageId::Go => false,
         }
     }
 
@@ -907,7 +909,10 @@ mod tests {
         assert_eq!(LanguageId::Python.required_feature(), "lang-python");
         assert_eq!(LanguageId::Perl.required_feature(), "lang-perl");
         assert_eq!(LanguageId::Go.required_feature(), "lang-go");
-        assert_eq!(LanguageId::Go.is_available(), cfg!(feature = "lang-go"));
+        assert!(
+            !LanguageId::Go.is_available(),
+            "Go identity is closed but no adapter runs yet (#6349)"
+        );
     }
 
     #[test]

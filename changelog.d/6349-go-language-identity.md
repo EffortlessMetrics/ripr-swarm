@@ -1,1 +1,2 @@
-Add closed `LanguageId::Go` wire identity (`go`) and capability registry cells without enabling Go routing or `[languages]` config (#6349).
+<!-- section: Added -->
+- Add Go's closed `go` language identity and unproven capability cells without enabling Go analysis or `[languages]` configuration (#6349).
