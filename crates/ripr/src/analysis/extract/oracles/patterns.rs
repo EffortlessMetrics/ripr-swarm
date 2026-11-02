@@ -186,12 +186,39 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
     let (Some(left), Some(right)) = (args.first(), args.get(1)) else {
         return false;
     };
+    // The operand must read the error side of the owner call itself: an
+    // adapter that replaces the error (`.map_err(|_| E::Odd)`, `.and(..)`)
+    // makes the asserted value independent of what the owner returned, and
+    // `receiver_keeps_call_error` already refuses those for the uncompared
+    // case. Outer grouping is looked through.
     let is_error_read = |operand: &str| {
-        super::scan::ends_with_unwrap_err(operand) || super::scan::ends_with_expect_err(operand)
+        let mut operand = operand.trim();
+        while operand.starts_with('(')
+            && group_end(operand, 0) == Some(operand.len().saturating_sub(1))
+        {
+            operand = operand[1..operand.len() - 1].trim();
+        }
+        let masked = mask_comments_and_strings(operand);
+        // `map_err` keeps an `Ok` an `Ok` (so the uncompared-error reader
+        // accepts it) but replaces the error, which is what this pin reads.
+        super::scan::receiver_keeps_call_error(&masked) && !has_map_err_adapter(&masked)
     };
-    let (left, right) = (comparable_expression(left), comparable_expression(right));
-    (is_error_read(&left) && expression_pins_specific_error(&right))
-        || (is_error_read(&right) && expression_pins_specific_error(&left))
+    // The expected side names the error; another error read names nothing, so
+    // comparing two reads pins no variant.
+    let pins_against = |read: &str, expected: &str| {
+        is_error_read(read)
+            && !is_error_read(expected)
+            && expression_pins_specific_error(&comparable_expression(expected))
+    };
+    pins_against(left, right) || pins_against(right, left)
+}
+
+fn has_map_err_adapter(masked: &str) -> bool {
+    masked.match_indices("map_err").any(|(index, _)| {
+        let before = masked[..index].trim_end();
+        let after = masked[index + "map_err".len()..].trim_start();
+        before.ends_with('.') && after.starts_with('(')
+    })
 }
 
 fn is_bound_error_equality_assertion(
@@ -2309,6 +2336,7 @@ mod spec_0106_tests {
             "assert_eq!(FromHexError::OddLength, Vec::from_hex(\"1\").unwrap_err());",
             "assert_eq!(\n    parse(\"x\").unwrap_err(),\n    ParseError::Empty\n);",
             r#"assert_eq!(parse("x").expect_err("must fail"), ParseError::Empty);"#,
+            r#"assert_eq!((parse("x").unwrap_err()), ParseError::Empty);"#,
         ] {
             assert!(
                 is_inline_unwrap_err_error_assertion(line),
@@ -2328,6 +2356,10 @@ mod spec_0106_tests {
             "assert_eq!(parse(\"x\"), ParseError::Empty);",
             "assert!(parse(\"x\").unwrap_err().is_empty());",
             "assert_eq!(parse(\"x\").unwrap_err().kind(), ParseError::Empty);",
+            "assert_eq!(parse(\"x\").unwrap_err(), parse(\"y\").unwrap_err());",
+            "assert_eq!(parse(\"x\").map_err(|_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(parse(\"x\").and(Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(find(\"x\").ok_or(ParseError::Empty).unwrap_err(), ParseError::Empty);",
         ] {
             assert!(
                 !is_inline_unwrap_err_error_assertion(line),

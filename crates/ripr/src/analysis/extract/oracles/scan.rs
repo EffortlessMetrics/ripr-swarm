@@ -2863,7 +2863,7 @@ fn is_call_path(callee: &str) -> bool {
 /// call. Only adapters that keep an `Ok` an `Ok` may sit between them:
 /// `check(x).and(Err(E::Other)).unwrap_err()` passes whatever `check`
 /// returns, and `find(x).ok_or(E).unwrap_err()` reads an `Option`.
-fn receiver_keeps_call_error(masked: &str) -> bool {
+pub(super) fn receiver_keeps_call_error(masked: &str) -> bool {
     let masked = masked.trim_end();
     let receiver = masked
         .strip_suffix(".unwrap_err()")
@@ -2973,11 +2973,11 @@ fn adapters_keep_ok(mut rest: &str) -> bool {
     }
 }
 
-pub(super) fn ends_with_unwrap_err(expr: &str) -> bool {
+fn ends_with_unwrap_err(expr: &str) -> bool {
     expr.trim_end().ends_with(".unwrap_err()")
 }
 
-pub(super) fn ends_with_expect_err(expr: &str) -> bool {
+fn ends_with_expect_err(expr: &str) -> bool {
     // `.expect_err(<message>)` or `Result::expect_err(<call>, <msg>)` whose
     // argument group closes `expr`. An empty group (`expect_err()`,
     // `expect_err( )`, `expect_err ()`) is a mock's expectation for a

@@ -21810,6 +21810,22 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
         StageState::Yes,
         "a different variant does not discriminate the seam"
     );
+    // `map_err` replaces the error, so the asserted value no longer depends on
+    // what the owner returned (Devin finding on #12290).
+    let mapped = read(
+        "#[test] fn odd() { assert_eq!(parse(\"1\").map_err(|_| Fault::Odd).unwrap_err(), Fault::Odd); }",
+    )?;
+    assert_ne!(
+        mapped.0,
+        StageState::Yes,
+        "a mapped error is not a pin on the owner's error"
+    );
+    let grouped =
+        read("#[test] fn odd() { assert_eq!((parse(\"1\").unwrap_err()), Fault::Odd); }")?;
+    assert_eq!(grouped.0, StageState::Yes, "grouped error read");
+    let expected_err =
+        read("#[test] fn odd() { assert_eq!(parse(\"1\").expect_err(\"odd\"), Fault::Odd); }")?;
+    assert_eq!(expected_err.0, StageState::Yes, "expect_err spelling");
     let opaque = read(
         "#[test] fn odd() { let want = Fault::Odd; assert_eq!(parse(\"1\").unwrap_err(), want); }",
     )?;
