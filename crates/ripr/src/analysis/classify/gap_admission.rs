@@ -1369,7 +1369,7 @@ mod tests {
     }
 
     #[test]
-    fn value_guard_refusal_limitation_edge_does_not_name_standard_macro() {
+    fn value_guard_refusal_limitation_edge_does_not_name_standard_macro() -> Result<(), String> {
         let mut finding = marked();
         finding.evidence = vec![
             "assertion not credited: `assert_eq!` in weighs at src/lib.rs:9: an earlier `if weight(2) > 1000 { return; }` spares the value the assertion expects, so whether the assertion runs depends on the value of `weight(2)`, which ripr does not evaluate".to_string(),
@@ -1380,9 +1380,10 @@ mod tests {
             .evidence
             .iter()
             .find_map(|line| line.strip_prefix(LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX))
-            .expect("limitation edge");
+            .ok_or("missing limitation edge".to_string())?;
         assert!(edge.contains("conditional return"), "{edge}");
         assert!(!edge.contains("standard `assert_eq!`"), "{edge}");
+        Ok(())
     }
 
     #[test]

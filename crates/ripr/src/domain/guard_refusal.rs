@@ -8,11 +8,61 @@ use super::ASSERTION_NOT_CREDITED_PREFIX;
 
 /// Why the related assertion was not credited, when the classifier recorded one.
 pub(crate) fn assertion_not_credited_reason<'a>(evidence: &'a [String]) -> Option<&'a str> {
+    assertion_not_credited_entry(evidence).and_then(|entry| {
+        entry
+            .rsplit_once(": ")
+            .map(|(_, reason)| reason.trim())
+            .filter(|reason| !reason.is_empty())
+    })
+}
+
+/// Full `assertion not credited:` evidence line when it names the given test.
+pub(crate) fn assertion_not_credited_entry_for_test<'a>(
+    evidence: &'a [String],
+    test_name: &str,
+) -> Option<&'a str> {
+    let needle = format!(" in {test_name} at ");
+    evidence.iter().find_map(|line| {
+        let body = line.strip_prefix(ASSERTION_NOT_CREDITED_PREFIX)?;
+        body.contains(&needle).then_some(line.as_str())
+    })
+}
+
+fn assertion_not_credited_entry<'a>(evidence: &'a [String]) -> Option<&'a str> {
     evidence
         .iter()
         .find_map(|entry| entry.strip_prefix(ASSERTION_NOT_CREDITED_PREFIX))
         .map(str::trim)
-        .filter(|reason| !reason.is_empty())
+        .filter(|entry| !entry.is_empty())
+}
+
+/// Digest `Why …` hint from a guard-shaped refusal (#6541).
+///
+/// Only when the guard explains the finding class; never override `no_static_path`
+/// and similar exposure explanations with an unrelated test's guard refusal.
+pub(crate) fn guard_refusal_digest_classification_hint(
+    finding: &crate::domain::Finding,
+) -> Option<String> {
+    use crate::domain::{ASSERTION_CONTEXT_UNESTABLISHED, ExposureClass, StageState};
+    let reason = assertion_not_credited_reason(&finding.evidence)?;
+    guard_refusal_kind(reason)?;
+    let applies = match finding.class {
+        ExposureClass::StaticUnknown => true,
+        ExposureClass::ReachableUnrevealed => {
+            finding.ripr.reveal.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
+                && finding.ripr.reach.state != StageState::Weak
+                && !finding
+                    .ripr
+                    .reach
+                    .summary
+                    .starts_with(crate::domain::CALLEE_ONLY_REACH_PREFIX)
+        }
+        _ => false,
+    };
+    if !applies {
+        return None;
+    }
+    guard_refusal_classification_hint(reason)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,5 +127,14 @@ mod tests {
             guard_refusal_classification_hint(reason)
                 .is_some_and(|hint| !hint.contains("standard"))
         );
+    }
+
+    #[test]
+    fn not_credited_entry_matches_test_name_in_location() {
+        let evidence = vec![format!(
+            "{ASSERTION_NOT_CREDITED_PREFIX}`assert_eq!` in weighs_two at src/lib.rs:12: guard reason"
+        )];
+        assert!(assertion_not_credited_entry_for_test(&evidence, "weighs_two").is_some());
+        assert!(assertion_not_credited_entry_for_test(&evidence, "other_test").is_none());
     }
 }

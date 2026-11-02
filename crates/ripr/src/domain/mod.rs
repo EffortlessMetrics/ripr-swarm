@@ -100,8 +100,8 @@ pub use git_candidate::{
     GitHashFormat, GitObjectId, GitTreeish,
 };
 pub(crate) use guard_refusal::{
-    GuardRefusalKind, assertion_not_credited_reason, guard_refusal_classification_hint,
-    guard_refusal_kind, guard_refusal_limitation_edge,
+    GuardRefusalKind, assertion_not_credited_entry_for_test, assertion_not_credited_reason,
+    guard_refusal_digest_classification_hint, guard_refusal_kind, guard_refusal_limitation_edge,
 };
 pub use identity::{
     GOVERNED_IDENTITY_SURFACES, IDENTITY_REGISTRY_JSON_PATH, IDENTITY_REGISTRY_MARKDOWN_PATH,
