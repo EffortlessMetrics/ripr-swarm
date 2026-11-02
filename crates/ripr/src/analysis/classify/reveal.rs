@@ -1335,10 +1335,11 @@ fn owner_call_binding_matches_impl_type(
     let Some(prefix) = body.get(..call_at) else {
         return false;
     };
-    if super::related_tests::let_binding_mentions_type(prefix, binding, impl_type) {
+    let prefix = mask_comments_and_strings(prefix);
+    if super::related_tests::let_binding_mentions_type(&prefix, binding, impl_type) {
         return true;
     }
-    super::related_tests::let_binding_certain_type_head(prefix, binding) == Some(impl_type)
+    super::related_tests::let_binding_certain_type_head(&prefix, binding) == Some(impl_type)
 }
 
 /// The offsets in `body` of the `binding.method(..)` calls that
@@ -6792,6 +6793,7 @@ mod tests {
         for refused in [
             "    let mut other = OtherInventory::default();\n    other.add(4);\n    assert_eq!(other.log, vec![4]);",
             "    let mut other: OtherInventory = Default::default();\n    other.add(4);\n    assert_eq!(other.log, vec![4]);",
+            "    // let other = Inventory::new();\n    let mut other = OtherInventory::default();\n    other.add(4);\n    assert_eq!(other.log, vec![4]);",
         ] {
             assert!(!precedes(refused, "Inventory"), "{refused}");
         }
