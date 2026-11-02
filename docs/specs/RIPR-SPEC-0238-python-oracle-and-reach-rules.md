@@ -195,7 +195,7 @@ A call statement or `with` item, by the last dotted segment of its callee:
 | `assertRaises` | `broad_error` / weak |
 | `raises` as `pytest.raises` or bare `raises`, as a `with` item, with `match=` | `exact_error_variant` / strong |
 | the same without `match=` | `broad_error` / weak |
-| `assert_called`, `assert_called_once`, `assert_called_with`, `assert_called_once_with`, `assert_any_call`, `assert_has_calls`, `assert_not_called` | `mock_expectation` / medium |
+| `assert_called`, `assert_called_once`, `assert_called_with`, `assert_called_once_with`, `assert_any_call`, `assert_has_calls`, `assert_not_called`, `assert_awaited`, `assert_awaited_once`, `assert_awaited_with`, `assert_awaited_once_with` | `mock_expectation` / medium |
 | other segment starting `assert_`, or `assert_that` | `unknown`, shape `unknown_custom_helper` (rule 28 re-reads proven numpy.testing and assertpy equality) |
 | anything else | no assertion recorded |
 
@@ -1913,6 +1913,7 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `a_deep_sum_is_refused_not_recursed`.
 - Existing: `crates/ripr/src/analysis/language/python/python_tests.rs`
   `oracle_for_call_recognizes_all_unittest_and_mock_variants`,
+  `oracle_for_call_recognizes_async_mock_expectations`,
   `collect_with_item_assertions_treats_pytest_raises_match_as_exact_error`,
   `contains_dynamic_dispatch_detects_registry_indexed_call`,
   `contains_metaprogramming_detects_metaclass_declarations`,

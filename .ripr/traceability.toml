@@ -18060,6 +18060,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/message_pin.rs::tests::literal_message_pattern_reads_both_assertion_forms",
   "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_keep_ordinary_module_imports_conservative",  "crates/ripr/src/analysis/language/python/python_tests.rs::classify_change_relates_path_parameter_route_to_concrete_client_call",
   "crates/ripr/src/analysis/language/python/python_tests.rs::classify_change_does_not_relate_typed_route_to_a_value_the_router_rejects",
+  "crates/ripr/src/analysis/language/python/python_tests.rs::oracle_for_call_recognizes_async_mock_expectations",
   "crates/ripr/src/analysis/language/python/fixture_substitution_tests.rs::a_plain_test_with_no_fixture_keeps_its_credit",
   "crates/ripr/src/analysis/language/python/fixture_substitution_tests.rs::an_autouse_conftest_fixture_that_patches_the_owner_keeps_the_limit",
   "crates/ripr/src/analysis/language/python/fixture_substitution_tests.rs::an_autouse_fixture_in_the_test_module_keeps_the_limit",
