@@ -36,8 +36,7 @@ mod test_evidence_summary;
 mod verification_result;
 
 pub(crate) use analysis_execution_identity::{
-    AnalysisAttemptId, AnalysisExecutionIdentityParseError, CompletedAnalysisSnapshotId,
-    ContinuationId, DiagnosticResultId,
+    AnalysisAttemptId, CompletedAnalysisSnapshotId, ContinuationId, DiagnosticResultId,
 };
 pub use candidate_relation::CandidateRelation;
 pub use causal_delta::{

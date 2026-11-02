@@ -1122,7 +1122,7 @@ mod tests {
           "request": "ripr/listActionableItems",
           "kind": "actionable_items",
           "status": "ok",
-          "snapshot_id": "snapshot:abc",
+          "snapshot_id": "snapshot:1",
           "input_identity": "input:def",
           "root_identity": "root:ghi",
           "config_identity": "config:jkl",
@@ -1250,7 +1250,7 @@ mod tests {
             request: RiprAgentRequest::ListActionableItems,
             kind: RiprAgentResponseKind::ActionableItems,
             status: RiprAgentSuccessStatus::Ok,
-            snapshot_id: RiprAgentRequiredNullable::Value("snapshot:abc".to_string()),
+            snapshot_id: RiprAgentRequiredNullable::Value("snapshot:1".to_string()),
             input_identity: RiprAgentRequiredNullable::Value("input:def".to_string()),
             root_identity: RiprAgentRequiredNullable::Value("root:ghi".to_string()),
             config_identity: RiprAgentRequiredNullable::Value("config:jkl".to_string()),
@@ -1290,7 +1290,7 @@ mod tests {
             "kind": "stale_snapshot",
             "retryable": true,
             "recovery_route": "refresh",
-            "snapshot_id": "snapshot:old"
+            "snapshot_id": "snapshot:0"
           },
           "allowed_edit_surface": "read_only",
           "must_not_change": ["source_edits", "workspace_edit", "autonomous_repair"]
@@ -2177,13 +2177,13 @@ mod tests {
         }
 
         let missing_success_field =
-            success_fixture().replace("          \"snapshot_id\": \"snapshot:abc\",\n", "");
+            success_fixture().replace("          \"snapshot_id\": \"snapshot:1\",\n", "");
         if serde_json::from_str::<RiprAgentSuccessEnvelope>(&missing_success_field).is_ok() {
             return Err("success accepted an omitted nullable snapshot_id".to_string());
         }
 
         let missing_error_field = error_fixture().replace(
-            "            \"recovery_route\": \"refresh\",\n            \"snapshot_id\": \"snapshot:old\"\n",
+            "            \"recovery_route\": \"refresh\",\n            \"snapshot_id\": \"snapshot:0\"\n",
             "            \"recovery_route\": \"refresh\"\n",
         );
         if serde_json::from_str::<RiprAgentErrorEnvelope>(&missing_error_field).is_ok() {

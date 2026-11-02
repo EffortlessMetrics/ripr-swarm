@@ -78,16 +78,19 @@ impl AnalysisAttemptId {
         value: &str,
     ) -> Result<Self, AnalysisExecutionIdentityParseError> {
         let trimmed = nonempty_trimmed(value, "AnalysisAttemptId")?;
-        if !trimmed.starts_with("snapshot:") {
-            return Err(AnalysisExecutionIdentityParseError::WrongClass {
-                value: trimmed,
+        let generation = trimmed.strip_prefix("snapshot:").ok_or_else(|| {
+            AnalysisExecutionIdentityParseError::WrongClass {
+                value: trimmed.clone(),
                 expected: "refresh-generation AnalysisAttemptId (`snapshot_id` echo)",
-            });
+            }
+        })?;
+        if generation.is_empty() {
+            return Err(AnalysisExecutionIdentityParseError::Empty);
         }
-        if is_completed_snapshot_handle(&trimmed) {
+        if generation.parse::<u64>().is_err() {
             return Err(AnalysisExecutionIdentityParseError::WrongClass {
                 value: trimmed,
-                expected: "AnalysisAttemptId (not a completed snapshot handle)",
+                expected: "refresh-generation AnalysisAttemptId (`snapshot:{generation}`)",
             });
         }
         Ok(Self(trimmed))
@@ -115,7 +118,10 @@ impl CompletedAnalysisSnapshotId {
     }
 }
 
-#[expect(dead_code, reason = "policy:4807: typed DiagnosticResultId surface is consumed from tests and future LSP wiring")]
+#[expect(
+    dead_code,
+    reason = "policy:4807: typed DiagnosticResultId surface is consumed from tests and future LSP wiring"
+)]
 impl DiagnosticResultId {
     pub(crate) fn from_producer_id(
         value: &str,
@@ -166,6 +172,8 @@ impl ContinuationId {
             || trimmed.starts_with("gap:")
             || trimmed.starts_with("action:")
             || trimmed.starts_with("instruction-")
+            || trimmed.starts_with("ripr-document-diagnostics-v2:")
+            || trimmed.starts_with("ripr-workspace-diagnostics-v2:")
         {
             return Err(AnalysisExecutionIdentityParseError::WrongClass {
                 value: trimmed,
@@ -211,6 +219,20 @@ mod tests {
     fn diagnostic_result_rejects_snapshot_and_attempt_handles() {
         assert!(DiagnosticResultId::from_producer_id("snapshot:1").is_err());
         assert!(DiagnosticResultId::from_producer_id("snapshot:sha256:abc").is_err());
+    }
+
+    #[test]
+    fn attempt_id_requires_numeric_refresh_generation() {
+        assert!(AnalysisAttemptId::parse_agent_snapshot_id("snapshot:abc").is_err());
+        assert!(AnalysisAttemptId::parse_agent_snapshot_id("snapshot:").is_err());
+        assert!(AnalysisAttemptId::parse_agent_snapshot_id("snapshot:9").is_ok());
+    }
+
+    #[test]
+    fn continuation_rejects_diagnostic_result_prefix() {
+        assert!(
+            ContinuationId::parse_request("ripr-document-diagnostics-v2:0123456789abcdef").is_err()
+        );
     }
 
     #[test]
