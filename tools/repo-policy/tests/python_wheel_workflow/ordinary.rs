@@ -125,7 +125,10 @@ exit "$CARGO_TEST_EXIT"
         !evidence.join("cargo-build.jsonl").exists(),
         "wrong source must refuse before compilation"
     );
-    fs::write(fixture.0.join("Cargo.toml"), "# uncommitted source change\n")?;
+    fs::write(
+        fixture.0.join("Cargo.toml"),
+        "# uncommitted source change\n",
+    )?;
     assert!(!run(&[valid], 0, &head)?.status.success());
     assert!(!evidence.join("runner-receipt.json").exists());
     assert!(fs::read_to_string(&output_path)?.is_empty());
@@ -337,9 +340,15 @@ exec /usr/bin/find "$@"
     let mut wrong_wheel = wheel_receipt.clone();
     wrong_wheel["candidate_tree"] = "d".repeat(40).into();
     assert!(
-        !invoke(WORKFLOW, "positive", &runner_receipt, &wrong_wheel, &runner_sha)?
-            .status
-            .success()
+        !invoke(
+            WORKFLOW,
+            "positive",
+            &runner_receipt,
+            &wrong_wheel,
+            &runner_sha
+        )?
+        .status
+        .success()
     );
     assert!(!runner_dir.join("invoked").exists());
     assert!(
@@ -409,12 +418,14 @@ fn ordinary_hook_preserves_rust_free_install_and_existing_consumer_guards() -> T
     assert!(!consume.contains("actions/checkout"));
     assert_eq!(consume.matches("dtolnay/rust-toolchain@").count(), 1);
     assert!(
-        consume.contains("if: ${{ matrix.client == 'pip' }}\n        uses: dtolnay/rust-toolchain@")
+        consume
+            .contains("if: ${{ matrix.client == 'pip' }}\n        uses: dtolnay/rust-toolchain@")
     );
     assert!(consume.contains("id: ordinary\n        if: ${{ matrix.client == 'pip' }}"));
-    assert!(consume.contains(
-        "always() && matrix.client == 'pip' && steps.ordinary.outcome != 'skipped'"
-    ));
+    assert!(
+        consume
+            .contains("always() && matrix.client == 'pip' && steps.ordinary.outcome != 'skipped'")
+    );
     assert!(consume.contains(
         "needs.build-wheel.result == 'success' && needs.source-contract.result == 'success'"
     ));
