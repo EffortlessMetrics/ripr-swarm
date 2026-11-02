@@ -89,3 +89,45 @@ fn configured_finding_severity_applies_to_human_json_and_github() -> Result<(), 
     }
     Ok(())
 }
+
+#[test]
+fn per_crate_severity_overrides_change_json_independently() -> Result<(), String> {
+    let config = crate::config::tests_only_parse(
+        "[severity.findings]\nweakly_exposed = \"warning\"\n\n\
+         [[overrides]]\npath = \"crates/alpha/**\"\nseverity.findings.weakly_exposed = \"info\"\n\n\
+         [[overrides]]\npath = \"crates/beta/**\"\nseverity.findings.weakly_exposed = \"note\"\n",
+    )?;
+    let alpha = render_check_with_config(
+        &check_output_with(vec![sample_finding("crates/alpha/src/lib.rs", 1)]),
+        &OutputFormat::Json,
+        &config,
+    )?;
+    let beta = render_check_with_config(
+        &check_output_with(vec![sample_finding("crates/beta/src/lib.rs", 1)]),
+        &OutputFormat::Json,
+        &config,
+    )?;
+    if !alpha.contains("\"severity\": \"info\"") {
+        return Err(format!("alpha crate expected info: {alpha}"));
+    }
+    if !beta.contains("\"severity\": \"note\"") {
+        return Err(format!("beta crate expected note: {beta}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn no_overrides_keep_configured_severity_byte_identical() -> Result<(), String> {
+    let output = check_output_with(vec![sample_finding("crates/alpha/src/lib.rs", 1)]);
+    let repo_wide =
+        crate::config::tests_only_parse("[severity.findings]\nweakly_exposed = \"info\"\n")?;
+    let empty_overrides = crate::config::tests_only_parse(
+        "[severity.findings]\nweakly_exposed = \"info\"\noverrides = []\n",
+    )?;
+    let left = render_check_with_config(&output, &OutputFormat::Json, &repo_wide)?;
+    let right = render_check_with_config(&output, &OutputFormat::Json, &empty_overrides)?;
+    if left != right {
+        return Err("empty overrides must not change rendered JSON".to_string());
+    }
+    Ok(())
+}

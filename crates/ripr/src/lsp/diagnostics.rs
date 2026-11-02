@@ -1637,7 +1637,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             // are operational noise, not analysis errors.
             if diagnostic_severity_for_grip_class_with_config(
                 entry.class,
-                config.repo_config().severity(),
+                &config.repo_config().severity_for_file(entry.seam.file()),
             )
             .is_none()
             {
@@ -1650,7 +1650,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             if let Some(mut diagnostic) = diagnostic_for_classified_seam_with_causal(
                 &root,
                 entry,
-                config.repo_config().severity(),
+                &config.repo_config().severity_for_file(entry.seam.file()),
                 causal_projection.as_ref(),
             ) {
                 // Policy: limited/stale run downgrades seam WARNINGs to INFORMATION.
@@ -3505,7 +3505,10 @@ fn diagnostic_for_classified_seam_with_causal(
     config: &SeverityConfig,
     causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Option<Diagnostic> {
-    let severity = diagnostic_severity_for_grip_class_with_config(entry.class, config)?;
+    let severity = diagnostic_severity_for_grip_class_with_config(
+        entry.class,
+        &config.resolved_for_path(entry.seam.file()),
+    )?;
     let seam = &entry.seam;
     let evidence = &entry.evidence;
     let line = seam.display_line().saturating_sub(1) as u32;
@@ -3772,7 +3775,9 @@ fn diagnostic_for_finding_with_causal(
     }
     Diagnostic {
         range: diagnostic_range_for_finding(root, finding, position_encoding, origins),
-        severity: lsp_severity(config.for_exposure(&finding.class)),
+        severity: lsp_severity(
+            config.for_exposure_in(&finding.class, &finding.probe.location.file),
+        ),
         code: Some(NumberOrString::String(
             super::diagnostic_catalog::finding_code(&finding.class),
         )),

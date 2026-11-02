@@ -18,6 +18,9 @@ use std::path::{Component, Path, PathBuf};
 mod diagnostic;
 mod model;
 #[cfg(test)]
+mod override_tests;
+mod overrides;
+#[cfg(test)]
 mod perl_executable_tests;
 mod python;
 mod toolchain_file;
@@ -45,6 +48,7 @@ pub use model::{
 pub(crate) use model::{
     HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig, perl_executable_opt_in,
 };
+use overrides::discover_workspace_crates;
 
 #[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
@@ -325,8 +329,11 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
     // Identity stays the discovered canonical path: symlink equality and
     // `source_path` consumers compare filesystem identity, not the display
     // spelling (#7652).
-    config.source_path = Some(path);
+    config.source_path = Some(path.clone());
     config.source_text = Some(text);
+    config
+        .bind_workspace_crates(discover_workspace_crates(root))
+        .map_err(|err| config_load_parse_error_for_host(&path, &err, cfg!(windows)))?;
     Ok(config)
 }
 
@@ -552,10 +559,12 @@ pub(crate) fn loaded_config_identity(config: &RiprConfig) -> Option<String> {
 /// differing only in an unconsumed setting stay comparable). Closed set:
 /// when the producer starts consuming another config field, add it here in
 /// the same PR; do not widen the filter to whole sections.
-pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 7] = [
+pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 8] = [
     "oracles.broad_error_strength",
     "oracles.mock_expectation_strength",
     "oracles.snapshot_strength",
+    // Per-crate/path oracle overlays change classification evidence (#2671).
+    "overrides.oracles",
     // The production-like opt-in changes which files are production
     // subjects in the repo seam inventory (#3283).
     "analysis.production_like_targets",
@@ -1007,6 +1016,10 @@ impl RiprConfig {
                     .transpose()?,
             };
         }
+        if let Some(overrides) = raw.overrides {
+            config.overrides = parse_overrides(overrides, text)?;
+            overrides::sync_compiled_overlays(&mut config);
+        }
         Ok(config)
     }
 }
@@ -1124,6 +1137,245 @@ fn parse_handwritten_files(
     Ok(parsed)
 }
 
+fn parse_overrides(
+    raw: Vec<RawOverride>,
+    text: &str,
+) -> Result<Vec<overrides::ConfigOverride>, Box<ConfigDiagnostic>> {
+    let mut parsed = Vec::with_capacity(raw.len());
+    for (index, row) in raw.into_iter().enumerate() {
+        let selector = match (row.crate_name, row.path) {
+            (Some(name), None) => {
+                overrides::OverrideSelector::Crate(overrides::parse_crate_selector(&name)?)
+            }
+            (None, Some(path)) => {
+                overrides::OverrideSelector::Path(overrides::parse_path_selector(&path)?)
+            }
+            (Some(_), Some(_)) => {
+                return Err(format!(
+                    "[[overrides]] entry {} must set exactly one of crate or path, not both",
+                    index + 1
+                )
+                .into());
+            }
+            (None, None) => {
+                return Err(format!(
+                    "[[overrides]] entry {} must set crate (Cargo package name) or path (repository-relative glob)",
+                    index + 1
+                )
+                .into());
+            }
+        };
+        let severity = row
+            .severity
+            .map(|raw_severity| parse_partial_severity(raw_severity, text, index))
+            .transpose()?;
+        let oracles = row
+            .oracles
+            .map(|raw_oracles| parse_partial_oracles(raw_oracles, text, index))
+            .transpose()?;
+        if severity
+            .as_ref()
+            .is_none_or(overrides::PartialSeverityConfig::is_empty)
+            && oracles
+                .as_ref()
+                .is_none_or(overrides::PartialOraclePolicy::is_empty)
+        {
+            return Err(format!(
+                "[[overrides]] entry {} must override severity or oracles",
+                index + 1
+            )
+            .into());
+        }
+        parsed.push(overrides::ConfigOverride {
+            selector,
+            severity,
+            oracles,
+            resolved_path_glob: None,
+        });
+    }
+    Ok(parsed)
+}
+
+fn parse_partial_severity(
+    raw: RawSeverityConfig,
+    text: &str,
+    index: usize,
+) -> Result<overrides::PartialSeverityConfig, Box<ConfigDiagnostic>> {
+    let prefix = format!("overrides[{index}].severity");
+    let mut partial = overrides::PartialSeverityConfig::default();
+    if let Some(findings) = raw.findings {
+        partial.findings.exposed = optional_severity(
+            findings.exposed,
+            &format!("{prefix}.findings.exposed"),
+            false,
+            text,
+        )?;
+        partial.findings.weakly_exposed = optional_severity(
+            findings.weakly_exposed,
+            &format!("{prefix}.findings.weakly_exposed"),
+            false,
+            text,
+        )?;
+        partial.findings.reachable_unrevealed = optional_severity(
+            findings.reachable_unrevealed,
+            &format!("{prefix}.findings.reachable_unrevealed"),
+            false,
+            text,
+        )?;
+        partial.findings.no_static_path = optional_severity(
+            findings.no_static_path,
+            &format!("{prefix}.findings.no_static_path"),
+            false,
+            text,
+        )?;
+        partial.findings.infection_unknown = optional_severity(
+            findings.infection_unknown,
+            &format!("{prefix}.findings.infection_unknown"),
+            false,
+            text,
+        )?;
+        partial.findings.propagation_unknown = optional_severity(
+            findings.propagation_unknown,
+            &format!("{prefix}.findings.propagation_unknown"),
+            false,
+            text,
+        )?;
+        partial.findings.static_unknown = optional_severity(
+            findings.static_unknown,
+            &format!("{prefix}.findings.static_unknown"),
+            false,
+            text,
+        )?;
+    }
+    if let Some(seams) = raw.seams {
+        partial.seams.strongly_gripped = optional_severity(
+            seams.strongly_gripped,
+            &format!("{prefix}.seams.strongly_gripped"),
+            true,
+            text,
+        )?;
+        partial.seams.weakly_gripped = optional_severity(
+            seams.weakly_gripped,
+            &format!("{prefix}.seams.weakly_gripped"),
+            true,
+            text,
+        )?;
+        partial.seams.ungripped = optional_severity(
+            seams.ungripped,
+            &format!("{prefix}.seams.ungripped"),
+            true,
+            text,
+        )?;
+        partial.seams.reachable_unrevealed = optional_severity(
+            seams.reachable_unrevealed,
+            &format!("{prefix}.seams.reachable_unrevealed"),
+            true,
+            text,
+        )?;
+        partial.seams.activation_unknown = optional_severity(
+            seams.activation_unknown,
+            &format!("{prefix}.seams.activation_unknown"),
+            true,
+            text,
+        )?;
+        partial.seams.propagation_unknown = optional_severity(
+            seams.propagation_unknown,
+            &format!("{prefix}.seams.propagation_unknown"),
+            true,
+            text,
+        )?;
+        partial.seams.observation_unknown = optional_severity(
+            seams.observation_unknown,
+            &format!("{prefix}.seams.observation_unknown"),
+            true,
+            text,
+        )?;
+        partial.seams.discrimination_unknown = optional_severity(
+            seams.discrimination_unknown,
+            &format!("{prefix}.seams.discrimination_unknown"),
+            true,
+            text,
+        )?;
+        partial.seams.opaque =
+            optional_severity(seams.opaque, &format!("{prefix}.seams.opaque"), true, text)?;
+        partial.seams.intentional = optional_severity(
+            seams.intentional,
+            &format!("{prefix}.seams.intentional"),
+            true,
+            text,
+        )?;
+        partial.seams.suppressed = optional_severity(
+            seams.suppressed,
+            &format!("{prefix}.seams.suppressed"),
+            true,
+            text,
+        )?;
+    }
+    Ok(partial)
+}
+
+fn parse_partial_oracles(
+    raw: RawOraclePolicy,
+    text: &str,
+    index: usize,
+) -> Result<overrides::PartialOraclePolicy, Box<ConfigDiagnostic>> {
+    let prefix = format!("overrides[{index}].oracles");
+    Ok(overrides::PartialOraclePolicy {
+        snapshot_strength: optional_oracle_strength(
+            raw.snapshot_strength,
+            &format!("{prefix}.snapshot_strength"),
+            text,
+        )?,
+        mock_expectation_strength: optional_oracle_strength(
+            raw.mock_expectation_strength,
+            &format!("{prefix}.mock_expectation_strength"),
+            text,
+        )?,
+        broad_error_strength: optional_oracle_strength(
+            raw.broad_error_strength,
+            &format!("{prefix}.broad_error_strength"),
+            text,
+        )?,
+    })
+}
+
+fn optional_severity(
+    raw: Option<toml::Spanned<String>>,
+    field: &str,
+    allow_off: bool,
+    text: &str,
+) -> Result<Option<ConfigSeverity>, Box<ConfigDiagnostic>> {
+    raw.map(|value| {
+        parse_severity(field, value.get_ref(), allow_off).map_err(|message| {
+            Box::new(ConfigDiagnostic::at_value(
+                message,
+                field,
+                value.span(),
+                text,
+            ))
+        })
+    })
+    .transpose()
+}
+
+fn optional_oracle_strength(
+    raw: Option<toml::Spanned<String>>,
+    field: &str,
+    text: &str,
+) -> Result<Option<OracleStrength>, Box<ConfigDiagnostic>> {
+    raw.map(|value| {
+        parse_oracle_strength(field, value.get_ref()).map_err(|message| {
+            Box::new(ConfigDiagnostic::at_value(
+                message,
+                field,
+                value.span(),
+                text,
+            ))
+        })
+    })
+    .transpose()
+}
+
 fn parse_profiles(raw: RawProfilesConfig) -> Result<ProfilesConfig, String> {
     Ok(ProfilesConfig {
         bun_ub: raw.bun_ub.map(parse_bun_ub_profile).transpose()?,
@@ -1172,6 +1424,17 @@ struct RawConfig {
     profiles: Option<RawProfilesConfig>,
     typescript: Option<RawTypescriptConfig>,
     perl: Option<RawPerlConfig>,
+    overrides: Option<Vec<RawOverride>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawOverride {
+    #[serde(rename = "crate")]
+    crate_name: Option<String>,
+    path: Option<String>,
+    severity: Option<RawSeverityConfig>,
+    oracles: Option<RawOraclePolicy>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]

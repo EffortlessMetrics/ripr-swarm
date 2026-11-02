@@ -5,6 +5,7 @@ use crate::app::Mode;
 use crate::domain::{ExposureClass, LanguageId, OracleStrength};
 use std::path::{Path, PathBuf};
 
+use super::overrides::{ConfigOverride, WorkspaceCrate};
 use super::{
     DEFAULT_CONTEXT_RELATED_TESTS, DEFAULT_LSP_SEAM_DIAGNOSTICS, DEFAULT_SUPPRESSIONS_PATH,
 };
@@ -21,6 +22,12 @@ pub struct RiprConfig {
     pub profiles: ProfilesConfig,
     pub typescript: TypescriptConfig,
     pub perl: PerlConfig,
+    /// Optional `[[overrides]]` rows (#2671). Empty when omitted, so existing
+    /// configs keep repo-wide severity and oracle policy.
+    pub(crate) overrides: Vec<ConfigOverride>,
+    /// Cargo packages discovered for the selected root. Loader metadata, not
+    /// a `ripr.toml` field; used to resolve `crate = "..."` selectors.
+    pub(crate) workspace_crates: Vec<WorkspaceCrate>,
     pub source_path: Option<PathBuf>,
     pub source_text: Option<String>,
 }
@@ -246,6 +253,9 @@ pub struct OraclePolicy {
     pub snapshot_strength: OracleStrength,
     pub mock_expectation_strength: OracleStrength,
     pub broad_error_strength: OracleStrength,
+    /// Compiled `[[overrides]]` rows that set oracle fields. Empty means the
+    /// repo-wide strengths apply everywhere.
+    pub(crate) overlays: Vec<ConfigOverride>,
 }
 
 impl Default for OraclePolicy {
@@ -254,6 +264,7 @@ impl Default for OraclePolicy {
             snapshot_strength: OracleStrength::Medium,
             mock_expectation_strength: OracleStrength::Medium,
             broad_error_strength: OracleStrength::Weak,
+            overlays: Vec::new(),
         }
     }
 }
@@ -681,6 +692,9 @@ impl ConfigSeverity {
 pub struct SeverityConfig {
     pub findings: FindingSeverityConfig,
     pub seams: SeamSeverityConfig,
+    /// Compiled `[[overrides]]` rows that set severity fields. Empty means
+    /// the repo-wide map applies everywhere.
+    pub(crate) overlays: Vec<ConfigOverride>,
 }
 
 impl SeverityConfig {
@@ -796,7 +810,7 @@ pub struct CheckInputExplicit {
 /// same PR. The classification is closed: the field enumerator destructures
 /// every config struct without `..`, so an unclassified field fails to
 /// compile, and a unit test pins the resulting role of every field.
-pub const CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION: u32 = 4;
+pub const CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION: u32 = 5;
 
 /// How one `ripr.toml` field participates in the check-artifact identity gate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -847,6 +861,8 @@ impl RiprConfig {
             profiles,
             typescript,
             perl,
+            overrides,
+            workspace_crates: _,
             source_path: _,
             source_text: _,
         } = self;
@@ -860,8 +876,13 @@ impl RiprConfig {
             snapshot_strength,
             mock_expectation_strength,
             broad_error_strength,
+            overlays: _,
         } = oracles;
-        let SeverityConfig { findings, seams } = severity;
+        let SeverityConfig {
+            findings,
+            seams,
+            overlays: _,
+        } = severity;
         let FindingSeverityConfig {
             exposed: _,
             weakly_exposed: _,
@@ -994,6 +1015,12 @@ impl RiprConfig {
                 role: ConfigIdentityRole::FindingAffecting,
                 value: Some(broad_error_strength.as_str().to_string()),
                 note: "oracle strength policy changes classification evidence",
+            },
+            ConfigIdentityField {
+                name: "overrides.oracles",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(super::overrides::oracle_overlay_identity(overrides)),
+                note: "per-crate oracle overlays change classification evidence (#2671)",
             },
         ];
         for name in [
@@ -1151,6 +1178,18 @@ impl RiprConfig {
                         .unwrap_or_else(|| "none".to_string()),
                 ),
                 note: "where the managed Perl fact packet is written and read",
+            },
+            ConfigIdentityField {
+                name: "overrides.severity",
+                role: ConfigIdentityRole::Excluded,
+                value: None,
+                note: "render-only per-crate severity display; honored fresh at render time (#2671)",
+            },
+            ConfigIdentityField {
+                name: "workspace_crates",
+                role: ConfigIdentityRole::Excluded,
+                value: None,
+                note: "loader container metadata, not a ripr.toml field",
             },
             ConfigIdentityField {
                 name: "source_path",

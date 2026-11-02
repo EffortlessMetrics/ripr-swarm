@@ -1040,6 +1040,42 @@ smoke-only assertions remain smoke.
 | `mock_expectation_strength` | same enum | `medium` | Strength assigned to mock/side-effect expectation oracles. |
 | `broad_error_strength` | same enum | `weak` | Strength assigned to broad error checks such as `is_err()`. |
 
+### `[[overrides]]`
+
+Optional. Absent or empty means every crate uses the repo-wide `[severity]`
+and `[oracles]` values — existing configs stay byte-identical. Each row
+selects **exactly one** of `crate` or `path` and overrides **only** nested
+`severity` and/or `oracles` fields; unspecified nested keys keep the
+repo-wide value. Other `ripr.toml` sections cannot be overridden here.
+
+| Field | Type | Effect |
+| --- | --- | --- |
+| `crate` | Cargo package name | Matches one workspace package (`letters`, digits, `_`, `-`). Unknown names fail closed at load with a diagnostic that lists known packages. |
+| `path` | repository-relative glob | Matches `/`-separated paths with `*`, `?`, and `**` (the same dialect as generated-file patterns). |
+| `severity` | table | Partial `[severity.findings]` / `[severity.seams]` overlay. Render-only, like repo-wide severity. |
+| `oracles` | table | Partial `[oracles]` overlay. Finding-affecting: it joins the check-artifact config identity. |
+
+Resolution: the most specific matching row wins, otherwise the repo-wide
+default. A `crate` selector outranks a `path` glob. Among path globs, more
+literal path segments win. Equal specificity keeps the later matching row.
+Crate names resolve from the selected root's `Cargo.toml` workspace members
+(including a `members = ["crates/*"]` glob of immediate children).
+
+```toml
+[severity.findings]
+weakly_exposed = "warning"
+
+[[overrides]]
+crate = "xtask"
+severity.findings.weakly_exposed = "note"
+
+[[overrides]]
+path = "crates/preview/**"
+oracles.snapshot_strength = "weak"
+```
+
+`ripr init` still writes defaults only; it does not add `[[overrides]]`.
+
 ### `[severity.findings]`
 
 Finding severities affect human output, JSON `severity`, GitHub annotations,
@@ -1290,6 +1326,10 @@ static_unknown = "note"
 [severity.seams]
 weakly_gripped = "warning"
 opaque = "info"
+
+[[overrides]]
+crate = "xtask"
+severity.findings.weakly_exposed = "note"
 
 [lsp]
 seam_diagnostics = true

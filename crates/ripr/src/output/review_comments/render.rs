@@ -617,7 +617,10 @@ pub(super) fn review_recommendation_json(
         "gap_state": gap_state,
         "oracle_kind": oracle_kind,
         "oracle_strength": oracle_strength,
-        "severity": config.severity().for_seam(entry.class).as_str(),
+        "severity": config
+            .severity_for_file(seam.file())
+            .for_seam(entry.class)
+            .as_str(),
         "owner": seam.owner(),
         "seam": {
             "file": seam_file,
