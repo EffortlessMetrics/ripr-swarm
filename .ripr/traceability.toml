@@ -21318,7 +21318,6 @@ metrics = [
 
 [[behavior]]
 id = "RIPR-SPEC-0379"
-id = "RIPR-SPEC-0377"
 name = "Verification plan corpus PR A mechanics"
 spec = "docs/specs/RIPR-SPEC-0379-verification-plan-corpus-pr-a.md"
 tests = [
@@ -21342,7 +21341,7 @@ code = [
   "xtask/src/reports/verification_plan_corpus.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0377-verification-plan-corpus-pr-a.md",
+  "docs/specs/RIPR-SPEC-0379-verification-plan-corpus-pr-a.md",
 ]
 metrics = [
   "unit_test_pass_rate",
