@@ -542,7 +542,7 @@ mod tests {
 
     #[test]
     fn explicit_check_timeout_disclosure_names_worker_scope() -> Result<(), String> {
-        let line = super::explicit_check_timeout_disclosure(Some(Duration::from_secs(120)), false)
+        let line = super::explicit_check_timeout_disclosure(Some(Duration::from_mins(2)), false)
             .ok_or("explicit budget must disclose")?;
         assert!(
             line.contains("120s") && line.contains("analysis worker"),
