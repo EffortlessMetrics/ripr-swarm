@@ -604,7 +604,14 @@ rust/Cargo.toml via workspace root rust/`) when the selected root has none.
 `skipped` (additive in schema `0.2`) marks a check that does not apply to the
 root, such as the `cargo_toml`, `tool_cargo`, and `tool_rustc` checks on a
 root where Rust is not in scope. A skipped check never fails the report, and
-its `evidence` states why it was skipped. See [Exit codes](EXIT_CODES.md).
+its `evidence` states why it was skipped. When the `config` check fails on a
+typed semantic validation error, an optional additive `checks[].validation`
+object (schema `0.4`) carries `kind`, `config_path`, `file`, `location_status`
+(`exact` or `unavailable`), one-based Unicode-scalar `start_*` / `end_*`
+coordinates, `invalid_value` when the offending token is safe to publish,
+`expected_values`, and `message`. Structural TOML parse failures omit
+`validation`; their redacted `evidence` keeps the parser location line only.
+See [Exit codes](EXIT_CODES.md).
 
 `ripr doctor --json` also carries an additive `binary` object (schema `0.2`)
 naming which `ripr` is running and which one PATH selects: `version` (the
@@ -9767,6 +9774,21 @@ Success payload (200-level result object, no `protocol_version`,
   exceeds the listed entries.
 - `suppression_disclosure` — a sentence naming the withholding and the
   `diagnosticProfile: "full"` escape hatch; `null` when nothing is withheld.
+- `analysis_outcome` — #12416: the committed snapshot's typed producer
+  outcome, serialized exactly as the `analysis_outcome` member of
+  `ripr.collectWorkspaceStatus` (versioned `AnalysisOutcome`: `kind`,
+  counts, limitations, claim boundary); `null` when the snapshot carries no
+  typed outcome.
+- `scope_disclosure` — #12416: for an empty-scope snapshot only
+  (`kind` ∈ `no_scope` | `no_changed_lines` | `no_behavioral_candidates` AND
+  zero canonical items), one human sentence carrying the same
+  not-all-clear fact and cause wording as MCP's `empty_scope_hint` plus the
+  editor set-a-base recovery route (the `baseRef` session option or
+  `[lsp] base_ref` in `ripr.toml`, then `ripr.refresh`); `null` for a
+  populated or complete-clean scope (`complete_no_findings` and
+  `complete_with_findings` are real answers and stay silent). A different
+  fact from `suppression_disclosure` (which names withheld live findings);
+  never downgrades `status: "ok"`.
 - `budget_identity` — the snapshot profile budget identity string.
 - `complete_evidence_identity` — the complete-evidence identity string.
 - `continuation_or_inspect_route` — the route string for continuing or
@@ -20690,6 +20712,7 @@ measured values.
 ```text
 target/ripr/reports/lsp-performance.json
 target/ripr/reports/lsp-performance.md
+target/ripr/reports/lsp-performance-measurement.json
 ```
 
 The JSON schema is `ripr-lsp-saved-edit-sequence-v1`. It is an identity-bound
@@ -20703,6 +20726,14 @@ remain `proposal`. A stale cached answer cannot satisfy a speed target. Complete
 semantic parity fails independently of elapsed time. A
 fast elapsed time cannot hide a redundant full rescan or duplicate diagnostic
 publication.
+
+`lsp-performance-measurement.json` uses schema `ripr-lsp-saved-edit-measurement-v1`
+(#4863). It retains separate `subjects` rows for the deterministic fixture,
+`ripr-swarm` self-dogfood identity, and honestly `not_authorized` governed
+external trials. Each executed row records cold/warm populations, separate
+first-health/first-useful/complete endpoints, a semantic `packet_digest`, and
+a dominant observed phase or an explicit `not_established` reason. Host-local
+wall times are observations only; they are not gates.
 
 ```json
 {

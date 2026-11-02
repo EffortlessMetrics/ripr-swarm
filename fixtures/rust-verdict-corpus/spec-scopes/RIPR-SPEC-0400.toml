@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0400"
+scope = "out"
+reason = "Shell preview contract is normative documentation for a not-yet-implemented adapter; judged corpus obligations land in #5734"

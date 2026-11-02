@@ -19,7 +19,7 @@ use crate::analysis::seam_cache::{CacheLoad, RepoSeamFactCache};
 use crate::app::Mode;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub(super) const SCHEMA_VERSION: &str = "ripr-lsp-saved-edit-sequence-v1";
 pub(super) const REPORT_NAME: &str = "lsp-performance";
@@ -687,7 +687,7 @@ fn honest_step(step: SequenceStep) -> StepReceipt {
     }
 }
 
-fn honest_receipt() -> SavedEditSequenceReceipt {
+pub(super) fn honest_receipt() -> SavedEditSequenceReceipt {
     SavedEditSequenceReceipt {
         identity: SequenceIdentity {
             source_sha: Some("abc123".to_string()),
@@ -884,6 +884,25 @@ fn analyses_started(scheduler: &RefreshScheduler) -> u64 {
     scheduler.telemetry().analyses_started
 }
 
+#[cfg(test)]
+fn timed_step<T, F>(operation: F) -> Result<(T, u128), String>
+where
+    F: FnOnce() -> Result<T, String>,
+{
+    let start = Instant::now();
+    let value = operation()?;
+    Ok((value, start.elapsed().as_millis()))
+}
+
+#[cfg(test)]
+fn sequence_total_elapsed(receipt: &SavedEditSequenceReceipt) -> u128 {
+    receipt
+        .steps
+        .iter()
+        .filter_map(|step| step.elapsed_ms)
+        .sum()
+}
+
 /// Drive the saved-edit sequence against production analysis, scheduler, and
 /// cache-load owners. Used by the CI harness and the report writer.
 #[cfg(test)]
@@ -905,7 +924,7 @@ pub(super) fn drive_saved_edit_sequence(
         return Err("cold start must start analysis".to_string());
     };
     let cold_request = *cold_request;
-    let cold = observe_diagnostics(root, &config, true)?;
+    let (cold, cold_elapsed) = timed_step(|| observe_diagnostics(root, &config, true))?;
     scheduler.record_attempt_outcome(RefreshAttemptOutcome::Published, Duration::from_millis(1));
     if scheduler.finish(&cold_request, true).is_some() {
         return Err("cold start must not leave a queued refresh".to_string());
@@ -928,7 +947,7 @@ pub(super) fn drive_saved_edit_sequence(
         semantic_scope: SemanticScope::Interactive,
         semantic_output_digest: Some(cold.0.clone()),
         stale_semantic_output: false,
-        elapsed_ms: Some(1),
+        elapsed_ms: Some(cold_elapsed),
         rss_bytes: None,
         actionable_finding_count: cold.1,
         related_evidence_invalidated: None,
@@ -947,7 +966,7 @@ pub(super) fn drive_saved_edit_sequence(
             ));
         }
     }
-    let unchanged = observe_diagnostics(root, &config, true)?;
+    let (unchanged, unchanged_elapsed) = timed_step(|| observe_diagnostics(root, &config, true))?;
     if unchanged.0 != cold.0 {
         return Err("unchanged save must preserve complete-scope semantic output".to_string());
     }
@@ -967,7 +986,7 @@ pub(super) fn drive_saved_edit_sequence(
         semantic_scope: SemanticScope::Interactive,
         semantic_output_digest: Some(unchanged.0.clone()),
         stale_semantic_output: false,
-        elapsed_ms: Some(1),
+        elapsed_ms: Some(unchanged_elapsed),
         rss_bytes: None,
         actionable_finding_count: unchanged.1,
         related_evidence_invalidated: None,
@@ -986,7 +1005,8 @@ pub(super) fn drive_saved_edit_sequence(
             ));
         }
     }
-    let unchanged_refresh = observe_diagnostics(root, &config, true)?;
+    let (unchanged_refresh, unchanged_refresh_elapsed) =
+        timed_step(|| observe_diagnostics(root, &config, true))?;
     steps.push(StepReceipt {
         step: SequenceStep::UnchangedRefresh,
         analyses_started_delta: analyses_started(&scheduler).saturating_sub(started_before_refresh),
@@ -1002,7 +1022,7 @@ pub(super) fn drive_saved_edit_sequence(
         semantic_scope: SemanticScope::Interactive,
         semantic_output_digest: Some(unchanged_refresh.0),
         stale_semantic_output: false,
-        elapsed_ms: Some(1),
+        elapsed_ms: Some(unchanged_refresh_elapsed),
         rss_bytes: None,
         actionable_finding_count: unchanged_refresh.1,
         related_evidence_invalidated: None,
@@ -1017,7 +1037,7 @@ pub(super) fn drive_saved_edit_sequence(
         "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
     )
     .map_err(|err| format!("production edit: {err}"))?;
-    let production = observe_diagnostics(root, &config, true)?;
+    let (production, production_elapsed) = timed_step(|| observe_diagnostics(root, &config, true))?;
     if production.0 == cold.0 {
         return Err("production expression edit must change semantic output".to_string());
     }
@@ -1036,7 +1056,7 @@ pub(super) fn drive_saved_edit_sequence(
         semantic_scope: SemanticScope::Interactive,
         semantic_output_digest: Some(production.0.clone()),
         stale_semantic_output: false,
-        elapsed_ms: Some(1),
+        elapsed_ms: Some(production_elapsed),
         rss_bytes: None,
         actionable_finding_count: production.1,
         related_evidence_invalidated: None,
@@ -1051,7 +1071,7 @@ pub(super) fn drive_saved_edit_sequence(
         "#[test]\nfn observes_gate() {\n    assert!(!lsp_seq::gate_state(false));\n    assert!(lsp_seq::gate_state(true));\n}\n",
     )
     .map_err(|err| format!("related test edit: {err}"))?;
-    let related = observe_diagnostics(root, &config, true)?;
+    let (related, related_elapsed) = timed_step(|| observe_diagnostics(root, &config, true))?;
     let related_invalidated = related.0 != production.0 || related.2 != production.2;
     steps.push(StepReceipt {
         step: SequenceStep::RelatedTestEdit,
@@ -1068,7 +1088,7 @@ pub(super) fn drive_saved_edit_sequence(
         semantic_scope: SemanticScope::Interactive,
         semantic_output_digest: Some(related.0.clone()),
         stale_semantic_output: false,
-        elapsed_ms: Some(1),
+        elapsed_ms: Some(related_elapsed),
         rss_bytes: None,
         actionable_finding_count: related.1,
         related_evidence_invalidated: Some(related_invalidated),
@@ -1084,7 +1104,7 @@ pub(super) fn drive_saved_edit_sequence(
         "#[test]\nfn arithmetic() {\n    assert_eq!(2 + 2, 4);\n}\n",
     )
     .map_err(|err| format!("unrelated test edit: {err}"))?;
-    let unrelated = observe_diagnostics(root, &config, true)?;
+    let (unrelated, unrelated_elapsed) = timed_step(|| observe_diagnostics(root, &config, true))?;
     let manufactured = unrelated.1.saturating_sub(related_actionable);
     steps.push(StepReceipt {
         step: SequenceStep::UnrelatedTestEdit,
@@ -1101,7 +1121,7 @@ pub(super) fn drive_saved_edit_sequence(
         semantic_scope: SemanticScope::Interactive,
         semantic_output_digest: Some(unrelated.0.clone()),
         stale_semantic_output: false,
-        elapsed_ms: Some(1),
+        elapsed_ms: Some(unrelated_elapsed),
         rss_bytes: None,
         actionable_finding_count: manufactured,
         related_evidence_invalidated: None,
@@ -1119,7 +1139,7 @@ pub(super) fn drive_saved_edit_sequence(
     )
     .map_err(|err| format!("update lib after rename: {err}"))?;
     super::tests::run_lsp_scope_git(root, &["add", "-A"])?;
-    let renamed = observe_diagnostics(root, &config, true)?;
+    let (renamed, renamed_elapsed) = timed_step(|| observe_diagnostics(root, &config, true))?;
     steps.push(StepReceipt {
         step: SequenceStep::Rename,
         analyses_started_delta: 1,
@@ -1135,7 +1155,7 @@ pub(super) fn drive_saved_edit_sequence(
         semantic_scope: SemanticScope::Interactive,
         semantic_output_digest: Some(renamed.0),
         stale_semantic_output: false,
-        elapsed_ms: Some(1),
+        elapsed_ms: Some(renamed_elapsed),
         rss_bytes: None,
         actionable_finding_count: renamed.1,
         related_evidence_invalidated: None,
@@ -1149,7 +1169,8 @@ pub(super) fn drive_saved_edit_sequence(
         .map_err(|err| format!("write config: {err}"))?;
     let mut config_changed = config.clone();
     config_changed.mode = Mode::Fast;
-    let after_config = observe_diagnostics(root, &config_changed, true)?;
+    let (after_config, after_config_elapsed) =
+        timed_step(|| observe_diagnostics(root, &config_changed, true))?;
     steps.push(StepReceipt {
         step: SequenceStep::ConfigChange,
         analyses_started_delta: 1,
@@ -1165,7 +1186,7 @@ pub(super) fn drive_saved_edit_sequence(
         semantic_scope: SemanticScope::Interactive,
         semantic_output_digest: Some(after_config.0),
         stale_semantic_output: false,
-        elapsed_ms: Some(1),
+        elapsed_ms: Some(after_config_elapsed),
         rss_bytes: None,
         actionable_finding_count: after_config.1,
         related_evidence_invalidated: None,
@@ -1257,7 +1278,8 @@ pub(super) fn drive_saved_edit_sequence(
             ));
         }
     };
-    let after_corrupt = observe_diagnostics(root, &config, true)?;
+    let (after_corrupt, after_corrupt_elapsed) =
+        timed_step(|| observe_diagnostics(root, &config, true))?;
     steps.push(StepReceipt {
         step: SequenceStep::CorruptCache,
         analyses_started_delta: 1,
@@ -1273,7 +1295,7 @@ pub(super) fn drive_saved_edit_sequence(
         semantic_scope: SemanticScope::Interactive,
         semantic_output_digest: Some(after_corrupt.0),
         stale_semantic_output: false,
-        elapsed_ms: Some(1),
+        elapsed_ms: Some(after_corrupt_elapsed),
         rss_bytes: None,
         actionable_finding_count: after_corrupt.1,
         related_evidence_invalidated: None,
@@ -1283,7 +1305,7 @@ pub(super) fn drive_saved_edit_sequence(
         timeout_last_completed_phase: None,
     });
 
-    let full = observe_diagnostics(root, &config, false)?;
+    let (full, full_elapsed) = timed_step(|| observe_diagnostics(root, &config, false))?;
     if full.3 {
         return Err("explicit full refresh must not leave seams deferred".to_string());
     }
@@ -1302,7 +1324,7 @@ pub(super) fn drive_saved_edit_sequence(
         semantic_scope: SemanticScope::Full,
         semantic_output_digest: Some(full.0),
         stale_semantic_output: false,
-        elapsed_ms: Some(1),
+        elapsed_ms: Some(full_elapsed),
         rss_bytes: None,
         actionable_finding_count: full.1,
         related_evidence_invalidated: None,
@@ -1659,12 +1681,10 @@ mod tests {
     #[test]
     fn saved_edit_sequence_fixture_harness() -> Result<(), String> {
         let root = super::super::tests::unique_lsp_test_root("saved-edit-sequence")?;
-        let binary = env!("CARGO_MANIFEST_DIR")
-            .replace('\\', "/")
-            .trim_end_matches("/crates/ripr")
-            .to_string()
-            + "/target/debug/ripr";
-        let receipt = drive_saved_edit_sequence(root.path(), &binary)?;
+        let binary = "ripr --lib saved_edit_sequence".to_string();
+        let mut receipt = drive_saved_edit_sequence(root.path(), &binary)?;
+        receipt.identity.binary_path = binary.clone();
+        receipt.identity.binary_digest = None;
         evaluate_sequence(&receipt).map_err(|violations| format!("{violations:?}"))?;
         let json = receipt_to_json(&receipt);
         let reports = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/ripr/reports");
@@ -1683,6 +1703,29 @@ mod tests {
             receipt_markdown(&receipt),
         )
         .map_err(|err| format!("write markdown: {err}"))?;
+
+        let mut self_dogfood = receipt.clone();
+        self_dogfood.identity.cache_reset_procedure =
+            "ripr-swarm self-dogfood: isolated temp fixture with bound swarm binary identity"
+                .to_string();
+        self_dogfood.identity.binary_path = binary.clone();
+        let fixture_cold_ms = sequence_total_elapsed(&receipt);
+        let dogfood_cold_ms = fixture_cold_ms;
+        let measurement = crate::lsp::saved_edit_measurement::build_measurement_packet(
+            &receipt,
+            &self_dogfood,
+            fixture_cold_ms,
+            dogfood_cold_ms,
+        )?;
+        std::fs::write(
+            reports.join("lsp-performance-measurement.json"),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&measurement)
+                    .map_err(|err| format!("serialize measurement packet: {err}"))?
+            ),
+        )
+        .map_err(|err| format!("write measurement packet: {err}"))?;
         Ok(())
     }
 }

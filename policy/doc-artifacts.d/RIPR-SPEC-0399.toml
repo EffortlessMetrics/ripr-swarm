@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0399"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0399-native-family-evidence-contract.md"
+status = "proposed"
+owner = "analysis-native"
+standalone_reason = "Spec-only leaf #5696 defines native TU, C, C++, test, UB, and FFI evidence law before adapter implementation."
