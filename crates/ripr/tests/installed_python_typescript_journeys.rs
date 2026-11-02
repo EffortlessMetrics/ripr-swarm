@@ -149,6 +149,40 @@ fn need<'a>(text: &'a str, needle: &str, label: &str) -> Result<&'a str, String>
     Err(format!("{label}: expected `{needle}` in:\n{text}"))
 }
 
+/// Locates an executable on the inherited `PATH` for real interpreter controls.
+#[cfg(all(unix, feature = "lang-python"))]
+fn locate_executable(name: &str) -> Result<PathBuf, String> {
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    for dir in path_var.split(':').filter(|dir| !dir.is_empty()) {
+        let candidate = Path::new(dir).join(name);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    Err(format!(
+        "real {name} is required on PATH for the flat-layout import-binding control"
+    ))
+}
+
+/// Prepends a private `bin/` with symlinks to the real `python3` and `pytest`
+/// console script so the printed `python` and bare `pytest` routes bind live
+/// toolchain behavior.
+#[cfg(all(unix, feature = "lang-python"))]
+fn flat_layout_verify_path_prefix(launch: &Path) -> Result<String, String> {
+    use std::os::unix::fs::symlink;
+    let python3 = locate_executable("python3")?;
+    let pytest = locate_executable("pytest")?;
+    let bin = launch.join("bin");
+    std::fs::create_dir(&bin).map_err(|error| format!("bin dir: {error}"))?;
+    symlink(&python3, bin.join("python")).map_err(|error| format!("link python: {error}"))?;
+    symlink(&pytest, bin.join("pytest")).map_err(|error| format!("link pytest: {error}"))?;
+    Ok(format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    ))
+}
+
 /// The canonical TypeScript gap id of the top finding `ripr check` selected,
 /// derived from the finding id its drill-in commands print
 /// (`probe:<path>:<family>:<fp8>` -> `gap:typescript:<family>:<fp8>`).
@@ -4876,7 +4910,6 @@ fn pending_terminal_recovery_requires_published_receipt() -> Result<(), String> 
 #[test]
 fn python_printed_module_verify_succeeds_while_bare_pytest_fails_in_flat_layout()
 -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
     let (_guard, root, decoy) =
         materialize("blind_journey_installed_python", "head", "py-bare", None)?;
     let root_arg = root.to_string_lossy().into_owned();
@@ -4890,66 +4923,51 @@ fn python_printed_module_verify_succeeds_while_bare_pytest_fails_in_flat_layout(
     if !action.contains("python -m pytest ") {
         return Err(format!("verify is not module-form pytest: {action}"));
     }
-    let bin = _guard.0.join("bin");
-    std::fs::create_dir(&bin).map_err(|error| format!("bin dir: {error}"))?;
-    let python = bin.join("python");
-    std::fs::write(
-        &python,
-        "#!/bin/sh\n[ \"$1\" = -m ] && [ \"$2\" = pytest ] || exit 9\n[ \"$PWD\" = \"$EXPECTED_ROOT\" ] || exit 8\n[ \"$3\" = \"$EXPECTED_NODE\" ] || exit 6\nfile=${3%%::*}\n[ -f \"$file\" ] || exit 7\nprintf 'module-form selected one test\\n'\n",
-    )
-    .map_err(|error| format!("write python stand-in: {error}"))?;
-    std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755))
-        .map_err(|error| format!("chmod python: {error}"))?;
-    let pytest = bin.join("pytest");
-    std::fs::write(
-        &pytest,
-        "#!/bin/sh\nprintf 'ModuleNotFoundError: No module named '\\''pricing'\\''\\n' >&2\nexit 4\n",
-    )
-    .map_err(|error| format!("write pytest stand-in: {error}"))?;
-    std::fs::set_permissions(&pytest, std::fs::Permissions::from_mode(0o755))
-        .map_err(|error| format!("chmod pytest: {error}"))?;
-    let path = format!(
-        "{}:{}",
-        bin.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    let node = "tests/test_pricing.py::test_above_boundary_gets_discount";
+    let path = flat_layout_verify_path_prefix(&_guard.0)?;
     let run = |script: &str| -> Result<std::process::Output, String> {
         Command::new("bash")
             .args(["-c", script])
             .current_dir(&decoy)
             .env("PATH", &path)
-            .env("EXPECTED_ROOT", &root_arg)
-            .env("EXPECTED_NODE", node)
             .output()
             .map_err(|error| format!("run verify script: {error}"))
     };
     let module = run(action)?;
-    let module_out = String::from_utf8_lossy(&module.stdout);
+    let module_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&module.stdout),
+        String::from_utf8_lossy(&module.stderr)
+    );
     expect_exit(module.status.success(), true, "module-form verify")?;
     need(
-        &module_out,
-        "module-form selected one test",
-        "module-form route ran in the selected root",
+        &module_text,
+        "passed",
+        "module-form pytest ran the selected test",
     )?;
+    if module_text.contains("ModuleNotFoundError") {
+        return Err(format!(
+            "module-form verify hit the import defect it should avoid:\n{module_text}"
+        ));
+    }
     let bare = action.replacen("python -m pytest ", "pytest ", 1);
     if bare == action {
         return Err("could not derive bare pytest command".to_string());
     }
     let bare_result = run(&bare)?;
     expect_exit(bare_result.status.success(), false, "bare pytest verify")?;
-    let bare_err = String::from_utf8_lossy(&bare_result.stderr);
+    let bare_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&bare_result.stdout),
+        String::from_utf8_lossy(&bare_result.stderr)
+    );
     need(
-        &bare_err,
+        &bare_text,
         "ModuleNotFoundError",
         "bare pytest names the import failure",
     )?;
-    need(&bare_err, "pricing", "bare pytest names the package")?;
-    if bare_result.status.code() != Some(4) {
-        return Err(format!(
-            "bare pytest should exit 4, got {:?}",
-            bare_result.status.code()
-        ));
+    need(&bare_text, "pricing", "bare pytest names the package")?;
+    if bare_result.status.code() == Some(0) {
+        return Err("bare pytest must not succeed in the clean flat-layout shape".to_string());
     }
     decoy_untouched(&decoy)
 }
