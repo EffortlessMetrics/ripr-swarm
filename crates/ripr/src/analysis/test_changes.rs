@@ -570,11 +570,15 @@ mod tests {
             self.commit("after")?;
             let diff = fixture_git_stdout(&self.root, &["diff", "--unified=0", "HEAD^", "HEAD"])?;
             if !diff.contains("diff --git a/app/src/user.rs b/app/src/user.rs") {
-                return Err(format!("expected a module-only diff, got {diff}"));
+                return Err(format!(
+                    "expected a module-only diff, got {diff}; inspect the fixture diff, then re-run"
+                ));
             }
             if diff.contains("diff --git a/app/src/lib.rs") || diff.contains("diff --git a/macros/")
             {
-                return Err(format!("crate root or wrapper must stay unchanged: {diff}"));
+                return Err(format!(
+                    "crate root or wrapper must stay unchanged: {diff}; inspect the fixture diff, then re-run"
+                ));
             }
             Ok(diff)
         }
@@ -747,10 +751,14 @@ mod tests {
         fixture.commit_paths("after", &["app/src/user.rs"])?;
         let diff = fixture_git_stdout(&fixture.root, &["diff", "--unified=0", "HEAD^", "HEAD"])?;
         if !diff.contains("diff --git a/app/src/user.rs b/app/src/user.rs") {
-            return Err(format!("expected a module-only diff, got {diff}"));
+            return Err(format!(
+                "expected a module-only diff, got {diff}; inspect the fixture diff, then re-run"
+            ));
         }
         if diff.contains("diff --git a/app/Cargo.toml") {
-            return Err(format!("dirty manifest must stay uncommitted: {diff}"));
+            return Err(format!(
+                "dirty manifest must stay uncommitted: {diff}; inspect the HEAD diff, then re-run"
+            ));
         }
         let changes = changes_for(&fixture.root, &diff);
         assert!(
