@@ -342,6 +342,16 @@ impl<'index> EvidencePass<'index> {
         // partial vector exactly as it did for the serial loop.
         let token = cancellation::current_token();
         let overlay = crate::analysis::committed_source::current_overlay();
+        // Capture the listener on this thread. Rayon workers do not inherit
+        // the inventory-progress thread-local, so they must hold the Arc.
+        let units_listener = super::inventory_progress::current_listener();
+        let total_units = u64::try_from(seams.len()).unwrap_or(u64::MAX);
+        if let Some(listener) = units_listener.as_ref() {
+            // Report the honest denominator before the whole-index warm so a
+            // tens-of-seconds table build is not another unquantified stall
+            // (#8643).
+            listener(0, total_units);
+        }
         // #9211: a stage large enough to need the whole-index tables pays
         // for them here, before any seam is queued, instead of the first
         // worker to ask building one in line while its siblings wait. A first
@@ -367,6 +377,10 @@ impl<'index> EvidencePass<'index> {
                                 &format!("processed_{processed}_of_{}", seams.len()),
                                 evidence_started.elapsed(),
                             );
+                            if let Some(listener) = units_listener.as_ref() {
+                                let completed = u64::try_from(processed).unwrap_or(u64::MAX);
+                                listener(completed, total_units);
+                            }
                         }
                         Some(evidence)
                     })

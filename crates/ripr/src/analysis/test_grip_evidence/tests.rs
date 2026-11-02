@@ -1145,6 +1145,62 @@ fn latency_trace_line_uses_repo_exposure_trace_shape() {
 }
 
 #[test]
+fn evidence_for_seams_reports_honest_units_to_the_inventory_listener() -> Result<(), String> {
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn boundary_case() {
+    assert_eq!(discounted_total(100, 100), 90);
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    assert!(
+        !seams.is_empty(),
+        "pricing fixture must yield seams so the reporter has a denominator"
+    );
+    let total = u64::try_from(seams.len()).unwrap_or(u64::MAX);
+    let log = Arc::new(std::sync::Mutex::new(Vec::<(u64, u64)>::new()));
+    let captured = Arc::clone(&log);
+    crate::analysis::inventory_progress::with_listener(
+        Some(Arc::new(move |completed, reported_total| {
+            match captured.lock() {
+                Ok(mut rows) => rows.push((completed, reported_total)),
+                Err(poisoned) => poisoned.into_inner().push((completed, reported_total)),
+            }
+        })),
+        || {
+            let _ = evidence_for_seams(&seams, &index);
+        },
+    );
+    let rows = match log.lock() {
+        Ok(rows) => rows.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    };
+    assert!(
+        rows.first() == Some(&(0, total)),
+        "denominator must be visible before the walk: {rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|(completed, reported_total)| { *completed == total && *reported_total == total }),
+        "final report must close the honest count: {rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .all(|(_, reported_total)| *reported_total == total),
+        "listener must not invent a second denominator: {rows:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn latency_trace_line_can_report_evidence_context_start() {
     let line = crate::analysis::resource_cost::latency_trace_line(
         "evidence_context",

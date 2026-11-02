@@ -181,18 +181,72 @@ pub(crate) fn format_stage_line(
     stage: AnalysisProgressStage,
     scope: AnalysisProgressScope,
 ) -> String {
-    format!(
+    format_stage_line_with_units(stage, scope, None, None)
+}
+
+pub(crate) fn format_stage_line_with_units(
+    stage: AnalysisProgressStage,
+    scope: AnalysisProgressScope,
+    completed_units: Option<u64>,
+    total_units: Option<u64>,
+) -> String {
+    let base = format!(
         "{PROGRESS_PREFIX}{} [{}]",
         stage_token(stage),
         scope_token(scope)
-    )
+    );
+    append_units_if_safe(base, completed_units, total_units)
 }
 
 pub(crate) fn format_heartbeat_line(stage: AnalysisProgressStage, class: &str) -> String {
-    format!(
+    format_heartbeat_line_with_units(stage, class, None, None)
+}
+
+pub(crate) fn format_heartbeat_line_with_units(
+    stage: AnalysisProgressStage,
+    class: &str,
+    completed_units: Option<u64>,
+    total_units: Option<u64>,
+) -> String {
+    let base = format!(
         "{PROGRESS_PREFIX}{} still active after {class}",
         stage_token(stage)
-    )
+    );
+    // Insert the count before " still active" so the elapsed class stays last.
+    match units_token(completed_units, total_units) {
+        Some(token) => {
+            let stage_name = stage_token(stage);
+            let candidate =
+                format!("{PROGRESS_PREFIX}{stage_name} {token} still active after {class}");
+            if progress_line_is_safe(&candidate) {
+                candidate
+            } else {
+                base
+            }
+        }
+        None => base,
+    }
+}
+
+fn units_token(completed_units: Option<u64>, total_units: Option<u64>) -> Option<String> {
+    let (completed, total) = completed_units.zip(total_units)?;
+    Some(format!("processed_{completed}_of_{total}"))
+}
+
+fn append_units_if_safe(
+    base: String,
+    completed_units: Option<u64>,
+    total_units: Option<u64>,
+) -> String {
+    let Some(token) = units_token(completed_units, total_units) else {
+        return base;
+    };
+    let candidate = format!("{base} {token}");
+    if progress_line_is_safe(&candidate) {
+        candidate
+    } else {
+        base
+    }
 }
 
 /// TTY in-place overwrite: pad to the longest line shown so far so a shorter
@@ -254,6 +308,8 @@ struct Projection {
     hold_success: bool,
     user_fixable_failure: bool,
     pending_success: Option<AnalysisProgressEvent>,
+    completed_units: Option<u64>,
+    total_units: Option<u64>,
     now: NowFn,
 }
 
@@ -356,6 +412,8 @@ impl CliProgressSink {
                     hold_success: false,
                     user_fixable_failure: false,
                     pending_success: None,
+                    completed_units: None,
+                    total_units: None,
                     now,
                 }),
                 stop: Arc::new(AtomicBool::new(false)),
@@ -422,6 +480,12 @@ impl CliProgressSink {
         if projection.current_stage != Some(event.stage) {
             projection.stage_started = now;
             projection.last_heartbeat = None;
+            projection.completed_units = None;
+            projection.total_units = None;
+        }
+        if let (Some(completed), Some(total)) = (event.completed_units, event.total_units) {
+            projection.completed_units = Some(completed);
+            projection.total_units = Some(total);
         }
         projection.current_stage = Some(event.stage);
         projection.current_scope = Some(event.scope);
@@ -447,7 +511,12 @@ impl CliProgressSink {
             return;
         }
         projection.visible = true;
-        let line = format_stage_line(event.stage, event.scope);
+        let line = format_stage_line_with_units(
+            event.stage,
+            event.scope,
+            event.completed_units,
+            event.total_units,
+        );
         Self::write_line(&mut projection, &line);
     }
 
@@ -514,7 +583,12 @@ impl CliProgressSink {
                 return;
             };
             projection.visible = true;
-            let line = format_stage_line(stage, scope);
+            let line = format_stage_line_with_units(
+                stage,
+                scope,
+                projection.completed_units,
+                projection.total_units,
+            );
             Self::write_line(&mut projection, &line);
         }
         let stage_age = now.duration_since(projection.stage_started);
@@ -529,7 +603,12 @@ impl CliProgressSink {
         let Some(class) = elapsed_class(stage_age) else {
             return;
         };
-        let line = format_heartbeat_line(stage, class);
+        let line = format_heartbeat_line_with_units(
+            stage,
+            class,
+            projection.completed_units,
+            projection.total_units,
+        );
         Self::write_line(&mut projection, &line);
         projection.last_heartbeat = Some(now);
         projection.heartbeat_count = projection.heartbeat_count.saturating_add(1);
@@ -586,6 +665,37 @@ impl AnalysisProgressSink for CliProgressSink {
         } else {
             self.start_heartbeat_thread();
         }
+    }
+
+    fn unit_emitter(&self) -> Option<Arc<dyn Fn(u64, u64) + Send + Sync>> {
+        let inner = Arc::clone(&self.inner);
+        Some(Arc::new(move |completed, total| {
+            let (scope, elapsed_ms) = {
+                let projection = CliProgressSink::lock_state(&inner);
+                let scope = projection
+                    .current_scope
+                    .unwrap_or(AnalysisProgressScope::Repo);
+                let now = (projection.now)();
+                let elapsed_ms = u64::try_from(now.duration_since(projection.started).as_millis())
+                    .unwrap_or(u64::MAX);
+                (scope, elapsed_ms)
+            };
+            // Share the inner sink without running `Drop`, which would stop
+            // the heartbeat of the still-live command owner.
+            let sink = std::mem::ManuallyDrop::new(CliProgressSink {
+                inner: Arc::clone(&inner),
+            });
+            sink.emit_event(AnalysisProgressEvent {
+                stage: AnalysisProgressStage::Analyzing,
+                scope,
+                completed_units: Some(completed),
+                total_units: Some(total),
+                elapsed_ms,
+            });
+            if !CliProgressSink::lock_state(&inner).terminal {
+                sink.start_heartbeat_thread();
+            }
+        }))
     }
 }
 
@@ -929,8 +1039,77 @@ mod tests {
         let text = buffer.text();
         assert!(!text.contains('%'));
         assert!(!text.contains("3/"));
+        assert!(!text.contains("processed_3"));
         assert!(!text.to_ascii_lowercase().contains("eta"));
         assert!(text.contains("analyzing [diff]"));
+    }
+
+    #[test]
+    fn known_seam_totals_render_processed_n_of_total_without_slash_or_percent() {
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.emit(AnalysisProgressEvent {
+            stage: AnalysisProgressStage::Analyzing,
+            scope: AnalysisProgressScope::Repo,
+            completed_units: Some(500),
+            total_units: Some(10_000),
+            elapsed_ms: 4_000,
+        });
+        let text = buffer.text();
+        assert!(
+            text.contains("ripr progress: analyzing [repo] processed_500_of_10000"),
+            "honest units must appear on the default stderr stream: {text}"
+        );
+        assert!(!text.contains('%'));
+        assert!(!text.contains("500/"));
+        assert!(!text.to_ascii_lowercase().contains("eta"));
+        for line in text.lines() {
+            assert!(progress_line_is_safe(line), "unsafe progress line: {line}");
+        }
+    }
+
+    #[test]
+    fn heartbeat_repeats_last_honest_units_without_slash() {
+        let buffer = Buffer::new();
+        let (clock, now) = FakeClock::start();
+        let sink = CliProgressSink::with_writer_and_clock(
+            Box::new(buffer.clone()),
+            false,
+            non_tty_policy(),
+            now,
+        );
+        sink.emit(AnalysisProgressEvent {
+            stage: AnalysisProgressStage::Analyzing,
+            scope: AnalysisProgressScope::Repo,
+            completed_units: Some(500),
+            total_units: Some(10_000),
+            elapsed_ms: 0,
+        });
+        sink.stop_heartbeat();
+        clock.advance_millis(2_000);
+        CliProgressSink::heartbeat_tick(&sink.inner);
+        let text = buffer.text();
+        assert!(
+            text.contains("processed_500_of_10000 still active after 2s"),
+            "heartbeats must keep the last honest count: {text}"
+        );
+        assert!(!text.contains("500/"));
+        assert!(!text.contains('%'));
+        for line in text.lines() {
+            assert!(progress_line_is_safe(line), "unsafe progress line: {line}");
+        }
+    }
+
+    #[test]
+    fn oversized_unit_token_is_omitted_rather_than_rendered_unsafe() {
+        let line = format_stage_line_with_units(
+            AnalysisProgressStage::Analyzing,
+            AnalysisProgressScope::Repo,
+            Some(u64::MAX),
+            Some(u64::MAX),
+        );
+        assert_eq!(line, "ripr progress: analyzing [repo]");
+        assert!(progress_line_is_safe(&line));
     }
 
     #[test]
@@ -1365,6 +1544,12 @@ mod tests {
         assert!(progress_line_is_safe("ripr progress: analyzing [diff]"));
         assert!(progress_line_is_safe(
             "ripr progress: analyzing still active after 2s"
+        ));
+        assert!(progress_line_is_safe(
+            "ripr progress: analyzing [repo] processed_500_of_10000"
+        ));
+        assert!(progress_line_is_safe(
+            "ripr progress: analyzing processed_500_of_10000 still active after 2s"
         ));
     }
 
