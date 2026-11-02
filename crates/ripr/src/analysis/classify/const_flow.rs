@@ -98,6 +98,29 @@ impl ChangedConsts {
     }
 }
 
+/// #11400: whether the paired declarations name one constant of one type
+/// whose evaluated value differs. A visibility, spelling or type-only edit
+/// (`10` to `5 + 5`, `const` to `pub const`) or a value the evaluator cannot
+/// read is not a changed value.
+pub(in crate::analysis) fn const_value_changes(change: &ConstChange) -> bool {
+    let (Some(old), Some(new)) = (
+        parse_const_decl(change.old_declaration.trim()),
+        parse_const_decl(change.new_declaration.trim()),
+    ) else {
+        return false;
+    };
+    if old.name != new.name || old.ty != new.ty {
+        return false;
+    }
+    match (
+        expr::evaluate_initializer(&old.init, old.ty),
+        expr::evaluate_initializer(&new.init, new.ty),
+    ) {
+        (Some(before), Some(after)) => before != after,
+        _ => false,
+    }
+}
+
 /// Whether the declaration at `declaration_line` and every function starting
 /// at one of `function_lines` sit directly in the same module of `source`
 /// (no enclosing block but `mod name { .. }`, the same chain of modules).

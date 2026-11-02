@@ -1625,9 +1625,121 @@ fn package_init_submodule_facts(
     file: &Path,
     source: &str,
 ) -> (std::collections::BTreeSet<String>, bool) {
+    package_init_submodule_facts_with_parse(file, source).0
+}
+
+/// Same as [`package_init_submodule_facts`], plus whether the production
+/// path parsed the file. Empty, comment-only, and leading-docstring-only
+/// `__init__.py` sources skip `parse_module_result` (#12238).
+fn package_init_submodule_facts_with_parse(
+    file: &Path,
+    source: &str,
+) -> ((std::collections::BTreeSet<String>, bool), bool) {
     if file.file_name().is_none_or(|name| name != "__init__.py") {
-        return (std::collections::BTreeSet::new(), false);
+        return ((std::collections::BTreeSet::new(), false), false);
     }
+    if package_init_source_cannot_shadow(source) {
+        return ((std::collections::BTreeSet::new(), false), false);
+    }
+    (package_init_submodule_facts_from_parse(file, source), true)
+}
+
+/// True when `__init__.py` text cannot contain a statement
+/// [`init_stmt_shadows_submodule`] reacts to. After stripping blank lines
+/// and full-line `#` comments, and optionally one leading module docstring,
+/// nothing remains. Anything else is parsed (fail-closed).
+fn package_init_source_cannot_shadow(source: &str) -> bool {
+    let after_comments = skip_blank_and_full_line_comment_lines(source);
+    if after_comments.is_empty() {
+        return true;
+    }
+    match skip_complete_string_literal(after_comments) {
+        Some(after_docstring) => {
+            let literal_len = after_comments.len().saturating_sub(after_docstring.len());
+            let Some(literal) = after_comments.get(..literal_len) else {
+                return false;
+            };
+            let prefix_is_raw = literal
+                .chars()
+                .take_while(|c| c.is_ascii_alphabetic())
+                .any(|c| matches!(c, 'r' | 'R'));
+            // A non-raw string containing a backslash may have an escape the
+            // parser rejects (`\x`, `\u`, `\N{...}`); fall through to parse so
+            // the result stays opaque rather than skipping as inert.
+            if literal.contains('\\') && !prefix_is_raw {
+                return false;
+            }
+            skip_blank_and_full_line_comment_lines(after_docstring).is_empty()
+        }
+        None => false,
+    }
+}
+
+/// Drop blank lines and lines whose first non-whitespace character is `#`.
+/// Leading whitespace on a remaining line is kept so an indented statement
+/// is not mistaken for a module docstring.
+fn skip_blank_and_full_line_comment_lines(source: &str) -> &str {
+    let mut rest = source;
+    loop {
+        rest = rest.trim_start_matches(['\r', '\n']);
+        if rest.is_empty() {
+            return rest;
+        }
+        let line_end = rest.find(['\n', '\r']).unwrap_or(rest.len());
+        let trimmed = rest[..line_end].trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            rest = &rest[line_end..];
+            continue;
+        }
+        return rest;
+    }
+}
+
+/// Skip one complete string literal at the start of `source`.
+///
+/// Only a single `r`/`R` or `u`/`U` prefix is accepted: `ur`/`ru` are a
+/// Python 3 `SyntaxError`, an `f`-string can bind through `:=`, and any
+/// other prefix (or an unclosed literal) falls through to parse. A
+/// backslash escapes the next source byte in both single- and triple-quoted
+/// strings, so `\"""` does not close a `"""` docstring.
+fn skip_complete_string_literal(source: &str) -> Option<&str> {
+    let bytes = source.as_bytes();
+    let mut i = 0;
+    if i < bytes.len() && matches!(bytes[i], b'r' | b'R' | b'u' | b'U') {
+        i += 1;
+        if i < bytes.len() && matches!(bytes[i], b'r' | b'R' | b'u' | b'U') {
+            return None;
+        }
+    }
+    let quote = *bytes.get(i)?;
+    if quote != b'\'' && quote != b'"' {
+        return None;
+    }
+    let triple = bytes.get(i + 1) == Some(&quote) && bytes.get(i + 2) == Some(&quote);
+    let quote_len = if triple { 3 } else { 1 };
+    i += quote_len;
+    while i + quote_len <= bytes.len() {
+        if bytes[i] == b'\\' {
+            i = i.checked_add(2)?;
+            continue;
+        }
+        if !triple && (bytes[i] == b'\n' || bytes[i] == b'\r') {
+            return None;
+        }
+        if bytes[i] == quote
+            && (!triple || (bytes.get(i + 1) == Some(&quote) && bytes.get(i + 2) == Some(&quote)))
+        {
+            return source.get(i + quote_len..);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn package_init_submodule_facts_from_parse(
+    file: &Path,
+    source: &str,
+) -> (std::collections::BTreeSet<String>, bool) {
     let Ok(Mod::Module(module)) = parse_module_result(file, source) else {
         return (std::collections::BTreeSet::new(), true);
     };
@@ -1646,6 +1758,23 @@ pub(super) fn package_init_submodule_facts_for_test(
     source: &str,
 ) -> (std::collections::BTreeSet<String>, bool) {
     package_init_submodule_facts(file, source)
+}
+
+#[cfg(test)]
+pub(super) fn package_init_submodule_facts_parsed_for_test(
+    file: &Path,
+    source: &str,
+) -> (std::collections::BTreeSet<String>, bool, bool) {
+    let ((shadows, opaque), parsed) = package_init_submodule_facts_with_parse(file, source);
+    (shadows, opaque, parsed)
+}
+
+#[cfg(test)]
+pub(super) fn package_init_submodule_facts_from_parse_for_test(
+    file: &Path,
+    source: &str,
+) -> (std::collections::BTreeSet<String>, bool) {
+    package_init_submodule_facts_from_parse(file, source)
 }
 
 fn init_stmt_shadows_submodule(
