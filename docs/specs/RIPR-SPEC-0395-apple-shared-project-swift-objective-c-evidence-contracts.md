@@ -235,10 +235,11 @@ Objective-C++.
 | function | C linkage functions in ObjC translation units |
 | block typedef | block signature |
 
-Stable owner id shape:
+Stable owner id shape (repo-relative path preserves the actual `.m`, `.h`, or promoted `.mm`
+extension):
 
 ```text
-objc:<repo/path.m>::<class_or_category>::<selector_or_symbol>@<preprocessor/target/config digest>
+objc:<repo/path/with/actual/extension>::<class_or_category>::<selector_or_symbol>@<preprocessor/target/config digest>
 ```
 
 Selectors, categories, method replacement, optional protocol methods, nullability,
@@ -584,8 +585,8 @@ limit = "Normative contract only; Apple adapters and judged corpora not landed (
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/any/diff/static_facts"
-language = "objective-c"
+id = "objective_c/any/diff/static_facts"
+language = "objective_c"
 framework = "any"
 mode = "diff"
 family = "static_facts"
@@ -595,8 +596,8 @@ limit = "Normative contract only; Apple adapters and judged corpora not landed (
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/any/repo/static_facts"
-language = "objective-c"
+id = "objective_c/any/repo/static_facts"
+language = "objective_c"
 framework = "any"
 mode = "repo"
 family = "static_facts"
@@ -606,8 +607,8 @@ limit = "Normative contract only; Apple adapters and judged corpora not landed (
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/xctest/diff/static_facts"
-language = "objective-c"
+id = "objective_c/xctest/diff/static_facts"
+language = "objective_c"
 framework = "xctest"
 mode = "diff"
 family = "static_facts"
@@ -641,8 +642,8 @@ proof_refs = ["RIPR-SPEC-0395"]
 # Explicit unpromoted modes (must remain separate decisions)
 
 [[cell]]
-id = "objective-c/objcpp/diff/static_facts"
-language = "objective-c"
+id = "objective_c/objcpp/diff/static_facts"
+language = "objective_c"
 framework = "objcpp"
 mode = "diff"
 family = "static_facts"
@@ -663,8 +664,8 @@ limit = "UI tests are not production seam oracles by default"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/xctest-ui/diff/static_facts"
-language = "objective-c"
+id = "objective_c/xctest-ui/diff/static_facts"
+language = "objective_c"
 framework = "xctest-ui"
 mode = "diff"
 family = "static_facts"
@@ -731,8 +732,8 @@ limit = "visionOS SDK/deployment context is scoped separately from generic Swift
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/platform-macos/diff/static_facts"
-language = "objective-c"
+id = "objective_c/platform-macos/diff/static_facts"
+language = "objective_c"
 framework = "platform-macos"
 mode = "diff"
 family = "static_facts"
@@ -742,8 +743,8 @@ limit = "macOS SDK/deployment context is scoped separately from generic Objectiv
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/platform-ios/diff/static_facts"
-language = "objective-c"
+id = "objective_c/platform-ios/diff/static_facts"
+language = "objective_c"
 framework = "platform-ios"
 mode = "diff"
 family = "static_facts"
@@ -753,8 +754,8 @@ limit = "iOS SDK/deployment context is scoped separately from generic Objective-
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/platform-tvos/diff/static_facts"
-language = "objective-c"
+id = "objective_c/platform-tvos/diff/static_facts"
+language = "objective_c"
 framework = "platform-tvos"
 mode = "diff"
 family = "static_facts"
@@ -764,8 +765,8 @@ limit = "tvOS SDK/deployment context is scoped separately from generic Objective
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/platform-watchos/diff/static_facts"
-language = "objective-c"
+id = "objective_c/platform-watchos/diff/static_facts"
+language = "objective_c"
 framework = "platform-watchos"
 mode = "diff"
 family = "static_facts"
@@ -775,8 +776,8 @@ limit = "watchOS SDK/deployment context is scoped separately from generic Object
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/platform-visionos/diff/static_facts"
-language = "objective-c"
+id = "objective_c/platform-visionos/diff/static_facts"
+language = "objective_c"
 framework = "platform-visionos"
 mode = "diff"
 family = "static_facts"
@@ -799,8 +800,8 @@ limit = "Apple repair routing is not implemented or promoted (#5682)"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/any/diff/repair_routing"
-language = "objective-c"
+id = "objective_c/any/diff/repair_routing"
+language = "objective_c"
 framework = "any"
 mode = "diff"
 family = "repair_routing"
