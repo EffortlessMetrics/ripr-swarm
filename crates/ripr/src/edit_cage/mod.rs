@@ -538,6 +538,14 @@ pub(crate) fn visit_reconstructed_workflow_deltas(
         {
             delta.inline_test_region = Some(observe_inline_target(baseline, &after, region)?);
         }
+        if let Some(region) = &baseline.external_test_file_region
+            && delta.changes.iter().any(|change| {
+                normalize_repo_relative_path(&change.path).is_ok_and(|path| path == region.path)
+            })
+        {
+            delta.external_test_file_region =
+                Some(observe_external_target(baseline, &after, region)?);
+        }
         visit(delta)?;
     }
     Ok(())
