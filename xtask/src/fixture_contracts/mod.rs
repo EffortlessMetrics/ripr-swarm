@@ -95,6 +95,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_intervention_study_fixture_corpus(&mut violations)?;
     validate_blind_journey_contract_fixture_corpus(&mut violations)?;
     validate_cache_payload_tamper_recovery_fixture_corpus(&mut violations)?;
+    validate_incomplete_diff_corpus_fixture_corpus(&mut violations)?;
     validate_orchestration_attempt_receipts_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_attempts_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_intake_fixture_corpus(&mut violations)?;
