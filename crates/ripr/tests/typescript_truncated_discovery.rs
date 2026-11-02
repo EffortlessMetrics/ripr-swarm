@@ -29,9 +29,19 @@ index 0000000..1111111 100644
      return amount;
 ";
 
+enum WorkspaceShape {
+    /// Twelve `docs/*.txt` files: the #11767 producer that still trips the
+    /// 5× total-entry backstop under a tiny cap.
+    DocsTree,
+    /// Twenty `tests/baselines/reference/*.js` files: #11984 item 2. Without
+    /// the path-shaped prune these candidate sources would consume a tiny
+    /// cap; with it the walk finishes.
+    BaselinesReference,
+}
+
 /// Runs `ripr check --format json` on a workspace that has the changed source
 /// and many unrelated entries but no test, with the walk cap set to `cap`.
-fn check_json(cap: Option<&str>) -> Result<serde_json::Value, String> {
+fn check_json(cap: Option<&str>, shape: WorkspaceShape) -> Result<serde_json::Value, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let root: PathBuf = std::env::temp_dir().join(format!(
         "ripr-ts-truncated-discovery-{}-{}",
@@ -50,8 +60,20 @@ fn check_json(cap: Option<&str>) -> Result<serde_json::Value, String> {
         "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
     )?;
     write("src/discount.ts", SOURCE)?;
-    for index in 0..12 {
-        write(&format!("docs/page{index}.txt"), "unrelated\n")?;
+    match shape {
+        WorkspaceShape::DocsTree => {
+            for index in 0..12 {
+                write(&format!("docs/page{index}.txt"), "unrelated\n")?;
+            }
+        }
+        WorkspaceShape::BaselinesReference => {
+            for index in 0..20 {
+                write(
+                    &format!("tests/baselines/reference/case{index}.js"),
+                    "export const baseline = 1;\n",
+                )?;
+            }
+        }
     }
     write("diff.patch", DIFF)?;
     let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"));
@@ -91,7 +113,7 @@ fn only_finding(report: &serde_json::Value) -> Result<&serde_json::Value, String
 /// Control: a walk that finishes keeps the verdict this fixture always had.
 #[test]
 fn a_finished_walk_still_reports_no_static_path() -> Result<(), String> {
-    let report = check_json(None)?;
+    let report = check_json(None, WorkspaceShape::DocsTree)?;
     let finding = only_finding(&report)?;
     assert_eq!(finding["classification"], "no_static_path", "{finding}");
     assert!(
@@ -106,7 +128,7 @@ fn a_finished_walk_still_reports_no_static_path() -> Result<(), String> {
 /// withheld and the limit names the cap and the way out.
 #[test]
 fn a_truncated_walk_withholds_no_static_path() -> Result<(), String> {
-    let report = check_json(Some("3"))?;
+    let report = check_json(Some("3"), WorkspaceShape::DocsTree)?;
     let finding = only_finding(&report)?;
     assert_eq!(finding["classification"], "static_unknown", "{finding}");
     assert_eq!(
@@ -121,5 +143,23 @@ fn a_truncated_walk_withholds_no_static_path() -> Result<(), String> {
     );
     assert!(text.contains("15 directory entries"), "{text}");
     assert_eq!(report["analysis_outcome"]["analysis_complete"], false);
+    Ok(())
+}
+
+/// #11984 item 2: compiler reference-output `.js` files would consume a tiny
+/// candidate cap without the path-shaped prune. After pruning
+/// `tests/baselines/reference`, the walk finishes and keeps `no_static_path`.
+#[test]
+fn a_finished_walk_prunes_baselines_reference_instead_of_truncating() -> Result<(), String> {
+    let report = check_json(Some("3"), WorkspaceShape::BaselinesReference)?;
+    let finding = only_finding(&report)?;
+    assert_eq!(finding["classification"], "no_static_path", "{finding}");
+    assert!(
+        finding
+            .get("static_limit_kind")
+            .is_none_or(|kind| kind.is_null()),
+        "{finding}"
+    );
+    assert_eq!(report["analysis_outcome"]["analysis_complete"], true);
     Ok(())
 }
