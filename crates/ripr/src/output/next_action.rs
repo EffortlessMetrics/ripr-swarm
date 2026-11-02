@@ -13,6 +13,7 @@
 
 use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::domain::{CanonicalNextActionV1, NextActionDiffSource, NextActionStop};
+use crate::output::human::plain_repair_card_user_wording;
 use std::path::Path;
 
 /// The machine projection as a JSON value for envelope embedding. A DTO
@@ -442,6 +443,7 @@ fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
             )
         }
     };
+    let text = plain_repair_card_user_wording(&text);
     let mut lines = vec![text];
     // Paste surfaces pair the bash route with its PowerShell spelling on
     // the next line; portable renders carry no paste target.
