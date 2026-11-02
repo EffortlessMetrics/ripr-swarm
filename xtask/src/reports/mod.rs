@@ -35,6 +35,7 @@ mod pr_causal_delta;
 mod pr_evidence;
 mod pr_evidence_summary;
 mod proof_preflight;
+mod proof_receipt_binding;
 mod proof_route;
 mod python_repair_driver;
 mod python_repair_trust;

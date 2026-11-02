@@ -61,7 +61,8 @@ pub(in crate::analysis) use activation::{
     pushed_collection_compared_whole, pushed_literal_path, signature_parameters, sort_value_facts,
 };
 pub(in crate::analysis) use arm_selection::{
-    ArmSelector, error_path_arm_probe, unresolved_parameter_field_selector,
+    ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,
+    match_arm_selection_witness_schema_version, unresolved_parameter_field_selector,
 };
 pub(in crate::analysis) use binding_return_flow::{
     BindingReturnFlow, evaluate_binding_return_flow, same_file_binding_helpers,
@@ -124,7 +125,8 @@ pub(in crate::analysis) use implicit_call::{
     pre_cap_syntax_only, withhold_destructor_credit, withhold_implicit_call_gap,
 };
 pub(in crate::analysis) use indirect_owner::{
-    related_tests_reach_owner_indirectly, withhold_indirect_owner_gap,
+    oracle_owner_call_is_shadowed, related_tests_reach_owner_indirectly,
+    withhold_indirect_owner_gap,
 };
 pub(in crate::analysis) use infection::{
     OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,

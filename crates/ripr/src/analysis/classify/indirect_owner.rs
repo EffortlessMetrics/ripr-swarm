@@ -143,7 +143,7 @@ pub(in crate::analysis) fn related_tests_reach_owner_indirectly(
             return false;
         }
         let code = mask_comments_and_strings(&test.body);
-        names_owner_as_value(&code, owner)
+        names_owner_as_value(&code, owner, test, index)
             || (is_async && executor_wraps_owner_call(&code, &owner.name, test, index))
     })
 }
@@ -192,7 +192,9 @@ fn judged_for_owner(
         // A test that names the owner as a value is a candidate only where it
         // can see the owner: its own file, or an integration test.
         let sees_owner = test.file == owner.file || is_test_file(&test.file);
-        if sees_owner && (!called || is_related(test, false)) && names_owner_as_value(&code, owner)
+        if sees_owner
+            && (!called || is_related(test, false))
+            && names_owner_as_value(&code, owner, test, index)
         {
             judged.push((label(test), Form::FunctionValue));
             continue;
@@ -250,6 +252,111 @@ fn is_ident(text: &str) -> bool {
         && text.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
 }
 
+/// Whether the owner-name mentions inside `oracle_text`, as it appears in the
+/// test body `source`, are item shadows or declarations rather than the owner
+/// passed as a value — the bare-name fold's per-assertion premise
+/// (RIPR-SPEC-0240, #10162 review). The shadow reading is the same scoped
+/// item reading the mention gate uses: a same-name `fn` binds another item
+/// only inside its own block, and an explicit import binds another definition
+/// only where the shared call-identity resolver reads it as one.
+/// `Some(true)` refuses the fold for this assertion, `Some(false)` admits it,
+/// and `None` — the oracle text is not a body substring, the body is
+/// unreadable, or the assertion carries no owner mention — keeps the
+/// caller's prior answer.
+pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
+    source: &str,
+    oracle_text: &str,
+    owner: &FunctionFact,
+    test: &TestFact,
+    index: &RustIndex,
+) -> Option<bool> {
+    use super::call_identity::{CallTarget, shared_owner_call_identity};
+    let name = owner.name.as_str();
+    let identity = shared_owner_call_identity(index, owner);
+    let import_is_other = |path: &[String]| {
+        let Some((leaf, qualifier)) = path.split_last() else {
+            return false;
+        };
+        leaf == name
+            && identity.as_ref().is_some_and(|identity| {
+                identity.resolve_call(test, index, qualifier) == CallTarget::Other
+            })
+    };
+    let items = ItemBindings::read(source, name, import_is_other);
+    if items.unreadable {
+        return None;
+    }
+    let anchor = oracle_text.trim();
+    if anchor.is_empty() {
+        return None;
+    }
+    // The assertion fact's text is a trimmed statement of the body; locate it
+    // (or its first line) to read the mentions in their real lexical scope.
+    // The fact carries the statement's text, not its position: identical text in
+    // two lexical scopes cannot be told apart, so neither scope is established.
+    if source.matches(anchor).nth(1).is_some() {
+        return None;
+    }
+    let (at, len, partial) = match source.find(anchor) {
+        Some(at) => (at, anchor.len(), false),
+        None => {
+            let first = anchor.split('\n').next()?.trim();
+            if first.is_empty() {
+                return None;
+            }
+            (source.find(first)?, first.len(), true)
+        }
+    };
+    let span = source.get(at..at.checked_add(len)?)?;
+    let mut mentions = 0usize;
+    for offset in identifier_offsets(span, name) {
+        // A spelling inside a string literal (an assertion message) is text, not a
+        // reference; the scan cannot say what the executable call resolves to.
+        if inside_string_literal(span, offset) {
+            return None;
+        }
+        let at = at + offset;
+        let before = source[..at].trim_end();
+        mentions += 1;
+        let shadowed =
+            items.declaration_at(at) || (!before.ends_with("::") && items.shadows_at(at));
+        if !shadowed {
+            // A mention that is neither an established declaration nor an established
+            // shadow grounds the fold's owner-call premise.
+            return Some(false);
+        }
+    }
+    // Only the first line of the statement was located, so the later lines were
+    // not read: an all-shadowed first line cannot establish the whole statement.
+    if mentions == 0 || partial {
+        return None;
+    }
+    Some(true)
+}
+
+/// Whether `offset` falls inside a `"` string literal of `code`. Raw strings and
+/// character literals can misread; a misread only withholds a conclusion.
+fn inside_string_literal(code: &str, offset: usize) -> bool {
+    let (mut inside, mut escaped) = (false, false);
+    for (at, ch) in code.char_indices() {
+        if at >= offset {
+            break;
+        }
+        if inside {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                inside = false;
+            }
+        } else if ch == '"' {
+            inside = true;
+        }
+    }
+    inside
+}
+
 fn is_path(text: &str) -> bool {
     !text.is_empty() && text.split("::").all(is_ident)
 }
@@ -277,29 +384,63 @@ fn identifier_offsets<'a>(code: &'a str, name: &'a str) -> impl Iterator<Item = 
 /// The test's code names `name` as a value: not called, not a macro, not a
 /// method, field label or definition, the test binds no local of that name,
 /// and a qualifying path (`other::inc`) can still name the owner.
-fn names_owner_as_value(code: &str, owner: &FunctionFact) -> bool {
-    names_value(code, &owner.name, &owner_path_names(owner))
+fn names_owner_as_value(
+    code: &str,
+    owner: &FunctionFact,
+    test: &TestFact,
+    index: &RustIndex,
+) -> bool {
+    use super::call_identity::{CallTarget, shared_owner_call_identity};
+
+    let identity = shared_owner_call_identity(index, owner);
+    names_value(
+        &test.body,
+        code,
+        &owner.name,
+        &owner_path_names(owner),
+        |path| {
+            let Some((leaf, qualifier)) = path.split_last() else {
+                return false;
+            };
+            leaf == &owner.name
+                && identity.as_ref().is_some_and(|identity| {
+                    identity.resolve_call(test, index, qualifier) == CallTarget::Other
+                })
+        },
+    )
 }
 
-fn names_value(code: &str, name: &str, owner_names: &[String]) -> bool {
+fn names_value(
+    source: &str,
+    code: &str,
+    name: &str,
+    owner_names: &[String],
+    import_is_other: impl Fn(&[String]) -> bool,
+) -> bool {
     if is_bound_locally(code, name) {
         return false;
     }
+    let items = ItemBindings::read(source, name, import_is_other);
     identifier_offsets(code, name).any(|at| {
-        let before = code[..at].trim_end();
+        let reference_at = code[..at].strip_suffix("r#").map_or(at, str::len);
+        let before = code[..reference_at].trim_end();
+        if items.declaration_at(at)
+            || (!before.ends_with("::") && items.shadows_at(at))
+            || (items.unreadable && use_line_mention(code, at))
+        {
+            return false;
+        }
         let after = code[at + name.len()..].trim_start();
         let defined = before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2]);
         let method = before.ends_with('.');
-        let imported = line_starts_with_use(code, at);
         let called = after.starts_with(['(', '!']) || after.starts_with("::<");
         let field_label = after.starts_with(':') && !after.starts_with("::");
         !(defined
             || method
-            || imported
             || called
             || field_label
-            || typed_fn_pointer_initializer(code, at)
-            || !qualifier_may_name_owner(&code[..at], owner_names))
+            || typed_fn_pointer_initializer(code, reference_at)
+            || !qualifier_may_name_owner(before, owner_names))
     })
 }
 
@@ -394,7 +535,11 @@ fn ends_at_boundary(text: &str) -> bool {
     text.chars().next_back().is_none_or(|ch| !is_ident_char(ch))
 }
 
-fn line_starts_with_use(code: &str, at: usize) -> bool {
+/// Whether the mention at `at` sits on a line that begins with a `use` item.
+/// A parse-refused body cannot prove a declaration range, so this lexical
+/// exclusion keeps a `use` line from counting as the owner passed as a value;
+/// the parse-backed declaration ranges remain the primary path.
+fn use_line_mention(code: &str, at: usize) -> bool {
     let start = code[..at].rfind('\n').map_or(0, |newline| newline + 1);
     let line = code[start..at].trim_start();
     line.starts_with("use ") || line.starts_with("pub use ")
@@ -415,6 +560,113 @@ fn is_bound_locally(code: &str, name: &str) -> bool {
                 && !after.starts_with("::")
                 && code[..at].trim_end().ends_with(['(', ',', '|'])
         })
+}
+
+/// Declaration ranges and hoisted item bindings in the test's real lexical
+/// blocks. Macro arguments remain text: their function values are token trees,
+/// not `PathExpr` nodes. An unreadable parse cannot prove a shadow.
+#[derive(Default)]
+struct ItemBindings {
+    declarations: Vec<ra_ap_syntax::TextRange>,
+    scopes: Vec<(ra_ap_syntax::TextRange, bool)>,
+    /// The shared parser refused the body, so no declaration range is known.
+    /// Mentions on lexical `use` lines then keep the import exclusion instead
+    /// of counting the import as the owner passed as a value (RIPR-SPEC-0240).
+    unreadable: bool,
+}
+
+impl ItemBindings {
+    fn read(source: &str, name: &str, import_is_other: impl Fn(&[String]) -> bool) -> Self {
+        use crate::analysis::syntax::{UseBinding, parse_clean_source_file, use_item_bindings};
+        use ra_ap_syntax::{
+            AstNode,
+            ast::{self, HasAttrs, HasName},
+        };
+
+        let mut result = Self::default();
+        let Some(parse) = parse_clean_source_file(source) else {
+            result.unreadable = true;
+            return result;
+        };
+        for node in parse.tree().syntax().descendants() {
+            // An item scope cannot inherit the surrounding function's local
+            // shadow. Its imports also need their own module context; leave
+            // that identity unresolved instead of borrowing the test's.
+            if ast::ItemList::can_cast(node.kind()) {
+                result.scopes.push((node.text_range(), false));
+                continue;
+            }
+            let shadow = if let Some(function) = ast::Fn::cast(node.clone()) {
+                let Some(declared) = function.name() else {
+                    continue;
+                };
+                if declared.text().trim_start_matches("r#") != name {
+                    continue;
+                }
+                result.declarations.push(declared.syntax().text_range());
+                function.attrs().next().is_none()
+            } else if let Some(import) = ast::Use::cast(node.clone()) {
+                result.declarations.push(node.text_range());
+                let scope = use_item_bindings(&import);
+                let matching: Vec<_> = scope
+                    .imports
+                    .iter()
+                    .filter(|import| import.bound.trim_start_matches("r#") == name)
+                    .collect();
+                if matching.is_empty() && scope.globs.is_empty() {
+                    continue;
+                }
+                import.attrs().next().is_none()
+                    && !node
+                        .ancestors()
+                        .any(|ancestor| ast::ItemList::can_cast(ancestor.kind()))
+                    && scope.globs.is_empty()
+                    && !matching.is_empty()
+                    && matching.iter().all(|import| match &import.binding {
+                        // Absence from a lexical owner-name list is not
+                        // evidence of a different definition: reexports and
+                        // unreadable module layouts retain the limit.
+                        UseBinding::Path(path) | UseBinding::Renamed(path) => import_is_other(path),
+                        UseBinding::Opaque => false,
+                    })
+            } else {
+                continue;
+            };
+            // Items in a nested module or impl belong to its ItemList, not the
+            // surrounding test. Never climb across that boundary.
+            if let Some(block) = node.parent().and_then(ast::StmtList::cast) {
+                result.scopes.push((block.syntax().text_range(), shadow));
+            }
+        }
+        result
+    }
+
+    fn declaration_at(&self, at: usize) -> bool {
+        self.declarations
+            .iter()
+            .any(|range| contains_offset(*range, at))
+    }
+
+    fn shadows_at(&self, at: usize) -> bool {
+        let Some((innermost, _)) = self
+            .scopes
+            .iter()
+            .filter(|(range, _)| contains_offset(*range, at))
+            .min_by_key(|(range, _)| range.len())
+        else {
+            return false;
+        };
+        // A nearer owner-preserving import overrides an outer shadow. An
+        // opaque, conditional or competing binding cannot prove another owner.
+        self.scopes
+            .iter()
+            .filter(|(range, _)| range == innermost)
+            .all(|(_, shadow)| *shadow)
+    }
+}
+
+fn contains_offset(range: ra_ap_syntax::TextRange, at: usize) -> bool {
+    usize::from(range.start()) <= at && at < usize::from(range.end())
 }
 
 /// Byte ranges of `code` that are binding patterns: from `let`/`for` to the
@@ -550,7 +802,51 @@ mod tests {
     }
 
     fn value(code: &str, name: &str) -> bool {
-        names_value(code, name, &owner_names())
+        let source = format!("fn test_body() {{ {code} }}");
+        names_value(
+            &source,
+            &mask_comments_and_strings(&source),
+            name,
+            &owner_names(),
+            |_| false,
+        )
+    }
+
+    fn value_raw(source: &str, name: &str) -> bool {
+        names_value(
+            source,
+            &mask_comments_and_strings(source),
+            name,
+            &owner_names(),
+            |_| false,
+        )
+    }
+
+    /// A body the shared parser refuses cannot prove a declaration range, so
+    /// a mention on a `use` line keeps the lexical exclusion instead of
+    /// counting the import as the owner passed as a value, while a real value
+    /// mention in the same refused body still counts (RIPR-SPEC-0240).
+    #[test]
+    fn a_use_line_keeps_its_exclusion_in_an_unparseable_body() {
+        let broken = "fn test_body() {\n    use super::inc;\n    let x = ;\n}\n";
+        assert!(
+            crate::analysis::syntax::parse_clean_source_file(broken).is_none(),
+            "premise: the body is parse-refused"
+        );
+        assert!(!value_raw(broken, "inc"));
+        // The lexical fallback excludes only import lines: a real value
+        // mention in the same refused body still counts.
+        let broken_value =
+            "fn test_body() {\n    let w: Vec<_> = rows.map(inc).collect();\n    let x = ;\n}\n";
+        assert!(
+            crate::analysis::syntax::parse_clean_source_file(broken_value).is_none(),
+            "premise: the value body is parse-refused"
+        );
+        assert!(value_raw(broken_value, "inc"));
+        // A readable body keeps the parse-backed path: the import does not
+        // shadow, so the bare value mention beside it still counts.
+        let readable = "fn test_body() {\n    use super::inc;\n    let w: Vec<_> = rows.map(inc).collect();\n}\n";
+        assert!(value_raw(readable, "inc"));
     }
 
     #[test]

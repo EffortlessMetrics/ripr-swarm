@@ -222,6 +222,34 @@
       ]
     },
     {
+      "id": "rust_indirect_owner_item_scope",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_indirect_owner_item_scope",
+      "vector": "nested_item_binding_cannot_hide_an_outer_real_owner_value",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "rust_indirect_owner_call_unresolved"
+        }
+      ]
+    },
+    {
       "id": "rust_matches_panic_message_return_value",
       "language": "rust",
       "tier": "pure",
@@ -539,6 +567,54 @@
       "tier": "pure",
       "source_fixture": "fixtures/rust_wrapper_closure_shadowed_callee",
       "vector": "wrapper_calls_a_local_closure_that_shadows_the_private_helper",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_wrapper_static_shadowed_callee_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_static_shadowed_callee",
+      "vector": "wrapper_calls_a_static_item_that_shadows_the_private_helper",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_wrapper_static_shadowed_callee_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_wrapper_static_shadowed_callee",
+      "vector": "wrapper_calls_a_static_item_that_shadows_the_private_helper",
       "probe_family": "return_value",
       "assertions": [
         {
@@ -10876,6 +10952,42 @@
           "expression": "tokens > 9",
           "grip_class": "weakly_gripped",
           "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::reduce",
+          "expression": "tokens > 9",
+          "test": "reduce_over",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::consume",
+          "expression": "match reduce(tokens)",
+          "test": "reduce_over",
+          "file": "src/lib.rs",
+          "oracle_strength": "none",
+          "relation_reason": "same_test_file"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::consume",
+          "expression": "Reduction::Failure =>",
+          "test": "reduce_over",
+          "file": "src/lib.rs",
+          "oracle_strength": "none",
+          "relation_reason": "assertion_target_affinity"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::consume",
+          "expression": "Reduction::Over(wait) =>",
+          "test": "reduce_over",
+          "file": "src/lib.rs",
+          "oracle_strength": "none",
+          "relation_reason": "assertion_target_affinity"
         }
       ]
     },
