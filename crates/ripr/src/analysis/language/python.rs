@@ -408,6 +408,9 @@ mod reexports;
 mod related_tests;
 mod repo;
 mod route_client;
+mod row_discriminator_coverage;
+#[cfg(test)]
+mod row_discriminator_coverage_tests;
 mod row_miss;
 mod row_reach;
 mod setup_receivers;
