@@ -219,14 +219,7 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
 /// UFCS spelling): `map_err`, `and`, `or`, `ok_or`, `ok_or_else`, and `or_else`.
 /// Plain error reads such as `Result::expect_err(call, msg)` are not adapters (#12336).
 fn has_error_replacing_adapter(masked: &str) -> bool {
-    const REPLACING: &[&str] = &[
-        "map_err",
-        "and",
-        "or",
-        "ok_or",
-        "ok_or_else",
-        "or_else",
-    ];
+    const REPLACING: &[&str] = &["map_err", "and", "or", "ok_or", "ok_or_else", "or_else"];
     let stripped = strip_turbofish(masked);
     let masked = stripped.as_str();
     REPLACING
