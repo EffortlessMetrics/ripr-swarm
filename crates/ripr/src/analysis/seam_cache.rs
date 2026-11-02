@@ -1208,7 +1208,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// facts keep the old kind.
 /// `1.54`: `assert_ok_eq` and `assert_some_eq` are trusted macro names, so the
 /// stored binding candidates may name them (#12304); `1.53` facts cannot.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.54";
+/// `1.55`: `FileFacts` carry parsed `verus_guard_facts` (#10747); `1.54`
+/// warm entries deserialize with an empty guard vector.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.55";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live

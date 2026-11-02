@@ -66,6 +66,12 @@ pub(super) fn apply_verus_macro_region_limit(
     let Some((start, end)) = region else {
         return;
     };
+    if let Some(guard) =
+        crate::analysis::verus::guard_fact_at_line(&facts.verus_guard_facts, probe.location.line)
+    {
+        name_verus_guard_fact(finding, guard, side);
+        return;
+    }
     name_verus_region(
         finding,
         start,
@@ -102,6 +108,12 @@ pub(super) fn apply_verus_macro_region_limit_in_repo_file(
     else {
         return;
     };
+    if let Some(guard) =
+        crate::analysis::verus::guard_fact_at_line(&facts.verus_guard_facts, probe.location.line)
+    {
+        name_verus_guard_fact(finding, guard, "");
+        return;
+    }
     name_verus_region(
         finding,
         start,
@@ -142,6 +154,62 @@ fn name_verus_region(
     );
     finding.recommended_next_step = Some(format!(
         "{subject} is inside `verus!`; ripr cannot judge it. Run the Verus verifier for spec and proof edits; no test is requested by this finding."
+    ));
+}
+
+/// RIPR-SPEC-0374 (#10747): an admitted guard fact names the owner, mode,
+/// clauses and trust boundary instead of the generic macro-region limit.
+fn name_verus_guard_fact(
+    finding: &mut Finding,
+    guard: &crate::analysis::verus::VerusGuardFact,
+    side: &str,
+) {
+    use crate::analysis::verus::{VerusItemMode, VerusTrustBoundary};
+    finding.static_limit_kind = Some(StaticLimitKind::UnsupportedSyntax);
+    finding.stop_reasons.push(StopReason::ProcMacroOpaque);
+    finding.evidence.push(format!(
+        "verus_guard_fact: owner={} mode={:?} parser={} trust={:?}",
+        guard.owner_name, guard.mode, guard.parser_version, guard.trust
+    ));
+    finding.evidence.push(format!(
+        "verus_guard_fact_region: `verus!` lines {}-{}{}",
+        guard.region_start_line, guard.region_end_line, side
+    ));
+    finding.evidence.push(format!(
+        "verus_guard_fact_header: lines {}-{} requires={} ensures={} recommends={}",
+        guard.header_start_line,
+        guard.header_end_line,
+        guard.requires.len(),
+        guard.ensures.len(),
+        guard.recommends.len()
+    ));
+    finding.evidence.push(
+        "limitation_non_claim: static guard-fact admission only; ripr does not run Verus or establish specification adequacy"
+            .to_string(),
+    );
+    finding
+        .evidence
+        .push("limitation_analyzer_route: analysis/verus-dialect".to_string());
+    let subject = match guard.mode {
+        VerusItemMode::Proof => "This proof-function change",
+        VerusItemMode::Spec => "This spec-function change",
+        VerusItemMode::Exec => "This executable Verus item",
+    };
+    let trust_note = match guard.trust {
+        VerusTrustBoundary::ExternalBody
+        | VerusTrustBoundary::Assume
+        | VerusTrustBoundary::Admit => {
+            " Trusted or external-body semantics apply; ripr grants no checked-body verification credit."
+        }
+        VerusTrustBoundary::VerifierExternal => {
+            " This item is verifier-external; strong syntax does not imply a checked body."
+        }
+        VerusTrustBoundary::Checked => "",
+    };
+    finding.recommended_next_step = Some(format!(
+        "{subject} is bound to `{owner}` inside `verus!`.{trust_note} Run the Verus verifier; no test is requested by this finding.",
+        owner = guard.owner_name,
+        trust_note = trust_note
     ));
 }
 
@@ -939,6 +1007,7 @@ mod tests {
                 crate::analysis::FileFacts {
                     path: PathBuf::from("src/lib.rs"),
                     source: source.into(),
+                    verus_guard_facts: crate::analysis::verus::verus_guard_facts(source),
                     ..crate::analysis::FileFacts::default()
                 },
             )]),
@@ -973,15 +1042,7 @@ mod tests {
             inside
                 .evidence
                 .iter()
-                .any(|line| line.contains("verus_macro_region_unsupported")),
-            "{:?}",
-            inside.evidence
-        );
-        assert!(
-            inside
-                .evidence
-                .iter()
-                .any(|line| line.contains("spanning lines 2-9")),
+                .any(|line| line.contains("verus_guard_fact: owner=inc")),
             "{:?}",
             inside.evidence
         );
