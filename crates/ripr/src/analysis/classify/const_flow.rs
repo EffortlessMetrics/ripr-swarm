@@ -15,7 +15,7 @@
 //! `None`, and the caller keeps `static_unknown`.
 
 mod assoc;
-mod expr;
+pub(super) mod expr;
 
 pub(in crate::analysis) use self::assoc::associated_const_binding;
 use std::collections::BTreeMap;
@@ -441,7 +441,7 @@ fn calls_name_the_type(text: &str, name: &str, self_type: &str) -> bool {
 }
 
 /// Whether `text` calls `name(`: a whole-word occurrence followed by `(`.
-fn mentions_call(text: &str, name: &str) -> bool {
+pub(super) fn mentions_call(text: &str, name: &str) -> bool {
     let word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     text.match_indices(name).any(|(at, _)| {
         text[..at].chars().next_back().is_none_or(|ch| !word(ch))

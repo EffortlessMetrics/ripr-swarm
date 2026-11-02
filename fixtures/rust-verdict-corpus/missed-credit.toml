@@ -569,10 +569,6 @@ case = "spec-b-0169-raw-path-cfg-test-helper"
 reason = "Truth is discriminated but the edit is a test-only helper, so ripr reads silent (no probe seeded), which RIPR-SPEC-0153/0169 require; silent counts as abstained, not a false verdict (#10126 review)."
 
 [[entry]]
-case = "spec0096-named-binding-used"
-reason = "Measured row whose initializer-call and const shape abstains today; analyzer fix tracked in #9871."
-
-[[entry]]
 case = "spec0114-helper-chain-public-api"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 

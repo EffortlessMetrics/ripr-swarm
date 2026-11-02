@@ -2,6 +2,7 @@ mod absorbing_tail;
 mod activation;
 mod argument_fold;
 mod arm_selection;
+mod binding_return_flow;
 mod boundary_pairing;
 mod builder_override;
 mod call_identity;
@@ -61,6 +62,9 @@ pub(in crate::analysis) use activation::{
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, unresolved_parameter_field_selector,
+};
+pub(in crate::analysis) use binding_return_flow::{
+    BindingReturnFlow, evaluate_binding_return_flow, same_file_binding_helpers,
 };
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,

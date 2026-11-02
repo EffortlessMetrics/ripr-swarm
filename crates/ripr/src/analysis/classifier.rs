@@ -12,9 +12,9 @@ use super::classify::{
     DependencyEdgeContext, HelperChain, NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY,
     NO_REACHABLE_TEST_OBSERVE_SUMMARY, ProbeContext, RelatedTestCandidateIndex,
     TransitiveReachIndex, ambiguous_helper_entry_called_by_tests, associated_const_binding,
-    confidence_score, evaluate_const_flow, find_related_tests_with_candidate_index,
-    is_assertion_shaped_owner, relation_establishes_reach, same_file_const_readers,
-    shares_module_scope,
+    confidence_score, evaluate_binding_return_flow, evaluate_const_flow,
+    find_related_tests_with_candidate_index, is_assertion_shaped_owner, relation_establishes_reach,
+    same_file_binding_helpers, same_file_const_readers, shares_module_scope,
 };
 use super::probes::parser_expression_for_probe;
 use super::rust_index::{RustIndex, TestSummary, find_file_facts};
@@ -244,6 +244,20 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
             related_tests = through_readers;
         }
     }
+    // RIPR-SPEC-0096: a changed `let` returned unmodified is the owner's
+    // return. Evaluate related tests under the old and new initializer.
+    let mut binding_return_flow = None;
+    if const_flow.is_none()
+        && let Some(owner) = owner_fn
+        && let Some(helpers) = same_file_binding_helpers(owner, index)
+        && let Some(facts) = find_file_facts(index, &owner.file)
+    {
+        let reader_tests: Vec<&TestSummary> = related_tests.iter().map(|(test, _)| *test).collect();
+        binding_return_flow =
+            evaluate_binding_return_flow(probe, owner, &helpers, &reader_tests, &|name| {
+                facts.functions.iter().filter(|f| f.name == name).count()
+            });
+    }
     // RIPR-SPEC-0133: detect assertion-shaped owners (oracles) here, where the
     // full index is available; the context carries the verdict so guidance can
     // be reframed. The exposure class is never changed by this flag.
@@ -268,6 +282,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     context.propagation_origin = propagation_origin;
     context.const_readers = const_readers;
     context.const_flow = const_flow;
+    context.binding_return_flow = binding_return_flow;
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
     let reveal_expression = parser_expression_for_probe(
@@ -282,9 +297,13 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         ClassifiedProbeEvidence::gather(&context, reveal_expression, transitive_reach);
     // RIPR-SPEC-0048: a changed constant decided by evaluation takes its class
     // from the evaluation; every other probe is classified as before.
-    let class = match context.const_flow.as_ref() {
-        Some(flow) => evidence.apply_const_flow(flow),
-        None => evidence.classify(context.probe),
+    let class = match (
+        context.const_flow.as_ref(),
+        context.binding_return_flow.as_ref(),
+    ) {
+        (Some(flow), _) => evidence.apply_const_flow(flow),
+        (None, Some(flow)) => evidence.apply_binding_return_flow(flow),
+        (None, None) => evidence.classify(context.probe),
     };
     // #7532: `build_finding` rewrites a `no_static_path` finding's misses;
     // keep reveal's so a withheld finding can report them again.
