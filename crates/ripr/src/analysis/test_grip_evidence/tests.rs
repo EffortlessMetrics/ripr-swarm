@@ -13888,6 +13888,57 @@ fn proximity_test_pinning_another_function_lends_a_predicate_boundary_no_oracle(
     Ok(())
 }
 
+/// #12600/#12671: the same refusal for a returned value. `Ok(n)` in
+/// `parse_masked` is a value `parse_pinned` also returns, so a same-file test
+/// that pins `parse_pinned` lends it no oracle once a test that runs
+/// `parse_masked` is related. With no such test every related test is
+/// proximity-only and keeps the lent oracle, so the seam stays
+/// `activation_unknown` rather than reading `reachable_unrevealed`.
+#[test]
+fn proximity_test_pinning_another_function_lends_a_return_value_no_oracle() -> Result<(), String> {
+    let published_for = |extra_tests: &str| -> Result<Vec<OracleStrength>, String> {
+        let prod = format!(
+            "pub fn parse_masked(n: u8) -> Result<u8, u8> {{\n    if n % 2 == 1 {{ Err(1) }} else {{ Ok(n) }}\n}}\n\
+             pub fn parse_pinned(n: u8) -> Result<u8, u8> {{\n    if n % 2 == 0 {{ Err(2) }} else {{ Ok(n) }}\n}}\n\
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    {extra_tests}\n}}\n"
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let value = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ReturnValue && s.expression() == "Ok(n)" && s.display_line() == 2)
+            .ok_or_else(|| "parse_masked Ok(n) return_value seam present".to_string())?;
+        let full = evidence_for_seam(value, &index);
+        let context = CompactGripContext::new(&index);
+        let compact = compact_evidence_for_seam(value, &context);
+        assert!(
+            full.observe.state == compact.observe.state
+                && full.discriminate.state == compact.discriminate.state,
+            "full and compact agree"
+        );
+        Ok(full
+            .related_tests
+            .iter()
+            .map(|grip| grip.oracle_strength.clone())
+            .collect())
+    };
+    let other = "#[test] fn pinned_even() { assert_eq!(parse_pinned(2).unwrap_err(), 2); }";
+    let alone = published_for(other)?;
+    let with_runner = published_for(&format!(
+        "{other} #[test] fn masked_runs() {{ let _ = parse_masked(1); }}"
+    ))?;
+    assert!(
+        alone.iter().all(|o| *o != OracleStrength::None),
+        "no runner keeps credit: {alone:?}"
+    );
+    assert!(
+        with_runner.iter().all(|o| *o == OracleStrength::None),
+        "runner without assertion: other-function lends none: {with_runner:?}"
+    );
+    Ok(())
+}
+
 /// #12053: a repo seam whose one-line arms all hold the same statement
 /// decides nothing an exact assertion can see, so it must not read propagated
 /// (and so not strongly gripped). Differing arms keep the propagated read.
