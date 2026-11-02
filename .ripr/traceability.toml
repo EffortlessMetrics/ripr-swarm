@@ -21221,20 +21221,3 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
-
-[[behavior]]
-id = "RIPR-SPEC-0391"
-name = "Ruby preview static facts contract"
-spec = "docs/specs/RIPR-SPEC-0391-ruby-preview-static-facts.md"
-tests = []
-fixtures = []
-code = []
-outputs = [
-  "docs/specs/RIPR-SPEC-0391-ruby-preview-static-facts.md",
-  "docs/spec-index.d/RIPR-SPEC-0391.md",
-  "docs/CAPABILITY_MATRIX.md",
-  "metrics/capabilities.toml",
-]
-metrics = [
-  "language_adapter_ruby_spec_registered",
-]

@@ -166,6 +166,11 @@ Reuse shared limit kinds when accurate (`dynamic_dispatch`, `metaprogramming`,
 `missing_import_graph`, `unsupported_syntax`, `mocked_module`,
 `decorator_indirection`).
 
+Shared output metadata in RIPR-SPEC-0026 does not yet list `ruby` or the
+Ruby-specific owner and limit tokens above. A future additive schema PR must
+extend the shared vocabulary before adapters emit those public fields; until
+then this spec is the normative contract only.
+
 ### Test activation — RSpec
 
 Map RSpec surfaces into shared activation states (#5542), not a parallel schema:
@@ -204,9 +209,12 @@ Bounded credit rules:
   after the call in the same example.
 - **Weak**: truthiness (`be_truthy`, bare `assert obj`), type-only matchers,
   substring-free presence checks, title/proximity-only links.
-- **Mock inversion**: `allow(...).to receive`, `expect(...).to receive`, Minitest
-  stubs/mocks verify interaction contracts and refute execution of the underlying
-  production implementation for credit purposes.
+- **Mock inversion**: `allow(...).to receive`, `expect(...).to receive`, and
+  Minitest stubs/mocks verify interaction contracts and refute execution of the
+  underlying production implementation for credit purposes. Shapes that explicitly
+  delegate to the original implementation (`and_call_original`, `and_wrap_original`,
+  or equivalent) may observe the production method and follow the bounded oracle
+  rules for direct calls instead of mock inversion.
 
 Relation strength ladder (strongest first, all syntax-bounded):
 
