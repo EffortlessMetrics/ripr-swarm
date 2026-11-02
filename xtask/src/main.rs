@@ -66,6 +66,7 @@ mod python_judged_panel_feedback;
 mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod repo_readiness;
+mod ripr_agent_disposition;
 mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
@@ -617,6 +618,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-generated",
     "check-badge-diff-policy",
     "check-generated-clean",
+    "check-ripr-agent-disposition",
     "check-proof-packs",
     "check-release-targets",
     "check-dependencies",

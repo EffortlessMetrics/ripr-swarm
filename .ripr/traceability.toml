@@ -11490,6 +11490,8 @@ tests = [
   "crates/ripr/src/lsp/agent_protocol.rs::tests::request_envelope_keeps_mode_and_profile_typed",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::success_and_error_envelopes_are_typed_and_bounded",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::source_edit_boundary_is_explicitly_read_only",
+  "xtask/src/ripr_agent_disposition.rs::tests::ledger_covers_capability_fixture_inventory",
+  "xtask/src/ripr_agent_disposition.rs::tests::scanned_surfaces_reject_generic_headless_claims",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -11502,11 +11504,13 @@ fixtures = [
 code = [
   "crates/ripr/src/lsp/agent_protocol.rs",
   "crates/ripr/src/lsp/capabilities.rs",
+  "xtask/src/ripr_agent_disposition.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0131-ripr-agent-protocol-contract.md",
   "docs/specs/README.md",
   "policy/doc-artifacts.toml",
+  "policy/ripr-agent-disposition.toml",
   "schemas/ripr/ripr-agent-capability.schema.json",
   "schemas/ripr/ripr-agent-request.schema.json",
   "schemas/ripr/ripr-agent-success.schema.json",
