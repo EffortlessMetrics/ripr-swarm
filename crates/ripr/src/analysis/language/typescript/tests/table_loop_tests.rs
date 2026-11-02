@@ -107,6 +107,44 @@ fn names_no_row_literal(source: &str) {
 const TWO_ROWS: &str = "    [999, \"silver\"],\n    [1000, \"gold\"],";
 
 #[test]
+fn loop_title_quoting_with_resolves_rows() -> Result<(), String> {
+    let body = "    expect(loyaltyTier(points)).toBe(tier); // works with spaces";
+    let source = loop_test(TWO_ROWS, body);
+    assert_eq!(
+        observed(&source),
+        vec![
+            (
+                Some("loyaltyTier(999)".to_string()),
+                Some("\"silver\"".to_string()),
+                9
+            ),
+            (
+                Some("loyaltyTier(1000)".to_string()),
+                Some("\"gold\"".to_string()),
+                9
+            ),
+        ]
+    );
+    assert_eq!(
+        tier_class("loop-quoted-with-title", &source)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_body_real_eval_keeps_the_loop_unresolved() -> Result<(), String> {
+    let body = "    expect(loyaltyTier(points)).toBe(tier);\n    eval(\"tier = 'x'\");";
+    let source = loop_test("    [1000, \"gold\"],", body);
+    keeps_loop_variable(&source);
+    assert_eq!(
+        tier_class("loop-real-eval", &source)?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
 fn a_non_literal_cell_keeps_the_loop_assertion() -> Result<(), String> {
     let source = loop_test("    [999, \"silver\"],\n    [base + 1, \"gold\"],", ASSERT);
     keeps_loop_variable(&source);

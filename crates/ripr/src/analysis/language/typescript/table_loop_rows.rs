@@ -21,6 +21,118 @@
 
 use super::*;
 
+/// Whether a loop body block holds control flow the row substitution cannot
+/// linearize. Parsed blocks are judged on their syntax tree (#12572); text
+/// that does not parse keeps the raw-word backstop.
+fn loop_block_has_disallowed_control_flow(body: &str) -> bool {
+    match loop_block_disallowed_on_parse(body) {
+        Some(found) => found,
+        None => loop_block_disallowed_raw_fallback(body),
+    }
+}
+
+fn loop_block_disallowed_on_parse(body: &str) -> Option<bool> {
+    let wrapped = format!("function __ripr_loop_body() {body}");
+    let allocator = oxc_allocator::Allocator::default();
+    let parsed = oxc_parser::Parser::new(&allocator, &wrapped, oxc_span::SourceType::ts()).parse();
+    if parsed.panicked || !parsed.errors.is_empty() {
+        return None;
+    }
+    let oxc_ast::ast::Statement::FunctionDeclaration(function) = parsed.program.body.first()?
+    else {
+        return None;
+    };
+    let block_body = function.body.as_ref()?;
+    let mut finder = LoopBodyControlFlowFinder(false);
+    for stmt in &block_body.statements {
+        oxc_ast_visit::Visit::visit_statement(&mut finder, stmt);
+    }
+    Some(finder.0)
+}
+
+fn loop_block_disallowed_raw_fallback(body: &str) -> bool {
+    body.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+        .any(|word| {
+            matches!(
+                word,
+                "break"
+                    | "continue"
+                    | "return"
+                    | "throw"
+                    | "if"
+                    | "else"
+                    | "switch"
+                    | "case"
+                    | "default"
+                    | "while"
+                    | "do"
+                    | "for"
+                    | "try"
+                    | "with"
+            )
+        })
+        || body.contains(['?'])
+        || body.contains("&&")
+        || body.contains("||")
+}
+
+struct LoopBodyControlFlowFinder(bool);
+
+impl<'a> oxc_ast_visit::Visit<'a> for LoopBodyControlFlowFinder {
+    fn visit_break_statement(&mut self, _it: &oxc_ast::ast::BreakStatement) {
+        self.0 = true;
+    }
+    fn visit_continue_statement(&mut self, _it: &oxc_ast::ast::ContinueStatement) {
+        self.0 = true;
+    }
+    fn visit_return_statement(&mut self, _it: &oxc_ast::ast::ReturnStatement) {
+        self.0 = true;
+    }
+    fn visit_throw_statement(&mut self, _it: &oxc_ast::ast::ThrowStatement) {
+        self.0 = true;
+    }
+    fn visit_if_statement(&mut self, _it: &oxc_ast::ast::IfStatement) {
+        self.0 = true;
+    }
+    fn visit_switch_statement(&mut self, _it: &oxc_ast::ast::SwitchStatement) {
+        self.0 = true;
+    }
+    fn visit_while_statement(&mut self, _it: &oxc_ast::ast::WhileStatement) {
+        self.0 = true;
+    }
+    fn visit_do_while_statement(&mut self, _it: &oxc_ast::ast::DoWhileStatement) {
+        self.0 = true;
+    }
+    fn visit_for_statement(&mut self, _it: &oxc_ast::ast::ForStatement) {
+        self.0 = true;
+    }
+    fn visit_for_in_statement(&mut self, _it: &oxc_ast::ast::ForInStatement) {
+        self.0 = true;
+    }
+    fn visit_for_of_statement(&mut self, _it: &oxc_ast::ast::ForOfStatement) {
+        self.0 = true;
+    }
+    fn visit_try_statement(&mut self, _it: &oxc_ast::ast::TryStatement) {
+        self.0 = true;
+    }
+    fn visit_with_statement(&mut self, _it: &oxc_ast::ast::WithStatement) {
+        self.0 = true;
+    }
+    fn visit_conditional_expression(&mut self, _it: &oxc_ast::ast::ConditionalExpression) {
+        self.0 = true;
+    }
+    fn visit_logical_expression(&mut self, it: &oxc_ast::ast::LogicalExpression) {
+        if matches!(
+            it.operator,
+            oxc_ast::ast::LogicalOperator::And | oxc_ast::ast::LogicalOperator::Or
+        ) {
+            self.0 = true;
+        }
+        oxc_ast_visit::Visit::visit_expression(self, &it.left);
+        oxc_ast_visit::Visit::visit_expression(self, &it.right);
+    }
+}
+
 /// A top-level `const` holding an inline literal table.
 #[derive(Clone, Debug)]
 pub(crate) struct TableConst {
@@ -162,31 +274,8 @@ pub(crate) fn table_loop_assertions(
     let text: &str = source;
     let body = text.get(block.span.start as usize..block.span.end as usize)?;
     if !body.is_ascii()
-        || !super::table_rows::row_text_is_inert(body)
-        || body
-            .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
-            .any(|word| {
-                matches!(
-                    word,
-                    "break"
-                        | "continue"
-                        | "return"
-                        | "throw"
-                        | "if"
-                        | "else"
-                        | "switch"
-                        | "case"
-                        | "default"
-                        | "while"
-                        | "do"
-                        | "for"
-                        | "try"
-                        | "with"
-                )
-            })
-        || body.contains(['?'])
-        || body.contains("&&")
-        || body.contains("||")
+        || !super::table_rows::block_text_is_inert(body)
+        || loop_block_has_disallowed_control_flow(body)
         || params
             .iter()
             .any(|param| local_identifier_declared_in_test_body(body, param))
