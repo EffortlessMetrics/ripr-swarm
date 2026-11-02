@@ -661,3 +661,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_dynamic_import_limit (31)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless python_dynamic_import_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

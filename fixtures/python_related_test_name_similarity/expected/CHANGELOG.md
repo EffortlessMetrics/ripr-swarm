@@ -660,3 +660,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_related_test_name_similarity (32)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless python_related_test_name_similarity --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
