@@ -436,6 +436,7 @@
         "observed_sink": { "type": "string" },
         "oracle_alignment": { "type": "string" },
         "alignment_reason": { "type": "string" },
+        "superseded_alignment_reason": { "type": "string" },
         "source_currentness": { "$ref": "#/$defs/source_currentness" }
       }
     },
