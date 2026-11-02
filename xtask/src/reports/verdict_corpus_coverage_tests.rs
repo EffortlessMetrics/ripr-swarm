@@ -933,3 +933,25 @@ reason = "every mutant is equivalent"
     assert_eq!(json, "\"a-b\"");
     Ok(())
 }
+
+#[test]
+fn committed_corpus_tests_do_not_pin_spec_example_counts() -> Result<(), String> {
+    // Parallel corpus PRs used to conflict on shared `in_scope_examples` literals
+    // in `verdict_corpus_tests.rs` (#9859). The ledger's uncovered list and
+    // `spec-examples.lock` are the gate; committed corpus tests must not pin counts.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/reports/verdict_corpus_tests.rs");
+    let text = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !trimmed.contains("spec.in_scope_examples") {
+            continue;
+        }
+        if trimmed.starts_with("assert_eq!") || trimmed.contains(">=") {
+            return Err(format!(
+                "gate on spec.uncovered, not example count (#9859): {trimmed}"
+            ));
+        }
+    }
+    Ok(())
+}

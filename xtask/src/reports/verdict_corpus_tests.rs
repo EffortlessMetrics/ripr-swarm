@@ -1623,7 +1623,6 @@ fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> 
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0243")
         .ok_or("RIPR-SPEC-0243 is not in scope in the typescript ledger")?;
-    assert!(spec.in_scope_examples >= 42);
     assert_eq!(spec.uncovered, Vec::<coverage::ExampleKey>::new());
     assert_eq!(spec.waived, 0);
     let corpus = load_corpus(&dir)?;
@@ -1705,7 +1704,6 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0238")
         .ok_or("RIPR-SPEC-0238 is not in scope in the python ledger")?;
-    assert_eq!(spec.in_scope_examples, 43);
     assert!(spec.uncovered.is_empty(), "uncovered: {:?}", spec.uncovered);
     assert_eq!(spec.waived, 0);
     assert!(
