@@ -327,6 +327,7 @@ pub(crate) fn golden_drift_impl() -> Result<(), String> {
 }
 
 fn collect_golden_runs() -> Result<GoldenRunSet, String> {
+    preparation::ensure_ready()?;
     let fixture_dirs = fixture_dirs()?;
     let mut violations = golden_assistant_loop_health_contract_violations_at(Path::new(
         "fixtures/boundary_gap/expected/assistant-loop-health",
@@ -1074,10 +1075,6 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
             normalize_path(path)
         ));
     }
-    if name == preparation::FIXTURE {
-        preparation::ensure_ready()?;
-    }
-
     let actual_dir = Path::new("target")
         .join("ripr")
         .join("fixtures")
