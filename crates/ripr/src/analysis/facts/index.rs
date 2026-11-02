@@ -376,7 +376,7 @@ impl serde::Serialize for FileFactsView<'_> {
             .iter()
             .map(|fact| ProbeShapeFactWire::attached(fact, &self.source))
             .collect();
-        let mut state = serializer.serialize_struct("FileFacts", 12)?;
+        let mut state = serializer.serialize_struct("FileFacts", 13)?;
         state.serialize_field("path", &self.path)?;
         state.serialize_field("functions", &functions)?;
         state.serialize_field("tests", &tests)?;
@@ -389,6 +389,7 @@ impl serde::Serialize for FileFactsView<'_> {
             "unresolved_property_macros",
             &self.unresolved_property_macros,
         )?;
+        state.serialize_field("verus_guard_facts", &self.verus_guard_facts)?;
         state.serialize_field("source", self.source.as_ref())?;
         state.serialize_field("item_scopes", &self.item_scopes)?;
         state.serialize_field("macro_candidates", &self.macro_candidates)?;
