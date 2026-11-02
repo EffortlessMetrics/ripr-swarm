@@ -219,22 +219,55 @@ export function workspaceStatusDeliveryBudgetLines(
   if (record['overflowed'] !== true) {
     return [];
   }
-  const omitted = record['omitted_count'];
-  if (typeof omitted !== 'number' || omitted <= 0) {
-    return [];
-  }
-  const selected = record['selected_count'];
-  const eligible = record['eligible_items'];
   const route =
     typeof record['continuation_or_inspect_route'] === 'string'
       ? record['continuation_or_inspect_route']
       : 'ripr/listActionableItems';
-  const selectedText = typeof selected === 'number' ? String(selected) : '?';
-  const eligibleText = typeof eligible === 'number' ? String(eligible) : '?';
-  return [
-    `ripr diagnostic delivery budget: ${selectedText} selected, ${omitted} omitted (${eligibleText} eligible items); displayed diagnostics are a bounded subset and the result is incomplete.`,
-    `Next safe action: narrow the diff or profile, or retrieve current details through ${route}.`,
-  ];
+  const deliveryOmitted = deliveryOmittedCount(record);
+  const reasons = overflowReasonNames(record);
+  const byteOverflow = reasons.includes('serialized_byte_limit');
+
+  if (deliveryOmitted > 0) {
+    const selected = record['selected_count'];
+    const eligible = record['eligible_items'];
+    const selectedText = typeof selected === 'number' ? String(selected) : '?';
+    const eligibleText = typeof eligible === 'number' ? String(eligible) : '?';
+    return [
+      `ripr diagnostic delivery budget: ${selectedText} selected, ${deliveryOmitted} omitted (${eligibleText} eligible items); displayed diagnostics are a bounded subset and the result is incomplete.`,
+      `Next safe action: narrow the diff or profile, or retrieve current details through ${route}.`,
+    ];
+  }
+
+  if (byteOverflow) {
+    return [
+      'ripr diagnostic delivery budget: serialized diagnostic payload exceeds the byte cap; delivery is incomplete.',
+      `Next safe action: narrow inline detail or retrieve current details through ${route}.`,
+    ];
+  }
+
+  return [];
+}
+
+function deliveryOmittedCount(record: Record<string, unknown>): number {
+  const omittedItems = record['omitted'];
+  if (Array.isArray(omittedItems)) {
+    return omittedItems.filter((item) => {
+      if (!item || typeof item !== 'object') {
+        return false;
+      }
+      return (item as Record<string, unknown>)['reason'] !== 'profile_filtered';
+    }).length;
+  }
+  const raw = record['omitted_count'];
+  return typeof raw === 'number' ? raw : 0;
+}
+
+function overflowReasonNames(record: Record<string, unknown>): string[] {
+  const reasons = record['overflow_reasons'];
+  if (!Array.isArray(reasons)) {
+    return [];
+  }
+  return reasons.filter((reason): reason is string => typeof reason === 'string');
 }
 
 export function statusBarColors(kind: RiprStatusKind): StatusBarColors | undefined {
