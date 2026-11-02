@@ -194,7 +194,8 @@ fn touches_test(
         .ok()?;
     Some(lines.iter().any(|line| {
         index.functions().iter().any(|function| {
-            function.source_role.is_evidence_role()
+            function.file == changed.path
+                && function.source_role.is_evidence_role()
                 // A proof harness is verification source, not a test.
                 && function.source_role != crate::analysis::facts::FunctionSourceRole::ProofHarness
                 && function.start_line <= line.line
@@ -257,7 +258,7 @@ fn insert_alias_support(
         }
     }
     for name in alias_crates {
-        let Some(lib) = path_bound_library_root(root, changed, &name) else {
+        let Some(lib) = path_bound_library_root(root, head, changed, &name) else {
             continue;
         };
         if !loaded.insert(lib.clone()) {
@@ -279,6 +280,8 @@ fn insert_alias_support(
     Some(())
 }
 
+/// Default crate roots (`src/lib.rs`, `src/main.rs`), matching
+/// `LocalTestAliases`. Custom `[lib] path` remains an unresolved route.
 fn crate_root_paths(file: &Path) -> Vec<PathBuf> {
     let Some(src) = file
         .ancestors()
@@ -295,41 +298,54 @@ fn crate_root_paths(file: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn path_bound_library_root(root: &Path, consumer: &Path, crate_name: &str) -> Option<PathBuf> {
-    let mut dir = root.join(consumer);
-    dir.pop();
+fn path_bound_library_root(
+    root: &Path,
+    head: &str,
+    consumer: &Path,
+    crate_name: &str,
+) -> Option<PathBuf> {
+    let mut dir = consumer.to_path_buf();
+    if !dir.pop() {
+        return None;
+    }
     loop {
-        let manifest = dir.join("Cargo.toml");
-        if manifest.is_file() {
-            let text = crate::bounded_input::read_metadata_toml(&manifest).ok()?;
-            let table = text.parse::<toml::Table>().ok()?;
-            if table.get("package").is_some() {
-                let rel = dep_path_in_table(&table, crate_name)?;
-                let mut package = dir.strip_prefix(root).ok()?.to_path_buf();
-                for part in rel.components() {
-                    match part {
-                        Component::CurDir => {}
-                        Component::ParentDir => {
-                            if !package.pop() {
-                                return None;
+        let manifest = if dir.as_os_str().is_empty() {
+            PathBuf::from("Cargo.toml")
+        } else {
+            dir.join("Cargo.toml")
+        };
+        match head_metadata_toml(root, head, &manifest)? {
+            None => {}
+            Some(text) => {
+                let table = text.parse::<toml::Table>().ok()?;
+                if table.get("package").is_some() {
+                    let rel = dep_path_in_table(&table, crate_name)?;
+                    let mut package = dir;
+                    for part in rel.components() {
+                        match part {
+                            Component::CurDir => {}
+                            Component::ParentDir => {
+                                if !package.pop() {
+                                    return None;
+                                }
                             }
+                            Component::Normal(name) => package.push(name),
+                            _ => return None,
                         }
-                        Component::Normal(name) => package.push(name),
-                        _ => return None,
                     }
+                    package.push("src");
+                    package.push("lib.rs");
+                    if package
+                        .components()
+                        .all(|part| matches!(part, Component::Normal(_)))
+                    {
+                        return Some(package);
+                    }
+                    return None;
                 }
-                package.push("src");
-                package.push("lib.rs");
-                if package
-                    .components()
-                    .all(|part| matches!(part, Component::Normal(_)))
-                {
-                    return Some(package);
-                }
-                return None;
             }
         }
-        if dir == root {
+        if dir.as_os_str().is_empty() {
             return None;
         }
         if !dir.pop() {
@@ -363,6 +379,47 @@ fn dep_path_in_table(manifest: &toml::Table, crate_name: &str) -> Option<PathBuf
         }
     }
     None
+}
+
+/// Manifest text at `head`. Does not consume the source-companion disclosure
+/// budget. Outer `None` is a path, oversize, or decode failure; `Some(None)`
+/// is a missing object; `Some(Some(text))` is the blob.
+fn head_metadata_toml(root: &Path, head: &str, path: &Path) -> Option<Option<String>> {
+    let path = path.to_str()?;
+    if Path::new(path)
+        .components()
+        .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return None;
+    }
+    let object = format!("{head}:{path}");
+    let kind = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        &["cat-file", "-t", &object],
+        Duration::from_mins(1),
+        128,
+    )
+    .ok()?;
+    if !kind.status.success() || kind.stdout != b"blob\n" {
+        return Some(None);
+    }
+    let size = blob_size(root, &object)?;
+    if size > crate::bounded_input::MAX_METADATA_TOML_BYTES {
+        return None;
+    }
+    let Ok(output_limit) = usize::try_from(size.max(1)) else {
+        return None;
+    };
+    let source = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        &["show", "--no-textconv", &object],
+        Duration::from_mins(1),
+        output_limit,
+    )
+    .ok()
+    .filter(|output| output.status.success() && output.stdout.len() as u64 == size)
+    .and_then(|output| String::from_utf8(output.stdout).ok())?;
+    Some(Some(source))
 }
 
 /// `None` is a budget or decode failure (unresolved). `Some(None)` is a
@@ -475,8 +532,11 @@ mod tests {
             Ok(fixture)
         }
 
-        fn commit(&self, message: &str) -> Result<(), String> {
-            fixture_git_ok(&self.root, &["add", "."])?;
+        fn write_relative(&self, relative: &str, contents: &str) -> Result<(), String> {
+            std::fs::write(self.root.join(relative), contents).map_err(|err| err.to_string())
+        }
+
+        fn commit_message(&self, message: &str) -> Result<(), String> {
             fixture_git_ok(
                 &self.root,
                 &[
@@ -493,12 +553,20 @@ mod tests {
             )
         }
 
+        fn commit(&self, message: &str) -> Result<(), String> {
+            fixture_git_ok(&self.root, &["add", "."])?;
+            self.commit_message(message)
+        }
+
+        fn commit_paths(&self, message: &str, paths: &[&str]) -> Result<(), String> {
+            for path in paths {
+                fixture_git_ok(&self.root, &["add", "--", path])?;
+            }
+            self.commit_message(message)
+        }
+
         fn add_module_item(&self, item: &str) -> Result<String, String> {
-            std::fs::write(
-                self.root.join("app/src/user.rs"),
-                format!("// module\n{item}"),
-            )
-            .map_err(|err| err.to_string())?;
+            self.write_relative("app/src/user.rs", &format!("// module\n{item}"))?;
             self.commit("after")?;
             let diff = fixture_git_stdout(&self.root, &["diff", "--unified=0", "HEAD^", "HEAD"])?;
             if !diff.contains("diff --git a/app/src/user.rs b/app/src/user.rs") {
@@ -509,6 +577,12 @@ mod tests {
                 return Err(format!("crate root or wrapper must stay unchanged: {diff}"));
             }
             Ok(diff)
+        }
+
+        fn app_manifest(dep_path: &str) -> String {
+            format!(
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dependencies]\nmy_macros = {{ path = \"{dep_path}\" }}\n"
+            )
         }
     }
 
@@ -608,6 +682,84 @@ mod tests {
             changes.files,
             [PathBuf::from("app/src/user.rs")],
             "ordinary #[test] in a module must not require alias companions: {changes:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn overlapping_companion_test_line_does_not_credit_production_edit() -> Result<(), String> {
+        let fixture = AliasWorkspace::new("overlap", "use my_macros::wrapped_test as test;\n")?;
+        let crate_root_test = format!(
+            "use my_macros::wrapped_test as test;\npub fn value() -> u32 {{ 1 }}\n\n#[test]\nfn crate_root_test() {{\n{}\n}}\n",
+            "    let _ = value();\n".repeat(12)
+        );
+        fixture.write_relative("app/src/lib.rs", &crate_root_test)?;
+        fixture.write_relative("app/src/user.rs", &format!("// module\n{ADDED_TEST}"))?;
+        fixture.commit("seed wrapper and crate-root test")?;
+        let diff = fixture.add_module_item(&format!(
+            "{ADDED_TEST}pub fn production() -> u32 {{\n    2\n}}\n"
+        ))?;
+        let changes = changes_for(&fixture.root, &diff);
+        assert!(
+            !changes.unresolved,
+            "overlapping companion fixture must resolve: {changes:?}"
+        );
+        assert!(
+            changes.files.is_empty(),
+            "a production edit must not inherit a companion test at the same line: {changes:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dirty_worktree_missing_path_still_credits_head_wrapper() -> Result<(), String> {
+        let fixture =
+            AliasWorkspace::new("dirty-head-ok", "use my_macros::wrapped_test as test;\n")?;
+        let diff = fixture.add_module_item(ADDED_TEST)?;
+        fixture.write_relative(
+            "app/Cargo.toml",
+            &AliasWorkspace::app_manifest("../macros-missing"),
+        )?;
+        let changes = changes_for(&fixture.root, &diff);
+        assert!(
+            !changes.unresolved,
+            "HEAD wrapper path must still resolve through a dirty missing worktree path: {changes:?}"
+        );
+        assert_eq!(
+            changes.files,
+            [PathBuf::from("app/src/user.rs")],
+            "a dirty missing worktree path must not drop HEAD wrapper credit: {changes:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dirty_worktree_valid_path_does_not_credit_when_head_path_missing() -> Result<(), String> {
+        let fixture =
+            AliasWorkspace::new("dirty-head-miss", "use my_macros::wrapped_test as test;\n")?;
+        fixture.write_relative(
+            "app/Cargo.toml",
+            &AliasWorkspace::app_manifest("../macros-missing"),
+        )?;
+        fixture.commit("head missing wrapper path")?;
+        fixture.write_relative("app/Cargo.toml", &AliasWorkspace::app_manifest("../macros"))?;
+        fixture.write_relative("app/src/user.rs", &format!("// module\n{ADDED_TEST}"))?;
+        fixture.commit_paths("after", &["app/src/user.rs"])?;
+        let diff = fixture_git_stdout(&fixture.root, &["diff", "--unified=0", "HEAD^", "HEAD"])?;
+        if !diff.contains("diff --git a/app/src/user.rs b/app/src/user.rs") {
+            return Err(format!("expected a module-only diff, got {diff}"));
+        }
+        if diff.contains("diff --git a/app/Cargo.toml") {
+            return Err(format!("dirty manifest must stay uncommitted: {diff}"));
+        }
+        let changes = changes_for(&fixture.root, &diff);
+        assert!(
+            !changes.unresolved,
+            "missing HEAD wrapper path must resolve closed: {changes:?}"
+        );
+        assert!(
+            changes.files.is_empty(),
+            "a dirty worktree wrapper path must not credit a missing HEAD dependency: {changes:?}"
         );
         Ok(())
     }
