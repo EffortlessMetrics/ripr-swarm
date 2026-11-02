@@ -28,8 +28,10 @@ impl Scratch {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(path.join("src")).map_err(|error| error.to_string())?;
-        Ok(Self(path))
+        std::fs::create_dir(&path).map_err(|error| error.to_string())?;
+        let scratch = Self(path);
+        std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        Ok(scratch)
     }
 }
 
@@ -78,10 +80,9 @@ fn method_hop_field_read_hit_reads_infection_yes() -> Result<(), String> {
 #[test]
 fn method_hop_field_read_trap_does_not_read_infection_yes() -> Result<(), String> {
     let finding = predicate_finding(SOURCE, TRAP_DIFF)?;
-    assert_ne!(
-        finding["ripr"]["infect"]["state"].as_str(),
-        Some("yes"),
-        "{finding}"
-    );
+    let state = finding["ripr"]["infect"]["state"]
+        .as_str()
+        .ok_or_else(|| format!("missing ripr.infect.state on trap finding: {finding}"))?;
+    assert_ne!(state, "yes", "{finding}");
     Ok(())
 }
