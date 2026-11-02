@@ -7503,6 +7503,53 @@ mod diagnostic_policy_tests {
         Ok(())
     }
 
+    #[test]
+    fn seam_inventory_status_prose_uses_plain_words() -> Result<(), String> {
+        let features = crate::lsp::client_features::ClientFeatureProfile::unsupported();
+        let mut rust_off = LspAnalysisConfig {
+            diagnostic_profile: LspDiagnosticProfile::Full,
+            ..LspAnalysisConfig::default()
+        };
+        rust_off.repo_config.languages.enabled = vec![LanguageId::TypeScript];
+        let configs = [
+            LspAnalysisConfig::default(),
+            LspAnalysisConfig {
+                diagnostic_profile: LspDiagnosticProfile::Full,
+                enable_seam_diagnostics: false,
+                ..LspAnalysisConfig::default()
+            },
+            rust_off,
+            LspAnalysisConfig {
+                session_options: Some(serde_json::json!({ "diagnosticProfile": "actionable" })),
+                ..LspAnalysisConfig::default()
+            },
+        ];
+        let mut checked = 0;
+        for config in &configs {
+            let payload =
+                seam_inventory_not_enabled_outcome(config).status_payload(Some("s:g"), &features);
+            for field in ["message", "recovery"] {
+                let text = payload[field].as_str().unwrap_or_default();
+                if text.is_empty() {
+                    return Err(format!("status payload lost its {field}: {payload}"));
+                }
+                let hits = crate::lsp::tests::jargon_words(text);
+                if !hits.is_empty() {
+                    return Err(format!("jargon {hits:?} in status {field}: {text}"));
+                }
+                checked += 1;
+            }
+        }
+        // Positive control: the scanner flags prose but not the config key.
+        assert_eq!(
+            crate::lsp::tests::jargon_words("the seam is a Discriminator"),
+            ["seam", "Discriminator"]
+        );
+        assert!(crate::lsp::tests::jargon_words("set seam_diagnostics = true").is_empty());
+        assert_eq!(checked, 8);
+        Ok(())
+    }
+
     // Test 9 (#6001): the `seam_diagnostics_not_enabled` outcome must carry
     // the concrete enable route on the wire. The default `actionable` profile
     // makes this the default-session state, and a `recovery: null` gives an

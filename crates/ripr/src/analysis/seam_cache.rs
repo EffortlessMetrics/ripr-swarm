@@ -621,7 +621,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// or discrimination credit (#12060).
 /// `1.134`: a proximity test assertion that pins another function through a
 /// local it reads no longer confirms the changed arm (#12056).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.134";
+/// `1.135`: a changed match arm whose `match` value is consumed before the
+/// owner returns it (method call, or a used `let`) is not confirmed (#12143).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.135";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -5578,7 +5580,8 @@ mod tests {
         // 1.132 -> 1.133: proximity assertions pinning another function (#12060).
         // 1.133 -> 1.134: an assertion that pins another function through a
         // local it reads no longer confirms the arm (#12056).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.134");
+        // 1.134 -> 1.135: a consumed `match` value remaps the arm result (#12143).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.135");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.

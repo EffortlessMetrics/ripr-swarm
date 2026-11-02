@@ -356,17 +356,114 @@ pub(super) fn shadowed_by_later_binding_control(site: DeclarationSite) -> Python
 /// Whether a statement after `index` in the same list rebinds `name` without
 /// reading the earlier definition (a wrapper such as `name = mark(name)` keeps
 /// it running).
+#[cfg(test)]
 pub(super) fn rebound_later(
     statements: &[Stmt],
     index: usize,
     name: &str,
     source: &SourceText<'_>,
 ) -> bool {
+    statements[index + 1..]
+        .iter()
+        .any(|stmt| rebinds(stmt, name, source))
+}
+
+/// Where each name could be rebound in one statement list, so asking whether a
+/// later statement rebinds a definition's name looks at the statements that
+/// bind that name instead of every statement after it (a module of N tests
+/// otherwise costs N scans of up to N statements).
+pub(super) struct LaterBindings<'a> {
+    positions: std::collections::HashMap<&'a str, Vec<usize>>,
+}
+
+impl<'a> LaterBindings<'a> {
+    pub(super) fn of(statements: &'a [Stmt]) -> Self {
+        let mut positions: std::collections::HashMap<&'a str, Vec<usize>> =
+            std::collections::HashMap::new();
+        let mut names = Vec::new();
+        for (index, stmt) in statements.iter().enumerate() {
+            names.clear();
+            names_rebound_by(stmt, &mut names);
+            for name in &names {
+                positions.entry(name).or_default().push(index);
+            }
+        }
+        Self { positions }
+    }
+
+    /// [`rebound_later`] over the same list `of` indexed.
+    pub(super) fn rebound_later(
+        &self,
+        statements: &[Stmt],
+        index: usize,
+        name: &str,
+        source: &SourceText<'_>,
+    ) -> bool {
+        let found = self.positions.get(name).is_some_and(|positions| {
+            let first = positions.partition_point(|&position| position <= index);
+            positions[first..]
+                .iter()
+                .any(|&position| rebinds(&statements[position], name, source))
+        });
+        // The tests run every answer against the scan over all later statements
+        // (up to a size, so a test build stays linear on a large generated file).
+        #[cfg(test)]
+        assert!(
+            statements.len() > 512 || found == rebound_later(statements, index, name, source),
+            "indexed rebinding lookup disagrees with the full scan for {name}"
+        );
+        found
+    }
+}
+
+/// Every name `stmt` could rebind in [`rebinds`]; a superset, since `rebinds`
+/// also checks what the binding reads.
+fn names_rebound_by<'a>(stmt: &'a Stmt, out: &mut Vec<&'a str>) {
+    fn target<'a>(expr: &'a Expr, out: &mut Vec<&'a str>) {
+        match expr {
+            Expr::Name(bound) => out.push(bound.id.as_str()),
+            Expr::Tuple(tuple) => tuple.elts.iter().for_each(|elt| target(elt, out)),
+            Expr::List(list) => list.elts.iter().for_each(|elt| target(elt, out)),
+            Expr::Starred(starred) => target(starred.value.as_ref(), out),
+            _ => {}
+        }
+    }
+    match stmt {
+        Stmt::FunctionDef(def) => out.push(def.name.as_str()),
+        Stmt::AsyncFunctionDef(def) => out.push(def.name.as_str()),
+        Stmt::ClassDef(def) => out.push(def.name.as_str()),
+        Stmt::Assign(assign) => assign.targets.iter().for_each(|t| target(t, out)),
+        Stmt::AnnAssign(assign) => target(assign.target.as_ref(), out),
+        Stmt::Delete(delete) => delete.targets.iter().for_each(|t| target(t, out)),
+        Stmt::For(for_stmt) => target(for_stmt.target.as_ref(), out),
+        Stmt::With(with) => with
+            .items
+            .iter()
+            .filter_map(|item| item.optional_vars.as_deref())
+            .for_each(|var| target(var, out)),
+        Stmt::Import(import) => {
+            out.extend(import.names.iter().filter_map(|alias| match &alias.asname {
+                Some(asname) => Some(asname.as_str()),
+                None => alias.name.as_str().split('.').next(),
+            }))
+        }
+        Stmt::ImportFrom(import) => out.extend(
+            import
+                .names
+                .iter()
+                .map(|alias| alias.asname.as_ref().unwrap_or(&alias.name).as_str()),
+        ),
+        _ => {}
+    }
+}
+
+/// Whether `stmt` rebinds `name` without reading the earlier definition.
+fn rebinds(stmt: &Stmt, name: &str, source: &SourceText<'_>) -> bool {
     // Quoted text (`factory('test_p')`) is not a read of the earlier definition.
     let reads_name =
         |range| mentions_identifier(&blank_quoted_strings(&text_for_range(source, range)), name);
     let targets_name = |target: &Expr| binds_name(target, name);
-    statements[index + 1..].iter().any(|stmt| match stmt {
+    match stmt {
         Stmt::FunctionDef(def) => {
             def.name.as_str() == name && !def.decorator_list.iter().any(|d| reads_name(d.range()))
         }
@@ -415,7 +512,7 @@ pub(super) fn rebound_later(
             .iter()
             .any(|alias| alias.asname.as_ref().unwrap_or(&alias.name).as_str() == name),
         _ => false,
-    })
+    }
 }
 
 /// Whether `target` binds `name` directly or inside a tuple/list target.
@@ -583,5 +680,64 @@ fn join_tail(base: &str, tail: &str) -> String {
         base.to_string()
     } else {
         format!("{base}.{tail}")
+    }
+}
+
+#[cfg(test)]
+mod later_bindings_tests {
+    use super::super::source_utils::SourceText;
+    use super::LaterBindings;
+    use rustpython_parser::ast::{Mod, Stmt};
+    use rustpython_parser::{Mode, parse};
+
+    fn body(source: &str) -> Result<Vec<Stmt>, String> {
+        match parse(source, Mode::Module, "m.py").map_err(|error| error.to_string())? {
+            Mod::Module(module) => Ok(module.body),
+            _ => Err("expected a module".to_string()),
+        }
+    }
+
+    /// Which of the first definitions a later statement rebinds. The lookup
+    /// asserts every answer against the scan over all later statements.
+    fn rebound(source: &str, name: &str) -> Result<bool, String> {
+        let statements = body(source)?;
+        let text = SourceText::new(source);
+        let index = statements
+            .iter()
+            .position(|stmt| matches!(stmt, Stmt::FunctionDef(def) if def.name.as_str() == name))
+            .ok_or_else(|| format!("no def {name}"))?;
+        Ok(LaterBindings::of(&statements).rebound_later(&statements, index, name, &text))
+    }
+
+    #[test]
+    fn a_later_binding_of_the_name_rebinds_it() -> Result<(), String> {
+        for later in [
+            "def test_a(): pass",
+            "test_a = None",
+            "import test_a",
+            "import x as test_a",
+            "from m import test_a",
+            "del test_a",
+            "for test_a in range(2): pass",
+            "(test_b, test_a) = (1, 2)",
+        ] {
+            let source = format!("def test_a(): pass\ndef test_other(): pass\n{later}\n");
+            assert!(rebound(&source, "test_a")?, "{later}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_binding_that_reads_the_earlier_definition_or_only_precedes_it_does_not()
+    -> Result<(), String> {
+        for source in [
+            "def test_a(): pass\ntest_a = mark(test_a)\n",
+            "test_a = None\ndef test_a(): pass\n",
+            "def test_a(): pass\ndef test_b(): pass\n",
+            "def test_a(): pass\nx = 'test_a'\n",
+        ] {
+            assert!(!rebound(source, "test_a")?, "{source}");
+        }
+        Ok(())
     }
 }

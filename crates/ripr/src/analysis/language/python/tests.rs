@@ -4645,6 +4645,29 @@ fn classify_log_text_edit_from(
     Ok((finding.class, finding.static_limit_kind))
 }
 
+// #11889: a conjunction with a false comparison is false past an unreadable
+// conjunct, so `condition_holds` now answers `Some(false)` to this reader; it
+// must still never turn the edit into an `exposed` credit.
+#[test]
+fn caplog_text_reads_a_conjunction_guard_past_an_unreadable_conjunct() -> Result<(), String> {
+    let owner = "import logging\nlog = logging.getLogger(\"audit\")\n\n\
+         def check_balance(balance, verbose):\n    if verbose and balance < 10:\n        log.warning(\"low balance: %s\", balance)\n        return False\n    return True\n";
+    let test = |argument: u32| {
+        format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance({argument}, True) is False\n    assert \"low balance: {argument}\" in caplog.text\n"
+        )
+    };
+    let undecided =
+        classify_log_text_edit(owner, "log.info(\"low balance: %s\", balance)", &test(5))?;
+    let excluded =
+        classify_log_text_edit(owner, "log.info(\"low balance: %s\", balance)", &test(50))?;
+    // Neither reading credits the edit: the entering row stays undecided and
+    // the excluded row records nothing, so no `exposed` is invented.
+    assert_ne!(undecided.0, ExposureClass::Exposed, "{undecided:?}");
+    assert_ne!(excluded.0, ExposureClass::Exposed, "{excluded:?}");
+    Ok(())
+}
+
 const PINNED_TEST: &str = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.text\n";
 
 #[test]

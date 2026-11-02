@@ -115,3 +115,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — binding_value_semantics_fail_closed (10)
+
+Reason:
+RIPR-SPEC-0122 / #10692: plain wording for the stage legend, evidence row and repair-start refusal on the integrated tree
+
+Command:
+`cargo xtask goldens bless binding_value_semantics_fail_closed --reason "..."`
+
+Updated:
+- `expected/human.txt`
