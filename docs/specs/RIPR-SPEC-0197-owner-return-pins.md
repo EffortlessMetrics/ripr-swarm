@@ -15,8 +15,8 @@ Linked plan:
 Linked issues:
 
 - #4478 (confirm a return value pinned by `assert_eq!` on the owner's own call)
-- #9478 (bounded typed function-pointer calls; iterator, macro and executor
-  credit remain separate work)
+- #9478 (bounded typed function-pointer calls and owner path values in
+  `.map`; macro and executor credit remain separate work)
 - #5027 (share bounded equality execution admission with ErrorPath and Predicate)
 - #5040 (typed async-harness execution provenance; explicit unsupported boundary)
 - #3727 (parser-backed call identity; this spec adds the owner's item
@@ -3080,9 +3080,15 @@ assertions. This repair shares the existing callback without that larger migrati
   `invoked_callback_params`, source-position ordering in `starts_after`).
 
 - `crates/ripr/src/analysis/extract/calls/function_alias.rs`: shared bounded
-  alias reader and `local_fn_pointer_call`; `extract/calls.rs` retains the
-  call-fact producer and its per-line budget. The scalar free-function pin
+  alias reader and `local_fn_pointer_call`; `extract/calls/path_value_map.rs`
+  adds synthetic owner calls for bounded `.map(owner)` chains; `extract/calls.rs`
+  retains the call-fact producer and its per-line budget. The scalar free-function pin
   resolves the returned path through its existing identity gates (#9478).
+
+- `crates/ripr/tests/owner_pin_execution/path_value.rs`:
+  `path_value_pins_only_the_observed_owner` (#9478 slice A) compares bare,
+  qualified, unresolved, shadowed, foreign same-name and blind `.map(owner)`
+  subjects through the public API.
 
 - `crates/ripr/src/analysis/syntax/ra.rs`: `function_item_fact` fills
   `FunctionFact.item`.

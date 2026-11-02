@@ -8,8 +8,9 @@
 //! - **function value**: the test names the owner without calling it
 //!   (`.map(owner)`, an untyped `let f = owner; f(2)`), so the call
 //!   happens inside machinery ripr does not follow; a typed
-//!   `let f: fn(..) -> .. = owner;` binding is left to the typed
-//!   function-pointer reading (RIPR-SPEC-0115, #9478);
+//!   `let f: fn(..) -> .. = owner;` binding and a bounded
+//!   `.map(owner).collect::<Vec..>()` chain are left to the owner-pin
+//!   readings (RIPR-SPEC-0115/0197, #9478);
 //! - **generated owner**: the changed line is an item-position macro
 //!   invocation (`def_add!(add_five, 2 + 3);`) that defines the owner, and the
 //!   expansion is not source ripr reads;
@@ -22,6 +23,7 @@
 //! only withholds, so the actionability flip stays fail-closed.
 
 use super::gap_admission::{is_ignored, withhold_gap};
+use super::owner_pin::path_value::map_path_value_mention;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionContainer, FunctionFact, TestFact};
 use crate::analysis::rust_index::{RustIndex, is_test_file};
@@ -278,35 +280,50 @@ fn identifier_offsets<'a>(code: &'a str, name: &'a str) -> impl Iterator<Item = 
 /// method, field label or definition, the test binds no local of that name,
 /// and a qualifying path (`other::inc`) can still name the owner.
 fn names_owner_as_value(code: &str, owner: &FunctionFact) -> bool {
-    names_value(code, &owner.name, &owner_path_names(owner))
+    let owner_names = owner_path_names(owner);
+    if is_bound_locally(code, &owner.name) {
+        return false;
+    }
+    identifier_offsets(code, &owner.name).any(|at| {
+        if map_path_value_mention(code, at, owner) {
+            return false;
+        }
+        value_mention_at(code, at, &owner.name, &owner_names)
+    })
 }
 
-fn names_value(code: &str, name: &str, owner_names: &[String]) -> bool {
+fn value_mention_at(code: &str, at: usize, name: &str, owner_names: &[String]) -> bool {
+    let before = code[..at].trim_end();
+    let after = code[at + name.len()..].trim_start();
+    let defined = before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2]);
+    let method = before.ends_with('.');
+    let imported = line_starts_with_use(code, at);
+    let called = after.starts_with(['(', '!']) || after.starts_with("::<");
+    let field_label = after.starts_with(':') && !after.starts_with("::");
+    !(defined
+        || method
+        || imported
+        || called
+        || field_label
+        || typed_fn_pointer_initializer(code, at)
+        || !qualifier_may_name_owner(&code[..at], owner_names))
+}
+
+pub(in crate::analysis::classify) fn names_value(
+    code: &str,
+    name: &str,
+    owner_names: &[String],
+) -> bool {
     if is_bound_locally(code, name) {
         return false;
     }
-    identifier_offsets(code, name).any(|at| {
-        let before = code[..at].trim_end();
-        let after = code[at + name.len()..].trim_start();
-        let defined = before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2]);
-        let method = before.ends_with('.');
-        let imported = line_starts_with_use(code, at);
-        let called = after.starts_with(['(', '!']) || after.starts_with("::<");
-        let field_label = after.starts_with(':') && !after.starts_with("::");
-        !(defined
-            || method
-            || imported
-            || called
-            || field_label
-            || typed_fn_pointer_initializer(code, at)
-            || !qualifier_may_name_owner(&code[..at], owner_names))
-    })
+    identifier_offsets(code, name).any(|at| value_mention_at(code, at, name, owner_names))
 }
 
 /// Path segments that identify where the owner lives: `self`, `super` and
 /// `crate`, the components of its file path (module and crate directory names,
 /// `-` read as `_`), and the self type and trait of an impl it sits in.
-fn owner_path_names(owner: &FunctionFact) -> Vec<String> {
+pub(in crate::analysis::classify) fn owner_path_names(owner: &FunctionFact) -> Vec<String> {
     let mut names: Vec<String> = ["self", "super", "crate", "Self"]
         .into_iter()
         .map(String::from)
@@ -342,7 +359,10 @@ fn owner_path_names(owner: &FunctionFact) -> Vec<String> {
 /// `other::inc`) can still be the owner's: no qualifier, or one whose first or
 /// last segment is among the names that locate the owner. A qualifier that
 /// names neither is a different entity with the same leaf name.
-fn qualifier_may_name_owner(before: &str, owner_names: &[String]) -> bool {
+pub(in crate::analysis::classify) fn qualifier_may_name_owner(
+    before: &str,
+    owner_names: &[String],
+) -> bool {
     let Some(path) = before.strip_suffix("::") else {
         return true;
     };
@@ -551,6 +571,32 @@ mod tests {
 
     fn value(code: &str, name: &str) -> bool {
         names_value(code, name, &owner_names())
+    }
+
+    #[test]
+    fn a_bounded_map_path_is_left_to_the_owner_pin_not_the_indirect_limit() {
+        use crate::analysis::facts::{FunctionFact, FunctionSourceRole};
+        use crate::domain::SymbolId;
+        let owner = FunctionFact {
+            id: SymbolId("inc".into()),
+            name: "inc".into(),
+            file: "src/lib.rs".into(),
+            start_line: 1,
+            end_line: 3,
+            body: "fn inc(x: u32) -> u32 { x + 1 }".into(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: FunctionSourceRole::Production,
+            attrs: Vec::new(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        };
+        let code = "assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);";
+        assert!(!names_owner_as_value(code, &owner));
     }
 
     #[test]

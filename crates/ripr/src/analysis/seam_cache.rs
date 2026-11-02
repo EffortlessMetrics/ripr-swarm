@@ -1184,7 +1184,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.52`: an inline `unwrap_err` / `expect_err` equality against a named
 /// variant is an `ExactErrorVariant` oracle fact (#12266); `1.51` facts keep
 /// it `exact_value`.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.52";
+/// `1.53`: bounded `.map(owner)` iterator chains emit synthetic owner call
+/// facts for reach (#9478); `1.52` facts lack them.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.53";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5425,7 +5427,10 @@ mod tests {
         // 1.47 -> 1.48: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.48 -> 1.49: call-in-term accumulator probe (RIPR-SPEC-0360, #9478).
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.52");
+        // 1.50 -> 1.51: exact `#[kani::proof]` harness role (RIPR-SPEC-0367).
+        // 1.51 -> 1.52: inline unwrap_err/expect_err variant oracle (#12266).
+        // 1.52 -> 1.53: path-value `.map(owner)` synthetic call facts (#9478).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.53");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5495,7 +5500,8 @@ mod tests {
         // 1.48 -> 1.49: same-file macro_rules! test generators (#5334).
         // 1.49 -> 1.50: contradiction-activated tests lose activation credit (#7007).
         // 1.50 -> 1.51: evidence carries the producer contradiction count.
-        // 1.51 -> 1.52: consumed calls emit no call_presence seam (#6677).
+        // 1.51 -> 1.52: inline unwrap_err/expect_err variant oracle (#12266).
+        // 1.52 -> 1.53: path-value `.map(owner)` synthetic call facts (#9478).
         // 1.52 -> 1.53: whole-value field pins (RIPR-SPEC-0225).
         // 1.53 -> 1.54: check-helper assertions admitted and paired (#6482).
         // 1.54 -> 1.55: seam IDs hash the line-ending-normalized logical
