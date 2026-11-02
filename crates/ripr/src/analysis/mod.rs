@@ -62,6 +62,7 @@ pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
 mod value_resolution;
+mod verification_plan;
 mod witness;
 mod workspace;
 
