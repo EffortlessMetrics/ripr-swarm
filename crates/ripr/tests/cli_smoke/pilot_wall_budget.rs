@@ -1,5 +1,5 @@
 //! #5322: a many-function repo must not outrun a hard pilot deadline by multiples
-//! of the cancel grace after the budget is spent.
+//! of the cancel grace after the budget is spent (hostile-input cancellation lag).
 use super::{DeclaredHunkScratch, probe_command, run_owned_stdin_probe, unique_external_workspace};
 use std::fs;
 use std::process::Stdio;

@@ -1767,6 +1767,47 @@ mod tests {
     }
 
     #[test]
+    fn pilot_extension_notice_fires_at_first_phase_boundary() {
+        // Negative control for a single long recv through the whole budget:
+        // the extension callback must fire at the first-phase boundary, not
+        // only after the combined budget elapses (#5322).
+        const FIRST_MS: u64 = 40;
+        const EXTENSION_MS: u64 = 60;
+        let started = Instant::now();
+        let notice_at = std::cell::Cell::new(None::<Duration>);
+        let result = run_pilot_analysis_with_timeout::<(), _>(
+            FIRST_MS,
+            Some(EXTENSION_MS),
+            || notice_at.set(Some(started.elapsed())),
+            || {
+                loop {
+                    if crate::analysis::cancellation::checkpoint().is_err() {
+                        return Err("analysis cancelled".to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            },
+        );
+        assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
+        match notice_at.get() {
+            Some(notice) => {
+                assert!(
+                    notice <= Duration::from_millis(FIRST_MS + 20),
+                    "extension notice must fire at the first-phase boundary, not after the whole budget; got {notice:?}"
+                );
+                assert!(
+                    notice >= Duration::from_millis(FIRST_MS.saturating_sub(20)),
+                    "extension notice fired too early: {notice:?}"
+                );
+            }
+            None => assert!(
+                false,
+                "default-plus-extension run must emit the extension notice"
+            ),
+        }
+    }
+
+    #[test]
     fn pilot_deadline_without_extension_still_cancels() {
         // Negative control for the extension: an explicit --timeout-ms
         // passes no extension, so the first deadline cancels the run and
