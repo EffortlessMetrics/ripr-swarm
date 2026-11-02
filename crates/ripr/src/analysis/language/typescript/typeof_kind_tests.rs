@@ -235,3 +235,50 @@ fn equality_negation_requires_the_whole_condition() {
         );
     }
 }
+
+/// #12281 re-review: the changed line alone is parsed, so a line of a
+/// multi-line condition must never read as the whole condition. Only a
+/// self-contained `if` / `while` header or a complete `return ...;` does.
+#[test]
+fn equality_negation_refuses_lines_of_a_multi_line_condition() {
+    use super::typescript_changed_boundary_is_equality_negation as negation;
+    use crate::domain::ProbeFamily;
+    let file = std::path::Path::new("src/f.ts");
+    let flip = |line: &str| line.replacen("===", "!==", 1);
+    for old_line in [
+        // continuation line of `if (\n flag &&\n typeof input ... \n) {`
+        "    typeof input === \"function\"",
+        // continuation line of `return flag &&\n typeof input ...;`
+        "    typeof input === \"function\";",
+        // first line of `if (typeof input ... &&\n flag) {`
+        "  if (typeof input === \"function\" &&",
+        // first line of `return typeof input ... &&\n flag;`
+        "  return typeof input === \"function\" &&",
+        // a `return` without its terminating `;` may continue below
+        "  return typeof input === \"function\"",
+        // a header whose parenthesis closes on a later line
+        "  if (typeof input === \"function\"",
+        // a leading continuation operator
+        "    && typeof input === \"function\") {",
+        // a declaration is not a condition header
+        "  const ok = typeof input === \"function\";",
+    ] {
+        let new_line = flip(old_line);
+        assert_ne!(old_line, new_line, "fixture must flip an operator");
+        assert!(
+            !negation(file, &ProbeFamily::Predicate, Some(old_line), &new_line),
+            "{old_line} -> {new_line}"
+        );
+    }
+    for old_line in [
+        "  } else if (typeof input === \"function\") {",
+        "  while (typeof input === \"function\") input = input();",
+        "  return typeof input === \"function\";",
+    ] {
+        let new_line = flip(old_line);
+        assert!(
+            negation(file, &ProbeFamily::Predicate, Some(old_line), &new_line),
+            "{old_line} -> {new_line}"
+        );
+    }
+}

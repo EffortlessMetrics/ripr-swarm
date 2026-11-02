@@ -439,6 +439,62 @@ fn selected_text(new: &BoundaryLine, old: Option<&BoundaryLine>) -> Option<Strin
     }
 }
 
+/// `true` when `line` is a complete, self-contained `if (...)`,
+/// `} else if (...)`, `while (...)` header or a `return ...;` statement:
+/// parentheses and brackets balance on the line (outside string literals),
+/// a `return` ends with `;`, and the line ends in no operator or opener that
+/// would continue the expression on the next line (#12281 review). Any other
+/// line (a bare expression, a continuation, a declaration, a one-line
+/// function) fails closed to `false`.
+fn self_contained_condition_line(line: &str) -> bool {
+    let text = line.trim();
+    let head = text.trim_start_matches('}').trim_start();
+    let head = head.strip_prefix("else").map_or(head, str::trim_start);
+    let keyword = ["if (", "if(", "while (", "while(", "return "]
+        .into_iter()
+        .find(|keyword| head.starts_with(keyword));
+    let Some(keyword) = keyword else {
+        return false;
+    };
+    if keyword == "return " && !text.ends_with(';') {
+        return false;
+    }
+    const CONTINUATIONS: [&str; 17] = [
+        "&&", "||", "??", "?", ":", ",", "(", "[", "+", "-", "*", "/", "%", "=", "!", "<", ">",
+    ];
+    if CONTINUATIONS.iter().any(|end| text.ends_with(end)) || text.ends_with(['|', '&']) {
+        return false;
+    }
+    let mut depth_paren = 0_i64;
+    let mut depth_bracket = 0_i64;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' => depth_paren += 1,
+            ')' => depth_paren -= 1,
+            '[' => depth_bracket += 1,
+            ']' => depth_bracket -= 1,
+            _ => {}
+        }
+        if depth_paren < 0 || depth_bracket < 0 {
+            return false;
+        }
+    }
+    quote.is_none() && depth_paren == 0 && depth_bracket == 0
+}
+
 /// The negated form of an equality operator: `===` and `!==`, `==` and `!=`.
 fn negated_equality(operator: &str) -> Option<&'static str> {
     Some(match operator {
@@ -474,6 +530,13 @@ pub(crate) fn typescript_changed_boundary_is_equality_negation(
     let Some(old_line) = old_line else {
         return false;
     };
+    // The changed line alone is parsed, so a continuation line of a
+    // multi-line condition (`flag &&` above, `typeof input !== "function"`
+    // here) would read as a whole condition. Only a self-contained header
+    // line can carry the whole condition (#12281 review).
+    if !self_contained_condition_line(old_line) || !self_contained_condition_line(new_line) {
+        return false;
+    }
     let parse = |line: &str| {
         let line = one_line_function_first_statement(line);
         parse_on_worker(file, line, |file, line, allocator| {

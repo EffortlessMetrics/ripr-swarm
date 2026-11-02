@@ -645,8 +645,11 @@ boundary without changing the guards (#4104 E):
   guard's equality operator with its negation (`===` and `!==`, `==` and `!=`)
   and changes no other token, and the comparison is the whole condition (the
   `if`/loop test, the returned expression, or the test of a returned
-  conditional, with at most `!` and parentheses around it), every input takes
-  the other branch. An observed
+  conditional, with at most `!` and parentheses around it) on a changed line
+  that is itself a complete `if (...)`, `} else if (...)` or `while (...)`
+  header or a `return ...;` statement (balanced parentheses and brackets, no
+  trailing operator or opener), every input takes the other branch. A line of
+  a condition written over several lines never qualifies. An observed
   owner call whose argument at the guarded parameter's position is written as
   a value of any readable kind then witnesses the change, so
   `expect(resolveValue(42)).toBe(42)` against a flipped

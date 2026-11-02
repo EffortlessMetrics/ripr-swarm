@@ -5195,3 +5195,74 @@ fn changed_typeof_kind_with_no_kind_input_still_starts() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// #12281 re-review: a negated `typeof` clause of a condition written over
+/// several lines is one operand among others, whichever line holds it.
+/// `f(42, false)` returns the same value under both versions, so each case
+/// must keep needing an input of the kind: the finding is never `exposed`.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn negated_typeof_clause_of_a_multi_line_condition_is_not_exposed() -> Result<(), String> {
+    let cases = [
+        (
+            "if-continuation",
+            "export function f(input: unknown, flag: boolean): unknown {\n  if (\n    flag &&\n    typeof input === \"function\"\n  ) {\n    return (input as any)();\n  }\n  return input;\n}\n",
+            "    typeof input !== \"function\"",
+            "42",
+        ),
+        (
+            "return-continuation",
+            "export function f(input: unknown, flag: boolean): unknown {\n  return flag &&\n    typeof input === \"function\" ? (input as any)() : input;\n}\n",
+            "    typeof input !== \"function\" ? (input as any)() : input;",
+            "42",
+        ),
+        (
+            "if-first-line",
+            "export function f(input: unknown, flag: boolean): unknown {\n  if (typeof input === \"function\" &&\n    flag) {\n    return (input as any)();\n  }\n  return input;\n}\n",
+            "  if (typeof input !== \"function\" &&",
+            "42",
+        ),
+        (
+            "return-first-line",
+            "export function f(input: unknown, flag: boolean): unknown {\n  return typeof input === \"function\" &&\n    flag ? (input as any)() : input;\n}\n",
+            "  return typeof input !== \"function\" &&",
+            "42",
+        ),
+    ];
+    for (label, base_source, changed_line, expected) in cases {
+        let test_source = format!(
+            "import {{ describe, it, expect }} from \"vitest\";\nimport {{ f }} from \"../src/f.ts\";\n\ndescribe(\"f\", () => {{\n  it(\"keeps the flag-off result\", () => {{\n    expect(f(42, false)).toBe({expected});\n  }});\n}});\n"
+        );
+        let head_source = base_source.replacen("typeof input ===", "typeof input !==", 1);
+        if head_source == base_source || !head_source.contains(changed_line) {
+            return Err(format!(
+                "{label}: head must flip the clause on `{changed_line}`"
+            ));
+        }
+        let base = [
+            ("package.json", TYPEOF_PACKAGE_JSON),
+            ("ripr.toml", TYPEOF_RIPR_TOML),
+            ("src/f.ts", base_source),
+            ("test/f.test.ts", test_source.as_str()),
+        ];
+        let head = [("src/f.ts", head_source.as_str())];
+        let (_guard, launch, root, base_sha) =
+            inline_typescript_repo(&format!("ts-typeof-{label}"), &base, &head)?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let (ok, check) = ripr(
+            &launch,
+            &["check", "--root", &root_arg, "--base", &base_sha],
+        )?;
+        expect_exit(ok, true, label)?;
+        need(
+            &check,
+            &format!("Changed behavior: {}", changed_line.trim()),
+            label,
+        )?;
+        if check.contains("Static exposure: exposed") {
+            return Err(format!("{label}: a negated clause read exposed:\n{check}"));
+        }
+        need(&check, "Static exposure: weak", label)?;
+    }
+    Ok(())
+}
