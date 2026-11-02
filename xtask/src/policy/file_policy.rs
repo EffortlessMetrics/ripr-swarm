@@ -249,15 +249,31 @@ fn validate_test_covered_by(
 /// outlives its own deadline (the isolated policy-facade test, #12510) carries
 /// this stream in its diagnostic, so a stall names the Cargo command it was
 /// inside and how long earlier ones took instead of only the phase.
-fn announce_cargo_child<T>(description: &str, run: impl FnOnce() -> T) -> T {
-    eprintln!("policy cargo child start: {description}");
+fn announce_cargo_child<T>(label: &str, run: impl FnOnce() -> T) -> T {
+    announce_cargo_child_to(&mut std::io::stderr(), label, run)
+}
+
+fn announce_cargo_child_to<T>(
+    out: &mut impl std::io::Write,
+    label: &str,
+    run: impl FnOnce() -> T,
+) -> T {
+    // Diagnostics only: a failed stderr write must not change the check.
+    let _ = writeln!(out, "policy cargo child start: {label}");
     let started = std::time::Instant::now();
     let result = run();
-    eprintln!(
-        "policy cargo child done after {}s: {description}",
+    let _ = writeln!(
+        out,
+        "policy cargo child done after {}s: {label}",
         started.elapsed().as_secs()
     );
     result
+}
+
+/// Names the exact Cargo invocation, so two stalled selectors with the same
+/// description stay distinguishable.
+fn cargo_child_label(description: &str, args: &[String]) -> String {
+    format!("{description}: cargo {}", args.join(" "))
 }
 
 fn validate_test_covered_by_recorded(
@@ -270,19 +286,22 @@ fn validate_test_covered_by_recorded(
     // preparations below compile one package at a time. One combined build
     // lets Cargo schedule them together; it only pre-fills the cache.
     if let Some(args) = combined_preparation_args(commands, host) {
-        let captured = announce_cargo_child("test-valued covered_by combined build", || {
-            capture_output_with_timeout(
-                "cargo",
-                &args,
-                &[],
-                TEST_COVERED_BY_BUILD_TIMEOUT,
-                "test-valued covered_by combined build",
-            )
-        });
+        let captured = announce_cargo_child(
+            &cargo_child_label("test-valued covered_by combined build", &args),
+            || {
+                capture_output_with_timeout(
+                    "cargo",
+                    &args,
+                    &[],
+                    TEST_COVERED_BY_BUILD_TIMEOUT,
+                    "test-valued covered_by combined build",
+                )
+            },
+        );
         diagnostics.push(CommandDiagnostic::captured("cargo", &args, &captured));
     }
     validate_test_covered_by_recorded_with(path, commands, host, diagnostics, |spawn| {
-        announce_cargo_child(spawn.description, || {
+        announce_cargo_child(&cargo_child_label(spawn.description, &spawn.args), || {
             capture_output_with_timeout("cargo", &spawn.args, &[], spawn.timeout, spawn.description)
         })
     })
@@ -670,6 +689,31 @@ fn validate_test_covered_by_with(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cargo_child_announcements_name_start_finish_and_the_exact_selector() {
+        let args = |name: &str| ["test", "--test", name].map(String::from).to_vec();
+        let a = super::cargo_child_label("test-valued covered_by enumeration", &args("mcp_stdio"));
+        let b = super::cargo_child_label("test-valued covered_by enumeration", &args("causal"));
+        assert_ne!(a, b, "same description must still differ by selector");
+        let mut out = Vec::new();
+        let value = super::announce_cargo_child_to(&mut out, &a, || 7);
+        assert_eq!(value, 7);
+        let text = String::from_utf8(out).expect("utf8");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        assert_eq!(
+            lines[0],
+            "policy cargo child start: test-valued covered_by enumeration: cargo test --test mcp_stdio"
+        );
+        assert!(
+            lines[1].starts_with("policy cargo child done after ")
+                && lines[1].ends_with(
+                    "s: test-valued covered_by enumeration: cargo test --test mcp_stdio"
+                ),
+            "{text}"
+        );
+    }
+
     use std::time::Duration;
 
     use super::COVERED_BY_INSTRUMENT_PREFIX;
