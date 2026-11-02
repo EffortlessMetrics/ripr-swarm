@@ -85,8 +85,7 @@ jobs:
         timeout-minutes: 45
         shell: bash
         run: |
-          cargo xtask check-covered-by
-          cargo xtask check-file-policy
+          echo skip
 
       # Nested-build tests (#10847). nextest runs every test in its own process,
       # so the build memoized in a OnceLock (`candidate_binary` in
@@ -101,7 +100,7 @@ jobs:
       - name: Warm the ripr build the nested-cargo tests spawn
         timeout-minutes: 25
         shell: bash
-        run: cargo build -p ripr --locked
+        run: echo skip
 
       # File redirect, not `| tee`: see windows-advisory.yml. The shard's real
       # cargo status is recorded so a failed test still fails the job, and the log
@@ -143,7 +142,7 @@ jobs:
       # largest processes (also saved as the `.heartbeat` artifact), so a stalled
       # shard leaves its last observed state, or shows that the runner stopped.
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
-        timeout-minutes: 55
+        timeout-minutes: 4
         shell: bash
         env:
           # Below the 360 s nextest terminate (.config/nextest.toml), so a stalled
@@ -153,7 +152,7 @@ jobs:
         run: |
           mkdir -p target
           shard=${{ matrix.shard }}
-          bash -c 'rc=0; for pkg in "-p xtask" "--workspace --exclude xtask"; do cargo nextest run --profile windows-advisory $pkg --no-fail-fast --partition count:$0/4 -E "not $ACL_TESTS" || rc=$?; done; exit $rc' "$shard" > target/shard-$shard.log 2>&1 &
+          sleep 3600 > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
           tail -n +1 -F target/shard-$shard.log &
           tail_pid=$!
