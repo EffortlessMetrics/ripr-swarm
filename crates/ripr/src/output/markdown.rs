@@ -462,27 +462,81 @@ pub(crate) fn command_context_directory(
     workspace_root: &std::path::Path,
     record: &serde_json::Value,
 ) -> std::path::PathBuf {
-    match typescript_package_root_from_gap_record(record) {
-        Some(rel) if rel != "." => workspace_root.join(rel),
-        _ => workspace_root.to_path_buf(),
+    match confined_typescript_package_directory(workspace_root, record) {
+        Some(directory) => directory,
+        None => workspace_root.to_path_buf(),
     }
 }
 
-/// Bash clipboard form for a verify command, using [`command_context_directory`].
-pub(crate) fn verify_command_clipboard_from_context(
+/// Resolve a ledger `typescript_package_root` to a directory under `workspace_root`.
+fn confined_typescript_package_directory(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let rel = typescript_package_root_from_gap_record(record)?;
+    if rel == "." {
+        return None;
+    }
+    let rel_path = std::path::Path::new(&rel);
+    if rel_path.is_absolute()
+        || rel_path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return None;
+    }
+    let joined = workspace_root.join(rel_path);
+    let workspace = workspace_root.canonicalize().ok()?;
+    let resolved = joined.canonicalize().ok()?;
+    if !resolved.is_dir() || !resolved.starts_with(&workspace) {
+        return None;
+    }
+    Some(resolved)
+}
+
+/// Clipboard verify command for nested TypeScript packages when a rooted Bash
+/// form exists; otherwise withhold the clipboard value (#5439).
+pub(crate) fn verify_command_clipboard_for_record(
     workspace_root: &std::path::Path,
     record: &serde_json::Value,
     verify: &str,
-) -> String {
+) -> Option<String> {
+    if typescript_package_root_from_gap_record(record).is_none() {
+        return None;
+    }
     let directory = command_context_directory(workspace_root, record);
     let context = selected_command_context(&directory, verify, verify);
-    context
+    let bash = context
         .get("verify")
         .and_then(|forms| forms.get("bash"))
         .and_then(serde_json::Value::as_str)
-        .filter(|command| !command.is_empty())
-        .unwrap_or(verify)
-        .to_string()
+        .map(str::trim)
+        .filter(|command| !command.is_empty())?;
+    Some(bash.to_string())
+}
+
+/// Advisory command context: verify runs from the nested package directory when
+/// known; receipt stays rooted at the workspace (#5439).
+pub(crate) fn selected_nested_verify_command_context(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+    verify: &str,
+    receipt: &str,
+) -> serde_json::Value {
+    let verify_root = command_context_directory(workspace_root, record);
+    let mut context = selected_command_context(&verify_root, verify, verify);
+    let receipt_context = selected_command_context(workspace_root, receipt, receipt);
+    if let Some(object) = context.as_object_mut() {
+        object.insert(
+            "receipt".to_string(),
+            receipt_context
+                .get("receipt")
+                .cloned()
+                .unwrap_or_else(|| serde_json::Value::Null),
+        );
+    }
+    context
 }
 
 /// Advisory human forms for the current ledger selection. Raw verification

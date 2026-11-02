@@ -3412,18 +3412,18 @@ fn gap_record_diagnostic_data_with_causal(
             serde_json::Value::String(package_root.to_string()),
         );
         if let Some(verify) = record.verification_commands.first() {
-            object.insert(
-                "verify_command_clipboard".to_string(),
-                serde_json::Value::String(
-                    crate::output::markdown::verify_command_clipboard_from_context(
-                        root,
-                        &serde_json::json!({
-                            "typescript_package_root": package_root,
-                        }),
-                        verify,
-                    ),
-                ),
-            );
+            if let Some(clipboard) = crate::output::markdown::verify_command_clipboard_for_record(
+                root,
+                &serde_json::json!({
+                    "typescript_package_root": package_root,
+                }),
+                verify,
+            ) {
+                object.insert(
+                    "verify_command_clipboard".to_string(),
+                    serde_json::Value::String(clipboard),
+                );
+            }
         }
     }
     if let Some(error) = regeneration_command_specs_error

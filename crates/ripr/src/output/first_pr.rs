@@ -2461,9 +2461,9 @@ fn top_gap_from_record(
             "first_pr.default_receipt_write_command".to_string(),
         ),
     };
-    let command_directory = crate::output::markdown::command_context_directory(root, record);
-    let command_context = crate::output::markdown::selected_command_context(
-        &command_directory,
+    let command_context = crate::output::markdown::selected_nested_verify_command_context(
+        root,
+        record,
         &verify_command,
         &receipt_command,
     );
@@ -7822,6 +7822,17 @@ mod tests {
         assert!(
             bash.contains("packages/auth"),
             "markdown verify form must name the package directory: {bash}"
+        );
+        let receipt_bash = packet["selected"]["command_context"]["receipt"]["bash"]
+            .as_str()
+            .ok_or("missing receipt bash form")?;
+        assert!(
+            !receipt_bash.contains("packages/auth"),
+            "receipt form must stay workspace-rooted: {receipt_bash}"
+        );
+        assert!(
+            receipt_bash.contains("target/ripr/receipts"),
+            "receipt form must name the workspace receipt path: {receipt_bash}"
         );
         check_first_pr(&repo, &options)?;
         cleanup(&repo)

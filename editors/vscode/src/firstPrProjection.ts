@@ -23,6 +23,7 @@ import {
   isWindowsHost,
   redirectStaysInWorkspace,
   TEST_RUNNER_VERIFY_COMMAND_PREFIXES,
+  rootedTestRunnerVerifyCommandIsSafe,
   testRunnerCommandLeavesScope
 } from './packetJson';
 
@@ -580,6 +581,20 @@ export function validateFirstPrPacket(
       ...base,
       state: 'unsafeCommand',
       detail: 'first-pr selected command payload is not safe for editor projection'
+    };
+  }
+  const commandContext = objectField(selected, 'command_context');
+  const verifyForms = commandContext ? objectField(commandContext, 'verify') : undefined;
+  const verifyBash = verifyForms ? stringField(verifyForms, 'bash') : undefined;
+  if (
+    verifyBash &&
+    !rootedTestRunnerVerifyCommandIsSafe(verifyBash, redirectRoots) &&
+    !firstPrCommandIsSafe(verifyBash, redirectRoots)
+  ) {
+    return {
+      ...base,
+      state: 'unsafeCommand',
+      detail: 'first-pr selected verify context is not safe for editor projection'
     };
   }
   const repair = objectField(selected, 'repair');

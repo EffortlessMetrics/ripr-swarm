@@ -14,7 +14,8 @@ import {
   hasUnsafeShellMetacharacter,
   redirectTargetMatches,
   serverShellArg,
-  isWindowsHost
+  isWindowsHost,
+  rootedTestRunnerVerifyCommandIsSafe
 } from './packetJson';
 import type { RiprConfig } from './config';
 import type { ResolvedServer } from './serverResolver';

@@ -940,13 +940,19 @@ fn push_gap_actions(
             ));
         }
         let verify_command = string_at(context.data, &["verify_command_clipboard"])
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
             .map(str::to_string)
             .or_else(|| {
-                first_safe_command_at(
-                    context.snapshot.root.as_path(),
-                    context.data,
-                    &["verification_commands"],
-                )
+                if string_at(context.data, &["typescript_package_root"]).is_some() {
+                    None
+                } else {
+                    first_safe_command_at(
+                        context.snapshot.root.as_path(),
+                        context.data,
+                        &["verification_commands"],
+                    )
+                }
             });
         match &verify_command {
             Some(command) => actions.push(copy_agent_loop_command_action(
