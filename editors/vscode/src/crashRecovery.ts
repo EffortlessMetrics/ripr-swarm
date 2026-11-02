@@ -12,6 +12,9 @@ export const CRASH_RECOVERY_SESSION_BUDGET = 3;
 /** Backoff delays after the 1st and 2nd failed sessions (ms). */
 export const CRASH_RECOVERY_BACKOFF_MS: readonly number[] = [1_000, 2_000, 4_000];
 
+/** Running time required before a session clears the crash budget (#1744). */
+export const CRASH_RECOVERY_STABLE_MS = 5_000;
+
 export type CrashRecoveryScheduler = (
   callback: () => void,
   delayMs: number

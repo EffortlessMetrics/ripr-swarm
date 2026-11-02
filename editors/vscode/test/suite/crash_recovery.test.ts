@@ -49,7 +49,7 @@ suite('CrashRecoveryController (#1744)', () => {
     const controller = new CrashRecoveryController((callback, delayMs) => {
       scheduled.push(delayMs);
       pending.push(callback);
-      return setTimeout(() => undefined, 0);
+      return setTimeout(() => undefined, 86_400_000);
     });
     let generation = 0;
     let retries = 0;
@@ -219,7 +219,7 @@ function recoveryHarness(): {
   const scheduler = new CrashRecoveryController((callback, delayMs) => {
     assert.ok(CRASH_RECOVERY_BACKOFF_MS.includes(delayMs), `unexpected delay ${delayMs}`);
     pendingRetries.push(callback);
-    return setTimeout(() => undefined, 0);
+    return setTimeout(() => undefined, 86_400_000);
   });
 
   const runtime: RiprClientRuntime = {

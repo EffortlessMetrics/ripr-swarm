@@ -66,6 +66,7 @@ import {
 } from './attemptStatus';
 import {
   CRASH_RECOVERY_SESSION_BUDGET,
+  CRASH_RECOVERY_STABLE_MS,
   CrashRecoveryController
 } from './crashRecovery';
 
@@ -143,7 +144,7 @@ const RETRY_ACTION = 'Retry';
 export const SERVER_CRASH_RESTART_ACTION = 'Restart Server';
 /** Failed-session budget before typed `circuit_open` (#1744). */
 export const SERVER_CRASH_RESTART_LIMIT = CRASH_RECOVERY_SESSION_BUDGET;
-export { CRASH_RECOVERY_SESSION_BUDGET, CRASH_RECOVERY_BACKOFF_MS } from './crashRecovery';
+export { CRASH_RECOVERY_SESSION_BUDGET, CRASH_RECOVERY_BACKOFF_MS, CRASH_RECOVERY_STABLE_MS } from './crashRecovery';
 const SERVER_CRASH_MESSAGE =
   'The ripr server stopped unexpectedly and will not restart on its own. Restart the server to continue analysis.';
 
@@ -516,6 +517,7 @@ export class RiprClientController {
   private readonly crashRecovery: CrashRecoveryController;
   /** Dedupes duplicate end signals for one session attempt. */
   private crashEndChargedForAttempt = false;
+  private crashStabilityTimer: ReturnType<typeof setTimeout> | undefined;
   private stoppingClient = false;
   private receivedTypedAnalysisStatus = false;
   private typedAnalysisStatusState: RiprAnalysisStatusPayload['state'] | undefined;
@@ -936,9 +938,35 @@ export class RiprClientController {
   }
 
   async restart(): Promise<void> {
-    this.crashRecovery.resetCircuit();
+    this.resetCrashRecoveryForExplicitRestart();
     await this.stop();
     await this.start();
+  }
+
+  /** User-initiated restart clears an open crash-recovery circuit (#1744). */
+  resetCrashRecoveryForExplicitRestart(): void {
+    this.clearCrashStabilityTimer();
+    this.crashRecovery.resetCircuit();
+  }
+
+  private clearCrashStabilityTimer(): void {
+    if (this.crashStabilityTimer !== undefined) {
+      clearTimeout(this.crashStabilityTimer);
+      this.crashStabilityTimer = undefined;
+    }
+  }
+
+  private scheduleCrashStabilityReset(): void {
+    this.clearCrashStabilityTimer();
+    this.crashStabilityTimer = setTimeout(() => {
+      this.crashStabilityTimer = undefined;
+      if (this.stoppingClient || this.crashRecovery.intentionalStopActive()) {
+        return;
+      }
+      if (this.clientIsActivelyRunning(this.client)) {
+        this.crashRecovery.noteSuccessfulSession();
+      }
+    }, CRASH_RECOVERY_STABLE_MS);
   }
 
   /**
@@ -1044,7 +1072,7 @@ export class RiprClientController {
   }
 
   private async restartThroughLifecycle(): Promise<void> {
-    this.crashRecovery.resetCircuit();
+    this.resetCrashRecoveryForExplicitRestart();
     if (this.runtime.restartWorkspaceRoot) {
       await this.runtime.restartWorkspaceRoot();
       return;
@@ -1240,6 +1268,13 @@ export class RiprClientController {
     this.output.appendLine('ripr server retry after unexpected exit: re-resolving and restarting.');
     try {
       await this.start();
+      if (this.startGeneration !== capturedGeneration) {
+        return;
+      }
+      if (!this.clientIsActivelyRunning(this.client)) {
+        this.crashEndChargedForAttempt = false;
+        this.maybeChargeUnexpectedSessionEnd();
+      }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.output.appendLine(`ripr crash recovery restart failed: ${message}`);
@@ -1257,10 +1292,7 @@ export class RiprClientController {
     }
     this.crashEndChargedForAttempt = true;
     const capturedGeneration = this.startGeneration;
-    const client = this.client;
-    if (client) {
-      this.detachStoppedClient(client);
-    }
+    this.clearCrashStabilityTimer();
     const outcome = this.crashRecovery.handleUnexpectedSessionEnd({
       startGeneration: capturedGeneration,
       readStartGeneration: () => this.startGeneration,
@@ -1289,7 +1321,7 @@ export class RiprClientController {
       return;
     }
     if (event.newState === State.Running) {
-      this.crashRecovery.noteSuccessfulSession();
+      this.scheduleCrashStabilityReset();
       this.crashEndChargedForAttempt = false;
       return;
     }
@@ -1349,73 +1381,77 @@ export class RiprClientController {
     let startupFailed = false;
     this.crashRecovery.beginIntentionalStop();
     this.crashRecovery.cancelPendingRetry();
-    // Bump the generation so any in-flight startOnce() detects that stop()
-    // ran during its async setup window. The captured start is awaited before
-    // the client is cleared or stopped, so a stop during startup cannot lose
-    // ownership of a client that may have started successfully. (#2822)
-    this.startGeneration++;
-
-    // Config is already the new value when onDidChangeConfiguration restarts.
-    // Hide the opt-out immediately so a stalled waitForLifecycle or
-    // client.stop() cannot keep the previous item visible. Reuse this
-    // snapshot for the final status so a disable transition never renders
-    // visible `stopped`.
-    const config = this.runtime.getConfig(
-      this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
-    );
-    if (!config.enabled) {
-      this.updateStatus(disabledStatus());
-    }
-
-    if (starting) {
-      const waitForLifecycle = this.runtime.waitForLifecycle ?? waitForLifecyclePromise;
-      await waitForLifecycle(
-        starting.catch(() => { startupFailed = true; }),
-        DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS,
-        'ripr server startup'
-      );
-    }
-
-    // The captured start's finally block clears this when it completes. A
-    // completed start has no remaining deduplication authority here.
-    if (this.startingPromise === starting) {
-      this.startingPromise = undefined;
-    }
-    if (this.client !== client) {
-      return { kind: this.client ? 'replaced' : startupFailed ? 'startupFailed' : 'cancelled' };
-    }
-    this.stoppingClient = true;
+    this.clearCrashStabilityTimer();
     try {
-      if (client) {
-        await client.stop();
-        this.client = undefined;
-        this.disposeNotifications(client);
+      // Bump the generation so any in-flight startOnce() detects that stop()
+      // ran during its async setup window. The captured start is awaited before
+      // the client is cleared or stopped, so a stop during startup cannot lose
+      // ownership of a client that may have started successfully. (#2822)
+      this.startGeneration++;
+
+      // Config is already the new value when onDidChangeConfiguration restarts.
+      // Hide the opt-out immediately so a stalled waitForLifecycle or
+      // client.stop() cannot keep the previous item visible. Reuse this
+      // snapshot for the final status so a disable transition never renders
+      // visible `stopped`.
+      const config = this.runtime.getConfig(
+        this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
+      );
+      if (!config.enabled) {
+        this.updateStatus(disabledStatus());
       }
+
+      if (starting) {
+        const waitForLifecycle = this.runtime.waitForLifecycle ?? waitForLifecyclePromise;
+        await waitForLifecycle(
+          starting.catch(() => { startupFailed = true; }),
+          DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS,
+          'ripr server startup'
+        );
+      }
+
+      // The captured start's finally block clears this when it completes. A
+      // completed start has no remaining deduplication authority here.
+      if (this.startingPromise === starting) {
+        this.startingPromise = undefined;
+      }
+      if (this.client !== client) {
+        return { kind: this.client ? 'replaced' : startupFailed ? 'startupFailed' : 'cancelled' };
+      }
+      this.stoppingClient = true;
+      try {
+        if (client) {
+          await client.stop();
+          this.client = undefined;
+          this.disposeNotifications(client);
+        }
+      } finally {
+        this.stoppingClient = false;
+      }
+      this.server = undefined;
+      this.receivedTypedAnalysisStatus = false;
+      this.workspaceRoot = undefined;
+      this.workspaceRootState = workspaceRootStateNoWorkspace();
+      this.setupStatus = setupStatusWithoutWorkspace();
+      this.typedAnalysisStatusState = undefined;
+      this.firstUsefulAction = undefined;
+      this.dirtyRiprDocuments.clear();
+      this.lastCompletedStatus = undefined;
+      this.configurationFailurePainted = false;
+      this.configurationFailureStatus = undefined;
+      this.clearAttemptStatusBar();
+      this.updateStatus(config.enabled
+        ? {
+            kind: 'stopped',
+            summary: 'ripr server has stopped.',
+            detail: 'Run ripr: Restart Server to start analysis again.',
+            nextStep: 'Run ripr: Restart Server.'
+          }
+        : disabledStatus());
+      return { kind: client ? 'stopped' : startupFailed ? 'startupFailed' : starting ? 'cancelled' : 'alreadyStopped' };
     } finally {
-      this.stoppingClient = false;
       this.crashRecovery.endIntentionalStop();
     }
-    this.server = undefined;
-    this.receivedTypedAnalysisStatus = false;
-    this.workspaceRoot = undefined;
-    this.workspaceRootState = workspaceRootStateNoWorkspace();
-    this.setupStatus = setupStatusWithoutWorkspace();
-    this.typedAnalysisStatusState = undefined;
-    this.firstUsefulAction = undefined;
-    this.dirtyRiprDocuments.clear();
-    this.lastCompletedStatus = undefined;
-    this.configurationFailurePainted = false;
-    this.configurationFailureStatus = undefined;
-    this.clearAttemptStatusBar();
-    this.updateStatus(config.enabled
-      ? {
-          kind: 'stopped',
-          summary: 'ripr server has stopped.',
-          detail: 'Run ripr: Restart Server to start analysis again.',
-          nextStep: 'Run ripr: Restart Server.'
-        }
-      : disabledStatus());
-    return { kind: client ? 'stopped' : startupFailed ? 'startupFailed' : starting ? 'cancelled' : 'alreadyStopped' };
   }
 
   markWorkspaceStale(document: vscode.TextDocument): void {

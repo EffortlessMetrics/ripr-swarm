@@ -82,7 +82,7 @@ function crashHarness(): CrashHarness {
   let state = State.Stopped;
   const crashRecovery = new CrashRecoveryController((callback) => {
     retryCallbacks.push(callback);
-    return setTimeout(() => undefined, 0);
+    return setTimeout(() => undefined, 86_400_000);
   });
 
   const runtime: RiprClientRuntime = {
