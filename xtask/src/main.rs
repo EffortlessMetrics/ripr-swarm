@@ -6904,7 +6904,9 @@ fn finish_traceability_report(violations: &[String], advisories: &[String]) -> R
          and the file paths named by registered references. It does not enumerate Rust tests. \
          It does not require every newly added test to appear in `.ripr/traceability.toml`. \
          A `::symbol` suffix remains advisory and is not proof that the symbol exists, has \
-         a test role, ran, or establishes the behavior (see #2345).\n\n",
+         a test role, ran, or establishes the behavior (see #2345). \
+         An explicit planned test mapping may satisfy an accepted contract's mapping obligation; \
+         it is not an existing evidence reference, implementation, executed proof, or support promotion.\n\n",
     );
 
     if violations.is_empty() {
@@ -6937,8 +6939,9 @@ fn finish_traceability_report(violations: &[String], advisories: &[String]) -> R
     if !advisories.is_empty() {
         body.push_str("## Advisories (non-blocking)\n\n");
         body.push_str(
-            "These references point to existing files but carry a `::symbol` suffix that the \
-             structural checker cannot verify yet. They do not fail the gate.\n\n",
+            "Symbol advisories describe existing-file references whose symbols are not verified. \
+             Planned-mapping advisories describe future test obligations, not existing or executed evidence. \
+             Neither advisory promotes implementation or support.\n\n",
         );
         for advisory in advisories {
             body.push_str("```text\n");
@@ -6968,7 +6971,8 @@ fn traceability_recommended_fixes() -> &'static [&'static str] {
         "Known spec IDs are listed in docs/specs/README.md and docs/spec-index.d/.",
         "Keep every docs/specs/RIPR-SPEC-*.md file represented in the manifest.",
         "Use valid RIPR-SPEC-NNNN IDs (exactly 4 digits) in specs, fixtures, and manifest entries.",
-        "List only paths that exist, or leave planned fields empty until the artifact exists.",
+        "List only existing paths in current reference arrays; leave those arrays empty until artifacts exist.",
+        "For an accepted contract without current tests or fixtures, declare named obligations under `Planned tests:` in its Test Mapping section.",
     ]
 }
 
@@ -7028,12 +7032,148 @@ fn validate_trace_behavior(
         && behavior.tests.is_empty()
         && behavior.fixtures.is_empty()
     {
-        violations.push(format!(
-            "{id} is accepted but has no current test or fixture mapping"
-        ));
+        let planned = match behavior.spec.as_deref() {
+            Some(spec) => has_explicit_planned_test_mapping(&read_text_lossy(Path::new(spec))?),
+            None => false,
+        };
+        if planned {
+            advisories.push(format!(
+                "{id} is accepted with an explicit planned test mapping and no current test or fixture references; \
+                 this is an obligation, not implemented behavior or executed/sufficient evidence"
+            ));
+        } else {
+            violations.push(format!(
+                "{id} is accepted but has no current test or fixture mapping or explicit planned test mapping"
+            ));
+        }
     }
 
     Ok(())
+}
+
+fn has_explicit_planned_test_mapping(text: &str) -> bool {
+    let mut in_mapping = false;
+    let mut planned_list = false;
+    let mut fence: Option<(char, usize)> = None;
+    let mut comment = false;
+    for line in text.lines() {
+        let fence_text = line.trim_start_matches(' ');
+        let fence_indent = line.len() - fence_text.len();
+        if let Some((delimiter, length)) = fence {
+            let count = fence_text.chars().take_while(|ch| *ch == delimiter).count();
+            if fence_indent <= 3
+                && count >= length
+                && fence_text[count..]
+                    .bytes()
+                    .all(|byte| byte == b' ' || byte == b'\t')
+            {
+                fence = None;
+            }
+            continue;
+        }
+        if !comment
+            && fence_indent <= 3
+            && (fence_text.starts_with("```") || fence_text.starts_with("~~~"))
+        {
+            let delimiter = if fence_text.starts_with('`') {
+                '`'
+            } else {
+                '~'
+            };
+            fence = Some((
+                delimiter,
+                fence_text.chars().take_while(|ch| *ch == delimiter).count(),
+            ));
+            continue;
+        }
+        let mut visible = String::new();
+        let mut remainder = line;
+        loop {
+            if comment {
+                let Some(end) = remainder.find("-->") else {
+                    break;
+                };
+                comment = false;
+                remainder = &remainder[end + 3..];
+            } else if let Some(start) = remainder.find("<!--") {
+                visible.push_str(&remainder[..start]);
+                comment = true;
+                remainder = &remainder[start + 4..];
+            } else {
+                visible.push_str(remainder);
+                break;
+            }
+        }
+        let trimmed = visible.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "## Test Mapping" {
+            in_mapping = true;
+            planned_list = false;
+            continue;
+        }
+        if !in_mapping {
+            continue;
+        }
+        if trimmed.starts_with("## ") || trimmed.starts_with("# ") {
+            break;
+        }
+        // The qualified native form is unindented, excluding Markdown code blocks.
+        if visible.starts_with(char::is_whitespace) && !trimmed.is_empty() {
+            planned_list = false;
+            continue;
+        }
+        if trimmed.eq_ignore_ascii_case("Planned tests:") {
+            planned_list = true;
+            continue;
+        }
+        let item = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "));
+        if let Some(item) = item {
+            let mut name = item.trim();
+            loop {
+                let previous_length = name.len();
+                name = name.trim_matches(['`', '*', '_', '~']).trim();
+                name = name
+                    .strip_prefix("[ ]")
+                    .or_else(|| name.strip_prefix("[x]"))
+                    .or_else(|| name.strip_prefix("[X]"))
+                    .unwrap_or(name)
+                    .trim();
+                if name.len() == previous_length {
+                    break;
+                }
+            }
+            let item = name.to_ascii_lowercase();
+            let sentinel = item.trim_end_matches(['.', '!', '?', ';', ':', ',']);
+            let placeholder = !sentinel.chars().any(char::is_alphanumeric)
+                || matches!(
+                    sentinel,
+                    "..."
+                        | "-"
+                        | "none"
+                        | "n/a"
+                        | "tbd"
+                        | "todo"
+                        | "planned"
+                        | "add test"
+                        | "add tests"
+                        | "write test"
+                        | "write tests"
+                )
+                || ["none ", "todo:", "todo ", "tbd:", "tbd ", "<!--", "<"]
+                    .iter()
+                    .any(|prefix| item.starts_with(prefix));
+            if planned_list && !placeholder {
+                return true;
+            }
+        } else {
+            planned_list = false;
+        }
+    }
+    false
 }
 
 fn validate_behavior_spec_path(
