@@ -872,6 +872,47 @@ fn member_directory_commands_use_the_resolved_workspace_root() -> Result<(), Str
     Ok(())
 }
 
+/// #12417: `continue` with no attempt, run from a directory that no
+/// workspace, package or Git top level encloses, must say so and stop. The
+/// repair selector it used to consult reads the whole current directory, which
+/// on a large tree ran for minutes with no output. Unix-only like the other
+/// implicit-root smoke tests (the temp parent must hold no manifest or repo).
+#[cfg(unix)]
+#[test]
+fn continue_outside_any_workspace_refuses_without_scanning() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-unanchored")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    // The claim needs a directory no project encloses. A temp dir inside a
+    // checkout (TMPDIR under `target/`) is anchored by that checkout, and the
+    // refusal would then be the ordinary scan; hosted runners keep temp outside.
+    if outer.ancestors().any(|dir| {
+        dir.join("Cargo.toml").is_file()
+            || dir.join(".git").exists()
+            || dir.join("package.json").is_file()
+            || dir.join("pyproject.toml").is_file()
+    }) {
+        return Ok(());
+    }
+    std::fs::write(outer.join("loose.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    let output = run_ripr(&outer, &["continue"])?;
+    assert_exit(&output, 3, "continue outside any workspace");
+    let all = stderr_text(&output);
+    assert!(
+        all.contains("no current attempt to continue")
+            && all.contains("no workspace, package or Git repository was found"),
+        "must name the cause:\n{all}"
+    );
+    assert!(
+        !all.contains("starts nothing right now"),
+        "must not consult the repair selector:\n{all}"
+    );
+    assert!(
+        stdout_text(&output).is_empty(),
+        "typed refusal keeps stdout empty"
+    );
+    Ok(())
+}
+
 /// #8872: from a workspace member directory `diff` uses the resolved
 /// workspace root (same stderr disclosure as `check`), and `--root .` keeps
 /// the member. Unix-only like the other implicit-root smoke tests: the
