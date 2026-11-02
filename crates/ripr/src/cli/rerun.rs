@@ -3,8 +3,7 @@ use crate::analysis::targeted_typescript_findings_for_scope;
 use crate::analysis::{
     TargetedTestInventoryError, canonical_gap::canonical_gap_identity,
     inventory_changed_test_classified_seams_at_with_config_node,
-    inventory_classified_seams_at_with_config,
-    inventory_diff_scoped_classified_seams_at_with_config, seam_cache::stable_input_hash,
+    inventory_classified_seams_at_with_config, seam_cache::stable_input_hash,
     workspace_cache_key_at_with_config,
 };
 use crate::app::repair_route_readiness;
@@ -763,6 +762,10 @@ fn rerun_gap(
     let mut cache = crate::analysis::seam_cache::FileFactCacheStats::default();
     let mut input_fingerprint = None;
     let mut seams = BTreeMap::<String, TargetedRerunSeam>::new();
+    let mut shared_rust_preparation: Option<
+        crate::analysis::PreparedDiffScopedClassifiedWorkspace,
+    > = None;
+    let mut shared_rust_cache_stats_recorded = false;
     for scope in scopes {
         #[cfg(feature = "lang-typescript")]
         if is_typescript_scope(&scope) {
@@ -871,15 +874,46 @@ fn rerun_gap(
 
         let changed_files = vec![scope.file.clone()];
         let changed_owner_names = scope.owner.iter().cloned().collect::<Vec<_>>();
-        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+        let absent_changed_files = crate::analysis::changed_source_files_absent_from_worktree(
             root,
-            config,
-            &changed_files,
-            &changed_owner_names,
-        )?;
+            changed_files.iter().map(PathBuf::as_path),
+        );
+        let cache_stats = if shared_rust_preparation.is_some() {
+            crate::analysis::DiffScopedCacheStatsAttribution::Omit
+        } else {
+            crate::analysis::DiffScopedCacheStatsAttribution::Preparation
+        };
+        let inventory = if let Some(prepared) = shared_rust_preparation.as_ref() {
+            crate::analysis::evaluate_diff_scoped_classified_seams_from_prepared(
+                prepared,
+                crate::analysis::PreparedDiffScopedEvaluationInput::canonical_gap_rerun_scope(
+                    &changed_files,
+                    &changed_owner_names,
+                    absent_changed_files,
+                    cache_stats,
+                ),
+            )?
+        } else {
+            let prepared =
+                crate::analysis::prepare_diff_scoped_classified_workspace(root, config, None)?;
+            let inventory = crate::analysis::evaluate_diff_scoped_classified_seams_from_prepared(
+                &prepared,
+                crate::analysis::PreparedDiffScopedEvaluationInput::canonical_gap_rerun_scope(
+                    &changed_files,
+                    &changed_owner_names,
+                    absent_changed_files,
+                    cache_stats,
+                ),
+            )?;
+            shared_rust_preparation = Some(prepared);
+            inventory
+        };
+        if !shared_rust_cache_stats_recorded {
+            add_cache_stats(&mut cache, &inventory.file_fact_cache);
+            shared_rust_cache_stats_recorded = true;
+        }
         input_fingerprint
             .get_or_insert_with(|| input_fingerprint_for(root, &inventory.workspace_cache_key));
-        add_cache_stats(&mut cache, &inventory.file_fact_cache);
         let scoped_record_seam_ids = seam_ids_for_scope(&records, &scope);
         let scope_seams = inventory
             .classified

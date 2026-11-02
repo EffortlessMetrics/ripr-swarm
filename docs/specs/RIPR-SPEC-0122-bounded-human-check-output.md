@@ -370,7 +370,10 @@ compiling test stub, or a named refusal. When the finding line holds no seam
 of its own, `--at` stubs the nearest gap, so the printed `<line>` is that
 seam's own line rather than the finding line, and only when asking for that
 line resolves to the same seam with no substitution note; otherwise no route
-is printed. A changed constant routed through a consuming function follows the
+is printed. For `--kind return_value` only, a finding line with no
+return-value gap gets a direct stub for that line's return probe or a named
+refusal instead of substituting the nearest return-value gap (#8444 item 2).
+A changed constant routed through a consuming function follows the
 same rule for the consumer's seam line (#8444). Side-effect, call-deletion,
 field-construction, and static-unknown families never get the block, because
 the stub producer refuses them.

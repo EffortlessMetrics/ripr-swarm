@@ -11,6 +11,7 @@ mod mut_parameter;
 mod name_scope;
 mod nesting;
 mod owner_pin;
+mod parent_module_cfg_gate;
 mod passthrough_item_macros;
 mod pattern_pin;
 mod proptest;
@@ -65,6 +66,7 @@ pub(crate) use nesting::{
     block_comment_only_lines, non_code_token_end, parse_clean_source_file, rust_nesting_refusal,
     string_literal_continuation_lines,
 };
+pub(crate) use parent_module_cfg_gate::owner_gated_by_parent_mod_declarations;
 pub(crate) use ra::drop_in_assertion_leaf;
 pub(crate) use ra::parser_oracles_for_function;
 #[cfg(test)]
