@@ -814,6 +814,10 @@ fn candidate_from_gap_record(record: &GapRecord) -> GateCandidate {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "policy:1966: gate decision threads policy, baseline, causal, and acknowledgement state for one candidate"
+)]
 fn gate_decision(
     candidate: &GateCandidate,
     policy: &GatePolicy,
@@ -873,16 +877,34 @@ fn gate_decision(
     // `is_baseline_new = true` is the deferred deprecation question.
     let baseline_match_kind = (!canonical_hit && fallback_hit)
         .then(|| BASELINE_MATCH_KIND_LEGACY_PATH_LINE_CLASS.to_string());
-    let acknowledgement_resolution = structured_acknowledgements::resolve_candidate_acknowledgement(
-        structured_acknowledgements,
-        acknowledgement_match_counters,
-        today,
-        gate_root,
-        candidate.canonical_gap_id.as_deref(),
-        candidate.seam_id.as_deref(),
-        legacy_acknowledgement_label,
-        structured_loaded,
+    let causal_attribution = causal_delta
+        .map(|authority| authority.attribution_for(candidate.canonical_gap_id.as_deref()));
+    let causal_allows_blocking = causal_attribution
+        .map(CausalDeltaAuthority::allows_blocking)
+        .unwrap_or(true);
+    let would_block = candidate_would_block(
+        candidate,
+        policy.mode,
+        eligible,
+        is_baseline_new,
+        &recommendation_calibration,
+        &mutation_calibration,
+        causal_allows_blocking,
     );
+    let acknowledgement_resolution = if would_block {
+        structured_acknowledgements::resolve_candidate_acknowledgement(
+            structured_acknowledgements,
+            acknowledgement_match_counters,
+            today,
+            gate_root,
+            candidate.canonical_gap_id.as_deref(),
+            candidate.seam_id.as_deref(),
+            legacy_acknowledgement_label,
+            structured_loaded,
+        )
+    } else {
+        structured_acknowledgements::CandidateAcknowledgement::None
+    };
     let (
         acknowledgement_label,
         acknowledgement_id,
@@ -944,20 +966,6 @@ fn gate_decision(
         structured_acknowledgements::CandidateAcknowledgement::Applied(_)
             | structured_acknowledgements::CandidateAcknowledgement::LegacyGlobal { .. }
     );
-    let causal_attribution = causal_delta
-        .map(|authority| authority.attribution_for(candidate.canonical_gap_id.as_deref()));
-    let causal_allows_blocking = causal_attribution
-        .map(CausalDeltaAuthority::allows_blocking)
-        .unwrap_or(true);
-    let would_block = candidate_would_block(
-        candidate,
-        policy.mode,
-        eligible,
-        is_baseline_new,
-        &recommendation_calibration,
-        &mutation_calibration,
-        causal_allows_blocking,
-    );
     let route_limited = candidate_is_policy_eligible_without_route(candidate)
         && !gate_repair_route_is_complete(candidate);
     let decision = if candidate.suppressed || candidate.configured_off {
@@ -969,13 +977,6 @@ fn gate_decision(
         "not_applicable"
     } else if would_block && acknowledged {
         "acknowledged"
-    } else if would_block
-        && matches!(
-            acknowledgement_resolution,
-            structured_acknowledgements::CandidateAcknowledgement::Limitation { .. }
-        )
-    {
-        "blocking"
     } else if would_block {
         "blocking"
     } else {
@@ -993,7 +994,7 @@ fn gate_decision(
             mutation_calibration: &mutation_calibration,
             acknowledgement_label: acknowledgement_label.as_deref(),
             acknowledgement_id: acknowledgement_id.as_deref(),
-            acknowledgement_global_scope: acknowledgement_global_scope,
+            acknowledgement_global_scope,
             acknowledgement_limitation: acknowledgement_limitation.as_deref(),
         },
         // #2640: the configured labels travel alongside the matched one so a

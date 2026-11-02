@@ -6,6 +6,7 @@
 //! or for unmatched blocking candidates when a label is present alongside
 //! structured input.
 
+use crate::output::baseline_delta::normalize_root_for_comparison;
 use crate::output::suppressions::is_iso_date;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -113,7 +114,7 @@ pub(crate) fn validate_ledger_root(
     display: &str,
 ) -> Result<(), String> {
     if let Some(root) = ledger.root.as_deref()
-        && normalize_root(root) != normalize_root(gate_root)
+        && normalize_root_for_comparison(root) != normalize_root_for_comparison(gate_root)
     {
         return Err(format!(
             "{LIMITATION_WRONG_ROOT}: structured acknowledgements `{display}` root `{root}` does not match gate root `{gate_root}`"
@@ -212,6 +213,10 @@ fn validate_optional_date(value: &str, field: &str) -> Result<(), String> {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "policy:1966: structured acknowledgement matching needs ledger, counters, identity, and legacy label context"
+)]
 pub(crate) fn resolve_candidate_acknowledgement(
     ledger: Option<&StructuredAcknowledgementLedger>,
     counters: &mut MatchCounters,
@@ -234,7 +239,8 @@ pub(crate) fn resolve_candidate_acknowledgement(
                     continue;
                 }
                 if let Some(repo) = record.repository.as_deref()
-                    && normalize_root(repo) != normalize_root(gate_root)
+                    && normalize_root_for_comparison(repo)
+                        != normalize_root_for_comparison(gate_root)
                 {
                     continue;
                 }
@@ -288,13 +294,19 @@ pub(crate) fn resolve_candidate_acknowledgement(
     CandidateAcknowledgement::None
 }
 
-fn normalize_root(value: &str) -> String {
-    value.replace('\\', "/").trim_end_matches('/').to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn equivalent_root_spellings_match_gate_root() -> Result<(), String> {
+        let ledger = StructuredAcknowledgementLedger {
+            root: Some("repo".to_string()),
+            records: Vec::new(),
+        };
+        validate_ledger_root(&ledger, "./repo", "ledger.toml")?;
+        Ok(())
+    }
 
     #[test]
     fn duplicate_ids_fail_closed() -> Result<(), String> {

@@ -21346,6 +21346,12 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0378-cross-language-edge-registry-v1.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0372"
 name = "scoped gate acknowledgements"
 spec = "docs/specs/RIPR-SPEC-0372-scoped-gate-acknowledgements.md"
@@ -21356,6 +21362,7 @@ tests = [
   "crates/ripr/src/output/gate/tests.rs::gate_acknowledgeable_keeps_waived_candidate_visible",
   "crates/ripr/src/output/gate/structured_acknowledgements.rs::tests::duplicate_ids_fail_closed",
   "crates/ripr/src/output/gate/structured_acknowledgements.rs::tests::scoped_match_respects_max_matches",
+  "crates/ripr/src/output/gate/structured_acknowledgements.rs::tests::equivalent_root_spellings_match_gate_root",
 ]
 fixtures = [
   "fixtures/boundary_gap/expected/calibrated-gate/acknowledged-waiver/gate-decision.json",
