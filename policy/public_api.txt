@@ -298,6 +298,8 @@ pub use ripr::domain::CandidateRelation
 pub use ripr::domain::CanonicalDelta
 pub use ripr::domain::CanonicalEvidenceState
 pub use ripr::domain::CanonicalNextActionV1
+pub use ripr::domain::CanonicalItemId
+pub use ripr::domain::CanonicalItemParseError
 pub use ripr::domain::CardCurrentnessGoal
 pub use ripr::domain::CommandAuthorityBoundary
 pub use ripr::domain::CommandCostClass
@@ -327,6 +329,7 @@ pub use ripr::domain::ExpectedResultParser
 pub use ripr::domain::ExposureClass
 pub use ripr::domain::Finding
 pub use ripr::domain::FindingCanonicalGap
+pub use ripr::domain::FixInstructionIdentityContext
 pub use ripr::domain::FixInstructionState
 pub use ripr::domain::FixInstructionSummary
 pub use ripr::domain::FlowSinkFact
@@ -343,6 +346,10 @@ pub use ripr::domain::GitObjectId
 pub use ripr::domain::GitTreeish
 pub use ripr::domain::IDENTITY_REGISTRY_JSON_PATH
 pub use ripr::domain::IDENTITY_REGISTRY_MARKDOWN_PATH
+pub use ripr::domain::InstructionIdentityParseError
+pub use ripr::domain::InstructionInstanceId
+pub use ripr::domain::InstructionSemanticId
+pub use ripr::domain::InstructionSnapshotCurrentness
 pub use ripr::domain::LanguageFileCount
 pub use ripr::domain::LanguageId
 pub use ripr::domain::LanguageStatus
