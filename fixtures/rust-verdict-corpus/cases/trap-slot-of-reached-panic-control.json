@@ -53,7 +53,7 @@
       "limited"
     ]
   },
-  "reasoning": "Negative control for trap-row-of-unrelated-panic: Panel::new(4) succeeds, so the bare #[should_panic] can only be satisfied by slot_of's own panic at index 100, and mutants that stop that panic fail the test. The rewrite still leaves `index >= 99` green at 100, so truth is partially discriminated and ripr's gap is the ideal reading, not a false actionable.",
+  "reasoning": "Negative control for trap-slot-of-unrelated-panic: Panel::new(4) succeeds, so the bare #[should_panic] can only be satisfied by slot_of's own panic at index 100, and mutants that stop that panic fail the test. The rewrite still leaves `index >= 99` green at 100, so truth is partially discriminated and ripr's gap is the ideal reading, not a false actionable.",
   "labeling_observation": {
     "ripr_commit": "6487826",
     "full_checkout_verdict": "gap",
