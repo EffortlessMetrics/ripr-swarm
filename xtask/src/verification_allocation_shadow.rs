@@ -15,8 +15,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::verification_allocation_policy::{
-    VERIFICATION_ALLOCATION_POLICY_CLAIM_BOUNDARY, VerificationAllocationDecisionV1,
-    VerificationAllocationPolicyV1, VerificationAllocationSubjectEvidenceV1, recommend_action,
+    VERIFICATION_ALLOCATION_POLICY_CLAIM_BOUNDARY, VerificationAllocationActionV1,
+    VerificationAllocationDecisionV1, VerificationAllocationPolicyV1,
+    VerificationAllocationSubjectEvidenceV1, recommend_action, resolve_admitted_rule,
     validate_policy,
 };
 
@@ -80,13 +81,14 @@ pub(crate) struct CommittedRecommendationV1 {
     pub sequence: u64,
     pub decision: VerificationAllocationDecisionV1,
     pub decision_digest: String,
+    pub commitment_digest: String,
     pub committed_before_execution: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct FullVerificationExecutionV1 {
-    pub argv: Vec<String>,
+    pub command_line: String,
     pub working_directory: String,
     pub environment_class: String,
     pub tool_identity: String,
@@ -96,6 +98,8 @@ pub(crate) struct FullVerificationExecutionV1 {
     pub elapsed_ms: u64,
     pub retry_attempt: u32,
     pub first_attempt_retained: bool,
+    pub first_attempt_exit_code: Option<i32>,
+    pub first_attempt_detail: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -145,7 +149,63 @@ pub(crate) enum ShadowExecutionFailureKindV1 {
 pub(crate) struct ShadowCommandObservationV1 {
     pub exit_code: i32,
     pub detail: String,
+    pub elapsed_ms: u64,
     pub failure_kind: Option<ShadowExecutionFailureKindV1>,
+}
+
+pub(crate) trait RecommendationCommitSink {
+    fn commit_recommendation(
+        &mut self,
+        sequence: u64,
+        decision: &VerificationAllocationDecisionV1,
+        decision_digest: &str,
+    ) -> Result<String, String>;
+}
+
+pub(crate) trait ShadowCleanupObserver {
+    fn observe_cleanup(&self) -> ShadowCleanupRecordV1;
+}
+
+#[derive(Default)]
+pub(crate) struct InMemoryRecommendationJournal {
+    pub committed_digests: Vec<String>,
+}
+
+impl RecommendationCommitSink for InMemoryRecommendationJournal {
+    fn commit_recommendation(
+        &mut self,
+        _sequence: u64,
+        decision: &VerificationAllocationDecisionV1,
+        decision_digest: &str,
+    ) -> Result<String, String> {
+        let material = format!("{decision_digest}|{}", decision.subject_id);
+        let commitment_digest =
+            crate::verification_allocation_policy::sha256_hex(material.as_bytes());
+        self.committed_digests.push(commitment_digest.clone());
+        Ok(commitment_digest)
+    }
+}
+
+struct OptionsCleanupObserver<'a> {
+    options: &'a VerificationAllocationShadowRunOptionsV1,
+}
+
+impl ShadowCleanupObserver for OptionsCleanupObserver<'_> {
+    fn observe_cleanup(&self) -> ShadowCleanupRecordV1 {
+        if self.options.cleanup_succeeds {
+            ShadowCleanupRecordV1 {
+                disposition: ShadowCleanupDispositionV1::Clean,
+                detail: "cleanup_ok".to_string(),
+                owned_residue: Vec::new(),
+            }
+        } else {
+            ShadowCleanupRecordV1 {
+                disposition: ShadowCleanupDispositionV1::Failed,
+                detail: "cleanup_failed".to_string(),
+                owned_residue: self.options.cleanup_residue.clone(),
+            }
+        }
+    }
 }
 
 pub(crate) trait ShadowCommandAdapter {
@@ -210,13 +270,34 @@ pub(crate) fn classify_terminal_state(
         ShadowTerminalStateV1::ProductFailure
     } else if observation.detail.contains("inconclusive") {
         ShadowTerminalStateV1::Inconclusive
-    } else if observation.detail.contains("equivalent") {
-        ShadowTerminalStateV1::Equivalent
     } else if observation.detail.contains("setup_failure") {
         ShadowTerminalStateV1::SetupFailure
     } else {
         ShadowTerminalStateV1::ProductFailure
     }
+}
+
+pub(crate) fn authoritative_full_verification_command(
+    policy: &VerificationAllocationPolicyV1,
+    entry: &ShadowSubjectManifestEntryV1,
+) -> Result<String, String> {
+    let decision = recommend_action(policy, &entry.evidence);
+    if let Some(rule) = resolve_admitted_rule(policy, &decision, &entry.evidence)
+        && decision.recommended_action == VerificationAllocationActionV1::TargetedPlusAudit
+    {
+        return Ok(rule.full_audit_command.clone());
+    }
+    for rule in &policy.rules {
+        if entry.full_verification_command.trim() == rule.targeted_command.trim()
+            && entry.full_verification_command.trim() != rule.full_audit_command.trim()
+        {
+            return Err(format!(
+                "subject `{}` declares targeted command as full verification",
+                entry.subject_id
+            ));
+        }
+    }
+    Ok(entry.full_verification_command.clone())
 }
 
 fn validate_manifest(manifest: &VerificationAllocationShadowManifestV1) -> Result<(), String> {
@@ -310,20 +391,23 @@ pub(crate) fn validate_recommendation_precedes_execution(
             row.subject_id
         ));
     }
+    if row.recommendation.commitment_digest.is_empty() {
+        return Err(format!(
+            "subject `{}` missing durable recommendation commitment",
+            row.subject_id
+        ));
+    }
     Ok(())
 }
 
-pub(crate) fn validate_full_command_unchanged_by_recommendation(
-    declared: &str,
-    executed_argv: &[String],
-) -> Result<(), String> {
-    let executed = executed_argv.join(" ");
-    reject_subset_command(declared, &executed)
-}
-
-pub(crate) fn execute_verification_allocation_shadow<A: ShadowCommandAdapter>(
+pub(crate) fn execute_verification_allocation_shadow_with_parts<
+    A: ShadowCommandAdapter,
+    C: ShadowCleanupObserver,
+>(
     manifest: &VerificationAllocationShadowManifestV1,
     adapter: &A,
+    commit_sink: &mut InMemoryRecommendationJournal,
+    cleanup: &C,
     options: &VerificationAllocationShadowRunOptionsV1,
 ) -> Result<VerificationAllocationShadowReceiptV1, String> {
     validate_manifest(manifest)?;
@@ -339,19 +423,19 @@ pub(crate) fn execute_verification_allocation_shadow<A: ShadowCommandAdapter>(
 
     for entry in &manifest.subjects {
         sequence += 1;
+        let authoritative = authoritative_full_verification_command(&manifest.policy, entry)?;
+        reject_subset_command(&authoritative, &entry.full_verification_command)?;
+
         let decision = recommend_action(&manifest.policy, &entry.evidence);
         let digest = decision_digest(&decision);
+        let commitment_digest = commit_sink.commit_recommendation(sequence, &decision, &digest)?;
         let recommendation = CommittedRecommendationV1 {
             sequence,
             decision,
             decision_digest: digest,
+            commitment_digest,
             committed_before_execution: true,
         };
-
-        reject_subset_command(
-            &entry.full_verification_command,
-            &entry.full_verification_command,
-        )?;
 
         let observation = adapter.run(
             &entry.full_verification_command,
@@ -359,40 +443,26 @@ pub(crate) fn execute_verification_allocation_shadow<A: ShadowCommandAdapter>(
             &manifest.tool_identity,
         );
         let terminal_state = classify_terminal_state(&observation, observation.exit_code);
-        let argv = shell_argv(&entry.full_verification_command);
-        validate_full_command_unchanged_by_recommendation(&entry.full_verification_command, &argv)?;
 
         subject_rows.push(ShadowSubjectReceiptV1 {
             subject_id: entry.subject_id.clone(),
             recommendation,
             full_verification: FullVerificationExecutionV1 {
-                argv,
+                command_line: entry.full_verification_command.clone(),
                 working_directory: manifest.working_directory.clone(),
                 environment_class: manifest.environment_class.clone(),
                 tool_identity: manifest.tool_identity.clone(),
                 exit_code: Some(observation.exit_code),
                 terminal_state,
                 detail: observation.detail.clone(),
-                elapsed_ms: 0,
+                elapsed_ms: observation.elapsed_ms,
                 retry_attempt: 0,
                 first_attempt_retained: true,
+                first_attempt_exit_code: None,
+                first_attempt_detail: String::new(),
             },
         });
     }
-
-    let cleanup = if options.cleanup_succeeds {
-        ShadowCleanupRecordV1 {
-            disposition: ShadowCleanupDispositionV1::Clean,
-            detail: "cleanup_ok".to_string(),
-            owned_residue: Vec::new(),
-        }
-    } else {
-        ShadowCleanupRecordV1 {
-            disposition: ShadowCleanupDispositionV1::Failed,
-            detail: "cleanup_failed".to_string(),
-            owned_residue: options.cleanup_residue.clone(),
-        }
-    };
 
     let receipt = VerificationAllocationShadowReceiptV1 {
         schema_version: VERIFICATION_ALLOCATION_SHADOW_SCHEMA_VERSION.to_string(),
@@ -407,7 +477,7 @@ pub(crate) fn execute_verification_allocation_shadow<A: ShadowCommandAdapter>(
         policy_generation: manifest.policy.generation,
         policy_semantic_digest: manifest.policy.semantic_digest.clone(),
         subjects: subject_rows,
-        cleanup,
+        cleanup: cleanup.observe_cleanup(),
         claim_boundary: VERIFICATION_ALLOCATION_SHADOW_CLAIM_BOUNDARY.to_string(),
         non_claims: vec![
             VERIFICATION_ALLOCATION_POLICY_CLAIM_BOUNDARY.to_string(),
@@ -420,34 +490,84 @@ pub(crate) fn execute_verification_allocation_shadow<A: ShadowCommandAdapter>(
     for row in &receipt.subjects {
         validate_recommendation_precedes_execution(row)?;
     }
+    if commit_sink.committed_digests.len() != manifest.subjects.len() {
+        return Err("recommendation journal missing committed subjects".to_string());
+    }
     Ok(receipt)
+}
+
+pub(crate) fn execute_verification_allocation_shadow<A: ShadowCommandAdapter>(
+    manifest: &VerificationAllocationShadowManifestV1,
+    adapter: &A,
+    options: &VerificationAllocationShadowRunOptionsV1,
+) -> Result<VerificationAllocationShadowReceiptV1, String> {
+    let mut commit_sink = InMemoryRecommendationJournal::default();
+    let cleanup = OptionsCleanupObserver { options };
+    execute_verification_allocation_shadow_with_parts(
+        manifest,
+        adapter,
+        &mut commit_sink,
+        &cleanup,
+        options,
+    )
 }
 
 pub(crate) fn execute_verification_allocation_shadow_with_retry<A: ShadowCommandAdapter>(
     manifest: &VerificationAllocationShadowManifestV1,
     adapter: &A,
     options: &VerificationAllocationShadowRunOptionsV1,
-    retry_commands: &[&str],
+    retry_same_command: bool,
 ) -> Result<VerificationAllocationShadowReceiptV1, String> {
-    let mut receipt = execute_verification_allocation_shadow(manifest, adapter, options)?;
+    let mut commit_sink = InMemoryRecommendationJournal::default();
+    let cleanup = OptionsCleanupObserver { options };
+    let mut receipt = execute_verification_allocation_shadow_with_parts(
+        manifest,
+        adapter,
+        &mut commit_sink,
+        &cleanup,
+        options,
+    )?;
     if receipt.subjects.is_empty() {
         return Err("retry requires at least one subject".to_string());
     }
+    let entry = manifest
+        .subjects
+        .first()
+        .ok_or_else(|| "retry requires at least one subject".to_string())?;
     let first = receipt.subjects[0].full_verification.clone();
-    if !retry_commands.is_empty() {
-        receipt.subjects[0].full_verification.retry_attempt = 1;
-        receipt.subjects[0].full_verification.first_attempt_retained = true;
-        receipt.subjects[0].full_verification.detail = format!(
-            "{}; retry_policy={}",
-            first.detail,
-            retry_commands.join("|")
+    if retry_same_command && first.exit_code != Some(0) {
+        let retry_observation = adapter.run(
+            &entry.full_verification_command,
+            &manifest.working_directory,
+            &manifest.tool_identity,
         );
+        receipt.subjects[0].full_verification.first_attempt_retained = true;
+        receipt.subjects[0]
+            .full_verification
+            .first_attempt_exit_code = first.exit_code;
+        receipt.subjects[0].full_verification.first_attempt_detail = first.detail.clone();
+        receipt.subjects[0].full_verification.retry_attempt = 1;
+        receipt.subjects[0].full_verification.exit_code = Some(retry_observation.exit_code);
+        receipt.subjects[0].full_verification.detail = retry_observation.detail.clone();
+        receipt.subjects[0].full_verification.elapsed_ms = first
+            .elapsed_ms
+            .saturating_add(retry_observation.elapsed_ms);
+        receipt.subjects[0].full_verification.terminal_state =
+            classify_terminal_state(&retry_observation, retry_observation.exit_code);
+    }
+    for row in &receipt.subjects {
+        validate_recommendation_precedes_execution(row)?;
     }
     Ok(receipt)
 }
 
-fn shell_argv(command: &str) -> Vec<String> {
-    command.split_whitespace().map(str::to_string).collect()
+fn observation(exit_code: i32, detail: &str) -> ShadowCommandObservationV1 {
+    ShadowCommandObservationV1 {
+        exit_code,
+        detail: detail.to_string(),
+        elapsed_ms: 1,
+        failure_kind: None,
+    }
 }
 
 #[cfg(test)]
@@ -462,6 +582,41 @@ mod shadow_semantics {
         outcomes: std::collections::BTreeMap<String, ShadowCommandObservationV1>,
     }
 
+    struct SequentialShadowAdapter {
+        outcomes: Vec<ShadowCommandObservationV1>,
+        index: std::cell::Cell<usize>,
+    }
+
+    impl SequentialShadowAdapter {
+        fn new(outcomes: &[ShadowCommandObservationV1]) -> Self {
+            Self {
+                outcomes: outcomes.to_vec(),
+                index: std::cell::Cell::new(0),
+            }
+        }
+    }
+
+    impl ShadowCommandAdapter for SequentialShadowAdapter {
+        fn run(
+            &self,
+            _command: &str,
+            _cwd: &str,
+            _tool_identity: &str,
+        ) -> ShadowCommandObservationV1 {
+            let idx = self.index.get();
+            self.index.set(idx + 1);
+            self.outcomes
+                .get(idx)
+                .cloned()
+                .unwrap_or(ShadowCommandObservationV1 {
+                    exit_code: 127,
+                    detail: "missing_script".to_string(),
+                    elapsed_ms: 0,
+                    failure_kind: None,
+                })
+        }
+    }
+
     impl ScriptShadowAdapter {
         fn new(outcomes: &[(&str, i32, &str)]) -> Self {
             let mut map = std::collections::BTreeMap::new();
@@ -471,6 +626,7 @@ mod shadow_semantics {
                     ShadowCommandObservationV1 {
                         exit_code: *code,
                         detail: (*detail).to_string(),
+                        elapsed_ms: 1,
                         failure_kind: None,
                     },
                 );
@@ -492,11 +648,37 @@ mod shadow_semantics {
                 .unwrap_or(ShadowCommandObservationV1 {
                     exit_code: 127,
                     detail: "missing_script".to_string(),
+                    elapsed_ms: 0,
                     failure_kind: None,
                 })
         }
     }
 
+    fn full_audit_command() -> String {
+        sample_rule().full_audit_command
+    }
+
+    fn limited_evidence(subject_id: &str) -> VerificationAllocationSubjectEvidenceV1 {
+        let mut evidence = sample_evidence(subject_id);
+        evidence.evidence_strength = EvidenceStrengthV1::Limited;
+        evidence
+    }
+
+    fn entry_with_full_audit(subject_id: &str) -> ShadowSubjectManifestEntryV1 {
+        ShadowSubjectManifestEntryV1 {
+            subject_id: subject_id.to_string(),
+            full_verification_command: full_audit_command(),
+            evidence: sample_evidence(subject_id),
+        }
+    }
+
+    fn entry_with_command(subject_id: &str, command: &str) -> ShadowSubjectManifestEntryV1 {
+        ShadowSubjectManifestEntryV1 {
+            subject_id: subject_id.to_string(),
+            full_verification_command: command.to_string(),
+            evidence: limited_evidence(subject_id),
+        }
+    }
     fn sample_rule() -> VerificationAllocationRuleV1 {
         VerificationAllocationRuleV1 {
             rule_id: "rust-focused-clippy".to_string(),
@@ -554,23 +736,15 @@ mod shadow_semantics {
     #[test]
     fn verification_allocation_shadow_commits_recommendation_before_execution() -> Result<(), String>
     {
-        let manifest = sample_manifest(vec![ShadowSubjectManifestEntryV1 {
-            subject_id: "subject-a".to_string(),
-            full_verification_command: "cargo test -p xtask verification_allocation_shadow"
-                .to_string(),
-            evidence: sample_evidence("subject-a"),
-        }]);
+        let manifest = sample_manifest(vec![entry_with_full_audit("subject-a")]);
+        let command = full_audit_command();
         let options = VerificationAllocationShadowRunOptionsV1 {
             expected_tool_identity: manifest.tool_identity.clone(),
             ..Default::default()
         };
         let receipt = execute_verification_allocation_shadow(
             &manifest,
-            &ScriptShadowAdapter::new(&[(
-                "cargo test -p xtask verification_allocation_shadow",
-                0,
-                "clean",
-            )]),
+            &ScriptShadowAdapter::new(&[(&command, 0, "clean")]),
             &options,
         )?;
         assert_eq!(receipt.subjects.len(), 1);
@@ -611,16 +785,8 @@ mod shadow_semantics {
     #[test]
     fn verification_allocation_shadow_rejects_missing_subject_in_receipt() -> Result<(), String> {
         let manifest = sample_manifest(vec![
-            ShadowSubjectManifestEntryV1 {
-                subject_id: "subject-a".to_string(),
-                full_verification_command: "cmd-a".to_string(),
-                evidence: sample_evidence("subject-a"),
-            },
-            ShadowSubjectManifestEntryV1 {
-                subject_id: "subject-b".to_string(),
-                full_verification_command: "cmd-b".to_string(),
-                evidence: sample_evidence("subject-b"),
-            },
+            entry_with_command("subject-a", "cmd-a"),
+            entry_with_command("subject-b", "cmd-b"),
         ]);
         let mut receipt = VerificationAllocationShadowReceiptV1 {
             schema_version: VERIFICATION_ALLOCATION_SHADOW_SCHEMA_VERSION.to_string(),
@@ -638,12 +804,13 @@ mod shadow_semantics {
                 subject_id: "subject-a".to_string(),
                 recommendation: CommittedRecommendationV1 {
                     sequence: 1,
-                    decision: recommend_action(&manifest.policy, &sample_evidence("subject-a")),
+                    decision: recommend_action(&manifest.policy, &limited_evidence("subject-a")),
                     decision_digest: String::new(),
+                    commitment_digest: "committed".to_string(),
                     committed_before_execution: true,
                 },
                 full_verification: FullVerificationExecutionV1 {
-                    argv: vec!["cmd-a".to_string()],
+                    command_line: "cmd-a".to_string(),
                     working_directory: manifest.working_directory.clone(),
                     environment_class: manifest.environment_class.clone(),
                     tool_identity: manifest.tool_identity.clone(),
@@ -653,6 +820,8 @@ mod shadow_semantics {
                     elapsed_ms: 0,
                     retry_attempt: 0,
                     first_attempt_retained: true,
+                    first_attempt_exit_code: None,
+                    first_attempt_detail: String::new(),
                 },
             }],
             cleanup: ShadowCleanupRecordV1 {
@@ -692,6 +861,7 @@ mod shadow_semantics {
             let observation = ShadowCommandObservationV1 {
                 exit_code: 1,
                 detail: "synthetic".to_string(),
+                elapsed_ms: 0,
                 failure_kind: Some(kind),
             };
             assert_eq!(classify_terminal_state(&observation, 1), expected);
@@ -699,22 +869,29 @@ mod shadow_semantics {
         let build = ShadowCommandObservationV1 {
             exit_code: 101,
             detail: "build_failure".to_string(),
+            elapsed_ms: 0,
             failure_kind: None,
         };
         assert_eq!(
             classify_terminal_state(&build, 101),
             ShadowTerminalStateV1::BuildFailure
         );
+        let masked = ShadowCommandObservationV1 {
+            exit_code: 1,
+            detail: "no equivalent result: setup_failure".to_string(),
+            elapsed_ms: 0,
+            failure_kind: None,
+        };
+        assert_eq!(
+            classify_terminal_state(&masked, 1),
+            ShadowTerminalStateV1::SetupFailure
+        );
         Ok(())
     }
 
     #[test]
     fn verification_allocation_shadow_stale_policy_stops_before_execution() -> Result<(), String> {
-        let mut manifest = sample_manifest(vec![ShadowSubjectManifestEntryV1 {
-            subject_id: "subject-a".to_string(),
-            full_verification_command: "cmd-a".to_string(),
-            evidence: sample_evidence("subject-a"),
-        }]);
+        let mut manifest = sample_manifest(vec![entry_with_command("subject-a", "cmd-a")]);
         manifest.policy.semantic_digest = "stale".to_string();
         let options = VerificationAllocationShadowRunOptionsV1 {
             expected_tool_identity: manifest.tool_identity.clone(),
@@ -759,56 +936,52 @@ mod shadow_semantics {
     #[test]
     fn verification_allocation_shadow_recommendation_does_not_alter_full_command()
     -> Result<(), String> {
-        let manifest = sample_manifest(vec![ShadowSubjectManifestEntryV1 {
-            subject_id: "subject-a".to_string(),
-            full_verification_command: "cargo test -p xtask shadow".to_string(),
-            evidence: sample_evidence("subject-a"),
-        }]);
+        let command = "cargo  test -p xtask shadow".to_string();
+        let manifest = sample_manifest(vec![entry_with_command("subject-a", &command)]);
         let options = VerificationAllocationShadowRunOptionsV1 {
             expected_tool_identity: manifest.tool_identity.clone(),
             ..Default::default()
         };
         let receipt = execute_verification_allocation_shadow(
             &manifest,
-            &ScriptShadowAdapter::new(&[("cargo test -p xtask shadow", 0, "clean")]),
+            &ScriptShadowAdapter::new(&[(&command, 0, "clean")]),
             &options,
         )?;
-        assert_eq!(
-            receipt.subjects[0].full_verification.argv,
-            vec!["cargo", "test", "-p", "xtask", "shadow"]
-        );
+        assert_eq!(receipt.subjects[0].full_verification.command_line, command);
         Ok(())
     }
 
     #[test]
     fn verification_allocation_shadow_retry_retains_first_result() -> Result<(), String> {
-        let manifest = sample_manifest(vec![ShadowSubjectManifestEntryV1 {
-            subject_id: "subject-a".to_string(),
-            full_verification_command: "cmd-a".to_string(),
-            evidence: sample_evidence("subject-a"),
-        }]);
+        let manifest = sample_manifest(vec![entry_with_command("subject-a", "cmd-a")]);
         let options = VerificationAllocationShadowRunOptionsV1 {
             expected_tool_identity: manifest.tool_identity.clone(),
             ..Default::default()
         };
         let receipt = execute_verification_allocation_shadow_with_retry(
             &manifest,
-            &ScriptShadowAdapter::new(&[("cmd-a", 1, "product_failure")]),
+            &SequentialShadowAdapter::new(&[
+                observation(1, "product_failure"),
+                observation(0, "clean"),
+            ]),
             &options,
-            &["retry:cmd-a"],
+            true,
         )?;
         assert!(receipt.subjects[0].full_verification.first_attempt_retained);
         assert_eq!(receipt.subjects[0].full_verification.retry_attempt, 1);
+        assert_eq!(
+            receipt.subjects[0]
+                .full_verification
+                .first_attempt_exit_code,
+            Some(1)
+        );
+        assert_eq!(receipt.subjects[0].full_verification.exit_code, Some(0));
         Ok(())
     }
 
     #[test]
     fn verification_allocation_shadow_wrong_tool_identity_rejects() -> Result<(), String> {
-        let manifest = sample_manifest(vec![ShadowSubjectManifestEntryV1 {
-            subject_id: "subject-a".to_string(),
-            full_verification_command: "cmd-a".to_string(),
-            evidence: sample_evidence("subject-a"),
-        }]);
+        let manifest = sample_manifest(vec![entry_with_command("subject-a", "cmd-a")]);
         let options = VerificationAllocationShadowRunOptionsV1 {
             expected_tool_identity: "other-tool@sha256:dead".to_string(),
             ..Default::default()
@@ -827,11 +1000,7 @@ mod shadow_semantics {
 
     #[test]
     fn verification_allocation_shadow_cleanup_failure_is_non_green() -> Result<(), String> {
-        let manifest = sample_manifest(vec![ShadowSubjectManifestEntryV1 {
-            subject_id: "subject-a".to_string(),
-            full_verification_command: "cmd-a".to_string(),
-            evidence: sample_evidence("subject-a"),
-        }]);
+        let manifest = sample_manifest(vec![entry_with_command("subject-a", "cmd-a")]);
         let options = VerificationAllocationShadowRunOptionsV1 {
             expected_tool_identity: manifest.tool_identity.clone(),
             cleanup_succeeds: false,
@@ -853,11 +1022,7 @@ mod shadow_semantics {
     #[test]
     fn verification_allocation_shadow_equivalent_roots_preserve_portable_identity()
     -> Result<(), String> {
-        let manifest = sample_manifest(vec![ShadowSubjectManifestEntryV1 {
-            subject_id: "subject-a".to_string(),
-            full_verification_command: "cmd-a".to_string(),
-            evidence: sample_evidence("subject-a"),
-        }]);
+        let manifest = sample_manifest(vec![entry_with_command("subject-a", "cmd-a")]);
         assert_ne!(
             manifest.portable_root_identity,
             manifest.execution_root_identity
@@ -890,16 +1055,8 @@ mod shadow_semantics {
     fn verification_allocation_shadow_retains_failed_subjects_in_denominator() -> Result<(), String>
     {
         let manifest = sample_manifest(vec![
-            ShadowSubjectManifestEntryV1 {
-                subject_id: "subject-a".to_string(),
-                full_verification_command: "cmd-a".to_string(),
-                evidence: sample_evidence("subject-a"),
-            },
-            ShadowSubjectManifestEntryV1 {
-                subject_id: "subject-b".to_string(),
-                full_verification_command: "cmd-b".to_string(),
-                evidence: sample_evidence("subject-b"),
-            },
+            entry_with_command("subject-a", "cmd-a"),
+            entry_with_command("subject-b", "cmd-b"),
         ]);
         let options = VerificationAllocationShadowRunOptionsV1 {
             expected_tool_identity: manifest.tool_identity.clone(),
@@ -920,11 +1077,7 @@ mod shadow_semantics {
 
     #[test]
     fn verification_allocation_shadow_emits_no_savings_or_admission_claims() -> Result<(), String> {
-        let manifest = sample_manifest(vec![ShadowSubjectManifestEntryV1 {
-            subject_id: "subject-a".to_string(),
-            full_verification_command: "cmd-a".to_string(),
-            evidence: sample_evidence("subject-a"),
-        }]);
+        let manifest = sample_manifest(vec![entry_with_command("subject-a", "cmd-a")]);
         let options = VerificationAllocationShadowRunOptionsV1 {
             expected_tool_identity: manifest.tool_identity.clone(),
             ..Default::default()
@@ -950,12 +1103,32 @@ mod shadow_semantics {
     }
 
     #[test]
-    fn verification_allocation_shadow_does_not_skip_verification_work() -> Result<(), String> {
+    fn verification_allocation_shadow_rejects_targeted_manifest_full_command() -> Result<(), String>
+    {
         let manifest = sample_manifest(vec![ShadowSubjectManifestEntryV1 {
             subject_id: "subject-a".to_string(),
-            full_verification_command: "cmd-a".to_string(),
+            full_verification_command: sample_rule().targeted_command.clone(),
             evidence: sample_evidence("subject-a"),
         }]);
+        let options = VerificationAllocationShadowRunOptionsV1 {
+            expected_tool_identity: manifest.tool_identity.clone(),
+            ..Default::default()
+        };
+        if execute_verification_allocation_shadow(
+            &manifest,
+            &ScriptShadowAdapter::new(&[]),
+            &options,
+        )
+        .is_ok()
+        {
+            return Err("expected targeted manifest full command rejection".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn verification_allocation_shadow_does_not_skip_verification_work() -> Result<(), String> {
+        let manifest = sample_manifest(vec![entry_with_command("subject-a", "cmd-a")]);
         let options = VerificationAllocationShadowRunOptionsV1 {
             expected_tool_identity: manifest.tool_identity.clone(),
             ..Default::default()
