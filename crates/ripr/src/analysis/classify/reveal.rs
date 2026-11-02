@@ -155,6 +155,10 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// itself, else `None` (`builder_override::method_cannot_store`).
     pub(in crate::analysis) call_cannot_store:
         &'a dyn Fn(&str, &str, &str, &str) -> Option<EarlierWrite>,
+    /// #6991 / #7120: exact-equality `.any()` membership over a captured
+    /// `log::` sink the test installs before calling the owner.
+    pub(in crate::analysis) captured_log_exact_membership_confirms:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
 }
 
 #[cfg(test)]
@@ -196,6 +200,7 @@ fn reveal_evidence(
             owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
+            captured_log_exact_membership_confirms: &|_, _| false,
         },
         None,
     );
@@ -244,6 +249,7 @@ fn reveal_evidence_with_exit(
             owner_may_exit_before_probe,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
+            captured_log_exact_membership_confirms: &|_, _| false,
         },
         None,
     );
@@ -311,6 +317,7 @@ fn reveal_evidence_proximity_reach_pinning(
             owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
+            captured_log_exact_membership_confirms: &|_, _| false,
             out_parameter_read: &|_, _| None,
         },
         None,
@@ -2999,6 +3006,9 @@ fn analyze_related_assertions(
                                 || collection_argument_read
                                 || out_parameter_confirmed
                                 || recording_double_read
+                                || (return_admission.captured_log_exact_membership_confirms)(
+                                    test, assertion,
+                                )
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
@@ -6560,6 +6570,7 @@ mod tests {
             owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| true,
             call_cannot_store: &|_, _, _, _| Some(EarlierWrite::Reads),
+            captured_log_exact_membership_confirms: &|_, _| false,
         };
         let confirms = |test: &TestSummary| {
             keyed_field_read_confirms(
@@ -8033,6 +8044,7 @@ mod tests {
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         )
@@ -8132,6 +8144,7 @@ mod tests {
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    captured_log_exact_membership_confirms: &|_, _| false,
                 },
                 None,
             )
@@ -8318,6 +8331,7 @@ mod tests {
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    captured_log_exact_membership_confirms: &|_, _| false,
                 },
                 None,
             )
@@ -8431,6 +8445,7 @@ mod tests {
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    captured_log_exact_membership_confirms: &|_, _| false,
                 },
                 None,
                 None,
@@ -8857,6 +8872,7 @@ mod tests {
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -8952,6 +8968,7 @@ mod tests {
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -10762,6 +10779,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -10836,6 +10854,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -10881,6 +10900,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -10945,6 +10965,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -11011,6 +11032,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -11257,6 +11279,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -11305,6 +11328,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -11747,6 +11771,7 @@ return Err(\"typed pin\".into());
                         recording_double_observed: &|_, _| false,
                         expected_operand_value: &|_, _| None,
                         call_cannot_store: &|_, _, _, _| None,
+                        captured_log_exact_membership_confirms: &|_, _| false,
                         constructor_starts_empty: &|_, _, _| false,
                         owner_may_exit_before_probe: false,
                         owner_returns_value: true,
@@ -11830,6 +11855,7 @@ return Err(\"typed pin\".into());
                     recording_double_observed: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     call_cannot_store: &|_, _, _, _| None,
+                    captured_log_exact_membership_confirms: &|_, _| false,
                     constructor_starts_empty: &|_, _, _| false,
                     owner_may_exit_before_probe: false,
                     owner_returns_value: true,
@@ -11955,6 +11981,7 @@ return Err(\"typed pin\".into());
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    captured_log_exact_membership_confirms: &|_, _| false,
                 },
                 None,
             )
@@ -12294,6 +12321,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -12403,6 +12431,7 @@ return Err(\"typed pin\".into());
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    captured_log_exact_membership_confirms: &|_, _| false,
                 },
                 None,
             );
@@ -12455,6 +12484,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -12958,6 +12988,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -13509,6 +13540,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );

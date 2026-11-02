@@ -948,6 +948,7 @@ pub(crate) fn canonical_next_action_for_triage(
         check_item: triage.selected.map(|finding| finding.id.clone()),
         card_item: None,
         item_candidates: Vec::new(),
+        item_candidate_labels: Vec::new(),
         attempts: Vec::new(),
         // Finding currentness is enforced upstream by the triage candidate
         // filter; the check producer tracks no git-head axis here.

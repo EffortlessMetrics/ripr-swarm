@@ -191,6 +191,13 @@ jobs:
       # pwsh starts with both privileges disabled and its children inherit that,
       # so the deny is enforced and the tests establish their precondition. A
       # filter that matches nothing makes nextest exit nonzero.
+      # Two runs, the same package selections as the shard step above and in the
+      # reverse order (#12659). One `--workspace` run unifies features differently
+      # from `--workspace --exclude xtask` and rebuilt the workspace for 17 of this
+      # step's 20 minutes (run 41458879302), then timed out (run 41508421254). The
+      # workspace-minus-xtask run goes first because the shard step ended on it.
+      # The ripr tests matching ACL_TESTS and the xtask ones are both non-empty on
+      # Windows, so neither run is an empty filter.
       - name: Run the real-ACL tests outside bash (shard 1 only)
         if: ${{ !cancelled() && matrix.shard == 1 }}
         shell: pwsh
@@ -199,10 +206,14 @@ jobs:
         # lose acl.log.
         timeout-minutes: 20
         run: |
-          cargo nextest run --profile windows-advisory --workspace --no-fail-fast -E $env:ACL_TESTS *> target/acl.log
+          cargo nextest run --profile windows-advisory --workspace --exclude xtask --no-fail-fast -E $env:ACL_TESTS *> target/acl.log
           $code = $LASTEXITCODE
           # A failed spawn leaves $LASTEXITCODE null, which would exit 0.
           if ($null -eq $code) { $code = 1 }
+          cargo nextest run --profile windows-advisory -p xtask --no-fail-fast -E $env:ACL_TESTS *>> target/acl.log
+          $code2 = $LASTEXITCODE
+          if ($null -eq $code2) { $code2 = 1 }
+          if ($code -eq 0) { $code = $code2 }
           Set-Content target/acl.status $code
           Get-Content target/acl.log
           exit $code
