@@ -136,6 +136,41 @@ pub(crate) fn plain_stop_condition(text: &str) -> String {
     text.to_string()
 }
 
+/// Render-only plain wording for repair-card steps and next-action stops (#12214).
+///
+/// Producers in `output/python_repair_card.rs` and `app/repair_card.rs` keep
+/// the internal nouns for JSON, SARIF and agent DTOs. Human card surfaces
+/// substitute the glossary words (`spot`, `missing check`) on known producer
+/// phrases only; command spellings such as `--seam-id` stay unchanged.
+pub(crate) fn plain_repair_card_user_wording(text: &str) -> String {
+    let mut plain = plain_stop_condition(text);
+    const REPLACEMENTS: &[(&str, &str)] = &[
+        (
+            "no finding names this seam in the current analysis",
+            "no finding names this spot in the current analysis",
+        ),
+        (
+            "repair-packet eligibility for this seam",
+            "repair-packet eligibility for this spot",
+        ),
+        (
+            "repair readiness for this seam",
+            "repair readiness for this spot",
+        ),
+        (
+            "but the seam is repair-ready",
+            "but the spot is repair-ready",
+        ),
+        ("printed for this seam", "printed for this spot"),
+    ];
+    for (internal, replacement) in REPLACEMENTS {
+        if plain.contains(internal) {
+            plain = plain.replace(internal, replacement);
+        }
+    }
+    plain
+}
+
 /// #9244: the producer's reveal-stage summaries carry the machine marker
 /// `observation_unverified`, which consumers of the stage summary in JSON key
 /// on. The human window already says the same thing in words ("Discriminator

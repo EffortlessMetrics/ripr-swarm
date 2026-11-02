@@ -51,7 +51,9 @@ Exclude historical keys, obsolete schemas/builds, unreferenced generations,
 fingerprint mappings, locks, staging files and unrelated siblings. Membership
 is bounded by current paths and generations, not mtime or a fixed byte estimate.
 Formats and analysis limits remain unchanged. Recheck source/config key identity
-after copying before success.
+after copying before success; a refusal because inputs changed names which input
+moved (a key component such as the seam limit, Rust file contents, or the
+analyzed file list) so the cause can be diagnosed from the message alone.
 
 ## Ownership and restoration
 
