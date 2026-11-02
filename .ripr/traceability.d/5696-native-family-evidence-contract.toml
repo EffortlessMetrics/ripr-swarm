@@ -1,0 +1,18 @@
+# Registers the native-family evidence contract spec (#5696). Implementation and
+# corpus fixtures land in later epic slices; this PR registers the behavior and
+# repository policy surfaces only.
+[[behavior]]
+id = "RIPR-SPEC-0399"
+name = "Native translation-unit substrate and separate C/C++ evidence contracts"
+spec = "docs/specs/RIPR-SPEC-0399-native-family-evidence-contract.md"
+tests = [
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::spec_scope_files_add_in_scope_out_of_scope_and_unmeasured_specs",
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::spec_scope_files_fail_closed_on_a_wrong_name_a_missing_field_or_a_non_toml_entry",
+]
+code = []
+outputs = []
+metrics = [
+  "spec_format_pass_rate",
+  "spec_index_registration_complete",
+  "traceability_behavior_registered",
+]
