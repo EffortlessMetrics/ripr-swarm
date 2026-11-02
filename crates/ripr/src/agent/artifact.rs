@@ -602,6 +602,12 @@ fn producer_stamp_refusal(root: &Path, subject: &str, mismatch: &ProducerStampMi
     }
 }
 
+fn repo_exposure_parse_refusal(label: &str, err: impl std::fmt::Display) -> String {
+    format!(
+        "agent verify {label} artifact is not a canonical repo-exposure artifact: {err}; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
+    )
+}
+
 fn repo_exposure_cut_refusal(subject: &str, document: &Value) -> Option<String> {
     let cut = crate::output::repo_exposure::seam_limit_cut_controls(document);
     if crate::output::repo_exposure::is_byte_bounded_repo_exposure(document) {
@@ -625,9 +631,7 @@ pub(crate) fn validate_repo_exposure_artifact(
     let parsed_value = match serde_json::from_str::<Value>(raw) {
         Ok(document) => document,
         Err(err) => {
-            return Err(format!(
-                "agent verify {label} artifact is not a canonical repo-exposure artifact: {err}"
-            ));
+            return Err(repo_exposure_parse_refusal(label, err));
         }
     };
     if let Some(refusal) = repo_exposure_cut_refusal(&subject, &parsed_value) {
@@ -636,9 +640,8 @@ pub(crate) fn validate_repo_exposure_artifact(
     if let Some(mismatch) = producer_stamp_mismatch(&parsed_value) {
         return Err(producer_stamp_refusal(root, &subject, &mismatch));
     }
-    let document: RepoExposureDocument = serde_json::from_value(parsed_value).map_err(|err| {
-        format!("agent verify {label} artifact is not a canonical repo-exposure artifact: {err}")
-    })?;
+    let document: RepoExposureDocument = serde_json::from_value(parsed_value)
+        .map_err(|err| repo_exposure_parse_refusal(label, err))?;
     let RepoExposureDocument {
         schema_version,
         scope,
@@ -2841,6 +2844,13 @@ mod tests {
         if !error.contains("missing field") {
             return Err(format!(
                 "matching stamp must keep the canonical shape error: {error}"
+            ));
+        }
+        if !error.contains("regenerate the before snapshot")
+            || !error.contains("`ripr agent verify --help`")
+        {
+            return Err(format!(
+                "canonical shape error omitted the regenerate next step: {error}"
             ));
         }
         if error.contains("different ripr binary likely won PATH resolution")
