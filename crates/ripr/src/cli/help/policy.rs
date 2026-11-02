@@ -88,6 +88,10 @@ Options:
                                       Active exceptions and violations are reported in the
                                       gate-decision JSON and Markdown. A missing or malformed
                                       ledger is a config_error (fail-closed).
+  --acknowledgements PATH             Optional structured acknowledgement ledger (TOML,
+                                      schema_version = 1). Scoped rows bind to canonical_gap_id;
+                                      legacy labels retain global compatibility disclosure
+                                      (#1966).
   --mode MODE                         visible-only, acknowledgeable, baseline-check, or calibrated-gate. Defaults to visible-only.
   --acknowledgement-label LABEL       Repeatable acknowledgement label. Defaults to ripr-waive.
   --out PATH                          JSON output path. Defaults to target/ripr/reports/gate-decision.json.

@@ -1650,6 +1650,7 @@ mod tests {
             mode: crate::output::gate::GateMode::Acknowledgeable,
             acknowledgement_labels: Vec::new(),
             exception_policy: None,
+            acknowledgements: None,
         };
         let report = crate::output::gate::build_gate_decision_report(&input);
         let _ = fs::remove_dir_all(&root);
