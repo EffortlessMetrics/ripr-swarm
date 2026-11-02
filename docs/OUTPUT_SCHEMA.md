@@ -1052,8 +1052,20 @@ renderer consumes. The generic JSON renderer and unbounded `pr-evidence`
 path omit it because they lack navigation/provenance context and must not
 invent a committed-source default or executable route. Per-finding
 `suggested_next_action` advice stays compatible and is not this object.
-Unknown top-level fields are rejected by the verification contract. Nested
-finding and seam details may grow additively within the pinned version.
+Internal schema validation (`cargo xtask check-verification-contracts`)
+strictly verifies that ripr's emitted output conforms to the same-commit
+declared schema. That gate is repository-internal. External consumers (CI, editor integrations, and coding agents) must tolerate unknown top-level and nested fields within a pinned `schema_version`, because schema `0.2` grows
+additively without bumping `schema_version` (see the bump rule above).
+Strict JSON Schema validation is only sound when the schema file matches the
+ripr binary commit; a schema vendored at adoption time may reject legitimate
+additive output. The published `check.schema.json` sets
+`additionalProperties: false` for exhaustiveness at a pinned commit; it does
+not require consumers to hard-fail on unknown fields at runtime. Conditional
+top-level members already ship under `0.2` without a version bump, including
+`suppression_policy`, `language_runs`, `analysis_scope`, `scope_disclosures`,
+`unanalyzed_working_tree`, `preview_languages`, `finding_alignment`, and
+`test_harnesses`; nested `finding` and seam detail may grow additively within
+the pinned version the same way.
 
 Top-level `config_path` (RIPR-SPEC-0255, #7536) names the `ripr.toml` that
 governed the run, in the lossless stable path spelling used for `root`. It
@@ -17915,13 +17927,13 @@ budget; a changed seam the budget dropped is not in `repo-exposure.json` until
 `RIPR_PILOT_SEAM_BUDGET` is raised. When
 `top_recommendation_in_change` is `false`, the terminal and Markdown say why no
 seam on the change ranks (pilot withholds them, they are already gripped,
-intentional or suppressed, the seam limit left seams unanalyzed, the change is
+intentional or suppressed, the pilot limit left spots unchecked, the change is
 in a file pilot's repo-wide ranking leaves out by design such as a Cargo build
 script (#6944; a reason drawn from analyzed seams also names such a file when the change includes one), or no seam pilot analyzed is on a changed line; a reason drawn from analyzed seams adds the seam-limit
 caveat when the inventory limit left seams unanalyzed, the change touches a
 Rust file and pilot could not classify the change's own files past the limit,
 from an error or its deadline; #6943), say the
-recommendation is elsewhere in the repo and name `ripr check --root <root>` for
+gap is not on a line you changed and name `ripr check --root <root>` for
 the change itself, adding `--worktree` when the diff came from the working tree
 (plain `ripr check` reads committed history only). The partial (timeout) summary carries no `current_change`.
 
