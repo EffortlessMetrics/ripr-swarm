@@ -2157,6 +2157,22 @@ next = "agent/typed-command-spec-projections"
 metric = "command_spec_projection_accepted_routes, command_spec_projection_omitted_fail_closed, command_spec_projection_multi_route_arrays"
 
 [[capability]]
+id = "julia_preview_static_facts"
+name = "Julia preview static facts"
+status = "planned"
+spec = "RIPR-SPEC-0405"
+evidence = [
+  "docs/specs/RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md defines wire language julia, lang-julia feature gate, Project.toml/Manifest bounded project facts, source roles, method-signature owner identity, standard Test activation mapping through shared #5542 vocabulary, separate exact and approximate numerical and array shape/value/order/eltype/mutation facts, bounded oracle law through #5546, native ccall and GPU edges only through #5559, Julia-specific static_limit_kind tokens, and the soundness invariant that generic names, imports, deps, and native spellings cannot establish reach",
+  "docs/spec-index.d/RIPR-SPEC-0405.md registers the spec in the doc index",
+  ".ripr/traceability.d/5862-julia-preview-package-dispatch-test-boundaries.toml registers RIPR-SPEC-0405",
+  "docs/CAPABILITY_MATRIX.md lists julia_preview_static_facts as planned with no gate, badge, baseline, RIPR Zero, or repair-loop authority",
+  "Parent epic #5593 and issue #5862 acceptance: contract-only slice with positive and negative acceptance examples; implementation and judged corpora land in follow-on PRs",
+]
+fixtures = []
+next = "adr/julia-parser-substrate"
+metric = "language_adapter_julia_spec_registered"
+
+[[capability]]
 id = "source_role_authority"
 name = "Rust producer-owned source role"
 status = "alpha"

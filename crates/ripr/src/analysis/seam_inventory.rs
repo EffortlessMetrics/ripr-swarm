@@ -2266,6 +2266,44 @@ pub(crate) fn inventory_diff_scoped_streamed_seams_at_with_config(
     changed_owner_names: &[String],
     consumer: &mut dyn ScopedEvidenceConsumer,
 ) -> Result<ScopedClassifiedSeamInventory, String> {
+    inventory_diff_scoped_streamed_seams_with_optional_prepared(
+        root,
+        config,
+        changed_files,
+        changed_owner_names,
+        consumer,
+        None,
+    )
+}
+
+/// Diff-scoped streamed inventory with an optional prepared workspace (#4692).
+/// When `prepared` is `Some`, the workspace index is not built again.
+pub(crate) fn inventory_diff_scoped_streamed_seams_with_optional_prepared(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    changed_owner_names: &[String],
+    consumer: &mut dyn ScopedEvidenceConsumer,
+    prepared: Option<&PreparedDiffScopedClassifiedWorkspace>,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    if let Some(prepared) = prepared {
+        let absent_changed_files = workspace::changed_source_files_absent_from_worktree(
+            root,
+            changed_files.iter().map(PathBuf::as_path),
+        );
+        return evaluate_diff_scoped_classified_seams_from_prepared(
+            prepared,
+            PreparedDiffScopedEvaluationInput {
+                changed_files,
+                changed_owner_names,
+                absent_changed_files,
+                with_repo_seam_limit: false,
+                stages: None,
+                consumer: Some((consumer, review_evidence_window_size()?)),
+                cache_stats: DiffScopedCacheStatsAttribution::Omit,
+            },
+        );
+    }
     inventory_diff_scoped_classified_seams_inner(
         root,
         config,
@@ -7109,6 +7147,61 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         }
         if shared_b.file_fact_cache.hits != 0 || shared_b.file_fact_cache.misses != 0 {
             return Err("secondary scope evaluations must omit duplicated file-fact stats".into());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn optional_prepared_streamed_inventory_skips_second_preparation() -> Result<(), String> {
+        let root = make_tempdir("optional-prepared-streamed")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"prep4692\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n",
+        )?;
+        write_file(
+            &root.join("tests/it.rs"),
+            "use prep4692::discount;\n\n#[test]\nfn integration() {\n    assert_eq!(discount(200), 20);\n}\n",
+        )?;
+        let config = RiprConfig::default();
+        let changed_files = vec![PathBuf::from("src/lib.rs")];
+        let changed_owners = vec!["discount".to_string()];
+        let prepared = prepare_diff_scoped_classified_workspace(&root, &config, None)?;
+        struct NoopConsumer;
+        impl ScopedEvidenceConsumer for NoopConsumer {
+            fn in_first_stage(&self, _seam: &RepoSeam) -> bool {
+                true
+            }
+            fn observe(&mut self, _ordinal: usize, _entry: ClassifiedSeam) -> Result<(), String> {
+                Ok(())
+            }
+            fn first_stage_sufficient(&self) -> bool {
+                false
+            }
+            fn retained_payloads(&self) -> usize {
+                0
+            }
+        }
+        let (inventory, builds) = diff_scoped_preparation_probe::observe(|| {
+            let mut consumer = NoopConsumer;
+            inventory_diff_scoped_streamed_seams_with_optional_prepared(
+                &root,
+                &config,
+                &changed_files,
+                &changed_owners,
+                &mut consumer,
+                Some(&prepared),
+            )
+        });
+        inventory?;
+        if builds != 0 {
+            return Err(format!(
+                "prepared handoff must not rebuild the workspace index, got {builds} preparations"
+            ));
         }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
