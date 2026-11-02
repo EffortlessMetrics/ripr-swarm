@@ -203,8 +203,6 @@ pub struct ChangeVerificationPlanV1 {
 
 impl ChangeVerificationPlanV1 {
     pub fn digest_matches(&self) -> bool {
-        !self.semantic_digest.is_empty()
-            && !self.plan_id.is_empty()
-            && self.semantic_digest == self.plan_id
+        crate::change_verification_plan_digest::change_verification_plan_integrity_matches(self)
     }
 }

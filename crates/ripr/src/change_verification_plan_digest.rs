@@ -60,6 +60,13 @@ fn hex_sha256(bytes: &[u8]) -> String {
     hex
 }
 
+pub(crate) fn change_verification_plan_integrity_matches(plan: &ChangeVerificationPlanV1) -> bool {
+    change_verification_plan_semantic_digest(plan)
+        .ok()
+        .is_some_and(|digest| {
+            !digest.is_empty() && digest == plan.semantic_digest && digest == plan.plan_id
+        })
+}
 pub(crate) fn normalize_portable_path(path: &str) -> String {
     path.replace('\\', "/")
 }

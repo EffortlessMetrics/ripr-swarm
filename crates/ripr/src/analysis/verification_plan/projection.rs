@@ -37,12 +37,7 @@ pub(crate) fn project_plan_from_finding(
         witness,
         changed_subject_from_finding(finding),
         finding_related_tests(finding),
-        &finding
-            .probe
-            .expected_sinks
-            .first()
-            .cloned()
-            .unwrap_or_default(),
+        finding.oracle_alignment.as_deref(),
     )
 }
 
@@ -55,6 +50,7 @@ pub(crate) fn project_plan_from_classified_seam(
         ChangeVerificationPlanTestIdentity,
         RelationReason,
         OracleStrength,
+        crate::domain::OracleKind,
         bool,
     )> = seam
         .evidence
@@ -65,6 +61,7 @@ pub(crate) fn project_plan_from_classified_seam(
                 grip_test_identity(grip),
                 grip.relation_reason,
                 grip.oracle_strength.clone(),
+                grip.oracle_kind.clone(),
                 grip.test_target.is_some(),
             )
         })
@@ -74,7 +71,7 @@ pub(crate) fn project_plan_from_classified_seam(
         witness,
         changed_subject_from_seam(seam),
         tests,
-        &seam.seam.expected_sink().as_str().to_string(),
+        None,
     )
 }
 
@@ -86,9 +83,10 @@ fn project_plan_from_witness_and_tests(
         ChangeVerificationPlanTestIdentity,
         RelationReason,
         OracleStrength,
+        crate::domain::OracleKind,
         bool,
     )>,
-    expected_sink: &str,
+    sink_alignment: Option<&str>,
 ) -> Result<ChangeVerificationPlanV1, String> {
     let limitations = witness.limitations.clone();
     let mut non_claims = witness.non_claims.clone();
@@ -106,7 +104,7 @@ fn project_plan_from_witness_and_tests(
     let mut impacted_tests = Vec::new();
     let mut validating_tests = Vec::new();
 
-    for (test, reason, strength, has_target) in tests {
+    for (test, reason, strength, oracle_kind, has_target) in tests {
         let evidence_class = classify_relation_evidence(reason);
         if evidence_class.may_authorize_exclusion() {
             return Err("plan projection attempted to authorize exclusion".to_string());
@@ -138,14 +136,14 @@ fn project_plan_from_witness_and_tests(
                 relation_basis: reason.as_str().to_string(),
                 path_identities: Vec::new(),
                 base_presence: "unknown".to_string(),
-                head_presence: "present".to_string(),
+                head_presence: "unknown".to_string(),
                 target_state: "inspect_only".to_string(),
                 currentness: input_currentness_label(input.adapter_input.currentness),
                 applicability: "inspect_only".to_string(),
             });
         }
 
-        if qualifies_as_validating(reason, &strength, expected_sink, &stages) {
+        if qualifies_as_validating(reason, &strength, sink_alignment, &stages) {
             validating_tests.push(ChangeVerificationPlanValidatingTest {
                 test,
                 validated_subjects: changed_subjects
@@ -153,9 +151,9 @@ fn project_plan_from_witness_and_tests(
                     .map(|subject| subject.subject_identity.clone())
                     .collect(),
                 stages: stages.clone(),
-                oracle_kind: reason.as_str().to_string(),
+                oracle_kind: oracle_kind.as_str().to_string(),
                 oracle_strength: strength.as_str().to_string(),
-                oracle_alignment: oracle_alignment_label(reason, expected_sink),
+                oracle_alignment: oracle_alignment_label(sink_alignment),
                 first_unresolved_edge: witness
                     .earliest_unresolved_edge
                     .as_ref()
@@ -256,7 +254,7 @@ pub(crate) fn classify_relation_evidence(reason: RelationReason) -> PlanRelation
 pub(crate) fn qualifies_as_validating(
     reason: RelationReason,
     strength: &OracleStrength,
-    expected_sink: &str,
+    sink_alignment: Option<&str>,
     stages: &ChangeVerificationPlanStageStates,
 ) -> bool {
     if !matches!(
@@ -268,26 +266,25 @@ pub(crate) fn qualifies_as_validating(
     if !matches!(strength, OracleStrength::Strong | OracleStrength::Medium) {
         return false;
     }
-    if oracle_alignment_label(reason, expected_sink) != "observes_expected_sink" {
+    if !producer_sink_alignment_establishes_validation(sink_alignment) {
         return false;
     }
-    stages.reach == "yes" && stages.observe == "yes" && stages.discriminate != "no"
+    stages.reach == "yes"
+        && stages.activate == "yes"
+        && stages.propagate == "yes"
+        && stages.observe == "yes"
+        && stages.discriminate == "yes"
 }
 
-pub(crate) fn oracle_alignment_label(reason: RelationReason, expected_sink: &str) -> String {
-    if expected_sink.trim().is_empty() {
-        return "sink_unspecified".to_string();
-    }
-    if matches!(
-        reason,
-        RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
-    ) {
-        "observes_expected_sink".to_string()
-    } else {
-        format!(
-            "impacted_at_most:wrong_or_weak_relation:{}",
-            reason.as_str()
-        )
+fn producer_sink_alignment_establishes_validation(alignment: Option<&str>) -> bool {
+    matches!(alignment, Some("direct") | Some("changed_sink_token"))
+}
+
+pub(crate) fn oracle_alignment_label(sink_alignment: Option<&str>) -> String {
+    match sink_alignment {
+        Some("direct") | Some("changed_sink_token") => "observes_expected_sink".to_string(),
+        Some(value) => format!("impacted_at_most:producer_alignment:{value}"),
+        None => "impacted_at_most:sink_alignment_unspecified".to_string(),
     }
 }
 
@@ -319,7 +316,7 @@ fn derive_completeness(
 ) -> ChangeVerificationPlanCompleteness {
     let stale = !matches!(currentness, InputCurrentness::Current);
     let unsupported = limitations.iter().any(|item| item.contains("unsupported"));
-    let limited = !uncovered.is_empty() || !widened.is_empty() || stale;
+    let limited = !uncovered.is_empty() || !widened.is_empty() || stale || !limitations.is_empty();
     let not_proven = stale || unsupported || limited;
     ChangeVerificationPlanCompleteness {
         complete_for_declared_model: false,
@@ -405,19 +402,23 @@ fn finding_related_tests(
     ChangeVerificationPlanTestIdentity,
     RelationReason,
     OracleStrength,
+    crate::domain::OracleKind,
     bool,
 )> {
     finding
         .related_tests
         .iter()
-        .filter_map(|test| {
-            let reason = test.relation_reason?;
-            Some((
+        .map(|test| {
+            let reason = test
+                .relation_reason
+                .unwrap_or(RelationReason::WeakTokenSubstring);
+            (
                 related_test_identity(test),
                 reason,
                 test.oracle_strength.clone(),
+                test.oracle_kind.clone(),
                 false,
-            ))
+            )
         })
         .collect()
 }
@@ -461,6 +462,8 @@ pub(crate) fn finalize_plan(plan: &mut ChangeVerificationPlanV1) -> Result<(), S
     plan.non_claims.dedup();
     plan.completeness.unsupported_families.sort();
     plan.completeness.unsupported_families.dedup();
+    plan.commands
+        .sort_by(|left, right| left.command_id.cmp(&right.command_id));
     let digest = change_verification_plan_semantic_digest(plan)?;
     plan.semantic_digest = digest.clone();
     plan.plan_id = digest;
