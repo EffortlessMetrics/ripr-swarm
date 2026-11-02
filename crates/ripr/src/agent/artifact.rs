@@ -523,6 +523,15 @@ fn legacy_repo_exposure_refusal(root: &Path, subject: &str, produced_schema: &st
     )
 }
 
+fn legacy_check_findings_refusal(root: &Path, subject: &str, produced_schema: &str) -> String {
+    format!(
+        "{subject} is not a canonical check-findings artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} check-findings contract. {}. {}; the legacy artifact was not accepted",
+        env!("CARGO_PKG_VERSION"),
+        producer_substitution_clause("legacy/unknown RIPR", produced_schema),
+        recovery_advice(root, subject),
+    )
+}
+
 fn foreign_producer_refusal(root: &Path, subject: &str, produced_by: &str) -> String {
     foreign_producer_refusal_with_schema(
         root,
@@ -599,6 +608,19 @@ fn producer_stamp_refusal(root: &Path, subject: &str, mismatch: &ProducerStampMi
             foreign_producer_refusal_with_schema(root, subject, version, &mismatch.produced_schema)
         }
         None => legacy_repo_exposure_refusal(root, subject, &mismatch.produced_schema),
+    }
+}
+
+fn check_findings_producer_stamp_refusal(
+    root: &Path,
+    subject: &str,
+    mismatch: &ProducerStampMismatch,
+) -> String {
+    match mismatch.produced_by.as_deref() {
+        Some(version) => {
+            foreign_producer_refusal_with_schema(root, subject, version, &mismatch.produced_schema)
+        }
+        None => legacy_check_findings_refusal(root, subject, &mismatch.produced_schema),
     }
 }
 
@@ -773,6 +795,10 @@ pub(crate) fn validate_check_findings_artifact(
     raw: &str,
     label: &str,
 ) -> Result<ValidatedCheckFindings, String> {
+    let subject = format!("agent verify {label} artifact");
+    let parsed_value = serde_json::from_str::<Value>(raw)
+        .map_err(|err| check_findings_parse_refusal(label, err))?;
+    refuse_check_findings_producer_stamp_before_shape(root, &subject, &parsed_value)?;
     let CheckFindingsDocument {
         artifact: identity,
         analysis_outcome,
@@ -780,7 +806,8 @@ pub(crate) fn validate_check_findings_artifact(
         run_limitations,
         findings,
         ..
-    } = parse_check_findings_document(raw, label)?;
+    } = serde_json::from_value(parsed_value)
+        .map_err(|err| check_findings_parse_refusal(label, err))?;
     let artifact =
         validate_artifact_identity(root, raw, label, identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
     check_findings_run_is_whole(label, analysis_scope.as_ref(), run_limitations.as_deref())?;
@@ -788,10 +815,23 @@ pub(crate) fn validate_check_findings_artifact(
     Ok(ValidatedCheckFindings { artifact, gaps })
 }
 
-fn parse_check_findings_document(raw: &str, label: &str) -> Result<CheckFindingsDocument, String> {
-    let document: CheckFindingsDocument = serde_json::from_str(raw).map_err(|err| {
-        format!("agent verify {label} artifact is not a canonical check-findings artifact: {err}")
-    })?;
+fn check_findings_parse_refusal(label: &str, err: impl std::fmt::Display) -> String {
+    format!(
+        "agent verify {label} artifact is not a canonical check-findings artifact: {err}; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
+    )
+}
+
+fn parse_check_findings_document(
+    root: &Path,
+    raw: &str,
+    label: &str,
+) -> Result<CheckFindingsDocument, String> {
+    let subject = format!("agent verify {label} artifact");
+    let parsed_value = serde_json::from_str::<Value>(raw)
+        .map_err(|err| check_findings_parse_refusal(label, err))?;
+    refuse_check_findings_producer_stamp_before_shape(root, &subject, &parsed_value)?;
+    let document: CheckFindingsDocument = serde_json::from_value(parsed_value)
+        .map_err(|err| check_findings_parse_refusal(label, err))?;
     if document.schema_version.trim().is_empty() {
         return Err(format!(
             "agent verify {label} artifact has an empty check schema version"
@@ -822,7 +862,7 @@ pub(crate) fn validate_issued_check_findings_commitment(
         run_limitations,
         findings,
         ..
-    } = parse_check_findings_document(raw, label)?;
+    } = parse_check_findings_document(root, raw, label)?;
     validate_artifact_identity_shape(label, &identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
     if identity.producer.version != recorded_producer_version {
         return Err(format!(
@@ -1282,6 +1322,69 @@ fn is_unversioned_repo_exposure_value(document: &Value) -> bool {
         return false;
     };
     !map.contains_key("artifact") && repo_exposure_shape_markers(document)
+}
+
+/// Top-level markers of a check-findings document. Repo-exposure documents also
+/// carry `schema_version`, so the `findings` array and absence of repo scope
+/// distinguish the two before typed deserialization (#5115).
+fn check_findings_shape_markers(document: &Value) -> bool {
+    document.get("schema_version").is_some_and(Value::is_string)
+        && document.get("findings").is_some_and(Value::is_array)
+        && document.get("scope").is_none()
+}
+
+fn is_unversioned_check_findings_value(document: &Value) -> bool {
+    let Value::Object(map) = document else {
+        return false;
+    };
+    !map.contains_key("artifact") && check_findings_shape_markers(document)
+}
+
+/// Peek producer identity on a check-findings document before the full typed
+/// shape is deserialized (#5115 consume-path parity with repo-exposure).
+fn check_findings_producer_stamp_mismatch(document: &Value) -> Option<ProducerStampMismatch> {
+    if !check_findings_shape_markers(document) {
+        return None;
+    }
+    if is_unversioned_check_findings_value(document) {
+        return Some(ProducerStampMismatch {
+            produced_by: None,
+            produced_schema: document
+                .get("schema_version")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+        });
+    }
+    let producer = document.get("artifact")?.get("producer")?;
+    if producer.get("tool").and_then(Value::as_str) != Some("ripr") {
+        return None;
+    }
+    let version = producer.get("version")?.as_str()?;
+    if version.trim().is_empty() || version == env!("CARGO_PKG_VERSION") {
+        return None;
+    }
+    Some(ProducerStampMismatch {
+        produced_by: Some(version.to_string()),
+        produced_schema: document
+            .get("schema_version")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+    })
+}
+
+fn refuse_check_findings_producer_stamp_before_shape(
+    root: &Path,
+    subject: &str,
+    document: &Value,
+) -> Result<(), String> {
+    if let Some(mismatch) = check_findings_producer_stamp_mismatch(document) {
+        return Err(check_findings_producer_stamp_refusal(
+            root, subject, &mismatch,
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2858,6 +2961,52 @@ mod tests {
         {
             return Err(format!(
                 "matching stamp was misclassified as substitution: {error}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #5115: check-findings consume path peeks producer identity before typed
+    /// deserialize, like repo-exposure.
+    #[test]
+    fn check_findings_older_producer_stamp_names_substitution_not_missing_field()
+    -> Result<(), String> {
+        let raw = r#"{"schema_version":"0.2","findings":[],"artifact":{"kind":"check_findings","producer":{"tool":"ripr","version":"0.10.0"}}}"#;
+        let error = validate_check_findings_artifact(Path::new("."), raw, "before")
+            .err()
+            .ok_or("older check-findings producer stamp was accepted")?;
+        if !error.contains("produced by RIPR 0.10.0") {
+            return Err(format!("older stamp omitted producer version: {error}"));
+        }
+        assert_producer_substitution_diagnostic(&error, "ripr 0.10.0", "0.2")?;
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_check_findings_without_envelope_names_substitution() -> Result<(), String> {
+        let raw = r#"{"schema_version":"0.2","findings":[]}"#;
+        let error = validate_check_findings_artifact(Path::new("."), raw, "before")
+            .err()
+            .ok_or("legacy check-findings artifact was accepted")?;
+        if !error.contains("check-findings artifact") {
+            return Err(format!("legacy refusal omitted format name: {error}"));
+        }
+        assert_producer_substitution_diagnostic(&error, "legacy/unknown RIPR", "0.2")?;
+        Ok(())
+    }
+
+    #[test]
+    fn check_findings_matching_producer_stamp_keeps_canonical_shape_errors() -> Result<(), String> {
+        let version = env!("CARGO_PKG_VERSION");
+        let raw = format!(
+            r#"{{"schema_version":"0.2","findings":[],"artifact":{{"kind":"check_findings","producer":{{"tool":"ripr","version":"{version}"}}}}}}"#
+        );
+        let error = validate_check_findings_artifact(Path::new("."), &raw, "before")
+            .err()
+            .ok_or("incomplete matching check-findings stamp was accepted")?;
+        if !error.contains("missing field") {
+            return Err(format!(
+                "matching check-findings stamp must keep the canonical shape error: {error}"
             ));
         }
         Ok(())
