@@ -88,6 +88,10 @@ rustpython-parser = { version = "0.4", optional = true, default-features = false
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 sha2 = "0.10"
+# Optional SCIP index admission (#8115): decode user-supplied indexes only;
+# no indexer or network is invoked at runtime.
+prost = "0.13"
+bytes = "1"
 toml = "1"
 unicode-segmentation = "=1.13.3"
 unicode-width = "=0.2.2"
