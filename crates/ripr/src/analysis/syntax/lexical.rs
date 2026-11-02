@@ -82,7 +82,9 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
         }
         if trimmed.starts_with("#[test]")
             || trimmed.starts_with("#[tokio::test")
+            || trimmed.starts_with("#[::tokio::test")
             || trimmed.starts_with("#[async_std::test")
+            || trimmed.starts_with("#[::async_std::test")
             || trimmed.starts_with("#[rstest")
         {
             pending_test = true;

@@ -3371,6 +3371,26 @@ fn a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it() {
 }
 
 #[test]
+fn an_async_std_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
+    for attributes in ["#[async_std::test]", "#[::async_std::test]"] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        "#[async_std::test(flavor = \"multi_thread\")]",
+        "mod async_std { pub use other::test; }\n#[async_std::test]",
+        "use other as async_std;\n#[async_std::test]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+}
+
+#[test]
 fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
     for attributes in [
         "#[tokio::test]",
@@ -3387,7 +3407,6 @@ fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
     for attributes in [
         // Another crate's runtime path, and arguments that change what runs.
         "#[test]",
-        "#[async_std::test]",
         "#[tokio::test(crate = \"other\")]",
         "#[tokio::test(flavor = \"current_thread\", unhandled_panic = \"shutdown_runtime\")]",
         "#[tokio::test(flavor = some_flavor())]",
