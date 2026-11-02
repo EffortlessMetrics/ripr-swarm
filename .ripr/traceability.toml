@@ -585,6 +585,7 @@ tests = [
   "crates/ripr/src/analysis/syntax/source_snapshot.rs::tests::source_snapshot_keeps_same_line_lexical_ambiguity_and_scope_refusals",
   "crates/ripr/src/analysis/syntax/source_snapshot.rs::tests::source_snapshot_replacement_clone_and_removal_cannot_reuse_stale_facts",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_receiver_corpus_boundary_and_live_scope",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::receiver_binding_respects_block_scope_closure_for_and_assoc_consts",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::unique_inherent_receiver_refuses_decoys_in_full_and_compact_repo_evidence",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::public_inherent_receiver_keeps_cross_target_full_and_compact_repo_evidence",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::inherent_receiver_review_last_hop_and_wrapper_controls",

@@ -24,7 +24,7 @@ use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphSta
 use crate::domain::{Probe, RelationConfidence, RelationReason};
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
-    ast::{self, HasArgList, HasName},
+    ast::{self, HasArgList, HasLoopBody, HasName},
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -4133,40 +4133,32 @@ fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
     last
 }
 
-/// Innermost `{ .. }` block containing byte `pos`, as `(open, close)` indices.
-fn block_enclosing(body: &str, pos: usize) -> Option<(usize, usize)> {
-    let bytes = body.as_bytes();
-    let mut stack = Vec::new();
-    for (index, &byte) in bytes.iter().enumerate().take(pos) {
-        match byte {
-            b'{' => stack.push(index),
-            b'}' => {
-                stack.pop();
-            }
-            _ => {}
-        }
-    }
-    let open = *stack.last()?;
-    let mut depth = 0i32;
-    for (index, &byte) in bytes.iter().enumerate().skip(open) {
-        match byte {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some((open, index));
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn let_binding_in_scope_at(full_body: &str, let_at: usize, call_at: usize) -> bool {
-    match block_enclosing(full_body, let_at) {
-        Some((_, close)) => close >= call_at,
-        None => true,
+fn let_binding_in_scope_at(parse_body: &str, let_at: usize, call_at: usize) -> bool {
+    const WRAPPER: &str = "fn ripr_receiver_scope() {\n";
+    let source = format!("{WRAPPER}{parse_body}\n}}");
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return true;
+    };
+    let syntax = parse.tree().syntax().clone();
+    let offset = WRAPPER.len() + let_at;
+    let token = syntax
+        .token_at_offset((offset as u32).into())
+        .right_biased()
+        .or_else(|| syntax.token_at_offset((offset as u32).into()).left_biased());
+    let Some(token) = token else {
+        return true;
+    };
+    let block = token
+        .parent()
+        .into_iter()
+        .flat_map(|node| node.ancestors())
+        .find_map(ast::BlockExpr::cast);
+    if let Some(block) = block {
+        let range = block.syntax().text_range();
+        let call_offset = (WRAPPER.len() + call_at) as u32;
+        call_offset >= u32::from(range.start()) && call_offset <= u32::from(range.end())
+    } else {
+        true
     }
 }
 
@@ -4187,48 +4179,78 @@ fn ident_pat_binds_name(pattern: Option<ast::Pat>, name: &str) -> bool {
 
 /// Whether a closure/`for`/`match` binding or `if let` guard shadows `name`
 /// at the call site used by the text receiver matcher (#6858).
-fn receiver_binding_shadowed_at(body: &str, name: &str, call_at: usize) -> bool {
+fn receiver_binding_shadowed_at(parse_body: &str, name: &str, call_at: usize) -> bool {
     const WRAPPER: &str = "fn ripr_receiver_scope() {\n";
-    let source = format!("{WRAPPER}{body}\n}}");
-    let offset = WRAPPER.len() + call_at.min(body.len());
+    let source = format!("{WRAPPER}{parse_body}\n}}");
+    let offset = WRAPPER.len() + call_at.min(parse_body.len());
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&source) else {
-        return false;
+        return true;
     };
     let syntax = parse.tree().syntax().clone();
+    let offset_u32 = offset as u32;
     let token = syntax
-        .token_at_offset((offset as u32).into())
+        .token_at_offset(offset_u32.into())
         .right_biased()
-        .or_else(|| syntax.token_at_offset((offset as u32).into()).left_biased());
+        .or_else(|| syntax.token_at_offset(offset_u32.into()).left_biased());
     let Some(token) = token else {
-        return false;
+        return true;
     };
-    for ancestor in token
-        .parent()
-        .into_iter()
-        .flat_map(|node| node.ancestors().skip(1))
-    {
-        if ast::ClosureExpr::cast(ancestor.clone()).is_some_and(|closure| {
-            closure.param_list().is_some_and(|list| {
+    for ancestor in token.parent().into_iter().flat_map(|node| node.ancestors()) {
+        if let Some(closure) = ast::ClosureExpr::cast(ancestor.clone())
+            && closure.param_list().is_some_and(|list| {
                 list.params()
                     .any(|param| ident_pat_binds_name(param.pat(), name))
             })
-        }) || ast::ForExpr::cast(ancestor.clone())
-            .is_some_and(|for_loop| ident_pat_binds_name(for_loop.pat(), name))
-            || ast::MatchArm::cast(ancestor.clone())
-                .is_some_and(|arm| ident_pat_binds_name(arm.pat(), name))
+            && closure.body().is_some_and(|body| {
+                let body_range = body.syntax().text_range();
+                offset_u32 >= u32::from(body_range.start())
+                    && offset_u32 <= u32::from(body_range.end())
+            })
         {
             return true;
         }
-        let condition = ast::IfExpr::cast(ancestor.clone())
-            .and_then(|node| node.condition())
-            .or_else(|| ast::WhileExpr::cast(ancestor.clone()).and_then(|node| node.condition()));
-        if condition.is_some_and(|condition| {
-            condition
-                .syntax()
-                .descendants()
-                .filter_map(ast::LetExpr::cast)
-                .any(|binding| ident_pat_binds_name(binding.pat(), name))
-        }) {
+        if let Some(for_loop) = ast::ForExpr::cast(ancestor.clone())
+            && ident_pat_binds_name(for_loop.pat(), name)
+            && for_loop.loop_body().is_some_and(|body| {
+                let body_range = body.syntax().text_range();
+                offset_u32 >= u32::from(body_range.start())
+                    && offset_u32 <= u32::from(body_range.end())
+            })
+        {
+            return true;
+        }
+        if let Some(arm) = ast::MatchArm::cast(ancestor.clone())
+            && ident_pat_binds_name(arm.pat(), name)
+        {
+            return true;
+        }
+        if let Some(if_expr) = ast::IfExpr::cast(ancestor.clone())
+            && if_expr.condition().is_some_and(|condition| {
+                condition
+                    .syntax()
+                    .descendants()
+                    .filter_map(ast::LetExpr::cast)
+                    .any(|binding| ident_pat_binds_name(binding.pat(), name))
+            })
+        {
+            if if_expr.else_branch().is_some_and(|else_branch| {
+                let else_range = else_branch.syntax().text_range();
+                offset_u32 >= u32::from(else_range.start())
+                    && offset_u32 <= u32::from(else_range.end())
+            }) {
+                continue;
+            }
+            return true;
+        }
+        if let Some(while_expr) = ast::WhileExpr::cast(ancestor.clone())
+            && while_expr.condition().is_some_and(|condition| {
+                condition
+                    .syntax()
+                    .descendants()
+                    .filter_map(ast::LetExpr::cast)
+                    .any(|binding| ident_pat_binds_name(binding.pat(), name))
+            })
+        {
             return true;
         }
     }
@@ -4239,6 +4261,7 @@ fn receiver_binding_shadowed_at(body: &str, name: &str, call_at: usize) -> bool 
 fn live_let_statement_before<'a>(
     prefix: &'a str,
     full_body: &'a str,
+    parse_body: &str,
     name: &str,
     call_at: usize,
 ) -> Option<&'a str> {
@@ -4272,7 +4295,7 @@ fn live_let_statement_before<'a>(
                 .find(';')
                 .map(|offset| i + offset)
                 .unwrap_or(before);
-            if stmt_end >= before || !let_binding_in_scope_at(full_body, let_at, call_at) {
+            if stmt_end >= before || !let_binding_in_scope_at(parse_body, let_at, call_at) {
                 search = let_at + 1;
                 continue;
             }
@@ -4335,22 +4358,29 @@ pub(in crate::analysis) fn let_binding_mentions_type(
     binding: &str,
     type_name: &str,
 ) -> bool {
-    let_binding_mentions_type_at(body, body, body.len(), binding, type_name)
+    let_binding_mentions_type_at(body, body, body, body.len(), binding, type_name)
 }
 
 fn let_binding_mentions_type_at(
     prefix: &str,
     full_body: &str,
+    parse_body: &str,
     call_at: usize,
     binding: &str,
     type_name: &str,
 ) -> bool {
-    if receiver_binding_shadowed_at(full_body, binding, call_at.saturating_sub(1)) {
+    if receiver_binding_shadowed_at(parse_body, binding, call_at.saturating_sub(1)) {
         return false;
     }
-    live_let_statement_before(prefix, full_body, binding, call_at)
-        .and_then(let_statement_type_head)
-        .is_some_and(|head| head == type_name)
+    live_let_statement_before(prefix, full_body, parse_body, binding, call_at).is_some_and(|stmt| {
+        if let Some(head) = let_statement_type_head(stmt) {
+            head == type_name
+        } else if let Some(eq) = stmt.find('=') {
+            stmt[..eq].find(':').is_none() && literal_type_head(&stmt[eq + 1..]) == Some(type_name)
+        } else {
+            false
+        }
+    })
 }
 
 fn let_statement_type_head(stmt: &str) -> Option<&str> {
@@ -4771,6 +4801,7 @@ fn text_resolves_method_to_type(
     impl_type: &str,
     impl_trait: Option<&str>,
     body_for_lets: &str,
+    scope_body: &str,
     whole_body: bool,
 ) -> bool {
     let bytes = text.as_bytes();
@@ -4811,6 +4842,7 @@ fn text_resolves_method_to_type(
                                 impl_type,
                                 body_for_lets,
                                 text,
+                                scope_body,
                                 at,
                             )))
                 {
@@ -4824,7 +4856,14 @@ fn text_resolves_method_to_type(
                         // A raw call line is unmasked, so a literal quoted in
                         // a string or comment there must not type a receiver.
                         || (whole_body && suffixed_numeric_literal_type(recv) == Some(impl_type))
-                        || let_binding_mentions_type_at(body_for_lets, text, at, recv, impl_type)
+                        || let_binding_mentions_type_at(
+                            body_for_lets,
+                            text,
+                            scope_body,
+                            at,
+                            recv,
+                            impl_type,
+                        )
                     {
                         return true;
                     }
@@ -4886,6 +4925,7 @@ fn first_argument_has_type(
     impl_type: &str,
     body_for_lets: &str,
     full_body: &str,
+    scope_body: &str,
     call_at: usize,
 ) -> bool {
     let bytes = text.as_bytes();
@@ -4924,9 +4964,21 @@ fn first_argument_has_type(
         return ty == impl_type;
     }
     if !arg.is_empty() && arg.bytes().all(is_ident_byte) {
-        // A binding is typed by its annotation or, as an argument is, by a
-        // literal initializer; `let s = Site::new();` names no type.
-        return let_binding_mentions_type_at(body_for_lets, full_body, call_at, arg, impl_type);
+        if receiver_binding_shadowed_at(scope_body, arg, call_at.saturating_sub(1)) {
+            return false;
+        }
+        // Trait dispatch reads only an annotation or a literal initializer
+        // head; `let s = Site::new();` names no type for the first argument.
+        return live_let_statement_before(body_for_lets, full_body, scope_body, arg, call_at)
+            .is_some_and(|stmt| {
+                let Some(eq) = stmt.find('=') else {
+                    return false;
+                };
+                match stmt[..eq].find(':') {
+                    Some(_) => let_statement_type_head(stmt) == Some(impl_type),
+                    None => literal_type_head(&stmt[eq + 1..]) == Some(impl_type),
+                }
+            });
     }
     literal_type_head(arg) == Some(impl_type)
 }
@@ -5333,6 +5385,7 @@ fn method_call_resolves_to_impl_in(
         impl_type,
         impl_trait,
         masked_body,
+        &test.body,
         true,
     ) {
         return true;
@@ -5345,6 +5398,7 @@ fn method_call_resolves_to_impl_in(
                 impl_type,
                 impl_trait,
                 masked_body,
+                &test.body,
                 false,
             )
     })
@@ -6183,7 +6237,7 @@ pub(in crate::analysis) fn resolves_method_in_prefix(
     if method.is_empty() || impl_type.is_empty() {
         return false;
     }
-    text_resolves_method_to_type(prefix, method, impl_type, impl_trait, prefix, true)
+    text_resolves_method_to_type(prefix, method, impl_type, impl_trait, prefix, prefix, true)
 }
 
 /// Whether `owner` is `drop` of a plain `impl Drop for T` of the standard
@@ -8515,6 +8569,11 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             ),
             (
                 "let z = Wrap::new(1); Render::render(&z);",
+                Some("Render"),
+                false,
+            ),
+            (
+                "let s = Site::new(); Render::render(&s);",
                 Some("Render"),
                 false,
             ),
@@ -14101,6 +14160,24 @@ let r = try_parse_summary(\"x\");",
         );
         assert!(
             !method_call_resolves_to_impl(&summary, "render", "u8", Some("Render")),
+            "{body}"
+        );
+        let body = "let s: Site = make(); let label = \"ok\"; xs.iter().map(|s| s.build());";
+        let summary = test("tests/site.rs", "t", body);
+        assert!(
+            !method_call_resolves_to_impl_type(&summary, "build", "Site"),
+            "{body}"
+        );
+        let body = "let s: Site = make(); if let Some(s) = cache { } else { s.build(); }";
+        let summary = test("tests/site.rs", "t", body);
+        assert!(
+            method_call_resolves_to_impl_type(&summary, "build", "Site"),
+            "{body}"
+        );
+        let body = "let s: Site = make(); for s in std::iter::once(s.build()) {}";
+        let summary = test("tests/site.rs", "t", body);
+        assert!(
+            method_call_resolves_to_impl_type(&summary, "build", "Site"),
             "{body}"
         );
     }
