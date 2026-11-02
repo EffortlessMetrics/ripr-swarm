@@ -104,20 +104,40 @@ jobs:
             echo "nextest_exit: $(grep -E '^nextest_exit=' target/nextest/ci/run-context.txt 2>/dev/null || echo missing)"
             echo
             echo '```'
-            sed -E 's/\x1b\[[0-9;]*m//g' target/test-analytics-nextest.log 2>/dev/null | grep -aE '^(Summary|SLOW|TIMEOUT|FAIL)|starting [0-9]+ tests| PASS .* \([0-9]+/[0-9]+\)' | tail -40
+            sed -E 's/\x1b\[[0-9;]*m//g' target/test-analytics-nextest.log 2>/dev/null | grep -aE '^\s*(Summary|SLOW|TIMEOUT|FAIL)|starting [0-9]+ tests|\sPASS .* \([0-9]+/[0-9]+\)' | tail -40 || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload test results artifact
+      - name: Verify retained JUnit report
         if: always() && steps.rust-tests.outcome != 'skipped'
+        run: |
+          if [ "${{ steps.rust-tests.outcome }}" != "success" ]; then
+            echo "::error::nextest step outcome=${{ steps.rust-tests.outcome }}; Test Analytics run is incomplete"
+            exit 1
+          fi
+          if [ ! -f target/nextest/ci/junit.xml ] || ! grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml; then
+            echo "::error::Test Analytics finished without a nonempty parseable JUnit report"
+            exit 1
+          fi
+
+      - name: Upload JUnit test results
+        if: success()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rust-junit
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: error
+          retention-days: 5
+
+      - name: Upload Test Analytics diagnostics
+        if: always() && steps.rust-tests.outcome != 'skipped'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-analytics-diagnostics
           path: |
-            target/nextest/ci/junit.xml
             target/nextest/ci/run-context.txt
             target/test-analytics-nextest.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 5
 
       - name: Upload test results to Codecov

@@ -50,11 +50,18 @@ fn measured_budget_and_junit_honesty_are_wired() -> Result<(), String> {
     assert!(tests.contains("nextest succeeded without a fresh JUnit report"));
 
     let (_, upload) = text
-        .split_once("- name: Upload test results artifact\n")
+        .split_once("- name: Upload JUnit test results\n")
         .ok_or("missing junit upload")?;
     assert!(upload.contains("if-no-files-found: error"));
-    assert!(upload.contains("target/nextest/ci/run-context.txt"));
-    assert!(upload.contains("target/test-analytics-nextest.log"));
+    assert!(upload.contains("path: target/nextest/ci/junit.xml"));
+    assert!(
+        text.contains("- name: Verify retained JUnit report\n"),
+        "missing explicit JUnit verification step"
+    );
+    assert!(
+        text.contains("- name: Upload Test Analytics diagnostics\n"),
+        "diagnostics must upload separately from JUnit"
+    );
 
     let summary = step("Write bounded nextest terminal evidence")?;
     assert!(summary.contains("GITHUB_STEP_SUMMARY"));
