@@ -53,13 +53,16 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
     } else {
         "assert_eq"
     };
-    let first_unresolved_edge =
-        format!("whether the refused related assertions run as the standard `{macro_name}!`");
+    let first_unresolved_edge = crate::domain::assertion_not_credited_reason(&finding.evidence)
+        .and_then(crate::domain::guard_refusal_limitation_edge)
+        .unwrap_or_else(|| {
+            format!("whether the refused related assertions run as the standard `{macro_name}!`")
+        });
     withhold_gap(
         finding,
         LIMIT,
         &first_unresolved_edge,
-        next_step(&judged, macro_name),
+        next_step(&judged, macro_name, finding),
         &judged,
     );
     true
@@ -120,7 +123,7 @@ pub(in crate::analysis) fn withhold_mixed_refusal_gap(finding: &mut Finding) -> 
         finding,
         LIMIT,
         first_unresolved_edge,
-        next_step(&judged, "assert_eq"),
+        next_step(&judged, "assert_eq", finding),
         &judged,
     );
     true
@@ -1254,12 +1257,24 @@ fn last_established_edge(finding: &Finding, judged: &[String]) -> String {
     }
 }
 
-fn next_step(judged: &[String], macro_name: &str) -> String {
+fn next_step(judged: &[String], macro_name: &str, finding: &Finding) -> String {
     let tests = if judged.is_empty() {
         "the tests that call this code".to_string()
     } else {
         judged.join(", ")
     };
+    if let Some(reason) = crate::domain::assertion_not_credited_reason(&finding.evidence)
+        && let Some(kind) = crate::domain::guard_refusal_kind(reason)
+    {
+        return match kind {
+            crate::domain::GuardRefusalKind::ValueGuard => format!(
+                "ripr could not tell whether a conditional return skips the assertion in {tests}, because that depends on a value it does not evaluate, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
+            ),
+            crate::domain::GuardRefusalKind::GuardedReturn => format!(
+                "ripr could not tell whether a conditional return skips the assertion in {tests} on the executed path, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
+            ),
+        };
+    }
     format!(
         "ripr could not read whether the assertions in {tests} run as the standard `{macro_name}!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
     )
@@ -1351,6 +1366,24 @@ mod tests {
             alignment_reason: None,
             source_currentness: SourceCurrentness::CandidateCurrent,
         }
+    }
+
+    #[test]
+    fn value_guard_refusal_limitation_edge_does_not_name_standard_macro() -> Result<(), String> {
+        let mut finding = marked();
+        finding.evidence = vec![
+            "assertion not credited: `assert_eq!` in weighs at src/lib.rs:9: an earlier `if weight(2) > 1000 { return; }` spares the value the assertion expects, so whether the assertion runs depends on the value of `weight(2)`, which ripr does not evaluate".to_string(),
+            REFUSALS_ARE_ANALYZER_LIMITS.to_string(),
+        ];
+        assert!(withhold_unsupported_gap(&mut finding));
+        let edge = finding
+            .evidence
+            .iter()
+            .find_map(|line| line.strip_prefix(LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX))
+            .ok_or("missing limitation edge".to_string())?;
+        assert!(edge.contains("conditional return"), "{edge}");
+        assert!(!edge.contains("standard `assert_eq!`"), "{edge}");
+        Ok(())
     }
 
     #[test]

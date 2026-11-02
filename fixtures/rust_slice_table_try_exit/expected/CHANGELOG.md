@@ -341,6 +341,19 @@ Updated:
 ## Pending — rust_slice_table_try_exit (27)
 
 Reason:
+RIPR-SPEC-0094: a related test runs mean_latency but asserts nothing; the other-function assertions that lent an oracle are refused (#12434), so the finding reads reached-but-not-noticed and the missing list no longer names activation
+
+Command:
+`cargo xtask goldens bless rust_slice_table_try_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_slice_table_try_exit (28)
+
+Reason:
 RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
 
 Command:

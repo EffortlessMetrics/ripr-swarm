@@ -1,0 +1,16 @@
+{
+  "kind": "variant_field_foreign_glob_bare_call",
+  "summary": {
+    "findings": 1
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:field_construction:foreign_glob_bare_call",
+      "classification": "weakly_exposed",
+      "probe": {
+        "family": "field_construction"
+      },
+      "discriminate": "weak"
+    }
+  ]
+}
