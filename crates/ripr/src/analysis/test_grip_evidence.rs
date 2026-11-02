@@ -19,7 +19,9 @@ mod reach_limit;
 mod related_tests;
 pub(crate) mod shared_grips;
 mod snapshot_owner_binding;
+pub(crate) mod summary;
 pub(crate) use snapshot_owner_binding::{BindingReach, local_is_owner_result_before, text_calls};
+pub(crate) use summary::retain_test_grip_summary;
 mod value_contradiction;
 
 use boolean_boundary_pin::BooleanBoundaryPin;
