@@ -91,8 +91,8 @@ mod tests {
 
     use super::*;
     use crate::domain::{
-        ChangeVerificationPlanCompleteness, PlanRelationEvidenceClass,
-        VerificationObligationKind, WidenedObligationScope,
+        ChangeVerificationPlanCompleteness, PlanRelationEvidenceClass, VerificationObligationKind,
+        WidenedObligationScope,
     };
 
     fn minimal_plan(subject: ChangeVerificationPlanSubjectIdentity) -> ChangeVerificationPlanV1 {

@@ -164,7 +164,8 @@ fn direct_owner_and_strong_oracle_split_impacted_and_validating_rows() -> Result
     );
     assert!(plan.digest_matches());
     Ok(())
-}#[test]
+}
+#[test]
 fn weak_affinity_is_never_resolved_may_depend() -> Result<(), String> {
     assert_eq!(
         classify_relation_evidence(RelationReason::WeakTokenSubstring).as_str(),
@@ -207,7 +208,8 @@ fn weak_affinity_is_never_resolved_may_depend() -> Result<(), String> {
     );
     assert!(plan.validating_tests.is_empty());
     Ok(())
-}#[test]
+}
+#[test]
 fn candidate_relation_does_not_upgrade_witness_reach_by_rendering() -> Result<(), String> {
     let finding = finding_with_related(
         vec![RelatedTest {
@@ -239,8 +241,10 @@ fn candidate_relation_does_not_upgrade_witness_reach_by_rendering() -> Result<()
     ))?;
     assert!(plan.validating_tests.is_empty());
     Ok(())
-}#[test]
-fn finding_impacted_tests_use_unknown_target_when_producer_has_no_target_fact() -> Result<(), String> {
+}
+#[test]
+fn finding_impacted_tests_use_unknown_target_when_producer_has_no_target_fact() -> Result<(), String>
+{
     let finding = finding_with_related(
         vec![RelatedTest {
             name: "checks_total".to_string(),
@@ -276,7 +280,8 @@ fn finding_impacted_tests_use_unknown_target_when_producer_has_no_target_fact() 
         "direct owner row should report unknown target facts"
     );
     Ok(())
-}#[test]
+}
+#[test]
 fn wrong_sink_oracle_stays_impacted_at_most() -> Result<(), String> {
     let stages = ChangeVerificationPlanStageStates {
         reach: "yes".to_string(),
@@ -292,7 +297,8 @@ fn wrong_sink_oracle_stays_impacted_at_most() -> Result<(), String> {
         &stages
     ));
     Ok(())
-}#[test]
+}
+#[test]
 fn opaque_boundary_adds_widening_obligation() -> Result<(), String> {
     let mut finding = finding_with_related(
         Vec::new(),
@@ -317,7 +323,8 @@ fn opaque_boundary_adds_widening_obligation() -> Result<(), String> {
             .any(|row| row.widening_reason.contains("opaque_boundary"))
     );
     Ok(())
-}#[test]
+}
+#[test]
 fn stale_input_is_not_empty_clean() -> Result<(), String> {
     let finding = finding_with_related(
         Vec::new(),
@@ -342,7 +349,8 @@ fn stale_input_is_not_empty_clean() -> Result<(), String> {
     assert!(plan.completeness.not_proven);
     assert!(!plan.limitations.is_empty());
     Ok(())
-}#[test]
+}
+#[test]
 fn reordered_related_tests_preserve_digest() -> Result<(), String> {
     let a = RelatedTest {
         name: "a".to_string(),
@@ -398,7 +406,8 @@ fn reordered_related_tests_preserve_digest() -> Result<(), String> {
     ))?;
     assert_eq!(forward.semantic_digest, reverse.semantic_digest);
     Ok(())
-}#[test]
+}
+#[test]
 fn promoting_affinity_must_change_digest_negative_control() -> Result<(), String> {
     let finding = finding_with_related(
         vec![RelatedTest {
@@ -453,7 +462,8 @@ fn removing_limitations_changes_digest_negative_control() -> Result<(), String> 
     let after = ok_digest(change_verification_plan_semantic_digest(&plan))?;
     assert_ne!(before, after);
     Ok(())
-}#[test]
+}
+#[test]
 fn diff_only_limitation_keeps_plan_limited() -> Result<(), String> {
     let finding = finding_with_related(
         vec![RelatedTest {
@@ -489,7 +499,8 @@ fn diff_only_limitation_keeps_plan_limited() -> Result<(), String> {
             .any(|item| item.contains("diff_only"))
     );
     Ok(())
-}#[test]
+}
+#[test]
 fn production_builder_rejects_stronger_test_only_state() -> Result<(), String> {
     let finding = finding_with_related(
         vec![RelatedTest {

@@ -501,10 +501,7 @@ pub(crate) fn retain_finding_plan_projection(finding: &Finding, input: AdapterIn
     );
 }
 
-pub(crate) fn retain_classified_seam_plan_projection(
-    seam: &ClassifiedSeam,
-    input: AdapterInput,
-) {
+pub(crate) fn retain_classified_seam_plan_projection(seam: &ClassifiedSeam, input: AdapterInput) {
     let subject = ChangeVerificationPlanSubjectIdentity {
         repository: "unspecified".to_string(),
         base_revision: None,
