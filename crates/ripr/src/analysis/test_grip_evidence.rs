@@ -387,6 +387,16 @@ impl<'index> EvidencePass<'index> {
             })
             .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
+        if out.is_empty()
+            && cancellation::current_token()
+                .as_ref()
+                .and_then(|token| token.observed_abort())
+                .is_some()
+        {
+            // #5341: a cancelled pass must not leave provisional shared-grip
+            // records pinned on the generation-local pool.
+            context.clear_window_memos();
+        }
         out
     }
 

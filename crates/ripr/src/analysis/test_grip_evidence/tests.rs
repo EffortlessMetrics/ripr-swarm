@@ -3112,6 +3112,44 @@ fn window_boundaries_keep_a_held_second_spelling_shared() -> Result<(), String> 
     Ok(())
 }
 
+#[test]
+fn cancelled_evidence_pass_releases_provisional_shared_grips() -> Result<(), String> {
+    use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
+    use std::sync::Weak;
+    let (index, seams) = parallel_evidence_fixture()?;
+    let pass = EvidencePass::new(&index);
+    let context = pass
+        .context
+        .as_ref()
+        .ok_or("fixture must build a context")?;
+    let provisional: Weak<RelatedTestGrip> = {
+        let shared = context.share_grip(RelatedTestGrip {
+            test_name: "below_threshold_has_no_discount".to_string(),
+            file: PathBuf::from("tests/pricing_tests.rs"),
+            line: 12,
+            test_target: None,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            evidence_summary: "exact returned value assertion".to_string(),
+            relation_reason: RelationReason::DirectOwnerCall,
+            relation_confidence: RelationConfidence::High,
+        });
+        Arc::downgrade(&shared)
+    };
+    let token = AnalysisCancellationToken::new();
+    token.cancel(AnalysisAbortKind::Cancelled);
+    let evidence = cancellation::with_token(&token, || pass.evidence_for(&seams));
+    assert!(
+        evidence.is_empty(),
+        "cancelled evidence production must stay non-complete"
+    );
+    assert!(
+        provisional.upgrade().is_none(),
+        "provisional shared-grip records must be released after a cancelled pass"
+    );
+    Ok(())
+}
+
 fn parallel_evidence_fixture() -> Result<(FixtureIndex, Vec<RepoSeam>), String> {
     let prod = PathBuf::from("src/pricing.rs");
     let prod_src = r#"
