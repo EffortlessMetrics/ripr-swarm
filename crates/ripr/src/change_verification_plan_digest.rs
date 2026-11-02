@@ -85,18 +85,13 @@ pub(crate) fn normalize_test_identity(
 
 #[cfg(test)]
 mod tests {
-    fn ok_digest(result: Result<String, String>) -> String {
-        assert!(result.is_ok(), "{:?}", result.err());
-        if let Ok(digest) = result {
-            digest
-        } else {
-            loop {}
-        }
+    fn ok_digest(result: Result<String, String>) -> Result<String, String> {
+        result
     }
 
     use super::*;
     use crate::domain::{
-        ChangeVerificationPlanCompleteness, PlanRelationEvidenceClass, VerificationCommandPurpose,
+        ChangeVerificationPlanCompleteness, PlanRelationEvidenceClass,
         VerificationObligationKind, WidenedObligationScope,
     };
 
@@ -129,7 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn equivalent_checkout_spelling_yields_equal_digest() {
+    fn equivalent_checkout_spelling_yields_equal_digest() -> Result<(), String> {
         let left = minimal_plan(ChangeVerificationPlanSubjectIdentity {
             repository: "repo-a".to_string(),
             base_revision: Some("base".to_string()),
@@ -145,13 +140,14 @@ mod tests {
         let mut right = left.clone();
         right.subject_identity.repository = "repo-a".to_string();
         assert_eq!(
-            ok_digest(change_verification_plan_semantic_digest(&left)),
-            ok_digest(change_verification_plan_semantic_digest(&right))
+            ok_digest(change_verification_plan_semantic_digest(&left))?,
+            ok_digest(change_verification_plan_semantic_digest(&right))?
         );
+        Ok(())
     }
 
     #[test]
-    fn base_head_movement_changes_digest() {
+    fn base_head_movement_changes_digest() -> Result<(), String> {
         let mut base = minimal_plan(ChangeVerificationPlanSubjectIdentity {
             repository: "repo".to_string(),
             base_revision: Some("aaa".to_string()),
@@ -164,19 +160,21 @@ mod tests {
             features: Vec::new(),
             manifest_lock_inputs: Vec::new(),
         });
-        let digest_a = ok_digest(change_verification_plan_semantic_digest(&base));
+        let digest_a = ok_digest(change_verification_plan_semantic_digest(&base))?;
         base.subject_identity.head_revision = Some("ccc".to_string());
-        let digest_b = ok_digest(change_verification_plan_semantic_digest(&base));
+        let digest_b = ok_digest(change_verification_plan_semantic_digest(&base))?;
         assert_ne!(digest_a, digest_b);
+        Ok(())
     }
 
     #[test]
-    fn normalize_path_is_portable() {
+    fn normalize_path_is_portable() -> Result<(), String> {
         assert_eq!(normalize_portable_path("src\\lib.rs"), "src/lib.rs");
+        Ok(())
     }
 
     #[test]
-    fn widening_reason_is_digest_member() {
+    fn widening_reason_is_digest_member() -> Result<(), String> {
         let subject = ChangeVerificationPlanSubjectIdentity {
             repository: "repo".to_string(),
             base_revision: None,
@@ -197,14 +195,15 @@ mod tests {
                 widening_reason: "opaque_boundary:macro".to_string(),
                 originating_edge: Some("reach:macro_limit".to_string()),
             });
-        let with = ok_digest(change_verification_plan_semantic_digest(&plan));
+        let with = ok_digest(change_verification_plan_semantic_digest(&plan))?;
         plan.widened_obligations[0].widening_reason = "opaque_boundary:dynamic".to_string();
-        let changed = ok_digest(change_verification_plan_semantic_digest(&plan));
+        let changed = ok_digest(change_verification_plan_semantic_digest(&plan))?;
         assert_ne!(with, changed);
+        Ok(())
     }
 
     #[test]
-    fn affinity_class_change_changes_digest() {
+    fn affinity_class_change_changes_digest() -> Result<(), String> {
         let subject = ChangeVerificationPlanSubjectIdentity {
             repository: "repo".to_string(),
             base_revision: None,
@@ -230,10 +229,11 @@ mod tests {
                 currentness: "current".to_string(),
                 applicability: "inspect_only".to_string(),
             });
-        let weak = ok_digest(change_verification_plan_semantic_digest(&plan));
+        let weak = ok_digest(change_verification_plan_semantic_digest(&plan))?;
         plan.impacted_tests[0].evidence_class = PlanRelationEvidenceClass::ResolvedMayDepend;
         plan.impacted_tests[0].relation_basis = "direct_owner_call".to_string();
-        let strong = ok_digest(change_verification_plan_semantic_digest(&plan));
+        let strong = ok_digest(change_verification_plan_semantic_digest(&plan))?;
         assert_ne!(weak, strong);
+        Ok(())
     }
 }

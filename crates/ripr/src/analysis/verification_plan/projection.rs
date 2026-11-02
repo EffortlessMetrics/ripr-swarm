@@ -106,6 +106,7 @@ fn project_plan_from_witness_and_tests(
 
     for (test, reason, strength, oracle_kind, has_target) in tests {
         let evidence_class = classify_relation_evidence(reason);
+        debug_assert!(!evidence_class.as_str().is_empty());
         if evidence_class.may_authorize_exclusion() {
             return Err("plan projection attempted to authorize exclusion".to_string());
         }
@@ -490,6 +491,38 @@ pub(crate) fn retain_finding_plan_projection(finding: &Finding, input: AdapterIn
         commands: Vec::new(),
     };
     let plan = project_plan_from_finding(finding, &plan_input);
+    debug_assert!(
+        plan.as_ref().is_ok_and(|value| value.digest_matches()),
+        "change verification plan digest must match canonical bytes"
+    );
+    let _ = crate::app::change_verification_plan::build_change_verification_plan_from_finding(
+        finding,
+        &plan_input,
+    );
+}
+
+pub(crate) fn retain_classified_seam_plan_projection(
+    seam: &ClassifiedSeam,
+    input: AdapterInput,
+) {
+    let subject = ChangeVerificationPlanSubjectIdentity {
+        repository: "unspecified".to_string(),
+        base_revision: None,
+        head_revision: None,
+        worktree_identity: None,
+        analyzer_generation: None,
+        schema_generation: None,
+        language: None,
+        config_profile: None,
+        features: Vec::new(),
+        manifest_lock_inputs: Vec::new(),
+    };
+    let plan_input = ChangeVerificationPlanInput {
+        subject_identity: subject,
+        adapter_input: input,
+        commands: Vec::new(),
+    };
+    let plan = project_plan_from_classified_seam(seam, &plan_input);
     debug_assert!(
         plan.as_ref().is_ok_and(|value| value.digest_matches()),
         "change verification plan digest must match canonical bytes"

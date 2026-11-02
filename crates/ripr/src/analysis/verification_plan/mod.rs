@@ -14,6 +14,9 @@ pub(crate) use projection::{
 };
 
 pub(crate) use projection::{
-    ChangeVerificationPlanInput, classify_relation_evidence, project_plan_from_classified_seam,
-    project_plan_from_finding, qualifies_as_validating,
+    ChangeVerificationPlanInput, project_plan_from_finding, retain_classified_seam_plan_projection,
+    retain_finding_plan_projection,
 };
+
+#[cfg(test)]
+pub(crate) use projection::{classify_relation_evidence, qualifies_as_validating};
