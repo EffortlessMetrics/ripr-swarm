@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0372](../specs/RIPR-SPEC-0372-scoped-gate-acknowledgements.md) | proposed | Gate evaluate accepts an optional structured acknowledgement ledger so only matching canonical gaps are acknowledged; legacy `ripr-waive` retains visible global compatibility metadata (#1966) |
