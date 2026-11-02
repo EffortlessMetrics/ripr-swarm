@@ -2263,6 +2263,8 @@ fn analyze_related_assertions(
             (!name.is_empty()).then_some(name)
         }),
         arm_selector: arm_selector.filter(|_| matches!(probe.family, ProbeFamily::MatchArm)),
+        arm_result_remapped: arm_selector.is_some_and(ArmSelector::result_remapped)
+            && matches!(probe.family, ProbeFamily::MatchArm),
         arm_inputs_readable: false,
         arm_pattern_pinned: false,
         arm_lent_selected: false,
@@ -3306,6 +3308,10 @@ struct RevealMatchContext<'a> {
     /// the check helper (#6482) it is borrowed from or from a row of the
     /// constant-row table (#5328) it loops over.
     arm_lent_selected: bool,
+    /// The changed arm's value is consumed (`.map_err(..)`, a `let` that is
+    /// not returned bare) before it is the owner's return value, so no
+    /// assertion about the owner's result confirms this arm (#12143).
+    arm_result_remapped: bool,
     /// Probe tokens that name a binding only the owner holds (a parameter
     /// or `let` local) on a value probe. They confirm observation only in
     /// an assertion that calls the owner; anywhere else the shared name is
@@ -4276,6 +4282,7 @@ fn assertion_matches_probe_detail_with_literals(
         arm_inputs_readable,
         arm_pattern_pinned,
         arm_lent_selected,
+        arm_result_remapped,
         owner_scoped_tokens,
         owner_shadowed,
         sibling_excluded,
@@ -4418,7 +4425,12 @@ fn assertion_matches_probe_detail_with_literals(
     // (parameter names, the callee name, `Into::into`, a message string) is
     // token coincidence by construction, so observation stays unverified and
     // the seam cannot read `exposed` from lexical heuristics.
-    let has_token_match = if arm_lent_selected && matches!(family, ProbeFamily::MatchArm) {
+    let has_token_match = if arm_result_remapped && matches!(family, ProbeFamily::MatchArm) {
+        // #12143: a consumer of the match value (`.map_err(..)`, a `let`
+        // read later) can make the changed and original arm results equal, so
+        // neither a selection nor a variant token observes this arm.
+        false
+    } else if arm_lent_selected && matches!(family, ProbeFamily::MatchArm) {
         // RIPR-SPEC-0229 decisions 5 and 7: the owner call receives a lent
         // input (a helper's literal or a table row's cell) that selects the
         // arm, under the same owner defeats. A test that names the owner
@@ -4585,6 +4597,7 @@ fn assertion_matches_probe_detail(
             arm_inputs_readable: false,
             arm_pattern_pinned: false,
             arm_lent_selected: false,
+            arm_result_remapped: false,
             owner_scoped_tokens: &[],
             owner_shadowed: false,
             sibling_excluded: false,
@@ -9108,6 +9121,7 @@ mod tests {
                 arm_inputs_readable: false,
                 arm_pattern_pinned: false,
                 arm_lent_selected: false,
+                arm_result_remapped: false,
                 owner_scoped_tokens: &empty,
                 owner_shadowed: false,
                 sibling_excluded: false,

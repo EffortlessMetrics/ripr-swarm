@@ -235,6 +235,11 @@ pub(in crate::analysis) struct ArmSelector {
     /// compares arm results as return values; a `let t = match ..;` read
     /// later may map unequal results to one value.
     match_is_tail: bool,
+    /// Whether the arm's value is consumed before it can be the owner's
+    /// return value (see `EnclosingMatch::result_remapped`): a selected arm
+    /// then confirms nothing, because the consumer can make the changed and
+    /// original results equal (#12143).
+    result_remapped: bool,
     /// First path segments that name this workspace: `crate`, `self`,
     /// `super`, `Self`, the owner's impl type, and (once
     /// `with_workspace_packages` runs) each workspace package. A free
@@ -484,6 +489,7 @@ impl ArmSelector {
             reached,
             arms_from_changed,
             match_is_tail,
+            result_remapped,
         } = enclosing_match(
             owner,
             probe.location.line,
@@ -629,6 +635,7 @@ impl ArmSelector {
             later,
             original_same_body,
             match_is_tail,
+            result_remapped,
             local_roots,
             owner_file: owner.file.clone(),
             test_imports: None,
@@ -853,6 +860,12 @@ impl ArmSelector {
                 None => bare && (scrutinee_type.is_none() || parent != scrutinee_type),
             }
         })
+    }
+
+    /// Whether the arm's value is consumed before it is the owner's return
+    /// value (#12143): no assertion about the owner's result confirms it.
+    pub(in crate::analysis) fn result_remapped(&self) -> bool {
+        self.result_remapped
     }
 
     /// Whether the test binds an owner call's result (`let expected =
@@ -2622,6 +2635,11 @@ struct EnclosingMatch {
     arms_from_changed: Option<Vec<(String, String)>>,
     /// Whether only the owner body's closing `}` follows the match.
     match_is_tail: bool,
+    /// Whether the match value is consumed before it can be the owner's
+    /// return value: a method call on the match (`match .. {..}.map_err(..)`)
+    /// or a `let` binding that the owner does not return as its bare tail.
+    /// Such a consumer may map unequal arm results to one value (#12143).
+    result_remapped: bool,
 }
 
 /// `with_later_arms` asks for the changed and later arms' bodies, which only
@@ -2675,21 +2693,59 @@ fn enclosing_match(
         return None;
     }
     let earlier_patterns = earlier_arm_patterns(&masked, &source, brace + 1, arm_offset)?;
-    let close = with_later_arms
-        .then(|| matching_close_brace(&masked, brace))
-        .flatten();
-    let arms_from_changed =
-        close.and_then(|close| arms_with_bodies(&masked, &source, arm_offset, close));
-    let match_is_tail = close
-        .and_then(|close| masked.get(close + 1..))
-        .is_some_and(|rest| rest.trim() == "}");
+    let close = matching_close_brace(&masked, brace);
+    let arms_from_changed = with_later_arms
+        .then_some(close)
+        .flatten()
+        .and_then(|close| arms_with_bodies(&masked, &source, arm_offset, close));
+    let rest = close.and_then(|close| masked.get(close + 1..));
+    let match_is_tail = rest.is_some_and(|rest| rest.trim() == "}");
+    let result_remapped = rest.is_some_and(|rest| {
+        let rest = rest.trim_start();
+        rest.starts_with(|c: char| ".?[%+-*/&|^<>=!".contains(c))
+            || rest
+                .strip_prefix("as")
+                .is_some_and(|after| after.starts_with(char::is_whitespace))
+            || let_binding_before(&head[..keyword])
+                .is_some_and(|name| !binding_returned_bare(rest, &name))
+    });
     Some(EnclosingMatch {
         scrutinee: scrutinee.to_string(),
         earlier_patterns,
         reached: match_always_runs(&masked[..keyword]),
         arms_from_changed,
         match_is_tail,
+        result_remapped,
     })
+}
+
+/// The name a `let [mut] name[: Type] =` binding ends the text with, when the
+/// last statement before a `match` keyword is exactly such a binding head.
+fn let_binding_before(head: &str) -> Option<String> {
+    let statement = head.trim_end().strip_suffix('=')?;
+    let statement = statement.rsplit([';', '{', '}']).next()?.trim();
+    let statement = statement.strip_prefix("let")?;
+    if !statement.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let statement = statement.trim_start();
+    let statement = statement
+        .strip_prefix("mut")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map_or(statement, str::trim_start);
+    let name = statement.split(':').next()?.trim();
+    is_identifier(name).then(|| name.to_string())
+}
+
+/// Whether the text after a `let name = match .. {..}` is `;` and the bare
+/// `name` as the owner's final expression, so the arm result is returned as it
+/// stands.
+fn binding_returned_bare(rest: &str, name: &str) -> bool {
+    rest.trim_start()
+        .strip_prefix(';')
+        .map(str::trim)
+        .and_then(|tail| tail.strip_suffix('}'))
+        .is_some_and(|tail| tail.trim() == name)
 }
 
 const INTEGER_TYPES: [&str; 12] = [
@@ -5004,6 +5060,36 @@ mod tests {
             .ok_or_else(|| "premise: the Low arm is readable".to_string())?;
         assert!(low.assertion_selects("assert_eq!(f(Level::Low), 1);"));
         assert!(!low.assertion_selects("assert_eq!(f(Priority::Low), 1);"));
+        Ok(())
+    }
+    /// #12143: a `match` whose value is consumed before the owner returns it
+    /// (method call on the `match`, or a `let` binding used again) remaps the
+    /// arm's result; a bare `let`-then-return does not.
+    #[test]
+    fn a_consumed_match_value_marks_the_arm_result_remapped() -> Result<(), String> {
+        let remapped = |body: &str| -> Result<bool, String> {
+            ArmSelector::establish(&arm_probe("_ => 20,", 4), &owner(body, "f"))
+                .map(|selector| selector.result_remapped())
+                .ok_or_else(|| format!("premise: the arm is readable in {body:?}"))
+        };
+        let method = "fn f(x: u8) -> Result<u8, E> {\n    match x {\n        0 => Ok(1),\n        _ => Ok(20),\n    }.map_err(|_| E)\n}\n";
+        assert!(remapped(method)?);
+        // A binary operator, cast or `?` after the closing brace consumes it too.
+        for consumer in ["% 7", "+ 1", "as u32", "?", "== 3", "[0]"] {
+            let body = format!(
+                "fn f(x: u8) -> u32 {{\n    match x {{\n        0 => 1,\n        _ => 20,\n    }} {consumer}\n}}\n"
+            );
+            assert!(remapped(&body)?, "{consumer}");
+        }
+        let used = "fn f(x: u8) -> u8 {\n    let v = match x {\n        0 => 1,\n        _ => 20,\n    };\n    v.saturating_add(1)\n}\n";
+        assert!(remapped(used)?);
+        let bare = "fn f(x: u8) -> u8 {\n    let v = match x {\n        0 => 1,\n        _ => 20,\n    };\n    v\n}\n";
+        assert!(!remapped(bare)?);
+        let typed = "fn f(x: u8) -> u8 {\n    let mut v: u8 = match x {\n        0 => 1,\n        _ => 20,\n    };\n    v\n}\n";
+        assert!(!remapped(typed)?);
+        let tail =
+            "fn f(x: u8) -> u8 {\n    match x {\n        0 => 1,\n        _ => 20,\n    }\n}\n";
+        assert!(!remapped(tail)?);
         Ok(())
     }
 }
