@@ -1665,6 +1665,123 @@ Field contract:
   unobserved report/config labels, observed schema labels, cross-file flow
   unknown limitations, and opaque lookup limitations.
 
+## Diff Report
+
+`ripr diff --json` emits one `ripr_diff` object (schema `0.1`) from
+`crates/ripr/src/output/diff_report.rs`. It is the check-family diff envelope:
+changed-surface findings plus explicit completion and full-repo-context
+limitation signals. Human `ripr diff` prose stays on stderr; this object is the
+machine-readable contract. Exit mapping matches check JSON for
+`analysis_outcome` (see the `ripr diff` note under [Check Output](#check-output)).
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "ripr_diff",
+  "tool": "ripr",
+  "run_status": "diff_complete_full_repo_limited",
+  "root": ".",
+  "base": "origin/main",
+  "head": "HEAD",
+  "mode": "draft",
+  "runtime_status": {
+    "state": "diff_complete_full_repo_limited",
+    "diff": {
+      "state": "diff_complete",
+      "phase": "changed_surface_diff",
+      "changed_files": 1,
+      "changed_seams": 1,
+      "downstream_consumable": true
+    },
+    "full_repo_context": {
+      "state": "full_repo_limited",
+      "phase": "full_repo_context",
+      "limitation_category": "full_repo_context_not_run",
+      "downstream_consumable": false,
+      "repair_route": "ripr check --format repo-exposure-summary-json"
+    }
+  },
+  "receipt": {
+    "state": "not_written",
+    "path": "target/ripr/receipts/diff-first-origin-main-HEAD.json",
+    "outcome_hint": "diff_complete/full_repo_limited"
+  },
+  "summary": {
+    "changed_files": 1,
+    "changed_seams": 1,
+    "probes": 1,
+    "exposed": 0,
+    "weakly_exposed": 1,
+    "reachable_unrevealed": 0,
+    "no_static_path": 0,
+    "unknown": 0
+  },
+  "changed_files": [
+    {
+      "path": "src/lib.rs",
+      "added_lines": [2],
+      "removed_lines": [2],
+      "added_count": 1,
+      "removed_count": 1
+    }
+  ],
+  "changed_seams": [
+    {
+      "seam_id": "probe:src/lib.rs:2:predicate",
+      "file": "src/lib.rs",
+      "line": 2,
+      "classification": "weakly_exposed",
+      "evidence": ["related test reaches owner"],
+      "missing_discriminators": ["missing discriminator amount == threshold"],
+      "recommended_next_step": "Add equality-boundary assertion."
+    }
+  ]
+}
+```
+
+Field contract:
+
+- `schema_version` — currently `"0.1"`.
+- `kind` — `"ripr_diff"`.
+- `tool` — `"ripr"`.
+- `run_status` — top-level completion for the diff envelope. Emitted values are
+  `diff_complete_full_repo_limited` when analysis is complete enough for the
+  changed-surface diff, and `diff_incomplete_full_repo_limited` when
+  `analysis_outcome` is present and incomplete (for example
+  `unsupported_input` or `partial_with_limitations`). Mirrors
+  `runtime_status.state`.
+- `root`, `base`, `head`, `mode` — workspace root (slash-stable display path),
+  resolved base revision, head revision, and analysis mode (`draft` or `strict`).
+- `analysis_outcome` — optional typed outcome block (same shape as check JSON).
+  Omitted when absent, not `null`. When present and incomplete, zero
+  `changed_seams` is explicitly not a clean result.
+- `runtime_status` — structured completion view:
+  - `state` — same string as top-level `run_status`.
+  - `diff` — changed-surface phase: `state` is `diff_complete` or
+    `diff_incomplete`; `phase` is `changed_surface_diff`; counts mirror
+    `changed_files` / `changed_seams`; `downstream_consumable` is `true` only
+    for a complete changed-surface diff.
+  - `full_repo_context` — always records the large-repo limitation:
+    `state` `full_repo_limited`, `phase` `full_repo_context`,
+    `limitation_category` `full_repo_context_not_run`,
+    `downstream_consumable` `false`, and `repair_route` naming the repo-scope
+    follow-up command.
+- `receipt` — receipt binding for diff-first workflows: `state` (currently
+  `not_written` when no receipt file was written), `path` (intended or actual
+  receipt location), and `outcome_hint` (`diff_complete/full_repo_limited` or
+  `diff_incomplete/full_repo_limited`).
+- `summary` — roll-up counts for changed files/seams, probes, exposure classes,
+  and `unknown` (sum of infection, propagation, and static unknown findings).
+- `changed_files[]` — git-scoped file deltas: portable `path`, line lists, and
+  `added_count` / `removed_count`.
+- `changed_seams[]` — finding projection for the diff: `seam_id`, optional
+  `canonical_gap_id`, workspace-relative `file` and `line`, `classification`,
+  `evidence`, `missing_discriminators`, optional `recommended_next_step`.
+- `preview_languages[]` — optional preview-language advisories (RIPR-SPEC-0082).
+  Omitted when empty, not `null`. Non-empty entries mean preview-language files
+  were in scope; empty `changed_seams` with non-empty `preview_languages` is
+  not a Rust-grade clean result.
+
 ## Check Artifact
 
 `ripr check --write-artifact <path>` writes a full-fidelity check artifact

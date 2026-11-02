@@ -49,6 +49,7 @@ kind|agent_card_refusal|Typed refusal envelope of the ripr agent card handoff fa
 kind|python_repair_driver_binding|Prepare binding and apply record for the governed Python repair driver (schema 0.1).
 kind|python_repair_verification_check_report|Structural check report for Python repair verification receipts (schema 0.1).
 kind|python_repair_verification_receipt|Immutable Python repair verification candidate receipt (schema 0.1).
+kind|ripr_diff|Machine-readable diff report envelope from ripr diff --json (schema 0.1).
 next_action_class|choose_attempt|Canonical next-action class (#6304): several attempts are visible; select one explicitly.
 next_action_class|choose_item|Canonical next-action class (#6304): several items are visible or producers disagree; select one explicitly.
 next_action_class|inspect_details|Canonical next-action class (#6304): read the named detail; nothing is executable.
