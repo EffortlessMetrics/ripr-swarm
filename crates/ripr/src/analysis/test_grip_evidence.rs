@@ -19,6 +19,7 @@ mod reach_limit;
 mod related_tests;
 pub(crate) mod shared_grips;
 mod snapshot_owner_binding;
+mod whole_value_field_pin;
 pub(crate) use snapshot_owner_binding::{BindingReach, local_is_owner_result_before, text_calls};
 mod value_contradiction;
 
@@ -31,6 +32,7 @@ use value_contradiction::{
 pub(in crate::analysis) use value_contradiction::{
     InvisibilityReason, PointerReturnChange, change_is_invisible_to_every_assertion,
 };
+use whole_value_field_pin::WholeValueFieldPin;
 
 pub(crate) use related_tests::CompactGripContext;
 use related_tests::{
@@ -3876,7 +3878,7 @@ fn oracles_match_sink(
             ExpectedSink::SideEffect => {
                 if direct_collection_mutation_receiver(seam.expression()).is_some() {
                     oracle_discriminates_seam_in_test(
-                        seam, oracle, test, owner_fn, index, pin_syntax,
+                        seam, oracle, test, owner_fn, index, pin_syntax, None,
                     )
                 } else {
                     matches!(oracle.kind, OracleKind::MockExpectation)
@@ -3923,6 +3925,7 @@ fn discriminate_evidence(
         );
     }
     let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, index);
+    let whole_value_field_pin = WholeValueFieldPin::establish(seam, owner_fn, index);
     let mut best = OracleStrength::None;
     let mut best_matching = OracleStrength::None;
     let mut contradictions: Vec<String> = Vec::new();
@@ -3951,8 +3954,15 @@ fn discriminate_evidence(
             // RIPR-SPEC-0106 (Part B): for ErrorVariant seams, oracle_kind_matches_seam
             // is necessary but not sufficient — the oracle must also structurally pin
             // the seam's specific variant. oracle_discriminates_seam checks both.
-            if oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
-                && strength.rank() > best_matching.rank()
+            if oracle_discriminates_seam_in_test(
+                seam,
+                oracle,
+                test,
+                owner_fn,
+                index,
+                pin_syntax,
+                whole_value_field_pin.as_ref(),
+            ) && strength.rank() > best_matching.rank()
             {
                 best_matching = strength;
             }
@@ -4177,6 +4187,7 @@ fn oracle_discriminates_seam_in_test(
     owner: Option<&FunctionSummary>,
     index: &RustIndex,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    whole_value_field_pin: Option<&WholeValueFieldPin<'_>>,
 ) -> bool {
     if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
         return false;
@@ -4201,6 +4212,11 @@ fn oracle_discriminates_seam_in_test(
                     owner, path, test, oracle, index,
                 )
         });
+    }
+    if seam.kind() == SeamKind::FieldConstruction
+        && whole_value_field_pin.is_some_and(|pin| pin.admits(test, oracle, index, pin_syntax))
+    {
+        return true;
     }
     oracle_discriminates_seam(seam, oracle)
         || direct_collection_mutation_receiver(seam.expression())
@@ -5055,6 +5071,7 @@ fn best_oracle(
     index: &RustIndex,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
     boolean_pin: Option<&BooleanBoundaryPin<'_>>,
+    whole_value_field_pin: Option<&WholeValueFieldPin<'_>>,
 ) -> (OracleKind, OracleStrength, Option<String>) {
     let mut best_kind = OracleKind::Unknown;
     let mut best_strength = OracleStrength::None;
@@ -5079,7 +5096,15 @@ fn best_oracle(
             best_contradiction = contradiction.clone();
         }
         if seam.kind() == SeamKind::FieldConstruction
-            && oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
+            && oracle_discriminates_seam_in_test(
+                seam,
+                oracle,
+                test,
+                owner_fn,
+                index,
+                pin_syntax,
+                whole_value_field_pin,
+            )
             && strength.rank() > best_matching_strength.rank()
         {
             best_matching_strength = strength;

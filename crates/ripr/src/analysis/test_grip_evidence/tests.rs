@@ -2,6 +2,7 @@ mod boolean_owner_pin;
 mod module_extraction;
 mod shared_execution_context;
 mod warm_entrypoint;
+mod whole_value_field_pin;
 
 use super::related_tests::context::*;
 use super::related_tests::*;
