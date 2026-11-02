@@ -25136,7 +25136,7 @@ fn local_context_findings_are_sorted_deterministically() {
 fn ripr_spec_0140_cli_smoke_trace_reference_matches_live_test_fn() -> Result<(), String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let manifest_path = root.join(".ripr/traceability.toml");
-    let (behaviors, manifest_violations) = super::parse_traceability_manifest(&manifest_path)?;
+    let (behaviors, manifest_violations) = super::load_traceability_behaviors(&manifest_path)?;
     if !manifest_violations.is_empty() {
         return Err(format!(
             "manifest parse violations: {manifest_violations:?}"
@@ -25144,8 +25144,16 @@ fn ripr_spec_0140_cli_smoke_trace_reference_matches_live_test_fn() -> Result<(),
     }
     let behavior = behaviors
         .iter()
-        .find(|entry| entry.id == "RIPR-SPEC-0140")
+        .find(|entry| entry.id.as_deref() == Some("RIPR-SPEC-0140"))
         .ok_or_else(|| "RIPR-SPEC-0140 missing from .ripr/traceability.toml".to_string())?;
+    if let Some(stale) = behavior.tests.iter().find(|entry| {
+        entry.contains("crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain")
+            && entry.contains("byte_identical")
+    }) {
+        return Err(format!(
+            "stale renamed test still referenced in manifest: {stale}"
+        ));
+    }
     let reference = behavior
         .tests
         .iter()
@@ -25155,11 +25163,6 @@ fn ripr_spec_0140_cli_smoke_trace_reference_matches_live_test_fn() -> Result<(),
         .ok_or_else(|| {
             "RIPR-SPEC-0140 missing cli_smoke check-artifact reuse test reference".to_string()
         })?;
-    if reference.contains("byte_identical") {
-        return Err(format!(
-            "stale renamed test still referenced in manifest: {reference}"
-        ));
-    }
     let (path_text, suffix) = super::split_trace_reference(reference);
     let Some(symbol) = suffix else {
         return Err(format!(
