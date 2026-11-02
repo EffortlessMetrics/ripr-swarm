@@ -4,6 +4,15 @@ use super::model::{
     RepairAttemptSemanticSnapshot,
 };
 
+pub(crate) const REQUIRED_SECTION_IDS: &[&str] = &[
+    "installed_cli_positive_journey",
+    "packaged_vsix_positive_journey",
+    "unchanged_edit_control",
+    "limited_item_cannot_start",
+    "restart_survives_status",
+    "no_manual_artifact_threading",
+];
+
 pub(crate) fn evaluate(input: &GateInput<'_>) -> PackagedRepairParityGate {
     let receipt = input.receipt;
     let mut failures = Vec::new();
@@ -30,19 +39,27 @@ pub(crate) fn evaluate(input: &GateInput<'_>) -> PackagedRepairParityGate {
         "mismatched canonical gap id",
     );
 
+    failures.extend(validate_required_section_inventory(receipt));
+    failures.extend(validate_control_inventory(receipt));
+
     for section in &receipt.required_sections {
         if section.state.is_passing() {
-            if section_executed_steps(receipt, section.channel.as_deref()).is_empty() {
+            if let Some(channel) = section.channel.as_deref() {
+                if section_executed_steps(receipt, Some(channel)).is_empty() {
+                    failures.push(format!(
+                        "section `{}` is qualified without executed channel steps",
+                        section.section_id
+                    ));
+                }
+                if channel_semantic(receipt, Some(channel)).is_none() {
+                    failures.push(format!(
+                        "section `{}` is qualified without a channel semantic snapshot",
+                        section.section_id
+                    ));
+                }
+            } else if !control_qualified(receipt, &section.section_id) {
                 failures.push(format!(
-                    "section `{}` is qualified without executed channel steps",
-                    section.section_id
-                ));
-            }
-            if section.channel.is_some()
-                && channel_semantic(receipt, section.channel.as_deref()).is_none()
-            {
-                failures.push(format!(
-                    "section `{}` is qualified without a channel semantic snapshot",
+                    "section `{}` is qualified without a matching qualified control record",
                     section.section_id
                 ));
             }
@@ -65,10 +82,18 @@ pub(crate) fn evaluate(input: &GateInput<'_>) -> PackagedRepairParityGate {
                 channel.channel
             ));
         }
+        if let Some(semantic) = channel.semantic.as_ref() {
+            failures.extend(validate_semantic_against_fixture(
+                semantic,
+                input.expected_fixture,
+                &channel.channel,
+            ));
+        }
     }
 
     let parity_failures = compare_channel_semantics(receipt);
     failures.extend(parity_failures);
+    failures.extend(compare_channel_artifact_identities(receipt));
 
     if receipt.parity.verdict == ParityVerdict::Qualified && !parity_ready(receipt) {
         failures.push(
@@ -86,8 +111,7 @@ pub(crate) fn evaluate(input: &GateInput<'_>) -> PackagedRepairParityGate {
     let aggregate = aggregate_section_state(receipt);
     let parity_verdict = receipt.parity.verdict;
 
-    let require_pass = input.require_full_qualification;
-    if require_pass {
+    if input.require_full_qualification {
         if aggregate != QualificationSectionState::Qualified {
             failures.push(format!(
                 "aggregate section state is {}; full qualification requires qualified",
@@ -99,6 +123,18 @@ pub(crate) fn evaluate(input: &GateInput<'_>) -> PackagedRepairParityGate {
                 "parity verdict is {}; full qualification requires qualified",
                 parity_verdict.as_str()
             ));
+        }
+        for channel in [
+            &receipt.channels.installed_cli,
+            &receipt.channels.packaged_vsix,
+        ] {
+            if !channel.section_state.is_passing() {
+                failures.push(format!(
+                    "channel `{}` section_state is {}; full qualification requires qualified",
+                    channel.channel,
+                    channel.section_state.as_str()
+                ));
+            }
         }
     }
 
@@ -120,6 +156,98 @@ pub(crate) fn evaluate(input: &GateInput<'_>) -> PackagedRepairParityGate {
         limitations: receipt.limitations.clone(),
         non_claims: receipt.non_claims.clone(),
         claim_boundary: CLAIM_BOUNDARY.to_string(),
+    }
+}
+
+fn validate_required_section_inventory(
+    receipt: &super::model::PackagedRepairParityReceipt,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for section in &receipt.required_sections {
+        if !seen.insert(section.section_id.clone()) {
+            failures.push(format!(
+                "duplicate required section `{}`",
+                section.section_id
+            ));
+        }
+    }
+    for required in REQUIRED_SECTION_IDS {
+        if !seen.contains(*required) {
+            failures.push(format!("missing required section `{required}`"));
+        }
+    }
+    failures
+}
+
+fn validate_control_inventory(receipt: &super::model::PackagedRepairParityReceipt) -> Vec<String> {
+    let mut failures = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for control in receipt
+        .anti_ambient_controls
+        .iter()
+        .chain(receipt.negative_controls.iter())
+    {
+        if !seen.insert(control.control_id.clone()) {
+            failures.push(format!("duplicate control `{}`", control.control_id));
+        }
+    }
+    failures
+}
+
+fn control_qualified(
+    receipt: &super::model::PackagedRepairParityReceipt,
+    section_id: &str,
+) -> bool {
+    receipt
+        .anti_ambient_controls
+        .iter()
+        .chain(receipt.negative_controls.iter())
+        .any(|control| control.control_id == section_id && control.state.is_passing())
+}
+
+fn validate_semantic_against_fixture(
+    semantic: &RepairAttemptSemanticSnapshot,
+    expected: &super::model::ExpectedFixtureIdentity,
+    channel: &str,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    if let Some(gap) = expected.canonical_gap_id.as_deref() {
+        if semantic.canonical_gap_id != gap {
+            failures.push(format!(
+                "channel `{channel}` semantic canonical_gap_id must match fixture ({gap})"
+            ));
+        }
+    }
+    if let Some(surface) = expected.allowed_edit_surface.as_ref() {
+        if &semantic.allowed_edit_surface != surface {
+            failures.push(format!(
+                "channel `{channel}` semantic allowed_edit_surface must match fixture contract"
+            ));
+        }
+    }
+    if let Some(forbidden) = expected.must_not_change.as_ref() {
+        if &semantic.must_not_change != forbidden {
+            failures.push(format!(
+                "channel `{channel}` semantic must_not_change must match fixture contract"
+            ));
+        }
+    }
+    failures
+}
+
+fn compare_channel_artifact_identities(
+    receipt: &super::model::PackagedRepairParityReceipt,
+) -> Vec<String> {
+    let cli = &receipt.channels.installed_cli.artifact_identities;
+    let vsix = &receipt.channels.packaged_vsix.artifact_identities;
+    if cli.is_empty() || vsix.is_empty() {
+        return Vec::new();
+    }
+    if cli != vsix {
+        vec!["artifact_identities mismatch between installed_cli and packaged_vsix".to_string()]
+    } else {
+        Vec::new()
     }
 }
 
@@ -224,6 +352,18 @@ fn compare_channel_semantics(receipt: &super::model::PackagedRepairParityReceipt
         &cli.next_action_kind,
         &vsix.next_action_kind,
     );
+    compare_vec(
+        &mut mismatches,
+        "limitations",
+        &cli.limitations,
+        &vsix.limitations,
+    );
+    compare_vec(
+        &mut mismatches,
+        "non_claims",
+        &cli.non_claims,
+        &vsix.non_claims,
+    );
     mismatches
 }
 
@@ -245,6 +385,7 @@ fn parity_ready(receipt: &super::model::PackagedRepairParityReceipt) -> bool {
     receipt.channels.installed_cli.semantic.is_some()
         && receipt.channels.packaged_vsix.semantic.is_some()
         && compare_channel_semantics(receipt).is_empty()
+        && compare_channel_artifact_identities(receipt).is_empty()
 }
 
 fn aggregate_section_state(
@@ -253,7 +394,16 @@ fn aggregate_section_state(
     let mut saw_missing = false;
     let mut saw_failure = false;
     let mut all_qualified = true;
-    for section in &receipt.required_sections {
+    for required in REQUIRED_SECTION_IDS {
+        let Some(section) = receipt
+            .required_sections
+            .iter()
+            .find(|section| section.section_id == *required)
+        else {
+            all_qualified = false;
+            saw_missing = true;
+            continue;
+        };
         match section.state {
             QualificationSectionState::Qualified => {}
             QualificationSectionState::MissingEvidence => {

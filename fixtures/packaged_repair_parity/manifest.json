@@ -1,7 +1,7 @@
 {
   "schema_version": "packaged_repair_parity_fixture.v1",
   "issues": ["#2929", "#4648"],
-  "spec": "RIPR-SPEC-0217",
+  "design_reference": "issue:4648",
   "synthetic_qualification": true,
   "dogfood_denominator": "excluded",
   "parent_fixture": {

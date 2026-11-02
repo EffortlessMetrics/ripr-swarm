@@ -71,6 +71,14 @@ pub(crate) fn validate_packaged_repair_parity_fixture(
                                     .pointer("/canonical_transaction/canonical_gap_id")
                                     .and_then(Value::as_str)
                                     .map(str::to_string),
+                                allowed_edit_surface: string_array_field(
+                                    &manifest,
+                                    "/canonical_transaction/allowed_edit_surface",
+                                ),
+                                must_not_change: string_array_field(
+                                    &manifest,
+                                    "/canonical_transaction/must_not_change",
+                                ),
                             },
                         require_full_qualification: false,
                     },
@@ -122,4 +130,18 @@ pub(crate) fn validate_packaged_repair_parity_fixture(
         ));
     }
     Ok(())
+}
+
+fn string_array_field(manifest: &Value, pointer: &str) -> Option<Vec<String>> {
+    manifest.pointer(pointer).and_then(|value| {
+        value
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|items| !items.is_empty())
+    })
 }

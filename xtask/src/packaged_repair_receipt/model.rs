@@ -187,6 +187,8 @@ pub(crate) struct ExpectedFixtureIdentity {
     pub(crate) base_commit: Option<String>,
     pub(crate) head_commit: Option<String>,
     pub(crate) canonical_gap_id: Option<String>,
+    pub(crate) allowed_edit_surface: Option<Vec<String>>,
+    pub(crate) must_not_change: Option<Vec<String>>,
 }
 
 pub(crate) struct GateInput<'a> {

@@ -45,15 +45,25 @@ fn semantic_snapshot() -> RepairAttemptSemanticSnapshot {
     }
 }
 
+fn expected_fixture_identity() -> ExpectedFixtureIdentity {
+    ExpectedFixtureIdentity {
+        base_commit: Some(BASE.to_string()),
+        head_commit: Some(HEAD.to_string()),
+        canonical_gap_id: Some(GAP.to_string()),
+        allowed_edit_surface: Some(vec!["tests/tier_boundary.rs".to_string()]),
+        must_not_change: Some(vec![
+            "src/lib.rs".to_string(),
+            "Cargo.toml".to_string(),
+            "target/notes.rs".to_string(),
+        ]),
+    }
+}
+
 fn evaluate_skeleton(require_full: bool) -> Result<super::model::PackagedRepairParityGate, String> {
     let receipt = parse_receipt(&skeleton_receipt_text()?)?;
     Ok(evaluate(&GateInput {
         receipt: &receipt,
-        expected_fixture: &ExpectedFixtureIdentity {
-            base_commit: Some(BASE.to_string()),
-            head_commit: Some(HEAD.to_string()),
-            canonical_gap_id: Some(GAP.to_string()),
-        },
+        expected_fixture: &expected_fixture_identity(),
         require_full_qualification: require_full,
     }))
 }
@@ -187,7 +197,51 @@ fn packaged_repair_receipt_stale_fixture_head_fails() -> Result<(), String> {
             base_commit: Some(BASE.to_string()),
             head_commit: Some("ffffffffffffffffffffffffffffffffffffffff".to_string()),
             canonical_gap_id: Some(GAP.to_string()),
+            allowed_edit_surface: None,
+            must_not_change: None,
         },
+        require_full_qualification: false,
+    });
+    assert_eq!(gate.verdict, GateVerdict::Failed);
+    Ok(())
+}
+
+#[test]
+fn packaged_repair_receipt_missing_required_section_fails() -> Result<(), String> {
+    let mut value: Value =
+        serde_json::from_str(&skeleton_receipt_text()?).map_err(|error| error.to_string())?;
+    let sections = value
+        .get_mut("required_sections")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "sections".to_string())?;
+    sections.pop();
+    let receipt = parse_receipt(&value.to_string())?;
+    let gate = evaluate(&GateInput {
+        receipt: &receipt,
+        expected_fixture: &expected_fixture_identity(),
+        require_full_qualification: false,
+    });
+    assert_eq!(gate.verdict, GateVerdict::Failed);
+    assert!(
+        gate.failures
+            .iter()
+            .any(|failure| failure.contains("missing required section"))
+    );
+    Ok(())
+}
+
+#[test]
+fn packaged_repair_receipt_wrong_semantic_gap_fails_against_fixture() -> Result<(), String> {
+    let mut value: Value =
+        serde_json::from_str(&skeleton_receipt_text()?).map_err(|error| error.to_string())?;
+    let mut semantic = semantic_snapshot();
+    semantic.canonical_gap_id = "other-gap".to_string();
+    value["channels"]["installed_cli"]["semantic"] =
+        serde_json::to_value(&semantic).map_err(|error| error.to_string())?;
+    let receipt = parse_receipt(&value.to_string())?;
+    let gate = evaluate(&GateInput {
+        receipt: &receipt,
+        expected_fixture: &expected_fixture_identity(),
         require_full_qualification: false,
     });
     assert_eq!(gate.verdict, GateVerdict::Failed);
