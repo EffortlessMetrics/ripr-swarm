@@ -173,3 +173,21 @@ fn per_row_coverage_does_not_cross_rows() {
     assert!(a.support.is_none());
     assert!(b.support.is_some());
 }
+
+#[test]
+fn pytest_approx_equality_is_not_exact_pin() {
+    let finding = fact("return value == 11");
+    let result = evaluate_row_discriminator_coverage(
+        &ProbeFamily::ReturnValue,
+        Some(&finding),
+        true,
+        Some(PythonOracleShape::ExactAssertion),
+        Some("assert f() == pytest.approx(10, abs=2)"),
+        &OracleKind::ExactValue,
+        &OracleStrength::Strong,
+    );
+    assert_eq!(
+        result.coverage,
+        PythonRowDiscriminatorCoverage::ObservesSurfaceButNotExact
+    );
+}

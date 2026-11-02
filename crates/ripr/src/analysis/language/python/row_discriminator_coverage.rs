@@ -125,6 +125,9 @@ fn oracle_pins_return_exactly(
     oracle_kind: &OracleKind,
     oracle_shape: Option<PythonOracleShape>,
 ) -> bool {
+    if gate.contains("approx(") || gate.contains("pytest.approx") {
+        return false;
+    }
     *oracle_kind == OracleKind::ExactValue
         && oracle_shape == Some(PythonOracleShape::ExactAssertion)
         && gate.contains("==")
@@ -148,6 +151,8 @@ fn oracle_observes_return_broadly(
     ) || gate.contains(" is not None")
         || gate.contains("isinstance(")
         || gate.contains("len(")
+        || gate.contains("approx(")
+        || gate.contains("pytest.approx")
         || matches!(oracle_kind, OracleKind::RelationalCheck)
 }
 
@@ -191,11 +196,9 @@ fn error_path_exactness(
         OracleKind::ExactErrorVariant
             if oracle_strength.rank() >= OracleStrength::Strong.rank() =>
         {
-            if gate.contains("match=") || gate.contains("match =") {
-                PythonRowDiscriminatorCoverage::ExactlyDiscriminates
-            } else {
-                PythonRowDiscriminatorCoverage::ObservesSurfaceButNotExact
-            }
+            let _ = gate;
+            // Row-local exactness does not re-prove message discrimination (#9185).
+            PythonRowDiscriminatorCoverage::ObservesSurfaceButNotExact
         }
         OracleKind::BroadError | OracleKind::ExactErrorVariant => {
             PythonRowDiscriminatorCoverage::ObservesSurfaceButNotExact
