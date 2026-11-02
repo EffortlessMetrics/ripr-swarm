@@ -1799,7 +1799,10 @@ export class RiprClientController {
     if (!packet || !this.currentDiagnosticMatchesFirstPrPacket(packet)) {
       return;
     }
-    await this.copyFirstPrText(packet.verifyCommand ?? '', 'verify command');
+    await this.copyFirstPrText(
+      packet.verifyCommandClipboard ?? packet.verifyCommand ?? '',
+      'verify command'
+    );
   }
 
   async copyFirstPrReceiptCommand(): Promise<void> {
@@ -2661,9 +2664,11 @@ export class RiprClientController {
       this.runtime.showInformationMessage('No verify command available.');
       return;
     }
-    const verifyCommand = typeof packet['verify_command'] === 'string'
-      ? packet['verify_command'].trim()
-      : '';
+    const verifyCommand = typeof packet['verify_command_clipboard'] === 'string'
+      ? packet['verify_command_clipboard'].trim()
+      : typeof packet['verify_command'] === 'string'
+        ? packet['verify_command'].trim()
+        : '';
     if (!verifyCommand) {
       this.runtime.showInformationMessage('No verify command available.');
       return;

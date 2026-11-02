@@ -63,6 +63,7 @@ export interface RiprFirstPrPacketStatus {
   repairRoute?: string;
   suggestedAssertion?: string;
   verifyCommand?: string;
+  verifyCommandClipboard?: string;
   receiptCommand?: string;
   receiptPath?: string;
   relatedTest?: string;
@@ -618,6 +619,11 @@ export function validateFirstPrPacket(
     repairRoute: repair ? stringField(repair, 'route') : undefined,
     suggestedAssertion: repair ? stringField(repair, 'suggested_assertion') : undefined,
     verifyCommand: stringField(selected, 'verify_command'),
+    verifyCommandClipboard: (() => {
+      const context = objectField(selected, 'command_context');
+      const verifyForms = context ? objectField(context, 'verify') : undefined;
+      return verifyForms ? stringField(verifyForms, 'bash') : undefined;
+    })(),
     receiptCommand: stringField(selected, 'receipt_command'),
     receiptPath: stringField(selected, 'receipt_path'),
     relatedTest,
