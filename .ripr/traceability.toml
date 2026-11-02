@@ -17433,6 +17433,7 @@ tests = [
   "crates/ripr/tests/variant_field_pattern.rs::a_test_side_build_or_input_stays_unconfirmed",
   "crates/ripr/tests/variant_field_pattern.rs::a_production_namesake_under_a_path_remap_stays_unconfirmed",
   "crates/ripr/tests/variant_field_pattern.rs::a_foreign_glob_integration_import_stays_unconfirmed",
+  "crates/ripr/tests/variant_field_pattern.rs::a_foreign_glob_does_not_defeat_a_crate_qualified_owner_call",
   "crates/ripr/tests/variant_field_pattern.rs::an_own_package_integration_test_import_is_exposed",
   "crates/ripr/src/analysis/classify/reveal.rs::foreign_glob_defeats_bare_callee_without_own_import",
 ]

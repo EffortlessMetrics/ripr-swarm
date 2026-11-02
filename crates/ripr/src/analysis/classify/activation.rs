@@ -4166,11 +4166,12 @@ fn missing_field_value_discriminator(
                                             source,
                                             &owner.name,
                                             &index.package_names,
-                                        ) || super::reveal::file_foreign_glob_defeats_bare_callee_name(
-                                            source,
-                                            &owner.name,
-                                            &index.package_names,
-                                        )
+                                        ) || (qualifier.is_empty()
+                                            && super::reveal::file_foreign_glob_defeats_bare_callee_name(
+                                                source,
+                                                &owner.name,
+                                                &index.package_names,
+                                            ))
                                     }) && index
                                         .functions()
                                         .iter()

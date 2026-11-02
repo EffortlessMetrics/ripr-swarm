@@ -4931,7 +4931,7 @@ pub(in crate::analysis) fn file_foreign_glob_defeats_bare_callee_name(
     callee: &str,
     crate_names: &std::collections::BTreeSet<String>,
 ) -> bool {
-    if file_imports_own_item(source, callee, crate_names) {
+    if file_imports_own_item_mode(source, callee, crate_names, ImportMatch::Binding) {
         return false;
     }
     flattened_use_paths(source).iter().any(|import| {
@@ -4963,6 +4963,15 @@ pub(in crate::analysis) fn file_imports_own_item(
     name: &str,
     crate_names: &std::collections::BTreeSet<String>,
 ) -> bool {
+    file_imports_own_item_mode(source, name, crate_names, ImportMatch::Item)
+}
+
+fn file_imports_own_item_mode(
+    source: &str,
+    name: &str,
+    crate_names: &std::collections::BTreeSet<String>,
+    mode: ImportMatch,
+) -> bool {
     if name.is_empty() {
         return false;
     }
@@ -4982,7 +4991,7 @@ pub(in crate::analysis) fn file_imports_own_item(
         own && statement
             .trim_start()
             .strip_prefix("use")
-            .is_some_and(|rest| use_items_bind(rest.trim_start(), name, ImportMatch::Item))
+            .is_some_and(|rest| use_items_bind(rest.trim_start(), name, mode))
     })
 }
 
@@ -11075,6 +11084,12 @@ return Err(\"typed pin\".into());
         let own_glob = "use demo::*;\n";
         assert!(!file_foreign_glob_defeats_bare_callee_name(
             own_glob,
+            "parse_num",
+            &demo
+        ));
+        let renamed = "use foreign_parser::*;\nuse demo::parse_num as original;\n";
+        assert!(file_foreign_glob_defeats_bare_callee_name(
+            renamed,
             "parse_num",
             &demo
         ));

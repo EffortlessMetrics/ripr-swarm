@@ -243,6 +243,18 @@ fn a_foreign_glob_integration_import_stays_unconfirmed() -> Result<(), String> {
 }
 
 #[test]
+fn a_foreign_glob_does_not_defeat_a_crate_qualified_owner_call() -> Result<(), String> {
+    let finding = pos_finding(
+        "assert_matches!(crate::parse_num(\"x1\"), Err(ParseError::BadDigit { pos: 0 }));",
+        "use foreign_parser::*;\n",
+        "",
+    )?;
+    assert_eq!(finding["oracle_kind"], "exact_error_variant", "{finding}");
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
 fn an_own_package_integration_test_import_is_exposed() -> Result<(), String> {
     let finding = pos_finding_at(
         "",
