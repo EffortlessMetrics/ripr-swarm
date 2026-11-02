@@ -18,7 +18,10 @@
 //! gap, which keeps the actionability flip fail-closed.
 
 use super::decision::confidence_score;
-use super::reveal::ASSERTION_CONTEXT_UNESTABLISHED;
+use super::reveal::{
+    ASSERTION_CONTEXT_UNESTABLISHED, NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY,
+    NO_REACHABLE_TEST_OBSERVE_SUMMARY,
+};
 use crate::analysis::facts::{FunctionContainer, TestFact, cfg_predicates};
 use crate::analysis::rust_index::RustIndex;
 use crate::domain::*;
@@ -94,6 +97,82 @@ pub(in crate::analysis) fn withhold_truncated_discovery_gap(
         next_step,
         &[],
     );
+    true
+}
+
+const DEPENDENT_CRATE_LIMIT: StaticLimitKind = StaticLimitKind::RustDependentCrateReachUnresolved;
+const DEPENDENT_CRATE_FIRST_UNRESOLVED_EDGE: &str = "whether a test in a dependent crate reaches the changed owner through a trait or public API ripr does not follow";
+
+/// #5395 cause 3: a `no_static_path` finding with no related tests still
+/// cannot claim that no test reaches the owner when another package depends
+/// on that owner's crate and hosts indexed tests. The package-prefix guard
+/// drops those tests unless they name the owner, so a trait-dispatch or
+/// public-API path is invisible. Withhold the gap as `static_unknown`.
+/// Named `no_static_path` limitations (RIPR-SPEC-0118 and siblings) are
+/// replaced: keeping them would leave a kind whose documented class is
+/// `no_static_path`. Findings that already related a test, and workspaces
+/// with no such dependents, are untouched. Returns `true` when rewritten.
+pub(in crate::analysis) fn withhold_dependent_crate_reach_gap(
+    finding: &mut Finding,
+    dependents_host_indexed_tests: bool,
+) -> bool {
+    if !dependents_host_indexed_tests
+        || finding.class != ExposureClass::NoStaticPath
+        || !finding.related_tests.is_empty()
+    {
+        return false;
+    }
+    withhold_gap(
+        finding,
+        DEPENDENT_CRATE_LIMIT,
+        DEPENDENT_CRATE_FIRST_UNRESOLVED_EDGE,
+        DEPENDENT_CRATE_LIMIT.next_step().to_string(),
+        &[],
+    );
+    let unknown = |summary: &str| StageEvidence::new(StageState::Unknown, Confidence::Low, summary);
+    let ruled_out = |stage: &StageEvidence| {
+        stage.state == StageState::No
+            && (stage
+                .summary
+                .starts_with("No test reaches the changed owner, so no test can ")
+                || stage.summary == NO_REACHABLE_TEST_OBSERVE_SUMMARY
+                || stage.summary == NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY
+                || stage
+                    .summary
+                    .starts_with("No statically reachable test path")
+                || stage.summary.starts_with("No static test path"))
+    };
+    if finding.ripr.reach.state == StageState::No {
+        finding.ripr.reach = unknown(
+            "Not established: a dependent crate hosts tests that may reach this owner through a path ripr does not follow",
+        );
+    }
+    if ruled_out(&finding.ripr.infect) {
+        finding.ripr.infect = unknown(
+            "Not established: a dependent crate's tests may exercise this owner through a path ripr does not follow",
+        );
+    }
+    if ruled_out(&finding.ripr.reveal.observe) {
+        finding.ripr.reveal.observe =
+            unknown("Not established: whether a dependent crate's test observes this change");
+    }
+    if ruled_out(&finding.ripr.reveal.discriminate) {
+        finding.ripr.reveal.discriminate =
+            unknown("Not established: whether a dependent crate's test discriminates this change");
+    }
+    finding.evidence.retain(|line| {
+        !line.contains("No static test path")
+            && !line.starts_with("No test reaches the changed owner")
+    });
+    let ripr = &finding.ripr;
+    finding.confidence = finding.confidence.min(confidence_score(
+        &ripr.reach,
+        &ripr.infect,
+        &ripr.propagate,
+        &ripr.reveal.observe,
+        &ripr.reveal.discriminate,
+        &finding.class,
+    ));
     true
 }
 
@@ -1464,6 +1543,79 @@ mod tests {
             finding.stop_reasons,
             vec![StopReason::GapEvidenceUnresolved]
         );
+    }
+
+    fn no_path() -> Finding {
+        let mut finding = marked();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.related_tests.clear();
+        finding.static_limit_kind = None;
+        finding.evidence = vec!["No static test path found for the changed owner".to_string()];
+        finding.missing = vec!["No static test path reaches the changed owner".to_string()];
+        finding.ripr.reach = stage(
+            StageState::No,
+            "No static test path found for the changed owner",
+        );
+        finding.ripr.infect = stage(
+            StageState::No,
+            "No statically reachable test path was found, so activation/infection cannot be estimated",
+        );
+        finding.ripr.reveal.observe = stage(StageState::No, NO_REACHABLE_TEST_OBSERVE_SUMMARY);
+        finding.ripr.reveal.discriminate =
+            stage(StageState::No, NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY);
+        finding
+    }
+
+    #[test]
+    fn dependent_crate_tests_withhold_no_static_path() {
+        let mut finding = no_path();
+        finding.static_limit_kind = Some(StaticLimitKind::RustIntegrationPublicApiPathUnresolved);
+        assert!(withhold_dependent_crate_reach_gap(&mut finding, true));
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(finding.static_limit_kind, Some(DEPENDENT_CRATE_LIMIT));
+        assert_eq!(finding.ripr.reach.state, StageState::Unknown);
+        assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        assert_eq!(finding.ripr.reveal.observe.state, StageState::Unknown);
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Unknown);
+        assert!(
+            finding
+                .stop_reasons
+                .contains(&StopReason::GapEvidenceUnresolved)
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .all(|line| !line.contains("No static test path")),
+            "{:?}",
+            finding.evidence
+        );
+        assert_eq!(
+            finding.recommended_next_step.as_deref(),
+            Some(DEPENDENT_CRATE_LIMIT.next_step())
+        );
+        assert!(!withhold_dependent_crate_reach_gap(&mut finding, true));
+    }
+
+    #[test]
+    fn dependent_crate_withhold_leaves_related_or_other_classes() {
+        let mut with_related = no_path();
+        with_related.related_tests = vec![related("amp_is_escaped")];
+        assert!(!withhold_dependent_crate_reach_gap(&mut with_related, true));
+        assert_eq!(with_related.class, ExposureClass::NoStaticPath);
+
+        let mut no_dependents = no_path();
+        assert!(!withhold_dependent_crate_reach_gap(
+            &mut no_dependents,
+            false
+        ));
+        assert_eq!(no_dependents.class, ExposureClass::NoStaticPath);
+        assert_eq!(no_dependents.static_limit_kind, None);
+
+        let mut weakly = no_path();
+        weakly.class = ExposureClass::WeaklyExposed;
+        assert!(!withhold_dependent_crate_reach_gap(&mut weakly, true));
+        assert_eq!(weakly.class, ExposureClass::WeaklyExposed);
     }
 
     const LOG_SOURCE: &str = r##"

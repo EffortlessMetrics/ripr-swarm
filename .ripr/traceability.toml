@@ -19576,6 +19576,14 @@ tests = [
   "crates/ripr/tests/pinned_shape_limit.rs::a_single_line_let_else_initializer_keeps_the_gap",
   "crates/ripr/tests/pinned_shape_limit.rs::an_equality_that_may_not_run_does_not_withhold",
   "crates/ripr/src/analysis/classify/pinned_shape.rs::tests::a_closure_bound_by_let_in_the_tail_block_is_not_a_closure_tail",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::dependent_crate_tests_withhold_no_static_path",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::dependent_crate_withhold_leaves_related_or_other_classes",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::dependent_packages_host_indexed_tests_requires_complete_graph_and_a_test",
+  "crates/ripr/tests/dependent_crate_trait_dispatch.rs::trait_dispatch_from_a_dependent_crate_withholds_no_static_path",
+  "crates/ripr/tests/dependent_crate_trait_dispatch.rs::a_workspace_with_no_dependents_keeps_no_static_path",
+  "crates/ripr/tests/dependent_crate_trait_dispatch.rs::a_dependent_crate_with_no_tests_keeps_no_static_path",
+  "crates/ripr/tests/dependent_crate_trait_dispatch.rs::a_dependent_crate_that_names_the_owner_still_relates",
+  "crates/ripr/tests/dependent_crate_trait_dispatch.rs::nested_test_macro_chain_is_not_indexed",
 ]
 fixtures = [
   "fixtures/fixture_receiver_extension_iter",
@@ -19592,6 +19600,7 @@ code = [
   "crates/ripr/src/analysis/classify/owner_pin/fixture_receiver/dispatch.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/classify/gap_admission.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
   "crates/ripr/src/analysis/classify/pinned_shape.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",

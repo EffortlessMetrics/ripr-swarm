@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- When a changed Rust owner has no related tests but other packages in the workspace depend on its crate and host tests, `ripr check` no longer reports a confident `no_static_path`. The finding is `static_unknown` under `rust_dependent_crate_reach_unresolved`, because those tests may reach the owner through trait dispatch or a public API the package-prefix guard drops. Workspaces with no such dependents, and findings that already related a test, are unchanged (#5395).

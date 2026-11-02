@@ -27,7 +27,7 @@ use ra_ap_syntax::{
     ast::{self, HasArgList, HasName},
 };
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod drop_dispatch;
 mod equality_dispatch;
@@ -3004,6 +3004,56 @@ pub(super) fn nearest_manifest_identity(
         .filter(|prefix| normalized.starts_with(prefix.as_str()))
         .max_by_key(|prefix| prefix.len())
         .map(|prefix| format!("{prefix}Cargo.toml"))
+}
+
+/// #5395 cause 3: a complete path-dependency graph names at least one other
+/// package that depends on the owner's package and hosts an indexed test.
+/// Used to withhold a confident `no_static_path` when related tests were
+/// empty because the package-prefix guard dropped trait-dispatch paths ripr
+/// does not follow. Fail closed: missing context, an incomplete graph, an
+/// unattributable owner file, and dependents with no indexed tests all
+/// answer `false`.
+pub(in crate::analysis) fn dependent_packages_host_indexed_tests(
+    context: Option<&DependencyEdgeContext<'_>>,
+    owner_file: &Path,
+) -> bool {
+    let Some(context) = context else {
+        return false;
+    };
+    if context.adjacency.status() != PathDependencyGraphStatus::Complete {
+        return false;
+    }
+    let owner_file = strip_scan_root(context.root, owner_file);
+    let Some(owner_manifest) =
+        nearest_manifest_identity(context.manifest_dir_prefixes, &owner_file)
+    else {
+        return false;
+    };
+    let Some(dependents) = context.adjacency.reverse_neighbors(&owner_manifest) else {
+        return false;
+    };
+    if context.index.tests().iter().any(|test| {
+        let test_file = strip_scan_root(context.root, &test.file);
+        nearest_manifest_identity(context.manifest_dir_prefixes, &test_file)
+            .is_some_and(|manifest| dependents.contains(&manifest))
+    }) {
+        return true;
+    }
+    // Fast/Draft may leave dependent integration tests out of the main
+    // index while a widened witness search still names them. A `tests/`
+    // tree on disk under a reverse neighbor is enough to refuse a
+    // confident empty related-test list.
+    dependents.iter().any(|manifest| {
+        manifest
+            .strip_suffix("Cargo.toml")
+            .is_some_and(|dir| context.root.join(dir).join("tests").is_dir())
+    })
+}
+
+/// Repo-relative path for nearest-manifest attribution. Probe and test files
+/// may be stored rooted at the scan directory; adjacency identities are not.
+fn strip_scan_root(root: &Path, file: &Path) -> PathBuf {
+    file.strip_prefix(root).unwrap_or(file).to_path_buf()
 }
 
 /// #10127: whether a test in `test_file` sits in a package that directly
@@ -10640,6 +10690,66 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             false,
         );
         (adjacency, crate_abc_prefixes())
+    }
+
+    #[test]
+    fn dependent_packages_host_indexed_tests_requires_complete_graph_and_a_test() {
+        let (adjacency, prefixes) = crate_a_dependency_context();
+        let with_test = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![test(
+                "crates/crate_c/tests/html-serializer.rs",
+                "amp_is_escaped",
+                "serialize(&Node(\"&\"))",
+            )],
+            ..Default::default()
+        });
+        let context = edge_context(&adjacency, &prefixes, &with_test);
+        assert!(dependent_packages_host_indexed_tests(
+            Some(&context),
+            Path::new("crates/crate_a/src/lib.rs"),
+        ));
+        assert!(!dependent_packages_host_indexed_tests(
+            None,
+            Path::new("crates/crate_a/src/lib.rs"),
+        ));
+        assert!(
+            !dependent_packages_host_indexed_tests(
+                Some(&context),
+                Path::new("crates/crate_c/src/lib.rs"),
+            ),
+            "a crate with no reverse dependents must not trigger"
+        );
+
+        let empty = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            ..Default::default()
+        });
+        let empty_context = edge_context(&adjacency, &prefixes, &empty);
+        assert!(
+            !dependent_packages_host_indexed_tests(
+                Some(&empty_context),
+                Path::new("crates/crate_a/src/lib.rs"),
+            ),
+            "dependents with no indexed tests must not trigger"
+        );
+
+        let limited = adjacency_with(
+            "complete",
+            &[(
+                "crates/crate_c/Cargo.toml",
+                "crates/crate_a",
+                PathDependencySection::Dependencies,
+                "crate_a",
+            )],
+            true,
+        );
+        let limited_context = edge_context(&limited, &prefixes, &with_test);
+        assert!(
+            !dependent_packages_host_indexed_tests(
+                Some(&limited_context),
+                Path::new("crates/crate_a/src/lib.rs"),
+            ),
+            "an incomplete graph must fail closed"
+        );
     }
 
     /// #2972 positive control: the owner name `score` is ambiguous (crate_a

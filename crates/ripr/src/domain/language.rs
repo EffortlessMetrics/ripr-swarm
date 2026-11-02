@@ -503,6 +503,13 @@ pub enum StaticLimitKind {
     /// reaches the change is withheld and the class is `static_unknown`: the
     /// missing test may be one the walk never read. See RIPR-SPEC-0240.
     TypescriptWorkspaceDiscoveryTruncated,
+    /// Other packages in this workspace depend on the changed owner's crate
+    /// and host indexed tests, but ripr cannot follow a path through trait
+    /// dispatch or a public API the package-prefix guard dropped. A finding
+    /// that would say no test reaches the change is withheld and the class
+    /// is `static_unknown`: the missing test may be one of those dependent
+    /// crates'. See RIPR-SPEC-0240 / #5395.
+    RustDependentCrateReachUnresolved,
 }
 
 impl StaticLimitKind {
@@ -579,6 +586,9 @@ impl StaticLimitKind {
             StaticLimitKind::ProofHarnessNotEvaluated => "proof_harness_not_evaluated",
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
                 "typescript_workspace_discovery_truncated"
+            }
+            StaticLimitKind::RustDependentCrateReachUnresolved => {
+                "rust_dependent_crate_reach_unresolved"
             }
         }
     }
@@ -774,6 +784,12 @@ impl StaticLimitKind {
                  were never read. ripr cannot say that no test \
                  reaches this change, so it does not claim a gap; this is a named limitation, \
                  not a coverage claim."
+            }
+            StaticLimitKind::RustDependentCrateReachUnresolved => {
+                "Other packages in this workspace depend on the changed owner's crate and host \
+                 tests, but ripr cannot follow a path through trait dispatch or a public API the \
+                 package-prefix guard dropped. ripr cannot say that no test reaches this change, \
+                 so it does not claim a gap; this is a named limitation, not a coverage claim."
             }
         }
     }
@@ -1142,6 +1158,10 @@ mod tests {
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated.as_str(),
             "typescript_workspace_discovery_truncated"
         );
+        assert_eq!(
+            StaticLimitKind::RustDependentCrateReachUnresolved.as_str(),
+            "rust_dependent_crate_reach_unresolved"
+        );
     }
 
     #[test]
@@ -1180,6 +1200,7 @@ mod tests {
             StaticLimitKind::ProofHarnessNotEvaluated,
             StaticLimitKind::RustInherentReceiverUnestablished,
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
+            StaticLimitKind::RustDependentCrateReachUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by
