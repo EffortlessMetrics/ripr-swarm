@@ -6048,87 +6048,9 @@ fn mask_comments_and_strings(body: &str) -> String {
 }
 
 /// Returns `true` when `oracle_kind` can observe the seam identified by
-/// `probe_family`.
-///
-/// This is the single source of truth for the TS-adapter assertion-level
-/// family↔kind filter. It mirrors `oracle_kind_matches_seam_kind` from
-/// `test_grip_evidence.rs` (which operates on Rust `SeamKind`), adapted for
-/// the TypeScript `ProbeFamily` vocabulary.
-///
-/// ### Mapping table (RIPR-SPEC-0104 §3)
-///
-/// | ProbeFamily | Excluded OracleKinds (Strong-rank only — the honesty fix) |
-/// |---|---|
-/// | `ErrorPath` | `ExactValue`, `RelationalCheck`, `MockExpectation` |
-/// | `ReturnValue`, `Predicate`, `FieldConstruction`, `MatchArm` | `ExactErrorVariant`, `BroadError`, `MockExpectation` |
-/// | `SideEffect`, `CallDeletion` | *(handled by RIPR-SPEC-0098 observation guard — no additional exclusion here)* |
-/// | `StaticUnknown` | *(fail-open — all oracles admitted)* |
-///
-/// ### Design: fail-closed only at the cross-domain seam boundary
-///
-/// The HONESTY BUG addressed by this function is specifically the case where a
-/// **Strong wrong-domain** oracle is credited to a seam whose family it cannot
-/// observe:
-///
-/// - An `ExactErrorVariant` oracle (`.toThrow(DiscountError)`) is an error-path
-///   discriminator. It MUST NOT count as a strong match for a `ReturnValue` or
-///   `Predicate` seam — these seams emit a value, not an error.
-/// - An `ExactValue` oracle (`.toBe(90)`) is a value discriminator. It MUST NOT
-///   count as a strong match for an `ErrorPath` seam — the seam throws, not returns.
-///
-/// ### Composing with RIPR-SPEC-0098 (SideEffect observation guard)
-///
-/// For `SideEffect` and `CallDeletion` families, RIPR-SPEC-0098 already provides
-/// a dedicated observation guard (`ts_changed_value_is_observed`) that correctly
-/// handles the case where a value-shaped `ExactValue` assertion observes the owner
-/// RETURN value (not the call effect). That guard fires in the
-/// `else if strongest_strength >= Strong.rank()` arm of the classifier.
-/// To preserve that path, `ExactValue` is NOT excluded from `SideEffect` /
-/// `CallDeletion` by this function — SPEC-0098 handles those seams independently.
-/// The two specs compose: SPEC-0104 handles cross-domain value↔error exclusion;
-/// SPEC-0098 handles the same-domain but wrong-target SideEffect case.
-///
-/// ### Weak oracle kinds are always admitted
-///
-/// `SmokeOnly`, `Unknown`, `BroadError` (for non-error families),
-/// `RelationalCheck` (for non-error families) are admitted for all concrete
-/// families because they are weak/absent and do NOT contradict any family.
-/// Their rank (Smoke / Unknown / Weak) prevents them from triggering
-/// `Exposed` promotion regardless. Admitting them preserves accurate
-/// per-kind messaging in `weak_oracle_missing_summary`.
-pub(crate) fn ts_oracle_kind_matches_seam(
-    oracle_kind: &OracleKind,
-    probe_family: &ProbeFamily,
-) -> bool {
-    match probe_family {
-        // ErrorPath seams: exclude STRONG VALUE oracles (ExactValue, RelationalCheck)
-        // and MockExpectation.  BroadError, ExactErrorVariant, Snapshot all observe
-        // an error-path change.  SmokeOnly/Unknown are weak and admitted.
-        ProbeFamily::ErrorPath => !matches!(
-            oracle_kind,
-            OracleKind::ExactValue | OracleKind::RelationalCheck | OracleKind::MockExpectation
-        ),
-        // Value-family seams: exclude STRONG ERROR oracle (ExactErrorVariant)
-        // and BroadError, MockExpectation.  ExactValue, WholeObjectEquality,
-        // Snapshot, RelationalCheck, SmokeOnly, Unknown all admitted.
-        // THIS IS THE PRIMARY FIX: ExactErrorVariant must not credit a ReturnValue seam.
-        ProbeFamily::ReturnValue
-        | ProbeFamily::Predicate
-        | ProbeFamily::FieldConstruction
-        | ProbeFamily::MatchArm => !matches!(
-            oracle_kind,
-            OracleKind::ExactErrorVariant | OracleKind::BroadError | OracleKind::MockExpectation
-        ),
-        // SideEffect / CallDeletion: defer to RIPR-SPEC-0098 observation guard.
-        // All oracle kinds admitted here so that `strongest_strength` reflects
-        // the actual oracle rank, letting the observation guard run in the
-        // `else if strongest_strength >= Strong.rank()` arm.
-        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => true,
-        // Fail-open for genuinely-unknown family: we cannot determine the
-        // match — do not over-correct by blocking a potentially valid oracle.
-        ProbeFamily::StaticUnknown => true,
-    }
-}
+/// `probe_family` (RIPR-SPEC-0104). The mapping table lives in
+/// [`crate::domain::ts_oracle_kind_matches_seam`].
+pub(crate) use crate::domain::ts_oracle_kind_matches_seam;
 
 /// Compute the strongest oracle kind and strength that MATCHES the changed
 /// seam's probe family, by iterating assertions at the assertion level across

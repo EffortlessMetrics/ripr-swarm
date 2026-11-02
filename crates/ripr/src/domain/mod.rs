@@ -32,6 +32,8 @@ mod summary;
 mod support;
 mod test_evidence_identity;
 mod test_evidence_summary;
+mod typescript_oracle_seam;
+mod typescript_preview_related_test;
 mod verification_result;
 
 pub use candidate_relation::CandidateRelation;
@@ -151,6 +153,8 @@ pub(crate) use probe::boundary_input_observed_with_weak_oracle;
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};
 pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};
+pub(crate) use typescript_oracle_seam::ts_oracle_kind_matches_seam;
+pub(crate) use typescript_preview_related_test::typescript_script_preview_related_test;
 pub(crate) use verification_result::CommandSpecDigest;
 pub use verification_result::{
     VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION, VerificationCurrentnessV1,

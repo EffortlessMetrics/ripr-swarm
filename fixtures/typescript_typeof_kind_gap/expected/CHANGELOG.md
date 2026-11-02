@@ -95,3 +95,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_typeof_kind_gap (9)
+
+Reason:
+RIPR-SPEC-0224: TypeScript preview surfaces select the producer oracle-ref row before raw cross-test strength (#5505)
+
+Command:
+`cargo xtask goldens bless typescript_typeof_kind_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

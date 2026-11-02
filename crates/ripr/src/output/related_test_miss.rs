@@ -4,19 +4,19 @@
 //! single place that turns it into prose, so human, JSON, LSP and agent output
 //! say the same thing about the same test.
 
-use crate::domain::{ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason};
+use crate::domain::{
+    Finding, LanguageId, OracleKind, OracleStrength, ProbeFamily, RelatedTest, RelatedTestMiss,
+    RelationReason,
+};
 
 /// Why a TypeScript or JavaScript assertion's observation stays unconfirmed.
 const SCRIPT_OBSERVATION_UNCONFIRMED: &str =
     "the preview adapter could not confirm that this assertion observes the changed behavior";
 
-/// The one related-test selection rule shared by the check headline, the
-/// preview card, the repair packet and the JSON oracle summary (#11228).
+/// Strength-only row pick kept for non-script callers and legacy tests.
 ///
-/// The strongest oracle wins; equal strength keeps the earliest row, which is
-/// the row the human `Related test` line names (`related_tests.first()`).
-/// `Iterator::max_by_key` returns the *last* maximum, which made the packet
-/// name a different test than the headline whenever two tests tied.
+/// TypeScript/JavaScript preview surfaces must use
+/// [`typescript_script_preview_related_test`] instead (#5505).
 pub(crate) fn strongest_related_test(tests: &[RelatedTest]) -> Option<&RelatedTest> {
     let mut best: Option<&RelatedTest> = None;
     for test in tests {
@@ -27,23 +27,39 @@ pub(crate) fn strongest_related_test(tests: &[RelatedTest]) -> Option<&RelatedTe
     best
 }
 
-/// The row the human `Related test` headline names (#11228).
+/// The row the human `Related test` headline names for one finding.
+pub(crate) fn headline_related_test_for_finding(finding: &Finding) -> Option<&RelatedTest> {
+    if matches!(
+        finding.language,
+        Some(LanguageId::TypeScript | LanguageId::JavaScript)
+    ) {
+        return typescript_script_preview_related_test(finding);
+    }
+    finding.related_tests.first()
+}
+
+/// Legacy entry point for table tests that only hold related-test rows.
 ///
-/// TypeScript and JavaScript findings use [`strongest_related_test`] so the
-/// headline, card, packet and oracle summary all name one row, including when
-/// a weak direct call precedes a strong re-exported one. Other languages keep
-/// the first row; moving them is a separate, golden-wide change.
+/// Script findings should prefer [`headline_related_test_for_finding`] or
+/// [`typescript_script_preview_related_test`].
 pub(crate) fn headline_related_test(
-    language: Option<crate::domain::LanguageId>,
+    language: Option<LanguageId>,
     tests: &[RelatedTest],
 ) -> Option<&RelatedTest> {
     if matches!(
         language,
-        Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript)
+        Some(LanguageId::TypeScript | LanguageId::JavaScript)
     ) {
         return strongest_related_test(tests);
     }
     tests.first()
+}
+
+/// The one TypeScript/JavaScript preview related-test row shared by the check
+/// headline, preview card, packet projection, JSON oracle summary and miss
+/// explanation (#11228 tie-break, #5505 family-aware evidence).
+pub(crate) fn typescript_script_preview_related_test(finding: &Finding) -> Option<&RelatedTest> {
+    crate::domain::typescript_script_preview_related_test(finding)
 }
 
 /// Short reason the test misses the changed behavior, or `None` when the
@@ -333,6 +349,124 @@ mod tests {
             );
         }
         assert!(headline_related_test(Some(LanguageId::TypeScript), &[]).is_none());
+    }
+
+    /// #5505: preview surfaces prefer the producer oracle ref, then the
+    /// strongest family-relevant row, never a wrong-family strength-only pick.
+    #[test]
+    fn typescript_script_preview_related_test_controls() {
+        use crate::domain::{
+            ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageStatus,
+            Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence, SourceLocation,
+            StageEvidence, StageState,
+        };
+
+        fn stage(state: StageState) -> StageEvidence {
+            StageEvidence {
+                state,
+                confidence: Confidence::Low,
+                summary: String::new(),
+            }
+        }
+
+        fn ts_finding(family: ProbeFamily, rows: Vec<RelatedTest>) -> Finding {
+            Finding {
+                analysis_scope: crate::domain::AnalysisScope::Diff,
+                confidence_basis: Vec::new(),
+                id: "probe:src/a.ts:typescript_preview:deadbeef".to_string(),
+                canonical_gap: None,
+                probe: Probe {
+                    id: ProbeId("probe:src/a.ts:typescript_preview:deadbeef".to_string()),
+                    family,
+                    delta: DeltaKind::Control,
+                    location: SourceLocation::new("src/a.ts", 1, 1),
+                    expression: "if (x)".to_string(),
+                    before: None,
+                    after: Some("if (x)".to_string()),
+                    owner: None,
+                    expected_sinks: Vec::new(),
+                    required_oracles: Vec::new(),
+                },
+                class: ExposureClass::WeaklyExposed,
+                ripr: RiprEvidence {
+                    reach: stage(StageState::Yes),
+                    infect: stage(StageState::Unknown),
+                    propagate: stage(StageState::Unknown),
+                    reveal: RevealEvidence {
+                        observe: stage(StageState::Weak),
+                        discriminate: stage(StageState::Weak),
+                    },
+                },
+                evidence: Vec::new(),
+                missing: Vec::new(),
+                activation: ActivationEvidence::default(),
+                stop_reasons: Vec::new(),
+                related_tests_matched_total: None,
+                related_tests: rows,
+                recommended_next_step: None,
+                language: Some(LanguageId::TypeScript),
+                language_status: Some(LanguageStatus::Preview),
+                confidence: 0.4,
+                flow_sinks: Vec::new(),
+                owner_kind: None,
+                source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
+                static_limit_kind: None,
+                changed_sink: None,
+                observed_sink: None,
+                oracle_alignment: None,
+                alignment_reason: None,
+            }
+        }
+
+        let mut wrong_family = test_with(None, None);
+        wrong_family.name = "throw-only".to_string();
+        wrong_family.oracle_strength = OracleStrength::Unknown;
+        wrong_family.oracle_kind = OracleKind::Unknown;
+        let mut family_match = test_with(None, None);
+        family_match.name = "value".to_string();
+        family_match.oracle_strength = OracleStrength::Weak;
+        family_match.oracle_kind = OracleKind::ExactValue;
+        let finding = ts_finding(
+            ProbeFamily::Predicate,
+            vec![wrong_family.clone(), family_match.clone()],
+        );
+        assert_eq!(
+            typescript_script_preview_related_test(&finding).map(|row| row.name.as_str()),
+            Some("value")
+        );
+
+        let mut first = family_match.clone();
+        first.name = "first".to_string();
+        let mut second = family_match.clone();
+        second.name = "second".to_string();
+        second.oracle_strength = OracleStrength::Strong;
+        let tied = ts_finding(ProbeFamily::Predicate, vec![first, second.clone()]);
+        assert_eq!(
+            typescript_script_preview_related_test(&tied).map(|row| row.name.as_str()),
+            Some("second")
+        );
+
+        let mut evidence_row = family_match.clone();
+        evidence_row.name = "evidence".to_string();
+        evidence_row.file = PathBuf::from("tests/discount.test.ts");
+        evidence_row.line = 3;
+        let mut stronger = family_match.clone();
+        stronger.name = "stronger".to_string();
+        stronger.oracle_strength = OracleStrength::Strong;
+        let mut with_ref = ts_finding(ProbeFamily::Predicate, vec![stronger, evidence_row.clone()]);
+        with_ref
+            .evidence
+            .push("typescript_oracle_evidence_ref: tests/discount.test.ts:5".to_string());
+        assert_eq!(
+            typescript_script_preview_related_test(&with_ref).map(|row| row.name.as_str()),
+            Some("evidence")
+        );
+
+        let only_unknown = ts_finding(ProbeFamily::ErrorPath, vec![wrong_family]);
+        assert_eq!(
+            typescript_script_preview_related_test(&only_unknown).map(|row| row.name.as_str()),
+            Some("throw-only")
+        );
     }
 
     #[test]

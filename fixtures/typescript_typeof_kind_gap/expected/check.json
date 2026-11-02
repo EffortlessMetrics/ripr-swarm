@@ -112,8 +112,8 @@
         "probe_family": "predicate",
         "related_test": {
           "file": "tests/utils.test.ts",
-          "line": 4,
-          "name": "resolveValue returns a number unchanged"
+          "line": 8,
+          "name": "resolveValue returns the string 'function' unchanged"
         },
         "repair_packet_ready": false,
         "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",

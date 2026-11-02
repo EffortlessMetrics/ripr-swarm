@@ -22,7 +22,7 @@ Start here:
   Check (observed, advisory): Related test reaches `applyDiscount` with an `exact_value` oracle.
     Static evidence suggests the changed behavior is observed under an exact-value or
     exact-error-variant check
-  Related test (1 of 2 matched rows): tests/pricing.test.ts:7 alias import observes threshold
+  Related test (1 of 2 matched rows): tests/pricing.test.ts:11 namespace import observes threshold
   Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

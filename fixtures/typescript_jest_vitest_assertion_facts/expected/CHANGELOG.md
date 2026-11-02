@@ -901,3 +901,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (44)
+
+Reason:
+RIPR-SPEC-0224: TypeScript preview surfaces select the producer oracle-ref row before raw cross-test strength (#5505)
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

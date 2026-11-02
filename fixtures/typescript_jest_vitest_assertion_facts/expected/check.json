@@ -97,8 +97,8 @@
         "probe_family": "predicate",
         "related_test": {
           "file": "tests/signals.test.ts",
-          "line": 14,
-          "name": "pricing discounts pins threshold"
+          "line": 20,
+          "name": "discount table %#"
         },
         "repair_packet_ready": false,
         "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",

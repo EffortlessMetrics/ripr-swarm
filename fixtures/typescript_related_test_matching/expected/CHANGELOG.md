@@ -757,3 +757,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_related_test_matching (33)
+
+Reason:
+RIPR-SPEC-0224: TypeScript preview surfaces select the producer oracle-ref row before raw cross-test strength (#5505)
+
+Command:
+`cargo xtask goldens bless typescript_related_test_matching --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

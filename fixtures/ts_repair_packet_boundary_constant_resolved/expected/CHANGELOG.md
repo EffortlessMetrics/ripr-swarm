@@ -460,3 +460,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_constant_resolved (39)
+
+Reason:
+RIPR-SPEC-0224: TypeScript preview surfaces select the producer oracle-ref row before raw cross-test strength (#5505)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_resolved --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -264,10 +264,8 @@ pub(crate) fn render_finding_digest_with_config(
             out.push('\n');
         }
     }
-    if let Some(test) = crate::output::related_test_miss::headline_related_test(
-        finding.language,
-        &finding.related_tests,
-    ) {
+    if let Some(test) = crate::output::related_test_miss::headline_related_test_for_finding(finding)
+    {
         // #4320: the digest shows only the first related-test row; carry the
         // total so the reader knows how much reaching-test evidence exists
         // (the evidence window in the full form discloses the same bound).
