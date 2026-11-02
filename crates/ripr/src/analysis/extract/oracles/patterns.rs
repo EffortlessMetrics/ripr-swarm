@@ -234,7 +234,10 @@ fn has_error_replacing_adapter(masked: &str) -> bool {
     if has_map_err {
         return true;
     }
-    let head = masked.split('(').next().unwrap_or("");
+    // Grouped receivers such as `(Result::or(call, Err(..)))` carry the callee
+    // path after the leading groups, which the error-read reader also traverses.
+    let ungrouped = masked.trim_start_matches(|ch: char| ch == '(' || ch.is_whitespace());
+    let head = ungrouped.split('(').next().unwrap_or("");
     let segments: Vec<&str> = head.trim().split("::").map(str::trim).collect();
     segments.len() >= 2
         && segments
@@ -2421,6 +2424,9 @@ mod spec_0106_tests {
             "assert_eq!(parse(\"x\").map_err::<ParseError, _>(|_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
             "assert_eq!(std::result::Result::map_err(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
             "assert_eq!(Result::and(parse(\"x\"), Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);",
+            "assert_eq!((Result::or(parse(\"x\"), Err(ParseError::Empty))).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(((Result::map_err(parse(\"x\"), |_| ParseError::Empty))).unwrap_err(), ParseError::Empty);",
+            "assert_eq!((parse(\"x\").map_err(|_| ParseError::Empty)).unwrap_err(), ParseError::Empty);",
         ] {
             assert!(
                 !is_inline_unwrap_err_error_assertion(line),
