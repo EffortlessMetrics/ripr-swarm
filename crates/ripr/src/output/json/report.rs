@@ -795,6 +795,14 @@ fn summary_json(out: &mut String, output: &CheckOutput) {
         s.propagation_unknown,
         s.static_unknown
     ));
+    // Additive (#11554): present only when different probe families gave one
+    // expression different classes, so every other document is unchanged.
+    if s.conflicting_expressions > 0 {
+        out.push_str(&format!(
+            ",\"conflicting_expressions\":{}",
+            s.conflicting_expressions
+        ));
+    }
     // Additive (#2103): per-language changed-file counts, one entry per
     // adapter that ran, sorted by language wire string. `changed_rust_files`
     // above carries the Rust adapter's count only.

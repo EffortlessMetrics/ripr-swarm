@@ -53,7 +53,7 @@ pub(crate) mod seams;
 mod sort;
 #[cfg(test)]
 mod source_role_corpus;
-mod summary;
+pub(crate) mod summary;
 mod sync_memo;
 mod syntax;
 mod test_changes;
@@ -147,10 +147,11 @@ pub(crate) use seam_inventory::file_fact_store_failure_rows;
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
     ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, FileSeamIndex,
-    PilotInventoryDefault, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer, SeamLimitInfo,
-    SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
-    classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
-    diff_only_rust_files, inventory_changed_test_classified_seams_at_with_config_node,
+    PilotInventoryDefault, REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory,
+    ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
+    apply_pilot_seam_budget, classify_seams_in_file_with_shared_index,
+    classify_seams_in_files_at_with_config, diff_only_rust_files,
+    inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_bound_seams_at_with_config,
@@ -161,6 +162,7 @@ pub(crate) use seam_inventory::{
     seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
     workspace_cache_key_at_with_config,
 };
+pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{
     owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
@@ -548,6 +550,40 @@ use crate::core_error::CoreError;
 use crate::domain::{Finding, Summary};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
+
+/// #11398: whether `seam` is a field write in a method (`self.count += 1`)
+/// rather than a field of a struct literal. Surfaces that word guidance for
+/// field seams read this so they do not describe a returned struct.
+pub(crate) fn is_field_write_seam(seam: &seams::RepoSeam) -> bool {
+    seam.kind() == seams::SeamKind::FieldConstruction
+        && classify::field_assignment_target(seam.expression()).is_some()
+}
+
+/// Where a field write is read back (#12061).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FieldWriteRead {
+    /// The owner borrows its receiver: read the field on the value the
+    /// method was called on.
+    Receiver,
+    /// The owner takes `self` by value and writes a moved copy: the caller's
+    /// binding never sees the write, so read the field on the value the call
+    /// returns.
+    CallResult,
+    /// The receiver mode is not recorded (a cache entry from before the
+    /// fact): word the read without naming a value.
+    Unspecified,
+}
+
+/// How `seam`'s field write is read back, or `None` when it is not a field
+/// write. The one place the receiver mode becomes wording, so the hover, the
+/// agent packet and the human step agree.
+pub(crate) fn field_write_read(seam: &seams::RepoSeam) -> Option<FieldWriteRead> {
+    is_field_write_seam(seam).then(|| match seam.owner_borrows_receiver() {
+        Some(true) => FieldWriteRead::Receiver,
+        Some(false) => FieldWriteRead::CallResult,
+        None => FieldWriteRead::Unspecified,
+    })
+}
 
 /// Render a path for textual identity without collapsing distinct Unix byte
 /// paths through U+FFFD. Valid paths retain their usual spelling except that

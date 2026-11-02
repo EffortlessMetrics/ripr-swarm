@@ -28,16 +28,21 @@ pub(super) fn extract_owners(file: &Path, source: &str) -> Vec<PythonOwner> {
     extract_source_facts(file, source).owners
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "owner collection mirrors the per-file extraction inputs; the function-context input names the enclosing def for nested owners"
+)]
 pub(super) fn collect_owners_from_statements(
     file: &Path,
     source: &SourceText<'_>,
     statements: &[Stmt],
     class_context: Option<&str>,
+    function_context: Option<&str>,
     imports: &[PythonImport],
     module_constants: &[PythonModuleConstant],
     out: &mut Vec<PythonOwner>,
 ) {
-    let function_context = PythonOwnerContext {
+    let owner_context = PythonOwnerContext {
         file,
         source,
         class_context,
@@ -46,10 +51,10 @@ pub(super) fn collect_owners_from_statements(
     };
     // A definition under a statically decided module-level `if` runs on every
     // interpreter, so it is an owner like a top-level one (#9423).
-    if class_context.is_none() {
+    if class_context.is_none() && function_context.is_none() {
         for stmt in live_conditional_functions(source, statements) {
             let first = out.len();
-            push_function_owner(stmt, function_context, out);
+            push_function_owner(stmt, owner_context, out);
             for owner in &mut out[first..] {
                 owner.version_conditional = true;
             }
@@ -57,8 +62,55 @@ pub(super) fn collect_owners_from_statements(
     }
     for stmt in statements {
         match stmt {
-            Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) => {
-                push_function_owner(stmt, function_context, out);
+            Stmt::FunctionDef(function) => {
+                push_function_owner(stmt, owner_context, out);
+                if let Some(parent) = function_context {
+                    let called = body_calls_nested_def(source, statements, &function.name);
+                    if let Some(owner) = out.last_mut() {
+                        owner.qualified_name = format!("{parent}.{}", function.name);
+                        owner.owner_kind = Some(OwnerKind::Function);
+                        owner.nested_called_by_parent = called;
+                    }
+                }
+                let parent_qualified = out
+                    .last()
+                    .map(|owner| owner.qualified_name.clone())
+                    .unwrap_or_default();
+                collect_owners_from_statements(
+                    file,
+                    source,
+                    &function.body,
+                    class_context,
+                    Some(parent_qualified.as_str()),
+                    imports,
+                    module_constants,
+                    out,
+                );
+            }
+            Stmt::AsyncFunctionDef(function) => {
+                push_function_owner(stmt, owner_context, out);
+                if let Some(parent) = function_context {
+                    let called = body_calls_nested_def(source, statements, &function.name);
+                    if let Some(owner) = out.last_mut() {
+                        owner.qualified_name = format!("{parent}.{}", function.name);
+                        owner.owner_kind = Some(OwnerKind::Function);
+                        owner.nested_called_by_parent = called;
+                    }
+                }
+                let parent_qualified = out
+                    .last()
+                    .map(|owner| owner.qualified_name.clone())
+                    .unwrap_or_default();
+                collect_owners_from_statements(
+                    file,
+                    source,
+                    &function.body,
+                    class_context,
+                    Some(parent_qualified.as_str()),
+                    imports,
+                    module_constants,
+                    out,
+                );
             }
             Stmt::ClassDef(class) => {
                 let class_path = class_context.map_or_else(
@@ -71,6 +123,7 @@ pub(super) fn collect_owners_from_statements(
                     source,
                     &class.body,
                     Some(class_path.as_str()),
+                    None,
                     imports,
                     module_constants,
                     out,
@@ -148,6 +201,215 @@ struct PythonOwnerContext<'a> {
     class_context: Option<&'a str>,
     imports: &'a [PythonImport],
     module_constants: &'a [PythonModuleConstant],
+}
+
+/// Whether the statements that run when the enclosing function runs call the
+/// nested def `name` by name (#12141). `statements` is the enclosing body. The
+/// bodies of nested defs and classes, at any depth through `if`/`with`/`for`/
+/// `try`/`match` blocks, and every `lambda` expression are excluded, so a call
+/// from an unused sibling def, from the nested body itself, from a class body
+/// or from a lambda is not an edge from the enclosing function (#12197).
+/// What a nested declaration evaluates when it is defined (decorators, default
+/// values, annotations, class bases) still runs and still counts. A spaced
+/// call (`inner (n)`) counts. A body that rebinds the name (assignment,
+/// walrus, `for`, `as`, `import`) or defines it more than once is fail-closed:
+/// the call may reach a different binding. Returning or passing the def
+/// without calling it is not a call.
+fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> bool {
+    let mut scan = DeferredRanges::default();
+    collect_deferred_ranges(statements, name, &mut scan);
+    if scan.definitions > 1 {
+        return false;
+    }
+    super::module_constants::visit_exprs_in_statements(statements, &mut |expr| {
+        if let Expr::Lambda(lambda) = expr {
+            scan.lambdas.push(span(lambda.range));
+        }
+    });
+    let executed = statements
+        .iter()
+        .map(|stmt| match stmt {
+            Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_) => {
+                // Only what the declaration evaluates runs with the body.
+                let mut eager = DeferredRanges::default();
+                declaration_eager_ranges(stmt, &mut eager.eager);
+                eager.lambdas.clone_from(&scan.lambdas);
+                eager
+                    .eager
+                    .iter()
+                    .map(|&(from, to)| {
+                        text_without_ranges(source, from, to, &[], &[], &scan.lambdas)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+            _ => {
+                let range = stmt.range();
+                text_without_ranges(
+                    source,
+                    usize::from(range.start()),
+                    usize::from(range.end()),
+                    &scan.deferred,
+                    &scan.eager,
+                    &scan.lambdas,
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let ident = |ch: char| ch == '_' || ch.is_alphanumeric();
+    let mut calls = false;
+    let mut rebinds = false;
+    for (idx, _) in executed.match_indices(name) {
+        let end = idx + name.len();
+        let bounded = super::static_limits::python_callee_start_has_boundary(&executed, idx)
+            && executed[end..].chars().next().is_none_or(|ch| !ident(ch));
+        if !bounded {
+            continue;
+        }
+        let after = executed[end..].trim_start_matches([' ', '\t']);
+        let before = executed[..idx].trim_end_matches([' ', '\t']);
+        if after.starts_with('(') && super::related_tests::is_bare_call_site(&executed, idx) {
+            calls = true;
+        } else if (after.starts_with('=') && !after.starts_with("=="))
+            || after.starts_with(":=")
+            || matches!(
+                before.rsplit(char::is_whitespace).next(),
+                Some("as" | "for" | "import")
+            )
+        {
+            rebinds = true;
+        }
+    }
+    calls && !rebinds
+}
+
+/// Byte ranges found while reading an enclosing body for a nested-def call.
+#[derive(Default)]
+struct DeferredRanges {
+    /// Nested defs and classes: their text does not run with the body.
+    deferred: Vec<(usize, usize)>,
+    /// Inside a deferred declaration, what it evaluates when defined.
+    eager: Vec<(usize, usize)>,
+    /// `lambda` expressions: their bodies run only if something calls them.
+    lambdas: Vec<(usize, usize)>,
+    /// Defs named like the target, anywhere in the enclosing body's blocks.
+    definitions: usize,
+}
+
+fn span(range: TextRange) -> (usize, usize) {
+    (usize::from(range.start()), usize::from(range.end()))
+}
+
+fn collect_deferred_ranges(statements: &[Stmt], name: &str, scan: &mut DeferredRanges) {
+    for stmt in statements {
+        match stmt {
+            Stmt::FunctionDef(function) => {
+                scan.deferred.push(span(stmt.range()));
+                declaration_eager_ranges(stmt, &mut scan.eager);
+                if function.name.as_str() == name {
+                    scan.definitions += 1;
+                }
+            }
+            Stmt::AsyncFunctionDef(function) => {
+                scan.deferred.push(span(stmt.range()));
+                declaration_eager_ranges(stmt, &mut scan.eager);
+                if function.name.as_str() == name {
+                    scan.definitions += 1;
+                }
+            }
+            Stmt::ClassDef(_) => {
+                scan.deferred.push(span(stmt.range()));
+                declaration_eager_ranges(stmt, &mut scan.eager);
+            }
+            _ => {
+                for block in super::admission::nested_blocks(stmt) {
+                    collect_deferred_ranges(block, name, scan);
+                }
+            }
+        }
+    }
+}
+
+/// The expressions a def or class evaluates when it is defined: decorators,
+/// default values, return and argument annotations, class bases and keywords.
+fn declaration_eager_ranges(stmt: &Stmt, out: &mut Vec<(usize, usize)>) {
+    let mut push = |expr: &Expr| out.push(span(expr.range()));
+    let arguments = |args: &ast::Arguments, push: &mut dyn FnMut(&Expr)| {
+        for arg in args
+            .posonlyargs
+            .iter()
+            .chain(&args.args)
+            .chain(&args.kwonlyargs)
+        {
+            if let Some(default) = arg.default.as_deref() {
+                push(default);
+            }
+            if let Some(annotation) = arg.def.annotation.as_deref() {
+                push(annotation);
+            }
+        }
+    };
+    match stmt {
+        Stmt::FunctionDef(function) => {
+            function.decorator_list.iter().for_each(&mut push);
+            arguments(&function.args, &mut push);
+            function.returns.as_deref().into_iter().for_each(&mut push);
+        }
+        Stmt::AsyncFunctionDef(function) => {
+            function.decorator_list.iter().for_each(&mut push);
+            arguments(&function.args, &mut push);
+            function.returns.as_deref().into_iter().for_each(&mut push);
+        }
+        Stmt::ClassDef(class) => {
+            class.decorator_list.iter().for_each(&mut push);
+            class.bases.iter().for_each(&mut push);
+            class
+                .keywords
+                .iter()
+                .for_each(|keyword| push(&keyword.value));
+        }
+        _ => {}
+    }
+}
+
+/// The text of `[from, to)` with every byte inside a deferred or lambda range
+/// blanked to a space (newlines kept so offsets and lines are stable), except
+/// bytes inside an eager range, which a deferred declaration still evaluates.
+/// Lambda ranges are blanked last, so a lambda in a default stays deferred.
+fn text_without_ranges(
+    source: &str,
+    from: usize,
+    to: usize,
+    deferred: &[(usize, usize)],
+    eager: &[(usize, usize)],
+    lambdas: &[(usize, usize)],
+) -> String {
+    let from = from.min(source.len());
+    let to = to.min(source.len());
+    let original = source.get(from..to).unwrap_or_default().as_bytes();
+    let mut bytes = original.to_vec();
+    let blank = |bytes: &mut Vec<u8>, ranges: &[(usize, usize)]| {
+        for &(start, end) in ranges {
+            let start = start.saturating_sub(from).min(bytes.len());
+            let end = end.saturating_sub(from).min(bytes.len());
+            for byte in bytes.iter_mut().take(end).skip(start) {
+                if *byte != b'\n' {
+                    *byte = b' ';
+                }
+            }
+        }
+    };
+    blank(&mut bytes, deferred);
+    for &(start, end) in eager {
+        let start = start.saturating_sub(from).min(bytes.len());
+        let end = end.saturating_sub(from).min(bytes.len());
+        if let (Some(dst), Some(src)) = (bytes.get_mut(start..end), original.get(start..end)) {
+            dst.copy_from_slice(src);
+        }
+    }
+    blank(&mut bytes, lambdas);
+    String::from_utf8(bytes).unwrap_or_default()
 }
 
 fn owner_from_function(
@@ -289,6 +551,7 @@ fn owner_from_function(
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     }
 }
 
@@ -393,6 +656,7 @@ fn owner_from_class(
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     }
 }
 
@@ -432,6 +696,7 @@ pub(super) fn module_owner(
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     }
 }
 
@@ -545,8 +810,10 @@ pub(super) fn collect_tests_from_statements(
     } else {
         Vec::new()
     };
-    for stmt in statements {
+    let later_bindings = super::test_activation::LaterBindings::of(statements);
+    for (index, stmt) in statements.iter().enumerate() {
         apply_definition_import(file, stmt, &mut definition_imports);
+        let first_pushed = out.len();
         match stmt {
             Stmt::FunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {
@@ -960,6 +1227,26 @@ pub(super) fn collect_tests_from_statements(
             }
             _ => {}
         }
+        // Pytest and unittest collect the last binding of a name in a scope:
+        // an earlier definition (or one later replaced by `name = None`) never
+        // runs.
+        let defined = match stmt {
+            Stmt::FunctionDef(function) => Some(function.name.as_str()),
+            Stmt::AsyncFunctionDef(function) => Some(function.name.as_str()),
+            Stmt::ClassDef(class) => Some(class.name.as_str()),
+            _ => None,
+        };
+        if let Some(defined) = defined
+            && later_bindings.rebound_later(statements, index, defined, source)
+        {
+            for test in &mut out[first_pushed..] {
+                test.activation_controls.push(
+                    super::test_activation::shadowed_by_later_binding_control(
+                        super::test_activation::DeclarationSite::Function,
+                    ),
+                );
+            }
+        }
     }
 }
 
@@ -1355,6 +1642,11 @@ impl<'a> LocalTestClasses<'a> {
                         super::test_activation::DeclarationSite::Class,
                     )
                 }))
+                .chain(class_switched_off(&scope, name).then(|| {
+                    super::test_activation::test_switch_control(
+                        super::test_activation::DeclarationSite::Class,
+                    )
+                }))
                 .collect();
             found.class_activation_controls.insert(name, controls);
             let Some(mro) = scope.mro(name, &mut Vec::new()) else {
@@ -1528,6 +1820,43 @@ impl<'a> ScopeClasses<'a> {
             }
         }
         None
+    }
+}
+
+/// Whether `__test__ = False` (or an unevaluable binding) reaches `name`:
+/// pytest reads the attribute through the class hierarchy, so the first class
+/// along the MRO that binds it decides, and an intermediate literal `True`
+/// re-enables collection for its subclasses. When the MRO is unavailable or an
+/// external base precedes any binding, any ancestor that is not provably
+/// `True` counts (fail-closed).
+fn class_switched_off<'a>(scope: &ScopeClasses<'a>, name: &'a str) -> bool {
+    use super::test_activation::{TestSwitch, test_switch};
+    let switch_of = |key: &str| {
+        scope
+            .defs
+            .get(key)
+            .map(|(_, class)| test_switch(&class.body))
+    };
+    if let Some(mro) = scope.mro(name, &mut Vec::new()) {
+        for entry in &mro {
+            let MroEntry::Local(key) = entry else {
+                break;
+            };
+            match switch_of(key) {
+                Some(TestSwitch::Enabled) => return false,
+                Some(TestSwitch::Disabled) => return true,
+                _ => {}
+            }
+        }
+    }
+    let switches: Vec<TestSwitch> = scope
+        .ancestors_or_self(name)
+        .iter()
+        .filter_map(|ancestor| switch_of(ancestor))
+        .collect();
+    match switches.first() {
+        Some(TestSwitch::Enabled) => false,
+        _ => switches.contains(&TestSwitch::Disabled),
     }
 }
 

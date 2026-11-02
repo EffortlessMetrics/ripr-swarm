@@ -891,11 +891,17 @@ pub(crate) struct RegistrationScope {
     context: TypeScriptAdmissionContext,
     names: RegistrationNames,
     unshadowed_undefined: bool,
+    /// The object-row table loop this list is the body of (#11196).
+    row_loop: Option<RowLoop>,
 }
 
 impl RegistrationScope {
     fn of(scope: &TestScope, unshadowed_undefined: bool) -> Self {
         Self {
+            row_loop: scope
+                .row_loop
+                .clone()
+                .filter(|row_loop| row_loop.applies_at(scope.levels.len())),
             context: scope.admission.registration_context(),
             names: RegistrationNames::new(
                 scope
@@ -1205,7 +1211,12 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             scope.iterables.push(Vec::new());
             let inherited_strict = scope.admission.block_functions_are_lexical;
             scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
+            // #11196: a `for (const t of <object-row table>)` loop over one
+            // registration reads the registration once per row.
+            let inherited_row_loop = scope.row_loop.take();
+            scope.row_loop = row_loop_of(stmt, statements, body, source, scope.levels.len());
             collect_tests_from_statements(body, file, source, imports, scope, tests);
+            scope.row_loop = inherited_row_loop;
             scope.admission.block_functions_are_lexical = inherited_strict;
             scope.iterables.pop();
             scope.levels.pop();
@@ -1215,14 +1226,17 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         // re-declares an imported assertion binding shadows it for every test
         // inside (#4638 review). `levels[0]` is the file's own top level,
         // where the import itself lives.
-        let assertion_bindings = scope.assertion_bindings.without_shadowed(|name| {
-            scope
-                .levels
-                .iter()
-                .skip(1)
-                .flatten()
-                .any(|(bound, _, _)| bound == name)
-        });
+        let assertion_bindings = scope
+            .assertion_bindings
+            .without_shadowed(|name| {
+                scope
+                    .levels
+                    .iter()
+                    .skip(1)
+                    .flatten()
+                    .any(|(bound, _, _)| bound == name)
+            })
+            .with_block_function_scope(scope.admission.block_functions_are_lexical);
         let resolved = registration_scope
             .get_or_insert_with(|| RegistrationScope::of(scope, unshadowed_undefined));
         if let Some(mut test) = test_from_statement(
@@ -1452,6 +1466,8 @@ pub(crate) struct TestScope {
     guards: Vec<String>,
     /// The fixtures a Playwright `base.extend` constructs (SPEC-0243 rule 23).
     fixtures: Option<super::fixture_receivers::PlaywrightFixtures>,
+    /// The object-row table loop whose body is being walked (#11196).
+    row_loop: Option<RowLoop>,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -3054,7 +3070,7 @@ pub(super) fn collect_registration_scope_names(
     }
 }
 
-fn collect_hoisted_names(
+pub(super) fn collect_hoisted_names(
     statement: &Statement<'_>,
     out: &mut Vec<String>,
     block_functions_are_lexical: bool,
@@ -3840,10 +3856,24 @@ fn test_name_and_assertions_from_registration(
         bindings
     };
     let bindings = &bindings;
+    // #11196: a registration that is the whole body of a `for (const t of
+    // <object-row table>)` loop reads as one case per row.
+    if call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
+        && let Some(row_loop) = registration.and_then(|registration| registration.row_loop.as_ref())
+        && let Some(assertions) = row_loop_assertions(callback, row_loop, source, bindings)
+    {
+        return Some((name, assertions));
+    }
     // An inline literal `test.each` table reads as one concrete case per
     // row; any other table keeps the row-parameter assertions.
     if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
         && let Some(assertions) = table_row_assertions(call, callback, source, bindings)
+    {
+        return Some((name, assertions));
+    }
+    if let Argument::ArrowFunctionExpression(arrow) = callback
+        && let Some(assertions) =
+            collect_test_arrow_expression_assertions(arrow, source, receiver.as_deref(), bindings)
     {
         return Some((name, assertions));
     }
@@ -3854,6 +3884,11 @@ fn test_name_and_assertions_from_registration(
                 source,
                 receiver.as_deref(),
                 bindings,
+                referenced.is_none()
+                    && matches!(
+                        callback,
+                        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) if arrow.expression
+                    ),
             )
         })
         .unwrap_or_default();
@@ -4730,6 +4765,20 @@ pub(crate) fn detect_partial_test_extraction_expanded(
     extracted: &[TypeScriptTest],
     expansion: Option<&super::suite_factory::SuiteFactoryExpansion>,
 ) -> Option<TypeScriptTestExtractionGap> {
+    try_detect_partial_test_extraction_expanded(file, source, extracted, expansion)
+        .ok()
+        .flatten()
+}
+
+/// [`detect_partial_test_extraction_expanded`] that tells a parse-worker
+/// failure from "nothing dropped": only `Ok` is a function of the bytes, so
+/// only `Ok` may be persisted.
+pub(crate) fn try_detect_partial_test_extraction_expanded(
+    file: &Path,
+    source: &str,
+    extracted: &[TypeScriptTest],
+    expansion: Option<&super::suite_factory::SuiteFactoryExpansion>,
+) -> Result<Option<TypeScriptTestExtractionGap>, String> {
     let source = expansion.map_or(source, |expansion| expansion.source.as_str());
     let covered = expansion.map(|expansion| expansion.covered.clone());
     let call_lines = expansion.map(|expansion| expansion.call_lines.clone());
@@ -4737,7 +4786,7 @@ pub(crate) fn detect_partial_test_extraction_expanded(
     // the parse closure is `'static` and cannot borrow `extracted`.
     let extracted_starts =
         extracted_span_starts(source, extracted, covered.as_deref().unwrap_or_default());
-    let Ok(gap) = parse_on_worker(file, source, move |file, source, allocator| {
+    parse_on_worker(file, source, move |file, source, allocator| {
         let ret = Parser::new(allocator, source, source_type_for(file)).parse();
         if !ret.errors.is_empty() {
             // Parse-error disclosure owns this case; do not double-report.
@@ -4755,6 +4804,7 @@ pub(crate) fn detect_partial_test_extraction_expanded(
             covered: covered.as_deref().unwrap_or_default(),
             admission,
             shadowed: Vec::new(),
+            undefined_bound: 0,
             evaluated_only: false,
             gap: None,
         };
@@ -4770,10 +4820,7 @@ pub(crate) fn detect_partial_test_extraction_expanded(
                 snippet,
             },
         )
-    }) else {
-        return None;
-    };
-    gap
+    })
 }
 
 /// Recover the byte-offset span start for every extracted test from its
@@ -4834,6 +4881,11 @@ struct UnextractedTestFinder<'a> {
     /// parameter's value, not a runner registration (`async function run({
     /// test }) { await test(); }`).
     shadowed: Vec<String>,
+    /// How many enclosing scopes bind `undefined`. The extractor withholds a
+    /// skip/todo/fails/expectFailure option whose value is that binding; the
+    /// finder must use the same fence or those withheld registrations look
+    /// like dropped active tests (#6631).
+    undefined_bound: usize,
     /// Stored function values stay dormant throughout an invoked argument body.
     evaluated_only: bool,
     gap: Option<(usize, &'static str, String)>,
@@ -4862,7 +4914,17 @@ impl UnextractedTestFinder<'_> {
                 .chain(rest)
                 .map(|identifier| identifier.name.to_string()),
         );
+        let binds_undefined = self
+            .shadowed
+            .get(depth..)
+            .is_some_and(|names| names.iter().any(|name| name == "undefined"));
+        if binds_undefined {
+            self.undefined_bound = self.undefined_bound.saturating_add(1);
+        }
         visit(self);
+        if binds_undefined {
+            self.undefined_bound = self.undefined_bound.saturating_sub(1);
+        }
         self.shadowed.truncate(depth);
     }
 
@@ -4908,10 +4970,41 @@ impl UnextractedTestFinder<'_> {
             self.shadowed.retain(|name| !rebound.contains(name));
             outer
         });
+        let binds_undefined = rebound.iter().any(|name| name == "undefined");
+        if binds_undefined {
+            self.undefined_bound = self.undefined_bound.saturating_add(1);
+        }
         visit(self);
+        if binds_undefined {
+            self.undefined_bound = self.undefined_bound.saturating_sub(1);
+        }
         if let Some(outer) = outer {
             self.shadowed = outer;
         }
+    }
+
+    fn unshadowed_undefined(&self) -> bool {
+        self.undefined_bound == 0
+    }
+
+    fn call_is_active_declaration(
+        &self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        root: TestDeclarationRoot,
+    ) -> bool {
+        expression_is_active_declaration(&call.callee, root)
+            && declaration_options_are_active_with_undefined(call, self.unshadowed_undefined())
+    }
+
+    fn call_is_active_each_declaration(
+        &self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        root: TestDeclarationRoot,
+    ) -> bool {
+        each_declaration_callee(call, root).is_some_and(|each_call| {
+            !each_table_is_empty(each_call)
+                && declaration_options_are_active_with_undefined(call, self.unshadowed_undefined())
+        })
     }
 
     fn visit_statement(&mut self, stmt: &Statement<'_>) {
@@ -5097,13 +5190,13 @@ impl UnextractedTestFinder<'_> {
                 if statement_position
                     && let Expression::CallExpression(call) = &await_expr.argument
                     && !self.callee_is_parameter(&call.callee)
-                    && ((call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
-                        || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test))
+                    && ((self.call_is_active_declaration(call, TestDeclarationRoot::Test)
+                        || self.call_is_active_each_declaration(call, TestDeclarationRoot::Test))
                         && self
                             .admission
                             .registration_is_known(call, true, std::iter::empty())
-                        || (call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
-                            || call_callee_is_active_each_declaration(
+                        || (self.call_is_active_declaration(call, TestDeclarationRoot::Describe)
+                            || self.call_is_active_each_declaration(
                                 call,
                                 TestDeclarationRoot::Describe,
                             ))
@@ -5257,8 +5350,8 @@ impl UnextractedTestFinder<'_> {
                 return;
             }
             if !self.extracted_starts.contains(&(call.span.start as usize))
-                && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
-                    || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test))
+                && (self.call_is_active_declaration(call, TestDeclarationRoot::Test)
+                    || self.call_is_active_each_declaration(call, TestDeclarationRoot::Test))
             {
                 let shape = match call.arguments.first() {
                     Some(Argument::TemplateLiteral(_)) => "template-literal title",
@@ -5510,6 +5603,10 @@ impl UnextractedTestFinder<'_> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests_extract_finder_tests.rs"]
+mod finder_tests;
 
 /// Whether a tagged template's tag is the `test.each` / `it.each` tagged-template
 /// form (`` test.each`table` ``), as opposed to the call form

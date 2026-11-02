@@ -18,12 +18,12 @@ Start here:
   Missing check: No strong assertion was detected
   Related test: tests/api.rs:4 twin_bags_match (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Strengthen the related assertion so it discriminates the changed behavior
-  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -36,7 +36,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_twin_collection_read_self_computed/input --diff <cwd>/fixtures/rust_twin_collection_read_self_computed/diff.patch --mode fast probe:src_lib.rs:call_deletion:3c28bb05
   ripr context --root <cwd>/fixtures/rust_twin_collection_read_self_computed/input --diff <cwd>/fixtures/rust_twin_collection_read_self_computed/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:3c28bb05
-  no repair start offered: ripr found 4 seams in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
+  no repair start offered: ripr found 4 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 Write this test by hand: call the function, then assert the visible change the changed call makes (a changed value, state, or output); then rerun `ripr check`.
 

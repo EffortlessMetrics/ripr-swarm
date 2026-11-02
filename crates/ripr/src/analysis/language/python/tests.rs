@@ -3331,6 +3331,67 @@ fn annotation_only_detection_is_conservative() {
         "    return x + 1",
         "    return x - 1"
     )); // not a def
+    // #11888 object-base-only class header (suppress):
+    assert!(is_annotation_only_def_change(
+        "class Box(object):",
+        "class Box:"
+    ));
+    assert!(is_annotation_only_def_change("class Box():", "class Box:"));
+    assert!(is_annotation_only_def_change(
+        "class Box:",
+        "class Box(object):"
+    ));
+    // NOT object-base-only (must still analyze):
+    assert!(!is_annotation_only_def_change(
+        "class Box(object, Mixin):",
+        "class Box:"
+    ));
+    assert!(!is_annotation_only_def_change(
+        "class Box(Base):",
+        "class Box:"
+    ));
+    assert!(!is_annotation_only_def_change(
+        "class Box(object, metaclass=M):",
+        "class Box:"
+    ));
+    assert!(!is_annotation_only_def_change(
+        "class Box(object):",
+        "class Crate:"
+    ));
+    assert!(!is_annotation_only_def_change(
+        "class Box(\n    object):",
+        "class Box:"
+    ));
+}
+
+#[test]
+fn object_base_only_class_header_change_emits_no_probe() -> Result<(), String> {
+    // #11888: pyupgrade-style `class Box(object):` -> `class Box:` is behavior-preserving.
+    let source = concat!(
+        "class Box(object):\n",
+        "    def __init__(self, value):\n",
+        "        self.value = value\n\n",
+        "    def double(self):\n",
+        "        return self.value * 2\n"
+    );
+    let owners = extract_owners(Path::new("src/box.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_box.py"),
+        "from src.box import Box\n\n\ndef test_double():\n    assert Box(2).double() == 4\n",
+    );
+    let finding = classify_change_with_old(
+        Path::new("src/box.py"),
+        1,
+        "class Box:",
+        Some("class Box(object):"),
+        &owners,
+        &tests,
+    );
+    assert!(
+        finding.is_none(),
+        "removing the legacy object base from a class header must emit no probe"
+    );
+    Ok(())
 }
 
 #[test]
@@ -4582,6 +4643,29 @@ fn classify_log_text_edit_from(
     )
     .ok_or_else(|| "log edit should classify".to_string())?;
     Ok((finding.class, finding.static_limit_kind))
+}
+
+// #11889: a conjunction with a false comparison is false past an unreadable
+// conjunct, so `condition_holds` now answers `Some(false)` to this reader; it
+// must still never turn the edit into an `exposed` credit.
+#[test]
+fn caplog_text_reads_a_conjunction_guard_past_an_unreadable_conjunct() -> Result<(), String> {
+    let owner = "import logging\nlog = logging.getLogger(\"audit\")\n\n\
+         def check_balance(balance, verbose):\n    if verbose and balance < 10:\n        log.warning(\"low balance: %s\", balance)\n        return False\n    return True\n";
+    let test = |argument: u32| {
+        format!(
+            "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance({argument}, True) is False\n    assert \"low balance: {argument}\" in caplog.text\n"
+        )
+    };
+    let undecided =
+        classify_log_text_edit(owner, "log.info(\"low balance: %s\", balance)", &test(5))?;
+    let excluded =
+        classify_log_text_edit(owner, "log.info(\"low balance: %s\", balance)", &test(50))?;
+    // Neither reading credits the edit: the entering row stays undecided and
+    // the excluded row records nothing, so no `exposed` is invented.
+    assert_ne!(undecided.0, ExposureClass::Exposed, "{undecided:?}");
+    assert_ne!(excluded.0, ExposureClass::Exposed, "{excluded:?}");
+    Ok(())
 }
 
 const PINNED_TEST: &str = "def test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.text\n";
@@ -7497,7 +7581,7 @@ fn analyze_diff_discloses_unreadable_changed_file() -> Result<(), String> {
 fn analyze_diff_small_workspace_is_unaffected_by_default_bounds() -> Result<(), String> {
     let root = unique_test_root("diff-small-workspace");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
-    write_repo_file(&root.join("app.py"), "def run():\n    return 1\n")?;
+    write_repo_file(&root.join("app.py"), "def run():\n    return 2\n")?;
     write_repo_file(
         &root.join("test_app.py"),
         "from app import run\n\n\ndef test_run():\n    assert run() == 1\n",

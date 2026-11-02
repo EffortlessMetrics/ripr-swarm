@@ -477,7 +477,7 @@ pub(crate) fn render_policy_operations_json(
         "input_artifacts": report.input_artifacts.iter().map(input_artifact_json).collect::<Vec<_>>(),
         "limits_note": LIMITS_NOTE,
     }))
-    .map_err(|err| format!("failed to render policy operations JSON: {err}"))
+    .map_err(|err| format!("failed to render policy operations JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_policy_operations_markdown(report: &PolicyOperationsReport) -> String {

@@ -144,6 +144,14 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      suite. A projection carries only the fields judged by its contract and makes
      no captured-output or execution claim. Independent invariant controls must
      reject false-credit and empty-report re-blessing.
+     A case that pins a repo seam (`expected_repo_seam_grip` or `expected_repo_seam_related_test`) also names the
+     Cargo `report_subject` the report was captured from. The gate regenerates
+     that subject with the current binary (`ripr check --mode draft --format
+     repo-exposure-json`) and fails when the committed report differs in the
+     judged fields: the seam set, each seam's `grip_class` and stage states, and
+     each related test's `oracle_strength` and `relation_reason`. Producer
+     version, timestamps and the root are not judged. A repo-seam case without a
+     regenerable subject fails (#12144).
 2a. Validates the case tier before trusting the expectation:
    - `pure` cases are checked-in tiny examples and must not carry
      pinned-external metadata.
@@ -765,10 +773,18 @@ FAIL: evidence promotion honesty control case `rust_strong_error_oracle_control`
 the gate has over-corrected or the fixture needs re-blessing
 ```
 
+Typed `expected_partial_analysis` assertions require `analysis_complete: false`,
+`partial_with_limitations`, and exactly one limitation matching the named kind,
+producer stage, path, affected-item count and bounded-detail substring. A generic
+preview-language advisory does not satisfy this assertion. This pins unsupported
+private-member extraction without accepting a complete empty re-bless.
+
 ## Test Mapping
 
 | Test | Spec control |
 |---|---|
+| `nested_private_corpus_rejects_lost_partial_outcome_despite_preview_advisory` | Typed partial outcome and limitation mutations fail despite the retained generic advisory |
+| `partial_analysis_assertion_requires_every_identity_and_count_field` | Missing typed limitation identity or count is rejected |
 | `cargo run -p xtask -- check-evidence-promotion-honesty` | End-to-end gate pass |
 | Flip charter golden to `exposed` → gate fails naming it | Dishonest re-bless proof |
 | Flip control golden to `weakly_exposed` → gate fails naming it | Over-correct guard proof |

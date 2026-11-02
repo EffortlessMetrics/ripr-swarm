@@ -12,37 +12,37 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: static limitation `dynamic_dispatch` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  Safe next action: static limitation `decorator_indirection` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
   File: src/shapes/money.py:6
   Language: python
   Language status: preview
   Static exposure: unknown (severity: note, confidence 0.20)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return self.cents > 0
-  Analyzer limit: Static limit `dynamic_dispatch`: `Money.__bool__` is a dunder method Python
-    invokes through operator or `with` syntax; related tests build `Money` instances, but the
-    preview adapter does not bind the syntax to the instance or evaluate the assertion against the
-    dunder's result, so it does not grade this edit as a gap
+  Analyzer limit: Static limit `decorator_indirection`: related test `test_truthiness` uses
+    `pytest.collection(python_functions)`; static evidence does not establish that its body runs and
+    an assertion failure fails verification. Add an independent active test or inspect the
+    activation condition
   Related test: tests/test_money.py:4 test_truthiness
-  Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator unknown
+  Evidence: reach weak · infection unknown · propagation unknown · observation weak · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach weak: 1 heuristic Python test link(s) found for owner `__bool__`; relation is uncertain
-    - infection unknown: Static limit `dynamic_dispatch` prevents a safe Python infection claim
+    - infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_dunder_truthiness_pytest_config/input --diff <cwd>/fixtures/python_dunder_truthiness_pytest_config/diff.patch --mode fast probe:src_shapes_money.py:python_preview:aacb327b
   ripr context --root <cwd>/fixtures/python_dunder_truthiness_pytest_config/input --diff <cwd>/fixtures/python_dunder_truthiness_pytest_config/diff.patch --mode fast --at probe:src_shapes_money.py:python_preview:aacb327b
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

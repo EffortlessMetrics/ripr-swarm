@@ -83,6 +83,7 @@ pub(crate) struct PrTriagePullRequest {
     pub(crate) labels: Vec<String>,
     pub(crate) files: Vec<String>,
     pub(crate) checks: Vec<PrTriageCheck>,
+    pub(crate) checks_rollup_available: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

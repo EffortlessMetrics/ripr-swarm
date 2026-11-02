@@ -11,7 +11,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_check.py:python_preview:0f3004f4",
+      "id": "probe:src_check.py:python_preview:v1-11825c93",
       "canonical_gap_id": "gap:python:src/check.py:check:predicate_boundary:predicate:msg=negative_value_must_be_at_most_zero",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -28,7 +28,7 @@
       "severity": "info",
       "confidence": 0.60,
       "probe": {
-        "id": "probe:src_check.py:python_preview:0f3004f4",
+        "id": "probe:src_check.py:python_preview:v1-11825c93",
         "family": "predicate",
         "delta": "control",
         "file": "src/check.py",
@@ -48,7 +48,7 @@
         {"kind":"unknown","text":"msg = \"negative value: must be at most zero\"","line":3}
       ],
       "evidence": ["owner: check", "owner_kind: function", "test_framework: pytest (test_negative_is_rejected)", "test_verify_command: python -m pytest tests/test_check.py::test_negative_is_rejected (test_negative_is_rejected)", "related_test_relation: syntactic_call (test_negative_is_rejected)", "test_oracle: exact_error_variant strong (test_negative_is_rejected)", "test_oracle_shape: exception_assertion (test_negative_is_rejected)"],
-      "missing": ["Related Python test reaches `check` with an `exact_error_variant` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `check` with an `exact_error_variant` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {

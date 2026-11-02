@@ -675,8 +675,12 @@ fn ripr_plus_summary_from_disk(
             None,
         ));
     }
-    let text = std::fs::read_to_string(&report_path)
-        .map_err(|err| format!("failed to read {}: {err}", report_path.display()))?;
+    let text = std::fs::read_to_string(&report_path).map_err(|err| {
+        format!(
+            "failed to read {}: {err}; check that the path exists and is readable, then rerun",
+            report_path.display()
+        )
+    })?;
     let test_efficiency = badge::parse_test_efficiency_badge_summary(&text)?;
     let suppressions = load_suppressions(output, config)?;
     let today = suppressions::current_iso_date();

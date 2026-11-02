@@ -852,7 +852,12 @@ fn continuation_lines_cannot_hide_a_return_before_the_assertion() -> Check {
         let source = limit_test(body);
         let tests = tests_of(&[("tests/test_settings.py", &source)]);
         assert_eq!(tests.len(), 1, "the fixture must extract a test");
-        assert_eq!(tests[0].assertions.len(), 1, "keep the target assertion");
+        // The definite exit is read from the parsed statements, so the
+        // assertion after it is never extracted and earns no credit.
+        assert!(
+            tests[0].assertions.is_empty(),
+            "an assertion after a definite return must not be extracted"
+        );
         assert_abstains(&classify_limit(&source)?);
     }
     for body in [
@@ -2702,4 +2707,350 @@ fn persisted_lexes_carry_the_loose_name_answer_the_index_uses() {
     for (own, _) in &sources {
         assert_eq!(shared.excluding(own), parsed.excluding(own), "{own:?}");
     }
+}
+
+#[test]
+fn foreign_index_records_package_init_submodule_shadows_on_sibling_modules() {
+    let (shadows, opaque) = super::module_value::package_init_submodule_facts_for_test(
+        Path::new("shapes/rates/__init__.py"),
+        "from .table import lookup as table\n",
+    );
+    assert!(shadows.contains("table"), "{shadows:?}");
+    assert!(!opaque);
+    let index = super::module_value::ForeignIndex::build(
+        [
+            (
+                Path::new("shapes/rates/__init__.py"),
+                "from .table import lookup as table\n",
+            ),
+            (Path::new("shapes/rates/table.py"), "RATE_TABLE = {}\n"),
+        ]
+        .into_iter(),
+        false,
+    );
+    let foreign = index.excluding(Path::new("shapes/rates/table.py"));
+    assert!(
+        super::module_value::package_init_refuses_submodule_for_test(
+            Path::new("shapes/rates/table.py"),
+            &foreign,
+        )
+    );
+}
+
+const RATES_TABLE_OLD: &str = "RATE_TABLE = {\"gold\": 10, \"silver\": 5}";
+
+fn rates_table_source(first_line: &str, tail: &str) -> String {
+    format!("{first_line}\n\n\ndef lookup(tier):\n    return RATE_TABLE.get(tier, 0)\n{tail}")
+}
+
+fn classify_shapes_rates_table(
+    source: &str,
+    others: &[(&str, &str)],
+    test_source: &str,
+    old: &str,
+    new: &str,
+) -> Result<Finding, String> {
+    let own = Path::new("shapes/rates/table.py");
+    let mut owners = extract_owners(own, source);
+    let mut tests = tests_of(&[("tests/test_rates.py", test_source)]);
+    let foreign = super::module_value::ForeignWrites::scan(
+        own,
+        others
+            .iter()
+            .map(|(file, source)| (Path::new(file), *source))
+            .chain([
+                (own, source),
+                (Path::new("tests/test_rates.py"), test_source),
+            ]),
+        false,
+    );
+    for owner in owners.iter_mut().filter(|owner| owner.is_module_owner()) {
+        owner.foreign_writes = foreign.clone();
+    }
+    super::bool_oracle::credit_bare_bool_asserts(&mut tests, &owners, |path| {
+        if path == own {
+            Some(source)
+        } else {
+            (path == Path::new("tests/test_rates.py")).then_some(test_source)
+        }
+    });
+    classify_change_with_context(
+        own,
+        1,
+        new,
+        Some(old),
+        &owners,
+        &tests,
+        PythonNoBehaviorContext {
+            sole_line_replacement: true,
+            ..PythonNoBehaviorContext::default()
+        },
+        Some(source),
+    )
+    .ok_or_else(|| "the edit must yield a finding".to_string())
+}
+
+#[test]
+fn a_module_receiver_is_refused_when_the_package_init_rebinds_the_submodule_name() -> Check {
+    let source = rates_table_source(RATES_TABLE_OLD, "");
+    let test = "import shapes.rates.table as t\n\n\ndef test_gold():\n    assert t.lookup(\"gold\") == 10\n";
+    let others = [
+        ("shapes/__init__.py", ""),
+        (
+            "shapes/rates/__init__.py",
+            "from .table import lookup as table\n",
+        ),
+    ];
+    assert_not_credited(&classify_shapes_rates_table(
+        &source,
+        &others,
+        test,
+        RATES_TABLE_OLD,
+        "RATE_TABLE = {\"gold\": 11, \"silver\": 5}",
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_module_receiver_still_reaches_the_submodule_when_the_init_does_not_bind_its_name() -> Check {
+    let source = rates_table_source(RATES_TABLE_OLD, "");
+    let test = "import shapes.rates.table as t\n\n\ndef test_gold():\n    assert t.lookup(\"gold\") == 10\n";
+    let others = [("shapes/__init__.py", ""), ("shapes/rates/__init__.py", "")];
+    assert_credited(&classify_shapes_rates_table(
+        &source,
+        &others,
+        test,
+        RATES_TABLE_OLD,
+        "RATE_TABLE = {\"gold\": 11, \"silver\": 5}",
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_module_receiver_still_reaches_a_submodule_reexported_from_the_package_init() -> Check {
+    let source = rates_table_source(RATES_TABLE_OLD, "");
+    let test = "import shapes.rates.table as t\n\n\ndef test_gold():\n    assert t.lookup(\"gold\") == 10\n";
+    let others = [
+        ("shapes/__init__.py", ""),
+        ("shapes/rates/__init__.py", "from . import table\n"),
+    ];
+    assert_credited(&classify_shapes_rates_table(
+        &source,
+        &others,
+        test,
+        RATES_TABLE_OLD,
+        "RATE_TABLE = {\"gold\": 11, \"silver\": 5}",
+    )?);
+    Ok(())
+}
+
+const RATES_RECEIVER_TEST: &str =
+    "import shapes.rates.table as t\n\n\ndef test_gold():\n    assert t.lookup(\"gold\") == 10\n";
+const RATES_TABLE_NEW: &str = "RATE_TABLE = {\"gold\": 11, \"silver\": 5}";
+
+fn rates_receiver_with_inits(shapes_init: &str, rates_init: &str) -> Result<Finding, String> {
+    let source = rates_table_source(RATES_TABLE_OLD, "");
+    let others = [
+        ("shapes/__init__.py", shapes_init),
+        ("shapes/rates/__init__.py", rates_init),
+    ];
+    classify_shapes_rates_table(
+        &source,
+        &others,
+        RATES_RECEIVER_TEST,
+        RATES_TABLE_OLD,
+        RATES_TABLE_NEW,
+    )
+}
+
+#[test]
+fn a_nested_or_unpacked_init_binding_of_the_submodule_name_refuses_the_receiver() -> Check {
+    let shadowing_inits = [
+        "try:\n    from .table import lookup as table\nexcept ImportError:\n    table = None\n",
+        "if True:\n    table = alternate_table\n",
+        "if flag:\n    pass\nelse:\n    table = 1\n",
+        "table, other = alternate_table, 1\n",
+        "[other, table] = pair\n",
+        "other, *table = pair\n",
+        "del table\n",
+        "for table in tables:\n    pass\n",
+        "with opener() as table:\n    pass\n",
+        "while go():\n    table = 1\n",
+        "try:\n    pass\nexcept ImportError as table:\n    pass\n",
+        "if flag:\n    from .other import *\n",
+        "match command:\n    case other:\n        pass\n",
+    ];
+    for init in shadowing_inits {
+        assert_not_credited(&rates_receiver_with_inits("", init)?);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_nested_init_binding_of_other_names_keeps_the_receiver_credited() -> Check {
+    let benign_inits = [
+        "try:\n    from .other import thing\nexcept ImportError:\n    thing = None\n",
+        "if flag:\n    other = 1\n",
+        "other, extra = 1, 2\n",
+        "for item in tables:\n    pass\n",
+        "def configure():\n    table = 1\n",
+        "class Holder:\n    table = 1\n",
+        "if flag:\n    from . import table\n",
+    ];
+    for init in benign_inits {
+        assert_credited(&rates_receiver_with_inits("", init)?);
+    }
+    Ok(())
+}
+
+#[test]
+fn an_ancestor_package_init_rebinding_a_path_segment_refuses_the_receiver() -> Check {
+    for shapes_init in [
+        "rates = alternate_rates\n",
+        "if flag:\n    rates = alternate_rates\n",
+        "from .elsewhere import *\n",
+    ] {
+        assert_not_credited(&rates_receiver_with_inits(shapes_init, "")?);
+    }
+    Ok(())
+}
+
+#[test]
+fn an_ancestor_package_init_binding_other_names_keeps_the_receiver_credited() -> Check {
+    for shapes_init in [
+        "other = 1\n",
+        "from . import rates\n",
+        "if flag:\n    extra = 1\n",
+    ] {
+        assert_credited(&rates_receiver_with_inits(shapes_init, "")?);
+    }
+    Ok(())
+}
+
+#[test]
+fn package_init_prefilter_skips_inert_sources_without_parsing() {
+    let init = Path::new("pkg/__init__.py");
+    let skipped = [
+        "",
+        "   \n\t\n",
+        "# just a comment\n",
+        "#!/usr/bin/env python3\n# coding: utf-8\n",
+        "    # indented comment only\n",
+        "\"\"\"package docs\"\"\"\n",
+        "'''package docs'''\n",
+        "\"docs\"\n",
+        "r\"\"\"raw docs\"\"\"\n",
+        "r\"docs \\x\"\n",
+        "# comment\n\n\"\"\"docs\"\"\"\n# trailing\n",
+    ];
+    for source in skipped {
+        let (shadows, opaque, parsed) =
+            super::module_value::package_init_submodule_facts_parsed_for_test(init, source);
+        assert!(
+            shadows.is_empty() && !opaque && !parsed,
+            "prefilter skip {source:?}: shadows={shadows:?} opaque={opaque} parsed={parsed}"
+        );
+        let parsed_facts =
+            super::module_value::package_init_submodule_facts_from_parse_for_test(init, source);
+        assert_eq!(
+            parsed_facts,
+            (shadows, opaque),
+            "prefilter skip disagrees with parse for {source:?}"
+        );
+    }
+}
+
+#[test]
+fn package_init_prefilter_parses_sources_that_may_bind() {
+    let init = Path::new("pkg/__init__.py");
+    let must_parse = [
+        "from .a import *\n",
+        "x = 1\n",
+        "def a():\n    return 1\n",
+        "from . import a as b\n",
+        "# comment\n    x = 1\n",
+        "s = \"#\"\n",
+        "\"\"\"docs \\\"\"\"\n# \"\"\"; table = 1\n",
+        "ur\"docs\"\n",
+        "\"docs \\x\"\n",
+        "\"docs\\n\"\n",
+        "\"docs \\N{NotAName}\"\n",
+    ];
+    for source in must_parse {
+        let (shadows, opaque, parsed) =
+            super::module_value::package_init_submodule_facts_parsed_for_test(init, source);
+        assert!(parsed, "must parse {source:?}");
+        let parsed_facts =
+            super::module_value::package_init_submodule_facts_from_parse_for_test(init, source);
+        assert_eq!(
+            parsed_facts,
+            (shadows, opaque),
+            "parsed facts drifted for {source:?}"
+        );
+    }
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(
+            init,
+            "from .a import *\n",
+        );
+    assert!(parsed && opaque && shadows.is_empty(), "{shadows:?}");
+    let (shadows, opaque, _) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, "x = 1\n");
+    assert!(!opaque && shadows.contains("x"), "{shadows:?}");
+    let (shadows, opaque, _) = super::module_value::package_init_submodule_facts_parsed_for_test(
+        init,
+        "def a():\n    return 1\n",
+    );
+    assert!(!opaque && shadows.contains("a"), "{shadows:?}");
+    let (shadows, opaque, _) = super::module_value::package_init_submodule_facts_parsed_for_test(
+        init,
+        "from . import a as b\n",
+    );
+    assert!(!opaque && shadows.contains("b"), "{shadows:?}");
+    let (shadows, opaque, _) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, "s = \"#\"\n");
+    assert!(!opaque && shadows.contains("s"), "{shadows:?}");
+    let escaped_doc = "\"\"\"docs \\\"\"\"\n# \"\"\"; table = 1\n";
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, escaped_doc);
+    assert!(
+        parsed && !opaque && shadows.contains("table"),
+        "{shadows:?}"
+    );
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, "ur\"docs\"\n");
+    assert!(parsed && opaque && shadows.is_empty(), "{shadows:?}");
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, "\"docs \\x\"\n");
+    assert!(parsed && opaque && shadows.is_empty(), "{shadows:?}");
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, "\"docs\\n\"\n");
+    assert!(parsed && !opaque && shadows.is_empty(), "{shadows:?}");
+}
+
+#[test]
+fn package_init_prefilter_skips_parse_across_many_inert_inits() {
+    let init = Path::new("pkg/__init__.py");
+    let mut parsed = 0usize;
+    for i in 0..400 {
+        let source = if i % 2 == 0 { "" } else { "# pkg\n" };
+        let (_, _, did_parse) =
+            super::module_value::package_init_submodule_facts_parsed_for_test(init, source);
+        if did_parse {
+            parsed += 1;
+        }
+    }
+    assert_eq!(parsed, 0, "inert package inits must not reparse");
+}
+
+#[test]
+fn package_init_prefilter_ignores_non_init_files() {
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(
+            Path::new("pkg/mod.py"),
+            "from .a import *\n",
+        );
+    assert!(shadows.is_empty(), "{shadows:?}");
+    assert!(!opaque);
+    assert!(!parsed);
 }

@@ -221,10 +221,13 @@ fn harness_only_edit_seeds_no_probe_and_names_the_limitation() -> Result<(), Str
 }
 
 /// The same edit under a lookalike attribute path stays an ordinary
-/// production function: exact-path matching only.
+/// production function: exact-path matching only. The module gate is swapped
+/// for a non-Kani feature: a `#[cfg(kani)]` module is verification-only on its
+/// own (RIPR-SPEC-0373), whatever its inner attributes say.
 #[test]
 fn lookalike_attribute_path_is_not_a_proof_harness() -> Result<(), String> {
-    let source = lib("my::kani::proof", ">", "101", "");
+    let source = lib("my::kani::proof", ">", "101", "")
+        .replace("#[cfg(kani)]", "#[cfg(feature = \"proofs\")]");
     let repo = Repo::new(
         &source,
         &one_line_diff(

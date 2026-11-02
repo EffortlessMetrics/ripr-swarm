@@ -49,7 +49,10 @@ use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSumma
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::FunctionContainer;
 use crate::domain::{OracleKind, Probe, ProbeFamily};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 mod recording;
 
@@ -216,6 +219,13 @@ const PURE_MACROS: &[&str] = &[
     "unreachable",
     "vec",
 ];
+
+#[cfg(test)]
+thread_local! {
+    /// Test-body tokenizations performed on this thread (#7049 item 2).
+    pub(in crate::analysis) static TEST_BODY_TOKENIZE_COUNT: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
 
 const KEYWORDS: &[&str] = &[
     "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "false", "fn",
@@ -645,6 +655,9 @@ impl<'a> SelfTypeMethods<'a> {
     }
 }
 
+type TestBodyCacheKey = (PathBuf, usize, u64);
+type TestBodyTokenCache = RefCell<BTreeMap<TestBodyCacheKey, Arc<[Tok]>>>;
+
 /// The owner-side half: the fields the deleted call may write and the
 /// self-type methods that read one of them.
 pub(in crate::analysis) struct EffectStateCarrier {
@@ -663,6 +676,8 @@ pub(in crate::analysis) struct EffectStateCarrier {
     /// that calls one can move the written state into any field before it
     /// asserts (`inv.reorder()` turning `low_stock` into log entries).
     mutating_readers: BTreeSet<String>,
+    /// Tokenized test bodies keyed by `(file, start_line, body hash)`.
+    body_token_cache: TestBodyTokenCache,
 }
 
 impl EffectStateCarrier {
@@ -811,7 +826,32 @@ impl EffectStateCarrier {
             self_fields,
             any_method,
             mutating_readers,
+            body_token_cache: RefCell::new(BTreeMap::new()),
         })
+    }
+
+    fn test_body_cache_key(test: &TestSummary) -> TestBodyCacheKey {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let body = test.body.as_str();
+        let mut hasher = DefaultHasher::new();
+        body.hash(&mut hasher);
+        (test.file.clone(), test.start_line, hasher.finish())
+    }
+
+    fn test_body_tokens(&self, test: &TestSummary) -> Arc<[Tok]> {
+        let body = test.body.as_str();
+        let key = Self::test_body_cache_key(test);
+        if let Some(tokens) = self.body_token_cache.borrow().get(&key) {
+            return Arc::clone(tokens);
+        }
+        #[cfg(test)]
+        TEST_BODY_TOKENIZE_COUNT.with(|count| count.set(count.get() + 1));
+        let tokens: Arc<[Tok]> = Arc::from(tokenize(body).into_boxed_slice());
+        self.body_token_cache
+            .borrow_mut()
+            .insert(key, Arc::clone(&tokens));
+        tokens
     }
 
     /// Whether `assertion` may observe the written state. Only a whole-object
@@ -820,7 +860,7 @@ impl EffectStateCarrier {
         if !matches!(assertion.kind, OracleKind::WholeObjectEquality) {
             return true;
         }
-        let body = tokenize(&test.body);
+        let body = self.test_body_tokens(test);
         if self.calls_mutating_reader(&body) {
             return true;
         }
@@ -975,6 +1015,13 @@ impl EffectStateCarrier {
                 // A macro name, a path root, or a struct field label.
                 continue;
             }
+            if is_screaming_case(name)
+                && (punct(tokens, index + 1, '.') || punct(tokens, index + 1, '['))
+            {
+                // A static/const root read (`*LOG.lock()`, `TABLE[0]`) may
+                // observe state the callee wrote through a missed hand-off (#7070).
+                return true;
+            }
             if KEYWORDS.contains(&name)
                 || name.starts_with(|c: char| c.is_uppercase() || c.is_ascii_digit())
                 || punct(tokens, index + 1, '(')
@@ -1027,6 +1074,15 @@ impl EffectStateCarrier {
         }
         false
     }
+}
+
+/// All-uppercase ASCII identifier with at least one letter (`LOG`, `TABLE`).
+fn is_screaming_case(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().any(|ch| ch.is_ascii_alphabetic())
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
 }
 
 /// `callee` for an expression that is exactly `self.callee(args)`.

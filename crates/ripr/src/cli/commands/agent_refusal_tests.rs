@@ -320,6 +320,7 @@ fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> 
             verify_rollback: false,
             store: None,
             json: false,
+            quiet: false,
         };
         let mut refusal = AfterPhaseRefusalContext::default();
         match run_agent_repair_phase(options, &mut refusal, Some(&identity)) {
@@ -347,7 +348,14 @@ fn gap_before_phase_refuses_dirty_production_premise_before_the_snapshot() -> Re
 
 fn gap_premise_exercise(root: &Path) -> Result<(), String> {
     let mut refusal = AfterPhaseRefusalContext::default();
-    match run_gap_bound_before_phase(root, "gap:0123456789abcdef", "HEAD", None, &mut refusal) {
+    match run_gap_bound_before_phase(
+        root,
+        "gap:0123456789abcdef",
+        "HEAD",
+        None,
+        false,
+        &mut refusal,
+    ) {
         Err(error) => {
             require_contains(&error, &["Uncommitted: src/lib.rs", "Nothing was started."])
         }
@@ -371,7 +379,7 @@ fn seam_id_translation_passes_plain_ids_through_without_resolving() -> Result<()
 fn unknown_seam_hint_falls_back_to_the_pilot_listing_for_other_shapes() {
     let hint = unknown_seam_id_hint(Path::new("some-checkout"), "f3c9e4d21a0b7c88");
     assert!(hint.starts_with("Run `ripr pilot --root "), "{hint}");
-    assert!(hint.contains("current seam IDs"), "{hint}");
+    assert!(hint.contains("current repair IDs"), "{hint}");
     assert!(!hint.contains("finding ID"), "{hint}");
 }
 
@@ -575,7 +583,7 @@ fn agent_receipt_with_a_malformed_attempt_id_is_a_failure() -> Result<(), String
     let _ = std::fs::remove_dir_all(&root);
     match result {
         Err(CommandError::Failure(message))
-            if message == "repair attempt ID must start with `repair-attempt-`" =>
+            if message.starts_with("repair attempt ID must start with `repair-attempt-`") =>
         {
             Ok(())
         }

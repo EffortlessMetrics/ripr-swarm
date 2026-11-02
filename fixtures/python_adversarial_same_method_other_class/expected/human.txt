@@ -28,13 +28,13 @@ Start here:
   Suggested test: test_billing_validate
   Test node: tests/test_billing.py::test_billing_validate
   Verify command (Bash): (cd -P -- <cwd>/fixtures/python_adversarial_same_method_other_class/input && python -m pytest tests/test_billing.py::test_billing_validate) (high)
-  Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`
-  Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
+  Next step — Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `return value == <expected value>`
+  Evidence: reach yes · infection yes · propagation yes · observation weak · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -47,7 +47,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_adversarial_same_method_other_class/input --diff <cwd>/fixtures/python_adversarial_same_method_other_class/diff.patch --mode fast probe:src_auth.py:python_preview:d982555b
   ripr context --root <cwd>/fixtures/python_adversarial_same_method_other_class/input --diff <cwd>/fixtures/python_adversarial_same_method_other_class/diff.patch --mode fast --at probe:src_auth.py:python_preview:d982555b
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/auth.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/auth.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

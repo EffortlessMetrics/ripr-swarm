@@ -50,3 +50,27 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — binding_value_counterpart_width (5)
+
+Reason:
+RIPR-SPEC-0197: #10046 returned comparisons share the predicate lens's unresolved-input reading, so a returned comparison whose boundary input is a computed call result or an unresolved owner call is infection_unknown instead of the inherited exposed fallback; no gap or equality is invented
+
+Command:
+`cargo xtask goldens bless binding_value_counterpart_width --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — binding_value_counterpart_width (6)
+
+Reason:
+RIPR-SPEC-0122 / #10692: plain wording for the stage legend, evidence row and repair-start refusal on the integrated tree
+
+Command:
+`cargo xtask goldens bless binding_value_counterpart_width --reason "..."`
+
+Updated:
+- `expected/human.txt`

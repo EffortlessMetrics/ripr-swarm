@@ -26,6 +26,7 @@ use std::path::Path;
 
 mod boundary_input;
 mod fact_index;
+mod identity;
 mod static_limit;
 
 use boundary_input::BoundaryInput;
@@ -455,8 +456,8 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
 /// when exactly one of the two is an added line. One producer writes the whole
 /// packet, so every settled change must agree on the basis: if two disagree,
 /// no change gets a line. A change left out keeps its finding on the owner's
-/// declaration, as before. This only places the finding; probe and gap
-/// identity do not use it.
+/// declaration, as before. This only places the finding; named-owner probe
+/// identity and canonical gap identity do not use it.
 fn change_lines_from_diff(
     packet: &PerlFactPacket,
     changed_files: &[ChangedFile],
@@ -697,13 +698,16 @@ fn packet_to_findings_with_currentness(
     };
 
     let mut findings = Vec::new();
+    // Assign over the complete packet before projection/output filtering, so
+    // hiding a sibling cannot silently change another finding's ordinal.
+    let probe_ids = identity::probe_ids(packet);
 
     for change in &packet.changes {
         // Find the owning entity.
         let Some(owner) = packet.owner(&change.owner_id) else {
             continue;
         };
-        // Find the source file (for the probe location only).
+        // Find the source file for the probe's location and projected facts.
         let Some(file) = packet.file(&change.file_id) else {
             continue;
         };
@@ -1039,12 +1043,9 @@ fn packet_to_findings_with_currentness(
         };
 
         // Build the Finding.
-        let probe_id = format!(
-            "probe:{}:{}:{}:perl",
-            file.path,
-            owner.range.start_line,
-            change.behavior_hint.as_str()
-        );
+        let Some(probe_id) = probe_ids.get(change.change_id.as_str()).cloned() else {
+            continue;
+        };
         let probe = Probe {
             id: ProbeId(probe_id.clone()),
             location: match change_lines.get(&change.change_id) {
@@ -4261,6 +4262,8 @@ mod capability_disposition_tests;
 mod fact_index_projection_tests;
 #[cfg(test)]
 mod fact_index_tests;
+#[cfg(test)]
+mod identity_tests;
 #[cfg(test)]
 mod tests;
 /// Packet-backed findings the output, LSP and MCP projection tests share

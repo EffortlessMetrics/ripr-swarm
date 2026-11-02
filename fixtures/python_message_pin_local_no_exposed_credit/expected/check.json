@@ -11,7 +11,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_check.py:python_preview:0f3004f4",
+      "id": "probe:src_check.py:python_preview:v1-11825c93",
       "canonical_gap_id": "gap:python:src/check.py:check:predicate_boundary:predicate:msg=negative_value_must_be_at_most_zero",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -28,7 +28,7 @@
       "severity": "warning",
       "confidence": 0.40,
       "probe": {
-        "id": "probe:src_check.py:python_preview:0f3004f4",
+        "id": "probe:src_check.py:python_preview:v1-11825c93",
         "family": "predicate",
         "delta": "control",
         "file": "src/check.py",
@@ -123,8 +123,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
-      "recommended_next_step": "Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `message \"negative value: must be at most zero\"`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `message \"negative value: must be at most zero\"`.",
+      "recommended_next_step": "Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `message \"negative value: must be at most zero\"`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `message \"negative value: must be at most zero\"`.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",

@@ -103,6 +103,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "reports ci-summary",
     "reports gap-ledger",
     "reports index",
+    "reports kani",
     "reports ts-false-actionable",
     "reports ts-limitations",
     "rerun",
@@ -183,6 +184,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         | "reports ci-summary"
         | "reports gap-ledger"
         | "reports index"
+        | "reports kani"
         | "reports ts-false-actionable"
         | "reports ts-limitations" => REPORTS_HELP,
         "rerun" => RERUN_HELP,
@@ -903,9 +905,9 @@ mod tests {
     fn check_short_help_advertises_quiet_json_and_lean_route() {
         let short = super::CHECK_HELP_SHORT;
         assert!(short.contains("--json --quiet"));
-        assert!(short.contains("--json alone still prints progress"));
+        assert!(short.contains("--json on a pipe is already quiet"));
         let full = CHECK_HELP.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(full.contains("agents and scripts reading json should pass it"));
+        assert!(full.contains("`RIPR_PROGRESS=1` restores it"));
         assert!(
             !short.contains("--json alone silences"),
             "short help must not claim --json disables progress"
@@ -941,7 +943,7 @@ mod tests {
         // #5065: CI authors who only read `--help` must not treat findings as
         // a nonzero lint. The typed contract is docs/EXIT_CODES.md.
         assert!(CHECK_HELP.contains("`exposed`"));
-        assert!(CHECK_HELP.contains("`weakly_exposed`"));
+        assert!(CHECK_HELP.contains("or weak"));
         assert!(CHECK_HELP.contains("A non-zero exit means the analysis did not"));
         assert!(CHECK_HELP.contains("`ripr gate evaluate`"));
         assert!(CHECK_HELP.contains("exit 3 on `blocked`"));
@@ -1443,6 +1445,7 @@ mod tests {
     const DOCTOR_PARSER_RS: &str = include_str!("commands/doctor.rs");
     const GATE_PARSER_RS: &str = include_str!("commands/gate.rs");
     const INIT_PARSER_RS: &str = include_str!("commands/init.rs");
+    const KANI_REPORT_PARSER_RS: &str = include_str!("commands/kani_report.rs");
     const PILOT_PARSER_RS: &str = include_str!("commands/pilot.rs");
     const BASELINE_PARSER_RS: &str = include_str!("commands/baseline.rs");
     const CACHE_PARSER_RS: &str = include_str!("commands/cache.rs");
@@ -1727,6 +1730,7 @@ mod tests {
             CLI_COMMANDS_RS,
             &["parse_report_packet_index_options"],
         ),
+        ("reports kani", KANI_REPORT_PARSER_RS, &["parse_options"]),
         (
             "reports ts-false-actionable",
             CLI_COMMANDS_RS,

@@ -26,12 +26,12 @@ Start here:
   Suggested test: test_build_query
   Test node: tests/test_q.py::test_build_query
   Verify command (Bash): (cd -P -- <cwd>/fixtures/python_trailing_whitespace_in_multiline_string/input && python -m pytest tests/test_q.py::test_build_query) (high)
-  Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
+  Evidence: reach yes · infection yes · propagation weak · observation weak · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -42,9 +42,9 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/python_trailing_whitespace_in_multiline_string/input --diff <cwd>/fixtures/python_trailing_whitespace_in_multiline_string/diff.patch --mode fast probe:src_q.py:python_preview:dcc7b1e6
-  ripr context --root <cwd>/fixtures/python_trailing_whitespace_in_multiline_string/input --diff <cwd>/fixtures/python_trailing_whitespace_in_multiline_string/diff.patch --mode fast --at probe:src_q.py:python_preview:dcc7b1e6
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/q.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  ripr explain --root <cwd>/fixtures/python_trailing_whitespace_in_multiline_string/input --diff <cwd>/fixtures/python_trailing_whitespace_in_multiline_string/diff.patch --mode fast probe:src_q.py:python_preview:v1-eb0fa695
+  ripr context --root <cwd>/fixtures/python_trailing_whitespace_in_multiline_string/input --diff <cwd>/fixtures/python_trailing_whitespace_in_multiline_string/diff.patch --mode fast --at probe:src_q.py:python_preview:v1-eb0fa695
+  no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/q.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

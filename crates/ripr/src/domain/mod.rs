@@ -9,6 +9,8 @@ mod diagnostic_witness;
 mod evidence;
 mod evidence_state;
 pub(crate) mod executed_control;
+pub(crate) mod external_verification;
+pub(crate) mod external_verification_native;
 mod feedback;
 mod finding_test_evidence;
 mod fix_instruction;
@@ -24,6 +26,7 @@ mod language_capability_drift;
 mod limit_guidance;
 mod next_action;
 mod probe;
+mod refusal_remedy;
 mod repair_card;
 mod summary;
 mod support;
@@ -127,6 +130,7 @@ pub use probe::{
     RelatedTest, RelatedTestMiss, RelatedTestMissSupport, RelatedTestRole,
     SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
 };
+pub(crate) use refusal_remedy::RefusalRemedy;
 pub use repair_card::{
     AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,
     DEFAULT_REPAIR_CARD_MAX_INLINE_DETAIL_BYTES, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,

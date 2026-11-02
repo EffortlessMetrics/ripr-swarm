@@ -1,0 +1,133 @@
+{
+  "schema_version": "0.5",
+  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:3c37c37c65ec4c4f","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:2cb8c22d5cf71d236e4b13839cf5d2800d9662915e6efddf367fe0c92a620dd4","generated_at":"unix_ms:1793521830256","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/p12"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:3c37c37c65ec4c4f;revision:unavailable"},
+  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.135","files_content_hash":"db530d514ed46bc5","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:0dde0c101a10c505baa2529abb924db67aae29691267c321897246a82e9f4c74","path":"src/lib.rs"},{"digest":"sha256:f2f9a2e31283aed2a4ec390c985e43274803a3c94b43d1f3ee3898ed84dd7921","path":"tests/tier_tests.rs"}]},
+  "analysis_inputs": {"analyzer_version":"0.11.0+aedfed8432ff450474fb5d885636757f823ff67c+languages:rust=1,typescript=0,python=0,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"a690043ee56cbef5"},
+  "scope": "repo",
+  "run_status": "complete",
+  "metrics": {
+    "seams_total": 4,
+    "headline_eligible": 1,
+    "strongly_gripped": 3,
+    "weakly_gripped": 0,
+    "ungripped": 0,
+    "reachable_unrevealed": 0,
+    "activation_unknown": 0,
+    "propagation_unknown": 1,
+    "observation_unknown": 0,
+    "discrimination_unknown": 0,
+    "opaque": 0,
+    "intentional": 0,
+    "suppressed": 0
+  },
+  "seams": [
+    {
+      "seam_id": "91f33f9f942804ca",
+      "kind": "predicate_boundary",
+      "file": "src/lib.rs",
+      "line": 5,
+      "column": 8,
+      "end_line": 5,
+      "end_column": 14,
+      "owner": "src/lib.rs::tier_identical",
+      "expression": "x >= 5",
+      "grip_class": "propagation_unknown",
+      "headline_eligible": true,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "unknown",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "identical_arms_pinned_at_threshold", "file": "tests/tier_tests.rs", "line": 4, "oracle_kind": "exact_value", "oracle_strength": "strong", "evidence_summary": "exact value assertion", "relation_reason": "direct_owner_call", "relation_confidence": "high"}
+      ],
+      "observed_values": ["5"],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"static_limitation","has_concrete_guidance":false,"reason":"static evidence is opaque or unknown for this seam","signals":{"assertion_shape":false,"candidate_value":true,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":1,"canonical_gap_id":"gap:e4fb6d3a100929fc","canonical_gap_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","canonical_item":{"actionability":"static_limitation","canonical_gap_id":"gap:e4fb6d3a100929fc","canonical_item_kind":"limitation","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data","static limitation: propagation_static_unknown"]},"evidence_class":"predicate_boundary","gap_state":"static_limitation","group_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","primary_anchor":{"file":"src/lib.rs","kind":"propagation_unknown","line":5,"reason":"canonical_group_primary_raw_finding","source_id":"91f33f9f942804ca"},"raw_group_size":1,"raw_spans":[{"end_line":5,"file":"src/lib.rs","kind":"propagation_unknown","source_id":"91f33f9f942804ca","start_line":5}],"receipt_command":null,"recommended_repair":"Inspect static limitation `propagation_static_unknown` via `analysis/static-limitation-taxonomy`.","related_test":{"file":"tests/tier_tests.rs","line":4,"name":"identical_arms_pinned_at_threshold","reason":"direct_owner_call"},"repair_command":null,"repair_route":null,"static_limitations":[{"category":"propagation_static_unknown","reason":"The predicate's one-line arms hold the same statement, so no sink value depends on it","repair_route":"analysis/static-limitation-taxonomy","stage":"propagate","state":"unknown"}],"verify_command":null,"why":"static evidence is opaque or unknown for this seam"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed 1 concrete activation value(s) for seam `x >= 5`"},"discriminate":{"confidence":"medium","state":"yes","summary":"Strongest oracle for seam kind `predicate_boundary` is `strong` (kind-match true)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"unknown","summary":"The predicate's one-line arms hold the same statement, so no sink value depends on it"},"reach":{"confidence":"medium","state":"yes","summary":"Related tests appear to reach `src/lib.rs::tier_identical`: identical_arms_pinned_at_threshold"}},"grip_class":"propagation_unknown","headline_eligible":true,"location":{"file":"src/lib.rs","line":5},"missing_discriminators":[],"observed_values":[{"context":"function_argument","line":5,"text":"assert_eq!(tier_identical(5), 1);","value":"5"}],"owner":"src/lib.rs::tier_identical","presentation_text":null,"raw_findings":[{"evidence_record_ref":"91f33f9f942804ca","expression":"x >= 5","file":"src/lib.rs","kind":"propagation_unknown","language":"rust","language_status":"stable","line":5,"probe_kind":"predicate_boundary","source_id":"91f33f9f942804ca"}],"recommendation":{"action":"inspect_static_limitation","assertion_shape":null,"candidate_values":[{"reason":"observed function_argument value from existing tests","value":"5"}],"nearest_test_to_imitate":{"evidence_summary":"exact value assertion","file":"tests/tier_tests.rs","line":4,"name":"identical_arms_pinned_at_threshold","oracle_kind":"exact_value","oracle_semantics":{"missing":"no obvious value-shape discriminator gap under static scope","observes":"the exact value or value pattern asserted by the test","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"direct_owner_call"},"reason":"static evidence is opaque or unknown for this seam","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"exact value assertion","file":"tests/tier_tests.rs","line":4,"name":"identical_arms_pinned_at_threshold","oracle_kind":"exact_value","oracle_semantics":{"missing":"no obvious value-shape discriminator gap under static scope","observes":"the exact value or value pattern asserted by the test","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"direct_owner_call"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"91f33f9f942804ca","seam_kind":"predicate_boundary","static_limitations":[{"category":"propagation_static_unknown","reason":"The predicate's one-line arms hold the same statement, so no sink value depends on it","repair_route":"analysis/static-limitation-taxonomy","stage":"propagate","state":"unknown"}]}
+    },
+    {
+      "seam_id": "35f1af39f89759b4",
+      "kind": "return_value",
+      "file": "src/lib.rs",
+      "line": 6,
+      "column": 5,
+      "end_line": 6,
+      "end_column": 10,
+      "owner": "src/lib.rs::tier_identical",
+      "expression": "r + 0",
+      "grip_class": "strongly_gripped",
+      "headline_eligible": false,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "identical_arms_pinned_at_threshold", "file": "tests/tier_tests.rs", "line": 4, "oracle_kind": "exact_value", "oracle_strength": "strong", "evidence_summary": "exact value assertion", "relation_reason": "direct_owner_call", "relation_confidence": "high"}
+      ],
+      "observed_values": ["5"],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"not_policy_relevant","has_concrete_guidance":false,"reason":"seam is already gripped or intentionally non-actionable under current policy","signals":{"assertion_shape":false,"candidate_value":true,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":null,"canonical_gap_id":null,"canonical_gap_reason":null,"canonical_item":{"actionability":"already_observed","canonical_gap_id":null,"canonical_item_kind":"observed","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data"]},"evidence_class":"return_value","gap_state":"already_observed","group_reason":null,"primary_anchor":{"file":"src/lib.rs","kind":"strongly_gripped","line":6,"reason":"record_location","source_id":"35f1af39f89759b4"},"raw_group_size":1,"raw_spans":[{"end_line":6,"file":"src/lib.rs","kind":"strongly_gripped","source_id":"35f1af39f89759b4","start_line":6}],"receipt_command":null,"recommended_repair":"No new RIPR action; current static evidence already observes this seam.","related_test":{"file":"tests/tier_tests.rs","line":4,"name":"identical_arms_pinned_at_threshold","reason":"direct_owner_call"},"repair_command":null,"repair_route":null,"static_limitations":[],"verify_command":null,"why":"seam is already gripped or intentionally non-actionable under current policy"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed 1 concrete activation value(s) for seam `r + 0`"},"discriminate":{"confidence":"medium","state":"yes","summary":"Strongest oracle for seam kind `return_value` is `strong` (kind-match true)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `return_value` sink is yes"},"reach":{"confidence":"medium","state":"yes","summary":"Related tests appear to reach `src/lib.rs::tier_identical`: identical_arms_pinned_at_threshold"}},"grip_class":"strongly_gripped","headline_eligible":false,"location":{"file":"src/lib.rs","line":6},"missing_discriminators":[],"observed_values":[{"context":"function_argument","line":5,"text":"assert_eq!(tier_identical(5), 1);","value":"5"}],"owner":"src/lib.rs::tier_identical","presentation_text":null,"raw_findings":[{"evidence_record_ref":"35f1af39f89759b4","expression":"r + 0","file":"src/lib.rs","kind":"strongly_gripped","language":"rust","language_status":"stable","line":6,"probe_kind":"return_value","source_id":"35f1af39f89759b4"}],"recommendation":{"action":"no_action","assertion_shape":null,"candidate_values":[{"reason":"observed function_argument value from existing tests","value":"5"}],"nearest_test_to_imitate":{"evidence_summary":"exact value assertion","file":"tests/tier_tests.rs","line":4,"name":"identical_arms_pinned_at_threshold","oracle_kind":"exact_value","oracle_semantics":{"missing":"no obvious value-shape discriminator gap under static scope","observes":"the exact value or value pattern asserted by the test","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"direct_owner_call"},"reason":"seam is already gripped or intentionally non-actionable under current policy","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"exact value assertion","file":"tests/tier_tests.rs","line":4,"name":"identical_arms_pinned_at_threshold","oracle_kind":"exact_value","oracle_semantics":{"missing":"no obvious value-shape discriminator gap under static scope","observes":"the exact value or value pattern asserted by the test","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"direct_owner_call"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"35f1af39f89759b4","seam_kind":"return_value","static_limitations":[]}
+    },
+    {
+      "seam_id": "4994b75a25459f6d",
+      "kind": "predicate_boundary",
+      "file": "src/lib.rs",
+      "line": 11,
+      "column": 8,
+      "end_line": 11,
+      "end_column": 14,
+      "owner": "src/lib.rs::tier_differing",
+      "expression": "x >= 5",
+      "grip_class": "strongly_gripped",
+      "headline_eligible": false,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "differing_arms_pinned_at_threshold", "file": "tests/tier_tests.rs", "line": 9, "oracle_kind": "exact_value", "oracle_strength": "strong", "evidence_summary": "exact value assertion", "relation_reason": "direct_owner_call", "relation_confidence": "high"}
+      ],
+      "observed_values": ["5"],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"not_policy_relevant","has_concrete_guidance":false,"reason":"seam is already gripped or intentionally non-actionable under current policy","signals":{"assertion_shape":false,"candidate_value":true,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":null,"canonical_gap_id":null,"canonical_gap_reason":null,"canonical_item":{"actionability":"already_observed","canonical_gap_id":null,"canonical_item_kind":"observed","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data"]},"evidence_class":"predicate_boundary","gap_state":"already_observed","group_reason":null,"primary_anchor":{"file":"src/lib.rs","kind":"strongly_gripped","line":11,"reason":"record_location","source_id":"4994b75a25459f6d"},"raw_group_size":1,"raw_spans":[{"end_line":11,"file":"src/lib.rs","kind":"strongly_gripped","source_id":"4994b75a25459f6d","start_line":11}],"receipt_command":null,"recommended_repair":"No new RIPR action; current static evidence already observes this seam.","related_test":{"file":"tests/tier_tests.rs","line":9,"name":"differing_arms_pinned_at_threshold","reason":"direct_owner_call"},"repair_command":null,"repair_route":null,"static_limitations":[],"verify_command":null,"why":"seam is already gripped or intentionally non-actionable under current policy"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed 1 concrete activation value(s) for seam `x >= 5`"},"discriminate":{"confidence":"medium","state":"yes","summary":"Strongest oracle for seam kind `predicate_boundary` is `strong` (kind-match true)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `return_value` sink is yes"},"reach":{"confidence":"medium","state":"yes","summary":"Related tests appear to reach `src/lib.rs::tier_differing`: differing_arms_pinned_at_threshold"}},"grip_class":"strongly_gripped","headline_eligible":false,"location":{"file":"src/lib.rs","line":11},"missing_discriminators":[],"observed_values":[{"context":"function_argument","line":10,"text":"assert_eq!(tier_differing(5), 1);","value":"5"}],"owner":"src/lib.rs::tier_differing","presentation_text":null,"raw_findings":[{"evidence_record_ref":"4994b75a25459f6d","expression":"x >= 5","file":"src/lib.rs","kind":"strongly_gripped","language":"rust","language_status":"stable","line":11,"probe_kind":"predicate_boundary","source_id":"4994b75a25459f6d"}],"recommendation":{"action":"no_action","assertion_shape":null,"candidate_values":[{"reason":"observed function_argument value from existing tests","value":"5"}],"nearest_test_to_imitate":{"evidence_summary":"exact value assertion","file":"tests/tier_tests.rs","line":9,"name":"differing_arms_pinned_at_threshold","oracle_kind":"exact_value","oracle_semantics":{"missing":"no obvious value-shape discriminator gap under static scope","observes":"the exact value or value pattern asserted by the test","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"direct_owner_call"},"reason":"seam is already gripped or intentionally non-actionable under current policy","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"exact value assertion","file":"tests/tier_tests.rs","line":9,"name":"differing_arms_pinned_at_threshold","oracle_kind":"exact_value","oracle_semantics":{"missing":"no obvious value-shape discriminator gap under static scope","observes":"the exact value or value pattern asserted by the test","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"direct_owner_call"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"4994b75a25459f6d","seam_kind":"predicate_boundary","static_limitations":[]}
+    },
+    {
+      "seam_id": "2fd8f70473767a7a",
+      "kind": "return_value",
+      "file": "src/lib.rs",
+      "line": 12,
+      "column": 5,
+      "end_line": 12,
+      "end_column": 10,
+      "owner": "src/lib.rs::tier_differing",
+      "expression": "r + 0",
+      "grip_class": "strongly_gripped",
+      "headline_eligible": false,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "yes"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "differing_arms_pinned_at_threshold", "file": "tests/tier_tests.rs", "line": 9, "oracle_kind": "exact_value", "oracle_strength": "strong", "evidence_summary": "exact value assertion", "relation_reason": "direct_owner_call", "relation_confidence": "high"}
+      ],
+      "observed_values": ["5"],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"not_policy_relevant","has_concrete_guidance":false,"reason":"seam is already gripped or intentionally non-actionable under current policy","signals":{"assertion_shape":false,"candidate_value":true,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":null,"canonical_gap_id":null,"canonical_gap_reason":null,"canonical_item":{"actionability":"already_observed","canonical_gap_id":null,"canonical_item_kind":"observed","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data"]},"evidence_class":"return_value","gap_state":"already_observed","group_reason":null,"primary_anchor":{"file":"src/lib.rs","kind":"strongly_gripped","line":12,"reason":"record_location","source_id":"2fd8f70473767a7a"},"raw_group_size":1,"raw_spans":[{"end_line":12,"file":"src/lib.rs","kind":"strongly_gripped","source_id":"2fd8f70473767a7a","start_line":12}],"receipt_command":null,"recommended_repair":"No new RIPR action; current static evidence already observes this seam.","related_test":{"file":"tests/tier_tests.rs","line":9,"name":"differing_arms_pinned_at_threshold","reason":"direct_owner_call"},"repair_command":null,"repair_route":null,"static_limitations":[],"verify_command":null,"why":"seam is already gripped or intentionally non-actionable under current policy"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed 1 concrete activation value(s) for seam `r + 0`"},"discriminate":{"confidence":"medium","state":"yes","summary":"Strongest oracle for seam kind `return_value` is `strong` (kind-match true)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `return_value` sink is yes"},"reach":{"confidence":"medium","state":"yes","summary":"Related tests appear to reach `src/lib.rs::tier_differing`: differing_arms_pinned_at_threshold"}},"grip_class":"strongly_gripped","headline_eligible":false,"location":{"file":"src/lib.rs","line":12},"missing_discriminators":[],"observed_values":[{"context":"function_argument","line":10,"text":"assert_eq!(tier_differing(5), 1);","value":"5"}],"owner":"src/lib.rs::tier_differing","presentation_text":null,"raw_findings":[{"evidence_record_ref":"2fd8f70473767a7a","expression":"r + 0","file":"src/lib.rs","kind":"strongly_gripped","language":"rust","language_status":"stable","line":12,"probe_kind":"return_value","source_id":"2fd8f70473767a7a"}],"recommendation":{"action":"no_action","assertion_shape":null,"candidate_values":[{"reason":"observed function_argument value from existing tests","value":"5"}],"nearest_test_to_imitate":{"evidence_summary":"exact value assertion","file":"tests/tier_tests.rs","line":9,"name":"differing_arms_pinned_at_threshold","oracle_kind":"exact_value","oracle_semantics":{"missing":"no obvious value-shape discriminator gap under static scope","observes":"the exact value or value pattern asserted by the test","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"direct_owner_call"},"reason":"seam is already gripped or intentionally non-actionable under current policy","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"exact value assertion","file":"tests/tier_tests.rs","line":9,"name":"differing_arms_pinned_at_threshold","oracle_kind":"exact_value","oracle_semantics":{"missing":"no obvious value-shape discriminator gap under static scope","observes":"the exact value or value pattern asserted by the test","upgrade_suggestion":null},"oracle_strength":"strong","relation_confidence":"high","relation_reason":"direct_owner_call"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"2fd8f70473767a7a","seam_kind":"return_value","static_limitations":[]}
+    }
+  ]
+}

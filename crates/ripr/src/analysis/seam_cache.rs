@@ -67,7 +67,7 @@ use crate::config::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 // The producer's layer names are also the only names cache maintenance may
 // inspect or remove. Defining both the typed names and inventory here makes a
@@ -598,7 +598,32 @@ pub(crate) struct CachedSeamLimitInfo {
 /// macros when a bare owner call sits outside their inputs (#9644). The same
 /// version also covers a Kani proof harness getting its own source role
 /// instead of reading as a production function (RIPR-SPEC-0367).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.124";
+/// `1.125`: changed lines inside `verus! { .. }` seed one `static_unknown` probe
+/// per region and side and name `verus_macro_region_unsupported`; verification
+/// prelude globs (`vstd`, `creusot_std`, `prusti_contracts`) no longer refuse
+/// assertion credit (RIPR-SPEC-0369, #11703).
+/// `1.126`: a predicate on a self-closed `if` statement takes no branch-value
+/// sink from the next line (#10880); `1.125` credited a coincident row.
+/// `1.127`: those prelude globs keep assertion credit only when `Cargo.lock`
+/// pins an audited version of the crate (RIPR-SPEC-0369). Old entries credited
+/// by crate name alone.
+/// `1.128`: a bare imported unit variant receiver resolves to its enum's impl, so
+/// the receiver-unestablished withhold reads where a false gap was cached (#8782).
+/// `1.129`: a repo predicate seam whose one-line `if` arms all hold the same
+/// statement no longer reads propagated, so it cannot read strongly gripped
+/// (#12053).
+/// `1.131`: an `error_path` finding credits an exact pin of the variant a changed
+/// arm removed when the owner call's input selects that arm (#12110).
+/// `1.132`: a field write through a by-value receiver is no longer confirmed by
+/// a read of the caller's unmoved binding (#12061).
+/// `1.133`: a proximity-only or assertion-affinity test whose assertion pins
+/// another function no longer lends a match-arm seam its propagation, activation
+/// or discrimination credit (#12060).
+/// `1.134`: a proximity test assertion that pins another function through a
+/// local it reads no longer confirms the changed arm (#12056).
+/// `1.135`: a changed match arm whose `match` value is consumed before the
+/// owner returns it (method call, or a used `let`) is not confirmed (#12143).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.135";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -768,7 +793,14 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.124";
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
 /// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
+/// `0.132`: same `verus!` region limit and prelude-glob credit as full `1.125`
+/// (RIPR-SPEC-0369).
+/// `0.133`: same self-closed `if` rule as full `1.126` (#10880).
+/// `0.133`: same imported-variant receiver as full `1.127` (#8782).
+/// `0.135`: same identical-arms propagation rule as full `1.129` (#12053).
+/// `0.136`: same by-value receiver field-write rule as full `1.132` (#12061).
+/// `0.137`: same proximity-pins-another-function rule as full `1.133` (#12060).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.137";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -940,7 +972,14 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
 /// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
 /// `0.130`: same matches! execution admission as full `1.123`.
 /// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.131";
+/// `0.132`: same `verus!` region limit and prelude-glob credit as full `1.125`
+/// (RIPR-SPEC-0369).
+/// `0.133`: same self-closed `if` rule as full `1.126` (#10880).
+/// `0.133`: same imported-variant receiver as full `1.127` (#8782).
+/// `0.135`: same identical-arms propagation rule as full `1.129` (#12053).
+/// `0.136`: same by-value receiver field-write rule as full `1.132` (#12061).
+/// `0.137`: same proximity-pins-another-function rule as full `1.133` (#12060).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.137";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -2762,6 +2801,11 @@ impl FileFactCacheStats {
     }
 }
 
+/// Layer directories whose stale schema siblings were already pruned this
+/// process (#7047). Mirrors the once-per-directory latch in
+/// `atomic_file::sweep_stale_temp_files_once`.
+static FILE_FACT_STALE_SCHEMA_PRUNED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+
 pub(crate) struct RepoFileFactCache {
     /// Entry directory: `{cache_base}/repo-file-facts/{schema_version}`.
     dir: PathBuf,
@@ -2999,12 +3043,121 @@ impl RepoFileFactCache {
                 message,
             },
         )?;
+        // Load refuses an unusable/untrusted base, but production still
+        // parses and stores. Do not delete sibling schema directories there:
+        // a Git-tracked `repo-file-facts/1.31` is repository content (#7780).
+        if self.unusable_base_reason().is_none() {
+            self.prune_stale_schema_siblings_once();
+        }
         Ok(())
     }
 
     fn entry_path(&self, key: &RepoFileFactCacheKey) -> PathBuf {
         self.dir.join(key.filename())
     }
+
+    /// Once per run and cache layer directory, after a successful store,
+    /// best-effort remove sibling schema directories this build can never
+    /// serve (#7047). A process-wide latch avoids a new struct field.
+    fn prune_stale_schema_siblings_once(&self) {
+        let Some(layer_dir) = self.file_fact_schema_layer_dir() else {
+            return;
+        };
+        if !cache_path_contained_in_base(&self.base, &layer_dir) {
+            return;
+        }
+        let first_visit = {
+            let mut pruned = match FILE_FACT_STALE_SCHEMA_PRUNED.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            pruned.insert(layer_dir.clone())
+        };
+        if first_visit {
+            self.prune_stale_schema_siblings(&layer_dir);
+        }
+    }
+
+    fn prune_stale_schema_siblings(&self, layer_dir: &Path) {
+        let Ok(layer_meta) = std::fs::symlink_metadata(layer_dir) else {
+            return;
+        };
+        if layer_meta.file_type().is_symlink() || !layer_meta.is_dir() {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(layer_dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if name == FILE_FACT_CACHE_SCHEMA_VERSION || !parses_as_file_fact_schema_version(name) {
+                continue;
+            }
+            let path = layer_dir.join(name);
+            if !cache_path_contained_in_base(&self.base, &path) {
+                continue;
+            }
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                continue;
+            }
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+
+    /// Production layout `{base}/repo-file-facts/{current-version}` only.
+    /// Test `at_dir` roots write entries directly in `dir` and must not prune.
+    fn file_fact_schema_layer_dir(&self) -> Option<PathBuf> {
+        let layer_dir = self.base.join(CacheLayer::FileFacts.name());
+        let expected = layer_dir.join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        (self.dir == expected).then_some(layer_dir)
+    }
+}
+
+/// File-fact schema directories are `{major}.{minor}` decimal generations.
+fn parses_as_file_fact_schema_version(name: &str) -> bool {
+    let mut parts = name.split('.');
+    let Some(major) = parts.next() else {
+        return false;
+    };
+    let Some(minor) = parts.next() else {
+        return false;
+    };
+    parts.next().is_none()
+        && !major.is_empty()
+        && !minor.is_empty()
+        && major.bytes().all(|byte| byte.is_ascii_digit())
+        && minor.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Lexical containment under the cache base: no `.` / `..`, and a nonempty
+/// relative remainder so the base itself is never a prune target.
+fn cache_path_contained_in_base(base: &Path, path: &Path) -> bool {
+    if base.as_os_str().is_empty() || path.as_os_str().is_empty() {
+        return false;
+    }
+    let has_dot = |candidate: &Path| {
+        candidate.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    };
+    if has_dot(base) || has_dot(path) {
+        return false;
+    }
+    path.strip_prefix(base).is_ok_and(|relative| {
+        !relative.as_os_str().is_empty()
+            && relative
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_)))
+    })
 }
 
 /// Compact cache for [`SeamGripClassCounts`].
@@ -5413,7 +5566,22 @@ mod tests {
         // 1.122 -> 1.123: return/error matches! execution admission.
         // 1.123 -> 1.124: nested expected-macro limit (#9644) and the
         // proof-harness source role (RIPR-SPEC-0367).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.124");
+        // 1.124 -> 1.125: `verus!` region limit and verification-prelude glob
+        // credit (RIPR-SPEC-0369, #11703).
+        // 1.125 -> 1.126: self-closed `if` statement tail (#10880).
+        // 1.126 -> 1.127: those prelude globs keep assertion credit only for
+        // audited locked versions (RIPR-SPEC-0369).
+        // 1.127 -> 1.128: imported unit-variant receiver (#8782).
+        // 1.128 -> 1.129: identical-arms predicate seam propagation (#12053).
+        // 1.129 -> 1.131: an exact pin of the variant a changed error arm
+        // removed is credited when its input selects that arm (#12110).
+        // 1.131 -> 1.132: by-value receiver field writes are not confirmed by
+        // the caller's unmoved binding (#12061).
+        // 1.132 -> 1.133: proximity assertions pinning another function (#12060).
+        // 1.133 -> 1.134: an assertion that pins another function through a
+        // local it reads no longer confirms the arm (#12056).
+        // 1.134 -> 1.135: a consumed `match` value remaps the arm result (#12143).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.135");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5524,8 +5692,14 @@ mod tests {
         // 0.128 -> 0.129: same foreign embedded-type reading as full 1.122.
         // 0.129 -> 0.130: same matches! admission as full 1.123.
         // 0.130 -> 0.131: same nested expected-macro limit as full 1.124 (#9644).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.131");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.131");
+        // 0.131 -> 0.132: same `verus!` region limit as full 1.125 (RIPR-SPEC-0369).
+        // 0.132 -> 0.133: same self-closed `if` rule as full 1.126.
+        // 0.133 -> 0.134: same imported-variant receiver as full 1.127 (#8782).
+        // 0.134 -> 0.135: same identical-arms propagation rule as full 1.129.
+        // 0.135 -> 0.136: same by-value receiver field-write rule as full 1.132.
+        // 0.136 -> 0.137: same proximity rule as full 1.133 (#12060).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.137");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.137");
     }
 
     #[test]
@@ -11013,5 +11187,199 @@ mod generation_transition_tests {
             assert!(wrote.is_ok(), "writing hex into a String is infallible");
         }
         hex
+    }
+}
+
+/// #7047: after a successful file-fact store, prune sibling schema directories
+/// that this build can never serve. Kept at the end of the file so the tests
+/// stay away from open-PR hunks around the generation-pin table.
+#[cfg(test)]
+mod file_fact_stale_schema_prune_tests {
+    use super::*;
+
+    fn scratch(label: &str) -> Result<PathBuf, String> {
+        std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
+        let dir = super::tests::isolated_dir(label);
+        super::ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|error| format!("create scratch: {error}"))?;
+        Ok(dir)
+    }
+
+    fn store_one(cache: &RepoFileFactCache) -> Result<(), String> {
+        let key = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"pub fn cached() {}\n");
+        cache
+            .store_file_facts(&key, &FileFacts::default())
+            .map_err(|error| error.message)
+    }
+
+    fn plant_dir(path: &Path, marker: &str) -> Result<(), String> {
+        std::fs::create_dir_all(path)
+            .map_err(|error| format!("plant dir {}: {error}", path.display()))?;
+        std::fs::write(path.join(marker), b"stale")
+            .map_err(|error| format!("plant marker {}: {error}", path.display()))
+    }
+
+    #[test]
+    fn successful_store_removes_stale_schema_sibling_and_keeps_current() -> Result<(), String> {
+        let base = scratch("prune-stale-schema")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let layer = base.join(CacheLayer::FileFacts.name());
+        plant_dir(&layer.join("1.31"), "old.json")?;
+        store_one(&cache)?;
+
+        let current = layer.join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        if !current.is_dir() {
+            return Err(format!("current schema dir missing: {}", current.display()));
+        }
+        let stale = layer.join("1.31");
+        if stale.exists() {
+            super::ignore_remove_dir_all(&base);
+            return Err("stale 1.31 sibling must be removed after a successful store".to_string());
+        }
+        super::ignore_remove_dir_all(&base);
+        Ok(())
+    }
+
+    #[test]
+    fn successful_store_keeps_non_version_sibling_dir_and_file() -> Result<(), String> {
+        let base = scratch("prune-keep-non-version")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let layer = base.join(CacheLayer::FileFacts.name());
+        plant_dir(&layer.join("notes"), "readme.txt")?;
+        std::fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+        std::fs::write(layer.join("stray.json"), b"{}").map_err(|error| error.to_string())?;
+        store_one(&cache)?;
+
+        if !layer.join("notes").join("readme.txt").is_file() {
+            super::ignore_remove_dir_all(&base);
+            return Err("non-version sibling directory must be kept".to_string());
+        }
+        if !layer.join("stray.json").is_file() {
+            super::ignore_remove_dir_all(&base);
+            return Err("non-version sibling file must be kept".to_string());
+        }
+        super::ignore_remove_dir_all(&base);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_store_does_not_follow_or_remove_through_symlinked_version_sibling()
+    -> Result<(), String> {
+        let base = scratch("prune-symlink-version")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let layer = base.join(CacheLayer::FileFacts.name());
+        std::fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+        let target = base.join("outside-target");
+        plant_dir(&target, "keep-me")?;
+        std::os::unix::fs::symlink(&target, layer.join("1.31"))
+            .map_err(|error| error.to_string())?;
+        store_one(&cache)?;
+
+        let link_meta = std::fs::symlink_metadata(layer.join("1.31"))
+            .map_err(|error| format!("symlink metadata: {error}"))?;
+        if !link_meta.file_type().is_symlink() {
+            super::ignore_remove_dir_all(&base);
+            return Err("version-named symlink sibling must remain a symlink".to_string());
+        }
+        if !target.join("keep-me").is_file() {
+            super::ignore_remove_dir_all(&base);
+            return Err("symlink target must not be removed through".to_string());
+        }
+        super::ignore_remove_dir_all(&base);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_store_does_not_prune_stale_schema_sibling() -> Result<(), String> {
+        let base = scratch("prune-failed-store")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let layer = base.join(CacheLayer::FileFacts.name());
+        plant_dir(&layer.join("1.31"), "old.json")?;
+        std::fs::write(
+            layer.join(FILE_FACT_CACHE_SCHEMA_VERSION),
+            b"not a directory",
+        )
+        .map_err(|error| error.to_string())?;
+        match store_one(&cache) {
+            Err(_) => {}
+            Ok(()) => {
+                super::ignore_remove_dir_all(&base);
+                return Err("store through a file component must fail".to_string());
+            }
+        }
+        if !layer.join("1.31").join("old.json").is_file() {
+            super::ignore_remove_dir_all(&base);
+            return Err("failed store must not prune the stale sibling".to_string());
+        }
+        super::ignore_remove_dir_all(&base);
+        Ok(())
+    }
+
+    #[test]
+    fn successful_store_does_not_touch_paths_outside_the_cache_base() -> Result<(), String> {
+        let parent = scratch("prune-outside-parent")?;
+        let base = parent.join("cache-base");
+        std::fs::create_dir_all(&base).map_err(|error| error.to_string())?;
+        let cache = RepoFileFactCache::at_base(&base);
+        plant_dir(&parent.join("1.31"), "outside.json")?;
+        plant_dir(
+            &base.join("unrelated").join("1.31"),
+            "inside-unrelated.json",
+        )?;
+        store_one(&cache)?;
+
+        if !parent.join("1.31").join("outside.json").is_file() {
+            super::ignore_remove_dir_all(&parent);
+            return Err("directory outside the cache base must be left untouched".to_string());
+        }
+        if !base
+            .join("unrelated")
+            .join("1.31")
+            .join("inside-unrelated.json")
+            .is_file()
+        {
+            super::ignore_remove_dir_all(&parent);
+            return Err(
+                "same-named directory outside repo-file-facts must be left untouched".to_string(),
+            );
+        }
+        super::ignore_remove_dir_all(&parent);
+        Ok(())
+    }
+
+    #[test]
+    fn successful_store_does_not_prune_tracked_stale_schema_sibling() -> Result<(), String> {
+        // Production `CorruptIgnored` still parses and stores (#7780). Prune
+        // must not delete a Git-tracked schema sibling in that untrusted base.
+        let root = scratch("prune-tracked-schema")?;
+        crate::git::run_git(&root, &["init", "-q"])
+            .map_err(|error| format!("git init: {error}"))?;
+        let cache = RepoFileFactCache::at_base(&root);
+        let layer = root.join(CacheLayer::FileFacts.name());
+        plant_dir(&layer.join("1.31"), "old.json")?;
+        crate::git::run_git(&root, &["add", "-f", "--", "."])
+            .map_err(|error| format!("git add: {error}"))?;
+        match cache.load_file_facts(&RepoFileFactCacheKey::new(
+            Path::new("src/lib.rs"),
+            b"pub fn cached() {}\n",
+        )) {
+            CacheLoad::CorruptIgnored { reason } if reason.contains("tracked by Git") => {}
+            other => {
+                super::ignore_remove_dir_all(&root);
+                return Err(format!(
+                    "tracked cache base must be refused on load, got {other:?}"
+                ));
+            }
+        }
+        store_one(&cache)?;
+        if !layer.join("1.31").join("old.json").is_file() {
+            super::ignore_remove_dir_all(&root);
+            return Err(
+                "tracked stale 1.31 sibling must remain after a successful store".to_string(),
+            );
+        }
+        super::ignore_remove_dir_all(&root);
+        Ok(())
     }
 }

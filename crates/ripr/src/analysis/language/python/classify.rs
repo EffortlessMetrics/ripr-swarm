@@ -45,7 +45,7 @@ use super::term_activation::python_inactive_term_evidence;
 use super::transitive_reach::apply_python_no_static_path_limit;
 use super::type_guard::removed_type_guard_credit;
 use super::{
-    PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_expression,
+    PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_python_expression,
     owner_for_changed_line, python_no_family_relevant_missing_summary,
     python_recommended_next_step, python_weak_missing_summary, stop_reason_for_python_static_limit,
 };
@@ -289,7 +289,10 @@ fn classify_change_full<'a>(
     // behavior delta. Emit no probe rather than crediting `exposed` from a test that
     // reaches the owner. Requires the paired old line; fails closed when anything
     // beyond an annotation differs (e.g. a default-value change, which IS behavioral).
+    // A line inside a multi-line string (or in a file that could not be
+    // lexed) is data, not a header, so it keeps its probe (#11888).
     if let Some(old) = old_line_text
+        && !no_behavior.new_line_in_multiline_string
         && same_indentation(old, line_text)
         && is_annotation_only_def_change(old, line_text)
     {
@@ -313,7 +316,12 @@ fn classify_change_full<'a>(
     }
     let owner = owner_for_changed_line(file, line, owners)?;
     classify_change_for_owner_with_value_origins(
-        ChangeSite { file, line, owner },
+        ChangeSite {
+            file,
+            line,
+            owner,
+            old_guard: None,
+        },
         line_text,
         old_line_text,
         owners,
@@ -332,6 +340,21 @@ pub(super) struct ChangeSite<'a> {
     pub(super) file: &'a Path,
     pub(super) line: usize,
     pub(super) owner: &'a PythonOwner,
+    /// A deleted line's old-side view (#11889), `None` for a live line.
+    pub(super) old_guard: Option<OldGuardView<'a>>,
+}
+
+/// Where a deleted line sat in the old file: the old text, the owner re-spanned
+/// to old-side coordinates and the old line number. The guarded-arm reader
+/// walks the guards around that line exactly as it does for a live one, so a
+/// deleted line that no observed input could enter is not credited.
+pub(super) struct OldGuardView<'a> {
+    pub(super) owner: PythonOwner,
+    pub(super) source: &'a str,
+    pub(super) line: usize,
+    /// The owner's parameter names, the only identifiers an old-side guard may
+    /// name (constants resolve on the new side).
+    pub(super) parameters: Vec<String>,
 }
 
 /// Classify a change at a resolved owner.
@@ -350,7 +373,12 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     value_origins: Option<&mut crate::value_origins::ValueOrigins>,
     mut related: Option<&mut RelatedCandidateMemo<'a>>,
 ) -> Option<Finding> {
-    let ChangeSite { file, line, owner } = site;
+    let ChangeSite {
+        file,
+        line,
+        owner,
+        old_guard,
+    } = site;
     // Bare-variable annotation-only suppression at MODULE SCOPE only (#1289):
     // Python does not enforce type annotations at runtime at module scope, so a
     // module-scope annotated-variable change that touches ONLY the annotation
@@ -861,6 +889,32 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             })
         })
         .flatten();
+    // #11889: a deleted line is read on the old side. When every strong related
+    // call provably fails the guards that enclosed it there, the line never ran
+    // under an observed input, so no strong oracle could notice its removal.
+    let guarded_arm_gap = guarded_arm_gap.or_else(|| {
+        let view = old_guard.as_ref()?;
+        (static_limit.is_none()
+            && boundary_gap.is_none()
+            && inactive_term.is_none()
+            && !no_behavior.multi_line_def_header_line)
+            .then(|| {
+                guard_activation::python_guarded_arm_gap(
+                    &view.owner,
+                    view.source,
+                    view.line,
+                    &related_candidates,
+                    &focus,
+                )
+                .filter(|gap| {
+                    super::deleted_lines::guard_names_only_parameters(
+                        &gap.discriminator,
+                        &view.parameters,
+                    )
+                })
+            })
+            .flatten()
+    });
     let mut guarded_arm_downgraded = false;
     // Message-pin gate (#9185): a message-only change to a `raise` is
     // discriminated by a `match=` pattern only when the pattern accepts one
@@ -1062,7 +1116,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             StageState::Yes,
             vec![format!(
                 // #7752: the article follows the oracle-kind label ("an `exact_value`").
-                "Related Python test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.",
+                "Related Python test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value check.",
                 owner.name,
                 indefinite_article(strongest_kind.as_str()),
                 strongest_kind.as_str()
@@ -1285,14 +1339,25 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     let canonical_gap = (static_limit.is_none() && !imported_literal_gap)
         .then(|| canonical_python_gap_for(file, owner, &family, line_text));
     let owner_id = owner.symbol_id();
-    let probe_id = fingerprint_probe_id(
+    let normalized = normalize_python_expression(line_text);
+    let mut probe_id = fingerprint_probe_id(
         "probe",
         &id_path,
         "python_preview",
         owner_id.0.as_str(),
-        &normalize_expression(line_text),
+        &normalized,
         1,
     );
+    let marker = if normalized.starts_with("\0python-literal-v1\0") {
+        Some("v1-")
+    } else if normalized.starts_with("\0python-uncertain-v1\0") {
+        Some("v1u-")
+    } else {
+        None
+    };
+    if let (Some(marker), Some(separator)) = (marker, probe_id.0.rfind(':')) {
+        probe_id.0.insert_str(separator + 1, marker);
+    }
     let probe = Probe {
         id: probe_id,
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
@@ -1884,6 +1949,7 @@ fn note_runner_invocation(finding: &mut Finding, owner: &PythonOwner, tests: &[P
 pub(super) fn number_colliding_candidates(
     findings: &mut [Finding],
     value_origins: &mut crate::value_origins::ValueOrigins,
+    context: Option<&super::PythonIdentityContext<'_>>,
 ) {
     let keys: Vec<[u8; 32]> = findings
         .iter()
@@ -1895,7 +1961,11 @@ pub(super) fn number_colliding_candidates(
                     .owner
                     .as_ref()
                     .map_or("", |owner| owner.0.as_str()),
-                &normalize_expression(&finding.probe.expression),
+                &context
+                    .and_then(|context| {
+                        context.normalize(finding.probe.location.line, &finding.probe.expression)
+                    })
+                    .unwrap_or_else(|| normalize_python_expression(&finding.probe.expression)),
             )
         })
         .collect();

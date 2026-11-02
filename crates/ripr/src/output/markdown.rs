@@ -18,7 +18,7 @@ pub(crate) const COMMAND_SHELL_DISCLOSURE: &str = "Commands are written for Bash
 /// #8152 review: PowerShell expands `$` and backtick inside double quotes
 /// just as Git Bash does, so a value carrying those characters keeps the
 /// single-quote form instead of the unsafe double-quoted one.
-pub(crate) const COMMAND_SHELL_DISCLOSURE_WINDOWS: &str = "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor for spaced paths. A value carrying `$` or backtick keeps the single-quote form instead — both Git Bash and PowerShell would expand it inside double quotes — so paste that value in Git Bash or PowerShell, not cmd.exe (cmd.exe passes single quotes through as literal characters); the same routing applies to a value carrying `%`, which cmd.exe expands even inside double quotes. An interior `\"` in an argument is kept by cmd.exe and PowerShell but dropped by Git Bash (`\"` cannot occur in a Windows filename, so this touches only exotic non-path arguments). A PowerShell form follows a command only when PowerShell needs a different one: the `&` call operator before a quoted program path, or a guarded BOM-free UTF-8 write in place of `>`. A command with no PowerShell form after it runs unchanged in cmd.exe and PowerShell, unless a line says its PowerShell form is unavailable. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
+pub(crate) const COMMAND_SHELL_DISCLOSURE_WINDOWS: &str = "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor for spaced paths. A value carrying `$` or backtick keeps the single-quote form instead — both Git Bash and PowerShell would expand it inside double quotes — so paste that value in Git Bash or PowerShell, not cmd.exe (cmd.exe passes single quotes through as literal characters); the same routing applies to a value carrying `%`, which cmd.exe expands even inside double quotes. An interior `\"` in an argument is kept by cmd.exe and PowerShell but dropped by Git Bash (`\"` cannot occur in a Windows filename, so this touches only exotic non-path arguments). A PowerShell form follows a command only when PowerShell needs a different one: the `&` call operator before a quoted program path, or a guarded BOM-free UTF-8 write in place of `>`. A command that begins with a `NAME=value` environment assignment is Bash syntax only: PowerShell writes it differently (`$env:NAME = 'value'`, which its PowerShell form already does), and cmd.exe rejects it as an unrecognized command. Paste the PowerShell form, or in cmd.exe run `set NAME=value` on its own line first and then the command without the assignment. A command with no PowerShell form after it runs unchanged in cmd.exe and PowerShell, unless a line says its PowerShell form is unavailable. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
 
 /// The shell disclosure for the running host (#7729).
 pub(crate) fn command_shell_disclosure() -> &'static str {
@@ -605,9 +605,36 @@ pub(crate) fn powershell_command(command: &str) -> Option<String> {
 /// the Windows-form translation is testable on any machine (the
 /// `shell_arg_for` / `human_path_text` pattern, #4378).
 fn powershell_command_for(command: &str, windows_form: bool) -> Option<String> {
+    // A leading `NAME=value ` assignment scopes one environment variable to
+    // the command in Bash (#12150). PowerShell has no such prefix: translate
+    // the rest, then set the variable around it and restore the prior value.
+    if let Some((name, value, rest)) = split_leading_env_assignment(command) {
+        let line = powershell_command_for(rest, windows_form)?;
+        return Some(format!(
+            "$riprPriorEnv = $env:{name}; $env:{name} = '{value}'; try {{ {line} }} finally {{ $env:{name} = $riprPriorEnv }}"
+        ));
+    }
     let (command, lifted) = lift_control_arguments(command)?;
     let line = powershell_command_lifted(&command, windows_form)?;
     restore_control_arguments(line, &lifted)
+}
+
+/// Split one leading Bash `NAME=value ` environment assignment off `command`.
+/// Only an upper-case identifier and a bare `[0-9A-Za-z_.-]` value are
+/// recognised, so a quoted or expanding value stays unsupported rather than
+/// being translated by guesswork.
+fn split_leading_env_assignment(command: &str) -> Option<(&str, &str, &str)> {
+    let (assignment, rest) = command.split_once(' ')?;
+    let (name, value) = assignment.split_once('=')?;
+    let name_ok = name.starts_with(|ch: char| ch.is_ascii_uppercase())
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_');
+    let value_ok = !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-'));
+    (name_ok && value_ok).then_some((name, value, rest.trim_start()))
 }
 
 fn powershell_command_lifted(command: &str, windows_form: bool) -> Option<String> {
@@ -1678,6 +1705,44 @@ mod tests {
             "ripr x > 'out'\"$(printf '\\033')\"'.json'",
             // trailing junk after a segment
             "ripr x \"$(printf '\\033')\"y",
+        ] {
+            assert_eq!(powershell_command(command), None, "{command}");
+        }
+    }
+
+    /// #12217: pilot's seam-limited snapshot commands start with
+    /// `RIPR_REPO_EXPOSURE_SEAM_LIMIT=0`, which cmd.exe cannot run. The Windows
+    /// disclosure must say so and give the cmd.exe route instead of promising
+    /// that every command without a PowerShell form runs unchanged there.
+    #[test]
+    fn windows_disclosure_routes_an_env_prefixed_command_away_from_cmd_exe() {
+        let windows = COMMAND_SHELL_DISCLOSURE_WINDOWS;
+        assert!(
+            windows.contains("begins with a `NAME=value` environment assignment")
+                && windows.contains("is Bash syntax only")
+                && windows.contains("cmd.exe rejects it")
+                && windows.contains("`set NAME=value` on its own line"),
+            "{windows}"
+        );
+        // The Bash variant already says cmd.exe is unsupported; it must not
+        // grow a cmd.exe route it does not honor.
+        assert!(COMMAND_SHELL_DISCLOSURE.contains("cmd.exe is not supported"));
+        assert!(!COMMAND_SHELL_DISCLOSURE.contains("set NAME=value"));
+    }
+
+    #[test]
+    fn powershell_command_scopes_a_leading_environment_assignment() {
+        let line = powershell_command("RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 ripr check --root .")
+            .unwrap_or_default();
+        assert_eq!(
+            line,
+            "$riprPriorEnv = $env:RIPR_REPO_EXPOSURE_SEAM_LIMIT; $env:RIPR_REPO_EXPOSURE_SEAM_LIMIT = '0'; try { ripr check --root . } finally { $env:RIPR_REPO_EXPOSURE_SEAM_LIMIT = $riprPriorEnv }"
+        );
+        // A quoted or expanding value is not guessed at.
+        for command in [
+            "RIPR_X='a b' ripr check",
+            "RIPR_X=$HOME ripr check",
+            "lower=0 ripr check",
         ] {
             assert_eq!(powershell_command(command), None, "{command}");
         }

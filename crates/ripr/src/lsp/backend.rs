@@ -47,8 +47,8 @@ use super::state::{
     content_digest, format_duration,
 };
 use super::uri::{
-    CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uri_is_within_root,
-    file_uris_match, path_from_file_uri, path_is_within_root, read_artifact_capped,
+    CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uris_match,
+    path_from_file_uri, path_is_within_root, read_artifact_capped,
 };
 use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
@@ -83,7 +83,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 /// Debounce window for interactive refresh triggers (did_open, did_save,
@@ -1107,16 +1107,28 @@ impl Backend {
         RefreshAttemptOutcome::Published
     }
 
-    fn open_rust_index_paths_for_root(&self, root: &Path) -> std::collections::BTreeSet<PathBuf> {
-        let Ok(documents) = self.quarantine.documents.lock() else {
+    fn invalidate_rust_index_key(&self, uri: &Uri) {
+        if let Ok(mut documents) = self.quarantine.documents.lock() {
+            documents.invalidate_rust_index_key(uri);
+        }
+    }
+
+    fn invalidate_rust_index_keys_for_events(&self, changes: &[FileEvent]) {
+        if let Ok(mut documents) = self.quarantine.documents.lock() {
+            for event in changes {
+                documents.invalidate_rust_index_keys_under(&event.uri);
+            }
+        }
+    }
+
+    pub(super) fn open_rust_index_paths_for_root(
+        &self,
+        root: &Path,
+    ) -> std::collections::BTreeSet<PathBuf> {
+        let Ok(mut documents) = self.quarantine.documents.lock() else {
             return Default::default();
         };
-        documents
-            .documents
-            .keys()
-            .filter_map(|uri| super::uri::file_uri_relative_to_root(root, uri))
-            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-            .collect()
+        documents.open_rust_index_paths(root)
     }
 
     pub(super) async fn report_refresh_failure_after(
@@ -1919,6 +1931,19 @@ impl Backend {
     }
 
     #[cfg(test)]
+    pub(super) fn set_interactive_debounce_open_for_test(&self, open: bool) {
+        self.interactive_debounce_window_open
+            .store(open, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_pending_attempt_for_test(&self, id: Option<u64>) {
+        if let Ok(mut health) = self.analysis_health.lock() {
+            health.pending_attempt_id = id;
+        }
+    }
+
+    #[cfg(test)]
     pub(super) fn set_snapshot_run_status_for_test(&self, run_status: &str) {
         if let Ok(mut health) = self.analysis_health.lock() {
             health.snapshot_run_status = Some(run_status.to_string());
@@ -2551,7 +2576,7 @@ impl Backend {
         self.analysis_status_payload_for_health(&health)
     }
 
-    fn analysis_status_payload_for_health(&self, health: &AnalysisHealth) -> LSPAny {
+    pub(super) fn analysis_status_payload_for_health(&self, health: &AnalysisHealth) -> LSPAny {
         let root = self.workspace_root_authority();
         let config = self.analysis_config();
         let configuration_failure = self.configuration_failure();
@@ -5110,6 +5135,7 @@ pub(super) struct RefreshLogSummary {
     gap_artifact_rejection_kinds: Vec<&'static str>,
     withheld_unknown: usize,
     withheld_preview: usize,
+    withheld_gap: usize,
     enabled_languages: usize,
     enabled_language_names: Vec<&'static str>,
 }
@@ -5173,6 +5199,7 @@ impl RefreshLogSummary {
                 .collect(),
             withheld_unknown: withheld_unknown_summary(snapshot).map_or(0, |(count, _)| count),
             withheld_preview: withheld_preview_summary(snapshot).0,
+            withheld_gap: withheld_static_gap_summary(snapshot).0,
             enabled_languages: 1,
             enabled_language_names: vec!["rust"],
         }
@@ -5333,7 +5360,7 @@ fn refresh_completed_log_message_with_telemetry(
 ) -> String {
     let duration = format_duration(summary.duration);
     format!(
-        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, withheld_preview={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
+        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, withheld_preview={}, withheld_gap={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
         summary.generation,
         summary.diagnostics,
         summary.files,
@@ -5350,6 +5377,7 @@ fn refresh_completed_log_message_with_telemetry(
         summary.gap_artifact_rejection_kinds.join("|"),
         summary.withheld_unknown,
         summary.withheld_preview,
+        summary.withheld_gap,
         summary.enabled_languages,
         summary.enabled_language_names.join("|"),
         summary.files,
@@ -5436,7 +5464,8 @@ mod bounded_failure_message_tests {
             .path()
             .join("a long folder name with spaces ".repeat(6))
             .join("another long folder name");
-        std::fs::create_dir_all(&deep).map_err(|error| format!("create root failed: {error}"))?;
+        // The refusal only formats the path, so the long root is never created:
+        // on Windows it would pass MAX_PATH and fail with "path not found".
         // The production builder of the non-Git refusal; a non-Git temp root
         // is not constructible here because unit-test temp roots sit inside
         // the checkout's own work tree.
@@ -5624,9 +5653,12 @@ fn workspace_diagnostics_are_root_contained(
 ) -> bool {
     let snapshot_root_matches = super::uri::path_is_within_root(root, &diagnostics.snapshot.root)
         && super::uri::path_is_within_root(&diagnostics.snapshot.root, root);
+    // One projector for the whole check: the root and each directory are
+    // resolved once, not once per diagnostic URI (#11763).
+    let mut projector = super::uri::RelativeKeyProjector::new(root);
     snapshot_root_matches
         && diagnostics.batches.iter().all(|batch| {
-            file_uri_is_within_root(root, &batch.uri)
+            projector.is_within_root(&batch.uri)
                 && batch.diagnostics.iter().all(|diagnostic| {
                     diagnostic
                         .related_information
@@ -5634,7 +5666,7 @@ fn workspace_diagnostics_are_root_contained(
                         .is_none_or(|related| {
                             related
                                 .iter()
-                                .all(|item| file_uri_is_within_root(root, &item.location.uri))
+                                .all(|item| projector.is_within_root(&item.location.uri))
                         })
                 })
         })
@@ -6309,6 +6341,7 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
+        self.invalidate_rust_index_keys_for_events(&params.changes);
         let changes = self.watched_file_change_kinds(&params.changes);
         if changes.config_changed {
             self.reload_repository_config().await;
@@ -6748,6 +6781,9 @@ impl LanguageServer for Backend {
                 .await;
             return;
         }
+        // Only the saved document's own resolution can change; a deduplicated
+        // save returned above and leaves every cached key warm.
+        self.invalidate_rust_index_key(&uri);
         match digest {
             Some(digest) => self.record_saved_content_digest_and_advance(&uri, digest),
             None => self.advance_workspace_revision(),
@@ -6951,7 +6987,7 @@ or {\"gap_id\": \"...\", \"gap_ledger\": \"target/ripr/reports/gap-decision-ledg
 
 /// Accepted argument shape for `ripr.collectEvidenceContext`.
 pub(crate) const COLLECT_EVIDENCE_CONTEXT_ARGUMENT_SHAPES: &str = "one object: \
-{\"seam_id\": \"...\", \"evidence_identity\": {...}}; copy both from a ripr seam \
+{\"seam_id\": \"...\", \"evidence_identity\": {...}}; copy both from a ripr spot \
 diagnostic's data";
 
 /// Accepted argument shapes for `ripr.collectRepairPacket`, quoted in its errors.
@@ -7579,7 +7615,7 @@ impl Backend {
         }
         if snapshot.seams_deferred {
             return Some(
-                "the current deferred refresh does not retain the cited full-seam evidence",
+                "the current deferred refresh does not retain the cited full spot evidence",
             );
         }
         let cited_identity = args
@@ -7590,14 +7626,14 @@ impl Backend {
                 Some(cited_identity),
                 Some(&snapshot.evidence_identity()),
             ) {
-                return Some("the cited seam evidence belongs to an older snapshot");
+                return Some("the cited spot evidence belongs to an older snapshot");
             }
         } else if !legacy_test_snapshot {
-            return Some("the cited seam action has no evidence identity");
+            return Some("the cited spot action has no evidence identity");
         }
         let seam_id = args.get("seam_id").and_then(|v| v.as_str());
         if seam_id.is_some_and(|id| snapshot.classified_seam_by_id(id).is_none()) {
-            return Some("the cited seam is absent from the current full-seam evidence");
+            return Some("the cited spot is absent from the current full spot evidence");
         }
         None
     }
@@ -8078,53 +8114,106 @@ fn withheld_preview_summary(snapshot: &AnalysisSnapshot) -> (usize, Vec<&'static
     (withheld.len(), classes.into_iter().collect())
 }
 
-/// Combined disclosure summary (#5276, #11296): `*_unknown` plus preview gap
-/// findings withheld by the actionable profile, with the preview share kept
-/// separate so a client can say "preview" without re-deriving it.
-fn withheld_findings_summary(
-    snapshot: &AnalysisSnapshot,
-) -> Option<(usize, Vec<&'static str>, usize)> {
+/// Count/class summary of the non-preview candidate-actionable gap findings
+/// (`no_static_path`, `weakly_exposed`, `reachable_unrevealed`) the
+/// actionable profile withholds because they carry no fix route (#11798): the
+/// headline "I changed a function nothing tests" case. Disjoint from the
+/// `*_unknown` and preview sets.
+fn withheld_static_gap_summary(snapshot: &AnalysisSnapshot) -> (usize, Vec<&'static str>) {
+    let withheld =
+        super::diagnostics::withheld_gap_findings(snapshot.diagnostic_profile, &snapshot.findings)
+            .into_iter()
+            .filter(|finding| !super::diagnostics::finding_is_withheld_preview_gap(finding))
+            .collect::<Vec<_>>();
+    let classes = withheld
+        .iter()
+        .map(|finding| finding.class.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    (withheld.len(), classes.into_iter().collect())
+}
+
+/// Combined disclosure summary (#5276, #11296, #11798): every
+/// candidate-actionable finding the active profile does not publish, split
+/// into its disjoint `*_unknown`, preview-language and static-gap shares.
+struct WithheldSummary {
+    /// Total withheld findings; reconciles `finding_count` with the
+    /// published diagnostics.
+    count: usize,
+    classes: Vec<&'static str>,
+    /// Preview-language share of `count` (#11296).
+    preview: usize,
+    /// Non-preview gap-class share of `count` (#11798).
+    gap: usize,
+}
+
+fn withheld_findings_summary(snapshot: &AnalysisSnapshot) -> Option<WithheldSummary> {
     let (unknown, mut classes) = withheld_unknown_summary(snapshot)?;
     let (preview, preview_classes) = withheld_preview_summary(snapshot);
+    let (gap, gap_classes) = withheld_static_gap_summary(snapshot);
     classes.extend(preview_classes);
+    classes.extend(gap_classes);
     classes.sort_unstable();
     classes.dedup();
-    Some((unknown + preview, classes, preview))
+    Some(WithheldSummary {
+        count: unknown + preview + gap,
+        classes,
+        preview,
+        gap,
+    })
 }
 
 /// The status-surface payload for profile withholding (#5276): present with
 /// a zero count when nothing is withheld, and `null` only when no snapshot
-/// exists. `preview_count` (#11296) is the preview-language share of `count`.
-fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>, usize)>) -> LSPAny {
+/// exists. `preview_count` (#11296) and `gap_count` (#11798) are the
+/// preview-language and static-gap shares of `count`.
+fn withheld_findings_status_payload(summary: Option<WithheldSummary>) -> LSPAny {
     match summary {
         None => serde_json::Value::Null,
-        Some((0, _, _)) => {
-            serde_json::json!({ "count": 0, "preview_count": 0, "classes": [], "recovery_route": serde_json::Value::Null })
+        Some(WithheldSummary { count: 0, .. }) => {
+            serde_json::json!({ "count": 0, "preview_count": 0, "gap_count": 0, "classes": [], "recovery_route": serde_json::Value::Null })
         }
-        Some((count, classes, preview_count)) => serde_json::json!({
-            "count": count,
-            "preview_count": preview_count,
-            "classes": classes,
+        Some(summary) => serde_json::json!({
+            "count": summary.count,
+            "preview_count": summary.preview,
+            "gap_count": summary.gap,
+            "classes": summary.classes,
             "recovery_route": diagnostic_profile_full_recovery_route(),
         }),
     }
 }
 
-/// Pull-side disclosure naming the profile-withheld `*_unknown` findings
-/// (#5276). A pull that serves zero items must not read as "no findings":
+/// Pull-side disclosure naming the profile-withheld findings (#5276,
+/// #11798). A pull that serves zero items must not read as "no findings":
 /// the same one-line disclosure the status and listing surfaces carry names
 /// the withholding and the `full` escape hatch here too.
 fn profile_withholding_pull_disclosure(snapshot: &AnalysisSnapshot) -> Option<String> {
-    let (count, _, preview) = withheld_findings_summary(snapshot)?;
+    let summary = withheld_findings_summary(snapshot)?;
+    let count = summary.count;
     (count > 0).then(|| {
-        // The `*_unknown` wording is unchanged when no preview finding is
-        // withheld; the preview share is named only when it exists.
-        let subject = match (count - preview, preview) {
-            (_, 0) => format!("{count} finding(s) of the *_unknown classes"),
-            (0, _) => format!("{count} preview-language finding(s)"),
-            (unknown, preview) => format!(
-                "{count} finding(s) ({unknown} of the *_unknown classes, {preview} preview-language)"
-            ),
+        // The `*_unknown` wording is unchanged when nothing else is
+        // withheld; other shares are named only when they exist.
+        let unknown = count - summary.preview - summary.gap;
+        let subject = match (unknown, summary.preview, summary.gap) {
+            (_, 0, 0) => format!("{count} finding(s) of the *_unknown classes"),
+            (0, _, 0) => format!("{count} preview-language finding(s)"),
+            (0, 0, _) => {
+                format!("{count} finding(s) with no static test path found or weak static evidence")
+            }
+            (unknown, preview, gap) => {
+                let mut parts = Vec::new();
+                if unknown > 0 {
+                    parts.push(format!("{unknown} of the *_unknown classes"));
+                }
+                if preview > 0 {
+                    parts.push(format!("{preview} preview-language"));
+                }
+                if gap > 0 {
+                    parts.push(format!(
+                        "{gap} with no static test path found or weak static evidence"
+                    ));
+                }
+                format!("{count} finding(s) ({})", parts.join(", "))
+            }
         };
         format!(
             "ripr withheld {subject} from diagnostics (actionable profile, RIPR-SPEC-0069); {}",
@@ -9453,6 +9542,7 @@ mod top_limitation_selection_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 
@@ -9817,7 +9907,18 @@ impl Backend {
     fn collect_repair_packet(&self, gap_id: Option<&str>) -> Option<LSPAny> {
         let health = self.analysis_health_snapshot();
         if !health.allows_current_repairs() {
-            return Some(repair_packet_sentinel("analysis_snapshot_stale"));
+            // The reason stays `analysis_snapshot_stale` and the packet stays
+            // withheld; the added fields only tell a client whether to retry
+            // or recover (#4427).
+            let (refresh_state, recovery) = health.repair_block_guidance(
+                self.interactive_debounce_window_open
+                    .load(Ordering::Acquire),
+            );
+            let mut sentinel = repair_packet_sentinel("analysis_snapshot_stale");
+            sentinel["refresh_state"] = serde_json::json!(refresh_state);
+            sentinel["attempt_state"] = serde_json::json!(health.state.as_str());
+            sentinel["recovery"] = serde_json::json!(recovery);
+            return Some(sentinel);
         }
         let authority = self.workspace_root_authority();
         if !authority.allows_analysis() {
@@ -11387,6 +11488,7 @@ mod delivery_selection_parity_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
         WorkspaceDiagnostics { snapshot, batches }
     }
@@ -12544,6 +12646,7 @@ mod list_actionable_items_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 
@@ -12958,11 +13061,15 @@ mod list_actionable_items_tests {
                     && disclosure.contains("diagnosticProfile"),
                 "{file}: {disclosure}"
             );
-            let (count, classes, preview) =
+            let summary =
                 super::withheld_findings_summary(&snapshot).ok_or("a snapshot yields a summary")?;
-            assert_eq!((count, preview), (1, 1), "{file}");
-            assert_eq!(classes, vec!["weakly_exposed"], "{file}");
-            let status = super::withheld_findings_status_payload(Some((count, classes, preview)));
+            assert_eq!(
+                (summary.count, summary.preview, summary.gap),
+                (1, 1, 0),
+                "{file}"
+            );
+            assert_eq!(summary.classes, vec!["weakly_exposed"], "{file}");
+            let status = super::withheld_findings_status_payload(Some(summary));
             assert_eq!(status["count"], 1, "{status}");
             assert_eq!(status["preview_count"], 1, "{status}");
             assert!(status["recovery_route"].is_string(), "{status}");
@@ -12975,22 +13082,50 @@ mod list_actionable_items_tests {
         Ok(())
     }
 
-    /// #11296 negative control: a withheld non-preview (Rust) gap-class
-    /// finding is already named by `hidden_gaps`; it must not be counted as
-    /// a preview withholding, and a preview finding that is not candidate
-    /// current stays silent.
+    /// #11798: a withheld non-preview (Rust) gap-class finding is counted as
+    /// a static-gap withholding, never as a preview one, and the pull
+    /// disclosure names the count, static vocabulary and the `full` route. A
+    /// finding that is not candidate-current stays silent.
     #[test]
-    fn preview_withholding_disclosure_ignores_non_preview_and_non_current_findings()
-    -> Result<(), String> {
+    fn static_gap_withholding_is_counted_apart_from_preview() -> Result<(), String> {
         let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
         snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
-        snapshot.findings = vec![crate::lsp::tests::sample_finding()];
-        assert_eq!(
-            super::profile_withholding_pull_disclosure(&snapshot),
-            None,
-            "a non-preview hidden gap is not a preview withholding"
-        );
+        let mut rust = crate::lsp::tests::sample_finding();
+        rust.class = crate::domain::ExposureClass::NoStaticPath;
+        rust.language_status = None;
+        snapshot.findings = vec![rust];
         assert_eq!(super::withheld_preview_summary(&snapshot).0, 0);
+        let summary =
+            super::withheld_findings_summary(&snapshot).ok_or("a snapshot yields a summary")?;
+        assert_eq!((summary.count, summary.preview, summary.gap), (1, 0, 1));
+        assert_eq!(summary.classes, vec!["no_static_path"]);
+        let disclosure = super::profile_withholding_pull_disclosure(&snapshot)
+            .ok_or("a withheld static gap must disclose")?;
+        assert!(
+            disclosure.contains("1 finding(s) with no static test path found")
+                && disclosure.contains("diagnosticProfile"),
+            "{disclosure}"
+        );
+        let status = super::withheld_findings_status_payload(Some(summary));
+        assert_eq!(status["count"], 1, "{status}");
+        assert_eq!(status["gap_count"], 1, "{status}");
+        assert_eq!(status["preview_count"], 0, "{status}");
+
+        // Mixed unknown + static gap keeps both shares named.
+        let mut unknown = crate::lsp::tests::sample_finding();
+        unknown.id = "probe:unknown".to_string();
+        unknown.class = crate::domain::ExposureClass::StaticUnknown;
+        snapshot.findings.push(unknown);
+        let disclosure = super::profile_withholding_pull_disclosure(&snapshot)
+            .ok_or("mixed withholding must disclose")?;
+        assert!(
+            disclosure.contains("2 finding(s) (1 of the *_unknown classes, 1 with no static"),
+            "{disclosure}"
+        );
+
+        // Negative controls: full profile withholds nothing.
+        snapshot.diagnostic_profile = LspDiagnosticProfile::Full;
+        assert_eq!(super::profile_withholding_pull_disclosure(&snapshot), None);
         Ok(())
     }
 
@@ -13384,27 +13519,239 @@ mod pull_disclosure_dedup_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         })
     }
+}
+
+/// Stat identity for on-disk bytes used by [`disk_bytes_equal_text`]. When it
+/// is unchanged, the bounded read and digest are reused.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DiskContentStatKey {
+    len: u64,
+    modified: Option<(u64, u32)>,
+    ino: u64,
+    /// Inode change time. Unlike mtime, no writer can set or restore it
+    /// (#12046): an in-place same-length rewrite that puts the old mtime back
+    /// still moves ctime. `None` where std exposes no change time (Windows).
+    changed: Option<(i64, i64)>,
+}
+
+fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
+    let ino = {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            meta.ino()
+        }
+        #[cfg(not(unix))]
+        {
+            0
+        }
+    };
+    let modified = meta.modified().ok().map(|instant| {
+        let duration = instant
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        (duration.as_secs(), duration.subsec_nanos())
+    });
+    let changed = {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            Some((meta.ctime(), meta.ctime_nsec()))
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    };
+    DiskContentStatKey {
+        len: meta.len(),
+        modified,
+        ino,
+        changed,
+    }
+}
+
+/// A file modified within this window of the read can be rewritten again with
+/// the same length inside one filesystem timestamp tick (coarse on Windows and
+/// some Linux filesystems), which leaves its stat key unchanged. Git's "racy
+/// timestamp" rule applies: such a digest is used once and never cached, so a
+/// same-length rewrite in the same tick is reread (#12046). A future mtime is
+/// treated the same way.
+///
+/// Off Unix the cache is bypassed entirely: std exposes no inode change time,
+/// so a writer that rewrites a file in place with the same length and restores
+/// its old mtime would still match the key. Unix keys include ctime, which
+/// cannot be restored.
+#[cfg(not(test))]
+const DISK_EQUALITY_RACY_WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
+/// Tests use a short window so they can move past it with a brief sleep.
+#[cfg(test)]
+const DISK_EQUALITY_RACY_WINDOW: std::time::Duration = std::time::Duration::from_millis(150);
+
+fn disk_instant_is_racy(instant: std::time::SystemTime) -> bool {
+    std::time::SystemTime::now()
+        .duration_since(instant)
+        .map(|age| age < DISK_EQUALITY_RACY_WINDOW)
+        .unwrap_or(true)
+}
+
+/// Whether either the data timestamp or, on Unix, the inode change timestamp
+/// is within the racy window. The change time matters because the Unix stat
+/// key relies on it, and it can be as coarse as mtime on older kernels.
+fn disk_mtime_is_racy(meta: &fs::Metadata) -> bool {
+    let Ok(modified) = meta.modified() else {
+        return true;
+    };
+    disk_instant_is_racy(modified) || disk_change_time_is_racy(meta)
+}
+
+#[cfg(unix)]
+fn disk_change_time_is_racy(meta: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (
+        u64::try_from(meta.ctime()),
+        u32::try_from(meta.ctime_nsec()),
+    ) {
+        // `checked_add`: an out-of-range change time must not panic; treat it as racy.
+        (Ok(secs), Ok(nanos)) => std::time::UNIX_EPOCH
+            .checked_add(std::time::Duration::new(secs, nanos))
+            .is_none_or(disk_instant_is_racy),
+        _ => true,
+    }
+}
+
+#[cfg(not(unix))]
+fn disk_change_time_is_racy(_meta: &fs::Metadata) -> bool {
+    false
+}
+
+type DiskEqualityDigestCache = Mutex<BTreeMap<PathBuf, (DiskContentStatKey, Option<String>)>>;
+
+static DISK_EQUALITY_DIGEST_CACHE: LazyLock<DiskEqualityDigestCache> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+#[cfg(test)]
+thread_local! {
+    static DISK_EQUALITY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_disk_equality_read_cache_for_tests() {
+    if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
+        cache.clear();
+    }
+    DISK_EQUALITY_READS.with(|reads| reads.set(0));
+}
+
+fn cached_disk_content_digest(
+    path: &Path,
+    stat_key: &DiskContentStatKey,
+    bypass_cache: bool,
+) -> Option<String> {
+    // A bypass lookup never consults the cache, so no earlier entry can answer it.
+    if !bypass_cache
+        && let Ok(cache) = DISK_EQUALITY_DIGEST_CACHE.lock()
+        && let Some((cached_key, digest)) = cache.get(path)
+        && cached_key == stat_key
+    {
+        return digest.clone();
+    }
+
+    #[cfg(test)]
+    DISK_EQUALITY_READS.with(|reads| reads.set(reads.get() + 1));
+
+    let digest = super::state::read_saved_bytes(path).map(|disk| content_digest(&disk));
+    if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
+        if bypass_cache {
+            // Drop any older entry too, so an uncacheable read never leaves a
+            // key that a later same-tick rewrite could match.
+            cache.remove(path);
+        } else {
+            cache.insert(path.to_path_buf(), (stat_key.clone(), digest.clone()));
+        }
+    }
+    digest
 }
 
 /// Whether the regular file at the client-named `path` holds exactly `text`.
 /// A cheap length check precedes the read. The path may be a device or FIFO
 /// (`/dev/zero` reports length 0), so the read goes through the bounded
-/// regular-file reader, never an unbounded `fs::read`.
+/// regular-file reader, never an unbounded `fs::read`. Unchanged on-disk
+/// content is digested once per `(len, mtime, ctime, ino)` stat key on Unix,
+/// except that a file whose mtime or ctime is within
+/// [`DISK_EQUALITY_RACY_WINDOW`] of the check is not cached; off Unix every
+/// lookup rereads (#12046). A cached entry needs `now - mtime >= window`, and
+/// any later rewrite happens at or after `now`, so its floored timestamp
+/// differs from the cached one whenever the filesystem's timestamp granularity
+/// is no larger than the window (2 s FAT is covered). That relies on the
+/// filesystem stamping with a clock that agrees with the local clock; a
+/// network mount with a skewed clock can still reuse a digest across a
+/// same-key rewrite. A clock stepping backwards reads as racy, which is safe
+/// (#12115).
 fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
-    if std::fs::metadata(path).map(|meta| meta.len()).ok() != u64::try_from(text.len()).ok() {
+    let Ok(text_len) = u64::try_from(text.len()) else {
+        return false;
+    };
+    let Ok(meta) = fs::metadata(path) else {
+        return false;
+    };
+    if meta.len() != text_len {
         return false;
     }
-    super::state::read_saved_bytes(path).is_some_and(|disk| disk == text.as_bytes())
+    let stat_key = disk_content_stat_key(&meta);
+    // Off Unix std exposes no inode change time, so (len, mtime, ino) cannot
+    // prove the bytes are unchanged and the cache is bypassed there: a stale
+    // digest is a correctness bug, a reread is only a cost (#12046).
+    let bypass_cache = !cfg!(unix) || disk_mtime_is_racy(&meta);
+    let Some(disk_digest) = cached_disk_content_digest(path, &stat_key, bypass_cache) else {
+        return false;
+    };
+    disk_digest == content_digest(text.as_bytes())
 }
 
 #[cfg(test)]
 mod disk_bytes_equal_text_tests {
-    use super::disk_bytes_equal_text;
+    use super::{
+        DISK_EQUALITY_READS, cached_disk_content_digest, disk_bytes_equal_text,
+        disk_content_stat_key, reset_disk_equality_read_cache_for_tests,
+    };
+
+    fn temp_disk_path(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "ripr-disk-equal-{}-{}-{:?}.txt",
+            label,
+            std::process::id(),
+            std::thread::current().id()
+        ))
+    }
+
+    /// Lets the change time (which no writer can set) age out of the racy window.
+    fn past_racy_window() {
+        std::thread::sleep(super::DISK_EQUALITY_RACY_WINDOW * 2);
+    }
+
+    /// Moves the mtime well outside the racy window so the digest is cacheable.
+    fn backdate(path: &std::path::Path) -> Result<(), String> {
+        set_mtime(
+            path,
+            std::time::SystemTime::now() - std::time::Duration::from_mins(1),
+        )
+    }
+
+    fn set_mtime(path: &std::path::Path, when: std::time::SystemTime) -> Result<(), String> {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.set_modified(when))
+            .map_err(|err| format!("set mtime failed: {err}"))
+    }
 
     #[test]
     fn device_and_directory_paths_never_equal_empty_text() {
+        reset_disk_equality_read_cache_for_tests();
         // `/dev/zero` stats as length 0, so an empty buffer passes the length
         // check; the unbounded read that followed grew RSS past 5 GB.
         #[cfg(target_os = "linux")]
@@ -13417,11 +13764,8 @@ mod disk_bytes_equal_text_tests {
 
     #[test]
     fn regular_file_equality_is_exact() -> Result<(), String> {
-        let path = std::env::temp_dir().join(format!(
-            "ripr-disk-equal-{}-{:?}.txt",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("exact");
         std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
         let equal = disk_bytes_equal_text(&path, "abc");
         let same_len_different = disk_bytes_equal_text(&path, "abd");
@@ -13431,6 +13775,131 @@ mod disk_bytes_equal_text_tests {
             return Err(format!(
                 "equal={equal} same_len_different={same_len_different} shorter={shorter}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn same_length_buffer_checks_read_unchanged_disk_once() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("read-once");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        backdate(&path)?;
+        past_racy_window();
+        assert!(!disk_bytes_equal_text(&path, "abd"));
+        assert!(!disk_bytes_equal_text(&path, "abe"));
+        assert!(!disk_bytes_equal_text(&path, "abx"));
+        let reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        let _ = std::fs::remove_file(&path);
+        // Off Unix the cache is bypassed, so each of the three checks rereads.
+        let expected = if cfg!(unix) { 1 } else { 3 };
+        if reads != expected {
+            return Err(format!("expected {expected} disk reads, got {reads}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn disk_rewrite_rereads_and_finds_equality() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("rewrite");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        if !disk_bytes_equal_text(&path, "abc") {
+            return Err("initial equality check failed".to_string());
+        }
+        std::fs::write(&path, "abd").map_err(|err| format!("rewrite failed: {err}"))?;
+        // The cache key is (len, mtime, ino). A same-length rewrite inside one
+        // filesystem timestamp tick (coarse on Windows and some Linux
+        // filesystems) keeps the key, so move the mtime explicitly: the test
+        // asserts that a changed key rereads, not how fine the clock is.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|file| {
+                file.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
+            })
+            .map_err(|err| format!("mtime bump failed: {err}"))?;
+        if !disk_bytes_equal_text(&path, "abd") {
+            return Err("post-rewrite equality check failed".to_string());
+        }
+        let reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        let _ = std::fs::remove_file(&path);
+        if reads != 2 {
+            return Err(format!(
+                "expected two disk reads after rewrite, got {reads}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #12046: a writer that rewrites in place with the same length and puts the
+    /// old mtime back leaves (len, mtime, ino) unchanged and the mtime outside the
+    /// racy window. Unix keys include the inode change time; off Unix the cache
+    /// is bypassed. Runs on every platform, including the Windows lane.
+    #[test]
+    fn same_length_rewrite_with_restored_old_mtime_is_reread() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("restored-mtime");
+        let old = std::time::SystemTime::now() - std::time::Duration::from_mins(1);
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        set_mtime(&path, old)?;
+        past_racy_window();
+        let first = disk_bytes_equal_text(&path, "abc");
+        std::fs::write(&path, "abd").map_err(|err| format!("rewrite failed: {err}"))?;
+        set_mtime(&path, old)?;
+        let second = disk_bytes_equal_text(&path, "abd");
+        let stale = disk_bytes_equal_text(&path, "abc");
+        let _ = std::fs::remove_file(&path);
+        if !first || !second || stale {
+            return Err(format!(
+                "first={first} second={second} stale_abc_still_equal={stale}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #12046: two same-length writes inside one timestamp tick leave the stat
+    /// key unchanged. The rewrite must still be seen. Fails without the racy
+    /// window: the second call would hit the digest cached for the first write.
+    #[test]
+    fn same_length_rewrite_with_unchanged_stat_key_is_reread() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("same-tick");
+        let tick = std::time::SystemTime::now();
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        set_mtime(&path, tick)?;
+        let first = disk_bytes_equal_text(&path, "abc");
+        std::fs::write(&path, "abd").map_err(|err| format!("rewrite failed: {err}"))?;
+        set_mtime(&path, tick)?;
+        let second = disk_bytes_equal_text(&path, "abd");
+        let stale = disk_bytes_equal_text(&path, "abc");
+        let _ = std::fs::remove_file(&path);
+        if !first || !second || stale {
+            return Err(format!(
+                "first={first} second={second} stale_abc_still_equal={stale}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A key cached by an earlier cacheable lookup must not answer a later
+    /// bypass lookup: the cache check comes after the bypass decision.
+    #[test]
+    fn bypass_lookup_ignores_previously_cached_key() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("bypass-after-cached");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        backdate(&path)?;
+        let meta = std::fs::metadata(&path).map_err(|err| format!("stat failed: {err}"))?;
+        let key = disk_content_stat_key(&meta);
+        let cached = cached_disk_content_digest(&path, &key, false);
+        // Same-length rewrite; the key handed in is the old one, as a coarse
+        // timestamp collision would produce.
+        std::fs::write(&path, "abd").map_err(|err| format!("rewrite failed: {err}"))?;
+        let bypassed = cached_disk_content_digest(&path, &key, true);
+        let _ = std::fs::remove_file(&path);
+        if cached.is_none() || bypassed.is_none() || cached == bypassed {
+            return Err(format!("cached={cached:?} bypassed={bypassed:?}"));
         }
         Ok(())
     }

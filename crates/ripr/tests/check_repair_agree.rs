@@ -159,7 +159,14 @@ fn exposed_change_says_nothing_to_repair_in_both_commands() -> Result<(), String
             && check.contains("already notice this change (exposed)"),
         "check must say there is nothing to repair:\n{check}"
     );
-    for leak in ["no seam in this finding's file", "missing", "found no seam"] {
+    for leak in [
+        "no spot in this finding's file",
+        "no repairable spot in this finding's file",
+        "no spot in this finding's file",
+        "missing",
+        "found no seam",
+        "found no repairable spot",
+    ] {
         let advisory: Vec<&str> = check
             .lines()
             .filter(|line| line.contains("no repair start offered"))
@@ -182,7 +189,10 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     let repo = Repo::create(
         "pub fn label(n: u32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        1 => \"one\",\n        _ => \"many\",\n    }\n}\n",
         "pub fn label(n: u32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        1 => \"uno\",\n        _ => \"many\",\n    }\n}\n",
-        "use ar::label;\n\n#[test]\nfn labels() {\n    assert!(!label(1).is_empty());\n}\n",
+        // The test takes the wildcard arm, so no test runs a literal arm
+        // and repair lists seams instead of starting one (a test passing
+        // `label(1)` is a match-arm repair start since #11111).
+        "use ar::label;\n\n#[test]\nfn labels() {\n    assert!(!label(7).is_empty());\n}\n",
     )?;
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
@@ -191,12 +201,12 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     );
     let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
     assert!(
-        !check.contains("found no seam") && !check.contains("no seam in this finding's file"),
+        !check.contains("found no spot") && !check.contains("no spot in this finding's file"),
         "check must not claim there is no seam while repair lists seams:\n{check}"
     );
     assert!(
         check.contains(
-            "seams in this finding's file, but could not tie one to this finding's changed line"
+            "spots in this finding's file, but could not tie one to this finding's changed line"
         ),
         "check must name the one reason it cannot bind a seam:\n{check}"
     );
@@ -444,7 +454,8 @@ const ERR_TEST: &str = "use ar::{parse, ParseError};\n\n#[test]\nfn long_input_i
 
 const WS_ROOT: &str = "[workspace]\nmembers = [\"wscore\", \"app\"]\nresolver = \"2\"\n";
 const WS_APP_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n";
-const WS_CORE_TOML: &str = "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
+const WS_CORE_TOML: &str =
+    "[package]\nname = \"wscore\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
 const WS_APP_SRC: &str = "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n";
 const WS_OLD: &str = "pub fn discount(price: u32) -> u32 {\n    if price > 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";
 const WS_NEW: &str = "pub fn discount(price: u32) -> u32 {\n    if price >= 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";

@@ -1,0 +1,6 @@
+# Registers the repo-seam per-assertion proximity refusal test (#12060) under RIPR-SPEC-0094.
+[[extend]]
+id = "RIPR-SPEC-0094"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::proximity_test_pinning_another_function_cannot_grade_a_match_arm_up",
+]

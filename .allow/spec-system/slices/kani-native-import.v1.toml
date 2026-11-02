@@ -1,0 +1,45 @@
+schema_version = "2.0"
+id = "ripr.slice.kani-native-import.v1"
+generation = 1
+source_issue = "issue:10689"
+design_reference = "RIPR-SPEC-0135#external-kani-observation-import"
+change_class = "security_contract_change"
+
+claim_boundary = """
+Adds a non-executing reports kani import of the pinned native schema 0.1.0.
+A captured-source binding checks listed bytes, target and selected harnesses.
+The report preserves native outcomes and always remains external_unattested;
+listed_files_match is not source completeness, authentic execution or freshness.
+Upstream contract fixtures establish parser examples, not captured native runs.
+"""
+non_goals = [
+  "Kani execution or authenticated run capture",
+  "static exposure promotion or specification adequacy",
+  "repair receipt issuance, gate authority or support-tier promotion",
+  "new provider capability or agent verify-execute route",
+]
+return_conditions = [
+  "Return if native success grants static, receipt or merge authority.",
+  "Return if listed-file hashes are rendered as authentic or fresh execution.",
+  "Return if partial or expected-panic outcomes become ordinary functional proof.",
+]
+owned_seams = [
+  "seam:ripr:app:kani-import",
+  "seam:ripr:domain:external-verification",
+  "seam:ripr:output:kani-report",
+]
+shared_seams = ["seam:ripr:provider:repository-snapshot"]
+forbidden_seams = [
+  "seam:ripr:agent:command-runner",
+  "seam:ripr:agent:receipt-issuer",
+  "seam:ripr:output:gate-authority",
+]
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0135#external-kani-observation-import"
+requirement_generation = 1
+[implementation_claim]
+status = "implemented"
+[evidence]
+state = "outstanding"
+[support_claim]
+state = "unchanged"

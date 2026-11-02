@@ -50,7 +50,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-const REPO_EXPOSURE_SEAM_LIMIT_ENV: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
+pub(crate) const REPO_EXPOSURE_SEAM_LIMIT_ENV: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
 
 /// Default cap on the number of seams analyzed in a single full-repo
 /// `repo-exposure-json` run. This prevents pathological 41-minute runs
@@ -2952,6 +2952,32 @@ pub(crate) fn pilot_seam_budget() -> Result<Option<(usize, SeamLimitSource)>, St
     )
 }
 
+/// Environment variable that overrides how many packets the pilot
+/// `agent-seam-packets.json` artifact carries. `0` writes every packet.
+pub(crate) const PILOT_PACKET_BUDGET_ENV: &str = "RIPR_PILOT_PACKET_BUDGET";
+
+/// Default number of packets in the pilot `agent-seam-packets.json`. Each
+/// packet is several KB, and a repo-scope run can hold hundreds of
+/// `inspect_static_limitation` packets (2-4 MB in total), which is more than
+/// an agent can read. The bound keeps the file readable; the full packet set
+/// stays one `ripr check --format agent-seam-packets-json` or one
+/// `RIPR_PILOT_PACKET_BUDGET=0` rerun away.
+pub(crate) const DEFAULT_PILOT_PACKET_BUDGET: usize = 3;
+
+/// Resolve the pilot packet bound.
+///
+/// - Env var unset: `Some((DEFAULT_PILOT_PACKET_BUDGET, Default))`.
+/// - `"0"`: `None` (operator opt-out: every packet).
+/// - N > 0: `Some((N, Configured))`.
+/// - Anything else: `Err` naming the variable.
+pub(crate) fn pilot_packet_budget() -> Result<Option<(usize, SeamLimitSource)>, String> {
+    seam_limit_from_env(
+        PILOT_PACKET_BUDGET_ENV,
+        DEFAULT_PILOT_PACKET_BUDGET,
+        std::env::var(PILOT_PACKET_BUDGET_ENV),
+    )
+}
+
 #[cfg(test)]
 fn inventory_seam_grip_class_counts_from_state_with_config(
     state: &OwnedWorkspaceState,
@@ -3837,14 +3863,23 @@ fn build_seam_from_shape(
     arm_ranges: &BTreeMap<usize, (usize, usize)>,
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
-    // RIPR-SPEC-0228 field assignments are diff-scope probes only: repo-scope
-    // seam grading does not know their read rule, so it would grade a
-    // well-tested write as weakly gripped.
-    if kind == SeamKind::FieldConstruction
+    // RIPR-SPEC-0228 field writes (`self.count += 1`) get a seam only where
+    // the diff-side rule (`assigned_field_path`) reads the write as the
+    // owner's last word on one plain `self` field; that field is the
+    // required check, graded only by the exact-read rule (#11398). Any other
+    // field write stays a diff-scope probe: repo-scope grading has no read
+    // rule for it, so it would grade a well-tested write as weakly gripped.
+    let written_field = if kind == SeamKind::FieldConstruction
         && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
     {
-        return None;
-    }
+        Some(written_field_of_shape(
+            owners.owner(shape.start_line)?,
+            shape,
+            source,
+        )?)
+    } else {
+        None
+    };
     // A call whose value feeds a consumer cannot be deleted without breaking
     // the build, so no mutant asks whether tests notice it is gone. The
     // consumer's predicate, return or error seam carries that behavior
@@ -3865,7 +3900,10 @@ fn build_seam_from_shape(
     // are stable across platforms.
     let owner = owner_fact.id.0.replace('\\', "/");
     let expression = shape.text.clone();
-    let required_discriminator = required_discriminator_for(kind, &expression);
+    let required_discriminator = match written_field {
+        Some(field) => RequiredDiscriminator::FieldValue { field },
+        None => required_discriminator_for(kind, &expression),
+    };
     let expected_sink = expected_sink_for(kind);
     let owner_call = OwnerCallShape::from_function(owner_fact);
     // The ID hashes the line-ending-normalized logical offset (#7203): a
@@ -3884,6 +3922,16 @@ fn build_seam_from_shape(
     )
     .with_owner_call(owner_call)
     .with_source_lines(shape.source_lines);
+    // #12061: a field write is read back from the receiver only when the
+    // owner borrows it; record which so every surface words the read alike.
+    let seam = if kind == SeamKind::FieldConstruction
+        && crate::analysis::classify::field_assignment_target(seam.expression()).is_some()
+    {
+        let borrows = crate::analysis::classify::owner_receiver_borrow(owner_fact.body.as_str());
+        seam.with_owner_borrows_receiver(borrows)
+    } else {
+        seam
+    };
     // Span geometry is additional precision: when derivation fails (stale or
     // mismatched source), the seam keeps line-only behavior rather than
     // carrying wrong coordinates. An arm's token range is its identity,
@@ -3905,6 +3953,54 @@ fn build_seam_from_shape(
         Some(span) => Some(seam.with_span(span)),
         None => Some(seam),
     }
+}
+
+/// The `self` field a field-write shape leaves as its owner's last word on it
+/// (#11398): the diff probe's own rule, with no method resolution available
+/// here, so a later `self.m()` call counts as a possible write and the shape
+/// gets no seam. Only a plain one-segment field qualifies, since the read rule
+/// names the field by that one word.
+fn written_field_of_shape(
+    owner: &crate::analysis::facts::FunctionFact,
+    shape: &ProbeShapeFact,
+    source: &str,
+) -> Option<String> {
+    crate::analysis::classify::assigned_field_path(
+        owner.body.as_str(),
+        owner.start_line,
+        shape.start_line,
+        &shape.text,
+        &|_| None,
+    )
+    .filter(|path| !path.contains('.'))
+    .filter(|field| field_declared_public(source, field))
+}
+
+/// Whether this file declares `field` with plain `pub` visibility (a scoped
+/// `pub(crate)` field is out of reach of a test under `tests/`). The seam's required check is a test read of the
+/// field, which only a field a test can name makes possible: a private field
+/// is observed through a getter, `Display` or another method, so a missing
+/// direct read is not a gap a test author can close and grading it would call
+/// a well-observed write weakly gripped (the pilot ranking put bytesize's
+/// private `format` setters first, #11398). A declaration this file does not
+/// show stays ungraded, the fail-closed side.
+fn field_declared_public(source: &str, field: &str) -> bool {
+    source.match_indices("pub").any(|(at, _)| {
+        let word_start = source[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !(before.is_alphanumeric() || before == '_'));
+        let rest = &source[at + 3..];
+        let Some(after_name) = rest
+            .strip_prefix(char::is_whitespace)
+            .map(str::trim_start)
+            .and_then(|named| named.strip_prefix(field))
+        else {
+            return false;
+        };
+        let after_name = after_name.trim_start();
+        word_start && after_name.starts_with(':') && !after_name.starts_with("::")
+    })
 }
 
 /// The seam kind a `ripr check` finding's probe family names (#5471). Probe
@@ -4312,6 +4408,45 @@ marker = "libtest_mimic::Trial"
         assert_eq!(shape_of("::raw", "self.0 > 7"), method("ByteSize"));
         // A blanket impl's self type is not a plain named path.
         assert_eq!(shape_of("::raw", "2 > 1"), Some(OwnerCallShape::Unknown));
+        Ok(())
+    }
+
+    /// #12061: the production inventory records whether a field write's owner
+    /// borrows its receiver, and only for field writes, so the hover, packet
+    /// and human step can word the read from one fact.
+    #[test]
+    fn inventory_field_write_seams_record_whether_the_owner_borrows_its_receiver()
+    -> Result<(), String> {
+        let source = concat!(
+            "#[derive(Clone, Copy)]\n",
+            "pub struct Opts { pub retries: u32 }\n",
+            "impl Opts {\n",
+            "    pub fn bump(&mut self) { self.retries += 2; }\n",
+            "    pub fn with_retries(mut self, n: u32) -> Self {\n",
+            "        self.retries = n * 2;\n",
+            "        self\n",
+            "    }\n",
+            "    pub fn big(&self) -> bool { self.retries > 7 }\n",
+            "}\n",
+        );
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let fact = |owner_suffix: &str, expression: &str| {
+            seams
+                .iter()
+                .find(|seam| {
+                    seam.owner().ends_with(owner_suffix) && seam.expression().contains(expression)
+                })
+                .map(|seam| seam.owner_borrows_receiver())
+        };
+        assert_eq!(fact("::bump", "self.retries += 2"), Some(Some(true)));
+        assert_eq!(
+            fact("::with_retries", "self.retries = n * 2"),
+            Some(Some(false))
+        );
+        // Not a field write: nothing recorded.
+        assert_eq!(fact("::big", "self.retries > 7"), Some(None));
         Ok(())
     }
 
@@ -5015,6 +5150,80 @@ pub fn build_quote(amount: i32, fee: i32) -> Quote {
                 "expected at least one FieldConstruction seam, got {:?}",
                 seams.iter().map(|s| s.kind().as_str()).collect::<Vec<_>>()
             ));
+        }
+        Ok(())
+    }
+
+    /// The field a repository seam requires checked for each `self.` write in
+    /// `source`, in source order.
+    fn written_field_seams(source: &str) -> Result<Vec<(String, String)>, String> {
+        let path = PathBuf::from("src/counter.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(&[path], &index);
+        Ok(seams
+            .iter()
+            .filter(|seam| seam.expression().starts_with("self."))
+            .filter_map(|seam| match seam.required_discriminator() {
+                RequiredDiscriminator::FieldValue { field }
+                    if seam.kind() == SeamKind::FieldConstruction =>
+                {
+                    Some((seam.expression().to_string(), field.clone()))
+                }
+                _ => None,
+            })
+            .collect())
+    }
+
+    #[test]
+    fn field_write_seam_requires_the_written_field_only_for_the_last_plain_self_write()
+    -> Result<(), String> {
+        let wrap = |body: &str| {
+            format!(
+                "pub struct C {{ pub count: u32, pub label: u32 }}\nimpl C {{\n    pub fn bump(&mut self) {{\n{body}\n    }}\n}}\n"
+            )
+        };
+        // A last top-level write names the written field, not the statement.
+        assert_eq!(
+            written_field_seams(&wrap("        self.count += 1;"))?,
+            vec![("self.count += 1".to_string(), "count".to_string())]
+        );
+        // A builder's tail `self` is the hand-off, not a later write.
+        let builder = "pub struct R { pub timeout: u32 }\nimpl R {\n    pub fn timeout(mut self, t: u32) -> Self {\n        self.timeout = t * 2;\n        self\n    }\n}\n";
+        assert_eq!(
+            written_field_seams(builder)?,
+            vec![("self.timeout = t * 2".to_string(), "timeout".to_string())]
+        );
+        // Of two writes, only the last is the owner's last word.
+        assert_eq!(
+            written_field_seams(&wrap("        self.count += 1;\n        self.count = 0;"))?,
+            vec![("self.count = 0".to_string(), "count".to_string())]
+        );
+        // A private or crate-scoped field is out of a test's reach, so its
+        // write has no seam.
+        assert_eq!(
+            written_field_seams(
+                &wrap("        self.count += 1;").replace("pub count", "pub(crate) count")
+            )?,
+            Vec::<(String, String)>::new()
+        );
+        assert_eq!(
+            written_field_seams(&wrap("        self.count += 1;").replace("pub count", "count"))?,
+            Vec::<(String, String)>::new()
+        );
+        // No seam where the write is not the owner's last word on the field,
+        // is conditional, or sits on a nested path.
+        for body in [
+            "        self.count += 1;\n        self.reset();",
+            "        self.count += 1;\n        helper(self);",
+            "        if self.label > 0 { self.count += 1; }",
+            "        for _ in 0..2 { self.count += 1; }",
+            "        self.inner.count += 1;",
+        ] {
+            assert_eq!(
+                written_field_seams(&wrap(body))?,
+                Vec::<(String, String)>::new(),
+                "{body}"
+            );
         }
         Ok(())
     }
@@ -10583,6 +10792,26 @@ pub fn check_b(x: i32) -> bool { x < 0 }
         assert_eq!(
             parse_seam_limit(PILOT_SEAM_BUDGET_ENV, "500"),
             Ok(Some(500))
+        );
+    }
+
+    #[test]
+    fn pilot_packet_budget_resolves_default_configured_and_opt_out() {
+        let resolve = |value: Result<String, std::env::VarError>| {
+            seam_limit_from_env(PILOT_PACKET_BUDGET_ENV, DEFAULT_PILOT_PACKET_BUDGET, value)
+        };
+        assert_eq!(
+            resolve(Err(std::env::VarError::NotPresent)),
+            Ok(Some((3, SeamLimitSource::Default)))
+        );
+        assert_eq!(
+            resolve(Ok("12".to_string())),
+            Ok(Some((12, SeamLimitSource::Configured)))
+        );
+        assert_eq!(resolve(Ok("0".to_string())), Ok(None));
+        assert!(
+            resolve(Ok("many".to_string()))
+                .is_err_and(|error| error.starts_with("RIPR_PILOT_PACKET_BUDGET `many`"))
         );
     }
 

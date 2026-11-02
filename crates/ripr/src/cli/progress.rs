@@ -54,21 +54,71 @@ impl ProgressPolicy {
 /// through every drill-in command).
 pub(crate) const QUIET_ENV: &str = "RIPR_QUIET";
 
-/// `RIPR_QUIET` semantics: unset, empty, `0` or `false` (any case) leave
-/// progress on; any other value silences it. Pure so the parse is testable
-/// without mutating the process environment.
-pub(crate) fn quiet_env_value(value: Option<&str>) -> bool {
+/// Prefix of every stderr progress line this sink formats. New commands must
+/// go through [`format_stage_line`] / [`format_heartbeat_line`] (or this
+/// constant) rather than restating the literal at the call site (#12103).
+pub(crate) const PROGRESS_PREFIX: &str = "ripr progress: ";
+
+/// Prefix of every `wrote <path>` narration line. The source-scan plus catalog
+/// runtime guard in `quiet_narration_guard` / `cli_progress` fail when a new
+/// command formats this literal outside the shared sink (#12103). #11955 owns
+/// which lines count as narration.
+pub(crate) const WROTE_PREFIX: &str = "ripr: wrote ";
+
+/// Environment switch that keeps (forces) the stderr progress stream when a
+/// machine format is selected and stderr is not a terminal, where progress is
+/// otherwise off by default (#11598). `--quiet` and `RIPR_QUIET` still win.
+pub(crate) const PROGRESS_ENV: &str = "RIPR_PROGRESS";
+
+/// Environment switch semantics shared by `RIPR_QUIET` and `RIPR_PROGRESS`:
+/// unset, empty, `0` or `false` (any case) are off; any other value is on.
+/// Pure so the parse is testable without mutating the process environment.
+fn env_switch_on(value: Option<&str>) -> bool {
     value.is_some_and(|raw| {
         let trimmed = raw.trim();
         !(trimmed.is_empty() || trimmed == "0" || trimmed.eq_ignore_ascii_case("false"))
     })
 }
 
+/// `RIPR_QUIET` semantics: unset, empty, `0` or `false` (any case) leave
+/// progress on; any other value silences it.
+pub(crate) fn quiet_env_value(value: Option<&str>) -> bool {
+    env_switch_on(value)
+}
+
+/// The progress decision as a pure function of its inputs (#11598).
+///
+/// Silenced when `--quiet` or `RIPR_QUIET` asks for it. Otherwise a machine
+/// format on a stderr that is not a terminal is silenced by default, so an
+/// agent that merges or forwards stderr gets no `ripr progress:` noise;
+/// `RIPR_PROGRESS` (any value but empty, `0` or `false`) restores the stream.
+/// A terminal, or a human format, keeps progress.
+pub(crate) fn progress_silenced_with(
+    quiet_flag: bool,
+    quiet_env: Option<&str>,
+    progress_env: Option<&str>,
+    machine_format: bool,
+    stderr_is_terminal: bool,
+) -> bool {
+    if quiet_flag || quiet_env_value(quiet_env) {
+        return true;
+    }
+    machine_format && !stderr_is_terminal && !env_switch_on(progress_env)
+}
+
 /// True when the stderr progress stream must not be wired: the command's
-/// `--quiet` flag or the `RIPR_QUIET` environment switch. Stdout, exit codes
-/// and error text are unaffected.
-pub(crate) fn progress_silenced(quiet_flag: bool) -> bool {
-    quiet_flag || quiet_env_value(std::env::var(QUIET_ENV).ok().as_deref())
+/// `--quiet` flag, the `RIPR_QUIET` environment switch, or a machine format
+/// on a non-terminal stderr without `RIPR_PROGRESS`. Stdout, exit codes and
+/// error text are unaffected.
+pub(crate) fn progress_silenced(quiet_flag: bool, machine_format: bool) -> bool {
+    use std::io::IsTerminal;
+    progress_silenced_with(
+        quiet_flag,
+        std::env::var(QUIET_ENV).ok().as_deref(),
+        std::env::var(PROGRESS_ENV).ok().as_deref(),
+        machine_format,
+        io::stderr().is_terminal(),
+    )
 }
 
 /// Wake interval of the heartbeat thread between throttled ticks.
@@ -132,7 +182,7 @@ pub(crate) fn format_stage_line(
     scope: AnalysisProgressScope,
 ) -> String {
     format!(
-        "ripr progress: {} [{}]",
+        "{PROGRESS_PREFIX}{} [{}]",
         stage_token(stage),
         scope_token(scope)
     )
@@ -140,7 +190,7 @@ pub(crate) fn format_stage_line(
 
 pub(crate) fn format_heartbeat_line(stage: AnalysisProgressStage, class: &str) -> String {
     format!(
-        "ripr progress: {} still active after {class}",
+        "{PROGRESS_PREFIX}{} still active after {class}",
         stage_token(stage)
     )
 }
@@ -160,7 +210,10 @@ pub(crate) fn tty_overwrite(line: &str, previous_width: usize) -> (String, usize
 /// Fail closed: a projected line may only carry closed tokens and elapsed
 /// classes. Absolute paths, percents, ETAs, and source text are rejected.
 pub(crate) fn progress_line_is_safe(line: &str) -> bool {
-    if !line.starts_with("ripr progress: ") {
+    if line.starts_with(WROTE_PREFIX) {
+        return false;
+    }
+    if !line.starts_with(PROGRESS_PREFIX) {
         return false;
     }
     if line.len() > 80 {
@@ -173,7 +226,7 @@ pub(crate) fn progress_line_is_safe(line: &str) -> bool {
     if lowered.contains('%') || lowered.contains("eta") {
         return false;
     }
-    let payload = &line["ripr progress: ".len()..];
+    let payload = &line[PROGRESS_PREFIX.len()..];
     payload.chars().all(|ch| {
         ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '_' | ' ' | '[' | ']' | ':')
     })
@@ -613,6 +666,56 @@ mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
 
+    /// #12103: the production sink formats `ripr progress:` only through
+    /// [`PROGRESS_PREFIX`]. A restated literal in `format_stage_line` or
+    /// `format_heartbeat_line` would bypass that constant.
+    #[test]
+    fn progress_prefix_is_the_only_formatted_progress_literal_in_this_sink() {
+        let production = production_source(include_str!("progress.rs"));
+        let hits = production.match_indices("\"ripr progress:").count();
+        assert_eq!(
+            hits, 1,
+            "PROGRESS_PREFIX must be the only production `ripr progress:` string literal"
+        );
+        assert!(
+            production.contains("pub(crate) const PROGRESS_PREFIX"),
+            "the remaining literal must be the PROGRESS_PREFIX definition"
+        );
+        assert!(
+            production.contains("{PROGRESS_PREFIX}"),
+            "stage/heartbeat formatters must interpolate PROGRESS_PREFIX"
+        );
+        assert!(
+            format_stage_line(
+                AnalysisProgressStage::Analyzing,
+                AnalysisProgressScope::Diff
+            )
+            .starts_with(PROGRESS_PREFIX),
+            "stage lines must start with PROGRESS_PREFIX"
+        );
+        assert!(
+            format_heartbeat_line(AnalysisProgressStage::Analyzing, "2s")
+                .starts_with(PROGRESS_PREFIX),
+            "heartbeat lines must start with PROGRESS_PREFIX"
+        );
+        let wrote_hits = production.match_indices("\"ripr: wrote ").count();
+        assert_eq!(
+            wrote_hits, 1,
+            "WROTE_PREFIX must be the only production `ripr: wrote ` string literal"
+        );
+        assert!(
+            !progress_line_is_safe(&format!("{WROTE_PREFIX}target/ripr/example.json")),
+            "wrote narration carries paths and must not pass the progress-line safety gate"
+        );
+    }
+
+    fn production_source(src: &str) -> String {
+        match src.find("#[cfg(test)]") {
+            Some(index) => src[..index].to_string(),
+            None => src.to_string(),
+        }
+    }
+
     /// #11580: `RIPR_QUIET` silences progress for any value but the explicit
     /// off spellings; unset keeps it.
     #[test]
@@ -624,6 +727,60 @@ mod tests {
             assert!(!quiet_env_value(Some(off)), "{off:?} must keep progress");
         }
         assert!(!quiet_env_value(None), "unset keeps progress");
+    }
+
+    /// #11598: the full decision table. Machine format plus a non-terminal
+    /// stderr is silent by default; a terminal, a human format, or
+    /// `RIPR_PROGRESS` keeps progress; `--quiet` / `RIPR_QUIET` always win.
+    #[test]
+    fn progress_default_is_off_only_for_machine_formats_on_a_non_terminal() {
+        struct Case {
+            quiet: bool,
+            quiet_env: Option<&'static str>,
+            progress_env: Option<&'static str>,
+            machine: bool,
+            terminal: bool,
+            silenced: bool,
+        }
+        let case = |quiet, quiet_env, progress_env, machine, terminal, silenced| Case {
+            quiet,
+            quiet_env,
+            progress_env,
+            machine,
+            terminal,
+            silenced,
+        };
+        let table = [
+            case(false, None, None, true, false, true),
+            case(false, None, None, true, true, false),
+            case(false, None, None, false, false, false),
+            case(false, None, None, false, true, false),
+            case(false, None, Some("1"), true, false, false),
+            case(false, None, Some("always"), true, false, false),
+            case(false, None, Some("0"), true, false, true),
+            case(true, None, Some("1"), true, false, true),
+            case(false, Some("1"), Some("1"), true, false, true),
+            case(true, None, None, false, true, true),
+            case(false, Some("0"), None, false, false, false),
+        ];
+        for row in table {
+            assert_eq!(
+                progress_silenced_with(
+                    row.quiet,
+                    row.quiet_env,
+                    row.progress_env,
+                    row.machine,
+                    row.terminal
+                ),
+                row.silenced,
+                "quiet={} RIPR_QUIET={:?} RIPR_PROGRESS={:?} machine={} terminal={}",
+                row.quiet,
+                row.quiet_env,
+                row.progress_env,
+                row.machine,
+                row.terminal
+            );
+        }
     }
     use std::sync::atomic::AtomicU64;
 

@@ -766,8 +766,18 @@ pub(super) fn sort_related_tests_for_seam<'a>(
         .iter()
         .map(|&entry| {
             let (indexed, reason) = entry;
+            // #12060: rank and publish the oracle the stages credit. A
+            // proximity test whose assertion pins another function keeps its
+            // identity but offers no oracle for this match arm.
+            let credited = (seam.kind() == SeamKind::MatchArm).then(|| {
+                super::credited_related_tests(seam, context, owner_fn, &[(indexed.test, reason)])
+            });
+            let credited_test = credited
+                .as_ref()
+                .and_then(|views| views.first())
+                .map_or(indexed.test, AsRef::as_ref);
             let oracle = best_oracle(
-                indexed.test,
+                credited_test,
                 seam,
                 owner_fn,
                 context.index,

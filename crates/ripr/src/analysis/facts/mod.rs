@@ -230,9 +230,9 @@ pub(crate) fn build_analysis_index_with_kani_context(
 /// as-is, new or changed files are parsed through the file-fact cache and
 /// inserted, files no longer in the list are removed, and the shared
 /// post-parse phases re-run once over the merged index. When nothing
-/// changed, the index is returned untouched, so one check invocation
-/// builds its workspace index once and reuses it instead of re-decoding
-/// the fact cache and re-running post-processing per consumer.
+/// changed, parsed facts are returned without another build or post-parse
+/// pass. Run-scoped manifest/export authority and dependent query memos are
+/// refreshed because auxiliary inputs need not be among the indexed files.
 #[cfg(test)]
 pub(crate) fn reuse_cached_index_with_loaded_files(
     cached: build::CachedRustIndex,
@@ -260,7 +260,7 @@ pub(crate) fn reuse_cached_index_with_kani_context(
             file.unresolved_property_macros.iter().any(|property| {
                 matches!(
                     property.name.as_str(),
-                    "proptest::proptest" | "::proptest::proptest"
+                    "proptest" | "proptest::proptest" | "::proptest::proptest"
                 )
             })
         })
@@ -295,6 +295,11 @@ pub(crate) fn reuse_cached_index_with_kani_context(
         .filter(|path| !kept.contains(path.as_path()))
         .collect();
     if extras.is_empty() && dropped.is_empty() {
+        // #11810: a local macro exporter or its selected manifest can change
+        // without changing the indexed Rust files. Do not retain a cached
+        // absent/present export or the assertion sites derived from it.
+        cached.index.member_crates = member_crates::MemberCrates::new(root);
+        cached.index.call_identity_memos.clear();
         return Ok(cached);
     }
     // Post-processing is only incrementally exact when the file set grows by
@@ -482,6 +487,7 @@ pub(crate) fn build_index_from_paths_with_kani_context(
 // misdeclared registration degrades identically everywhere.
 pub(crate) use harness_registry::validated_file_wide_harness_targets;
 pub(crate) use test_helpers::expanded_assertion_view;
+pub(crate) use test_styles::attributes_define_proof_harness;
 pub(crate) use test_styles::attributes_define_test;
 
 // Keep compilation-unit rebasing available at the facts facade for index consumers.

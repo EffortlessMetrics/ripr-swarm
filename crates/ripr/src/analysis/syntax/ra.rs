@@ -2,8 +2,8 @@ use crate::domain::{OracleKind, OracleStrength, SymbolId};
 #[cfg(test)]
 use ra_ap_syntax::Edition;
 use ra_ap_syntax::{
-    AstNode, SourceFile, TextSize,
-    ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
+    AstNode, SourceFile, SyntaxKind, SyntaxNode, TextSize,
+    ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
 };
 mod closure_callbacks;
 #[cfg(test)]
@@ -37,8 +37,8 @@ use super::super::facts::ModulePathTarget;
 use super::super::facts::SourceRoleProvenance;
 use super::super::facts::cfg_predicates;
 use super::{
-    RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange, parse_clean_source_file,
-    rust_nesting_refusal,
+    NameScope, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange, UseBinding,
+    name_scope::path_segments, name_scope_for_items, parse_clean_source_file, rust_nesting_refusal,
 };
 use crate::analysis::rust_index::{
     FunctionFact, LazyDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
@@ -88,20 +88,20 @@ pub(crate) fn rust_include_directives(
             .path()
             .map(|path| path.syntax().text_range().start())
             .unwrap_or(call_range.start());
-        let expression = slice_text(text, call_start, call_range.end());
-        let Some((callee, _)) = expression.split_once('!') else {
+        let Some(path) = macro_call.path() else {
             continue;
         };
-        if callee.trim() != "include" {
+        if !include_macro_callee_is_include(&path) {
             continue;
         }
+        let expression = slice_text(text, call_start, call_range.end());
         let attributes = macro_call
             .attrs()
             .map(|attr| attr.syntax().text().to_string())
             .collect::<Vec<_>>();
         directives.push(RustIncludeDirective {
             line: line_index.line(call_start),
-            literal_path: include_literal_path(&expression),
+            literal_path: include_literal_path_from_macro_call(&macro_call),
             is_file_level: !macro_call
                 .syntax()
                 .ancestors()
@@ -497,15 +497,43 @@ pub(crate) fn fn_name_binding_count(fn_text: &str, name: &str) -> Option<usize> 
     )
 }
 
-pub(super) fn include_literal_path(expression: &str) -> Option<PathBuf> {
-    let (_, arguments) = expression.split_once('!')?;
-    let arguments = arguments.trim();
-    let arguments = arguments.strip_suffix(';').unwrap_or(arguments).trim();
-    let inner = match (arguments.chars().next()?, arguments.chars().last()?) {
-        ('(', ')') | ('{', '}') | ('[', ']') => arguments.get(1..arguments.len() - 1)?.trim(),
+/// Whether a macro path names the standard `include!` builtin (including `r#include`
+/// and `std`/`core`/`alloc`-qualified spellings handled elsewhere in module-tree scans).
+pub(super) fn include_macro_callee_is_include(path: &ast::Path) -> bool {
+    let mut callee = path.syntax().text().to_string();
+    callee = callee.trim_start_matches("::").to_string();
+    for prefix in ["std::", "core::", "alloc::"] {
+        if let Some(rest) = callee.strip_prefix(prefix) {
+            callee = rest.to_string();
+            break;
+        }
+    }
+    callee.trim_start_matches("r#") == "include"
+}
+
+pub(super) fn include_literal_path_from_macro_call(call: &ast::MacroCall) -> Option<PathBuf> {
+    let tree = call.token_tree()?;
+    let tokens: Vec<_> = tree
+        .syntax()
+        .children_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    let (open, rest) = tokens.split_first()?;
+    let close = match open.kind() {
+        SyntaxKind::L_PAREN => SyntaxKind::R_PAREN,
+        SyntaxKind::L_CURLY => SyntaxKind::R_CURLY,
+        SyntaxKind::L_BRACK => SyntaxKind::R_BRACK,
         _ => return None,
     };
-    parse_rust_string_literal(inner).map(PathBuf::from)
+    let (literal, tail) = rest.split_first()?;
+    if literal.kind() != SyntaxKind::STRING {
+        return None;
+    }
+    if tail.iter().any(|token| token.kind() != close) {
+        return None;
+    }
+    parse_rust_string_literal(literal.text()).map(PathBuf::from)
 }
 
 pub(super) fn parse_rust_string_literal(literal: &str) -> Option<String> {
@@ -959,6 +987,69 @@ fn collect_body_shadow_facts(
                 line: body_relative_line,
                 name,
             });
+        }
+    }
+    // A macro argument is an opaque token tree, so a `let` written inside it
+    // (`assert!({ let thr = ..; thr(1) })`) is no `LetStmt` node. Read the
+    // tokens: an initialized `let <pattern> =` still shadows from its own
+    // line. Over-reading a pattern only withholds credit (fail closed).
+    for token in function
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == ra_ap_syntax::SyntaxKind::LET_KW)
+        .filter(|token| {
+            token
+                .parent_ancestors()
+                .any(|node| node.kind() == ra_ap_syntax::SyntaxKind::TOKEN_TREE)
+        })
+    {
+        let Some(body_relative_line) = line_of(token.text_range().start()).checked_sub(fn_line)
+        else {
+            continue;
+        };
+        let mut pattern = String::new();
+        let mut in_type = false;
+        let mut initialized = false;
+        // A `:` ends the pattern only outside brackets: a struct-field
+        // pattern (`Foo { a: score }`) carries a `:` inside its braces
+        // and must keep binding `score` (fail closed).
+        let mut depth = 0usize;
+        let mut next = token.next_token();
+        while let Some(current) = next {
+            let kind = current.kind();
+            if depth == 0 && kind == ra_ap_syntax::SyntaxKind::EQ {
+                initialized = true;
+                break;
+            }
+            if kind == ra_ap_syntax::SyntaxKind::SEMICOLON {
+                break;
+            }
+            if depth == 0 && kind == ra_ap_syntax::SyntaxKind::COLON {
+                in_type = true;
+            } else {
+                match kind {
+                    ra_ap_syntax::SyntaxKind::L_PAREN
+                    | ra_ap_syntax::SyntaxKind::L_BRACK
+                    | ra_ap_syntax::SyntaxKind::L_CURLY => depth += 1,
+                    ra_ap_syntax::SyntaxKind::R_PAREN
+                    | ra_ap_syntax::SyntaxKind::R_BRACK
+                    | ra_ap_syntax::SyntaxKind::R_CURLY => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+                if !in_type {
+                    pattern.push_str(current.text());
+                }
+            }
+            next = current.next_token();
+        }
+        if initialized {
+            for name in extract_pattern_words(&pattern) {
+                let_bindings.push(LetBindingFact {
+                    line: body_relative_line,
+                    name,
+                });
+            }
         }
     }
     let_bindings.sort_by(|left, right| left.line.cmp(&right.line).then(left.name.cmp(&right.name)));
@@ -1483,6 +1574,161 @@ fn enclosed_by_nested_fn_like(node: &ra_ap_syntax::SyntaxNode, body: &ast::Block
         })
 }
 
+/// Label of an `unsafe` block that contains an unchecked-assumption call.
+pub(crate) const UNCHECKED_ASSUMPTION_LABEL: &str = "unsafe block (unchecked assumption)";
+
+/// Whether the block itself calls the `core::hint` intrinsics
+/// `unreachable_unchecked` or `assert_unchecked` (or the `intrinsics` module's
+/// spelling). The call path is resolved through the `use` bindings visible at
+/// the block (#12196): `std::hint::..` / `core::hint::..` spelled out, a
+/// `hint` module or a leaf imported by `use` (renamed or not), or a
+/// `use std::hint::*` glob. A bare name that nothing imports, a name a local
+/// item defines, or a path under another module (`local::assert_unchecked`)
+/// is not established as the intrinsic and keeps the plain `unsafe block`
+/// label. A call inside a nested `fn`, closure or `async` block does not run
+/// with the block. Parsed calls only: a string, comment or identifier that
+/// merely contains the name does not match.
+fn block_calls_unchecked_assumption(block: &ast::BlockExpr) -> bool {
+    block
+        .syntax()
+        .descendants()
+        .filter_map(ast::CallExpr::cast)
+        .filter(|call| !enclosed_by_nested_fn_like(call.syntax(), block))
+        .filter_map(|call| match call.expr()? {
+            ast::Expr::PathExpr(path) => path.path(),
+            _ => None,
+        })
+        .any(|path| call_path_is_unchecked_intrinsic(&path, block))
+}
+
+fn call_path_is_unchecked_intrinsic(path: &ast::Path, block: &ast::BlockExpr) -> bool {
+    // `::std::hint::..` names the crate root directly: no scope can rebind it.
+    if path
+        .segments()
+        .next()
+        .is_some_and(|segment| segment.coloncolon_token().is_some())
+    {
+        let segments: Option<Vec<String>> = path
+            .segments()
+            .map(|segment| segment.name_ref().map(|name| name.text().to_string()))
+            .collect();
+        return segments.is_some_and(|segments| resolves_to_unchecked_intrinsic(&segments, &[]));
+    }
+    let Some(segments) = path_segments(path) else {
+        return false;
+    };
+    // A parameter, `let` or closure parameter of that name is called instead
+    // of an imported function. Fail closed on any such pattern in the function.
+    if let [name] = segments.as_slice()
+        && binds_local_pattern(block, name)
+    {
+        return false;
+    }
+    // Scopes start at the call so a `use` or item in the block itself or in a
+    // nested block is seen, innermost first.
+    let scopes = scopes_visible_at(path.syntax());
+    resolves_to_unchecked_intrinsic(&segments, &scopes)
+}
+
+/// Whether any pattern in the function around `block` (or in the block's file
+/// when it sits outside a function) binds `name`.
+fn binds_local_pattern(block: &ast::BlockExpr, name: &str) -> bool {
+    let scope = block
+        .syntax()
+        .ancestors()
+        .find(|ancestor| ast::Fn::can_cast(ancestor.kind()))
+        .unwrap_or_else(|| block.syntax().clone());
+    scope
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
+}
+
+/// The item scopes around `node`, innermost first: enclosing statement lists
+/// up to the nearest module (inline `mod` or the file). A parent module's
+/// imports are not inherited by a child module, so the walk stops there.
+fn scopes_visible_at(node: &SyntaxNode) -> Vec<NameScope> {
+    let mut scopes = Vec::new();
+    for ancestor in node.ancestors() {
+        let (items, module_level): (Vec<ast::Item>, bool) =
+            if let Some(file) = ast::SourceFile::cast(ancestor.clone()) {
+                (file.items().collect(), true)
+            } else if let Some(list) = ast::ItemList::cast(ancestor.clone()) {
+                (list.items().collect(), true)
+            } else if let Some(list) = ast::StmtList::cast(ancestor) {
+                let items = list
+                    .statements()
+                    .filter_map(|stmt| match stmt {
+                        ast::Stmt::Item(item) => Some(item),
+                        _ => None,
+                    })
+                    .collect();
+                (items, false)
+            } else {
+                continue;
+            };
+        scopes.push(name_scope_for_items(&items));
+        if module_level {
+            break;
+        }
+    }
+    scopes
+}
+
+fn resolves_to_unchecked_intrinsic(segments: &[String], scopes: &[NameScope]) -> bool {
+    let Some(first) = segments.first() else {
+        return false;
+    };
+    let mut full: Vec<String> = Vec::new();
+    let mut settled = false;
+    for scope in scopes {
+        if let Some(binding) = scope.imports_of(first).next() {
+            match binding {
+                UseBinding::Path(path) | UseBinding::Renamed(path) => full.extend(path.clone()),
+                UseBinding::Opaque => return false,
+            }
+            full.extend(segments[1..].iter().cloned());
+            settled = true;
+            break;
+        }
+        // A local item of that name shadows the standard-library one.
+        if scope.defines.contains(first) || scope.child_modules.contains(first) {
+            return false;
+        }
+        // `use std::hint::*;` brings the bare intrinsic names into scope.
+        if segments.len() == 1
+            && scope
+                .globs
+                .iter()
+                .flatten()
+                .any(|prefix| is_std_hint_module(prefix))
+        {
+            full = ["core", "hint"]
+                .iter()
+                .map(|segment| segment.to_string())
+                .chain(segments.iter().cloned())
+                .collect();
+            settled = true;
+            break;
+        }
+    }
+    if !settled {
+        // `std` / `core` are always in scope as crate roots.
+        full = segments.to_vec();
+    }
+    matches!(
+        full.as_slice(),
+        [root, module, name]
+            if matches!(root.as_str(), "std" | "core")
+                && matches!(module.as_str(), "hint" | "intrinsics")
+                && matches!(name.as_str(), "unreachable_unchecked" | "assert_unchecked")
+    )
+}
+
+fn is_std_hint_module(prefix: &[String]) -> bool {
+    matches!(prefix, [root, module] if matches!(root.as_str(), "std" | "core") && module == "hint")
+}
+
 fn push_unsafe_boundary_probe_shapes(
     shapes: &mut Vec<ProbeShapeFact>,
     function: &ast::Fn,
@@ -1517,17 +1763,21 @@ fn push_unsafe_boundary_probe_shapes(
         let Some(unsafe_token) = block.unsafe_token() else {
             continue;
         };
+        // #11549: a block that states an unchecked assumption to the compiler
+        // (`unreachable_unchecked()`, `assert_unchecked(..)`) makes the
+        // surrounding code's soundness depend on it; name that in the label.
+        let label = if block_calls_unchecked_assumption(&block) {
+            UNCHECKED_ASSUMPTION_LABEL
+        } else {
+            "unsafe block"
+        };
         push_probe_shape_with_text(
             shapes,
             line_index,
             ProbeShapeKind::UnsafeBoundary,
             unsafe_token.text_range().start(),
             block.syntax().text_range().end(),
-            link_shape_text(
-                source,
-                unsafe_token.text_range().start(),
-                "unsafe block".to_string(),
-            ),
+            link_shape_text(source, unsafe_token.text_range().start(), label.to_string()),
             None,
         );
     }
@@ -4406,10 +4656,16 @@ mod include_directive_tests {
 // include!("comment.rs");
 const SAMPLE: &str = "include!(\"string.rs\")";
 include!("plain.rs");
+r#include!("raw_name.rs");
+include /* ! nested /* block */ */ !("commented_name.rs");
+include!(/* path */ "commented_argument.rs" /* tail */);
 include!(r#"raw.rs"#);
 include!("escaped\\path.rs");
 include!("quoted\"file.rs");
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+include!(env!("X"), "frag.rs");
+include_str!("sidecar.rs");
+preinclude!("not_include.rs");
 mod nested { include!("nested.rs"); }
 "###;
 
@@ -4423,15 +4679,29 @@ mod nested { include!("nested.rs"); }
             literals,
             vec![
                 PathBuf::from("plain.rs"),
+                PathBuf::from("raw_name.rs"),
+                PathBuf::from("commented_name.rs"),
+                PathBuf::from("commented_argument.rs"),
                 PathBuf::from("raw.rs"),
                 PathBuf::from("escaped\\path.rs"),
                 PathBuf::from("quoted\"file.rs"),
                 PathBuf::from("nested.rs")
             ]
         );
-        assert_eq!(directives.len(), 6);
-        assert!(directives[4].literal_path.is_none());
-        assert!(!directives[5].is_file_level);
+        assert_eq!(directives.len(), 10);
+        assert!(
+            directives
+                .iter()
+                .filter(|directive| directive.literal_path.is_none())
+                .count()
+                == 2,
+            "concat! and non-leading-literal arguments should lack a literal path"
+        );
+        let nested = directives
+            .iter()
+            .find(|directive| directive.literal_path.as_deref() == Some(Path::new("nested.rs")))
+            .ok_or_else(|| "nested include directive missing".to_string())?;
+        assert!(!nested.is_file_level);
         Ok(())
     }
 }
@@ -4499,6 +4769,30 @@ mod shadow_fact_equivalence_tests {
                 "let-shadow verdicts must agree for `{callee}` in:\n{source}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn let_inside_macro_token_tree_is_recorded_as_a_shadow() -> Result<(), String> {
+        let (_, inside) = parser_facts(
+            "fn probe() {\n    assert_eq!({ let score = build(); score(1) }, 1);\n}\n",
+        )?;
+        assert!(
+            inside.iter().any(|binding| binding.name == "score"),
+            "a block-local `let score` inside a macro argument must shadow: {inside:?}"
+        );
+        let (_, absent) = parser_facts("fn probe() {\n    assert_eq!(score(1), 1);\n}\n")?;
+        assert!(
+            absent.iter().all(|binding| binding.name != "score"),
+            "no `let` means no shadow fact: {absent:?}"
+        );
+        let (_, field) = parser_facts(
+            "fn probe() {\n    assert_eq!({ let Foo { a: score } = f(); score(1) }, 1);\n}\n",
+        )?;
+        assert!(
+            field.iter().any(|binding| binding.name == "score"),
+            "a struct-field pattern's `:` must not end the pattern: {field:?}"
+        );
         Ok(())
     }
 

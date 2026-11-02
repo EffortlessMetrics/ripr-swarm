@@ -27,12 +27,12 @@ Start here:
     strengthen a test only if this inspection finds a gap. Compare the original and changed
     implementations with a focused run using the project's configured test runner (`cargo test` for
     ordinary Cargo tests). Static classification may remain unknown
-  Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
+  Evidence: reach yes · infection unknown · propagation yes · observation yes · assertion not established
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -51,11 +51,10 @@ Write a test for it:
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (unknown: propagation unclear); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
+    - ./src/lib.rs:3 (unknown: infection unclear); kind: return_value; reason: Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary…
     - ./src/lib.rs:8 (unknown: infection unclear); kind: predicate; reason: Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary…
-    - ./src/lib.rs:8 (unknown: propagation unclear); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
+    - ./src/lib.rs:8 (unknown: infection unclear); kind: return_value; reason: Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary…
   Hidden classes:
     unknown: infection unclear = ripr could not tell what input makes the change take effect
-    unknown: propagation unclear = ripr could not follow the change through an opaque boundary
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

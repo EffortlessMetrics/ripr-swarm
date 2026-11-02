@@ -11,7 +11,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_q.py:python_preview:dcc7b1e6",
+      "id": "probe:src_q.py:python_preview:v1-eb0fa695",
       "canonical_gap_id": "gap:python:src/q.py:build_query:predicate_boundary:predicate:select_a_from_t",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -28,7 +28,7 @@
       "severity": "warning",
       "confidence": 0.40,
       "probe": {
-        "id": "probe:src_q.py:python_preview:dcc7b1e6",
+        "id": "probe:src_q.py:python_preview:v1-eb0fa695",
         "family": "predicate",
         "delta": "control",
         "file": "src/q.py",

@@ -58,9 +58,9 @@ pub(super) fn trim_field_period(value: &str) -> &str {
 pub(crate) const HUMAN_EVIDENCE_LEGEND: &str = concat!(
     "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
     "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
-    "      discriminator = assertion distinguishes intended from wrong behavior\n",
+    "      assertion = a test assertion tells intended from wrong behavior\n",
     "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
-    "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+    "      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused\n",
     "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
     "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
     "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
@@ -204,7 +204,7 @@ pub(crate) fn render_finding_digest_with_config(
         // A typed static limitation is the analyzer naming what it could not
         // bind, never an assertion a test could add.
         let label = if finding.class == ExposureClass::Exposed {
-            "Discriminator (observed, advisory)"
+            "Check (observed, advisory)"
         } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX)
             || ((matches!(
                 finding.class,
@@ -244,8 +244,18 @@ pub(crate) fn render_finding_digest_with_config(
         // with no pointer to the rest). Wrap like the next-step and
         // not-credited lines instead of truncating; `--format human-full`
         // keeps the same text in its Weakness section.
-        let value = trim_field_period(&missing.split_whitespace().collect::<Vec<_>>().join(" "))
-            .to_string();
+        let plain_missing = if missing == "No strong discriminator was detected" {
+            "No strong check was detected"
+        } else {
+            missing.as_str()
+        };
+        let value = trim_field_period(
+            &plain_missing
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+        .to_string();
         let prefix = format!("  {label}: ");
         if prefix.chars().count() + value.chars().count() <= LINE_BUDGET {
             out.push_str(&format!("{prefix}{value}\n"));
@@ -337,7 +347,7 @@ pub(crate) fn render_finding_digest_with_config(
         // every finding — and keep only the per-stage prose detail inside
         // the window.
         out.push_str(&format!(
-            "  Evidence: reach {} · infection {} · propagation {} · observation {} · discriminator {}\n",
+            "  Evidence: reach {} · infection {} · propagation {} · observation {} · assertion {}\n",
             finding.ripr.reach.state.as_str(),
             finding.ripr.infect.state.as_str(),
             finding.ripr.propagate.state.as_str(),
@@ -619,11 +629,8 @@ pub(super) fn render_finding_with_shared_sections(
     // Revision labelling (#3281): base-side evidence stays visible here —
     // the human surface explicitly supports historical context — but is
     // labelled non-actionable so it cannot read as a current obligation.
-    if !finding.is_candidate_actionable() {
-        out.push_str(&format!(
-            "  source:  {} — base-side evidence, not a candidate edit target\n",
-            finding.source_currentness.as_str()
-        ));
+    if let Some(disclosure) = finding.source_currentness_disclosure() {
+        out.push_str(&format!("  source:  {disclosure}\n"));
     }
 
     // #10691: lead with the plain change type; the stable family/delta tokens
@@ -1869,8 +1876,8 @@ mod trim_field_period_tests {
     #[test]
     fn strips_a_single_trailing_period() {
         assert_eq!(
-            trim_field_period("add a co-located test so a discriminator exists."),
-            "add a co-located test so a discriminator exists"
+            trim_field_period("add a co-located test so an assertion can notice if it is wrong."),
+            "add a co-located test so an assertion can notice if it is wrong"
         );
     }
 

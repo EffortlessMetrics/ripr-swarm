@@ -1,5 +1,19 @@
 # Golden Output Changes
 
+## Pending — Kani context / cache-generation integration (#10686)
+
+The declared-context candidate now composes with main's corpus generation
+`1.135`. Preserve the candidate's config identity `b951ffa16f958c3f`, input and
+snapshot identities, and canonical dirty-source flags; preserve main's corpus
+generation. Recompute the exact raw-JSON placeholder commitment and dependent
+verify commitments and receipt byte hashes. The independently recomputed prior
+`1.124` commitment matches the retained producer output below.
+
+This conflict repair changes no seam, classification, evidence, movement,
+currentness or receipt envelope. The composed artifacts have internally checked
+commitments; current-candidate native producer/consumer validation remains pending
+and is not inferred from that arithmetic or the earlier producer receipt.
+
 ## Pending — declared Kani source-context identity (#10686)
 
 The new consumed `languages.rust.kani` field is materialized even when absent,
@@ -1479,6 +1493,32 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: #10920 review - the weak-infection hint claimed no test input tells the versions apart; the admitted relational sibling case (#10916) has asserted inputs that evaluate differently, so the hint now states the assertion-level fact
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (32)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_gap (33)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
 
 Command:
 `cargo xtask goldens bless boundary_gap --reason "..."`

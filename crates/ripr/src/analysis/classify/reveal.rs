@@ -44,6 +44,11 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// admitted owner pin; token coincidence cannot confirm discrimination.
     pub(in crate::analysis) returned_closure_pin_required: bool,
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// #9766: this exact assertion passed the fixture-receiver owner gate
+    /// itself, not merely some other owner-pin route (chain entry, display,
+    /// field projection, fallible check). Only this per-assertion fact may
+    /// back the literal-fixture propagation claim.
+    pub(in crate::analysis) fixture_receiver_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// #9870: a Result.map callback runs only on Ok. Token coincidence in
     /// an unrelated assertion cannot establish that callback's observation.
     pub(in crate::analysis) owner_return_pin_required: bool,
@@ -65,6 +70,16 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// (#6297). One that cannot, by any name path, does not confirm a match
     /// arm while another related test reaches the owner.
     pub(in crate::analysis) proximity_may_reach_owner: &'a dyn Fn(&TestSummary) -> bool,
+    /// #11552: whether the assertion's own calls tie it to a different indexed
+    /// function (`tb.reduce(2500)` for a changed arm of `consume`) and to no
+    /// function that can reach the owner. A shared enum variant named in such
+    /// an assertion is that function's result, not the owner's, so a test
+    /// related only by file or module cannot confirm the arm through it, even
+    /// when the test makes some unindexed call that might reach the owner.
+    /// A local the assertion reads (`let r = tb.reduce(2500); assert_eq!(r, ..)`)
+    /// stands for its single immutable initializer (#12056).
+    pub(in crate::analysis) assertion_pins_other_function:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// Names the changed owner's signature binds. A test can never hold
     /// the owner's parameter, so for a value probe a shared parameter name
     /// confirms observation only in an assertion that calls the owner
@@ -159,11 +174,13 @@ fn reveal_evidence(
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
+            fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
+            assertion_pins_other_function: &|_, _| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
@@ -206,10 +223,12 @@ fn reveal_evidence_with_exit(
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
+            fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
+            assertion_pins_other_function: &|_, _| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
@@ -242,6 +261,23 @@ fn reveal_evidence_proximity_reach(
     related_tests: &[(&TestSummary, RelationReason)],
     proximity_may_reach_owner: &dyn Fn(&TestSummary) -> bool,
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
+    reveal_evidence_proximity_reach_pinning(
+        probe,
+        related_tests,
+        proximity_may_reach_owner,
+        &|_, _| false,
+    )
+}
+
+/// [`reveal_evidence_proximity_reach`] with the `assertion_pins_other_function`
+/// answer under the test's control (#11552).
+#[cfg(test)]
+fn reveal_evidence_proximity_reach_pinning(
+    probe: &Probe,
+    related_tests: &[(&TestSummary, RelationReason)],
+    proximity_may_reach_owner: &dyn Fn(&TestSummary) -> bool,
+    assertion_pins_other_function: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
     let (observe, discriminate, related, _) = reveal_evidence_with_expression(
         probe,
         &probe.expression,
@@ -254,11 +290,13 @@ fn reveal_evidence_proximity_reach(
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
+            fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             assertion_has_known_implicit_observer: &|_, _| None,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner,
+            assertion_pins_other_function,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
@@ -330,6 +368,13 @@ pub(in crate::analysis) struct RevealOutcome {
     /// reach-bearing test, foreign same-name imports, cross-package
     /// same-name definitions, the exact error variant).
     pub(in crate::analysis) owner_pin_credited: bool,
+    /// #9766: a credited assertion passed the fixture-receiver owner gate
+    /// itself (see `ReturnOracleAdmission::fixture_receiver_pin`).
+    pub(in crate::analysis) fixture_receiver_credited: bool,
+    /// #12110: a credited assertion pinned the variant the change removed on
+    /// an owner call selecting the changed arm, so the new variant's missing
+    /// exact assertion no longer stands for this probe.
+    pub(in crate::analysis) removed_variant_pin_credited: bool,
 }
 
 /// Summaries of the `no` observe/discriminate stages when no related test
@@ -372,6 +417,8 @@ pub(in crate::analysis) fn reveal_outcome(
             complete_proximity_oracles_only: false,
             direct_rows: Vec::new(),
             owner_pin_credited: false,
+            fixture_receiver_credited: false,
+            removed_variant_pin_credited: false,
         };
     }
 
@@ -442,6 +489,8 @@ pub(in crate::analysis) fn reveal_outcome(
         complete_proximity_oracles_only,
         direct_rows,
         owner_pin_credited: analysis.owner_pin_credited,
+        fixture_receiver_credited: analysis.fixture_receiver_credited,
+        removed_variant_pin_credited: analysis.removed_variant_pin_credited,
     }
 }
 
@@ -470,6 +519,10 @@ struct RevealAssertionAnalysis {
     matched_any: bool,
     /// #6692: some credited assertion pinned the owner's return value.
     owner_pin_credited: bool,
+    /// #12110: some credited assertion pinned the removed variant.
+    removed_variant_pin_credited: bool,
+    /// #9766: some credited assertion passed the fixture-receiver gate itself.
+    fixture_receiver_credited: bool,
     refused_context: bool,
     /// True when a test related only by file or module matched an assertion
     /// but could not confirm a match arm, because another related test reaches
@@ -2183,6 +2236,15 @@ fn analyze_related_assertions(
     } else {
         Vec::new()
     };
+    // #12110: the error variant an `error_path` change replaced, when the
+    // paired old text names a different one.
+    let removed_variant = matches!(probe.family, ProbeFamily::ErrorPath)
+        .then(|| {
+            let removed = probe.before.as_deref().and_then(error_path_variant_path)?;
+            let removed = removed.rsplit("::").next()?;
+            (error_construction_variant.as_deref() != Some(removed)).then(|| removed.to_string())
+        })
+        .flatten();
     let match_context = RevealMatchContext {
         probe_tokens: &probe_tokens,
         effect_literals: &effect_literals,
@@ -2201,6 +2263,8 @@ fn analyze_related_assertions(
             (!name.is_empty()).then_some(name)
         }),
         arm_selector: arm_selector.filter(|_| matches!(probe.family, ProbeFamily::MatchArm)),
+        arm_result_remapped: arm_selector.is_some_and(ArmSelector::result_remapped)
+            && matches!(probe.family, ProbeFamily::MatchArm),
         arm_inputs_readable: false,
         arm_pattern_pinned: false,
         arm_lent_selected: false,
@@ -2208,6 +2272,10 @@ fn analyze_related_assertions(
         owner_shadowed: false,
         sibling_excluded: false,
         owner_pin_required,
+        removed_variant_arm: removed_variant
+            .as_deref()
+            .zip(arm_selector.filter(|_| matches!(probe.family, ProbeFamily::ErrorPath))),
+        removed_variant_selected: false,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     // RIPR-SPEC-0040 builder override (#6613): the fields a changed struct
@@ -2266,6 +2334,8 @@ fn analyze_related_assertions(
     let mut strongest_observation_confirmed = false;
     let mut matched_any = false;
     let mut owner_pin_credited = false;
+    let mut removed_variant_pin_credited = false;
+    let mut fixture_receiver_credited = false;
     let mut refused_context = false;
     // For families that need token confirmation: start pessimistic and clear
     // once a token_match fires.
@@ -2440,6 +2510,13 @@ fn analyze_related_assertions(
         let assertion_count = test.assertions.len();
         let related_before = related.len();
         for assertion in assertions {
+            // #11552: per assertion, because the same proximity test may hold
+            // one assertion on the owner's enum and another on a different
+            // function's result of the same enum.
+            let confirms_observation = confirms_observation
+                && !(names_shared_variant
+                    && is_proximity_only(*reason)
+                    && (return_admission.assertion_pins_other_function)(test, assertion));
             // RIPR-SPEC-0231 examples 19 and 20: an inequality on the owner
             // call that excludes only a sibling variant of the changed error
             // observes the changed result, but only as `relational_check` /
@@ -2539,6 +2616,26 @@ fn analyze_related_assertions(
                 arm_lent_selected: unfiltered_arm_selector
                     .is_some_and(|selector| selector.lent_selects(test, assertion)),
                 sibling_excluded,
+                removed_variant_selected: match_context.removed_variant_arm.is_some_and(
+                    |(variant, selector)| {
+                        // The variant must sit in the compared operands, not in
+                        // a diagnostic message argument.
+                        let operands =
+                            crate::analysis::extract::assertion_oracle_text(&assertion.text);
+                        matches!(assertion.kind, OracleKind::ExactErrorVariant)
+                            && !match_context.owner_shadowed
+                            && operands
+                                .as_deref()
+                                .is_some_and(|text| contains_as_whole_word(text, variant))
+                            && selector.mentioned_by(test)
+                            && selector.observed_inputs(test).is_some()
+                            && !selector.binds_owner_result(test)
+                            && !import_defeats_owner
+                            && !cross_package_defeats_owner
+                            && (selector.assertion_selects(&assertion.text)
+                                || selector.pattern_pin_selects(test, assertion))
+                    },
+                ),
                 ..match_context
             };
             let (matched, mut has_token_match) = assertion_matches_probe_detail_with_literals(
@@ -2742,6 +2839,8 @@ fn analyze_related_assertions(
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field
             // cleanup in `ClassifiedProbeEvidence::gather` reads this.
+            removed_variant_pin_credited |=
+                matched && credits_oracle && assertion_context.removed_variant_selected;
             owner_pin_credited |= matched
                 && credits_oracle
                 && !self_computed
@@ -2749,6 +2848,16 @@ fn analyze_related_assertions(
                     &match_context,
                     assertion,
                     owner_pinned,
+                    import_defeats_owner,
+                    cross_package_defeats_owner,
+                );
+            fixture_receiver_credited |= matched
+                && credits_oracle
+                && !self_computed
+                && owner_return_pin_holds(
+                    &match_context,
+                    assertion,
+                    owner_pinned && (return_admission.fixture_receiver_pin)(test, assertion),
                     import_defeats_owner,
                     cross_package_defeats_owner,
                 );
@@ -2925,6 +3034,8 @@ fn analyze_related_assertions(
         strongest_observation_confirmed,
         matched_any,
         owner_pin_credited,
+        removed_variant_pin_credited,
+        fixture_receiver_credited,
         refused_context,
         observation_unverified,
         proximity_confirmation_withheld,
@@ -3197,6 +3308,10 @@ struct RevealMatchContext<'a> {
     /// the check helper (#6482) it is borrowed from or from a row of the
     /// constant-row table (#5328) it loops over.
     arm_lent_selected: bool,
+    /// The changed arm's value is consumed (`.map_err(..)`, a `let` that is
+    /// not returned bare) before it is the owner's return value, so no
+    /// assertion about the owner's result confirms this arm (#12143).
+    arm_result_remapped: bool,
     /// Probe tokens that name a binding only the owner holds (a parameter
     /// or `let` local) on a value probe. They confirm observation only in
     /// an assertion that calls the owner; anywhere else the shared name is
@@ -3220,6 +3335,15 @@ struct RevealMatchContext<'a> {
     /// through the owner-return pin, a whole-value equality tied to the
     /// owner call (RIPR-SPEC-0197 "Early error-variant pins").
     owner_pin_required: bool,
+    /// #12110: for an `error_path` probe on a whole match arm whose change
+    /// replaced one error variant with another, the removed variant's bare
+    /// name and the selector for the changed arm. A test that pins the
+    /// removed variant on an owner call whose input selects this arm fails
+    /// once the arm yields the new variant, so it discriminates the change.
+    removed_variant_arm: Option<(&'a str, &'a ArmSelector)>,
+    /// #12110: the current assertion is an exact pin of the removed variant
+    /// on an owner call whose input selects the changed arm.
+    removed_variant_selected: bool,
 }
 
 /// The field a `field_construction` expression assigns: the identifier
@@ -3269,7 +3393,7 @@ fn calls_owner(text: &str, owner: &str, free_owner: bool) -> bool {
 
 /// Every identifier `text` calls (comments and strings masked), excluding
 /// macro invocations: the word immediately before `(` or `::<`.
-fn called_names(text: &str) -> Vec<String> {
+pub(in crate::analysis::classify) fn called_names(text: &str) -> Vec<String> {
     called_paths(text)
         .into_iter()
         .map(|(_, name)| name)
@@ -3331,6 +3455,9 @@ fn called_paths(text: &str) -> Vec<(Option<String>, String)> {
     }
     names
 }
+
+#[cfg(kani)]
+mod kani_proofs;
 
 /// A self-computed assertion's probe-relative strength is at most `weak`.
 fn self_computed_cap(strength: OracleStrength, self_computed: bool) -> OracleStrength {
@@ -4155,10 +4282,13 @@ fn assertion_matches_probe_detail_with_literals(
         arm_inputs_readable,
         arm_pattern_pinned,
         arm_lent_selected,
+        arm_result_remapped,
         owner_scoped_tokens,
         owner_shadowed,
         sibling_excluded,
         owner_pin_required,
+        removed_variant_arm: _,
+        removed_variant_selected,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -4295,7 +4425,12 @@ fn assertion_matches_probe_detail_with_literals(
     // (parameter names, the callee name, `Into::into`, a message string) is
     // token coincidence by construction, so observation stays unverified and
     // the seam cannot read `exposed` from lexical heuristics.
-    let has_token_match = if arm_lent_selected && matches!(family, ProbeFamily::MatchArm) {
+    let has_token_match = if arm_result_remapped && matches!(family, ProbeFamily::MatchArm) {
+        // #12143: a consumer of the match value (`.map_err(..)`, a `let`
+        // read later) can make the changed and original arm results equal, so
+        // neither a selection nor a variant token observes this arm.
+        false
+    } else if arm_lent_selected && matches!(family, ProbeFamily::MatchArm) {
         // RIPR-SPEC-0229 decisions 5 and 7: the owner call receives a lent
         // input (a helper's literal or a table row's cell) that selects the
         // arm, under the same owner defeats. A test that names the owner
@@ -4389,7 +4524,12 @@ fn assertion_matches_probe_detail_with_literals(
     if matches!(assertion.kind, OracleKind::ExactErrorVariant)
         && let Some(variant) = error_construction_variant
     {
-        let variant_matches = contains_as_whole_word(&assertion.text, variant);
+        // #12110: the pin of the variant the change removed, on an owner
+        // call selecting the changed arm, fails once the arm yields the new
+        // variant. It confirms only where a payload-free change needs no
+        // owner-return pin (`required_pin_observed`).
+        let variant_matches =
+            contains_as_whole_word(&assertion.text, variant) || removed_variant_selected;
         let variant_confirms = variant_matches && required_pin_observed;
         if matches!(family, ProbeFamily::ErrorPath) {
             return (variant_matches, variant_confirms);
@@ -4457,10 +4597,13 @@ fn assertion_matches_probe_detail(
             arm_inputs_readable: false,
             arm_pattern_pinned: false,
             arm_lent_selected: false,
+            arm_result_remapped: false,
             owner_scoped_tokens: &[],
             owner_shadowed: false,
             sibling_excluded: false,
             owner_pin_required: false,
+            removed_variant_arm: None,
+            removed_variant_selected: false,
         },
         assertion,
         assertion_count,
@@ -5162,10 +5305,36 @@ fn retain_owner_calling_rows(
     ranked: &[RelatedTest],
     owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
 ) {
-    let signalled = |test: &RelatedTest| {
+    retain_signalled_rows(window, ranked, &|test: &RelatedTest| {
         test.relation_reason == Some(RelationReason::WeakTokenSubstring)
             && owner_calls.contains(&(test.file.clone(), test.line, test.name.clone()))
-    };
+    });
+}
+
+/// #12098: an owner-named row whose oracle is too weak to tell the old value
+/// from the new (`weak` or `smoke`) is the row `triage::weak_assertion_row`
+/// reads. It ties the file/module-proximity rows on confidence, so when the
+/// render cap cut rows, name order alone could leave it behind eight proximity
+/// rows that never name the owner. Lift it by the same rules as
+/// [`retain_owner_calling_rows`]: it replaces trailing location-only rows one
+/// for one, never takes row 0, and changes neither the window length nor the
+/// total. No row is rescored or re-tiered. A strong-oracle owner-named row and
+/// a proximity row are not lifted.
+fn retain_owner_named_weak_rows(window: &mut Vec<RelatedTest>, ranked: &[RelatedTest]) {
+    retain_signalled_rows(window, ranked, &|test: &RelatedTest| {
+        test.relation_reason == Some(RelationReason::OwnerNamedTest)
+            && matches!(
+                test.oracle_strength,
+                crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
+            )
+    });
+}
+
+fn retain_signalled_rows(
+    window: &mut Vec<RelatedTest>,
+    ranked: &[RelatedTest],
+    signalled: &dyn Fn(&RelatedTest) -> bool,
+) {
     // A signalled test already in the window but behind location-only rows
     // moves up to just ahead of the first of them (its first row only; no row
     // is added or evicted).
@@ -5311,6 +5480,7 @@ fn finalize_related_tests_with_direct_rows(
         if !owner_calls.is_empty() {
             retain_owner_calling_rows(&mut oracle_rows, &ranked, owner_calls);
         }
+        retain_owner_named_weak_rows(&mut oracle_rows, &ranked);
     }
     let free = RELATED_TESTS_RENDER_CAP.saturating_sub(oracle_rows.len());
     oracle_rows.extend(unmatched.into_iter().take(free));
@@ -6230,10 +6400,12 @@ mod tests {
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
+            fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
+            assertion_pins_other_function: &|_, _| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
@@ -7704,10 +7876,12 @@ mod tests {
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &pin,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -7801,10 +7975,12 @@ mod tests {
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &pin,
+                    fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
+                    assertion_pins_other_function: &|_, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -7984,11 +8160,13 @@ mod tests {
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
+                    fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
+                    assertion_pins_other_function: &|_, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -8095,11 +8273,13 @@ mod tests {
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &pin,
+                    fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
+                    assertion_pins_other_function: &|_, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -8519,11 +8699,13 @@ mod tests {
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -8612,11 +8794,13 @@ mod tests {
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -8937,10 +9121,13 @@ mod tests {
                 arm_inputs_readable: false,
                 arm_pattern_pinned: false,
                 arm_lent_selected: false,
+                arm_result_remapped: false,
                 owner_scoped_tokens: &empty,
                 owner_shadowed: false,
                 sibling_excluded: false,
                 owner_pin_required: false,
+                removed_variant_arm: None,
+                removed_variant_selected: false,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,
@@ -10417,11 +10604,13 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -10489,11 +10678,13 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -10532,11 +10723,13 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -10594,11 +10787,13 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -10658,11 +10853,13 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -10866,11 +11063,13 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -10912,11 +11111,13 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -11386,11 +11587,13 @@ return Err(\"typed pin\".into());
                         owner_return_pin_required: false,
                         returned_closure_pin_required: false,
                         owner_return_pin: &|_, _| false,
+                        fixture_receiver_pin: &|_, _| false,
                         wrapper_return_pin: &|_, _| false,
                         assertion_admitted: &|_, _| true,
                         sibling_exclusion_admitted: &|_, _| true,
                         // The observer sibling may reach the owner (#9167).
                         proximity_may_reach_owner: &|_| true,
+                        assertion_pins_other_function: &|_, _| false,
                         owner_parameters: &[],
                         expected_reaches_owner: &|_, _| false,
                         effect_state_carried: &|_, _| true,
@@ -11466,6 +11669,7 @@ return Err(\"typed pin\".into());
                     out_parameter_read: &|_, _| None,
                     owner_return_pin_required: false,
                     owner_return_pin: &|_, _| false,
+                    fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|test, _| {
@@ -11473,6 +11677,7 @@ return Err(\"typed pin\".into());
                     },
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| true,
+                    assertion_pins_other_function: &|_, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
@@ -11556,11 +11761,13 @@ return Err(\"typed pin\".into());
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
+                    fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
+                    assertion_pins_other_function: &|_, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -11752,6 +11959,51 @@ return Err(\"typed pin\".into());
         );
     }
 
+    /// #11552: a same-file test that makes an unindexed call (`.unwrap()`)
+    /// may run the owner by name, so it kept the arm confirmation #6297
+    /// withholds. Its assertion pinning a different indexed function's result
+    /// (`tb.reduce(..)`) is that function's variant, not the owner's.
+    #[test]
+    fn match_arm_proximity_test_pinning_another_function_cannot_confirm() {
+        let probe = probe(
+            ProbeFamily::MatchArm,
+            "Reduction::Over(extra) => extra < 10,",
+        );
+        let reaching = test_with_assertions(
+            "consume_small",
+            vec![oracle(
+                "assert!(consume(5));",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let sibling = test_with_assertions(
+            "reduce_over",
+            vec![oracle(
+                "assert_eq!(reduce(107), Reduction::Over(7));",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let related = [
+            (&reaching, RelationReason::DirectOwnerCall),
+            (&sibling, RelationReason::SameTestFile),
+        ];
+        let (_, may_reach, _) = reveal_evidence_proximity_reach_pinning(
+            &probe,
+            &related,
+            &|_| true,
+            &|_, assertion| assertion.text.contains("reduce("),
+        );
+        assert_eq!(may_reach.state, StageState::Weak, "{}", may_reach.summary);
+        assert_eq!(may_reach.summary, PROXIMITY_CONFIRMATION_WITHHELD);
+
+        // Without the pin the unindexed-call allowance still confirms.
+        let (_, unpinned, _) =
+            reveal_evidence_proximity_reach_pinning(&probe, &related, &|_| true, &|_, _| false);
+        assert_eq!(unpinned.state, StageState::Yes, "{}", unpinned.summary);
+    }
+
     /// #6297: a same-file test that names the arm's variant through another
     /// function cannot confirm the arm while a test that calls the owner is
     /// related, so editing that same-file test cannot move the verdict.
@@ -11848,11 +12100,13 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -11955,11 +12209,13 @@ return Err(\"typed pin\".into());
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
+                    fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
                     assertion_admitted: &|_, _| true,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|test| test.name == "a_large_refund_hits_the_limit",
+                    assertion_pins_other_function: &|_, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -12005,11 +12261,13 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -12506,11 +12764,13 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -13055,11 +13315,13 @@ return Err(\"typed pin\".into());
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
+                fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
                 assertion_admitted: &|_, _| true,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters,
                 expected_reaches_owner: reaches,
                 expected_operand_value: operand_value,

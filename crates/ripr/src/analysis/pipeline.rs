@@ -212,8 +212,11 @@ fn uncompiled_preview_file_counts(
 
 /// Typed limitation kinds as stable wire labels, in adapter order.
 fn limitation_kind_labels(limitations: &[AnalysisLimitation]) -> Vec<String> {
+    // An advisory disclosure does not scope the language run down, so it must
+    // not read as a partial language outcome.
     limitations
         .iter()
+        .filter(|limitation| !limitation.kind.is_advisory_disclosure())
         .map(|limitation| limitation.kind.as_str().to_string())
         .collect()
 }
@@ -799,20 +802,24 @@ fn non_source_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<
         ));
     }
     let summary = summary.join(", ");
-    let verdict = if truncated_paths.is_empty() {
-        "Nothing was analyzed: ripr cannot analyze non-source files, so this is not a statement about changed behavior.".to_string()
-    } else {
-        let listed = truncated_paths
-            .iter()
-            .take(MAX_NAMED_PATHS)
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!(
-            "Path(s) ending in `.` with no extension ({listed}) usually mean a truncated \
-             `+++` header, so this empty result is not a clean pass — verify the diff input."
-        )
-    };
+    if truncated_paths.is_empty() {
+        // #11396: the stderr note is the only disclosure JSON and explicit-scope
+        // runs get, so it keeps the non-claim in plain words; the human headline
+        // adds the verdict for the default scope.
+        return Some(format!(
+            "ripr: diff contained {non_source_count} non-source file(s) ({summary}). Nothing was analyzed, so this says nothing about whether changed behavior is tested."
+        ));
+    }
+    let listed = truncated_paths
+        .iter()
+        .take(MAX_NAMED_PATHS)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let verdict = format!(
+        "Path(s) ending in `.` with no extension ({listed}) usually mean a truncated \
+         `+++` header, so this empty result is not a clean pass — verify the diff input."
+    );
     Some(format!(
         "ripr: diff contained {non_source_count} non-source file(s) ({summary}); \
          no analyzable Rust, TypeScript, Python, or Perl files found. {verdict}"
@@ -2236,7 +2243,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         AnalysisOutcomeKind::UnsupportedInput
     } else if limitations
         .iter()
-        .any(|limitation| limitation.kind != AnalysisLimitationKind::EolOnlyChurn)
+        .any(|limitation| !limitation.kind.is_advisory_disclosure())
     {
         // #4952: the EOL-only disclosure alone does not make the analysis
         // partial; see the limitation push above.
@@ -2949,7 +2956,7 @@ fn file_is_eol_only_churn(file: &diff::ChangedFile, raw_line1_bom_paths: &[PathB
             .all(|(added, removed)| added.text == removed.text && added.line == removed.line)
 }
 
-fn bounded_path_listing(paths: &[String]) -> String {
+pub(crate) fn bounded_path_listing(paths: &[String]) -> String {
     let shown = paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
     let more = paths.len().saturating_sub(3);
     let listed = if more > 0 {
@@ -6049,7 +6056,7 @@ mod tests {
              diff --git a/calc.py b/calc.py\n\
              --- /dev/null\n\
              +++ b/calc.py\n\
-             @@ -0,0 +2 @@\n\
+             @@ -0,0 +1,2 @@\n\
              +def double(x):\n\
              +    return x * 2\n",
         )?;

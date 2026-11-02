@@ -160,8 +160,9 @@ pub(crate) struct RepoCapFired {
 /// - TypeScript: `selected` is production files up to the working-set limit
 ///   PLUS every test file (evidence is not capped by that limit); `skipped`
 ///   is type declaration files only; `omitted` is production files beyond the
-///   limit. The walk cap (`RIPR_TS_MAX_WORKSPACE_FILES`) counts directory
-///   entry visits, not files, so it can fire before many files are seen.
+///   limit. The walk cap (`RIPR_TS_MAX_WORKSPACE_FILES`) counts candidate
+///   TypeScript/JavaScript source files, not every directory entry; a 5x
+///   total-entry backstop still ends a walk over a huge non-source tree.
 /// - Python: `selected` is production plus evidence files under one combined
 ///   cap, production taking priority; `skipped` is files excluded by role
 ///   (vendor, generated, environment); `omitted` is eligible files beyond the

@@ -99,6 +99,19 @@ Cursor and Claude Code share one entry shape:
 approval steps were not run here; treat those lines as configuration, not a
 support claim. Full MCP details: [MCP workspace status](interop/mcp.md).
 
+## Choosing between `explain` and `context`
+
+For one finding, pick by what the consumer is:
+
+| Need | Command | Output |
+|---|---|---|
+| A model reading a few lines under a token budget | `ripr explain <id> --format agent` | compact lines with an explicit `done=` / `open=` / `stop=` terminal line and a `next=` context command |
+| A person reading why it was flagged | `ripr explain <id>` | human explanation |
+| A tool or agent that needs fields (related tests, seams, evidence) | `ripr context --at <id>` | JSON packet (always JSON) |
+
+`explain --format agent` is a static advisory projection, not a runtime result.
+`explain --format json` is refused; use `ripr context`.
+
 ## When the agent should stop
 
 The block carries the rule, restated here because it is the part agents get

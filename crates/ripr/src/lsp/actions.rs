@@ -32,6 +32,7 @@ use crate::output::agent_seam_packets::{
 use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY, repair_start_command_for,
 };
+use crate::output::human::plain_stop_condition;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -345,7 +346,7 @@ pub(super) fn resolve_action(
     let data = action
         .data
         .clone()
-        .ok_or_else(|| "code action is missing its ripr data payload".to_string())?;
+        .ok_or_else(|| "code action is missing its ripr data payload; ask the client to request code actions again, and send each action back unchanged".to_string())?;
     let command_id = resolve_command_id(&action, &data)?;
     let parsed = parse_validated_action_data(&data, &command_id)?;
     if parsed.addresses_artifact() {
@@ -418,7 +419,7 @@ fn resolve_command_id(action: &CodeAction, data: &Value) -> Result<String, Strin
         Some(capability) if capability != "server" && !capability.trim().is_empty() => {
             Ok(capability.to_string())
         }
-        _ => Err("code action carries no command and its payload cannot recover one".to_string()),
+        _ => Err("code action carries no command and its payload cannot recover one; ask the client to request code actions again, and send each action back unchanged".to_string()),
     }
 }
 
@@ -1398,7 +1399,7 @@ fn first_repair_packet_text(
     {
         lines.push(format!("- Changed behavior: {changed_behavior}"));
     }
-    lines.push(format!("- Missing discriminator: {missing_discriminator}"));
+    lines.push(format!("- Missing check: {missing_discriminator}"));
     if let Some(focused_proof_intent) = focused_proof_intent_for_packet(repair_route) {
         lines.push(format!("- Focused proof intent: {focused_proof_intent}"));
     }
@@ -1423,7 +1424,7 @@ fn first_repair_packet_text(
         lines.push("- Stop conditions:".to_string());
         for item in items {
             if let Some(text) = item.as_str().map(str::trim).filter(|text| !text.is_empty()) {
-                lines.push(format!("  - {text}"));
+                lines.push(format!("  - {}", plain_stop_condition(text)));
             }
         }
     }
@@ -1532,14 +1533,17 @@ fn python_repair_card_text(
     lines.push("Current test evidence:".to_string());
     if let Some(related_test) = related_test {
         lines.push(format!("  Related test target: {related_test}"));
-        lines.push("  Current evidence is weak preview evidence; strengthen it with the missing discriminator.".to_string());
+        lines.push(
+            "  Current evidence is weak preview evidence; strengthen it with the missing check."
+                .to_string(),
+        );
     } else {
         lines.push(
             "  No related test selector is available in this GapRecord; use the suggested file."
                 .to_string(),
         );
     }
-    lines.push("Missing discriminator:".to_string());
+    lines.push("Missing check:".to_string());
     lines.push(format!("  {missing_discriminator}"));
     lines.push("Recommended repair:".to_string());
     lines.push(format!("  {route_kind}"));
@@ -1574,7 +1578,7 @@ fn python_repair_card_text(
         lines.push("Stop conditions:".to_string());
         for item in items {
             if let Some(text) = item.as_str().map(str::trim).filter(|text| !text.is_empty()) {
-                lines.push(format!("  - {text}"));
+                lines.push(format!("  - {}", plain_stop_condition(text)));
             }
         }
     }
@@ -1617,7 +1621,7 @@ fn python_pytest_skeleton_target(snapshot: &AnalysisSnapshot, data: &Value) -> O
         "# RIPR Python repair skeleton".to_string(),
         format!("# Gap: {gap_identity}"),
         format!("# Suggested file: {target_file}"),
-        format!("# Missing discriminator: {missing_discriminator}"),
+        format!("# Missing check: {missing_discriminator}"),
     ];
     if let Some(changed_behavior) = route.get("changed_behavior").and_then(non_empty_string) {
         lines.push(format!("# Changed behavior: {changed_behavior}"));
@@ -1636,7 +1640,7 @@ fn python_pytest_skeleton_target(snapshot: &AnalysisSnapshot, data: &Value) -> O
         .map(str::trim)
         .filter(|item| !item.is_empty())
         .take(3)
-        .map(ToOwned::to_owned)
+        .map(plain_stop_condition)
         .collect::<Vec<_>>();
     if !stop_conditions.is_empty() {
         lines.push("# Stop if:".to_string());
@@ -2076,7 +2080,7 @@ fn limitation_array_contains_category(data: &Value, path: &[&str], category: &st
         })
 }
 
-fn static_limit_note(data: &Value) -> Option<String> {
+pub(super) fn static_limit_note(data: &Value) -> Option<String> {
     let mut lines = Vec::new();
     if let Some(kind) = string_at(data, &["static_limit_kind"]) {
         lines.push(format!("Static limit: {kind}"));
@@ -2365,7 +2369,7 @@ pub(super) fn show_related_test_params(
     });
     if !inside_root {
         return Err(format!(
-            "`{SHOW_RELATED_TEST_COMMAND}` target is not an existing file inside the workspace"
+            "`{SHOW_RELATED_TEST_COMMAND}` target is not an existing file inside the workspace; pass a file path or URI under the workspace root"
         ));
     }
     let position = Position::new(line, 0);
@@ -2884,6 +2888,46 @@ mod tests {
     }
 
     #[test]
+    fn python_skeleton_and_packet_render_the_stop_condition_in_plain_words() -> Result<(), String> {
+        let snapshot = python_snapshot();
+        let data = serde_json::json!({
+            "language": "python",
+            "canonical_gap_id": "gap:python:pricing",
+            "missing_discriminator": "amount == DISCOUNT_THRESHOLD",
+            "repair_route": {
+                "route_kind": "existing_test_strengthening",
+                "target_file": "tests/test_pricing.py",
+                "assertion_shape": "assert result == expected",
+                "stop_conditions": [
+                    "Stop if the expected value for the missing discriminator is ambiguous."
+                ]
+            },
+            "verification_commands": ["python -m pytest tests/test_pricing.py::test_boundary"]
+        });
+        let target = python_pytest_skeleton_target(&snapshot, &data)
+            .ok_or_else(|| "skeleton target was omitted".to_string())?;
+        let brief = target["brief"]
+            .as_str()
+            .ok_or_else(|| "skeleton target must contain a text brief".to_string())?;
+        let packet = first_repair_packet_text(
+            &data,
+            &data["repair_route"],
+            "python -m pytest tests/test_pricing.py::test_boundary",
+            "ripr agent receipt",
+        )
+        .ok_or_else(|| "packet text was omitted".to_string())?;
+        for (name, text) in [("skeleton", brief), ("packet", packet.as_str())] {
+            if !text.contains("Stop if the expected value for the missing check is ambiguous.") {
+                return Err(format!("{name} lacks the plain stop condition:\n{text}"));
+            }
+            if text.contains("missing discriminator is ambiguous") {
+                return Err(format!("{name} kept the jargon stop condition:\n{text}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn lsp_actions_do_not_relabel_prose_as_a_missing_discriminator() -> Result<(), String> {
         let snapshot = python_snapshot();
         let data = serde_json::json!({
@@ -3195,6 +3239,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 
