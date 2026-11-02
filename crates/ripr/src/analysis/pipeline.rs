@@ -1186,7 +1186,7 @@ const DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT: usize = 2_000;
 pub(crate) const DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV: &str =
     "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES";
 
-fn diff_changed_python_line_limit() -> Result<usize, String> {
+pub(crate) fn diff_changed_python_line_limit() -> Result<usize, String> {
     diff_changed_python_line_limit_from_env(diff_limit_env(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV))
 }
 
@@ -1200,7 +1200,7 @@ fn diff_changed_python_line_limit_from_env(
     )
 }
 
-fn diff_changed_typescript_line_limit() -> Result<usize, String> {
+pub(crate) fn diff_changed_typescript_line_limit() -> Result<usize, String> {
     diff_changed_typescript_line_limit_from_env(diff_limit_env(
         DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
     ))
@@ -1244,7 +1244,7 @@ fn changed_language_line_count(
 /// Whether `language`'s adapter would count `path` at all: routed to the
 /// language and not refused by its generated-name / excluded-directory
 /// authorities ahead of counting.
-fn language_admits_changed_path(
+pub(crate) fn language_admits_changed_path(
     path: &std::path::Path,
     language: LanguageId,
     language_config: &crate::config::LanguagesConfig,
