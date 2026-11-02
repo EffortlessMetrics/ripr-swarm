@@ -167,13 +167,7 @@ fn unknown_gap_retains_truthful_bases_and_json() -> Result<(), serde_json::Error
     assert_eq!(value["head_state"]["gap_state"], "unknown");
 
     head.canonical_owner = "other-owner".to_string();
-    let mismatch = compare_fixture_delta(
-        "gap:unknown",
-        true,
-        true,
-        Some(base.clone()),
-        Some(head),
-    );
+    let mismatch = compare_fixture_delta("gap:unknown", true, true, Some(base.clone()), Some(head));
     assert_eq!(
         mismatch.delta_attribution,
         DeltaAttribution::ComparisonUnknown
