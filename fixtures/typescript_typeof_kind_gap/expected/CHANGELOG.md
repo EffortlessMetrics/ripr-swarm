@@ -95,15 +95,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — typescript_typeof_kind_gap (9)
-
-Reason:
-RIPR-SPEC-0027: strong oracle with untied changed line no longer asks for another exact-value assertion (#12463)
-
-Command:
-`cargo xtask goldens bless typescript_typeof_kind_gap --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

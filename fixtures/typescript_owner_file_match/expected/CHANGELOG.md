@@ -819,15 +819,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — typescript_owner_file_match (38)
-
-Reason:
-RIPR-SPEC-0027: strong oracle with untied changed line no longer asks for another exact-value assertion (#12463)
-
-Command:
-`cargo xtask goldens bless typescript_owner_file_match --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

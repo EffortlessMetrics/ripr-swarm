@@ -768,15 +768,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — javascript_jsx_preview (35)
-
-Reason:
-RIPR-SPEC-0027: strong oracle with untied changed line no longer asks for another exact-value assertion (#12463)
-
-Command:
-`cargo xtask goldens bless javascript_jsx_preview --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

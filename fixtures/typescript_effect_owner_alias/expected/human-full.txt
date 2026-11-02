@@ -69,7 +69,7 @@ TypeScript preview card (advisory)
   related test: tests/receipt.test.ts:4 unchanged return is not the audit event
   oracle: exact_value (strong)
   missing discriminator: log contains "audit"
-  suggested assertion shape: The related test's check is already strong, but ripr cannot tie it to the changed line. Exercise the changed branch with an input that flips it.
+  suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
   verify: node --test tests/receipt.test.ts
   repair packet ready: false
   why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: identify an effect-observing assertion before this repair can be handed to an agent: the strong borrowed assertion is not confirmed to observe the changed effect

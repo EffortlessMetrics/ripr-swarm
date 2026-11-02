@@ -433,15 +433,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — ts_repair_packet_boundary_literal_guarded (37)
-
-Reason:
-RIPR-SPEC-0027: strong oracle with untied changed line no longer asks for another exact-value assertion (#12463)
-
-Command:
-`cargo xtask goldens bless ts_repair_packet_boundary_literal_guarded --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

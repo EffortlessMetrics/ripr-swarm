@@ -79,15 +79,3 @@ Command:
 
 Updated:
 - `expected/human.txt`
-
-## Pending — ts_table_row_expected_refused (8)
-
-Reason:
-RIPR-SPEC-0027: strong oracle with untied changed line no longer asks for another exact-value assertion (#12463)
-
-Command:
-`cargo xtask goldens bless ts_table_row_expected_refused --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
