@@ -21328,6 +21328,9 @@ outputs = [
 ]
 metrics = [
   "r_preview_contract_registered",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0394"
 name = "JVM shared build facts and separate Java, Kotlin, and Scala evidence contracts"
 spec = "docs/specs/RIPR-SPEC-0394-jvm-shared-build-and-separate-language-evidence-contracts.md"
