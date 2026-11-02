@@ -693,6 +693,25 @@ enum PreflightReceiptStatus {
     Missing,
     /// Receipt file exists but cannot be read or parsed.
     Unreadable(String),
+    /// Recorded execution outcomes remain visible even when reuse is unavailable.
+    RecordedUnavailable {
+        execution_head_sha: String,
+        current_head_sha: String,
+        overall_status: String,
+        passed: usize,
+        failed: usize,
+        not_run: usize,
+        unavailable_reason: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreflightRecordedOutcomes {
+    execution_head_sha: String,
+    overall_status: String,
+    passed: usize,
+    failed: usize,
+    not_run: usize,
 }
 
 /// Everything the pr-summary section renders, computed once.
@@ -762,6 +781,98 @@ fn preflight_receipt_status(
     }
 }
 
+fn parse_recorded_outcomes(value: &Value) -> Result<PreflightRecordedOutcomes, String> {
+    let Some(executed) = value
+        .pointer("/head/sha")
+        .and_then(Value::as_str)
+        .filter(|sha| !sha.is_empty())
+    else {
+        return Err("preflight receipt carries no head.sha".to_string());
+    };
+    let Some(commands) = value.get("commands").and_then(Value::as_array) else {
+        return Err("preflight receipt carries no commands".to_string());
+    };
+    let mut failed = false;
+    for command in commands {
+        let exit_code = match command.get("exit_code") {
+            Some(Value::Null) => None,
+            Some(value) => match value.as_i64().and_then(|code| i32::try_from(code).ok()) {
+                Some(code) => Some(code),
+                None => {
+                    return Err("preflight receipt has an invalid command exit code".to_string());
+                }
+            },
+            None => return Err("preflight receipt carries no command exit code".to_string()),
+        };
+        let status = command.get("status").and_then(Value::as_str);
+        if (status == Some("pass") && exit_code != Some(0))
+            || (status == Some("not_run") && exit_code.is_some())
+        {
+            return Err("preflight receipt command status contradicts its exit code".to_string());
+        }
+        match status {
+            Some("pass") if !failed => {}
+            Some("fail") if !failed => failed = true,
+            Some("not_run") if failed => {}
+            _ => {
+                return Err("preflight receipt has an invalid command outcome sequence".to_string());
+            }
+        }
+    }
+    let overall = if failed { "fail" } else { "pass" };
+    if value.get("overall_status").and_then(Value::as_str) != Some(overall) {
+        return Err("preflight receipt overall status contradicts command outcomes".to_string());
+    }
+    let count = |status: &str| {
+        commands
+            .iter()
+            .filter(|command| command.get("status").and_then(Value::as_str) == Some(status))
+            .count()
+    };
+    Ok(PreflightRecordedOutcomes {
+        execution_head_sha: executed.to_string(),
+        overall_status: overall.to_string(),
+        passed: count("pass"),
+        failed: count("fail"),
+        not_run: count("not_run"),
+    })
+}
+
+fn receipt_plan_matches(value: &Value, expected: &[(String, Vec<String>)]) -> Result<(), String> {
+    let Some(commands) = value.get("commands").and_then(Value::as_array) else {
+        return Err("preflight receipt carries no commands".to_string());
+    };
+    if commands.len() != expected.len() {
+        return Err("preflight receipt command plan is incomplete".to_string());
+    }
+    for (command, (name, packs)) in commands.iter().zip(expected) {
+        if command.get("command").and_then(Value::as_str) != Some(name.as_str())
+            || command.get("packs") != Some(&json!(packs))
+        {
+            return Err(
+                "preflight receipt command identities differ from the current plan".to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn recorded_unavailable(
+    outcomes: PreflightRecordedOutcomes,
+    current_head_sha: &str,
+    unavailable_reason: &str,
+) -> PreflightReceiptStatus {
+    PreflightReceiptStatus::RecordedUnavailable {
+        execution_head_sha: outcomes.execution_head_sha,
+        current_head_sha: current_head_sha.to_string(),
+        overall_status: outcomes.overall_status,
+        passed: outcomes.passed,
+        failed: outcomes.failed,
+        not_run: outcomes.not_run,
+        unavailable_reason: unavailable_reason.to_string(),
+    }
+}
+
 /// Classify without rewriting execution identity. Bindings are advisory local
 /// observations, not producer authentication or protected qualification.
 fn parse_preflight_receipt(
@@ -810,73 +921,39 @@ fn parse_preflight_receipt(
     {
         return unreadable("preflight receipt execution identity contradicts its binding");
     }
+    let outcomes = match parse_recorded_outcomes(&value) {
+        Ok(outcomes) => outcomes,
+        Err(reason) => return unreadable(&reason),
+    };
     let Some(current) = current else {
-        return unreadable("current reuse context is unavailable");
+        return recorded_unavailable(outcomes, head_sha, "current reuse context is unavailable");
     };
     if current.execution_head_sha != head_sha || !binding.compatible_with(current) {
-        return unreadable("preflight source, base, environment or plan changed");
+        return recorded_unavailable(
+            outcomes,
+            head_sha,
+            "preflight source, base, environment or plan changed",
+        );
     }
-    let Some(commands) = value.get("commands").and_then(Value::as_array) else {
-        return unreadable("preflight receipt carries no commands");
-    };
-    if commands.len() != expected.len() {
-        return unreadable("preflight receipt command plan is incomplete");
+    if let Err(reason) = receipt_plan_matches(&value, expected) {
+        return recorded_unavailable(outcomes, head_sha, &reason);
     }
-    let mut failed = false;
-    for (command, (name, packs)) in commands.iter().zip(expected) {
-        if command.get("command").and_then(Value::as_str) != Some(name.as_str())
-            || command.get("packs") != Some(&json!(packs))
-        {
-            return unreadable("preflight receipt command identities differ from the current plan");
-        }
-        let exit_code = match command.get("exit_code") {
-            Some(Value::Null) => None,
-            Some(value) => match value.as_i64().and_then(|code| i32::try_from(code).ok()) {
-                Some(code) => Some(code),
-                None => return unreadable("preflight receipt has an invalid command exit code"),
-            },
-            None => return unreadable("preflight receipt carries no command exit code"),
-        };
-        let status = command.get("status").and_then(Value::as_str);
-        if (status == Some("pass") && exit_code != Some(0))
-            || (status == Some("not_run") && exit_code.is_some())
-        {
-            return unreadable("preflight receipt command status contradicts its exit code");
-        }
-        // A timeout may fail with code 0, and launch/signal failures have no code.
-        match status {
-            Some("pass") if !failed => {}
-            Some("fail") if !failed => failed = true,
-            Some("not_run") if failed => {}
-            _ => return unreadable("preflight receipt has an invalid command outcome sequence"),
-        }
-    }
-    let overall = if failed { "fail" } else { "pass" };
-    if value.get("overall_status").and_then(Value::as_str) != Some(overall) {
-        return unreadable("preflight receipt overall status contradicts command outcomes");
-    }
-    let count = |status: &str| {
-        commands
-            .iter()
-            .filter(|command| command.get("status").and_then(Value::as_str) == Some(status))
-            .count()
-    };
     if executed == head_sha {
         PreflightReceiptStatus::Fresh {
-            execution_head_sha: executed.to_string(),
-            overall_status: overall.to_string(),
-            passed: count("pass"),
-            failed: count("fail"),
-            not_run: count("not_run"),
+            execution_head_sha: outcomes.execution_head_sha,
+            overall_status: outcomes.overall_status,
+            passed: outcomes.passed,
+            failed: outcomes.failed,
+            not_run: outcomes.not_run,
         }
     } else {
         PreflightReceiptStatus::CarriedForward {
-            execution_head_sha: executed.to_string(),
+            execution_head_sha: outcomes.execution_head_sha,
             current_head_sha: head_sha.to_string(),
-            overall_status: overall.to_string(),
-            passed: count("pass"),
-            failed: count("fail"),
-            not_run: count("not_run"),
+            overall_status: outcomes.overall_status,
+            passed: outcomes.passed,
+            failed: outcomes.failed,
+            not_run: outcomes.not_run,
         }
     }
 }
@@ -950,6 +1027,17 @@ fn preflight_receipt_line(receipt: &PreflightReceiptStatus) -> String {
         PreflightReceiptStatus::Unreadable(err) => format!(
             "Preflight receipt: no fresh preflight receipt ({}).\n",
             error_one_liner(err)
+        ),
+        PreflightReceiptStatus::RecordedUnavailable {
+            execution_head_sha,
+            current_head_sha,
+            overall_status,
+            passed,
+            failed,
+            not_run,
+            unavailable_reason,
+        } => format!(
+            "Preflight receipt: recorded execution at `{execution_head_sha}` — not reusable for current head `{current_head_sha}` ({unavailable_reason}); original overall status `{overall_status}`; original commands run: {passed} pass, {failed} fail ({not_run} not run); advisory only.\n"
         ),
     }
 }
@@ -1294,32 +1382,77 @@ mod tests {
                 .map_err(|error| error.to_string())?;
             current[field] = json!("changed");
             let current = serde_json::from_value(current).map_err(|error| error.to_string())?;
+            let status =
+                parse_preflight_receipt(&text, "executed-sha", Some(&current), &receipt_plan());
             assert!(
                 matches!(
-                    parse_preflight_receipt(&text, "executed-sha", Some(&current), &receipt_plan()),
-                    PreflightReceiptStatus::Unreadable(_)
+                    status,
+                    PreflightReceiptStatus::RecordedUnavailable {
+                        passed: 1,
+                        failed: 1,
+                        not_run: 1,
+                        ..
+                    }
                 ),
                 "{field}"
             );
+            assert!(
+                preflight_receipt_line(&status)
+                    .contains("original commands run: 1 pass, 1 fail (1 not run)")
+            );
         }
+        let status = parse_preflight_receipt(&text, "executed-sha", None, &receipt_plan());
         assert!(matches!(
-            parse_preflight_receipt(&text, "executed-sha", None, &receipt_plan()),
-            PreflightReceiptStatus::Unreadable(_)
+            status,
+            PreflightReceiptStatus::RecordedUnavailable { .. }
         ));
         Ok(())
     }
 
     #[test]
+    fn incompatible_binding_retains_recorded_outcomes_after_source_tree_change() {
+        let text = bound_receipt().to_string();
+        let mut current = test_binding("executed-sha");
+        current.source_tree = "changed-tree".to_string();
+        let status =
+            parse_preflight_receipt(&text, "executed-sha", Some(&current), &receipt_plan());
+        assert_eq!(
+            status,
+            PreflightReceiptStatus::RecordedUnavailable {
+                execution_head_sha: "executed-sha".to_string(),
+                current_head_sha: "executed-sha".to_string(),
+                overall_status: "fail".to_string(),
+                passed: 1,
+                failed: 1,
+                not_run: 1,
+                unavailable_reason: "preflight source, base, environment or plan changed"
+                    .to_string(),
+            }
+        );
+        let rendered = preflight_receipt_line(&status);
+        assert!(rendered.contains("not reusable for current head"));
+        assert!(rendered.contains("original overall status `fail`"));
+        assert!(!rendered.contains("no fresh preflight receipt"));
+    }
+
+    #[test]
     fn altered_or_incomplete_execution_receipts_refuse_reuse() -> Result<(), String> {
         let check = |value: Value| {
+            let status = parse_preflight_receipt(
+                &value.to_string(),
+                "executed-sha",
+                Some(&test_binding("executed-sha")),
+                &receipt_plan(),
+            );
             assert!(matches!(
-                parse_preflight_receipt(
-                    &value.to_string(),
-                    "executed-sha",
-                    Some(&test_binding("executed-sha")),
-                    &receipt_plan()
-                ),
+                status,
                 PreflightReceiptStatus::Unreadable(_)
+                    | PreflightReceiptStatus::RecordedUnavailable { .. }
+            ));
+            assert!(!matches!(
+                status,
+                PreflightReceiptStatus::Fresh { .. }
+                    | PreflightReceiptStatus::CarriedForward { .. }
             ));
         };
         for pointer in [
@@ -1360,10 +1493,17 @@ mod tests {
             assert!(
                 matches!(
                     status,
-                    PreflightReceiptStatus::Unreadable(_) | PreflightReceiptStatus::Stale { .. }
+                    PreflightReceiptStatus::Unreadable(_)
+                        | PreflightReceiptStatus::Stale { .. }
+                        | PreflightReceiptStatus::RecordedUnavailable { .. }
                 ),
                 "{pointer}"
             );
+            assert!(!matches!(
+                status,
+                PreflightReceiptStatus::Fresh { .. }
+                    | PreflightReceiptStatus::CarriedForward { .. }
+            ));
         }
         let mut value = bound_receipt();
         value["commands"]

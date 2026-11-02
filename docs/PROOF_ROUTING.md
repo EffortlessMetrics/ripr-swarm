@@ -129,13 +129,18 @@ The historical commit receipts are P17 `05fd3ef0` and P18
 
 ### Retained preflight evidence in PR summaries
 
-`pr-summary` reads the existing schema-`0.1` local preflight receipt and keeps
-its recorded head, base and command outcomes visible. For the same head, it
-compares command arguments with the current route's deduplicated required
-commands. A missing command is unproven; a recorded `not_run` is distinct from
-a command failure. An empty-range receipt cannot supply a passing result for
-a nonempty current route. Malformed, duplicate or inconsistent command records
-cannot supply current command coverage.
+`pr-summary` reads the local preflight receipt and keeps recorded head, base and
+command outcomes visible even when reuse is unavailable. Schema `0.2` receipts
+bind reuse to executed source tree, base/merge-base, routed plan, and observed
+local environment; when that binding no longer matches, the summary labels the
+receipt **recorded but not reusable** and still renders the original execution
+identity and validated command outcomes. Schema `0.1` receipts without a supported
+binding contract remain visible as stale head mismatches only. For the same head
+with a compatible binding, it compares command arguments with the current route's
+deduplicated required commands. A missing command is unproven; a recorded
+`not_run` is distinct from a command failure. An empty-range receipt cannot
+supply a passing result for a nonempty current route. Malformed, duplicate or
+inconsistent command records cannot supply current command coverage.
 
 Changing the route does not erase earlier command results. The summary names
 newly missing obligations and retains the original aggregate, even when a
