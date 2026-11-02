@@ -109,7 +109,7 @@ pub(super) fn actionable_in_owner(classified: &[ClassifiedSeam], entry: &Classif
     classified
         .iter()
         .filter(|other| {
-            class_rank(other.class).is_some()
+            is_pilot_rankable(other)
                 && other.seam.file() == entry.seam.file()
                 && other.seam.owner() == entry.seam.owner()
         })
@@ -188,7 +188,7 @@ fn is_pilot_rankable(entry: &ClassifiedSeam) -> bool {
     class_rank(entry.class).is_some() && !is_static_limited(entry)
 }
 
-fn counts_as_withheld_static_limitation(entry: &ClassifiedSeam) -> bool {
+pub(super) fn counts_as_withheld_static_limitation(entry: &ClassifiedSeam) -> bool {
     entry.class.is_static_limitation()
         || (class_rank(entry.class).is_some() && is_static_limited(entry))
 }
