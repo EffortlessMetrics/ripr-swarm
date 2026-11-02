@@ -3079,9 +3079,30 @@ fn hops_call_the_indexed_callees(owner_name: &str, hops: &[HelperHop], index: &R
         let Some(file) = files.get(&hop.caller.file) else {
             return false;
         };
-        let masked = crate::analysis::language::mask_rust_comments_and_strings(&hop.caller.body);
-        let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
-        let rebinds = ["fn ", "let ", "let mut "].iter().any(|prefix| {
+        callee_is_unique(callee, index)
+            && !caller_body_rebinds_free_callee_name(&hop.caller.body, callee)
+            && !super::reveal::file_imports_foreign_callee_name(
+                &file.source,
+                callee,
+                &index.package_names,
+            )
+    })
+}
+
+/// Whether `body` rebinds the bare name `callee` before a tail call: a nested
+/// `fn`/`const`/`static`, a `let` binding, or a `use` item that imports that
+/// name into the caller's scope (#10357 item 2). Unrelated `use` items do not
+/// count; the full [`caller_names_callee_only_as_a_call`] scan is reserved for
+/// identity-bound chains (#9638).
+fn caller_body_rebinds_free_callee_name(body: &str, callee: &str) -> bool {
+    if callee.is_empty() {
+        return true;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    if ["fn ", "let ", "let mut ", "static ", "const "]
+        .iter()
+        .any(|prefix| {
             let pattern = format!("{prefix}{callee}");
             masked.match_indices(&pattern).any(|(at, _)| {
                 !masked[..at].chars().next_back().is_some_and(is_word)
@@ -3090,14 +3111,13 @@ fn hops_call_the_indexed_callees(owner_name: &str, hops: &[HelperHop], index: &R
                         .next()
                         .is_some_and(is_word)
             })
-        });
-        callee_is_unique(callee, index)
-            && !rebinds
-            && !super::reveal::file_imports_foreign_callee_name(
-                &file.source,
-                callee,
-                &index.package_names,
-            )
+        })
+    {
+        return true;
+    }
+    super::reveal::flattened_use_paths(body).iter().any(|import| {
+        import.alias.as_deref() == Some(callee)
+            || import.path.rsplit("::").next() == Some(callee)
     })
 }
 
@@ -3139,10 +3159,10 @@ fn hops_forward_owner_result_with(
                 // user macro may expand to an early `return` the textual
                 // return scan cannot see.
                 && !caller_rebinds_parameter(&hop.caller.body, callee)
-                // #10357 item 2: nested items, `const`/`static`, or a `use`
-                // of the same bare name must not forward through a wrapper
-                // (`caller_rebinds_parameter` covers `let` only).
-                && caller_names_callee_only_as_a_call(&hop.caller.body, callee)
+                // #10357 item 2: nested items or a `use` of the same bare name
+                // must not forward through a wrapper (`caller_rebinds_parameter`
+                // covers `let`/match only).
+                && !caller_body_rebinds_free_callee_name(&hop.caller.body, callee)
                 && !caller_invokes_opaque_macro(&hop.caller.body, hop.transparent_macros_rebound)
                 && hop.arguments.iter().all(|argument| {
                     !is_identifier(argument.trim())
@@ -5306,6 +5326,12 @@ mod tests {
             "is_bulk",
             &chain_with_args(
                 "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { 5 } else { 0 }\n}"
+            )
+        ));
+        assert!(chain_forwards_owner_result(
+            "is_bulk",
+            &chain_with_args(
+                "pub fn w(qty: u32) -> u32 {\n    use std::collections::HashMap;\n    if is_bulk(qty) { 5 } else { 0 }\n}"
             )
         ));
         for body in [

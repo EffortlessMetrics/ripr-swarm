@@ -1,0 +1,55 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_wrapper_static_shadowed_callee/input
+
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 2 unclear. 2 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Start here:
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
+  File: ./src/lib.rs:2
+  Static exposure: unknown (severity: note, confidence 0.66)
+  Why unknown: ripr could not follow the changed value to something a test can check (a return value or side effect)
+  Gap ID (for scripts): gap:rust:src/lib.rs:is_bulk:predicate_boundary:predicate:10==qty
+  Changed behavior: 10 <= qty
+  Analyzer limit: Discriminator unconfirmed: no admitted discriminating oracle is paired with the
+    owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle
+    do not establish that discriminator
+  Related test (1 of 2 matched rows): tests/api.rs:4 wrapper_pins_the_boundary
+  Next step: Trace the changed value to its output or effect, and inspect what the related test
+    actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or
+    strengthen a test only if this inspection finds a gap. Compare the original and changed
+    implementations with a focused run using the project's configured test runner (`cargo test` for
+    ordinary Cargo tests). Static classification may remain unknown
+  Evidence: reach yes · infection yes · propagation unknown · observation yes · assertion weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach is_bulk: wrapper_pins_the_boundary
+    - infection yes: Detected related test input at the changed boundary
+    - 11 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/rust_wrapper_static_shadowed_callee/input --diff <cwd>/fixtures/rust_wrapper_static_shadowed_callee/diff.patch --mode fast probe:src_lib.rs:predicate:41e056ec
+  ripr context --root <cwd>/fixtures/rust_wrapper_static_shadowed_callee/input --diff <cwd>/fixtures/rust_wrapper_static_shadowed_callee/diff.patch --mode fast --at probe:src_lib.rs:predicate:41e056ec
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins the changed boundary value exactly; a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/rust_wrapper_static_shadowed_callee/input --at src/lib.rs:2 --kind predicate
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:2 (unknown: propagation unclear); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
+  Hidden classes:
+    unknown: propagation unclear = ripr could not follow the change through an opaque boundary
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
