@@ -666,7 +666,10 @@ Two pattern terms are used below.
     (RIPR-SPEC-0120) puts it. The re-grade changes the reported
     `oracle_kind` and `oracle_strength` of that related test for that finding
     only, so the finding never reads `exposed` through an oracle that reports
-    `unknown`. It adds no oracle kind or strength value.
+    `unknown`. It adds no oracle kind or strength value. Adding the two names
+    to the trusted macro set also stops a verified-import invocation from
+    reading as an opaque macro in the other owner-pin scans, as `assert_ok!`
+    already does.
 
 ### Reveal admission of an excluded sibling
 
@@ -784,8 +787,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 - Rule 10: acceptance examples 41 to 44 read as stated, through the public
   API. Every negative control is the credited twin with exactly one thing
-  changed, and the two RIPR-SPEC-0120 inventory rows
-  `claims_assert_ok_eq` and `claims_assert_some_eq` flip on purpose.
+  changed. The RIPR-SPEC-0120 inventory rows `claims_assert_ok_eq` and
+  `claims_assert_some_eq` use a `predicate` probe and stay `unknown` on
+  purpose; the `return_value` twins credit in the rule 10 test.
 - Each row of the Problem table, and each overstatement listed after it,
   reads the kind and strength the rules give, in JSON `related_tests[]`.
 - `assert_eq!(check(20), Err(e))` with a bound value stays
@@ -1018,9 +1022,10 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 ## Test Mapping
 
-- Rule 10: `crates/ripr/tests/claims_payload_eq_owner_pin.rs` and the
+- Rule 10: `crates/ripr/tests/claims_payload_eq_owner_pin.rs`; the
   inventory rows in
-  `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs`.
+  `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs` are the
+  predicate-family contrast.
 - Existing: `crates/ripr/src/analysis/extract/oracles/classify.rs` unit tests.
 - Existing: `classify.rs` unit test for `ensure!(s != X)` changes with
   example 13.

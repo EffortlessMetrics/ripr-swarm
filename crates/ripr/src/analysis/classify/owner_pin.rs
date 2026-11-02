@@ -4903,7 +4903,8 @@ impl OwnerReturnPin {
         syntax: &OwnerPinSyntax,
     ) -> bool {
         CLAIMS_EQ_MACROS.into_iter().any(|name| {
-            claims_eq_operands(&assertion.text, name).is_some()
+            assertion.text.contains(name)
+                && claims_eq_operands(&assertion.text, name).is_some()
                 && self.admits_spelled(test, assertion, index, imports_foreign, syntax, name)
         })
     }
@@ -5109,20 +5110,20 @@ impl OwnerReturnPin {
             // `assert_eq!(first.unwrap(), second)` (the unwrapped pin) and only
             // on the verified `use claims::..` import under its own name, in a
             // test's own file (a doc example is its own crate).
-            let imported = doctest.is_none()
-                && index.files().get(&test.file).is_some_and(|facts| {
-                    source_imported_claims_macros(&facts.source).contains(&spelling)
-                });
             // The opposite exit panics the macro before any comparison, so
             // only a pin on the macro's own variant reads.
             let direction = matches!(
                 (spelling, unwrap_wrapper),
                 ("assert_ok_eq", Some("Ok")) | ("assert_some_eq", Some("Some"))
             );
-            // Only a literal expected operand is a discriminator.
-            if !imported
-                || !direction
+            // Only a literal expected operand is a discriminator. The cheap
+            // refusals come first: the import check parses the whole file.
+            if !direction
                 || helper_arguments::expected_literal(second, index).is_none()
+                || doctest.is_some()
+                || !index.files().get(&test.file).is_some_and(|facts| {
+                    source_imported_claims_macros(&facts.source).contains(&spelling)
+                })
             {
                 return false;
             }
@@ -7050,7 +7051,8 @@ pub(in crate::analysis) fn claims_payload_eq_candidates(test: &TestSummary) -> V
     if !CLAIMS_EQ_MACROS.iter().any(|name| test.body.contains(name)) {
         return Vec::new();
     }
-    test.body
+    let mut candidates: Vec<OracleFact> = test
+        .body
         .lines()
         .enumerate()
         .filter_map(|(offset, line)| {
@@ -7076,7 +7078,12 @@ pub(in crate::analysis) fn claims_payload_eq_candidates(test: &TestSummary) -> V
                     ok_value_observed: None,
                 })
         })
-        .collect()
+        .collect();
+    // The statements extraction drops as never run (after `panic!`, `todo!`,
+    // `return`, ...) are not nominated either; the owner pin does not read the
+    // diverging macros, so this is the only gate for them.
+    crate::analysis::extract::retain_reached_oracles(&mut candidates, &test.body, test.start_line);
+    candidates
 }
 
 /// RIPR-SPEC-0197 claims payload equality: the two compared operands of one

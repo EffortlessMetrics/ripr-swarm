@@ -1655,8 +1655,10 @@ payload with `expected`, so each reads as the unwrapped pin above
 5. Grade. The oracle extractor stays text-only and reads the line
    `unknown` / none (RIPR-SPEC-0120). Reveal grades it `exact_value` /
    strong for one probe, and only for the `return_value` family, when this
-   pin admits the assertion (RIPR-SPEC-0231 rule 10). No other consumer of an
-   oracle's kind reads a different grade.
+   pin admits the assertion (RIPR-SPEC-0231 rule 10). The grade lives in the
+   finding's related test. Analyses that read the extracted oracle list
+   directly (test-grip evidence, the refusal notes) still see no oracle on
+   that line.
 
 The import is read at file granularity, with the same accepted limitation as
 "Claims payload pins".
@@ -2834,11 +2836,12 @@ assertions. This repair shares the existing callback without that larger migrati
 
 - Claims payload equality pins (#12304):
   `crates/ripr/tests/claims_payload_eq_owner_pin.rs` (the credited twins and
-  one negative control per refusal above), the inventory rows
-  `claims_assert_ok_eq` / `claims_assert_some_eq` in
-  `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs`, and the
-  direction unit tests in
-  `crates/ripr/src/analysis/classify/owner_pin/tests/claims_direction.rs`.
+  one negative control per refusal above, the early-`Err` and `None` exit
+  directions, the non-`return_value` families and a multi-line invocation).
+  The inventory rows `claims_assert_ok_eq` / `claims_assert_some_eq` in
+  `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs` use a
+  `predicate` probe and therefore stay `unknown` on purpose; the
+  return-value twins are in the test above.
 - Claims payload pins (#9619): `crates/ripr/tests/claims_payload_owner_pin.rs`
   (single and grouped import, trailing `assert_err!`, `assert_some!`
   positives; missing, foreign, renamed, locally redefined import, `mut`,
