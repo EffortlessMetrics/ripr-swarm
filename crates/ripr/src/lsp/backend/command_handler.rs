@@ -770,7 +770,7 @@ pub(super) fn no_repair_packet_reason(gap_id: Option<&str>) -> String {
     };
     format!(
         "{subject}: neither {DEFAULT_ACTIONABLE_GAPS_OUT} nor {DEFAULT_GAP_DECISION_LEDGER_OUT} \
-holds one; run `ripr pilot --root .` for seams with their repair commands, or write the gap \
+holds one; run `ripr pilot --root .` for gaps with their repair commands, or write the gap \
 ledger with `ripr reports gap-ledger --check-output PATH` from saved `ripr check --format json` \
 output"
     )
