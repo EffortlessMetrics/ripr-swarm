@@ -5944,6 +5944,10 @@ tests = [
   "crates/ripr/tests/printed_command_paste.rs::extract_text_empty_rest_guard_does_not_consume_the_next_bash_command",
   "crates/ripr/tests/printed_command_paste.rs::extract_text_does_not_pair_powershell_text_inside_a_bash_code_span",
   "crates/ripr/tests/printed_command_paste.rs::extract_text_marks_unavailable_powershell_disclosure_and_does_not_paste_it",
+  "crates/ripr/tests/printed_command_paste.rs::extract_text_pairs_multi_command_bash_and_powershell_fences_by_position",
+  "crates/ripr/tests/printed_command_paste.rs::extract_text_rejects_mismatched_multi_command_fence_counts",
+  "crates/ripr/tests/printed_command_paste.rs::extract_text_second_powershell_fence_line_is_paired_to_the_second_bash_command",
+  "crates/ripr/tests/printed_command_paste.rs::sink_ingest_extracts_stderr_commands_when_stdout_is_json",
   "crates/ripr/tests/generated_review_workflow.rs::recovery_ref_quoting_accepts_adjacent_and_refspec_forms",
   "crates/ripr/tests/generated_review_workflow.rs::odd_unterminated_quote_before_unquoted_hostile_ref_is_not_quoted",
   "crates/ripr/src/output/first_pr/rendering.rs::tests::preflight_recovery_preserves_markdown_backticks_and_discloses_unsupported_forms",
@@ -13636,6 +13640,10 @@ tests = [
   "crates/ripr/src/analysis/witness/tests.rs::json_and_markdown_derive_from_the_same_normalized_dto",
   "crates/ripr/src/analysis/witness/tests.rs::unspecified_repo_completeness_is_a_typed_limitation_not_optimistic_parity",
   "crates/ripr/src/analysis/witness/tests.rs::production_retain_does_not_mutate_producer_classes_or_relations",
+  "crates/ripr/src/analysis/test_grip_evidence/summary.rs::exact_and_broad_oracles_produce_distinct_fingerprints",
+  "crates/ripr/src/analysis/test_grip_evidence/summary.rs::proximity_relation_stays_in_the_semantic_fingerprint",
+  "crates/ripr/src/analysis/test_grip_evidence/summary.rs::missing_discriminator_identity_changes_the_fingerprint",
+  "crates/ripr/src/domain/finding_test_evidence.rs::finding_projection_prefers_canonical_identity_and_does_not_invent_targets",
 ]
 fixtures = []
 code = [
@@ -13644,6 +13652,9 @@ code = [
   "crates/ripr/src/analysis/witness/relations.rs",
   "crates/ripr/src/analysis/witness/adapters.rs",
   "crates/ripr/src/analysis/witness/parity.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/summary.rs",
+  "crates/ripr/src/domain/finding_test_evidence.rs",
+  "crates/ripr/src/domain/test_evidence_summary.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
 ]
