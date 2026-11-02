@@ -1797,9 +1797,11 @@ pub(in crate::analysis) fn may_name_constant(source: &str, name: &str) -> bool {
 /// declares (#7543). `None` when the file may bind that name to anything
 /// else: it declares no such enum or more than one, declares another item
 /// of that name, imports the name, glob-imports a module (which may bring
-/// a same-named struct with constants), or calls an item macro (whose
-/// output is not read). So an uncased `Kind::A` stays unreadable unless the
-/// file itself shows `A` is a variant of `Kind`.
+/// a same-named struct with constants), calls an item macro (whose
+/// output is not read), or the owner function or an item in its body
+/// carries a non-builtin attribute or derive (whose expansion may declare
+/// a local `Kind`, #7692). So an uncased `Kind::A` stays unreadable unless
+/// the file itself shows `A` is a variant of `Kind`.
 fn declared_enum_variants(
     source: &str,
     type_name: &str,
@@ -1857,6 +1859,7 @@ fn declared_enum_variants(
             || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
             || parent_glob_outside_this_file(&node)
             || may_shadow_in_owner_scope(&node, owner)
+            || owner_attr_may_emit_items(&node, owner, source)
         {
             return None;
         }
@@ -1937,10 +1940,11 @@ fn may_shadow_in_owner_scope(node: &ra_ap_syntax::SyntaxNode, owner: &str) -> bo
 /// module path the recorded `mod` edges place in exactly one workspace file
 /// (`use kinds::Kind;` after `mod kinds;`, `use crate::a::b::Kind;`,
 /// `use self::..`/`use super::..`), and that file declares the enum
-/// (`declared_enum_variants`). An owner item or item macro that may define
-/// `Kind`, an inline or `cfg`-duplicated module step, a `cfg`-gated import
-/// or step, a chain that does not start at a `src/` or `crates/<name>/src/`
-/// crate root, any workspace `#[path]`, a
+/// (`declared_enum_variants`). An owner item, item macro, or non-builtin
+/// attribute or derive on the owner function or an item in its body that
+/// may define `Kind` (#7692), an inline or `cfg`-duplicated module step, a
+/// `cfg`-gated import or step, a chain that does not start at a `src/` or
+/// `crates/<name>/src/` crate root, any workspace `#[path]`, a
 /// re-export, an external or package-named root, an `include!` edge, or any
 /// unresolved edge reads nothing, so `Kind::A` stays unreadable.
 fn imported_enum_variants(
@@ -1983,6 +1987,7 @@ fn imported_enum_variants(
             || ast::TypeAlias::cast(node.clone()).is_some_and(|item| named(&item))
             || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
             || may_shadow_in_owner_scope(&node, owner_name)
+            || owner_attr_may_emit_items(&node, owner_name, &owner.source)
         {
             return None;
         }
@@ -2180,56 +2185,113 @@ fn imported_enum_variants(
     declared_enum_variants(&files.get(&file)?.source, type_name, owner_name)
 }
 
-/// Whether a file may hold items the index never reads: an item-level
-/// macro call, an attribute other than a compiler builtin (a proc-macro
-/// attribute or custom derive may emit any item, and `cfg_attr` may apply
-/// one), or an import that may shadow a builtin. An unparsable file may.
-fn may_expand_items(source: &str) -> bool {
-    use ra_ap_syntax::{AstNode, ast};
-    const BUILTIN_ATTRIBUTES: &[&str] = &[
-        "allow",
-        "cfg",
-        "cold",
-        "deny",
-        "deprecated",
-        "derive",
-        "doc",
-        "expect",
-        "forbid",
-        "ignore",
-        "inline",
-        "must_use",
-        "no_mangle",
-        "non_exhaustive",
-        "repr",
-        "should_panic",
-        "test",
-        "track_caller",
-        "warn",
-    ];
-    const BUILTIN_DERIVES: &[&str] = &[
-        "Clone",
-        "Copy",
-        "Debug",
-        "Default",
-        "Eq",
-        "Hash",
-        "Ord",
-        "PartialEq",
-        "PartialOrd",
-    ];
-    // A glob, or an import named like a builtin, may shadow the prelude's
-    // attribute or derive (`use pm::Clone; #[derive(Clone)]`), and a
-    // `cfg_attr` may apply any attribute, so neither is read as builtin.
-    let shadowed = flattened_use_paths(source).iter().any(|import| {
+/// Compiler attributes that expand to no new items, matching the sibling-root
+/// check in [`may_expand_items`]. A derive is listed so its arguments can be
+/// judged separately.
+const BUILTIN_ATTRIBUTES: &[&str] = &[
+    "allow",
+    "cfg",
+    "cold",
+    "deny",
+    "deprecated",
+    "derive",
+    "doc",
+    "expect",
+    "forbid",
+    "ignore",
+    "inline",
+    "must_use",
+    "no_mangle",
+    "non_exhaustive",
+    "repr",
+    "should_panic",
+    "test",
+    "track_caller",
+    "warn",
+];
+
+/// Standard derivable traits. A custom derive may emit any item, including a
+/// local `struct Kind` with associated constants (#7692).
+const BUILTIN_DERIVES: &[&str] = &[
+    "Clone",
+    "Copy",
+    "Debug",
+    "Default",
+    "Eq",
+    "Hash",
+    "Ord",
+    "PartialEq",
+    "PartialOrd",
+];
+
+/// Whether `source` imports a glob or a name that may shadow a builtin
+/// attribute or derive (`use pm::Clone; #[derive(Clone)]`).
+fn imports_shadow_builtin_macros(source: &str) -> bool {
+    flattened_use_paths(source).iter().any(|import| {
         let name = import
             .alias
             .as_deref()
             .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or_default());
         let name = name.strip_prefix("r#").unwrap_or(name);
         name == "*" || BUILTIN_ATTRIBUTES.contains(&name) || BUILTIN_DERIVES.contains(&name)
-    });
-    if shadowed {
+    })
+}
+
+/// Whether `attr` is a proc-macro attribute or a custom derive: those may
+/// emit any item. `cfg_attr` is not a builtin here, because it may apply
+/// one. A path `name::rest` is never a compiler builtin.
+fn attribute_may_emit_items(attr: &ra_ap_syntax::ast::Attr) -> bool {
+    use ra_ap_syntax::AstNode;
+    let text = attr.syntax().text().to_string();
+    let inner = text
+        .trim_start_matches(|ch: char| ch == '#' || ch == '!' || ch == '[' || ch.is_whitespace());
+    let name_end = inner
+        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .unwrap_or(inner.len());
+    let (name, rest) = inner.split_at(name_end);
+    if !BUILTIN_ATTRIBUTES.contains(&name) || rest.trim_start().starts_with("::") {
+        return true;
+    }
+    name == "derive"
+        && rest
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
+            .filter(|word| !word.is_empty())
+            .any(|word| !BUILTIN_DERIVES.contains(&word))
+}
+
+/// Whether `node` is a non-builtin attribute or derive on the function
+/// `owner` or on an item in its body (#7692). An unread expansion may
+/// declare a local `struct Kind` with `const A`, which a pattern compares
+/// by value. Builtin attributes on a sibling function cannot reach the
+/// match, so they are not read. An import that shadows a builtin makes
+/// every such attribute unread.
+fn owner_attr_may_emit_items(node: &ra_ap_syntax::SyntaxNode, owner: &str, source: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let Some(attr) = ast::Attr::cast(node.clone()) else {
+        return false;
+    };
+    if !attribute_may_emit_items(&attr) && !imports_shadow_builtin_macros(source) {
+        return false;
+    }
+    let owner = owner.strip_prefix("r#").unwrap_or(owner);
+    node.ancestors().filter_map(ast::Fn::cast).any(|function| {
+        function.name().is_some_and(|name| {
+            let text = name.text();
+            text.strip_prefix("r#").unwrap_or(text) == owner
+        })
+    })
+}
+
+/// Whether a file may hold items the index never reads: an item-level
+/// macro call, an attribute other than a compiler builtin (a proc-macro
+/// attribute or custom derive may emit any item, and `cfg_attr` may apply
+/// one), or an import that may shadow a builtin. An unparsable file may.
+fn may_expand_items(source: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    // A glob, or an import named like a builtin, may shadow the prelude's
+    // attribute or derive (`use pm::Clone; #[derive(Clone)]`), and a
+    // `cfg_attr` may apply any attribute, so neither is read as builtin.
+    if imports_shadow_builtin_macros(source) {
         return true;
     }
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
@@ -2241,25 +2303,7 @@ fn may_expand_items(source: &str) -> bool {
                 ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
             });
         }
-        let Some(attr) = ast::Attr::cast(node) else {
-            return false;
-        };
-        let text = attr.syntax().text().to_string();
-        let inner = text.trim_start_matches(|ch: char| {
-            ch == '#' || ch == '!' || ch == '[' || ch.is_whitespace()
-        });
-        let name_end = inner
-            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-            .unwrap_or(inner.len());
-        let (name, rest) = inner.split_at(name_end);
-        if !BUILTIN_ATTRIBUTES.contains(&name) || rest.trim_start().starts_with("::") {
-            return true;
-        }
-        name == "derive"
-            && rest
-                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
-                .filter(|word| !word.is_empty())
-                .any(|word| !BUILTIN_DERIVES.contains(&word))
+        ast::Attr::cast(node).is_some_and(|attr| attribute_may_emit_items(&attr))
     })
 }
 
@@ -4018,6 +4062,52 @@ mod tests {
             judged(Some(&declared), "Other::A"),
             Some(ArmSelection::Unknown)
         );
+        Ok(())
+    }
+
+    /// #7692: an unread attribute or derive on the owner, or on an item in
+    /// its body, may declare a local `Kind` whose `A` is a constant.
+    #[test]
+    fn an_owner_attr_or_body_derive_that_may_declare_kind_is_unread() -> Result<(), String> {
+        let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &owner(KIND, "f"))
+            .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())?;
+        let judged = |source: &str| {
+            uncased_selection_of(&resolve_with(&selector, Some(source)), "f(Kind::A)")
+        };
+        let declared = format!("pub enum Kind {{\n    A,\n    B,\n}}\n{KIND}");
+        assert_eq!(judged(&declared), Some(ArmSelection::SelectsOther));
+        // Builtin attributes and standard derives expand to no item, so the
+        // uncased read stands; a sibling function's proc-macro attribute
+        // cannot reach the match.
+        for source in [
+            format!("pub enum Kind {{ A, B }}\n#[inline]\n{KIND}"),
+            format!("pub enum Kind {{ A, B }}\n#[must_use]\n{KIND}"),
+            format!("pub enum Kind {{ A, B }}\n#[shadowing_attr]\npub fn g() {{}}\n{KIND}"),
+        ] {
+            assert_eq!(
+                judged(&source),
+                Some(ArmSelection::SelectsOther),
+                "{source}"
+            );
+        }
+        let local_body = "pub fn f(k: Kind) -> i32 {\n    #[derive(Clone)]\n    struct Local;\n    match k {\n        Kind::A => 1,\n        _ => 0,\n    }\n}\n";
+        assert_eq!(
+            judged(&format!("pub enum Kind {{ A, B }}\n{local_body}")),
+            Some(ArmSelection::SelectsOther)
+        );
+        // Each source below declares `enum Kind { A, B }` too, so the
+        // refusal is the unread expansion: `Kind::A` may be a constant.
+        for source in [
+            format!("pub enum Kind {{ A, B }}\n#[shadowing_attr]\n{KIND}"),
+            format!("pub enum Kind {{ A, B }}\n#[cfg_attr(all(), shadowing)]\n{KIND}"),
+            format!("use pm::inline;\npub enum Kind {{ A, B }}\n#[inline]\n{KIND}"),
+            format!(
+                "pub enum Kind {{ A, B }}\n{}",
+                local_body.replace("#[derive(Clone)]", "#[derive(Shadowing)]")
+            ),
+        ] {
+            assert_eq!(judged(&source), Some(ArmSelection::Unknown), "{source}");
+        }
         Ok(())
     }
 
