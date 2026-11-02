@@ -7,6 +7,7 @@ use crate::agent::loop_commands::{
 };
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::canonical_gap_identity;
+use crate::analysis::new_test_target::{NewTestKind, NewTestProposalProvenance};
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::Mode;
 use crate::app::agent_brief::{
@@ -712,6 +713,7 @@ fn gap_record_comment_json(
             "recommended_name": repair_route.related_test.as_deref(),
             "near_test": repair_route.related_test.as_deref(),
             "related_test": gap_record_related_test(repair_route),
+            "proposed_target": gap_record_proposed_target(repair_route),
         },
         "repair_card": {
             "gap_kind": record.kind.as_str(),
@@ -834,6 +836,61 @@ fn gap_record_related_test(route: &GapRepairRoute) -> Value {
         }),
         None => Value::Null,
     }
+}
+
+/// Project a producer-owned new-test proposal, or `null` when the producer
+/// has no governed proposal. Never inferred from `recommended_file`.
+fn proposed_target_json(entry: &ClassifiedSeam) -> Value {
+    let Some(proposal) = entry
+        .evidence
+        .new_test_target
+        .as_ref()
+        .and_then(|admission| admission.proposal.as_ref())
+    else {
+        return Value::Null;
+    };
+    proposed_target_object(
+        match proposal.kind {
+            NewTestKind::InlineUnit => "inline_unit",
+            NewTestKind::Integration => "integration",
+        },
+        &display_path(&proposal.file),
+        &proposal.owner,
+        match proposal.provenance {
+            NewTestProposalProvenance::ProducerOwned => "producer_owned",
+        },
+    )
+}
+
+fn gap_record_proposed_target(route: &GapRepairRoute) -> Value {
+    let Some(proposed) = route.proposed_target.as_ref() else {
+        return Value::Null;
+    };
+    proposed_target_object(
+        proposed.proposal_kind.as_str(),
+        proposed.file.as_str(),
+        proposed.owner.as_str(),
+        proposed.provenance.as_deref().unwrap_or(""),
+    )
+}
+
+fn proposed_target_object(proposal_kind: &str, file: &str, owner: &str, provenance: &str) -> Value {
+    let proposal_kind = proposal_kind.trim();
+    let file = file.trim();
+    let owner = owner.trim();
+    if !matches!(proposal_kind, "inline_unit" | "integration")
+        || file.is_empty()
+        || owner.is_empty()
+        || provenance.trim() != "producer_owned"
+    {
+        return Value::Null;
+    }
+    json!({
+        "proposal_kind": proposal_kind,
+        "file": file,
+        "owner": owner,
+        "provenance": "producer_owned",
+    })
 }
 
 fn repair_text(route: &GapRepairRoute) -> String {
@@ -1033,6 +1090,7 @@ fn review_recommendation_json(
             "recommended_name": recommended.name.as_str(),
             "near_test": nearest.map(|test| test.test_name.clone()),
             "related_test": related_test,
+            "proposed_target": proposed_target_json(entry),
         })
     } else {
         json!({
@@ -1045,6 +1103,7 @@ fn review_recommendation_json(
             "recommended_name": "not_applicable",
             "near_test": null,
             "related_test": null,
+            "proposed_target": proposed_target_json(entry),
         })
     };
 
@@ -1875,6 +1934,9 @@ mod tests {
 
     use crate::analysis::ClassifiedSeam;
     use crate::analysis::canonical_gap::canonical_gap_identity;
+    use crate::analysis::new_test_target::{
+        NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
+    };
     use crate::analysis::seams::{
         ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
     };
@@ -2233,6 +2295,78 @@ mod tests {
             .ok_or("missing prompt")?;
         assert!(prompt.starts_with("No existing test reaches"), "{prompt}");
         assert!(!prompt.contains("tests/"), "{prompt}");
+        assert!(
+            without_tests["comments"][0]["suggested_test"]["proposed_target"].is_null(),
+            "no producer proposal must stay null"
+        );
+        Ok(())
+    }
+
+    fn with_proposal(mut entry: ClassifiedSeam, kind: NewTestKind, file: &str) -> ClassifiedSeam {
+        let owner = entry.seam.owner().to_string();
+        entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+            proposal: Some(NewTestTargetProposal {
+                kind,
+                file: PathBuf::from(file),
+                owner,
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+            ..NewTestTargetAdmission::default()
+        });
+        entry
+    }
+
+    #[test]
+    fn working_set_card_emits_proposed_inline_unit_target() -> Result<(), String> {
+        let seam = with_proposal(
+            unreached_new_owner_classified(),
+            NewTestKind::InlineUnit,
+            "src/lib.rs",
+        );
+        let working_set =
+            AgentBriefResolvedWorkingSet::base("main", vec![AgentBriefLine::new("src/lib.rs", 29)]);
+        let value = render_value(&working_set, std::slice::from_ref(&seam))?;
+        let proposed = &value["comments"][0]["suggested_test"]["proposed_target"];
+        assert_eq!(proposed["proposal_kind"], "inline_unit");
+        assert_eq!(proposed["file"], "src/lib.rs");
+        assert_eq!(proposed["owner"], "src/lib.rs::loyalty_price");
+        assert_eq!(proposed["provenance"], "producer_owned");
+        assert!(value["comments"][0]["suggested_test"]["related_test"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn working_set_card_emits_proposed_integration_target() -> Result<(), String> {
+        let seam = with_proposal(
+            unreached_new_owner_classified(),
+            NewTestKind::Integration,
+            "tests/loyalty_price.rs",
+        );
+        let working_set =
+            AgentBriefResolvedWorkingSet::base("main", vec![AgentBriefLine::new("src/lib.rs", 29)]);
+        let value = render_value(&working_set, std::slice::from_ref(&seam))?;
+        let proposed = &value["comments"][0]["suggested_test"]["proposed_target"];
+        assert_eq!(proposed["proposal_kind"], "integration");
+        assert_eq!(proposed["file"], "tests/loyalty_price.rs");
+        assert_eq!(proposed["provenance"], "producer_owned");
+        Ok(())
+    }
+
+    #[test]
+    fn working_set_card_keeps_related_test_when_a_proposal_is_also_present() -> Result<(), String> {
+        let seam = with_proposal(classified(88), NewTestKind::InlineUnit, "src/pricing.rs");
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let value = render_value(&working_set, std::slice::from_ref(&seam))?;
+        let suggested = &value["comments"][0]["suggested_test"];
+        assert_eq!(
+            suggested["related_test"]["name"],
+            "above_threshold_gets_discount"
+        );
+        assert_eq!(suggested["proposed_target"]["proposal_kind"], "inline_unit");
+        assert_eq!(suggested["proposed_target"]["file"], "src/pricing.rs");
         Ok(())
     }
 
@@ -4185,6 +4319,7 @@ mod tests {
             missing_discriminator: None,
             changed_behavior: None,
             inspection_command: None,
+            proposed_target: None,
             stop_conditions: Vec::new(),
         };
         assert_eq!(
@@ -4229,6 +4364,7 @@ mod tests {
             missing_discriminator: None,
             changed_behavior: None,
             inspection_command: None,
+            proposed_target: None,
             stop_conditions: Vec::new(),
         };
         let value = gap_record_related_test(&full);
@@ -4254,6 +4390,42 @@ mod tests {
             ..full
         };
         assert!(gap_record_related_test(&none).is_null());
+    }
+
+    #[test]
+    fn gap_record_proposed_target_projects_object_or_null() {
+        let proposed = crate::output::gap_decision_ledger::GapProposedRepairTarget {
+            proposal_kind: "inline_unit".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "pricing::loyalty_price".to_string(),
+            provenance: Some("producer_owned".to_string()),
+        };
+        let route = crate::output::gap_decision_ledger::GapRepairRoute {
+            proposed_target: Some(proposed.clone()),
+            ..crate::output::gap_decision_ledger::GapRepairRoute::default()
+        };
+        let value = gap_record_proposed_target(&route);
+        assert_eq!(value["proposal_kind"], "inline_unit");
+        assert_eq!(value["file"], "src/lib.rs");
+        assert_eq!(value["owner"], "pricing::loyalty_price");
+        assert_eq!(value["provenance"], "producer_owned");
+
+        let missing_provenance = crate::output::gap_decision_ledger::GapRepairRoute {
+            proposed_target: Some(
+                crate::output::gap_decision_ledger::GapProposedRepairTarget {
+                    provenance: None,
+                    ..proposed
+                },
+            ),
+            ..crate::output::gap_decision_ledger::GapRepairRoute::default()
+        };
+        assert!(gap_record_proposed_target(&missing_provenance).is_null());
+        assert!(
+            gap_record_proposed_target(
+                &crate::output::gap_decision_ledger::GapRepairRoute::default()
+            )
+            .is_null()
+        );
     }
 
     #[test]

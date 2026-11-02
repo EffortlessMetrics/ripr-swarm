@@ -335,8 +335,23 @@ pub(crate) struct GapRepairRoute {
     /// consumers must not synthesize it from a path, line, or display label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) inspection_command: Option<String>,
+    /// Producer-owned new-test proposal. Distinct from `related_test`: kept
+    /// off the existing-test fields so a ledger cannot present a proposal as
+    /// an observed test. The gate projects this fail-closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) proposed_target: Option<GapProposedRepairTarget>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) stop_conditions: Vec<String>,
+}
+
+/// Governed new-test proposal carried on a gap-ledger repair route.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) struct GapProposedRepairTarget {
+    pub(crate) proposal_kind: String,
+    pub(crate) file: String,
+    pub(crate) owner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) provenance: Option<String>,
 }
 
 /// Reject ambiguous producer identity while preserving readable legacy rows.
@@ -1760,6 +1775,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
                 .map(ToString::to_string),
             changed_behavior: string_at(card, &["changed_behavior"]).map(ToString::to_string),
             inspection_command: string_at(card, &["inspection_command"]).map(ToString::to_string),
+            proposed_target: None,
             stop_conditions: string_array_at(card, &["stop_conditions"]),
         })
     } else {
@@ -1970,6 +1986,7 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
             changed_behavior: string_at(finding, &["typescript_preview_card", "changed_behavior"])
                 .map(ToString::to_string),
             inspection_command: string_at(packet, &["inspection_command"]).map(ToString::to_string),
+            proposed_target: None,
             stop_conditions: vec![
                 "Stop if the TypeScript preview packet loses repair_packet_ready=true.".to_string(),
                 "Stop if the verification command cannot run from this workspace.".to_string(),
@@ -2357,6 +2374,7 @@ fn gap_record_from_perl_preview_finding(finding: &Value, index: usize) -> Option
         missing_discriminator: string_at(card, &["missing_discriminator"]).map(ToString::to_string),
         changed_behavior: string_at(card, &["changed_owner"]).map(ToString::to_string),
         inspection_command: string_at(card, &["inspection_command"]).map(ToString::to_string),
+        proposed_target: None,
         stop_conditions: string_array_at(card, &["stop_if"]),
     };
     let verification_commands = verify_command.into_iter().collect::<Vec<_>>();
@@ -3172,6 +3190,7 @@ fn presentation_text_repair_route_from_alignment_item(
             .or_else(|| presentation_text.and_then(|text| string_at(text, &["constant_name"])))
             .map(ToString::to_string),
         inspection_command: string_at(item, &["inspection_command"]).map(ToString::to_string),
+        proposed_target: None,
         stop_conditions: vec![
             "Stop if the changed text is not user-facing in the current product surface."
                 .to_string(),
@@ -3245,6 +3264,7 @@ fn repair_route_from_evidence(
         inspection_command: string_at(canonical_item, &["inspection_command"])
             .or_else(|| string_at(evidence, &["inspection_command"]))
             .map(ToString::to_string),
+        proposed_target: None,
         stop_conditions: vec![
             "Stop if the related test is outside the current workspace.".to_string(),
             "Stop if the suggested assertion would require changing production behavior first."
