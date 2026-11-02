@@ -37,6 +37,7 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_mocked_module_limit/input --diff <cwd>/fixtures/python_mocked_module_limit/diff.patch --mode fast probe:src_service.py:python_preview:eb38331d
   ripr context --root <cwd>/fixtures/python_mocked_module_limit/input --diff <cwd>/fixtures/python_mocked_module_limit/diff.patch --mode fast --at probe:src_service.py:python_preview:eb38331d
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above

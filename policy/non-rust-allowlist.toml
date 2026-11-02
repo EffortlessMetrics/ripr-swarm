@@ -835,6 +835,19 @@ reason = "Frozen pre-filter gap-list v1 schema for strict-reader transport compa
 covered_by = ["cargo test -p ripr --test mcp_stdio", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "crates/ripr/tests/fixtures/mcp_stdio_investigation_disposition.v1.json"
+kind = "json_fixture"
+owner = "mcp"
+surface = "fixtures"
+classification = "fixture"
+reason = "Committed #4914 NOT_ESTABLISHED owner disposition and stage contract for the historical native Windows MCP stdio first-reply investigation."
+covered_by = [
+    "cargo test -p ripr --test mcp_stdio mcp_stdio_investigation_disposition_records_not_established_and_stage_witness",
+    "cargo test -p ripr --test mcp_stdio unsupported_inline_version_is_rejected_and_next_request_recovers",
+    "cargo xtask check-file-policy",
+]
+
+[[allow]]
 glob = "tools/python/portable-ripr-consumer/**/*.py"
 kind = "portable_native_consumer"
 owner = "agent/portable-consumer"

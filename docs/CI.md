@@ -572,6 +572,21 @@ and single-platform CI was the root cause enabling both.
   only by a native-Windows audit, so native-Windows verification of new
   product behavior remains an author and audit responsibility.
 
+- **Diff-scoped gate (#5088).** `.github/workflows/windows-gate.yml` posts
+  `Ripr Windows Gate Result` on every pull request `opened`/`synchronize`/`reopened`
+  event, on `main`/`master` pushes, and on `workflow_dispatch`. An ubuntu
+  detection job conservatively marks a diff `windows_relevant` when it touches
+  `cfg(windows)` in changed Rust, contains `cfg(windows)` anywhere in a changed
+  `*.rs` file, or edits the Windows advisory/gate workflow definitions; detection
+  failures fail toward running the subset. When not relevant, the Result
+  pass-as-skips with `skipped: diff does not touch cfg(windows) surfaces`. When
+  relevant, `windows-gate-run` executes the three-class subset from #4938
+  (`lsp::gap_artifacts`, the #4918 cache-warning smoke, and `cargo clippy -p ripr
+  --all-targets`) on `windows-latest`; missing evidence fails the run job, and
+  failing command verdicts fail the Result. The check is advisory until an owner
+  adds `Ripr Windows Gate Result` to branch protection; the always-on
+  `windows-advisory-subset` merge-ready job remains unchanged.
+
 - **Subject identity (#5043).** Observations and failure reasons are keyed by
   Cargo target kind, source path, exact executable basename (including its
   Cargo hash), and test name. Both samples execute the same compiled workspace;

@@ -249,6 +249,7 @@ jobs:
           fi
           cd "$base_tree"
           cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
 
       - name: Repository policy preflight
         id: precommit
