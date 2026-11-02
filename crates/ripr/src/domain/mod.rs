@@ -1,4 +1,5 @@
 mod candidate_relation;
+mod canonical_item;
 mod causal_delta;
 mod classification;
 mod command_spec;
@@ -35,6 +36,7 @@ mod test_evidence_summary;
 mod verification_result;
 
 pub use candidate_relation::CandidateRelation;
+pub use canonical_item::{CanonicalItemId, CanonicalItemParseError};
 pub use causal_delta::{
     AttributionBasis, CanonicalDelta, CanonicalEvidenceState, ComparisonConfidence,
     ComparisonCoverage, DeltaAttribution, GapState, compare_fixture_delta,
@@ -87,7 +89,11 @@ pub(crate) use feedback::{
     FeedbackReason, FeedbackReceipt, ReferenceState, ResultIdentity, ReviewStatus,
     classify_reference,
 };
-pub use fix_instruction::{FixInstructionState, FixInstructionSummary};
+pub use fix_instruction::{
+    FixInstructionIdentityContext, FixInstructionState, FixInstructionSummary,
+    InstructionIdentityParseError, InstructionInstanceId, InstructionSemanticId,
+    InstructionSnapshotCurrentness,
+};
 pub use git_candidate::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
     GitHashFormat, GitObjectId, GitTreeish,

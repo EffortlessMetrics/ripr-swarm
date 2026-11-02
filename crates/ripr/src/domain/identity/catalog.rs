@@ -50,8 +50,8 @@ const VOLATILE_COMMON: &[&str] = &[
 pub(crate) const PRODUCTION_RECORDS: &[IdentityRecord] = &[
     IdentityRecord {
         kind: IdentityKind::CanonicalItemId,
-        canonical_type: "analysis::canonical_gap::CanonicalGapIdentity",
-        owner_path: "crates/ripr/src/analysis/canonical_gap.rs",
+        canonical_type: "domain::canonical_item::CanonicalItemId",
+        owner_path: "crates/ripr/src/domain/canonical_item.rs",
         owner_issue: "#1932/#4804 (records PR-era Lane 1 gap identity; typed wrapper is #4805)",
         portability: PortabilityClass::Portable,
         semantic_inputs: &[
@@ -164,7 +164,7 @@ pub(crate) const PRODUCTION_RECORDS: &[IdentityRecord] = &[
     },
     IdentityRecord {
         kind: IdentityKind::InstructionSemanticId,
-        canonical_type: "(not yet typed; #4805)",
+        canonical_type: "domain::fix_instruction::InstructionSemanticId",
         owner_path: "crates/ripr/src/domain/fix_instruction.rs",
         owner_issue: "#1663/#1894/#4805",
         portability: PortabilityClass::Portable,
@@ -179,7 +179,7 @@ pub(crate) const PRODUCTION_RECORDS: &[IdentityRecord] = &[
     },
     IdentityRecord {
         kind: IdentityKind::InstructionInstanceId,
-        canonical_type: "(not yet typed; #4805)",
+        canonical_type: "domain::fix_instruction::InstructionInstanceId",
         owner_path: "crates/ripr/src/domain/fix_instruction.rs",
         owner_issue: "#1663/#1894/#4805",
         portability: PortabilityClass::SnapshotBound,
