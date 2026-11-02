@@ -138,7 +138,12 @@ pub(super) fn compiled_feature_violations(
             ));
             continue;
         }
-        let expected = enabled.contains(feature);
+        // Go keeps `adapter_compiled` false until a runnable adapter exists (#6349).
+        let expected = if name == "go" {
+            false
+        } else {
+            enabled.contains(feature)
+        };
         if language.get("adapter_compiled").and_then(Value::as_bool) != Some(expected) {
             violations.push(format!("language `{name}` adapter_compiled must be {expected} for required_feature `{feature}` in the selected build"));
         }

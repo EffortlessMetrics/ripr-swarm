@@ -309,7 +309,8 @@ fn build_registry(compiled: &[&str]) -> Value {
         {"language": "typescript", "required_feature": "lang-typescript", "adapter_compiled": compiled.contains(&"typescript")},
         {"language": "javascript", "required_feature": "lang-typescript", "adapter_compiled": compiled.contains(&"javascript")},
         {"language": "python", "required_feature": "lang-python", "adapter_compiled": compiled.contains(&"python")},
-        {"language": "perl", "required_feature": "lang-perl", "adapter_compiled": compiled.contains(&"perl")}
+        {"language": "perl", "required_feature": "lang-perl", "adapter_compiled": compiled.contains(&"perl")},
+        {"language": "go", "required_feature": "lang-go", "adapter_compiled": false}
     ]})
 }
 
@@ -325,10 +326,17 @@ fn minimal_and_individual_builds_require_exact_producer_presence() -> Result<(),
         ("lang-typescript", vec!["rust", "typescript", "javascript"]),
         ("lang-python", vec!["rust", "python"]),
         ("lang-perl", vec!["rust", "perl"]),
+        ("lang-go", vec!["rust"]),
     ];
     assert_eq!(
         inv.lang_features,
-        set(&["lang-rust", "lang-typescript", "lang-python", "lang-perl"]),
+        set(&[
+            "lang-rust",
+            "lang-typescript",
+            "lang-python",
+            "lang-perl",
+            "lang-go"
+        ]),
         "new language features need an explicit presence/absence control"
     );
     for (feature, compiled) in cases {
@@ -345,7 +353,7 @@ fn minimal_and_individual_builds_require_exact_producer_presence() -> Result<(),
         );
         // Flip EVERY language separately, testing missing enabled producers and
         // phantom disabled producers (including the shared TS/JS feature).
-        for index in 0..5 {
+        for index in 0..6 {
             let mut bad = good.clone();
             let present = bad["languages"][index]["adapter_compiled"]
                 .as_bool()
@@ -424,7 +432,12 @@ fn selected_features_and_manifest_defaults_match_cargo_arguments() -> Result<(),
         additive.build.enabled_features(&manifest)?,
         set(&["lang-rust", "lang-typescript", "lang-python", "lang-perl"])
     );
-    let unknown = parse_args(&["--features", "lang-go"].map(String::from))?;
+    let go_additive = parse_args(&["--features", "lang-go"].map(String::from))?;
+    assert_eq!(
+        go_additive.build.enabled_features(&manifest)?,
+        set(&["lang-rust", "lang-typescript", "lang-python", "lang-go"])
+    );
+    let unknown = parse_args(&["--features", "lang-haskell"].map(String::from))?;
     if let Ok(enabled) = unknown.build.enabled_features(&manifest) {
         return Err(format!("unknown language feature accepted: {enabled:?}"));
     }
