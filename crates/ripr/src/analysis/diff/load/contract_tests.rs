@@ -458,6 +458,7 @@ fn shared_diff_authority_overrides_conflicting_prefix_extras() -> io::Result<()>
         &["--src-prefix=old/", "--dst-prefix=new/"],
         "0",
         Some(GIT_TIMEOUT),
+        None,
     )
     .map_err(io::Error::other)?;
     let diff = String::from_utf8(bytes).map_err(io::Error::other)?;
@@ -544,6 +545,7 @@ fn git_patch_preserves_trailing_whitespace_paths_and_empty_renames() -> io::Resu
             &["--find-renames", "--rename-empty"],
             "0",
             Some(GIT_TIMEOUT),
+            None,
         )
         .map_err(io::Error::other)?,
     )

@@ -27,6 +27,7 @@ mod blind_journey;
 mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
+mod cache_payload_tamper_recovery;
 mod check_fast_cli;
 mod check_fast_selector;
 mod command;
@@ -91,6 +92,8 @@ mod rust_judged_panel;
 mod rust_region_scan;
 mod schema_cut_replay;
 mod schema_producer_sweep;
+mod verification_allocation_adapter;
+mod verification_allocation_policy;
 mod verification_contracts;
 mod verify_test_shards;
 mod version;
@@ -14544,22 +14547,22 @@ fn check_rust_source_role_authority() -> Result<(), String> {
             "#5563 source-text guard strips test modules from production text it scans for miss-based eligibility; it decides no analysis role",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/placement.rs",
             "starts_with(\"tests",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/placement.rs",
             "contains(\"/tests/\")",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/placement.rs",
             "ends_with(\"_test.rs\")",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/placement.rs",
             "ends_with(\"_tests.rs\")",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
@@ -19318,6 +19321,7 @@ fn ci_tables<'a>(document: &'a CiLedgerDocument, header: &str) -> Vec<&'a CiLedg
 const PROOF_PACK_MANIFEST_PATH: &str = "policy/proof-packs.toml";
 const PROOF_PACK_LANE_WHITELIST_PATH: &str = "policy/ci-lane-whitelist.toml";
 const PROOF_PACK_RELEASE_PACK_ID: &str = "release-package";
+const PROOF_PACK_OUTPUT_CONTRACTS_ID: &str = "output-contracts";
 
 /// Release surfaces the `release-package` pack MUST cover so that any change to
 /// a version file, the changelog, or a release workflow trips
@@ -19371,7 +19375,12 @@ fn check_proof_packs_impl() -> Result<(), String> {
 
     if let (Some(manifest), Some(lanes)) = (&manifest, &lanes) {
         let lane_ids = proof_pack_lane_ids(lanes);
+        let lane_commands = proof_pack_lane_commands(lanes);
         violations.extend(proof_pack_violations(manifest, &lane_ids));
+        violations.extend(proof_pack_output_contracts_lane_violations(
+            manifest,
+            &lane_commands,
+        ));
     }
 
     finish_policy_report(
@@ -19392,6 +19401,71 @@ fn check_proof_packs_impl() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+fn proof_pack_lane_commands(lanes: &CiLedgerDocument) -> BTreeMap<String, BTreeSet<String>> {
+    let path = PROOF_PACK_LANE_WHITELIST_PATH;
+    let mut lane_commands = BTreeMap::new();
+    let mut ignored = Vec::new();
+    for table in ci_tables(lanes, "lane") {
+        let Some(id_value) = table.values.get("id") else {
+            continue;
+        };
+        let Some(id) = ci_string_value(path, "table `[[lane]]`", "id", id_value, &mut ignored)
+        else {
+            continue;
+        };
+        let mut parse_violations = Vec::new();
+        let Some(commands) =
+            ci_required_table_array(path, table, "commands", &mut parse_violations)
+        else {
+            continue;
+        };
+        lane_commands.insert(id, commands.into_iter().collect());
+    }
+    lane_commands
+}
+
+pub(crate) fn proof_pack_output_contracts_lane_violations(
+    manifest: &CiLedgerDocument,
+    lane_commands: &BTreeMap<String, BTreeSet<String>>,
+) -> Vec<String> {
+    let path = PROOF_PACK_MANIFEST_PATH;
+    let mut violations = Vec::new();
+    let mut ignored = Vec::new();
+    let packs = policy::proof_packs::parse_proof_packs(manifest, &mut ignored);
+    let Some(pack) = packs
+        .iter()
+        .find(|pack| pack.id == PROOF_PACK_OUTPUT_CONTRACTS_ID)
+    else {
+        violations.push(format!(
+            "{path} must define an `{PROOF_PACK_OUTPUT_CONTRACTS_ID}` pack (P18 output-contracts routing slice)"
+        ));
+        return violations;
+    };
+    let Some(ci_lane) = &pack.ci_lane else {
+        violations.push(format!(
+            "{path}:{} proof pack `{PROOF_PACK_OUTPUT_CONTRACTS_ID}` must declare `ci_lane`",
+            pack.line
+        ));
+        return violations;
+    };
+    let Some(lane_commands) = lane_commands.get(ci_lane) else {
+        violations.push(format!(
+            "{path}:{} proof pack `{PROOF_PACK_OUTPUT_CONTRACTS_ID}` references unknown ci_lane `{ci_lane}`",
+            pack.line
+        ));
+        return violations;
+    };
+    for required in &pack.required_commands {
+        if !lane_commands.contains(required) {
+            violations.push(format!(
+                "{path}:{} proof pack `{PROOF_PACK_OUTPUT_CONTRACTS_ID}` requires `{required}` but ci_lane `{ci_lane}` at {PROOF_PACK_LANE_WHITELIST_PATH} does not list it\n  rule: P18 Correction #3 — the lane must run every required command the pack names (docs/PROOF_ROUTING.md slice 8)",
+                pack.line
+            ));
+        }
+    }
+    violations
 }
 
 fn proof_pack_lane_ids(lanes: &CiLedgerDocument) -> BTreeSet<String> {
