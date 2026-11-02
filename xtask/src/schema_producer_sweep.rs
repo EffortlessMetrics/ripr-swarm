@@ -1,12 +1,10 @@
 //! Sweep of committed producer documents against every published
 //! schema (#3920).
 //!
-//! `check-verification-contracts` validates one hand-picked subject per
-//! contract row. That denominator is kept by hand, and #3919 records why that
-//! is not enough on its own: #3894's second commit exists because its first
-//! commit's chosen golden missed two producer shapes. Replacing the required
-//! gate's subject selection is deferred past the 0.11 cut, so this command is
-//! the compensating release proof instead. It discovers every committed
+//! `check-verification-contracts` now validates committed producer documents
+//! through the binding table below (#3919), using the same discovery rules as
+//! this sweep on the working tree. This command remains the commit-bound release
+//! proof (#3920). It discovers every committed
 //! producer document by an explicit binding rule, validates each one with the
 //! same validator the gate uses, and reports discovered and validated counts
 //! separately so a qualification run can replay it on the frozen candidate.
@@ -45,7 +43,7 @@ const USAGE: &str = "usage: cargo xtask schema-producer-sweep [--rev REV | --wor
 const SCHEMAS_PREFIX: &str = "schemas/";
 
 /// Which committed documents a binding validates.
-enum Corpus {
+pub(crate) enum Corpus {
     /// Every document with this file name, anywhere in the repository.
     FileName(&'static str),
     /// Exactly these repository-relative paths.
@@ -70,7 +68,7 @@ enum Corpus {
     Exempt(&'static str),
 }
 
-struct Binding {
+pub(crate) struct Binding {
     schema_path: &'static str,
     /// JSON pointer to the subschema the subjects must match, or `None` for
     /// the whole schema.
@@ -84,7 +82,7 @@ struct Binding {
     excluded: &'static [(&'static str, &'static str)],
 }
 
-const BINDINGS: &[Binding] = &[
+pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
     Binding {
         schema_path: "schemas/badges/shields-endpoint.schema.json",
         pointer: None,
@@ -317,7 +315,7 @@ pub(crate) fn schema_producer_sweep(args: &[String]) -> Result<(), String> {
             options.artifacts.push(parse_artifact(spec)?);
         }
     }
-    let report = sweep(&tree, BINDINGS, &options.artifacts)?;
+    let report = sweep(&tree, VERIFICATION_CORPUS_BINDINGS, &options.artifacts)?;
     let text = serde_json::to_string_pretty(&report.packet)
         .map_err(|error| format!("serialize schema producer sweep: {error}"))?;
     let path = root.join(REPORT_PATH);
@@ -830,6 +828,87 @@ fn row_label(schema_path: &str, pointer: Option<&str>) -> String {
     match pointer {
         None => schema_path.to_string(),
         Some(pointer) => format!("{schema_path}#{pointer}"),
+    }
+}
+
+/// Summary counts from the required-gate corpus pass (#3919).
+pub(crate) struct VerificationCorpusGateSummary {
+    pub summary_lines: Vec<String>,
+    pub producer_discovered: usize,
+    pub producer_validated: usize,
+    pub edge_validated: usize,
+}
+
+/// Whether a hand-maintained contract row's subjects are owned by the corpus
+/// binding table rather than a per-row fixture path.
+pub(crate) fn contract_subjects_owned_by_corpus_gate(
+    schema_path: &str,
+    schema_pointer: Option<&str>,
+) -> bool {
+    if schema_path == "schemas/ripr/executed-control.schema.json"
+        && schema_pointer == Some("/$defs/packet")
+    {
+        // The binding row covers committed producer goldens; the design corpus
+        // in `fixtures/executed-control-contract/corpus.json` stays on the
+        // supplemental CONTRACT table until it is derived by rule (#3919).
+        return false;
+    }
+    VERIFICATION_CORPUS_BINDINGS.iter().any(|binding| {
+        binding.schema_path == schema_path
+            && binding.pointer == schema_pointer
+            && matches!(
+                binding.corpus,
+                Corpus::FileName(_) | Corpus::Paths(_) | Corpus::CommandSpecs { .. }
+            )
+    })
+}
+
+/// Validate every committed producer document the binding table claims on the
+/// working tree, using the same rules as `schema-producer-sweep --worktree`.
+pub(crate) fn verification_corpus_gate_check(
+    root: &Path,
+) -> Result<VerificationCorpusGateSummary, String> {
+    let tree = load_worktree(root)?;
+    let report = sweep(&tree, VERIFICATION_CORPUS_BINDINGS, &[])?;
+    let rows = report
+        .packet
+        .get("rows")
+        .and_then(Value::as_array)
+        .ok_or("corpus gate report missing rows")?;
+    let mut producer_discovered = 0usize;
+    let mut producer_validated = 0usize;
+    let mut edge_validated = 0usize;
+    for row in rows {
+        producer_discovered += row
+            .get("producer_subjects_discovered")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        producer_validated += row
+            .get("producer_subjects_valid")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        edge_validated += row
+            .get("edge_fixtures_valid")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+    }
+    if report.violations.is_empty() {
+        Ok(VerificationCorpusGateSummary {
+            summary_lines: report.summary,
+            producer_discovered,
+            producer_validated,
+            edge_validated,
+        })
+    } else {
+        Err(format!(
+            "verification corpus gate failed:\n{}",
+            report
+                .violations
+                .iter()
+                .map(|violation| format!("- {violation}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))
     }
 }
 
@@ -1915,7 +1994,7 @@ mod tests {
     /// so a new schema cannot ship without a sweep disposition and a renamed
     /// one cannot leave a binding that silently resolves nothing. This test
     /// deliberately stops at the table: validating the whole committed corpus
-    /// is the release command's job, not a new required gate during the cut
+    /// is also enforced by `check-verification-contracts` on the working tree
     /// (#3919).
     #[test]
     fn the_binding_table_covers_exactly_the_published_inventory() -> Result<(), String> {
@@ -1926,14 +2005,14 @@ mod tests {
             .filter(|path| path.starts_with(SCHEMAS_PREFIX))
             .collect();
         for schema_path in &inventory {
-            if !BINDINGS
+            if !VERIFICATION_CORPUS_BINDINGS
                 .iter()
                 .any(|binding| binding.schema_path == schema_path.as_str())
             {
                 return Err(format!("{schema_path} has no sweep binding"));
             }
         }
-        for binding in BINDINGS {
+        for binding in VERIFICATION_CORPUS_BINDINGS {
             if !inventory
                 .iter()
                 .any(|schema_path| schema_path.as_str() == binding.schema_path)
@@ -1998,10 +2077,13 @@ mod tests {
                     "named authority `{name}` no longer exists or is never run"
                 ));
             }
-            if !BINDINGS.iter().any(|binding| match &binding.corpus {
-                Corpus::Exempt(reason) | Corpus::Authority(reason) => reason.contains(name),
-                _ => false,
-            }) {
+            if !VERIFICATION_CORPUS_BINDINGS
+                .iter()
+                .any(|binding| match &binding.corpus {
+                    Corpus::Exempt(reason) | Corpus::Authority(reason) => reason.contains(name),
+                    _ => false,
+                })
+            {
                 return Err(format!("no exempt binding cites authority `{name}`"));
             }
         }
@@ -2057,5 +2139,36 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    /// A schema tightened to reject a shape some committed producer golden
+    /// carries must fail the corpus gate (#3919 acceptance 5).
+    #[test]
+    fn tightened_check_schema_fails_on_committed_producer_golden() -> Result<(), String> {
+        let root = crate::repo_root()?;
+        let schema_path = root.join("schemas/ripr/check.schema.json");
+        let original = std::fs::read_to_string(&schema_path)
+            .map_err(|error| format!("read {}: {error}", schema_path.display()))?;
+        let tightened = original.replace("\"flow_sink\": {", "\"flow_sink\": { \"not\": {},");
+        if tightened == original {
+            return Err(
+                "expected check schema to contain a flow_sink object definition to tighten"
+                    .to_string(),
+            );
+        }
+        std::fs::write(&schema_path, &tightened)
+            .map_err(|error| format!("write {}: {error}", schema_path.display()))?;
+        let result = verification_corpus_gate_check(&root);
+        std::fs::write(&schema_path, original)
+            .map_err(|error| format!("restore {}: {error}", schema_path.display()))?;
+        match result {
+            Err(message) if message.contains("verification corpus gate failed") => Ok(()),
+            Err(message) => Err(format!(
+                "expected corpus gate failure on committed golden, got: {message}"
+            )),
+            Ok(_) => Err(
+                "tightened check schema must fail against a committed producer golden".to_string(),
+            ),
+        }
     }
 }
