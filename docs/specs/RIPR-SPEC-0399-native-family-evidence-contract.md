@@ -99,7 +99,11 @@ NativeBuildProjectIdentityV1
   unresolved_configurations: ordered list of strings still competing
 
 NativeCompileContextV1
-  context_id: stable hash of canonical fields below
+  project_id: stable hash of `NativeBuildProjectIdentityV1` canonical fields
+  selected_configuration: optional string copied from project identity when admitted
+  context_id: stable hash of `project_id`, `selected_configuration`, and the
+    canonical compile fields below (argv alone is insufficient when Debug and Release
+    share identical compiler arguments)
   working_directory: normalized path
   compiler_family: clang | gcc | msvc | apple_clang | other | unknown
   compiler_version: optional string
@@ -287,12 +291,19 @@ expected_failure_like | unknown
 
 Oracle credit requires:
 
+0. a **registered** test case (or parameterized/typed instantiation) whose activation
+   state is `active` or otherwise oracle-eligible under [#5542](https://github.com/EffortlessMetrics/ripr-swarm/issues/5542);
+   disabled, skipped, fixture-only helpers, and registration-unknown paths withhold
+   credit even when assertions are syntactically present;
 1. admitted TU context for the test translation unit;
 2. framework identity established via resolved include/module facts for that context;
 3. exact-span match between assertion/matcher/macro expansion and a bound observable
    sink (#5546);
 4. related production owner in the **same or registered cross-TU context** only when
    a positive edge exists in the relation layer (#5706).
+
+Steps 0–4 are conjunctive; satisfying later steps without registration does not
+grant oracle credit.
 
 Custom matchers, generator expressions, death-test subprocesses, mock
 interposition, and section/generator paths that are not structurally resolved emit
@@ -366,9 +377,9 @@ future manifest joins. Support state remains `not_proven` until #5709.
 | `native/any/diff/translation_unit_substrate` | Shared TU/configuration substrate |
 | `native/any/repo/translation_unit_substrate` | Shared TU/configuration substrate |
 
-Configuration-specific rows (e.g. `Debug` vs `Release`) are modeled as separate
-admitted `context_id` values, not as alternate cell IDs, until a later slice proves
-otherwise.
+Configuration-specific rows (e.g. `Debug` vs `Release`) are separate admitted
+`context_id` values because `selected_configuration` participates in the hash even
+when compile argv matches.
 
 ## Required Evidence
 
@@ -402,8 +413,13 @@ reach/oracle/exposed classification.
 
 1. **Positive — dual context:** `header.h` included from `a.c` (C17, `-DFEATURE=1`)
    and `b.c` (C17, `-DFEATURE=0`) yields two `TranslationUnitFactV1` rows with
-   different `context_id` and `tu_id`. A probe in an inactive `#if` branch emits
+   different `context_id` and `tu_id`. When `-DFEATURE` is known in each admitted
+   context, code in the inactive `#if` branch is excluded from positive claims rather
+   than treated as an oracle miss; when the controlling macro value is unknown, emit
    `native_preprocessor_branch_unresolved`.
+1b. **Positive — configuration identity:** The same `src/a.c` compile argv under CMake
+   `Debug` and `Release` configurations yields two `context_id` values because
+   `selected_configuration` differs, even if compiler arguments are identical.
 2. **Negative — include reach:** `tests/t.c` includes `prod.h` but no registered test
    relation or oracle binding exists. Must not claim production activation from the
    include alone.
@@ -439,6 +455,9 @@ reach/oracle/exposed classification.
     headers and registered case binds oracle to observable `out` at exact span.
 11. **Unity negative — bare macro:** Source contains `TEST_ASSERT_EQUAL(x, y)` but
     Unity headers are not resolved in this compile context. No oracle credit.
+11b. **GoogleTest negative — unregistered helper:** A helper function in an admitted
+    GoogleTest TU contains `EXPECT_EQ` and calls production code, but no `TEST`/`TEST_F`
+    registers the helper. No oracle credit despite resolved headers and a bound assertion.
 12. **GoogleMock positive:** `EXPECT_CALL(mock, Foo(42)).Times(1)` with registered
     mock type and admitted context binds interaction oracle; production reach through
     mock interposition may be defeated per #5599 acceptance.
@@ -449,8 +468,10 @@ reach/oracle/exposed classification.
 
 ### FFI
 
-15. **Positive — registered edge:** Rust `extern "C"` fn declared in registry with
-    `ffi_binding` edge to C definition; relation cites edge id and both TU contexts.
+15. **Positive — registered edge:** A registry `ffi_binding` edge connects a Rust
+    subject (`CrossLanguageSubjectV1` for the `extern "C"` declaration) to a C
+    function owner in an admitted native `tu_id`. The relation cites the edge id and
+    each endpoint’s registry subject identity; only native endpoints carry TU context.
 16. **Negative — unregistered foreign call:** Call to `foreign_symbol` without registry
     edge; emit `native_ffi_boundary_unregistered`.
 

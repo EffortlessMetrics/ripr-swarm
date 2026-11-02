@@ -1,6 +1,7 @@
 # Registers the native-family evidence contract spec (#5696). Implementation and
 # corpus fixtures land in later epic slices; this PR registers the behavior and
-# repository policy surfaces only.
+# repository policy surfaces only. Mapped tests exercise spec-scope registration
+# mechanics, not native producer semantics (planned in #5698+).
 [[behavior]]
 id = "RIPR-SPEC-0399"
 name = "Native translation-unit substrate and separate C/C++ evidence contracts"
