@@ -260,7 +260,8 @@ arguments (`!x`, `a != b`) do not change this grade.
   | Family | Forms | Oracle read | Limitation named |
   |---|---|---|---|
   | Presence or variant only | `claims::assert_some!`, `assert_ok!`, `assert_err!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
-  | Direct payload equality | `claims::assert_some_eq!`, `assert_ok_eq!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
+  | Direct payload equality, boundary (`predicate`) probe | `claims::assert_some_eq!`, `assert_ok_eq!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
+  | Direct payload equality, changed `Ok(..)` / `Some(..)` tail (`return_value` probe) | `claims::assert_ok_eq!(owner(..), 3)`, `assert_some_eq!(owner(..), 5)` | exact value / strong | none (manifest-verified claims import and a literal expected operand, RIPR-SPEC-0197, #12304) |
   | Payload extraction, then a std assertion | `let v = assert_ok!(..); assert_eq!(v, ..)` | exact value / strong | none (the manifest-verified claims import path, #9619) |
   | Payload extraction, payload discarded | `let v = assert_ok!(..); let _ = v;` | relational / weak | none |
   | Tolerance equality | `approx::assert_relative_eq!`, `assert_abs_diff_eq!`, `assert_ulps_eq!`, `float_cmp::assert_approx_eq!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
@@ -269,10 +270,11 @@ arguments (`!x`, `a != b`) do not change this grade.
   | Debug-only, pin the twin would not credit | `debug_assert_eq!` off the changed boundary | unknown / none | none named; the gap stays by design |
   | Local macro with a provider's name | `macro_rules! assert_some` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
 
-  No provider macro other than the payload-extraction chain earns credit. The
-  direct payload equality forms are exact by the provider's contract, so they
-  are the first credit candidate; the tolerance forms are not, until the
-  tolerance and the size of the change are both readable.
+  Only the payload-extraction chain and the direct payload equality forms on a
+  changed `Ok(..)` / `Some(..)` tail earn credit; the equality forms are exact
+  by the provider's contract and need a verified import and a literal
+  expected operand. The tolerance forms do not, until the tolerance and the
+  size of the change are both readable.
 - Honesty corpus case expecting
   `rust_macro_wrapped_assertion_unresolved`, limitation detail,
   non-promotion, no verify command, no receipt command, and no repair packet.
