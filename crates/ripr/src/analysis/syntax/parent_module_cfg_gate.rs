@@ -13,8 +13,8 @@ use ra_ap_syntax::AstNode;
 use ra_ap_syntax::ast::{self, HasName};
 use std::path::{Path, PathBuf};
 
-/// `true` when a parent `mod` declaration along the chain carries a cfg a plain
-/// `cargo test` build may not enable.
+/// `true` when every parent `mod` declaration that default-resolves to the owner
+/// file carries only cfgs a plain `cargo test` build may not enable.
 pub(crate) fn owner_gated_by_parent_mod_declarations(
     package_root: &Path,
     owner_file: &Path,
@@ -25,7 +25,7 @@ pub(crate) fn owner_gated_by_parent_mod_declarations(
         .to_path_buf();
     current = PathBuf::from(current.to_string_lossy().replace('\\', "/"));
     while let Some(child_name) = out_of_line_module_name(&current) {
-        let candidates = module_parent_candidates(&current);
+        let candidates = declaring_file_candidates(&current);
         if candidates.is_empty() {
             break;
         }
@@ -35,14 +35,15 @@ pub(crate) fn owner_gated_by_parent_mod_declarations(
             let Ok(source) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            if let Some(module) = find_declaring_module(&source, &child_name, &candidate, &current)
-            {
-                if module_is_gated(&module) {
-                    return true;
-                }
-                declared_in = Some(candidate);
-                break;
+            let modules = find_declaring_modules(&source, &child_name, &candidate, &current);
+            if modules.is_empty() {
+                continue;
             }
+            if modules.iter().all(module_is_gated) {
+                return true;
+            }
+            declared_in = Some(candidate);
+            break;
         }
         let Some(parent) = declared_in else {
             break;
@@ -56,6 +57,17 @@ pub(crate) fn owner_gated_by_parent_mod_declarations(
         current = parent;
     }
     false
+}
+
+fn declaring_file_candidates(current: &Path) -> Vec<PathBuf> {
+    let mut candidates = module_parent_candidates(current);
+    for root in ["src/lib.rs", "src/main.rs"] {
+        let path = PathBuf::from(root);
+        if !candidates.contains(&path) {
+            candidates.push(path);
+        }
+    }
+    candidates
 }
 
 fn out_of_line_module_name(file: &Path) -> Option<String> {
@@ -75,34 +87,32 @@ fn out_of_line_module_name(file: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
-fn find_declaring_module(
+fn find_declaring_modules(
     source: &str,
     child_name: &str,
     declaring_file: &Path,
     child_file: &Path,
-) -> Option<ast::Module> {
-    let parse = parse_clean_source_file(source)?;
-    for module in parse
+) -> Vec<ast::Module> {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return Vec::new();
+    };
+    parse
         .tree()
         .syntax()
         .descendants()
         .filter_map(ast::Module::cast)
-    {
-        if module.item_list().is_some() {
-            continue;
-        }
-        let Some(name) = module.name() else {
-            continue;
-        };
-        if name.text().trim_start_matches("r#") != child_name {
-            continue;
-        }
-        let inline = enclosing_inline_modules(&module)?;
-        if default_resolution_matches(declaring_file, &inline, child_name, child_file) {
-            return Some(module);
-        }
-    }
-    None
+        .filter(|module| module.item_list().is_none())
+        .filter(|module| {
+            module
+                .name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == child_name)
+        })
+        .filter(|module| {
+            enclosing_inline_modules(module).is_some_and(|inline| {
+                default_resolution_matches(declaring_file, &inline, child_name, child_file)
+            })
+        })
+        .collect()
 }
 
 fn default_resolution_matches(
@@ -163,7 +173,7 @@ mod tests {
         fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
         fs::write(
             root.join("Cargo.toml"),
-            "[package]\nname = \"gate5616\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            "[package]\nname = \"gate5616\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[features]\nextra = []\n",
         )
         .map_err(|err| err.to_string())?;
         for (path, text) in files {
@@ -252,6 +262,49 @@ mod tests {
         assert!(owner_gated_by_parent_mod_declarations(
             &root,
             Path::new("src/a/b.rs")
+        ));
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn inline_parent_mod_gate_in_lib_rs_is_seen() -> Result<(), String> {
+        let root = temp_crate(
+            "inline",
+            &[
+                (
+                    "src/lib.rs",
+                    "mod a {\n    #[cfg(feature = \"extra\")]\n    mod b;\n}\n",
+                ),
+                (
+                    "src/a/b.rs",
+                    "pub fn f(n: u8) -> u8 { if n > 5 { 1 } else { 0 } }\n",
+                ),
+            ],
+        )?;
+        assert!(owner_gated_by_parent_mod_declarations(
+            &root,
+            Path::new("src/a/b.rs")
+        ));
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn complementary_mod_declarations_keep_plain_test_route_open() -> Result<(), String> {
+        let root = temp_crate(
+            "complement",
+            &[
+                ("src/lib.rs", "#[cfg(any())]\nmod extra;\nmod extra;\n"),
+                (
+                    "src/extra.rs",
+                    "pub fn f(n: u8) -> u8 { if n > 5 { 1 } else { 0 } }\n",
+                ),
+            ],
+        )?;
+        assert!(!owner_gated_by_parent_mod_declarations(
+            &root,
+            Path::new("src/extra.rs")
         ));
         let _ = fs::remove_dir_all(root);
         Ok(())
