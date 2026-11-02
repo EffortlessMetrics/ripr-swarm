@@ -37,7 +37,10 @@ impl SubjectTier {
 enum RunState {
     Executed,
     NotAuthorized,
-    #[expect(dead_code, reason = "policy:4863: reserved for authorized external subjects with no scheduled run")]
+    #[expect(
+        dead_code,
+        reason = "policy:4863: reserved for authorized external subjects with no scheduled run"
+    )]
     NotRun,
 }
 
@@ -97,14 +100,15 @@ pub(super) fn build_measurement_packet(
     fixture_receipt: &SavedEditSequenceReceipt,
     self_dogfood_receipt: &SavedEditSequenceReceipt,
     fixture_cold_ms: u128,
-    fixture_warm_ms: u128,
     dogfood_cold_ms: u128,
-    dogfood_warm_ms: u128,
 ) -> Result<Value, String> {
     evaluate_sequence(fixture_receipt)
         .map_err(|violations| format!("fixture sequence failed evaluation: {violations:?}"))?;
     evaluate_sequence(self_dogfood_receipt)
         .map_err(|violations| format!("self-dogfood sequence failed evaluation: {violations:?}"))?;
+
+    validate_cold_warm_honesty(&fixture_receipt.identity.cache_reset_procedure, "cold")?;
+    validate_cold_warm_honesty(&self_dogfood_receipt.identity.cache_reset_procedure, "cold")?;
 
     let fixture_cold = SampleSeries {
         population: "cold",
@@ -112,24 +116,17 @@ pub(super) fn build_measurement_packet(
         sample_count: 1,
         elapsed_ms_samples: vec![fixture_cold_ms],
     };
-    let fixture_warm = SampleSeries {
-        population: "warm",
-        cache_reset_procedure: "reuse fixture cache directory from cold sample".to_string(),
-        sample_count: 1,
-        elapsed_ms_samples: vec![fixture_warm_ms],
-    };
     let dogfood_cold = SampleSeries {
         population: "cold",
         cache_reset_procedure: self_dogfood_receipt.identity.cache_reset_procedure.clone(),
         sample_count: 1,
         elapsed_ms_samples: vec![dogfood_cold_ms],
     };
-    let dogfood_warm = SampleSeries {
-        population: "warm",
-        cache_reset_procedure: "reuse self-dogfood cache directory from cold sample".to_string(),
-        sample_count: 1,
-        elapsed_ms_samples: vec![dogfood_warm_ms],
-    };
+    let warm_not_measured = json!({
+        "population": "warm",
+        "run_state": "not_measured",
+        "reason": "separate cache-bound warm repetition is not yet recorded in this slice; do not treat unchanged-save step sums as warm samples",
+    });
 
     let subjects = vec![
         subject_row(
@@ -139,7 +136,7 @@ pub(super) fn build_measurement_packet(
             fixture_receipt,
             json!({
                 "cold": fixture_cold.distribution_json(),
-                "warm": fixture_warm.distribution_json(),
+                "warm": warm_not_measured.clone(),
             }),
             endpoints_from_receipt(fixture_receipt),
             vec![],
@@ -151,7 +148,7 @@ pub(super) fn build_measurement_packet(
             self_dogfood_receipt,
             json!({
                 "cold": dogfood_cold.distribution_json(),
-                "warm": dogfood_warm.distribution_json(),
+                "warm": warm_not_measured,
             }),
             endpoints_from_receipt(self_dogfood_receipt),
             vec![],
@@ -170,11 +167,11 @@ pub(super) fn build_measurement_packet(
         "schema_version": MEASUREMENT_SCHEMA,
         "tool": "ripr",
         "report": "lsp-performance-measurement",
-        "measurement_method": "in-process saved_edit_sequence harness (#4689); cold and warm populations use isolated versus reused private cache directories",
+        "measurement_method": "in-process saved_edit_sequence harness (#4689); cold population records one full-sequence wall-time sample; warm population remains not_measured until a separate cache-bound repetition lands",
         "sample_denominator": {
             "warmup_rule": "no warmup discards before the recorded cold sample",
             "cold_samples_per_executed_subject": 1,
-            "warm_samples_per_executed_subject": 1,
+            "warm_samples_per_executed_subject": 0,
             "p95_requires_at_least": 20,
         },
         "subjects": subjects,
@@ -231,22 +228,28 @@ fn identity_json(identity: &SequenceIdentity) -> Value {
 }
 
 fn endpoints_from_receipt(receipt: &SavedEditSequenceReceipt) -> Value {
-    let cold = receipt
-        .steps
-        .iter()
-        .find(|step| step.step == SequenceStep::ColdStart);
-    let production = receipt
-        .steps
-        .iter()
-        .find(|step| step.step == SequenceStep::ProductionEdit);
-    let full = receipt
-        .steps
-        .iter()
-        .find(|step| step.step == SequenceStep::ExplicitFullRefresh);
+    let mut cumulative_ms = 0u128;
+    let mut first_health_ms = None;
+    let mut first_useful_ms = None;
+    let mut complete_ms = None;
+    for step in &receipt.steps {
+        cumulative_ms = cumulative_ms.saturating_add(step.elapsed_ms.unwrap_or(0));
+        match step.step {
+            SequenceStep::ColdStart if first_health_ms.is_none() => {
+                first_health_ms = Some(cumulative_ms);
+            }
+            SequenceStep::ProductionEdit if first_useful_ms.is_none() => {
+                first_useful_ms = Some(cumulative_ms);
+            }
+            SequenceStep::ExplicitFullRefresh => complete_ms = Some(cumulative_ms),
+            _ => {}
+        }
+    }
     json!({
-        "first_health_ms": cold.and_then(|step| step.elapsed_ms).unwrap_or(0),
-        "first_useful_ms": production.and_then(|step| step.elapsed_ms).unwrap_or(0),
-        "complete_ms": full.and_then(|step| step.elapsed_ms).unwrap_or(0),
+        "first_health_ms": first_health_ms.unwrap_or(0),
+        "first_useful_ms": first_useful_ms.unwrap_or(0),
+        "complete_ms": complete_ms.unwrap_or(0),
+        "basis": "cumulative elapsed_ms from sequence start through the milestone step",
     })
 }
 
@@ -358,7 +361,7 @@ mod tests {
     fn packet_digest_is_stable_when_subject_rows_are_reordered() -> Result<(), String> {
         let fixture = sample_receipt("fixture");
         let dogfood = sample_receipt("dogfood");
-        let mut packet = build_measurement_packet(&fixture, &dogfood, 10, 5, 12, 6)?;
+        let mut packet = build_measurement_packet(&fixture, &dogfood, 10, 12)?;
         let first = packet_digest_semantic(&packet)?;
         if let Some(subjects) = packet.get_mut("subjects").and_then(Value::as_array_mut) {
             subjects.reverse();
@@ -384,7 +387,7 @@ mod tests {
     fn measurement_packet_retains_executed_fixture_and_self_dogfood_rows() -> Result<(), String> {
         let fixture = sample_receipt("fixture");
         let dogfood = sample_receipt("dogfood");
-        let packet = build_measurement_packet(&fixture, &dogfood, 10, 5, 12, 6)?;
+        let packet = build_measurement_packet(&fixture, &dogfood, 10, 12)?;
         let subjects = packet
             .get("subjects")
             .and_then(Value::as_array)
@@ -423,35 +426,38 @@ mod tests {
     #[test]
     fn endpoints_report_health_useful_and_complete_separately() -> Result<(), String> {
         let mut fixture = sample_receipt("fixture");
+        for step in &mut fixture.steps {
+            step.elapsed_ms = Some(0);
+        }
         if let Some(cold) = fixture
             .steps
             .iter_mut()
             .find(|step| step.step == SequenceStep::ColdStart)
         {
-            cold.elapsed_ms = Some(11);
+            cold.elapsed_ms = Some(10);
         }
         if let Some(production) = fixture
             .steps
             .iter_mut()
             .find(|step| step.step == SequenceStep::ProductionEdit)
         {
-            production.elapsed_ms = Some(22);
+            production.elapsed_ms = Some(5);
         }
         if let Some(full) = fixture
             .steps
             .iter_mut()
             .find(|step| step.step == SequenceStep::ExplicitFullRefresh)
         {
-            full.elapsed_ms = Some(33);
+            full.elapsed_ms = Some(7);
         }
         let endpoints = endpoints_from_receipt(&fixture);
-        if endpoints.get("first_health_ms").and_then(Value::as_u64) != Some(11) {
+        if endpoints.get("first_health_ms").and_then(Value::as_u64) != Some(10) {
             return Err(format!("unexpected endpoints: {endpoints}"));
         }
-        if endpoints.get("first_useful_ms").and_then(Value::as_u64) != Some(22) {
+        if endpoints.get("first_useful_ms").and_then(Value::as_u64) != Some(15) {
             return Err(format!("unexpected endpoints: {endpoints}"));
         }
-        if endpoints.get("complete_ms").and_then(Value::as_u64) != Some(33) {
+        if endpoints.get("complete_ms").and_then(Value::as_u64) != Some(22) {
             return Err(format!("unexpected endpoints: {endpoints}"));
         }
         Ok(())
