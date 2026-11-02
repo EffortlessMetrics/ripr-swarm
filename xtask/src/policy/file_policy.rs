@@ -245,6 +245,21 @@ fn validate_test_covered_by(
     validate_test_covered_by_recorded(path, commands, &mut Vec::new())
 }
 
+/// Announce a Cargo child on stderr before and after it runs. A caller that
+/// outlives its own deadline (the isolated policy-facade test, #12510) carries
+/// this stream in its diagnostic, so a stall names the Cargo command it was
+/// inside and how long earlier ones took instead of only the phase.
+fn announce_cargo_child<T>(description: &str, run: impl FnOnce() -> T) -> T {
+    eprintln!("policy cargo child start: {description}");
+    let started = std::time::Instant::now();
+    let result = run();
+    eprintln!(
+        "policy cargo child done after {}s: {description}",
+        started.elapsed().as_secs()
+    );
+    result
+}
+
 fn validate_test_covered_by_recorded(
     path: &str,
     commands: &[FilePolicyTestCommand],
@@ -255,17 +270,21 @@ fn validate_test_covered_by_recorded(
     // preparations below compile one package at a time. One combined build
     // lets Cargo schedule them together; it only pre-fills the cache.
     if let Some(args) = combined_preparation_args(commands, host) {
-        let captured = capture_output_with_timeout(
-            "cargo",
-            &args,
-            &[],
-            TEST_COVERED_BY_BUILD_TIMEOUT,
-            "test-valued covered_by combined build",
-        );
+        let captured = announce_cargo_child("test-valued covered_by combined build", || {
+            capture_output_with_timeout(
+                "cargo",
+                &args,
+                &[],
+                TEST_COVERED_BY_BUILD_TIMEOUT,
+                "test-valued covered_by combined build",
+            )
+        });
         diagnostics.push(CommandDiagnostic::captured("cargo", &args, &captured));
     }
     validate_test_covered_by_recorded_with(path, commands, host, diagnostics, |spawn| {
-        capture_output_with_timeout("cargo", &spawn.args, &[], spawn.timeout, spawn.description)
+        announce_cargo_child(spawn.description, || {
+            capture_output_with_timeout("cargo", &spawn.args, &[], spawn.timeout, spawn.description)
+        })
     })
 }
 
