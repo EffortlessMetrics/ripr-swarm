@@ -14,8 +14,8 @@ pub(crate) use super::extract::{
     err_return_guard_oracles, extract_assertions, extract_assertions_in, extract_call_facts,
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_literals, extract_return_facts, guarded_result_match_scan_with_shadow_authority,
-    has_oracle_text_shape, is_inequality_assertion, is_unwrap_err_bound_error_assertion,
-    unwrap_err_bound_variables,
+    has_oracle_text_shape, is_inequality_assertion, is_inline_unwrap_err_error_assertion,
+    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
 use super::facts::ModulePathTarget;
 pub(crate) use super::facts::validated_file_wide_harness_targets;

@@ -590,6 +590,19 @@ pub(crate) fn probes_for_file_with_relations(
             probes.extend(retargeted);
             continue;
         }
+        // #11400: a changed `const` value is its readers' new return value.
+        // When every same-file reader returns it on one line
+        // (`const_reader_returns`, the rule `ripr repair` scopes by), the
+        // finding moves to those returned expressions, the way #3294 moves a
+        // changed `let` to its predicates; otherwise the line stays a
+        // static-unknown const probe.
+        if families == [ProbeFamily::StaticUnknown]
+            && let Some(retargeted) =
+                retarget_changed_const_readers(&build_context, added, text, &changed_lines)
+        {
+            probes.extend(retargeted);
+            continue;
+        }
         // RIPR-SPEC-0357: a changed `let` whose binding reaches the returned
         // expression unchanged keeps its generic static-unknown probe and
         // only gains the named flow as evidence.
@@ -865,6 +878,66 @@ fn retarget_changed_binding_predicates(
         ));
     }
     (!retargeted.is_empty()).then_some(retargeted)
+}
+
+/// #11400: retarget a changed single-line `const` declaration to the
+/// returned expressions of its same-file readers (`const_reader_returns`).
+/// `None` keeps the generic static-unknown probe: a multi-line declaration,
+/// a reader without a one-line return of the name, or a reader return the
+/// diff already changes (that line carries its own probe).
+fn retarget_changed_const_readers(
+    context: &ProbeBuildContext<'_>,
+    added: &ChangedLine,
+    text: &str,
+    changed_lines: &[usize],
+) -> Option<Vec<SeededProbe>> {
+    // One plain declaration line: a brace could open or close an item on
+    // the same line.
+    if !text.trim_end().ends_with(';') || text.contains(['{', '}']) {
+        return None;
+    }
+    // Only a value that really changed: the removed declaration of the same
+    // name pairs with this one, and the two evaluate differently.
+    let pairs = crate::analysis::classify::ChangedConsts::from_changed_files([context.changed]);
+    let change = pairs.lookup(&context.changed.path, added.line)?;
+    if !crate::analysis::classify::const_value_changes(change) {
+        return None;
+    }
+    let readers = crate::analysis::classify::const_reader_returns(
+        context.root,
+        text,
+        added.line,
+        &context.changed.path,
+        context.index,
+    );
+    if readers.is_empty()
+        || readers
+            .iter()
+            .any(|shape| changed_lines.contains(&shape.start_line))
+    {
+        return None;
+    }
+    Some(
+        readers
+            .iter()
+            .map(|shape| {
+                let line = ChangedLine {
+                    line: shape.start_line,
+                    new_side_line: shape.start_line,
+                    text: shape.text.to_string(),
+                };
+                let mut seeded = SeededProbe::from_probe(build_probe(
+                    context,
+                    &line,
+                    ProbeFamily::ReturnValue,
+                    None,
+                    Some(shape.text.to_string()),
+                ));
+                seeded.const_reader = true;
+                seeded
+            })
+            .collect(),
+    )
 }
 
 /// Name the return flow of a changed complete single-line `let` (RIPR-SPEC-0357).

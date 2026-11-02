@@ -3155,6 +3155,16 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
     ] {
         assert_eq!(value(items, body, operand), None, "{body}");
     }
+    // #8928: the paired control — holder init with no interior-mutable token
+    // in the initializer text stays admitted (documented under-credit limit).
+    assert_eq!(
+        value(
+            "struct Counter(AtomicUsize);\nimpl Counter {\n    fn new(n: u32) -> Self {\n        Counter(AtomicUsize::new(n * 3))\n    }\n}\nstatic EXPECTED: Counter = Counter::new(weight(4));",
+            "assert_eq!(weight(4), EXPECTED.0);",
+            "EXPECTED"
+        ),
+        Some("Counter::new(weight(4))".to_string())
+    );
 }
 
 #[test]
