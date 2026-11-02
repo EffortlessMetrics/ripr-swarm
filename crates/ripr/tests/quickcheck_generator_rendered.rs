@@ -76,6 +76,11 @@ fn rendered(source: &str, generator: bool) -> Result<(), String> {
                     .iter()
                     .all(|f| f.canonical_gap.is_none() && f.related_tests.is_empty())
             );
+        } else {
+            assert!(
+                output.findings.iter().all(|f| f.canonical_gap.is_some()),
+                "production findings retain canonical gaps"
+            );
         }
     }
     Ok(())
