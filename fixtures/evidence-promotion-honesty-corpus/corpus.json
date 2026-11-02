@@ -10920,6 +10920,30 @@
       ]
     },
     {
+      "id": "rust_glob_import_pretty_assertions_drop_in",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/glob_import_pretty_assertions_drop_in",
+      "vector": "glob_imported_module_refuses_qualified_drop_in_assertion",
+      "probe_family": "static_unknown",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
       "id": "rust_glob_import_qualified_other_module",
       "language": "rust",
       "tier": "pure",
