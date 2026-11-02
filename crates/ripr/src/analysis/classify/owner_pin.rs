@@ -4233,6 +4233,11 @@ impl OwnerReturnPin {
         self.returns_bool && matches!(self.path, ReturnPathGate::Any)
     }
 
+    /// Whether this pin is the RIPR-SPEC-0225 whole-value field authority (#7894).
+    pub(in crate::analysis) fn credits_whole_value_field(&self) -> bool {
+        matches!(self.path, ReturnPathGate::WholeValueField(_))
+    }
+
     /// The owner-side gates: `None` when the probe is not a return value
     /// (or a changed `return Err(..)`, filed as `error_path`),
     /// the owner's declaration or return paths are not established, or
