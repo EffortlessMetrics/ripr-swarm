@@ -1,7 +1,7 @@
 [[behavior]]
-id = "RIPR-SPEC-0377"
+id = "RIPR-SPEC-0379"
 name = "Versioned tool-capability authority registry schema and report-only parser"
-spec = "docs/specs/RIPR-SPEC-0377-tool-capability-authority-registry.md"
+spec = "docs/specs/RIPR-SPEC-0379-tool-capability-authority-registry.md"
 tests = [
   "xtask/src/tool_capabilities/tests.rs::valid_seed_registry_parses_without_diagnostics",
   "xtask/src/tool_capabilities/tests.rs::unknown_schema_version_fails",
@@ -30,6 +30,6 @@ code = [
 ]
 outputs = [
   ".ripr/tool-capabilities.toml",
-  "docs/specs/RIPR-SPEC-0377-tool-capability-authority-registry.md",
+  "docs/specs/RIPR-SPEC-0379-tool-capability-authority-registry.md",
 ]
 metrics = ["unit_test_pass_rate"]

@@ -1,4 +1,4 @@
-//! Report-only parser for `.ripr/tool-capabilities.toml` (#2355, RIPR-SPEC-0377).
+//! Report-only parser for `.ripr/tool-capabilities.toml` (#2355, RIPR-SPEC-0379).
 //!
 //! The parser is deterministic, network-free, and injectable by `as_of`. It
 //! does not classify the full command surface or change CI behavior.

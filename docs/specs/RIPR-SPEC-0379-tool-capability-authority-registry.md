@@ -1,4 +1,4 @@
-# RIPR-SPEC-0377: Versioned tool-capability authority registry schema and report-only parser
+# RIPR-SPEC-0379: Versioned tool-capability authority registry schema and report-only parser
 
 Status: proposed
 

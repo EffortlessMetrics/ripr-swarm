@@ -1,4 +1,4 @@
-# Versioned capability-authority registry (RIPR-SPEC-0377 / #2355).
+# Versioned capability-authority registry (RIPR-SPEC-0379 / #2355).
 # Report-only schema and parser. Not a CI gate and not a complete command inventory.
 schema_version = 1
 kind = "ripr.tool_capabilities"
