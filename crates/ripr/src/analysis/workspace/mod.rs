@@ -5,6 +5,7 @@ mod classify;
 mod discover;
 mod module_graph;
 mod path_dependencies;
+mod rust_project_facts;
 mod select;
 mod source_role;
 
