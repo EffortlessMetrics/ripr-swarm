@@ -1506,6 +1506,9 @@ fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         return Some(worktree_scope_disclosure(snapshot));
     }
     let mut disclosure = tracked_scope_disclosure(snapshot);
+    if disclosure.is_none() {
+        disclosure = explicit_base_scope_disclosure(snapshot);
+    }
     let scope = &snapshot.scope;
     if scope.ignored.is_empty() {
         return disclosure;
@@ -1636,6 +1639,18 @@ fn analyzed_label(snapshot: &Snapshot) -> String {
         Some(base) => format!("committed diff against base `{base}`"),
         None => "committed default-branch diff".to_string(),
     }
+}
+
+/// #9190: a clean committed snapshot still names the explicit base it analyzed
+/// so refresh `scope` is not null when the client passed `base`.
+fn explicit_base_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
+    let base = snapshot.base.as_ref()?;
+    Some(json!({
+        "analyzed": analyzed_label(snapshot),
+        "analyzed_base": base,
+        "uncommitted_edits": "outside this analysis",
+        "note": "this snapshot analyzed the committed diff against the named base; no tracked edits were outside that analysis",
+    }))
 }
 
 fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
@@ -5184,6 +5199,26 @@ mod tests {
                 return Err(format!("reserved code is not a wire token: {code}"));
             }
         }
+        Ok(())
+    }
+
+    /// #9190: an explicit-base committed refresh names the analyzed base in
+    /// `scope` even when the worktree is clean.
+    #[test]
+    fn explicit_base_scope_disclosure_on_clean_committed_snapshot() -> Result<(), String> {
+        let mut snapshot = Snapshot::from_output(
+            &output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?,
+            Some("root:sha256:test"),
+        )
+        .map_err(|failure| failure.detail)?;
+        assert!(scope_disclosure(&snapshot).is_none());
+        snapshot.base = Some("trunk".to_string());
+        let disclosure = scope_disclosure(&snapshot).ok_or("explicit base must disclose")?;
+        assert_eq!(disclosure.get("analyzed_base"), Some(&json!("trunk")));
+        assert_eq!(
+            disclosure.get("uncommitted_edits"),
+            Some(&json!("outside this analysis"))
+        );
         Ok(())
     }
 
