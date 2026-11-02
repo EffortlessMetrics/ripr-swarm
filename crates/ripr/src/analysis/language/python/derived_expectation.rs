@@ -28,9 +28,11 @@ use super::approx_band::parse_expression;
 use super::source_utils::text_for_range;
 use super::{PythonAssertion, PythonOracleShape, PythonOwner, PythonTest};
 use crate::domain::{OracleKind, OracleStrength};
+use rayon::prelude::*;
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use super::source_facts::parse_module_result;
 
@@ -43,30 +45,44 @@ const MAX_FORWARD_DEPTH: usize = 4;
 
 /// Demote every exact-value comparison whose two sides reach the same
 /// workspace owner.
+///
+/// Each test is decided from its own assertions, its file's bindings and the
+/// read-only owner index, so files are bound and tests decided in parallel;
+/// the result does not depend on the order.
 pub(super) fn demote_derived_expectations<'a>(
     tests: &mut [PythonTest],
     owners: &[PythonOwner],
-    read_source: impl Fn(&Path) -> Option<&'a str>,
+    read_source: impl Fn(&Path) -> Option<&'a str> + Sync,
 ) {
     let index = OwnerIndex::new(owners, &read_source);
-    if index.callees.is_empty() {
+    if index.is_empty() {
         return;
     }
-    let mut files: BTreeMap<PathBuf, Option<FileBindings>> = BTreeMap::new();
-    for test in tests.iter_mut() {
-        if !test.assertions.iter().any(is_exact_comparison) {
-            continue;
-        }
-        let bindings = files
-            .entry(test.file.clone())
-            .or_insert_with(|| {
-                let source = read_source(&test.file)?;
-                match parse_module_result(&test.file, source) {
+    // Bindings only widen what an operand reads, and a pair relates only when
+    // both operands reach an owner call. An operand that names nothing (a
+    // literal) reaches none, so a test whose every pair has one is decided
+    // without parsing its file again.
+    let wanted: BTreeSet<PathBuf> = tests
+        .iter()
+        .filter(|test| test.assertions.iter().any(is_exact_comparison) && needs_bindings(test))
+        .map(|test| test.file.clone())
+        .collect();
+    let files: BTreeMap<PathBuf, Option<FileBindings>> = wanted
+        .into_par_iter()
+        .map(|file| {
+            let bindings =
+                read_source(&file).and_then(|source| match parse_module_result(&file, source) {
                     Ok(Mod::Module(module)) => Some(FileBindings::read(source, &module.body)),
                     _ => None,
-                }
-            })
-            .as_ref();
+                });
+            (file, bindings)
+        })
+        .collect();
+    tests.par_iter_mut().for_each(|test| {
+        if !test.assertions.iter().any(is_exact_comparison) {
+            return;
+        }
+        let bindings = files.get(&test.file).and_then(|bindings| bindings.as_ref());
         let scope = TestScope::new(test, bindings);
         let imports: BTreeMap<String, String> = test
             .imports
@@ -89,7 +105,27 @@ pub(super) fn demote_derived_expectations<'a>(
                 }
             }
         }
-    }
+    });
+}
+
+/// Whether some exact comparison of the test has a pair whose two operands
+/// both read a name, the only pairs bindings can relate.
+pub(super) fn needs_bindings(test: &PythonTest) -> bool {
+    test.assertions
+        .iter()
+        .filter(|assertion| is_exact_comparison(assertion))
+        .any(|assertion| {
+            assertion.observed_operands.chunks(2).any(|pair| {
+                matches!(pair, [(left, _), (right, _)] if reads_a_name(left) && reads_a_name(right))
+            })
+        })
+}
+
+/// Whether the operand text holds an identifier outside strings and comments.
+pub(super) fn reads_a_name(operand: &str) -> bool {
+    tokens(operand)
+        .iter()
+        .any(|token| matches!(token, Token::Chain(_) | Token::Ident { .. }))
 }
 
 fn is_exact_comparison(assertion: &PythonAssertion) -> bool {
@@ -104,7 +140,7 @@ fn derived(
     assertion: &PythonAssertion,
     scope: &TestScope<'_>,
     imports: &BTreeMap<String, String>,
-    index: &OwnerIndex,
+    index: &OwnerIndex<'_, '_>,
 ) -> bool {
     assertion.observed_operands.chunks(2).all(|pair| {
         let [(left, _), (right, _)] = pair else {
@@ -117,6 +153,12 @@ fn derived(
 /// `f(2) - f(2)`, `f(2) / f(2)`, `f(2) // f(2)`, `f(2) % f(2)`, `f(2) ^ f(2)`:
 /// a call minus (or over, or xor) itself is a constant whatever `f` returns.
 fn cancels_itself(operand: &str) -> bool {
+    // Cheap precheck before parsing: the shape needs a call on a side of one
+    // of the cancelling operators (`//` is covered by `/`). Parsing every
+    // operand of every exact comparison was a measurable share of a warm check.
+    if !operand.contains('(') || !operand.contains(['-', '/', '%', '^']) {
+        return false;
+    }
     let Some(Expr::BinOp(binop)) = parse_expression(operand) else {
         return false;
     };
@@ -145,38 +187,101 @@ fn compact(text: &str) -> String {
     text.chars().filter(|ch| !ch.is_whitespace()).collect()
 }
 
-/// The workspace owners by name and the owner names each one's body calls.
-struct OwnerIndex {
-    /// Owner name to the callee names its bodies call (owner names only).
-    callees: BTreeMap<String, BTreeSet<String>>,
+/// The workspace owners by name, with the owner names each one's body calls
+/// read on first use. Lexing every owner body of the workspace up front cost
+/// more than the rest of a warm Python check on a large repository; a
+/// comparison only ever reaches the owners its operands name.
+struct OwnerIndex<'o, 'a> {
+    /// Owner name to where its definitions live: file, first line, last line.
+    sites: BTreeMap<&'o str, Vec<(&'o Path, usize, usize)>>,
+    read_source: &'o (dyn Fn(&Path) -> Option<&'a str> + Sync),
+    lines_by_file: Mutex<BTreeMap<&'o Path, Arc<Vec<&'a str>>>>,
+    /// Owner name to the owner names its bodies call (memoized).
+    callees: Mutex<BTreeMap<&'o str, Arc<BTreeSet<String>>>>,
 }
 
-impl OwnerIndex {
-    fn new<'a>(owners: &[PythonOwner], read_source: &impl Fn(&Path) -> Option<&'a str>) -> Self {
-        let named: BTreeSet<&str> = owners
-            .iter()
-            .filter(|owner| owner.owner_kind.is_some())
-            .map(|owner| owner.name.as_str())
-            .collect();
-        let mut callees: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+impl<'o, 'a> OwnerIndex<'o, 'a> {
+    fn new(
+        owners: &'o [PythonOwner],
+        read_source: &'o (dyn Fn(&Path) -> Option<&'a str> + Sync),
+    ) -> Self {
+        let mut sites: BTreeMap<&str, Vec<(&Path, usize, usize)>> = BTreeMap::new();
         for owner in owners.iter().filter(|owner| owner.owner_kind.is_some()) {
-            let entry = callees.entry(owner.name.clone()).or_default();
-            let Some(source) = read_source(&owner.file) else {
+            sites.entry(owner.name.as_str()).or_default().push((
+                owner.file.as_path(),
+                owner.start_line,
+                owner.end_line,
+            ));
+        }
+        Self {
+            sites,
+            read_source,
+            lines_by_file: Mutex::new(BTreeMap::new()),
+            callees: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.sites.is_empty()
+    }
+
+    /// Whether `name` is a workspace owner.
+    fn has_owner(&self, name: &str) -> bool {
+        self.sites.contains_key(name)
+    }
+
+    /// The owner names the bodies of the owners called `name` call.
+    fn callees_of(&self, name: &str) -> Arc<BTreeSet<String>> {
+        let Some((key, sites)) = self.sites.get_key_value(name) else {
+            return Arc::default();
+        };
+        if let Some(found) = self
+            .callees
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(key)
+        {
+            return Arc::clone(found);
+        }
+        let mut callees = BTreeSet::new();
+        for &(file, start_line, end_line) in sites {
+            let Some(lines) = self.lines_of(file) else {
                 continue;
             };
-            let body: String = source
-                .lines()
-                .skip(owner.start_line.saturating_sub(1))
-                .take(owner.end_line.saturating_sub(owner.start_line) + 1)
-                .collect::<Vec<_>>()
-                .join("\n");
-            entry.extend(
+            let first = start_line.saturating_sub(1).min(lines.len());
+            let last = (first + end_line.saturating_sub(start_line) + 1).min(lines.len());
+            let body = lines[first..last].join("\n");
+            callees.extend(
                 called_names(&body)
                     .into_iter()
-                    .filter(|name| named.contains(name.as_str())),
+                    .filter(|called| self.has_owner(called)),
             );
         }
-        Self { callees }
+        let callees = Arc::new(callees);
+        self.callees
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, Arc::clone(&callees));
+        callees
+    }
+
+    /// The lines of `file`, split once.
+    fn lines_of(&self, file: &'o Path) -> Option<Arc<Vec<&'a str>>> {
+        if let Some(found) = self
+            .lines_by_file
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(file)
+        {
+            return Some(Arc::clone(found));
+        }
+        let source = (self.read_source)(file)?;
+        let lines = Arc::new(source.lines().collect::<Vec<_>>());
+        self.lines_by_file
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(file, Arc::clone(&lines));
+        Some(lines)
     }
 
     /// `names` and every owner they call, transitively.
@@ -186,7 +291,7 @@ impl OwnerIndex {
         for _ in 0..MAX_FORWARD_DEPTH {
             let mut next = BTreeSet::new();
             for name in &frontier {
-                for callee in self.callees.get(name).into_iter().flatten() {
+                for callee in self.callees_of(name).iter() {
                     if reached.insert(callee.clone()) {
                         next.insert(callee.clone());
                     }
@@ -570,11 +675,41 @@ fn collect_assigns(source: &str, stmts: &[Stmt], out: &mut Bindings) {
 struct TestScope<'a> {
     file: Option<&'a FileBindings>,
     test: &'a PythonTest,
+    /// The test function's own assignments.
+    locals: Option<&'a Bindings>,
+    /// Attribute bindings of the test's class and its same-file bases, found
+    /// once per test rather than on every name lookup.
+    classes: Vec<&'a Bindings>,
 }
 
 impl<'a> TestScope<'a> {
     fn new(test: &'a PythonTest, file: Option<&'a FileBindings>) -> Self {
-        Self { file, test }
+        let mut classes = Vec::new();
+        if let Some(file) = file {
+            let mut pending: Vec<String> = test
+                .qualified_name
+                .rsplit_once('.')
+                .map(|(class, _)| class.rsplit('.').next().unwrap_or(class).to_string())
+                .into_iter()
+                .collect();
+            let mut visited: BTreeSet<String> = BTreeSet::new();
+            while let Some(class) = pending.pop() {
+                if !visited.insert(class.clone()) {
+                    continue;
+                }
+                if let Some((attrs, bases)) = file.classes.get(&class) {
+                    classes.push(attrs);
+                    pending.extend(bases.iter().cloned());
+                }
+            }
+        }
+        let locals = file.and_then(|file| file.locals.get(&test.qualified_name));
+        Self {
+            file,
+            test,
+            locals,
+            classes,
+        }
     }
 
     /// Whether the owner calls of one operand reach the other's.
@@ -583,11 +718,14 @@ impl<'a> TestScope<'a> {
         left: &str,
         right: &str,
         imports: &BTreeMap<String, String>,
-        index: &OwnerIndex,
+        index: &OwnerIndex<'_, '_>,
     ) -> bool {
         let left_calls = self.owner_calls_of(left, imports, index);
+        if left_calls.is_empty() {
+            return false;
+        }
         let right_calls = self.owner_calls_of(right, imports, index);
-        if left_calls.is_empty() || right_calls.is_empty() {
+        if right_calls.is_empty() {
             return false;
         }
         let left_reach = index.closure(&left_calls);
@@ -604,7 +742,7 @@ impl<'a> TestScope<'a> {
         &self,
         operand: &str,
         imports: &BTreeMap<String, String>,
-        index: &OwnerIndex,
+        index: &OwnerIndex<'_, '_>,
     ) -> BTreeSet<String> {
         let mut roots = BTreeSet::new();
         let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -631,7 +769,7 @@ impl<'a> TestScope<'a> {
         &self,
         text: &str,
         imports: &BTreeMap<String, String>,
-        index: &OwnerIndex,
+        index: &OwnerIndex<'_, '_>,
         roots: &mut BTreeSet<String>,
     ) -> Vec<String> {
         let mut chains = Vec::new();
@@ -680,7 +818,7 @@ impl<'a> TestScope<'a> {
         chain: &str,
         attr: bool,
         imports: &BTreeMap<String, String>,
-        index: &OwnerIndex,
+        index: &OwnerIndex<'_, '_>,
     ) -> Option<String> {
         if attr {
             return None;
@@ -697,15 +835,15 @@ impl<'a> TestScope<'a> {
             .get(name)
             .cloned()
             .unwrap_or_else(|| name.to_string());
-        index.callees.contains_key(&resolved).then_some(resolved)
+        index.has_owner(&resolved).then_some(resolved)
     }
 
     /// Whether a name the test binds is assigned from a call of an owner.
-    fn built_by_owner(&self, name: &str, index: &OwnerIndex) -> bool {
+    fn built_by_owner(&self, name: &str, index: &OwnerIndex<'_, '_>) -> bool {
         self.bound(name).iter().any(|text| {
             called_names(text)
                 .iter()
-                .any(|called| index.callees.contains_key(called))
+                .any(|called| index.has_owner(called))
         })
     }
 
@@ -726,27 +864,13 @@ impl<'a> TestScope<'a> {
     fn bound(&self, key: &str) -> Vec<String> {
         let mut out = Vec::new();
         if let Some(file) = self.file {
-            if let Some(locals) = file.locals.get(&self.test.qualified_name) {
+            if let Some(locals) = self.locals {
                 out.extend(locals.by_name.get(key).cloned().unwrap_or_default());
             }
             out.extend(file.module.by_name.get(key).cloned().unwrap_or_default());
             // The test's class and its same-file bases.
-            let mut pending: Vec<String> = self
-                .test
-                .qualified_name
-                .rsplit_once('.')
-                .map(|(class, _)| class.rsplit('.').next().unwrap_or(class).to_string())
-                .into_iter()
-                .collect();
-            let mut visited: BTreeSet<String> = BTreeSet::new();
-            while let Some(class) = pending.pop() {
-                if !visited.insert(class.clone()) {
-                    continue;
-                }
-                if let Some((attrs, bases)) = file.classes.get(&class) {
-                    out.extend(attrs.by_name.get(key).cloned().unwrap_or_default());
-                    pending.extend(bases.iter().cloned());
-                }
+            for attrs in &self.classes {
+                out.extend(attrs.by_name.get(key).cloned().unwrap_or_default());
             }
             // A same-file fixture or helper read by name.
             if !key.contains('.') {

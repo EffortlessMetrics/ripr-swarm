@@ -168,3 +168,39 @@ fn given_an_imported_or_owner_built_receiver_then_the_owner_is_matched() {
         assert!(demoted(source), "{source}");
     }
 }
+
+/// Literal operands read no name, so a pair with one needs no file bindings
+/// (#12447); anything a binding could stand for does.
+#[test]
+fn only_pairs_of_two_named_operands_need_bindings() {
+    use derived_expectation::{needs_bindings, reads_a_name};
+    for literal in [
+        "5",
+        "\"gold\"",
+        "[1, 2]",
+        "{\"a\": \"b\"}",
+        "-3.5",
+        "'x' 'y'",
+    ] {
+        assert!(!reads_a_name(literal), "{literal}");
+    }
+    for named in [
+        "expected",
+        "self.expected",
+        "f(2)",
+        "b\"x\"",
+        "None",
+        "x + 1",
+    ] {
+        assert!(reads_a_name(named), "{named}");
+    }
+    let needs = |source: &str| {
+        extract_tests(Path::new(TESTS), source)
+            .iter()
+            .any(needs_bindings)
+    };
+    assert!(!needs("def test_a():\n    assert f(2) == 6\n"));
+    assert!(needs(
+        "def test_a():\n    expected = f(2)\n    assert f(2) == expected\n"
+    ));
+}
