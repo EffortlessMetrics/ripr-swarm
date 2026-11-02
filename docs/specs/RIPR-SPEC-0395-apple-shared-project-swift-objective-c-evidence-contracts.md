@@ -526,9 +526,17 @@ Machine-readable registry for #5531. All cells start `not_proven` / `preview`.
 `proof_refs = ["RIPR-SPEC-0395"]`. Implementation copies into
 `domain/language_capability.rs` in #5684 without semantic widening.
 
+Registry identity law: each `id` MUST match the four-axis
+`{language}/{framework}/{mode}/{family}` shape consumed by
+`domain/language_capability.rs` and the manifest join
+([RIPR-SPEC-0365](RIPR-SPEC-0365-capability-manifest-cell-join.md)). Platform-specific
+dispositions use framework values such as `platform-macos` rather than a fifth axis.
+Every `not_proven` cell names a `limit` string because the registry validator requires it.
+
 ```toml
 schema_version = "apple-capability-cells-v1"
 spec_id = "RIPR-SPEC-0395"
+default_limit = "Normative contract only; Apple adapters and judged corpora not landed (#5682)"
 
 [[cell]]
 id = "swift/any/diff/static_facts"
@@ -536,9 +544,9 @@ language = "swift"
 framework = "any"
 mode = "diff"
 family = "static_facts"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "Normative contract only; Apple adapters and judged corpora not landed (#5682)"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
@@ -547,9 +555,9 @@ language = "swift"
 framework = "any"
 mode = "repo"
 family = "static_facts"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "Normative contract only; Apple adapters and judged corpora not landed (#5682)"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
@@ -558,9 +566,9 @@ language = "swift"
 framework = "swift-testing"
 mode = "diff"
 family = "static_facts"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "Normative contract only; Apple adapters and judged corpora not landed (#5682)"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
@@ -569,9 +577,9 @@ language = "swift"
 framework = "xctest"
 mode = "diff"
 family = "static_facts"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "Normative contract only; Apple adapters and judged corpora not landed (#5682)"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
@@ -580,9 +588,9 @@ language = "objective-c"
 framework = "any"
 mode = "diff"
 family = "static_facts"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "Normative contract only; Apple adapters and judged corpora not landed (#5682)"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
@@ -591,9 +599,9 @@ language = "objective-c"
 framework = "any"
 mode = "repo"
 family = "static_facts"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "Normative contract only; Apple adapters and judged corpora not landed (#5682)"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
@@ -602,31 +610,31 @@ language = "objective-c"
 framework = "xctest"
 mode = "diff"
 family = "static_facts"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "Normative contract only; Apple adapters and judged corpora not landed (#5682)"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "apple/project/diff/static_facts"
-language = "apple_project"
+id = "apple-project/any/diff/static_facts"
+language = "apple-project"
 framework = "any"
 mode = "diff"
 family = "static_facts"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "Shared SwiftPM/Xcode substrate facts only; no language owner semantics (#5682)"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "apple/project/repo/static_facts"
-language = "apple_project"
+id = "apple-project/any/repo/static_facts"
+language = "apple-project"
 framework = "any"
 mode = "repo"
 family = "static_facts"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "Shared SwiftPM/Xcode substrate facts only; no language owner semantics (#5682)"
 proof_refs = ["RIPR-SPEC-0395"]
 
 # Explicit unpromoted modes (must remain separate decisions)
@@ -637,7 +645,6 @@ language = "objective-c"
 framework = "objcpp"
 mode = "diff"
 family = "static_facts"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
 limit = "Objective-C++ is not implied by .m support"
@@ -649,7 +656,6 @@ language = "swift"
 framework = "xctest-ui"
 mode = "diff"
 family = "static_facts"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
 limit = "UI tests are not production seam oracles by default"
@@ -661,7 +667,6 @@ language = "objective-c"
 framework = "xctest-ui"
 mode = "diff"
 family = "static_facts"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
 limit = "UI tests are not production seam oracles by default"
@@ -670,113 +675,113 @@ proof_refs = ["RIPR-SPEC-0395"]
 # Platform-scoped rows (configuration context must not universalize)
 
 [[cell]]
-id = "swift/any/diff/static_facts/macos"
+id = "swift/platform-macos/diff/static_facts"
 language = "swift"
-framework = "any"
+framework = "platform-macos"
 mode = "diff"
 family = "static_facts"
-platform_scope = "macos"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "macOS SDK/deployment context is scoped separately from generic Swift facts"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "swift/any/diff/static_facts/ios"
+id = "swift/platform-ios/diff/static_facts"
 language = "swift"
-framework = "any"
+framework = "platform-ios"
 mode = "diff"
 family = "static_facts"
-platform_scope = "ios"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "iOS SDK/deployment context is scoped separately from generic Swift facts"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "swift/any/diff/static_facts/tvos"
+id = "swift/platform-tvos/diff/static_facts"
 language = "swift"
-framework = "any"
+framework = "platform-tvos"
 mode = "diff"
 family = "static_facts"
-platform_scope = "tvos"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "tvOS SDK/deployment context is scoped separately from generic Swift facts"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "swift/any/diff/static_facts/watchos"
+id = "swift/platform-watchos/diff/static_facts"
 language = "swift"
-framework = "any"
+framework = "platform-watchos"
 mode = "diff"
 family = "static_facts"
-platform_scope = "watchos"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "watchOS SDK/deployment context is scoped separately from generic Swift facts"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "swift/any/diff/static_facts/visionos"
+id = "swift/platform-visionos/diff/static_facts"
 language = "swift"
-framework = "any"
+framework = "platform-visionos"
 mode = "diff"
 family = "static_facts"
-platform_scope = "visionos"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "visionOS SDK/deployment context is scoped separately from generic Swift facts"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/any/diff/static_facts/macos"
+id = "objective-c/platform-macos/diff/static_facts"
 language = "objective-c"
-framework = "any"
+framework = "platform-macos"
 mode = "diff"
 family = "static_facts"
-platform_scope = "macos"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "macOS SDK/deployment context is scoped separately from generic Objective-C facts"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/any/diff/static_facts/ios"
+id = "objective-c/platform-ios/diff/static_facts"
 language = "objective-c"
-framework = "any"
+framework = "platform-ios"
 mode = "diff"
 family = "static_facts"
-platform_scope = "ios"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "iOS SDK/deployment context is scoped separately from generic Objective-C facts"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/any/diff/static_facts/tvos"
+id = "objective-c/platform-tvos/diff/static_facts"
 language = "objective-c"
-framework = "any"
+framework = "platform-tvos"
 mode = "diff"
 family = "static_facts"
-platform_scope = "tvos"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "tvOS SDK/deployment context is scoped separately from generic Objective-C facts"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/any/diff/static_facts/watchos"
+id = "objective-c/platform-watchos/diff/static_facts"
 language = "objective-c"
-framework = "any"
+framework = "platform-watchos"
 mode = "diff"
 family = "static_facts"
-platform_scope = "watchos"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "watchOS SDK/deployment context is scoped separately from generic Objective-C facts"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
-id = "objective-c/any/diff/static_facts/visionos"
+id = "objective-c/platform-visionos/diff/static_facts"
 language = "objective-c"
-framework = "any"
+framework = "platform-visionos"
 mode = "diff"
 family = "static_facts"
-platform_scope = "visionos"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "visionOS SDK/deployment context is scoped separately from generic Objective-C facts"
 proof_refs = ["RIPR-SPEC-0395"]
 
 # Repair routing remains unavailable until explicit follow-on promotion
@@ -787,9 +792,9 @@ language = "swift"
 framework = "any"
 mode = "diff"
 family = "repair_routing"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "Apple repair routing is not implemented or promoted (#5682)"
 proof_refs = ["RIPR-SPEC-0395"]
 
 [[cell]]
@@ -798,8 +803,8 @@ language = "objective-c"
 framework = "any"
 mode = "diff"
 family = "repair_routing"
-platform_scope = "any_apple_platform"
 support_state = "not_proven"
 tier_ceiling = "preview"
+limit = "Apple repair routing is not implemented or promoted (#5682)"
 proof_refs = ["RIPR-SPEC-0395"]
 ```
