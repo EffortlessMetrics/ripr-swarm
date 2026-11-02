@@ -144,6 +144,14 @@ pub(in crate::analysis) fn build_finding_with_origins(
             &evidence.implicit_dispatch_tests,
         );
     }
+    let collection_contents_check_side_effect =
+        matches!(context.probe.family, ProbeFamily::SideEffect)
+            && crate::analysis::repair_route::side_effect_needs_collection_contents_guidance(
+                &context.probe.expression,
+                &evidence.reach.state,
+                &evidence.infect.state,
+                &evidence.propagate.state,
+            );
     // RIPR-SPEC-0229 / #11024: no related test input selects the changed
     // match arm, so the repair is an input that selects it, not a stronger
     // assertion. The arm pattern is the backticked span of the fact reason.
@@ -276,6 +284,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
                 &related_tests,
                 &stop_reasons,
             ),
+            collection_contents_check_side_effect,
         )
     };
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {

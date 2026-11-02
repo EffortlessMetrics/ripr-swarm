@@ -28,6 +28,27 @@ pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
 const PRODUCER_DISCRIMINATOR_EVIDENCE: &str = "producer-owned missing discriminator fact";
 pub(crate) const SAFE_TEST_TARGET_EVIDENCE: &str = "safe test target";
 
+/// Diff-side and hover next-step guidance when a localized side effect is a
+/// push into a collection the test holds (#12456). Matches the repair-route
+/// contents-check refusal wording shape from #11402.
+pub(crate) const COLLECTION_CONTENTS_CHECK_NEXT_STEP: &str =
+    "Add an exact check of the full contents the test reads back after the call.";
+
+/// Whether side-effect guidance should name a collection contents check instead
+/// of a mock expectation. Uses the same reach/activation/propagation gate as
+/// the repair route's contents-check requirement (#11402).
+pub(crate) fn side_effect_needs_collection_contents_guidance(
+    side_effect_expression: &str,
+    reach: &StageState,
+    activation: &StageState,
+    propagate: &StageState,
+) -> bool {
+    matches!(
+        (reach, activation, propagate),
+        (&StageState::Yes, &StageState::Yes, &StageState::Yes)
+    ) && super::classify::direct_collection_mutation_receiver(side_effect_expression).is_some()
+}
+
 /// Plain-language rendering of one readiness-evidence string for human
 /// output surfaces only (#10644). A reader cannot act on the internal fact
 /// code, so each known discriminator kind maps to the test evidence the
@@ -960,6 +981,33 @@ mod tests {
 
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")
+    }
+
+    #[test]
+    fn side_effect_needs_collection_contents_guidance_requires_localized_sink() {
+        use super::{
+            COLLECTION_CONTENTS_CHECK_NEXT_STEP, side_effect_needs_collection_contents_guidance,
+        };
+
+        assert!(side_effect_needs_collection_contents_guidance(
+            "buf.push(msg.to_string())",
+            &StageState::Yes,
+            &StageState::Yes,
+            &StageState::Yes,
+        ));
+        assert!(!side_effect_needs_collection_contents_guidance(
+            "buf.push(msg.to_string())",
+            &StageState::Yes,
+            &StageState::Yes,
+            &StageState::Unknown,
+        ));
+        assert!(!side_effect_needs_collection_contents_guidance(
+            "client.send(value)",
+            &StageState::Yes,
+            &StageState::Yes,
+            &StageState::Yes,
+        ));
+        assert!(!COLLECTION_CONTENTS_CHECK_NEXT_STEP.contains("mock"));
     }
 
     fn boundary_seam() -> RepoSeam {
