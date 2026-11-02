@@ -519,7 +519,10 @@ the arm, instead of claiming no assertion names it.
 Proof: `match_arm_proximity_test_cannot_confirm_beside_reaching_test`, the
 `match_arm_proximity_confirmation_not_credited` fixture, and its control
 `match_arm_proximity_wrapper_confirms` (a same-file test of a public wrapper
-keeps `exposed`), both registered in the honesty corpus.
+keeps `exposed`), both registered in the honesty corpus. The production-path
+two-state pin `editing_from_str_fortnight_does_not_flip_the_seconds_arm`
+runs both of the issue's `from_str_fortnight` assertion shapes through
+`check_workspace` and requires the same `weakly_exposed` class.
 
 A test related only by file or module is also withheld when one of its
 assertions calls an indexed function with no call or `macro_rules!` path to the
