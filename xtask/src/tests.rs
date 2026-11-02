@@ -29601,7 +29601,11 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
         ],
         Some(&repo_root()?),
         &[(CHILD_ENV, "1")],
-        crate::run::tool_build_timeout()?,
+        // The child runs the real file-policy Cargo builds, each allowed
+        // FILE_POLICY_COVERED_BY_BUILD_BUDGET by the check itself. A shorter
+        // child deadline fires inside that budget (#12510: Windows runs
+        // finished in ~14 of 15 minutes).
+        crate::run::tool_build_timeout()?.max(crate::policy::FILE_POLICY_COVERED_BY_BUILD_BUDGET),
         "isolated policy facade checks",
     )?
     .output;
