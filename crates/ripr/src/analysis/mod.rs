@@ -1312,10 +1312,14 @@ pub(crate) fn changed_const_reader_return_lines(
     if declaring.is_empty() {
         return Vec::new();
     }
-    // Only the declaring files: every retarget guard that reads an index
-    // reads the declaring file's own facts, which check's index always
-    // holds, and the workspace-wide rules (`name_confined`) read the raw
-    // files from disk in both commands, never an index.
+    // Only the declaring files. Each retarget guard reads the declaring
+    // file's own facts, which check's index always holds, and the
+    // workspace-wide rules (`name_confined`) read the raw files from disk in
+    // both commands, never an index. A function's composed test-only role
+    // does come from the other indexed files, so this narrower index can
+    // emit a return line that check would not (a reader check sees as
+    // test-only). That is harmless: the repair inventory drops test-only
+    // owners, so neither command starts there.
     let paths = declaring
         .iter()
         .map(|file| file.path.clone())

@@ -351,9 +351,12 @@ only when all of these hold:
   at most one call and at most one line that is exactly one plain `use ..;`
   with no `as`. That one call must sit inside a `#[test]` function and
   inside no macro invocation except `assert!`, `assert_eq!`, `assert_ne!`
-  and their `debug_` forms. A second call anywhere refuses, so a test
-  cannot keep the reader's own output as its expected side
-  (`let expected = banner_line(); assert_eq!(banner_line(), expected);`).
+  and their `debug_` forms. A second call anywhere refuses. That stops the
+  common routes by which a test keeps the reader's own output as its
+  expected side (`let expected = banner_line(); assert_eq!(banner_line(), expected);`),
+  but not every one: `let a = banner_line(); let e = a.clone(); assert_eq!(a, e);`
+  calls the reader once, and the test-oracle grading, not this rule, judges
+  such a self-comparison.
   A call from production code or from a test helper that is not a `#[test]`
   function (`fn expected() -> String { fx::banner_line() }`), a call inside
   another macro (`wrap! { #[test] fn .. }`, whose expansion is unknown), a
@@ -364,8 +367,11 @@ only when all of these hold:
   never an index, so `ripr check` in any mode (including `--mode instant`
   and `--no-unchanged-tests`, whose index holds only changed files and
   their parent modules) and `ripr repair` reach the same decision. Repair
-  indexes only the declaring files, since every guard that reads an index
-  reads only the declaring file's facts;
+  indexes only the declaring files: each guard reads the declaring file's
+  own facts. A function's composed test-only role comes from the other
+  indexed files, so repair can name a returned line that check would not
+  (a reader check sees as test-only). That is harmless, because the repair
+  inventory drops test-only owners, so neither command starts there;
 - shadowing and other-path reads are not reads. The reader sits in the
   declaration's own module, no module line leaves its `{` to a later line, and
   no code outside a function reads the name (another constant's initializer,
@@ -384,6 +390,18 @@ start. `ripr repair` scopes to the same returned lines and expressions by
 running the same probe pipeline over the change, and both commands read
 the same raw-text scan of the same workspace file list, so they offer the
 same start or neither does.
+
+Known limits: the scan reads spelling, not expansion, so some routes stay
+outside it. A `macro_rules!` in another file can shadow `assert!` or
+`assert_eq!` around the one allowed call. A proc macro other than `paste`
+can build the constant's or the reader's name from pieces. A `cfg_attr` in
+one file can pass tokens to a module declared in another. An external crate
+can re-export `include!` under a name that is not one of the refused words.
+An attribute proc macro, or a shadowed `#[test]`, can turn a `#[test]`
+function into something else. A template engine or build script can call
+the reader from a file that is not `.rs`. None of these is detected; each
+would need expansion or build knowledge that a static reading does not
+have.
 
 Known missed advisory: the scan over-refuses on purpose. A constant that a
 test, a doc comment or any other file mentions, even harmlessly, keeps the
