@@ -142,7 +142,6 @@ jobs:
         run: |
           mkdir -p target
           shard=${{ matrix.shard }}
-          # ripr and tools first, xtask last (#12245): see the comment above.
           bash -c 'rc=0; for pkg in "--workspace --exclude xtask" "-p xtask"; do cargo nextest run --profile windows-advisory $pkg --no-fail-fast --partition count:$0/4 -E "not $ACL_TESTS" || rc=$?; done; exit $rc' "$shard" > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
           tail -n +1 -F target/shard-$shard.log &
