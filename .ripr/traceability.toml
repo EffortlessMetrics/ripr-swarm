@@ -19217,6 +19217,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::loop_parameter_in_registration_arguments_is_never_resolved",
   "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::scalar_cells_resolve_only_as_direct_reads_in_a_lone_expect",
   "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::hidden_mutation_routes_are_refused_on_every_entry_path",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_callback_comment_tests.rs::object_each_callback_comment_pair_stays_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/table_loop_tests.rs::dynamic_code_in_the_test_body_keeps_the_loop_unresolved",
   "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::tuple_row_container_cells_never_resolve",
   "crates/ripr/src/analysis/language/typescript/table_rows.rs::tests::row_text_guard_refuses_hidden_mutation_routes_outside_quotes",
