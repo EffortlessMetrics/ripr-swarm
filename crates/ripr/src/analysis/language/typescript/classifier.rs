@@ -7208,12 +7208,16 @@ pub(crate) fn classify_resolved_owner(
         typescript_changed_boundary_text(file, &probe_shape.family, old_line_text, line_text);
     let boundary_text = boundary_text.as_ref();
     let predicate_boundary = ts_predicate_boundary(&probe_shape, boundary_text);
-    let boundary_is_equality_negation = typescript_changed_boundary_is_equality_negation(
-        file,
-        &probe_shape.family,
-        old_line_text,
-        line_text,
-    );
+    // #12281: the negation sends every input down the other branch only when
+    // every call evaluates the guard, so it must also be the first statement
+    // of the owner's own body.
+    let boundary_is_equality_negation =
+        typescript_changed_boundary_is_equality_negation(
+            file,
+            &probe_shape.family,
+            old_line_text,
+            line_text,
+        ) && typescript_changed_line_is_first_body_statement(owner, line);
     // #11256: a boundary operand no test call can set names its own limitation.
     let named_limitations_from_derived_operand: Vec<TypeScriptNamedLimitation> =
         derived_boundary_operand_limitation(owner, &predicate_boundary)

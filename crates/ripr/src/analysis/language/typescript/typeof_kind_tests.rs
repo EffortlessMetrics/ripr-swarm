@@ -282,3 +282,75 @@ fn equality_negation_refuses_lines_of_a_multi_line_condition() {
         );
     }
 }
+
+/// #12281 re-review: the negation credit needs every call to evaluate the
+/// guard, so the changed line must be where the owner's first body statement
+/// starts. Each case names the owner and the 1-based line of the guard.
+#[test]
+fn negation_guard_must_be_the_first_body_statement() -> Result<(), String> {
+    use super::typescript_changed_line_is_first_body_statement as first;
+    let file = std::path::Path::new("src/f.ts");
+    let guard = "typeof input !== \"function\"";
+    let case = |source: &str, owner: &str| -> Result<(super::TypeScriptOwner, usize), String> {
+        let owner = super::extract_owners(file, source)
+            .into_iter()
+            .find(|candidate| candidate.name == owner)
+            .ok_or_else(|| format!("owner `{owner}` not extracted from:\n{source}"))?;
+        let line = source
+            .lines()
+            .position(|text| text.contains(guard))
+            .map(|index| index + 1)
+            .ok_or_else(|| format!("no guard line in:\n{source}"))?;
+        Ok((owner, line))
+    };
+    for (owner, source) in [
+        (
+            "resolveValue",
+            "export function resolveValue(input: unknown): unknown {\n  return typeof input !== \"function\" ? (input as any)() : input;\n}\n",
+        ),
+        (
+            "f",
+            "export function f(input: unknown): unknown {\n  if (typeof input !== \"function\") return (input as any)();\n  return input;\n}\n",
+        ),
+        (
+            "f",
+            "export const f = (input: unknown): unknown => {\n  if (typeof input !== \"function\") return (input as any)();\n  return input;\n};\n",
+        ),
+        (
+            "f",
+            "export class C {\n  f(input: unknown): unknown {\n    return typeof input !== \"function\" ? (input as any)() : input;\n  }\n}\n",
+        ),
+    ] {
+        let (owner, line) = case(source, owner)?;
+        assert!(
+            first(&owner, line),
+            "first statement must credit:\n{source}"
+        );
+    }
+    for source in [
+        // an earlier `if` returns first
+        "export function f(input: unknown): unknown {\n  if (typeof input === \"number\") return input;\n  if (typeof input !== \"function\") return (input as any)();\n  return input;\n}\n",
+        // the guard is an `else if` of an earlier branch
+        "export function f(input: unknown): unknown {\n  if (typeof input === \"number\") {\n    return input;\n  } else if (typeof input !== \"function\") {\n    return (input as any)();\n  }\n  return input;\n}\n",
+        // an earlier `switch` returns first
+        "export function f(input: unknown): unknown {\n  switch (typeof input) {\n    case \"number\":\n      return input;\n  }\n  if (typeof input !== \"function\") return (input as any)();\n  return input;\n}\n",
+        // an earlier `throw`
+        "export function f(input: unknown): unknown {\n  if (input === 42) throw new Error(\"x\");\n  if (typeof input !== \"function\") return (input as any)();\n  return input;\n}\n",
+        // an earlier loop returns first
+        "export function f(input: unknown): unknown {\n  for (const k of [1]) {\n    return input;\n  }\n  if (typeof input !== \"function\") return (input as any)();\n  return input;\n}\n",
+        // an earlier plain declaration (refused: in doubt, refuse)
+        "export function f(input: unknown): unknown {\n  const seen = 1;\n  if (typeof input !== \"function\") return (input as any)();\n  return input;\n}\n",
+        // nested in an `if` block
+        "export function f(input: unknown, flag: boolean): unknown {\n  if (flag) {\n    if (typeof input !== \"function\") return (input as any)();\n  }\n  return input;\n}\n",
+        // nested in a loop
+        "export function f(input: unknown, n: number): unknown {\n  for (let i = 0; i < n; i++) {\n    if (typeof input !== \"function\") return (input as any)();\n  }\n  return input;\n}\n",
+        // nested in a callback the owner never calls
+        "export function f(input: unknown): unknown {\n  [].forEach(() => {\n    if (typeof input !== \"function\") return (input as any)();\n  });\n  return input;\n}\n",
+        // a directive precedes the guard
+        "export function f(input: unknown): unknown {\n  \"use strict\";\n  if (typeof input !== \"function\") return (input as any)();\n  return input;\n}\n",
+    ] {
+        let (owner, line) = case(source, "f")?;
+        assert!(!first(&owner, line), "must not credit:\n{source}");
+    }
+    Ok(())
+}

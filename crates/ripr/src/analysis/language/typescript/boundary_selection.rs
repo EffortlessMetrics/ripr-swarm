@@ -627,3 +627,78 @@ pub(crate) fn typescript_changed_boundary_text<'a>(
         Cow::Owned(selected)
     }
 }
+
+/// The source offset of the first statement of the outermost function body
+/// in `program`, or `None` when no body exists or the outermost body is
+/// empty. Parameter default values are walked before the body, so a default
+/// that holds its own function makes this the default's body: the caller
+/// then sees a statement on another line and fails closed.
+fn first_body_statement_start(program: &oxc_ast::ast::Program<'_>) -> Option<usize> {
+    struct First {
+        seen: bool,
+        start: Option<usize>,
+    }
+    impl<'a> oxc_ast_visit::Visit<'a> for First {
+        fn visit_function_body(&mut self, it: &oxc_ast::ast::FunctionBody<'a>) {
+            if self.seen {
+                return;
+            }
+            self.seen = true;
+            self.start = if it.directives.is_empty() {
+                it.statements
+                    .first()
+                    .map(|statement| statement.span().start as usize)
+            } else {
+                None
+            };
+        }
+    }
+    let mut first = First {
+        seen: false,
+        start: None,
+    };
+    oxc_ast_visit::Visit::visit_program(&mut first, program);
+    first.start
+}
+
+/// `true` when the changed source `line` (1-based, module coordinates) is
+/// where the first statement of `owner`'s own body starts (#12281 re-review).
+/// A guard only flips the outcome for every test input when every call
+/// evaluates it: an earlier statement may return, throw, branch or loop
+/// first, and a guard nested in a block, loop or callback may never run. The
+/// owner's recorded source is parsed as a function, a class member or an
+/// expression; anything that does not parse, an empty body, a body with
+/// directives, or a first statement on another line fails closed to `false`.
+pub(crate) fn typescript_changed_line_is_first_body_statement(
+    owner: &TypeScriptOwner,
+    line: usize,
+) -> bool {
+    let Some(source) = owner.source_text.as_deref() else {
+        return false;
+    };
+    if line < owner.start_line {
+        return false;
+    }
+    let wrappers: [(&str, &str); 3] = [("", ""), ("class __ripr_owner__ { ", " }"), ("(", ");")];
+    for (prefix, suffix) in wrappers {
+        let wrapped = format!("{prefix}{source}{suffix}");
+        let start = parse_on_worker(&owner.file, &wrapped, move |file, text, allocator| {
+            let parsed = Parser::new(allocator, text, source_type_for(file)).parse();
+            if parsed.panicked || !parsed.errors.is_empty() {
+                return None;
+            }
+            Some(first_body_statement_start(&parsed.program))
+        });
+        let Ok(Some(start)) = start else {
+            continue;
+        };
+        let Some(start) = start.and_then(|start| start.checked_sub(prefix.len())) else {
+            return false;
+        };
+        let Some(before) = source.get(..start) else {
+            return false;
+        };
+        return owner.start_line + before.matches('\n').count() == line;
+    }
+    false
+}

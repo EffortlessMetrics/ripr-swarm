@@ -648,8 +648,11 @@ boundary without changing the guards (#4104 E):
   conditional, with at most `!` and parentheses around it) on a changed line
   that is itself a complete `if (...)`, `} else if (...)` or `while (...)`
   header or a `return ...;` statement (balanced parentheses and brackets, no
-  trailing operator or opener), every input takes the other branch. A line of
-  a condition written over several lines never qualifies. An observed
+  trailing operator or opener), and that line is where the first statement of
+  the owner's own body starts (no earlier statement can return, throw, branch
+  or loop first, and the guard is not nested in a block, loop or callback),
+  every input takes the other branch. A line of a condition written over
+  several lines, or a guard after another statement, never qualifies. An observed
   owner call whose argument at the guarded parameter's position is written as
   a value of any readable kind then witnesses the change, so
   `expect(resolveValue(42)).toBe(42)` against a flipped

@@ -5266,3 +5266,122 @@ fn negated_typeof_clause_of_a_multi_line_condition_is_not_exposed() -> Result<()
     }
     Ok(())
 }
+
+/// #12281 re-review: the negated guard credits an input of another kind only
+/// when every call evaluates it. An earlier statement that returns, throws
+/// or loops first, or a block, loop or callback around the guard, means the
+/// test input may never reach it, so each case keeps needing an input of the
+/// kind and is never `exposed`. A first-statement guard still credits.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn negated_typeof_guard_credits_only_as_the_first_body_statement() -> Result<(), String> {
+    // (label, base source, changed line after the flip, test body, exposed?)
+    let cases = [
+        (
+            "early-if-return",
+            "export function f(input: unknown): unknown {\n  if (typeof input === \"number\") return input;\n  if (typeof input === \"function\") return (input as any)();\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(f(42)).toBe(42);",
+            false,
+        ),
+        (
+            "else-if",
+            "export function f(input: unknown): unknown {\n  if (typeof input === \"number\") {\n    return input;\n  } else if (typeof input === \"function\") {\n    return (input as any)();\n  }\n  return input;\n}\n",
+            "} else if (typeof input !== \"function\") {",
+            "expect(f(42)).toBe(42);",
+            false,
+        ),
+        (
+            "switch-before",
+            "export function f(input: unknown): unknown {\n  switch (typeof input) {\n    case \"number\":\n      return input;\n  }\n  if (typeof input === \"function\") return (input as any)();\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(f(42)).toBe(42);",
+            false,
+        ),
+        (
+            "throw-before",
+            "export function f(input: unknown): unknown {\n  if (input === 42) throw new Error(\"x\");\n  if (typeof input === \"function\") return (input as any)();\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(() => f(42)).toThrow(\"x\");",
+            false,
+        ),
+        (
+            "loop-return-before",
+            "export function f(input: unknown): unknown {\n  for (const k of [1]) {\n    return input;\n  }\n  if (typeof input === \"function\") return (input as any)();\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(f(42)).toBe(42);",
+            false,
+        ),
+        (
+            "nested-in-if",
+            "export function f(input: unknown, flag: boolean): unknown {\n  if (flag) {\n    if (typeof input === \"function\") return (input as any)();\n  }\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(f(42, false)).toBe(42);",
+            false,
+        ),
+        (
+            "nested-in-loop",
+            "export function f(input: unknown, n: number): unknown {\n  for (let i = 0; i < n; i++) {\n    if (typeof input === \"function\") return (input as any)();\n  }\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(f(42, 0)).toBe(42);",
+            false,
+        ),
+        (
+            "nested-in-callback",
+            "export function f(input: unknown): unknown {\n  [].forEach(() => {\n    if (typeof input === \"function\") input = (input as any)();\n  });\n  return input;\n}\n",
+            "if (typeof input !== \"function\") input = (input as any)();",
+            "expect(f(42)).toBe(42);",
+            false,
+        ),
+        (
+            "first-statement-if",
+            "export function f(input: unknown): unknown {\n  if (typeof input === \"function\") return (input as any)();\n  return input;\n}\n",
+            "if (typeof input !== \"function\") return (input as any)();",
+            "expect(f(42)).toBe(42);",
+            true,
+        ),
+    ];
+    let mut outcomes = Vec::new();
+    for (label, base_source, changed_line, assertion, exposed) in cases {
+        let head_source = base_source.replacen(
+            "typeof input === \"function\"",
+            "typeof input !== \"function\"",
+            1,
+        );
+        if head_source == base_source || !head_source.contains(changed_line) {
+            return Err(format!(
+                "{label}: head must flip the guard on `{changed_line}`"
+            ));
+        }
+        let test_source = format!(
+            "import {{ describe, it, expect }} from \"vitest\";\nimport {{ f }} from \"../src/f.ts\";\n\ndescribe(\"f\", () => {{\n  it(\"keeps the number result\", () => {{\n    {assertion}\n  }});\n}});\n"
+        );
+        let base = [
+            ("package.json", TYPEOF_PACKAGE_JSON),
+            ("ripr.toml", TYPEOF_RIPR_TOML),
+            ("src/f.ts", base_source),
+            ("test/f.test.ts", test_source.as_str()),
+        ];
+        let head = [("src/f.ts", head_source.as_str())];
+        let (_guard, launch, root, base_sha) =
+            inline_typescript_repo(&format!("ts-first-{label}"), &base, &head)?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let (ok, check) = ripr(
+            &launch,
+            &["check", "--root", &root_arg, "--base", &base_sha],
+        )?;
+        expect_exit(ok, true, label)?;
+        need(&check, &format!("Changed behavior: {changed_line}"), label)?;
+        let reads_exposed = check.contains("Static exposure: exposed");
+        let reads_weak = check.contains("Static exposure: weak");
+        outcomes.push(format!(
+            "{label}: exposed={reads_exposed} weak={reads_weak}"
+        ));
+        if exposed != reads_exposed || (!exposed && !reads_weak) {
+            return Err(format!(
+                "{label}: expected exposed={exposed} (else weak), got:\n{check}\nso far: {outcomes:?}"
+            ));
+        }
+    }
+    Ok(())
+}
