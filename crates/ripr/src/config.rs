@@ -409,6 +409,7 @@ const CONFIG_LOAD_READ_HINT: &str = concat!(
     config_removal_advice!()
 );
 
+#[cfg(test)]
 fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
     format!(
         "{}: {}\n{CONFIG_LOAD_PARSE_HINT}",
