@@ -2217,8 +2217,11 @@ fn tampered_perl(edit: impl Fn(&mut Value)) -> Result<Vec<String>, String> {
 
 #[test]
 fn committed_perl_corpus_is_valid_and_covers_each_test_library() -> Result<(), String> {
+    // Like the Python corpus test: resolve spec examples from the repository
+    // that owns fixtures/perl-verdict-corpus/, not from CWD (#7134).
     let dir = perl_corpus_dir();
-    let (corpus, _coverage) = validated_corpus(&dir)?;
+    let _coverage = coverage::spec_example_coverage_for_corpus(&dir)?;
+    let corpus = load_corpus(&dir)?;
     for library in ["testmore", "test2", "testexception"] {
         assert!(
             corpus.subjects.iter().any(|s| s
