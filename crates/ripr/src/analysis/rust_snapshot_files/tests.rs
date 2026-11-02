@@ -321,3 +321,33 @@ fn a_searchable_but_unlistable_directory_is_not_read_as_empty() -> Result<(), St
     assert_eq!(incomplete, unlistable);
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_name_makes_the_listing_unknown_and_never_demotes() -> Result<(), String> {
+    use std::os::unix::ffi::OsStrExt;
+    let root = scratch("non-utf8")?;
+    let odd = root.join(std::ffi::OsStr::from_bytes(b"snaps-\xff"));
+    // Some filesystems refuse non-UTF-8 names; only assert when one exists.
+    if std::fs::create_dir_all(&odd).is_err() {
+        let _ = std::fs::remove_dir_all(&root);
+        return Ok(());
+    }
+    std::fs::write(odd.join("krate__tests__record.snap"), "x").map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    let incomplete = collect(&root, &root, &mut out);
+    let listing = SnapshotListing {
+        files: out
+            .iter()
+            .map(|path| ListedSnapshot {
+                path: path.clone(),
+                tracked: None,
+            })
+            .collect(),
+        unknown: incomplete,
+    };
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(incomplete, "a non-UTF-8 directory name is incomplete");
+    assert!(!listing.certainly_lacks(&["record".to_string()]));
+    Ok(())
+}

@@ -646,7 +646,8 @@ certain:
 - the test file has no `snapshot_path`, `glob!` or `INSTA_` text and the test
   is not case-driven;
 - the workspace `.snap` listing is complete (readable, under its size limit,
-  and without a differing committed-history snapshot input) and no tracked
+  with every directory and file name valid UTF-8, and without a differing
+  committed-history snapshot input) and no tracked
   `.snap` carries the test's snapshot name, allowing a module prefix, a `-N`
   counter and an `@suffix`.
 
@@ -655,7 +656,8 @@ Any other shape keeps its grade. An untracked `.snap` is not one CI sees
 
 Proof: `snapshot_without_an_expected_file_cannot_close_the_return_seam`,
 `an_untracked_expected_file_does_not_credit_the_return_seam`,
-`a_committed_binary_snapshot_keeps_the_return_seam_credit`, the resolver tests in
+`a_committed_binary_snapshot_keeps_the_return_seam_credit`,
+`a_non_utf8_name_makes_the_listing_unknown_and_never_demotes` (#12259), the resolver tests in
 `rust_snapshot_files/tests.rs`, and `rust_field_snapshot_missing_expected_not_promoted`
 in the honesty corpus.
 

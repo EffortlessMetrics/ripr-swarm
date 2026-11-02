@@ -77,7 +77,7 @@ struct ListedSnapshot {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct SnapshotListing {
     files: Vec<ListedSnapshot>,
-    /// Incomplete walk (size limit or an unreadable directory), or a committed-history overlay that disagrees with the
+    /// Incomplete walk (size limit, an unreadable directory or a non-UTF-8 name), or a committed-history overlay that disagrees with the
     /// working tree about a snapshot input: the listing cannot say a file is
     /// absent.
     unknown: bool,
@@ -143,8 +143,8 @@ impl SnapshotListing {
 }
 
 /// Walk `directory` for `*.snap` files; `true` when the listing is
-/// incomplete: the limit stopped it, or a directory or entry could not be
-/// enumerated (a searchable but unlistable directory still lets insta open its
+/// incomplete: the limit stopped it, a directory or entry could not be
+/// enumerated, or an entry name is not valid UTF-8 (a searchable but unlistable directory still lets insta open its
 /// named file, so an unreadable place must never read as "no snapshot").
 fn collect(root: &Path, directory: &Path, out: &mut Vec<String>) -> bool {
     let Ok(entries) = std::fs::read_dir(directory) else {
@@ -155,8 +155,11 @@ fn collect(root: &Path, directory: &Path, out: &mut Vec<String>) -> bool {
             return true;
         };
         let path = entry.path();
+        // A name that is not valid UTF-8 cannot be compared with the test's
+        // snapshot name or reported in the listing, and a `.snap` below it
+        // may be the committed file, so the listing is unknown, not empty.
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
+            return true;
         };
         let Ok(kind) = entry.file_type() else {
             return true;
