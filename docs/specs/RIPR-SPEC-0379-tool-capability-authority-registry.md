@@ -64,8 +64,11 @@ The parser:
    no-panic and clippy-exception `expires` ledgers. `review_after` /
    `review_by` are warning-only and do not expire a dual run.
 5. Requires `control_semantics = "deny"` to name a `test:` or `receipt:`
-   negative proof and a `required_claim_id`. Documentation in `rationale_refs`
-   is not execution evidence.
+   negative proof with a non-empty identifier after the prefix, plus a
+   `required_claim_id`. Bare `test:` / `receipt:` and whitespace-only suffixes
+   are not named proof. Documentation in `rationale_refs` is not execution
+   evidence. The parser checks authored prefix syntax only; it does not
+   resolve that a named test or receipt exists (#2356 / #2358).
 6. Rejects metadata-only or report-only data as parity, currentness,
    required-route, cutover, or retirement evidence.
 7. Validates destination/consumer issue references as `owner/repo#n` syntax
@@ -106,7 +109,9 @@ CI behavior stay unchanged.
 4. Given `state = "dual-running"` without `dual_run_expires`, the diagnostic
    names `dual_run_expires`.
 5. Given `control_semantics = "deny"` with only `docs/CLIPPY_POLICY.md` as
-   negative proof, deny honesty fails.
+   negative proof, deny honesty fails. Given `negative_proof_refs = ["test:"]`
+   or `["test:   "]` or `["receipt:"]`, deny honesty fails because the prefix
+   has no named identifier.
 6. Given `control_semantics = "metadata-only"` and `state = "cutover-ready"`,
    evidence honesty fails.
 7. Given `dual_run_expires = "2026-01-01"` and `--as-of 2026-11-02`, the dual
@@ -127,6 +132,10 @@ CI behavior stay unchanged.
   `dual_running_names_missing_dual_run_expires`,
   `deny_without_negative_proof_and_required_claim_fails`,
   `deny_with_docs_path_as_negative_proof_fails`,
+  `deny_with_empty_test_prefix_fails`,
+  `deny_with_whitespace_only_test_suffix_fails`,
+  `deny_with_empty_receipt_prefix_fails`,
+  `cutover_ready_empty_receipt_prefix_fails`,
   `metadata_only_cannot_satisfy_parity_or_cutover`,
   `expired_dual_run_reported_for_injected_as_of`,
   `same_dual_run_is_valid_on_expiry_date`,

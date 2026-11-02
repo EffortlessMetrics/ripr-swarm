@@ -746,7 +746,11 @@ fn has_execution_proof(refs: &[String]) -> bool {
 
 fn is_execution_ref(value: &str) -> bool {
     let trimmed = value.trim();
-    trimmed.starts_with("test:") || trimmed.starts_with("receipt:")
+    ["test:", "receipt:"].iter().any(|prefix| {
+        trimmed
+            .strip_prefix(prefix)
+            .is_some_and(|name| !name.trim().is_empty())
+    })
 }
 
 fn is_authored_issue_ref(value: &str) -> bool {

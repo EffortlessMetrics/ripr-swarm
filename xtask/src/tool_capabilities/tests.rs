@@ -237,6 +237,81 @@ fn deny_with_docs_path_as_negative_proof_fails() {
 }
 
 #[test]
+fn deny_with_empty_test_prefix_fails() {
+    let body = local_entry("source-policy.example", "ripr.source-policy.example.v1")
+        .replace(
+            "control_semantics = \"report-only\"",
+            "control_semantics = \"deny\"",
+        )
+        .replace(
+            "negative_proof_refs = []",
+            "negative_proof_refs = [\"test:\"]\nrequired_claim_id = \"ripr.required.example\"",
+        );
+    let report = diagnostics_text(&document(&body), None);
+    assert!(
+        report.contains("[deny_honesty]") && report.contains("named negative proof"),
+        "{report}"
+    );
+}
+
+#[test]
+fn deny_with_whitespace_only_test_suffix_fails() {
+    let body = local_entry("source-policy.example", "ripr.source-policy.example.v1")
+        .replace(
+            "control_semantics = \"report-only\"",
+            "control_semantics = \"deny\"",
+        )
+        .replace(
+            "negative_proof_refs = []",
+            "negative_proof_refs = [\"test:   \"]\nrequired_claim_id = \"ripr.required.example\"",
+        );
+    let report = diagnostics_text(&document(&body), None);
+    assert!(
+        report.contains("[deny_honesty]") && report.contains("named negative proof"),
+        "{report}"
+    );
+}
+
+#[test]
+fn deny_with_empty_receipt_prefix_fails() {
+    let body = local_entry("source-policy.example", "ripr.source-policy.example.v1")
+        .replace(
+            "control_semantics = \"report-only\"",
+            "control_semantics = \"deny\"",
+        )
+        .replace(
+            "negative_proof_refs = []",
+            "negative_proof_refs = [\"receipt:\"]\nrequired_claim_id = \"ripr.required.example\"",
+        );
+    let report = diagnostics_text(&document(&body), None);
+    assert!(
+        report.contains("[deny_honesty]") && report.contains("named negative proof"),
+        "{report}"
+    );
+}
+
+#[test]
+fn cutover_ready_empty_receipt_prefix_fails() {
+    let body = local_entry("source-policy.example", "ripr.source-policy.example.v1")
+        .replace(
+            "control_semantics = \"report-only\"",
+            "control_semantics = \"deny\"",
+        )
+        .replace("state = \"local\"", "state = \"cutover-ready\"")
+        .replace(
+            "negative_proof_refs = []",
+            "negative_proof_refs = [\"test:named_negative\"]\nrequired_claim_id = \"ripr.required.example\"\nparity_receipt = \"receipt:\"\ncurrentness_receipt = \"receipt:current\"\nrequired_route_receipt = \"receipt:route\"",
+        );
+    let report = diagnostics_text(&document(&body), None);
+    assert!(
+        report.contains("[evidence_honesty]")
+            && report.contains("parity_receipt")
+            && report.contains("not execution evidence"),
+        "{report}"
+    );
+}
+
+#[test]
 fn metadata_only_cannot_satisfy_parity_or_cutover() {
     let body = local_entry("ripr.local.meta", "ripr.local.meta.v1")
         .replace(
