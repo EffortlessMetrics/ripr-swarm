@@ -1,5 +1,9 @@
-import { notify } from "../src/lib";
+import { enqueue } from "../src/lib";
 
-test("notify", () => {
-    expect(notify(7)).toMatchInlineSnapshot(`undefined`);
+test("enqueue", () => {
+    expect(enqueue([], 7)).toMatchInlineSnapshot(`
+[
+  "shipped 7",
+]
+`);
 });

@@ -8945,6 +8945,13 @@ pub(crate) fn ts_dropped_term_witness(
 /// the whole result of one owner call, or a local bound once to it. Allowlist:
 /// anything else (an unrelated value, a member or call on the result, a spy's
 /// recorded calls) is not read and earns no snapshot credit.
+///
+/// A free-function owner is called as `owner(..)` (or through a namespace
+/// receiver or rename local). A method owner is called as `<receiver>.m(..)`
+/// where the receiver is a local the test constructs from the owner's class
+/// and uses only as `<receiver>.<member>(..)`. A bound local must be read only
+/// by its declaration and by `expect(<local>)`, so a destructuring or loop
+/// binding that rewrites it, or any escape, refuses.
 fn ts_snapshot_subject_is_owner_result(
     candidate: &TypeScriptRelatedCandidate<'_>,
     assertion: &TypeScriptAssertion,
@@ -8952,13 +8959,116 @@ fn ts_snapshot_subject_is_owner_result(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
-    if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
+    let test = candidate.test;
+    let Some(observed) = assertion.observed_expression.as_deref() else {
+        return false;
+    };
+    let observed = observed.trim();
+    let owned_names: Vec<String>;
+    let receivers: Vec<String>;
+    let names: Vec<&str>;
+    if matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod) {
+        let constructors =
+            constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
+        let constructed = receiver_names_for_constructor_calls(&test.body_text, &constructors);
+        // Each receiver is read only as `<receiver>.<member>(..)` after its
+        // declaration, so nothing rebinds it or replaces the method.
+        owned_names = constructed
+            .iter()
+            .filter(|receiver| {
+                ts_identifier_uses_all(&test.body_text, receiver, |before, after| {
+                    ts_use_is_declaration(before, after) || ts_use_is_member_call(after)
+                })
+            })
+            .map(|receiver| format!("{receiver}.{}", owner.name))
+            .collect();
+        receivers = Vec::new();
+        names = owned_names.iter().map(String::as_str).collect();
+    } else {
+        if local_identifier_declared_in_test_body(&test.body_text, &owner.name) {
+            return false;
+        }
+        receivers = unshadowed_owner_namespace_receivers(test, owner, alias_map, workspace_root);
+        names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
+    }
+    if names.is_empty() {
         return false;
     }
-    let receivers =
-        unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
-    let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
-    ts_observed_owner_call_arguments(candidate.test, assertion, &names, owner, &receivers).is_some()
+    if ts_whole_owner_call_arguments(observed, &names, owner, &receivers).is_some() {
+        return true;
+    }
+    ts_identifier_uses_all(&test.body_text, observed, |before, after| {
+        ts_use_is_declaration(before, after) || ts_use_is_expect_argument(before, after)
+    }) && names.iter().any(|name| {
+        ts_observed_local_owner_call_arguments(test, assertion, name, &receivers).is_some()
+    })
+}
+
+/// `true` when every whole-word occurrence of `ident` in `body`'s code (not in
+/// a string or comment, and not a member segment `x.ident`) satisfies
+/// `allowed(text before, text after)`, and there is at least one. A spread
+/// `...ident` is refused, since `({ ...ident } = ..)` binds it.
+fn ts_identifier_uses_all(body: &str, ident: &str, allowed: impl Fn(&str, &str) -> bool) -> bool {
+    let is_ident_char = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    if ident.is_empty() || !ident.chars().all(is_ident_char) {
+        return false;
+    }
+    let masked = ts_mask_literals_and_comments(body);
+    let mut seen = false;
+    for (at, _) in masked.match_indices(ident) {
+        let (Some(before), Some(after)) = (masked.get(..at), masked.get(at + ident.len()..)) else {
+            return false;
+        };
+        if before.chars().next_back().is_some_and(is_ident_char)
+            || after.chars().next().is_some_and(is_ident_char)
+        {
+            continue;
+        }
+        let before_trimmed = before.trim_end();
+        if before_trimmed.ends_with("..") {
+            return false;
+        }
+        if before_trimmed.ends_with('.') {
+            continue;
+        }
+        if !allowed(before, after) {
+            return false;
+        }
+        seen = true;
+    }
+    seen
+}
+
+/// `const|let|var <ident> = ` (a single `=`).
+fn ts_use_is_declaration(before: &str, after: &str) -> bool {
+    let before = before.trim_end();
+    let keyword = ["const", "let", "var"].iter().any(|keyword| {
+        before.strip_suffix(keyword).is_some_and(|rest| {
+            !rest
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        })
+    });
+    let after = after.trim_start();
+    keyword && after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
+}
+
+/// `expect(<ident>)`.
+fn ts_use_is_expect_argument(before: &str, after: &str) -> bool {
+    before
+        .trim_end()
+        .strip_suffix('(')
+        .is_some_and(|rest| rest.trim_end().ends_with("expect"))
+        && after.trim_start().starts_with(')')
+}
+
+/// `.member(` straight after the identifier.
+fn ts_use_is_member_call(after: &str) -> bool {
+    after.strip_prefix('.').is_some_and(|rest| {
+        let tail = rest.trim_start_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '$');
+        tail.len() < rest.len() && tail.trim_start().starts_with('(')
+    })
 }
 
 /// The value assertions of a related test that see the owner's returned

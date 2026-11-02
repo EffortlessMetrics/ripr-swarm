@@ -1,7 +1,7 @@
-import { notify } from "../src/lib";
+import { enqueue } from "../src/lib";
 
-test("notify", () => {
-    notify(7);
-    const unrelated = "x";
+test("enqueue", () => {
+    enqueue([], 7);
+    const unrelated = ["shipped 7"];
     expect(unrelated).toMatchSnapshot();
 });

@@ -7,12 +7,12 @@
   "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:4fbb9720aa6abe91","base_revision":null,"input_identity":"sha256:ec9664ae052070be4d874bab3ac7c714d59f3307c113d342481f9dfe2c9f4d26","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:4fbb9720aa6abe91","base_revision":null,"input_identity":"sha256:306af0a98b7d44db72de2392f2616caf6bafdc698f1ed196e412818b0f95191c","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
-      "id": "probe:src_lib.ts:typescript_preview:f7f11d1f",
-      "canonical_gap_id": "gap:typescript:typescript_preview:f7f11d1f",
+      "id": "probe:src_lib.ts:typescript_preview:1066bfb8",
+      "canonical_gap_id": "gap:typescript:typescript_preview:1066bfb8",
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
@@ -22,27 +22,27 @@
       ],
       "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
       "probe": {
-        "id": "probe:src_lib.ts:typescript_preview:f7f11d1f",
+        "id": "probe:src_lib.ts:typescript_preview:1066bfb8",
         "family": "side_effect",
         "delta": "effect",
         "file": "src/lib.ts",
         "line": 2,
-        "expression": "    console.log(\"shipped \" + id);",
-        "owner": "typescript:src/lib.ts::notify"
+        "expression": "    queue.push(\"shipped \" + id);",
+        "owner": "typescript:src/lib.ts::enqueue"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `notify`"},
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `enqueue`"},
         "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
         "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted oracle kind: `snapshot` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related test uses a `snapshot` oracle; static evidence suggests the changed behavior is discriminated."}
        },
-      "evidence_path": ["reach yes: 1 related test(s) found for owner `notify`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `snapshot` (rank 5)", "discriminator yes: Related test uses a `snapshot` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches call effect: console.log(\"shipped \" + id); (line 2)", "related test tests/lib.test.ts:3 notify uses strong snapshot oracle: expect(...).toMatchInlineSnapshot(...)"],
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `enqueue`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `snapshot` (rank 5)", "discriminator yes: Related test uses a `snapshot` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches call effect: queue.push(\"shipped \" + id); (line 2)", "related test tests/lib.test.ts:3 enqueue uses strong snapshot oracle: expect(...).toMatchInlineSnapshot(...)"],
       "flow_sinks": [
-        {"kind":"call_effect","text":"console.log(\"shipped \" + id);","line":2}
+        {"kind":"call_effect","text":"queue.push(\"shipped \" + id);","line":2}
       ],
-      "evidence": ["owner: notify", "typescript_oracle_observed: notify(7)", "typescript_oracle_confidence: medium", "typescript_oracle_evidence_ref: tests/lib.test.ts:4", "gap_state: already_observed", "actionability_category: strong_oracle_observed", "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted", "repair_route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior", "evidence_needed_to_promote: none for a repair packet; retain strong related-test evidence as non-actionable context", "raw_evidence_ref: file=src/lib.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_lib.ts:typescript_preview:f7f11d1f;owner=notify", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related test reaches `notify` with a `snapshot` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
+      "evidence": ["owner: enqueue", "typescript_oracle_observed: enqueue([], 7)", "typescript_oracle_confidence: medium", "typescript_oracle_evidence_ref: tests/lib.test.ts:4", "gap_state: already_observed", "actionability_category: strong_oracle_observed", "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted", "repair_route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior", "evidence_needed_to_promote: none for a repair packet; retain strong related-test evidence as non-actionable context", "raw_evidence_ref: file=src/lib.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_lib.ts:typescript_preview:1066bfb8;owner=enqueue", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related test reaches `enqueue` with a `snapshot` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
       "assertion_texts": {
       },
       "activation": {
@@ -58,7 +58,7 @@
       "related_tests_total": 1,
       "related_tests": [
         {
-          "name": "notify",
+          "name": "enqueue",
           "file": "tests/lib.test.ts",
           "line": 3,
           "oracle_strength": "strong",
@@ -72,7 +72,7 @@
         "authority_boundary": "preview_advisory_only",
         "bun_cross_language_grip": null,
         "card_version": "typescript_preview_card.v1",
-        "changed_behavior": "side_effect changed at src/lib.ts:2: `console.log(\"shipped \" + id);`",
+        "changed_behavior": "side_effect changed at src/lib.ts:2: `queue.push(\"shipped \" + id);`",
         "language": "typescript",
         "language_status": "preview",
         "limits": [
@@ -83,13 +83,13 @@
         "missing_discriminator": null,
         "oracle_kind": "snapshot",
         "oracle_strength": "strong",
-        "owner": "notify",
+        "owner": "enqueue",
         "owner_kind": "function",
         "probe_family": "side_effect",
         "related_test": {
           "file": "tests/lib.test.ts",
           "line": 3,
-          "name": "notify"
+          "name": "enqueue"
         },
         "repair_packet_ready": false,
         "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
@@ -114,10 +114,10 @@
             "kind": "typescript_preview_probe",
             "leg": null,
             "line": 2,
-            "owner": "notify",
-            "raw": "file=src/lib.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_lib.ts:typescript_preview:f7f11d1f;owner=notify",
+            "owner": "enqueue",
+            "raw": "file=src/lib.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_lib.ts:typescript_preview:1066bfb8;owner=enqueue",
             "sample": null,
-            "source_id": "probe:src_lib.ts:typescript_preview:f7f11d1f"
+            "source_id": "probe:src_lib.ts:typescript_preview:1066bfb8"
           }
         ],
         "repair_packet_ready": false,
@@ -147,5 +147,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/lib.ts","digest":"sha256:265cf3a1f45dedb84080d1666da0fdd0053086678222562777a5cccbeb70a505"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/lib.ts","digest":"sha256:ac4802423d88c62173e4eed065e75ab14a6d35b8968d30f37ddb8db2406c7a3f"}]}
 }

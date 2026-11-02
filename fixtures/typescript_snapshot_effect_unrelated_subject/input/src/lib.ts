@@ -1,3 +1,4 @@
-export function notify(id: number): void {
-    console.log("shipped " + id);
+export function enqueue(queue: string[], id: number): string[] {
+    queue.push("shipped " + id);
+    return queue;
 }
