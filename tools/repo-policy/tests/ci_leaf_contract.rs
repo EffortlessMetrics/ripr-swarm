@@ -3,7 +3,7 @@
 use std::process::{Command, Output};
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const WORKFLOW: &str = include_str!("../../../.github/workflows/ci.yml");
-const ROUTED_RUST: &str = include_str!("../../../.github/workflows/routed-rust.yml");
+const VSCODE_E2E: &str = include_str!("../../../.github/workflows/vscode-e2e.yml");
 const ORIGINAL: &str = include_str!("../../../fixtures/convergence/ci-exact-subject/original.yml");
 const JOBS: &[(&str, &str)] = &[
     ("rust-only-features", "run_rust_only"),
@@ -27,6 +27,15 @@ fn job<'a>(source: &'a str, name: &str) -> &'a str {
         })
         .map_or(tail.len(), |(offset, _)| offset);
     &tail[..end]
+}
+/// The job whose steps carry a lane's payload: the extension lane lives in the reusable
+/// workflow (#12252), every other lane in ci.yml itself.
+fn payload_job(name: &str) -> &'static str {
+    if name == "vscode" {
+        job(VSCODE_E2E, name)
+    } else {
+        job(WORKFLOW, name)
+    }
 }
 fn body(step: &str) -> String {
     step.split_once("        run: |\n")
@@ -394,7 +403,7 @@ fn actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selecti
             "labeled",
             "merge-ready",
             vec!["merge-ready", "full-ci"],
-            [true; 4],
+            [true, true, true, false],
         ),
         (
             "pull_request",
@@ -433,77 +442,66 @@ fn actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selecti
     Ok(())
 }
 #[test]
-fn vscode_selection_runs_the_extension_e2e_unless_the_classifier_says_no() -> TestResult {
-    // #12122: under a merge-ready request the e2e runs for an extension change, the
-    // `vscode` or `full-ci` label, or a failed classifier (empty output). Only an
-    // affirmative `false` skips it.
+fn ci_runs_the_extension_e2e_only_off_pull_requests_and_for_a_frozen_selection() -> TestResult {
+    // #12252: a pull request's extension e2e is a job of routed-rust.yml's own run, read by
+    // the Result as a `needs` result. ci.yml keeps push/dispatch and the callable lane.
     let expression = condition(job(WORKFLOW, "vscode"));
-    let request = |labels: &'static [&'static str], surface: &'static str| Event {
-        name: "pull_request",
-        action: "labeled",
-        label: "merge-ready",
-        labels,
-        surface,
-    };
-    for (labels, surface, expected) in [
-        (&["merge-ready"][..], "false", false),
-        (&["merge-ready"][..], "true", true),
-        (&["merge-ready"][..], "", true),
-        (&["merge-ready", "vscode"][..], "false", true),
-        (&["merge-ready", "full-ci"][..], "false", true),
-    ] {
-        assert_eq!(
-            predicate(
-                &expression,
-                false,
-                request(labels, surface),
-                false,
-                "skipped"
-            )?,
-            expected,
-            "{labels:?} surface={surface:?}"
-        );
-    }
-    // An extension change without the merge-ready request starts nothing.
-    for (action, label) in [
-        ("synchronize", ""),
-        ("labeled", "vscode"),
-        ("labeled", "unrelated"),
+    for (action, label, labels) in [
+        ("labeled", "merge-ready", &["merge-ready"][..]),
+        ("labeled", "merge-ready", &["merge-ready", "vscode"][..]),
+        ("labeled", "merge-ready", &["merge-ready", "full-ci"][..]),
+        ("synchronize", "", &["merge-ready", "vscode"][..]),
     ] {
         let event = Event {
             name: "pull_request",
             action,
             label,
-            labels: &["vscode", "merge-ready"],
+            labels,
             surface: "true",
         };
         assert!(
             !predicate(&expression, false, event, false, "skipped")?,
-            "{action}/{label}"
+            "{action}/{label}/{labels:?}"
         );
     }
-    // A callable run takes its frozen selection, never the classifier.
-    assert!(!predicate(
-        &expression,
-        true,
-        request(&["merge-ready"], "true"),
-        false,
-        "success"
-    )?);
-    assert!(predicate(
-        &expression,
-        true,
-        request(&["merge-ready"], "false"),
-        true,
-        "success"
-    )?);
+    let push = Event {
+        name: "push",
+        action: "",
+        label: "",
+        labels: &[],
+        surface: "false",
+    };
+    assert!(predicate(&expression, false, push, false, "skipped")?);
+    // A callable run takes its frozen selection and a successful identity check.
+    let request = Event {
+        name: "pull_request",
+        action: "labeled",
+        label: "merge-ready",
+        labels: &["merge-ready"],
+        surface: "true",
+    };
+    assert!(predicate(&expression, true, request, true, "success")?);
+    assert!(!predicate(&expression, true, request, false, "success")?);
+    assert!(!predicate(&expression, true, request, true, "failure")?);
+    // The retired cross-workflow correlation stays gone from ci.yml.
+    for retired in [
+        "vscode surface",
+        "vscode-selection",
+        "CI merge-ready request",
+    ] {
+        assert!(
+            !WORKFLOW.contains(retired),
+            "ci.yml still carries {retired}"
+        );
+    }
     Ok(())
 }
 #[test]
 fn independent_event_labels_reject_request_guard_removal() -> TestResult {
     const GUARD: &str =
         "(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')";
-    for (name, _) in JOBS {
+    // The extension lane never runs for a pull request, so it has no request guard (#12252).
+    for (name, _) in JOBS.iter().filter(|(name, _)| *name != "vscode") {
         let expression = condition(job(WORKFLOW, name));
         assert_eq!(expression.matches(GUARD).count(), 1, "{name}");
         let mutant = expression.replacen(GUARD, "true", 1);
@@ -575,7 +573,7 @@ fn pr_owned_step_allowance_is_exact_and_job_scoped() {
 fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult {
     for (name, _) in JOBS {
         assert_eq!(
-            without_pr_owned_steps(name, run_blocks(job(WORKFLOW, name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).collect::<Vec<_>>(),
+            without_pr_owned_steps(name, run_blocks(payload_job(name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).collect::<Vec<_>>(),
             run_blocks(job(ORIGINAL, name)).iter().map(|script| script.replace(
                 "cargo package -p ripr --no-verify && tar xzf \"target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')\" && rm Cargo.lock && cargo generate-lockfile",
                 "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile"
@@ -609,16 +607,22 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
                 })
                 .collect::<Vec<_>>()
         };
-        assert_eq!(actions(job(WORKFLOW, name)), actions(job(ORIGINAL, name)));
-        let child = job(WORKFLOW, name);
-        // The extension job also waits for the diff classifier (#12122).
-        let needs = if name == &"vscode" {
-            "    needs: [source-identity, vscode-selection]"
+        assert_eq!(actions(payload_job(name)), actions(job(ORIGINAL, name)));
+        let child = payload_job(name);
+        if name == &"vscode" {
+            // The extension lane is a call of the reusable workflow (#12252).
+            let call = job(WORKFLOW, name);
+            assert!(
+                call.contains("    needs: [source-identity]"),
+                "{name} needs"
+            );
+            assert!(call.contains("    uses: ./.github/workflows/vscode-e2e.yml"));
+            assert!(call.contains("      ref: ${{ inputs.subject_sha || github.sha }}"));
+            assert!(child.contains("ref: ${{ inputs.ref || github.sha }}"));
         } else {
-            "    needs: source-identity"
-        };
-        assert!(child.contains(needs), "{name} needs");
-        assert!(child.contains("ref: ${{ inputs.subject_sha || github.sha }}"));
+            assert!(child.contains("    needs: source-identity"), "{name} needs");
+            assert!(child.contains("ref: ${{ inputs.subject_sha || github.sha }}"));
+        }
         assert!(child.contains("persist-credentials: false"));
         // The callable qualification budget equals the retained predecessor's
         // budget for the same job; first-ever admitted runs must not fit a
@@ -666,7 +670,7 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
     let stub = "cargo() { return \"$NATIVE_STATUS\"; }; npm() { return \"$NATIVE_STATUS\"; }; xvfb-run() { shift; \"$@\"; };\n";
     let mut count = 0;
     for (name, _) in JOBS {
-        for script in run_blocks(job(WORKFLOW, name)) {
+        for script in run_blocks(payload_job(name)) {
             if script.starts_with("cargo ") && !script.contains('\n')
                 || script.starts_with("npm ")
                 || script.starts_with("xvfb-run ")
@@ -1031,112 +1035,4 @@ fn staged_and_explicit_activation_event_matrix() -> TestResult {
         "Ready was not an original trigger"
     );
     Ok(())
-}
-
-#[test]
-fn merge_ready_run_names_its_request_for_the_results_vscode_binding() {
-    // #12236: routed-rust.yml's Result admits a `vscode surface` check only from
-    // the ci.yml run whose title is exactly this string.
-    assert!(
-        WORKFLOW.contains(
-            "format('CI merge-ready request {0} {1} {2} full-ci={3} vscode={4}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.event.pull_request.base.sha, contains(github.event.pull_request.labels.*.name, 'full-ci'), contains(github.event.pull_request.labels.*.name, 'vscode'))"
-        ),
-        "ci.yml must title a merge-ready run with the head and the request time"
-    );
-    // The Result relies on this: an earlier request's run with the same title
-    // (two events in one second) is cancelled, never left with a green surface.
-    assert!(
-        WORKFLOW.contains("cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}"),
-        "ci.yml must cancel an earlier in-flight merge-ready run when a later request arrives"
-    );
-}
-
-/// Split `format('<template>', arg, ...)` starting at `marker` into its template and
-/// top-level arguments, then render each `{n}` with its argument text.
-fn rendered_format_call<'a>(workflow: &'a str, marker: &str) -> Option<(String, &'a str)> {
-    let start = workflow.find(marker)?;
-    let call = &workflow[start + "format(".len()..];
-    let mut depth = 0usize;
-    let mut in_quote = false;
-    let mut end = None;
-    let mut parts: Vec<String> = vec![String::new()];
-    for (idx, ch) in call.char_indices() {
-        match ch {
-            '\'' => in_quote = !in_quote,
-            '(' if !in_quote => depth += 1,
-            ')' if !in_quote => {
-                if depth == 0 {
-                    end = Some(idx);
-                    break;
-                }
-                depth -= 1;
-            }
-            ',' if !in_quote && depth == 0 => {
-                parts.push(String::new());
-                continue;
-            }
-            _ => {}
-        }
-        if let Some(last) = parts.last_mut() {
-            last.push(ch);
-        }
-    }
-    let after = &call[end? + 1..];
-    let template = parts[0].trim().trim_matches('\'').to_string();
-    let args: Vec<String> = parts[1..]
-        .iter()
-        .map(|arg| arg.trim().to_string())
-        .collect();
-    let mut rendered = template;
-    for (index, arg) in args.iter().enumerate().rev() {
-        rendered = rendered.replace(&format!("{{{index}}}"), arg);
-    }
-    Some((rendered, after))
-}
-
-#[test]
-fn routed_result_request_selection_matches_the_ci_run_name_tail() {
-    // #12255: the Result's `REQUEST_SELECTION` env and ci.yml's `run-name` both build the
-    // selection tail of the request title from the same event payload. If one side drifts, no
-    // title matches and the Result fails closed only after its 20 minute wait, so tie them here.
-    let ci = rendered_format_call(WORKFLOW, "format('CI merge-ready request ");
-    let routed = rendered_format_call(ROUTED_RUST, "format('{0} full-ci={1} vscode={2}'");
-    assert!(
-        ci.is_some(),
-        "ci.yml must carry the merge-ready run-name format call"
-    );
-    assert!(
-        routed.is_some(),
-        "routed-rust.yml must carry the REQUEST_SELECTION format call"
-    );
-    let (ci, _) = ci.unwrap_or_default();
-    let (routed, routed_after) = routed.unwrap_or_default();
-    let head_and_time = "CI merge-ready request github.event.pull_request.head.sha github.event.pull_request.updated_at ";
-    assert!(
-        ci.starts_with(head_and_time),
-        "ci.yml run-name must start with the head and request time: {ci}"
-    );
-    assert_eq!(
-        ci.strip_prefix(head_and_time).unwrap_or_default(),
-        routed,
-        "ci.yml run-name tail and routed-rust.yml REQUEST_SELECTION must render identically"
-    );
-    // The format call must be the whole env value: a trailing operator such as `&& 'x'` would
-    // change what Actions assigns while the call text stays the same.
-    assert!(
-        ROUTED_RUST.contains("REQUEST_SELECTION: ${{ format('{0} full-ci={1} vscode={2}'"),
-        "REQUEST_SELECTION must be assigned directly from the format call"
-    );
-    assert!(
-        routed_after.starts_with(" }}\n"),
-        "REQUEST_SELECTION must end at the format call, found: {}",
-        routed_after.lines().next().unwrap_or_default()
-    );
-    // The Result appends the env after the head and the request time, in the run-name order.
-    assert!(
-        ROUTED_RUST.contains(
-            "request_title=\"CI merge-ready request $EXPECTED_HEAD $REQUEST_AT $REQUEST_SELECTION\""
-        ),
-        "the Result must build its title as head, request time, then REQUEST_SELECTION"
-    );
 }

@@ -23,7 +23,8 @@ mod output_builder;
 /// # Errors
 ///
 /// Returns `Err(String)` when diff acquisition, syntax indexing, or static
-/// analysis cannot complete for the requested workspace/input pair.
+/// analysis cannot complete for the requested workspace/input pair. Prefer
+/// [`try_check_workspace`] when programmatic error categories are required.
 ///
 /// # Examples
 ///
@@ -35,14 +36,36 @@ mod output_builder;
 /// # Ok::<(), String>(())
 /// ```
 pub fn check_workspace(input: CheckInput) -> Result<CheckOutput, String> {
-    check_workspace_with_config(input, &RiprConfig::default())
+    try_check_workspace(input).map_err(Into::into)
+}
+
+/// Typed public entry point for [`check_workspace`] (#1986).
+///
+/// Failures stay on the [`crate::RiprError`] boundary so embedders can match
+/// categories and stable codes without parsing human diagnostics.
+///
+/// # Errors
+///
+/// Returns [`crate::RiprError`] when diff acquisition, syntax indexing, or
+/// static analysis cannot complete for the requested workspace/input pair.
+pub fn try_check_workspace(input: CheckInput) -> Result<CheckOutput, crate::RiprError> {
+    try_check_workspace_with_config(input, &RiprConfig::default())
 }
 
 pub fn check_workspace_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    check_with_progress(input, config, AnalysisProgressScope::Diff, None)
+    try_check_workspace_with_config(input, config).map_err(Into::into)
+}
+
+/// Typed counterpart of [`check_workspace_with_config`] (#1986).
+pub fn try_check_workspace_with_config(
+    input: CheckInput,
+    config: &RiprConfig,
+) -> Result<CheckOutput, crate::RiprError> {
+    check_with_progress_core(input, config, AnalysisProgressScope::Diff, None)
+        .map_err(crate::RiprError::from_core)
 }
 
 /// [`check_workspace_with_config`] keeping the failure typed, so a caller

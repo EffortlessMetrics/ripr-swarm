@@ -16,7 +16,7 @@ pub(crate) use load::{
 };
 pub(crate) use load::{
     another_base_candidate, is_shallow_repository, load_diff_core,
-    load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
+    load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
     resolve_effective_base_core,
 };
@@ -34,8 +34,10 @@ pub(crate) use model::lines_look_alike;
 )]
 pub use model::{ChangedFile, ChangedLine};
 pub use parse::parse_unified_diff;
+#[cfg(test)]
+pub(crate) use parse::parse_unified_diff_bounded_with_metadata;
 pub(crate) use parse::{
-    parse_unified_diff_bounded_scoped, parse_unified_diff_bounded_with_metadata,
+    parse_unified_diff_bounded_scoped, parse_unified_diff_bounded_with_metadata_core,
 };
 #[cfg(test)]
 pub(crate) use path::diff_path_identity_key_with;
