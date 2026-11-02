@@ -194,8 +194,9 @@ Minimum independent families:
 | `haskell/any/diff/static_facts` | Syntax/substrate facts in diff mode |
 | `haskell/any/repo/static_facts` | Whole-workspace indexing posture |
 | `haskell/cabal/any/project_graph` | Package/component/module discovery |
-| `haskell/hspec/example/activation` | Example-test registration and activation |
-| `haskell/tasty/example/activation` | Tasty/HUnit example surfaces |
+| `haskell/hspec/example/activation` | Example-test registration and activation (Hspec) |
+| `haskell/tasty/example/activation` | Tasty test-tree registration and activation |
+| `haskell/hunit/example/activation` | HUnit `TestCase` and assertion registration |
 | `haskell/quickcheck/property/registration` | Property registration without generated cases |
 | `haskell/hedgehog/property/registration` | Property registration without generated cases |
 | `haskell/any/diff/evaluation_demand` | Strict vs lazy demand modeling |
@@ -210,7 +211,8 @@ under separate cells; one green cell must not imply another.
 ### Example-test framework cells (Hspec, Tasty, HUnit)
 
 Example-based frameworks share activation/oracle law from #5542 but retain
-**separate framework cells**:
+**separate framework cells** (`haskell/hspec/...`, `haskell/tasty/...`,
+`haskell/hunit/...`):
 
 - **Hspec** — `describe`/`context`/`it`/`specify`, pending and focus markers,
   filter hooks, and metadata tags are registration facts; they are not execution
