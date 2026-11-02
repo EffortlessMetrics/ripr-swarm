@@ -153,6 +153,7 @@ fn build_release_readiness_report(version: &str) -> ReleaseReadinessReport {
         vsix_packaging_check(),
         extension_version_match_check(version, crate_version.as_deref()),
         init_pin_version_check(version),
+        init_generator_self_pin_check(&installed_binary, version, crate_version.as_deref()),
         known_limits_docs_check(),
     ];
     let status = release_readiness_status(&checks).to_string();
@@ -2948,6 +2949,195 @@ fn github_workflow_check(binary: &Path) -> ReleaseReadinessCheck {
     }
 }
 
+const INIT_GENERATOR_SELF_PIN_ROOT: &str = "target/ripr/release-readiness/init-generator-self-pin";
+
+/// Failures for the release-commit generator self-pin smoke (#5245). The
+/// installed binary must behave like a published generator: no unreleased note
+/// on stderr and a workflow dry-run that self-pins `version`.
+pub(crate) fn init_generator_self_pin_problems(
+    version: &str,
+    stdout: &str,
+    stderr: &str,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    if !stderr.is_empty() {
+        problems.push(format!(
+            "stderr must be empty for a release generator (got {} byte(s))",
+            stderr.len()
+        ));
+    }
+    if stdout.contains("is unreleased") {
+        problems.push(
+            "generated workflow must not carry an unreleased-generator pin comment".to_string(),
+        );
+    }
+    let cargo_pin = format!("cargo install ripr --version {version} --locked");
+    if !stdout.contains(&cargo_pin) {
+        problems.push(format!(
+            "generated workflow must include `{cargo_pin}` on the fallback install route"
+        ));
+    }
+    let prebuilt_pin = format!("version={version}");
+    if !stdout.contains(&prebuilt_pin) {
+        problems.push(format!(
+            "generated workflow must pin `{prebuilt_pin}` on the prebuilt install route"
+        ));
+    }
+    problems
+}
+
+fn prepare_init_generator_self_pin_root() -> Result<PathBuf, String> {
+    let root = Path::new(INIT_GENERATOR_SELF_PIN_ROOT);
+    if root.exists() {
+        fs::remove_dir_all(root)
+            .map_err(|err| format!("reset {INIT_GENERATOR_SELF_PIN_ROOT}: {err}"))?;
+    }
+    fs::create_dir_all(root)
+        .map_err(|err| format!("create {INIT_GENERATOR_SELF_PIN_ROOT}: {err}"))?;
+    run_git_output_in_dir(root, &["init", "--quiet"])?;
+    Ok(root.to_path_buf())
+}
+
+fn init_generator_self_pin_check(
+    binary: &Path,
+    version: &str,
+    crate_version: Option<&str>,
+) -> ReleaseReadinessCheck {
+    let id = "init-generator-self-pin";
+    let command = format!(
+        "{} init --ci github --dry-run --root {}",
+        crate::normalize_path(binary),
+        INIT_GENERATOR_SELF_PIN_ROOT
+    );
+    let not_run = |summary: &str, details: Vec<String>| {
+        readiness_check(id, "not_run", false, &command, summary, Vec::new(), details)
+    };
+    let Some(crate_version) = crate_version else {
+        return not_run(
+            "crate version could not be read; release-prep should run this gate explicitly",
+            Vec::new(),
+        );
+    };
+    if crate_version != version {
+        return not_run(
+            "requested release version does not match the crate version yet",
+            vec![format!(
+                "requested version: {version}; crates/ripr version: {crate_version}"
+            )],
+        );
+    }
+    if version.contains('-') {
+        return not_run(
+            "release candidates keep an older LATEST_RELEASED_VERSION pin; run this on the stable release commit only",
+            Vec::new(),
+        );
+    }
+    let Some(release_commit) = fs::read_to_string("CHANGELOG.md")
+        .ok()
+        .map(|changelog| changelog_has_release_heading(&changelog, version))
+    else {
+        return readiness_check(
+            id,
+            "fail",
+            true,
+            &command,
+            "could not read CHANGELOG.md to tell the release commit from development",
+            Vec::new(),
+            vec!["CHANGELOG.md is missing or unreadable".to_string()],
+        );
+    };
+    if !release_commit {
+        return not_run(
+            "release-commit only; between releases a development generator is expected to warn and pin the latest published release (docs/INSTALLATION_VERIFICATION.md)",
+            Vec::new(),
+        );
+    }
+    if !binary.exists() {
+        return readiness_check(
+            id,
+            "fail",
+            true,
+            &command,
+            "installed binary is missing",
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    let root = match prepare_init_generator_self_pin_root() {
+        Ok(root) => root,
+        Err(err) => {
+            return readiness_check(
+                id,
+                "fail",
+                true,
+                &command,
+                "init self-pin smoke root could not be prepared",
+                vec![INIT_GENERATOR_SELF_PIN_ROOT.to_string()],
+                vec![err],
+            );
+        }
+    };
+    let root_arg = root.to_string_lossy().into_owned();
+    match run_command_path(
+        binary,
+        &[
+            "init",
+            "--ci",
+            "github",
+            "--dry-run",
+            "--root",
+            root_arg.as_str(),
+        ],
+    ) {
+        Ok(result) if result.success => {
+            let problems =
+                init_generator_self_pin_problems(version, &result.stdout, &result.stderr);
+            if problems.is_empty() {
+                readiness_check(
+                    id,
+                    "pass",
+                    true,
+                    &command,
+                    "release generator init --ci github --dry-run self-pins with no unreleased warning",
+                    vec![
+                        INIT_GENERATOR_SELF_PIN_ROOT.to_string(),
+                        ".github/workflows/ripr.yml (dry-run)".to_string(),
+                    ],
+                    Vec::new(),
+                )
+            } else {
+                readiness_check(
+                    id,
+                    "fail",
+                    true,
+                    &command,
+                    "release generator must self-pin; forgetting the LATEST_RELEASED_VERSION bump fails here",
+                    vec![".github/workflows/ripr.yml (dry-run)".to_string()],
+                    problems,
+                )
+            }
+        }
+        Ok(result) => readiness_check(
+            id,
+            "fail",
+            true,
+            &command,
+            "init --ci github --dry-run failed",
+            Vec::new(),
+            command_details(&result),
+        ),
+        Err(err) => readiness_check(
+            id,
+            "fail",
+            true,
+            &command,
+            "init --ci github --dry-run could not run",
+            Vec::new(),
+            vec![err],
+        ),
+    }
+}
+
 /// Text the generated workflow's summary step must print on a first run,
 /// before any start-here packet exists (#5375).
 const CI_SUMMARY_FIRST_RUN_NEEDLES: &[&str] = &[
@@ -3815,15 +4005,15 @@ mod tests {
         CommandResult, EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
         ReleaseReadinessCheck, ReleaseReadinessReport, changelog_has_release_heading,
         check_install_provenance, create_external_doctor_fixture, extension_version_check_from,
-        extract_packaged_crate, file_url_path, init_pin_version_check_from,
-        latency_parity_contradiction, latency_readiness_from, latest_released_version_in,
-        missing_required_needles, package_version, packaged_archive_commit,
-        parse_release_readiness_args, read_crate_version, readiness_check, records_ripr_bin,
-        release_readiness_json, release_readiness_markdown, release_readiness_status,
-        repo_exposure_latency_output_parity, repo_exposure_latency_status_reasons,
-        validate_binary_identity, validate_doctor_result, validate_install_provenance,
-        validate_installed_version, validate_installed_version_result, validate_package_entry,
-        vsix_start_current_repair_command_present,
+        extract_packaged_crate, file_url_path, init_generator_self_pin_problems,
+        init_pin_version_check_from, latency_parity_contradiction, latency_readiness_from,
+        latest_released_version_in, missing_required_needles, package_version,
+        packaged_archive_commit, parse_release_readiness_args, read_crate_version, readiness_check,
+        records_ripr_bin, release_readiness_json, release_readiness_markdown,
+        release_readiness_status, repo_exposure_latency_output_parity,
+        repo_exposure_latency_status_reasons, validate_binary_identity, validate_doctor_result,
+        validate_install_provenance, validate_installed_version, validate_installed_version_result,
+        validate_package_entry, vsix_start_current_repair_command_present,
     };
     use serde_json::{Value, json};
     use std::fs;
@@ -4971,6 +5161,38 @@ mod tests {
                 value: lock.map(str::to_string),
             },
         ]
+    }
+
+    #[test]
+    fn init_generator_self_pin_problems_passes_quiet_self_pin_output() -> Result<(), String> {
+        let version = "0.11.0";
+        let stdout = format!(
+            "Would write .github/workflows/ripr.yml\n          version={version}\n            cargo install ripr --version {version} --locked\n"
+        );
+        let problems = init_generator_self_pin_problems(version, &stdout, "");
+        if !problems.is_empty() {
+            return Err(format!("expected pass, got {problems:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn init_generator_self_pin_problems_fails_when_bump_forgotten() -> Result<(), String> {
+        let version = "0.11.0";
+        let pinned = "0.10.0";
+        let stderr = format!(
+            "ripr: note: this build of ripr ({version}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release.\n"
+        );
+        let stdout = format!(
+            "Would write .github/workflows/ripr.yml\n      # Pinned to released ripr {pinned} ({version} is unreleased). The steps below use\n          version={pinned}\n            cargo install ripr --version {pinned} --locked\n"
+        );
+        let problems = init_generator_self_pin_problems(version, &stdout, &stderr);
+        if problems.len() < 3 {
+            return Err(format!(
+                "forgotten bump should fail stderr, unreleased comment, and pin needles; got {problems:?}"
+            ));
+        }
+        Ok(())
     }
 
     #[test]

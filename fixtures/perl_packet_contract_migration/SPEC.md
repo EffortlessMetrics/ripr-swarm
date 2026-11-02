@@ -32,6 +32,11 @@ input directory as the analysis root, so the file-digest freshness check runs
 against the committed input bytes, and pins the observed pipeline disposition
 in `expected/consumer-dispositions.v1.json`.
 
+The v2 common-evidence projection matrix (`projection_matrix.v1.json`, #3221)
+lists every reviewed Perl packet enum disposition consumed by
+`v2_projection/dispositions.rs`. The matrix conformance tests fail if a row is
+removed or drifted without updating production mapping authority.
+
 The maintainer refresh command
 (`cargo xtask perl-migration-refresh --producer-bin <path> [--case <id>]`)
 re-runs the pinned producer command from a supplied producer binary and writes

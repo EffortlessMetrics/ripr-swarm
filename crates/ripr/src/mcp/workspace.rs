@@ -1734,28 +1734,22 @@ fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
 /// diff holds no analyzable change) and the `base`/`source` arguments to pass.
 fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
     let snapshot = session.last_good.as_ref()?;
-    let empty_kind = matches!(
-        snapshot.outcome.kind,
-        AnalysisOutcomeKind::NoScope
-            | AnalysisOutcomeKind::NoChangedLines
-            | AnalysisOutcomeKind::NoBehavioralCandidates
-    );
+    let empty_kind = snapshot.outcome.kind.is_empty_scope();
     if !empty_kind || !snapshot.items.is_empty() || snapshot.source != RefreshSource::Committed {
         return None;
     }
-    let why = match &session.desired_base {
-        Some(base) => format!(
-            "the committed diff against requested base `{base}` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
-        ),
-        None => match snapshot.outcome.kind {
-            AnalysisOutcomeKind::NoBehavioralCandidates => "no base was passed, so the default base was used; the diff has changed lines but none holds a behavior candidate to analyze (a different base may widen it). This is not an all-clear".to_string(),
-            _ => "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear".to_string(),
-        },
-    };
+    // #12416: the cause and retry wording live in the shared
+    // `AnalysisOutcomeKind` owner; the LSP scope disclosure consumes the
+    // same cause sentence, so the surfaces cannot drift. The bytes are the
+    // pre-refactor hint wording, pinned by the tests below.
+    let why = snapshot.outcome.kind.empty_scope_cause_sentence(
+        session.desired_base.as_deref(),
+        crate::analysis_outcome::EmptyScopeDiffAuthority::CommittedSnapshot,
+    );
     Some(json!({
         "why": why,
-        "pass_base": "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}",
-        "pass_source": "for saved uncommitted tracked edits retry with {\"source\": \"worktree\"}; repair cards and readiness are offered only when the findings and the seam inventory are shown to have consumed the same source bytes, and are withheld with the cause otherwise",
+        "pass_base": AnalysisOutcomeKind::EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE,
+        "pass_source": AnalysisOutcomeKind::EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE,
     }))
 }
 

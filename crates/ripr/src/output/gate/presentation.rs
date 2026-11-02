@@ -454,6 +454,17 @@ pub(super) fn repair_route_json(route: &GateRepairRoute) -> Value {
             "file": file,
             "line": line,
         }),
+        GateRepairTarget::Proposed {
+            proposal_kind,
+            file,
+            owner,
+        } => json!({
+            "kind": "proposed",
+            "proposal_kind": proposal_kind,
+            "file": file,
+            "owner": owner,
+            "provenance": "producer_owned",
+        }),
         GateRepairTarget::ProductionCaller { owner, file, line } => json!({
             "kind": "production_caller",
             "owner": owner,
@@ -612,6 +623,18 @@ fn push_repair_target(out: &mut String, target: Option<&GateRepairTarget>) {
                 "  - Near test: {} at {}\n",
                 code_span(name),
                 code_span(&format!("{file}:{line}"))
+            ));
+        }
+        Some(GateRepairTarget::Proposed {
+            proposal_kind,
+            file,
+            owner,
+        }) => {
+            out.push_str(&format!(
+                "  - Proposed test: {} in {} (owner {})\n",
+                code_span(proposal_kind),
+                code_span(file),
+                code_span(owner),
             ));
         }
         Some(GateRepairTarget::ProductionCaller { owner, file, line }) => {
@@ -801,6 +824,23 @@ mod tests {
             return Err("JSON must keep the prompt's verify sentence".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn proposed_target_markdown_names_kind_file_and_owner() {
+        let mut out = String::new();
+        push_repair_target(
+            &mut out,
+            Some(&GateRepairTarget::Proposed {
+                proposal_kind: "integration".to_string(),
+                file: "tests/loyalty_price.rs".to_string(),
+                owner: "pricing::loyalty_price".to_string(),
+            }),
+        );
+        assert_eq!(
+            out,
+            "  - Proposed test: `integration` in `tests/loyalty_price.rs` (owner `pricing::loyalty_price`)\n"
+        );
     }
 
     #[test]

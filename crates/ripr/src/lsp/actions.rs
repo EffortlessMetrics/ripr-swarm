@@ -33,6 +33,7 @@ use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY, repair_start_command_for,
 };
 use crate::output::human::plain_stop_condition;
+use crate::output::placeholder_assertion::fill_in_note_line;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -939,11 +940,21 @@ fn push_gap_actions(
                 client_features,
             ));
         }
-        let verify_command = first_safe_command_at(
-            context.snapshot.root.as_path(),
-            context.data,
-            &["verification_commands"],
-        );
+        let verify_command = string_at(context.data, &["verify_command_clipboard"])
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                if string_at(context.data, &["typescript_package_root"]).is_some() {
+                    None
+                } else {
+                    first_safe_command_at(
+                        context.snapshot.root.as_path(),
+                        context.data,
+                        &["verification_commands"],
+                    )
+                }
+            });
         match &verify_command {
             Some(command) => actions.push(copy_agent_loop_command_action(
                 AGENT_VERIFY_COMMAND_TITLE,
@@ -1402,6 +1413,9 @@ fn first_repair_packet_text(
     lines.push(format!("- Missing check: {missing_discriminator}"));
     if let Some(focused_proof_intent) = focused_proof_intent_for_packet(repair_route) {
         lines.push(format!("- Focused proof intent: {focused_proof_intent}"));
+        if let Some(note) = fill_in_note_line("  ", &focused_proof_intent) {
+            lines.push(note);
+        }
     }
     if let Some(assertion_shape) = repair_route
         .get("assertion_shape")
@@ -1410,6 +1424,9 @@ fn first_repair_packet_text(
         lines.push(format!(
             "- Add or strengthen one focused assertion: {assertion_shape}"
         ));
+        if let Some(note) = fill_in_note_line("  ", assertion_shape) {
+            lines.push(note);
+        }
     }
     if let Some(related_test) = repair_route.get("related_test").and_then(non_empty_string) {
         lines.push(format!("- Related test: {related_test}"));

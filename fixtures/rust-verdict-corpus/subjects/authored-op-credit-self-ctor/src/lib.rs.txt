@@ -1,0 +1,21 @@
+use std::ops::Add;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Money(pub i64);
+
+impl Add for Money {
+    type Output = Money;
+    fn add(self, other: Money) -> Money {
+        Self(self.0 + other.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operator_under_test() {
+        assert_eq!(Money(2) + Money(3), Money(5));
+    }
+}
