@@ -1,0 +1,138 @@
+{
+  "schema_version": "first_hour_repair_funnel_controls.v1",
+  "spec": "RIPR-SPEC-0377",
+  "description": "Planted negative and positive receipts for the first-hour repair funnel projection controls (#6308).",
+  "cases": [
+    {
+      "id": "governed_verified_improvement",
+      "inputs": {
+        "schema_version": "first_hour_repair_funnel_inputs.v1",
+        "case_id": "governed_verified_improvement",
+        "cohort": "governed_real_repository_attempt",
+        "clocks_compatible": true,
+        "first_run": {
+          "schema_version": "first_run.v1",
+          "ripr": "1.0.0",
+          "setup": [
+            { "step": "install_published", "exit": 0, "secs": 12.0 }
+          ],
+          "cases": [
+            {
+              "case": "semver",
+              "verdict": "exposed",
+              "steps": [{ "step": "check", "exit": 0, "secs": 8.0 }]
+            }
+          ]
+        },
+        "repair_attempt": {
+          "verify_result": "pass",
+          "verify_executed": true,
+          "static_movement": "improved",
+          "verified_improvement_ms": 25000
+        },
+        "terminal_receipt_issued": true
+      }
+    },
+    {
+      "id": "verification_pass_static_unchanged",
+      "inputs": {
+        "schema_version": "first_hour_repair_funnel_inputs.v1",
+        "case_id": "verification_pass_static_unchanged",
+        "cohort": "governed_real_repository_attempt",
+        "repair_attempt": {
+          "verify_result": "pass",
+          "verify_executed": true,
+          "static_movement": "unchanged"
+        }
+      }
+    },
+    {
+      "id": "verification_never_ran",
+      "inputs": {
+        "schema_version": "first_hour_repair_funnel_inputs.v1",
+        "case_id": "verification_never_ran",
+        "cohort": "governed_real_repository_attempt",
+        "repair_attempt": {
+          "verify_result": "not_run",
+          "verify_executed": false,
+          "static_movement": "improved"
+        }
+      }
+    },
+    {
+      "id": "fixture_claims_real_attempt",
+      "expect_control_violations": ["control_5"],
+      "inputs": {
+        "schema_version": "first_hour_repair_funnel_inputs.v1",
+        "case_id": "fixture_claims_real_attempt",
+        "cohort": "deterministic_fixture",
+        "claim_real_attempt": true,
+        "repair_attempt": {
+          "verify_result": "pass",
+          "verify_executed": true,
+          "static_movement": "improved"
+        }
+      }
+    },
+    {
+      "id": "blind_hidden_assistance",
+      "expect_control_violations": ["control_4"],
+      "inputs": {
+        "schema_version": "first_hour_repair_funnel_inputs.v1",
+        "case_id": "blind_hidden_assistance",
+        "cohort": "blind_operator_journey",
+        "hidden_assistance": true,
+        "funnel_exit": "verified_improvement",
+        "repair_attempt": {
+          "verify_result": "pass",
+          "verify_executed": true,
+          "static_movement": "improved"
+        }
+      }
+    },
+    {
+      "id": "denominator_drop_rejected",
+      "expect_control_violations": ["control_6"],
+      "inputs": {
+        "schema_version": "first_hour_repair_funnel_inputs.v1",
+        "case_id": "denominator_drop_rejected",
+        "cohort": "governed_real_repository_attempt",
+        "drop_from_denominator": true,
+        "repair_attempt": {
+          "verify_result": "fail",
+          "verify_executed": true,
+          "static_movement": "unchanged"
+        }
+      }
+    },
+    {
+      "id": "incompatible_clocks",
+      "inputs": {
+        "schema_version": "first_hour_repair_funnel_inputs.v1",
+        "case_id": "incompatible_clocks",
+        "cohort": "governed_real_repository_attempt",
+        "clocks_compatible": false,
+        "first_run": {
+          "schema_version": "first_run.v1",
+          "ripr": "1.0.0",
+          "setup": [
+            { "step": "install_published", "exit": 0, "secs": 1.0 }
+          ],
+          "cases": [
+            {
+              "case": "semver",
+              "verdict": "exposed",
+              "steps": [{ "step": "check", "exit": 0, "secs": 1.0 }]
+            }
+          ]
+        },
+        "repair_attempt": {
+          "verify_result": "pass",
+          "verify_executed": true,
+          "static_movement": "improved",
+          "verified_improvement_ms": 5000
+        }
+      }
+    }
+  ]
+}

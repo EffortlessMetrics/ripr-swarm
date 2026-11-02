@@ -946,6 +946,46 @@ runner_dependent = true
 per_repo = true
 source = "ingest:first-run"
 
+# --------------------------------------------------------------- repair ----
+# First-hour repair funnel (#6308). Host-sensitive durations stay advisory
+# until runner policy is ratified; zero selected cases remain not_measured.
+
+[[metric]]
+id = "repair.time_to_verified_improvement_ms"
+board = "repair"
+title = "Install to verified improvement or closure (project verification plus static movement)"
+unit = "ms"
+direction = "lower_is_better"
+target = 600000
+regression_pct = 25
+regression_floor = 60000
+runner_dependent = true
+source = "ingest:repair-funnel"
+
+[[metric]]
+id = "repair.time_to_first_honest_result_ms"
+board = "repair"
+title = "Install to first decisive honest result on the first-run walk"
+unit = "ms"
+direction = "lower_is_better"
+target = 300000
+regression_pct = 25
+regression_floor = 30000
+runner_dependent = true
+source = "ingest:repair-funnel"
+
+[[metric]]
+id = "repair.selected_case_count"
+board = "repair"
+title = "Governed funnel cases selected for real-route denominators"
+unit = "cases"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:repair-funnel"
+
 # ------------------------------------------------------------------ agent ----
 # Help-only agents fixing seeded test gaps on pinned crates, scored with
 # hand-written mutants plus cargo-mutants (agent-as-user harness, #5293).
