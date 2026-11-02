@@ -77,5 +77,28 @@ fn conformance_report_is_deterministic_apart_from_fixture_paths() -> Result<(), 
     if json_a != json_b {
         return Err("report serialization must be deterministic".to_string());
     }
+
+    let mut second = ConformanceReport::new("ripr-test".to_string());
+    second.push_row(report::RowReport {
+        row_id: "sample".to_string(),
+        action_family: "family".to_string(),
+        producer_surface: "surface".to_string(),
+        selected: true,
+        executed: true,
+        result: report::RowResult::HonestLimitation,
+        reason: "reason".to_string(),
+        expected_transition: "expected".to_string(),
+        observed_transition: "observed".to_string(),
+        action_identity: "id".to_string(),
+        fixture_root: "/tmp/other-fixture".to_string(),
+        limitations: Vec::new(),
+    });
+    let normalized_a = json_a.replace("/tmp/fixture", "<fixture-root>");
+    let normalized_b = serde_json::to_string(&second)
+        .map_err(|error| error.to_string())?
+        .replace("/tmp/other-fixture", "<fixture-root>");
+    if normalized_a != normalized_b {
+        return Err("independent reports must match after fixture-root normalization".to_string());
+    }
     Ok(())
 }

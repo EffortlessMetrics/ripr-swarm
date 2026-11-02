@@ -106,6 +106,12 @@ impl ConformanceReport {
             if !row.selected {
                 continue;
             }
+            if !row.executed {
+                return Err(format!(
+                    "selected row {} must be executed before aggregation (result {:?})",
+                    row.row_id, row.result
+                ));
+            }
             if row.row_id.starts_with("control_") {
                 if row.result.is_acceptable_positive()
                     || row.result == RowResult::WrongRootOrDiff
@@ -150,5 +156,46 @@ impl ConformanceReport {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod aggregate_tests {
+    use super::*;
+
+    fn sample_row(selected: bool, executed: bool) -> RowReport {
+        RowReport {
+            row_id: "row".to_string(),
+            action_family: "family".to_string(),
+            producer_surface: "surface".to_string(),
+            selected,
+            executed,
+            result: RowResult::HonestLimitation,
+            reason: "reason".to_string(),
+            expected_transition: "expected".to_string(),
+            observed_transition: "observed".to_string(),
+            action_identity: "id".to_string(),
+            fixture_root: "/tmp/fixture".to_string(),
+            limitations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn aggregate_rejects_selected_but_unexecuted_rows() {
+        let mut report = ConformanceReport::new("ripr-test".to_string());
+        report.push_row(sample_row(true, true));
+        report.push_row({
+            let mut row = sample_row(true, false);
+            row.row_id = "skipped".to_string();
+            row
+        });
+        let aggregate = report.aggregate_pass();
+        assert!(
+            matches!(
+                &aggregate,
+                Err(err) if err.contains("skipped") && err.contains("executed")
+            ),
+            "{aggregate:?}"
+        );
     }
 }

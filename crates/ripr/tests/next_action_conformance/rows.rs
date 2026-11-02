@@ -83,6 +83,15 @@ fn follow_printed_from_foreign(
     run_ripr(fixture.foreign_cwd(), &args)
 }
 
+fn follow_printed_at_root(
+    fixture: &BoundaryFixture,
+    printed: &str,
+) -> Result<std::process::Output, String> {
+    let tokens = split_ripr_command(printed)?;
+    let args: Vec<&str> = tokens.iter().skip(1).map(String::as_str).collect();
+    run_ripr(&fixture.root, &args)
+}
+
 pub fn check_result_to_inspect(fixture: &BoundaryFixture) -> RowReport {
     let root_arg = fixture.root_arg();
     let selected = true;
@@ -265,6 +274,7 @@ pub fn repair_card_to_repair(fixture: &BoundaryFixture) -> RowReport {
     };
     let canonical = &card_json["canonical_next_action"];
     if canonical["action_class"] != "run_command" {
+        let stop_kind = canonical["stop"]["kind"].as_str().unwrap_or_default();
         return row!(
             "repair_card_repair",
             "RepairCard -> repair / details",
@@ -272,26 +282,36 @@ pub fn repair_card_to_repair(fixture: &BoundaryFixture) -> RowReport {
             true,
             true,
             RowResult::HonestLimitation,
-            &format!("card canonical class was {}", canonical["action_class"]),
+            &format!(
+                "card canonical class was {} (stop kind {stop_kind})",
+                canonical["action_class"]
+            ),
             "start repair for seam",
             "non-run_command",
             FIXTURE_SEAM,
             &root_arg,
         );
     }
-    let before = match run_ripr(
-        &fixture.root,
-        &[
-            "agent",
-            "repair",
-            "--root",
-            &root_arg,
-            "--seam-id",
+    let display = canonical["command"]["display"]
+        .as_str()
+        .unwrap_or_default()
+        .trim();
+    if display.is_empty() {
+        return row!(
+            "repair_card_repair",
+            "RepairCard -> repair / details",
+            "ripr agent card --json",
+            true,
+            true,
+            RowResult::CommandRefused,
+            "run_command card carried no executable display",
+            "start repair for seam",
+            "missing command display",
             FIXTURE_SEAM,
-            "--phase",
-            "before",
-        ],
-    ) {
+            &root_arg,
+        );
+    }
+    let before = match follow_printed_at_root(fixture, display) {
         Ok(output) => output,
         Err(error) => {
             return row!(
@@ -303,8 +323,8 @@ pub fn repair_card_to_repair(fixture: &BoundaryFixture) -> RowReport {
                 RowResult::InstrumentFailure,
                 &error,
                 "start repair for seam",
-                "repair spawn failed",
-                FIXTURE_SEAM,
+                "follow card command failed",
+                display,
                 &root_arg,
             );
         }
@@ -331,10 +351,10 @@ pub fn repair_card_to_repair(fixture: &BoundaryFixture) -> RowReport {
         true,
         true,
         RowResult::AdvancedExpectedState,
-        "card run_command advanced to a live repair attempt",
+        "card canonical command advanced to a live repair attempt",
         "awaiting_edit attempt",
         "repair before phase succeeded",
-        FIXTURE_SEAM,
+        display,
         &root_arg,
     )
 }
@@ -458,8 +478,79 @@ pub fn ripr_status_continue(fixture: &BoundaryFixture) -> RowReport {
     let command = report
         .pointer("/next_action/command")
         .and_then(Value::as_str)
-        .unwrap_or_default();
-    if command.contains("ripr continue") {
+        .unwrap_or_default()
+        .trim();
+    if command.is_empty() {
+        return row!(
+            "ripr_status_continue",
+            "ripr status -> continue / choose / restart / terminal details",
+            "ripr status --json",
+            true,
+            true,
+            RowResult::HonestLimitation,
+            "status did not offer continue on this state",
+            "continue command",
+            "missing next_action command",
+            attempt_id,
+            &root_arg,
+        );
+    }
+    if !command.contains("ripr continue") {
+        return row!(
+            "ripr_status_continue",
+            "ripr status -> continue / choose / restart / terminal details",
+            "ripr status --json",
+            true,
+            true,
+            RowResult::HonestLimitation,
+            "status did not offer continue on this state",
+            "continue command",
+            command,
+            attempt_id,
+            &root_arg,
+        );
+    }
+    let pricing =
+        std::fs::read_to_string(fixture.root.join("tests/pricing.rs")).unwrap_or_default();
+    if std::fs::write(
+        fixture.root.join("tests/pricing.rs"),
+        format!("{pricing}{BOUNDARY_TEST_APPEND}"),
+    )
+    .is_err()
+    {
+        return row!(
+            "ripr_status_continue",
+            "ripr status -> continue / choose / restart / terminal details",
+            "ripr status --json",
+            true,
+            true,
+            RowResult::InstrumentFailure,
+            "could not write focused edit before status-produced continue",
+            "continue command",
+            "edit failed",
+            command,
+            &root_arg,
+        );
+    }
+    let continued = match follow_printed_at_root(fixture, command) {
+        Ok(output) => output,
+        Err(error) => {
+            return row!(
+                "ripr_status_continue",
+                "ripr status -> continue / choose / restart / terminal details",
+                "ripr status --json",
+                true,
+                true,
+                RowResult::InstrumentFailure,
+                &error,
+                "continue command",
+                "follow status command failed",
+                command,
+                &root_arg,
+            );
+        }
+    };
+    if continued.status.success() {
         return row!(
             "ripr_status_continue",
             "ripr status -> continue / choose / restart / terminal details",
@@ -467,10 +558,29 @@ pub fn ripr_status_continue(fixture: &BoundaryFixture) -> RowReport {
             true,
             true,
             RowResult::AdvancedExpectedState,
-            "status named the ordinary continue route for the live attempt",
+            "status-produced continue command advanced the live attempt",
             "continue command",
+            "continue exit 0",
             command,
-            attempt_id,
+            &root_arg,
+        );
+    }
+    let stderr = String::from_utf8_lossy(&continued.stderr).into_owned();
+    if stderr.contains("prerequisite")
+        || stderr.contains("Prerequisite")
+        || stderr.contains("awaiting_edit")
+    {
+        return row!(
+            "ripr_status_continue",
+            "ripr status -> continue / choose / restart / terminal details",
+            "ripr status --json",
+            true,
+            true,
+            RowResult::PrerequisiteRequired,
+            &stderr,
+            "continue command",
+            "continue refused with named prerequisite",
+            command,
             &root_arg,
         );
     }
@@ -480,11 +590,11 @@ pub fn ripr_status_continue(fixture: &BoundaryFixture) -> RowReport {
         "ripr status --json",
         true,
         true,
-        RowResult::HonestLimitation,
-        "status did not offer continue on this state",
+        RowResult::CommandRefused,
+        &stderr,
         "continue command",
+        "continue refused without prerequisite evidence",
         command,
-        attempt_id,
         &root_arg,
     )
 }
@@ -583,16 +693,35 @@ pub fn ripr_continue_advance(fixture: &BoundaryFixture) -> RowReport {
             &root_arg,
         );
     }
+    let stderr = String::from_utf8_lossy(&continued.stderr).into_owned();
+    if stderr.contains("prerequisite")
+        || stderr.contains("Prerequisite")
+        || stderr.contains("awaiting_edit")
+    {
+        return row!(
+            "ripr_continue_advance",
+            "ripr continue -> terminal or next governed state",
+            "ripr continue",
+            true,
+            true,
+            RowResult::PrerequisiteRequired,
+            &stderr,
+            "ready_to_finish",
+            "continue named a prerequisite",
+            &attempt_id,
+            &root_arg,
+        );
+    }
     row!(
         "ripr_continue_advance",
         "ripr continue -> terminal or next governed state",
         "ripr continue",
         true,
         true,
-        RowResult::PrerequisiteRequired,
-        &String::from_utf8_lossy(&continued.stderr),
+        RowResult::CommandRefused,
+        &stderr,
         "ready_to_finish",
-        "continue non-zero",
+        "continue failed without prerequisite evidence",
         &attempt_id,
         &root_arg,
     )
@@ -732,6 +861,21 @@ pub fn pilot_delegated_action(fixture: &BoundaryFixture) -> RowReport {
             &root_arg,
         );
     }
+    if !pilot.status.success() {
+        return row!(
+            "pilot_delegated",
+            "pilot -> delegated check/repair/inspect action",
+            "ripr pilot",
+            true,
+            true,
+            RowResult::CommandRefused,
+            &combined,
+            "pilot transaction",
+            "pilot exited non-zero without a delegated route",
+            "pilot",
+            &root_arg,
+        );
+    }
     row!(
         "pilot_delegated",
         "pilot -> delegated check/repair/inspect action",
@@ -750,6 +894,39 @@ pub fn pilot_delegated_action(fixture: &BoundaryFixture) -> RowReport {
 pub fn control_wrong_root_decoy(fixture: &BoundaryFixture) -> RowReport {
     let root_arg = fixture.root_arg();
     let decoy_arg = fixture.foreign_cwd().to_string_lossy().into_owned();
+    let positive = match run_ripr(&fixture.root, &["check", "--root", &root_arg, "--json"]) {
+        Ok(output) => output,
+        Err(error) => {
+            return row!(
+                "control_wrong_root",
+                "control: foreign root",
+                "ripr check --json",
+                true,
+                false,
+                RowResult::InstrumentFailure,
+                &error,
+                "fixture root check must succeed before decoy control",
+                "positive check spawn failed",
+                &decoy_arg,
+                &root_arg,
+            );
+        }
+    };
+    if !positive.status.success() {
+        return row!(
+            "control_wrong_root",
+            "control: foreign root",
+            "ripr check --json",
+            true,
+            true,
+            RowResult::InstrumentFailure,
+            &String::from_utf8_lossy(&positive.stderr),
+            "fixture root check must succeed before decoy control",
+            "positive check refused",
+            &decoy_arg,
+            &root_arg,
+        );
+    }
     let output = match run_ripr(
         fixture.foreign_cwd(),
         &["check", "--root", &decoy_arg, "--json"],
