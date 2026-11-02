@@ -1745,6 +1745,124 @@ pub(crate) fn user_surface_projection_required_run_status_violations(
         .collect()
 }
 
+pub(crate) fn validate_incomplete_diff_corpus_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/incomplete_diff_corpus");
+    for required in ["SPEC.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "incomplete diff corpus fixture is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    let spec_path = root.join("SPEC.md");
+    if spec_path.exists() {
+        let body = read_text_lossy(&spec_path)?;
+        if !body.contains("RIPR-SPEC-0147") {
+            violations.push(
+                "incomplete diff corpus SPEC.md must name RIPR-SPEC-0147 analysis outcome projection"
+                    .to_string(),
+            );
+        }
+        for heading in ["## Given", "## When", "## Then", "## Must Not"] {
+            if !body.contains(heading) {
+                violations.push(format!(
+                    "incomplete diff corpus SPEC.md must contain the `{heading}` section"
+                ));
+            }
+        }
+    }
+    let corpus_path = root.join("corpus.json");
+    if !corpus_path.exists() {
+        return Ok(());
+    }
+    let body = read_text_lossy(&corpus_path)?;
+    let corpus: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            violations.push(format!(
+                "incomplete diff corpus.json is invalid JSON: {error}"
+            ));
+            return Ok(());
+        }
+    };
+    if corpus
+        .get("schema_version")
+        .and_then(serde_json::Value::as_str)
+        != Some("incomplete_diff_corpus.v1")
+    {
+        violations.push(
+            "incomplete diff corpus.json must declare schema_version incomplete_diff_corpus.v1"
+                .to_string(),
+        );
+    }
+    let Some(rows) = corpus.get("rows").and_then(serde_json::Value::as_array) else {
+        violations.push("incomplete diff corpus.json must contain a rows array".to_string());
+        return Ok(());
+    };
+    if rows.is_empty() {
+        violations.push("incomplete diff corpus.json must retain at least one row".to_string());
+    }
+    for row in rows {
+        let Some(id) = row.get("id").and_then(serde_json::Value::as_str) else {
+            violations.push("incomplete diff corpus row is missing id".to_string());
+            continue;
+        };
+        let Some(diff_path) = row.get("diff_path").and_then(serde_json::Value::as_str) else {
+            violations.push(format!(
+                "incomplete diff corpus row {id} is missing diff_path"
+            ));
+            continue;
+        };
+        let Some(expected_sha) = row.get("diff_sha256").and_then(serde_json::Value::as_str) else {
+            violations.push(format!(
+                "incomplete diff corpus row {id} is missing diff_sha256"
+            ));
+            continue;
+        };
+        for field in [
+            "role",
+            "expected_analysis_complete",
+            "expected_exit_code",
+            "expect_malformed_diff_limitation",
+        ] {
+            if row.get(field).is_none() {
+                violations.push(format!(
+                    "incomplete diff corpus row {id} is missing required field `{field}`"
+                ));
+            }
+        }
+        if let Some(role) = row.get("role").and_then(serde_json::Value::as_str) {
+            if role != "incomplete" && role != "complete_control" {
+                violations.push(format!(
+                    "incomplete diff corpus row {id} has unknown role `{role}`"
+                ));
+            }
+        }
+        let path = root.join(diff_path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                violations.push(format!(
+                    "incomplete diff corpus row {id} is missing diff file {}: {error}",
+                    normalize_path(&path)
+                ));
+                continue;
+            }
+        };
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        if digest != expected_sha {
+            violations.push(format!(
+                "incomplete diff corpus row {id} diff_sha256 mismatch: expected {expected_sha}, observed {digest}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_blind_journey_contract_fixture_corpus(
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
