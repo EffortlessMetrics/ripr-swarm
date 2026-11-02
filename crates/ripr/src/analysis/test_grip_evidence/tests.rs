@@ -13907,7 +13907,11 @@ fn proximity_test_pinning_another_function_lends_a_return_value_no_oracle() -> R
         let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
         let value = seams
             .iter()
-            .find(|s| s.kind() == SeamKind::ReturnValue && s.expression() == "Ok(n)" && s.display_line() == 2)
+            .find(|s| {
+                s.kind() == SeamKind::ReturnValue
+                    && s.expression() == "Ok(n)"
+                    && s.display_line() == 2
+            })
             .ok_or_else(|| "parse_masked Ok(n) return_value seam present".to_string())?;
         let full = evidence_for_seam(value, &index);
         let context = CompactGripContext::new(&index);
