@@ -244,6 +244,72 @@ fn native_extension_field_keys_are_language_namespaced() {
     );
 }
 
+#[test]
+fn stage_source_identity_corruption_invalidates_digest() {
+    let facts = base_facts("python", "predicate_boundary", "module::compute");
+    let mut projection = project_native_facts(facts);
+    assert!(projection.digest_matches());
+    projection
+        .reach
+        .source_identities
+        .push("direct_owner_call".to_string());
+    assert!(!projection.digest_matches());
+}
+
+#[test]
+fn related_test_row_fields_do_not_collide_on_colons() {
+    let mut left = base_facts("python", "predicate_boundary", "module::compute");
+    left.related_test_rows = vec![RelatedTestRowWitness {
+        test_name: "module::test:case".to_string(),
+        row_assessment: "missing".to_string(),
+        oracle_kind: "assertion".to_string(),
+        oracle_strength: "strong".to_string(),
+        status: RelationStatus::Candidate,
+    }];
+    let mut right = base_facts("python", "predicate_boundary", "module::compute");
+    right.related_test_rows = vec![RelatedTestRowWitness {
+        test_name: "module::test".to_string(),
+        row_assessment: "case:missing".to_string(),
+        oracle_kind: "assertion".to_string(),
+        oracle_strength: "strong".to_string(),
+        status: RelationStatus::Candidate,
+    }];
+    assert_ne!(
+        project_native_facts(left).semantic_digest,
+        project_native_facts(right).semantic_digest
+    );
+}
+
+#[test]
+fn related_test_rename_without_evidence_change_keeps_digest() {
+    let mut first = base_facts("python", "predicate_boundary", "module::compute");
+    first.related_test_rows[0].test_name = "test_discount_boundary".to_string();
+    let mut second = first.clone();
+    second.related_test_rows[0].test_name = "test_discount_edge".to_string();
+    assert_eq!(
+        project_native_facts(first).semantic_digest,
+        project_native_facts(second).semantic_digest
+    );
+}
+
+#[test]
+fn native_extension_values_stay_verbatim_in_digest() {
+    let mut with_semicolon = base_facts("perl", "perl.packet.mention_only", "MyApp::run");
+    with_semicolon
+        .native_extensions
+        .fields
+        .insert("perl.packet.token".to_string(), "$x;".to_string());
+    let mut without_semicolon = with_semicolon.clone();
+    without_semicolon
+        .native_extensions
+        .fields
+        .insert("perl.packet.token".to_string(), "$x".to_string());
+    assert_ne!(
+        project_native_facts(with_semicolon).semantic_digest,
+        project_native_facts(without_semicolon).semantic_digest
+    );
+}
+
 fn base_facts(language: &str, family: &str, owner: &str) -> LanguageNativeProducerFacts {
     LanguageNativeProducerFacts {
         language: language.to_string(),

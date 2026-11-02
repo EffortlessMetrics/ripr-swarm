@@ -20,8 +20,7 @@ use super::BehaviorEvidenceWitnessV1;
 use super::adapters::{AdapterInput, from_finding_with_input};
 use super::relations::{RelationStatus, RelationWitness};
 use super::{
-    DiscriminatorIdentity, OwnerIdentity, StageWitness, TargetState, UnresolvedEdge,
-    normalize_semantic_text, sort_unique,
+    DiscriminatorIdentity, OwnerIdentity, StageWitness, TargetState, UnresolvedEdge, sort_unique,
 };
 use crate::domain::{Finding, StageEvidence, StageState};
 
@@ -67,9 +66,7 @@ impl NativeExtensionEnvelopeV1 {
     }
 
     pub(in crate::analysis::witness) fn normalize(&mut self) {
-        for (_key, value) in self.fields.iter_mut() {
-            *value = normalize_semantic_text(value);
-        }
+        // Native extension values stay verbatim; only the map ordering is canonical.
     }
 }
 
@@ -218,17 +215,11 @@ impl LanguageWitnessProjectionV1 {
         }
         append_field(&mut canonical, &self.related_test_rows.len().to_string());
         for row in &self.related_test_rows {
-            append_field(
-                &mut canonical,
-                &format!(
-                    "{}:{}:{}:{}:{}",
-                    row.test_name,
-                    row.row_assessment,
-                    row.oracle_kind,
-                    row.oracle_strength,
-                    row.status.as_str()
-                ),
-            );
+            append_field(&mut canonical, "related_test_row");
+            append_field(&mut canonical, &row.row_assessment);
+            append_field(&mut canonical, &row.oracle_kind);
+            append_field(&mut canonical, &row.oracle_strength);
+            append_field(&mut canonical, row.status.as_str());
         }
         match &self.selected_target {
             TargetState::SelectedExisting { identities } => {
@@ -476,6 +467,18 @@ fn append_stage(canonical: &mut Vec<u8>, label: &str, stage: &StageWitness) {
         canonical,
         stage.first_unresolved_edge.as_deref().unwrap_or(""),
     );
+    append_field(canonical, &stage.source_identities.len().to_string());
+    for identity in &stage.source_identities {
+        append_field(canonical, identity);
+    }
+    append_field(canonical, &stage.established_facts.len().to_string());
+    for fact in &stage.established_facts {
+        append_field(canonical, fact);
+    }
+    append_field(canonical, &stage.candidate_facts.len().to_string());
+    for fact in &stage.candidate_facts {
+        append_field(canonical, fact);
+    }
 }
 
 fn append_field(canonical: &mut Vec<u8>, value: &str) {
