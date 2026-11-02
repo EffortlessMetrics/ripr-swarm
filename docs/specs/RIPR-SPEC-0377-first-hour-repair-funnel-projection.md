@@ -18,6 +18,7 @@ Support-tier impact:
 
 - None. The projection reads committed receipt fragments and fixture corpora;
   it executes no repair, calls no provider, and makes no support promotion.
+  [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md)
 
 Policy impact:
 
