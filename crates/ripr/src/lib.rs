@@ -64,6 +64,8 @@ mod value_origins;
 mod core_error;
 // Bounded reads for user-named CLI file and stdin inputs (#4480).
 mod bounded_input;
+// Public application error boundary (#1986).
+mod ripr_error;
 // Commit record parser shared with build.rs; the crate only unit-tests it.
 #[cfg(test)]
 mod build_commit_record;
@@ -151,8 +153,9 @@ pub use analysis::PartialDiffStopReason;
 pub use analysis::PreviewLanguageAdvisory;
 /// Analyze a workspace diff using the default RIPR static pipeline.
 pub use app::{
-    CheckInput, CheckOutput, check_workspace, collect_context, explain_finding,
-    explain_finding_with_input, reject_pr_evidence_error_packet, render_check,
+    CheckInput, CheckOutput, check_workspace, check_workspace_with_config, collect_context,
+    explain_finding, explain_finding_with_input, reject_pr_evidence_error_packet, render_check,
+    try_check_workspace, try_check_workspace_with_config,
 };
 /// Field types of the public entrypoint types (#2112): every public field
 /// on `CheckInput` / `CheckOutput` is nameable from the crate root, so a
@@ -184,6 +187,7 @@ pub use provider_contract::{
     RiprProviderNativeStatusV1, RiprProviderResultClassV1, RiprRepositorySnapshotV1,
     RiprSourceViewV1,
 };
+pub use ripr_error::{RiprError, RiprErrorCategory};
 
 // #2610: global verbose flag. Set by the binary entry point before dispatch.
 use std::sync::atomic::{AtomicBool, Ordering};
