@@ -206,6 +206,26 @@ pub(crate) fn attribute_ranges(masked: &str) -> Vec<std::ops::Range<usize>> {
     ranges
 }
 
+/// Whether `offset` sits inside a macro invocation's delimiters (`name!(..)`,
+/// `name![..]`, `name!{..}`), whose tokens are not real item syntax.
+pub(crate) fn offset_inside_macro_invocation_delimiters(masked: &str, offset: usize) -> bool {
+    let bytes = masked.as_bytes();
+    let mut stack: Vec<bool> = Vec::new();
+    for (index, byte) in bytes[..offset.min(bytes.len())].iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => {
+                let before = masked[..index].trim_end().as_bytes();
+                stack.push(before.last() == Some(&b'!'));
+            }
+            b')' | b']' | b'}' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    stack.into_iter().any(|is_macro| is_macro)
+}
+
 /// CallFact already owns a source line. Exclude opaque arguments from that
 /// same line so later argument readers cannot select a discarded earlier call.
 /// This is a deny-only analysis view, never original-byte/source-commitment
@@ -718,5 +738,27 @@ let spaced = render_pipeline ("beta");
                 .iter()
                 .all(|call| call.text.shares_allocation(&calls[0].text))
         );
+    }
+
+    #[test]
+    fn offset_inside_macro_invocation_delimiters_skips_token_tree_text() {
+        let masked = crate::analysis::extract::mask_comments_and_strings(
+            "fn t() {\n let s = stringify!(#[derive(Error)]);\n #[derive(Error)]\n struct E;\n}\n",
+        );
+        let attrs = attribute_ranges(&masked);
+        let derive_offsets: Vec<usize> = attrs
+            .into_iter()
+            .filter(|range| masked[range.clone()].contains("derive("))
+            .map(|range| range.start)
+            .collect();
+        assert_eq!(derive_offsets.len(), 2);
+        assert!(offset_inside_macro_invocation_delimiters(
+            &masked,
+            derive_offsets[0]
+        ));
+        assert!(!offset_inside_macro_invocation_delimiters(
+            &masked,
+            derive_offsets[1]
+        ));
     }
 }

@@ -11,7 +11,8 @@ mod text;
 
 pub(crate) use calls::{
     MAX_CALL_FACTS_PER_LINE, attribute_ranges, call_name_bounds_before_paren, extract_call_facts,
-    has_saturated_line, line_at_call_budget, local_fn_pointer_call, runs_its_arguments,
+    has_saturated_line, line_at_call_budget, local_fn_pointer_call,
+    offset_inside_macro_invocation_delimiters, runs_its_arguments,
 };
 pub(crate) use groups::{delimiters_balance, group_end};
 pub(crate) use literals::{extract_literal_facts, extract_literals};
