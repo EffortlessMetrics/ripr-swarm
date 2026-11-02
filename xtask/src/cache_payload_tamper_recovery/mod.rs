@@ -130,9 +130,15 @@ pub(crate) fn validate_corpus(corpus: &Corpus) -> Result<(), String> {
     }
     validate_unique_ids(corpus.families.iter().map(|row| row.id.as_str()), "family")?;
     for required in REQUIRED_FAMILY_IDS {
-        let Some(row) = corpus.families.iter().find(|row| row.id == required) else {
+        if !corpus.families.iter().any(|row| row.id == required) {
             return Err(format!("missing required family `{required}`"));
-        };
+        }
+    }
+    for row in &corpus.families {
+        if !REQUIRED_FAMILY_IDS.contains(&row.id.as_str()) {
+            return Err(format!("unknown family id `{}`", row.id));
+        }
+        let id = row.id.as_str();
         match row.disposition {
             FamilyDisposition::IncludedAndExercised => {
                 for label in ["library_producer_test", "library_consumer_test"] {
@@ -142,7 +148,7 @@ pub(crate) fn validate_corpus(corpus: &Corpus) -> Result<(), String> {
                     };
                     let Some(anchor) = anchor else {
                         return Err(format!(
-                            "family `{required}` must name {label} when included_and_exercised"
+                            "family `{id}` must name {label} when included_and_exercised"
                         ));
                     };
                     validate_test_anchor(anchor)?;
@@ -153,7 +159,7 @@ pub(crate) fn validate_corpus(corpus: &Corpus) -> Result<(), String> {
         }
         if row.exact_candidate_execution != ExactCandidateExecution::NotRun {
             return Err(format!(
-                "family `{required}` exact_candidate_execution must remain not_run in this corpus slice"
+                "family `{id}` exact_candidate_execution must remain not_run in this corpus slice"
             ));
         }
     }
@@ -162,21 +168,27 @@ pub(crate) fn validate_corpus(corpus: &Corpus) -> Result<(), String> {
         "tamper operation",
     )?;
     for required in REQUIRED_TAMPER_OPERATION_IDS {
-        let Some(row) = corpus
+        if !corpus
             .tamper_operations
             .iter()
-            .find(|row| row.id == required)
-        else {
+            .any(|row| row.id == required)
+        {
             return Err(format!("missing required tamper operation `{required}`"));
-        };
+        }
+    }
+    for row in &corpus.tamper_operations {
+        if !REQUIRED_TAMPER_OPERATION_IDS.contains(&row.id.as_str()) {
+            return Err(format!("unknown tamper operation id `{}`", row.id));
+        }
+        let id = row.id.as_str();
         if row.exact_candidate_execution != ExactCandidateExecution::NotRun {
             return Err(format!(
-                "tamper operation `{required}` exact_candidate_execution must remain not_run in this corpus slice"
+                "tamper operation `{id}` exact_candidate_execution must remain not_run in this corpus slice"
             ));
         }
         if row.library_coverage.trim().is_empty() {
             return Err(format!(
-                "tamper operation `{required}` must name library_coverage"
+                "tamper operation `{id}` must name library_coverage"
             ));
         }
     }
@@ -185,16 +197,22 @@ pub(crate) fn validate_corpus(corpus: &Corpus) -> Result<(), String> {
         "required control",
     )?;
     for required in REQUIRED_CONTROL_IDS {
-        let Some(row) = corpus
+        if !corpus
             .required_controls
             .iter()
-            .find(|row| row.id == required)
-        else {
+            .any(|row| row.id == required)
+        {
             return Err(format!("missing required control `{required}`"));
-        };
+        }
+    }
+    for row in &corpus.required_controls {
+        if !REQUIRED_CONTROL_IDS.contains(&row.id.as_str()) {
+            return Err(format!("unknown required control id `{}`", row.id));
+        }
+        let id = row.id.as_str();
         if row.exact_candidate_execution != ExactCandidateExecution::NotRun {
             return Err(format!(
-                "required control `{required}` exact_candidate_execution must remain not_run in this corpus slice"
+                "required control `{id}` exact_candidate_execution must remain not_run in this corpus slice"
             ));
         }
     }
@@ -212,17 +230,28 @@ fn validate_unique_ids<'a>(ids: impl Iterator<Item = &'a str>, label: &str) -> R
 }
 
 fn validate_test_anchor(anchor: &str) -> Result<(), String> {
-    let Some((path, symbol)) = anchor.split_once("::") else {
+    let Some((path, symbol_path)) = anchor.split_once("::") else {
         return Err(format!(
             "test anchor `{anchor}` must use path::module::...::symbol form"
         ));
     };
-    if symbol.trim().is_empty() {
-        return Err(format!("test anchor `{anchor}` must name a symbol"));
-    }
-    if !workspace_root().join(path).exists() {
+    let test_name = symbol_path
+        .rsplit("::")
+        .next()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| format!("test anchor `{anchor}` must name a symbol"))?;
+    let source_path = workspace_root().join(path);
+    if !source_path.exists() {
         return Err(format!(
             "test anchor `{anchor}` source path `{path}` is missing from the workspace"
+        ));
+    }
+    let source = std::fs::read_to_string(&source_path)
+        .map_err(|error| format!("test anchor `{anchor}` source read failed: {error}"))?;
+    let fn_needle = format!("fn {test_name}");
+    if !source.contains(&fn_needle) {
+        return Err(format!(
+            "test anchor `{anchor}` must name a test function declared in `{path}`"
         ));
     }
     Ok(())

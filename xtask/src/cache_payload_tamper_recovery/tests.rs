@@ -1,6 +1,7 @@
 use super::{
-    CORPUS_SCHEMA, ExactCandidateExecution, REQUIRED_CONTROL_IDS, REQUIRED_FAMILY_IDS,
-    REQUIRED_TAMPER_OPERATION_IDS, load_committed_corpus, load_corpus, validate_corpus,
+    CORPUS_SCHEMA, ExactCandidateExecution, FamilyDisposition, FamilyRow, REQUIRED_CONTROL_IDS,
+    REQUIRED_FAMILY_IDS, REQUIRED_TAMPER_OPERATION_IDS, load_committed_corpus, load_corpus,
+    validate_corpus,
 };
 
 #[test]
@@ -63,6 +64,42 @@ fn malformed_json_is_rejected() -> Result<(), String> {
         Ok(_) => return Err("malformed corpus must fail to parse".to_string()),
     };
     if !error.contains("corpus JSON") {
+        return Err(format!("unexpected error: {error}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn extra_family_with_passed_execution_is_rejected() -> Result<(), String> {
+    let mut corpus = load_committed_corpus()?;
+    corpus.families.push(FamilyRow {
+        id: "unexpected_family".to_string(),
+        disposition: FamilyDisposition::IncludedAndExercised,
+        library_producer_test: None,
+        library_consumer_test: None,
+        exact_candidate_execution: ExactCandidateExecution::Passed,
+    });
+    let error = match validate_corpus(&corpus) {
+        Err(error) => error,
+        Ok(()) => return Err("extra passed family must fail".to_string()),
+    };
+    if !error.contains("unexpected_family") {
+        return Err(format!("unexpected error: {error}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn stale_test_symbol_in_existing_file_is_rejected() -> Result<(), String> {
+    let mut corpus = load_committed_corpus()?;
+    corpus.families[0].library_producer_test = Some(
+        "crates/ripr/src/analysis/facts/build.rs::tests::this_test_name_does_not_exist".to_string(),
+    );
+    let error = match validate_corpus(&corpus) {
+        Err(error) => error,
+        Ok(()) => return Err("stale test symbol must fail".to_string()),
+    };
+    if !error.contains("this_test_name_does_not_exist") {
         return Err(format!("unexpected error: {error}"));
     }
     Ok(())
