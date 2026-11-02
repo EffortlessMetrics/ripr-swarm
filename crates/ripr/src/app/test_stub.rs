@@ -1108,6 +1108,7 @@ fn byte_offset_of_line(source: &str, line: usize) -> Option<usize> {
 /// build a stub for the return on that line instead of substituting the
 /// nearest gap (#8444 item 2).
 fn return_value_direct_at_probe_line(
+    root: &Path,
     candidates: &[AtCandidate<'_>],
     file: &str,
     line: usize,
@@ -1157,7 +1158,7 @@ fn return_value_direct_at_probe_line(
         ExpectedSink::ReturnValue,
         &crlf_pairs,
     );
-    let outcome = rust_test_stub(&seam, None, source);
+    let outcome = rust_test_stub(&seam, None, source, Some(root));
     Some(TestStubResolution {
         seam_id: seam.id().as_str().to_string(),
         owner: seam.owner().to_string(),
@@ -1320,7 +1321,7 @@ fn resolve_at(
         let on_line_return_value = !candidates.is_empty();
         if !on_line_return_value
             && let Some(resolution) =
-                return_value_direct_at_probe_line(&in_file, file, line, &source)
+                return_value_direct_at_probe_line(root, &in_file, file, line, &source)
         {
             return Ok(resolution);
         }

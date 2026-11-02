@@ -490,7 +490,7 @@ pub(crate) fn discover_workspace_crates(root: &Path) -> Vec<WorkspaceCrate> {
     let Ok(text) = crate::bounded_input::read_metadata_toml(&manifest) else {
         return Vec::new();
     };
-    let Ok(document) = text.parse::<toml::Value>() else {
+    let Ok(document) = toml::from_str::<toml::Value>(&text) else {
         return Vec::new();
     };
     let mut listed = vec![(String::new(), text)];
@@ -516,7 +516,7 @@ pub(crate) fn crates_from_listed_manifests(manifests: &[(String, String)]) -> Ve
     let Some((_, root_text)) = manifests.iter().find(|(dir, _)| dir.is_empty()) else {
         return Vec::new();
     };
-    let Ok(document) = root_text.parse::<toml::Value>() else {
+    let Ok(document) = toml::from_str::<toml::Value>(root_text) else {
         return Vec::new();
     };
     let mut crates = Vec::new();
@@ -553,7 +553,7 @@ pub(crate) fn crates_from_listed_manifests(manifests: &[(String, String)]) -> Ve
         else {
             continue;
         };
-        let Ok(member_document) = member_text.parse::<toml::Value>() else {
+        let Ok(member_document) = toml::from_str::<toml::Value>(member_text) else {
             continue;
         };
         if let Some(name) = package_name(&member_document) {
