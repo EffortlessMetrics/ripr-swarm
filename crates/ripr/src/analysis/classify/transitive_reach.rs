@@ -2264,10 +2264,8 @@ fn derive_names(source: &str) -> Vec<String> {
         let Some(args) = attribute_call_args(&masked[range.clone()], "derive") else {
             continue;
         };
-        if crate::analysis::extract::offset_inside_macro_invocation_delimiters(
-            &masked,
-            range.start,
-        ) {
+        if crate::analysis::extract::offset_inside_macro_invocation_delimiters(&masked, range.start)
+        {
             continue;
         }
         if !derive_attribute_binds_active_item(&masked, &ranges, index) {
@@ -2320,10 +2318,12 @@ fn derive_item_attribute_bounds(
         }
     }
     let mut header_end = derive_range.end;
-    for next in index + 1..ranges.len() {
+    let mut next = index + 1;
+    while next < ranges.len() {
         let gap = masked.get(header_end..ranges[next].start)?.trim();
         if gap.is_empty() {
             header_end = ranges[next].end;
+            next += 1;
         } else {
             break;
         }
@@ -2332,18 +2332,51 @@ fn derive_item_attribute_bounds(
     Some((header_start, header_end))
 }
 
+fn starts_with_item_keyword(source: &str, keyword: &str) -> bool {
+    source.starts_with(keyword)
+        && source
+            .as_bytes()
+            .get(keyword.len())
+            .is_none_or(|byte| !is_ascii_ident_byte(*byte))
+}
+
+/// Skip a leading `pub`, `pub(crate)`, `pub(super)`, or `pub(in path)` prefix.
+fn skip_item_visibility(source: &str, start: usize) -> usize {
+    let mut cursor = skip_ascii_whitespace(source, start);
+    while let Some(tail) = source.get(cursor..) {
+        if !starts_with_item_keyword(tail, "pub") {
+            break;
+        }
+        cursor = skip_ascii_whitespace(source, cursor + 3);
+        if source.as_bytes().get(cursor) == Some(&b'(') {
+            let bytes = source.as_bytes();
+            let mut depth = 0usize;
+            while cursor < bytes.len() {
+                match bytes[cursor] {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            cursor += 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                cursor += 1;
+            }
+        }
+        cursor = skip_ascii_whitespace(source, cursor);
+    }
+    cursor
+}
+
 /// Start offset of a `struct`/`enum`/`union` item that follows `after_attrs`.
 fn derive_item_keyword_start(masked: &str, after_attrs: usize) -> Option<usize> {
-    let tail = masked.get(after_attrs..)?;
-    let trimmed = tail.trim_start();
-    let keyword_offset = after_attrs + tail.len().saturating_sub(trimmed.len());
+    let keyword_offset = skip_item_visibility(masked, after_attrs);
+    let tail = masked.get(keyword_offset..)?;
     for keyword in ["struct", "enum", "union"] {
-        if trimmed.starts_with(keyword)
-            && trimmed
-                .as_bytes()
-                .get(keyword.len())
-                .is_none_or(|byte| !is_ascii_ident_byte(*byte))
-        {
+        if starts_with_item_keyword(tail, keyword) {
             return Some(keyword_offset);
         }
     }
@@ -2359,7 +2392,7 @@ fn attribute_header_disabled_in_test_build(header: &str) -> bool {
 }
 
 /// Header text of each still-open `{` block that encloses `offset`.
-fn enclosing_item_headers_before<'s>(masked: &'s str, offset: usize) -> Vec<&'s str> {
+fn enclosing_item_headers_before(masked: &str, offset: usize) -> Vec<&str> {
     let mut open: Vec<(usize, usize)> = Vec::new();
     let mut header_start = 0usize;
     for (index, byte) in masked.bytes().enumerate() {
@@ -5685,6 +5718,8 @@ mod tests {
             "const INERT: &str = stringify!(#[derive(Error)]);\n",
             "fn inert() {\n    let _ = stringify!(#[derive(Error)]);\n}\n",
             "#[cfg(any())]\nmod disabled {\n    #[derive(Error)]\n    struct Inner;\n}\n",
+            "macro_rules! unused {\n    () => { #[derive(Error)] struct E; };\n}\n\
+             #[test]\nfn smoke() {}\n",
         ] {
             assert!(
                 find_transitive_witness("fmt_impl", &derive_index(source)).is_none(),
@@ -5699,6 +5734,23 @@ mod tests {
                       #[cfg(any())]\n#[derive(Error)]\nstruct Disabled;\n\
                       const INERT: &str = stringify!(#[derive(Error)]);\n";
         assert_eq!(derive_names(source), vec!["Error".to_string()]);
+    }
+
+    #[test]
+    fn derive_on_pub_items_still_counts_for_the_file() {
+        for source in [
+            "#[derive(Error)]\npub struct E;\n",
+            "#[derive(Error)]\npub(crate) enum E { A }\n",
+            "#[derive(Error)]\npub(super) union E { f: u8 }\n",
+        ] {
+            assert_eq!(derive_names(source), vec!["Error".to_string()], "{source}");
+            assert_eq!(
+                find_transitive_witness("fmt_impl", &derive_index(source))
+                    .and_then(|w| w.via_derive),
+                Some("Error".to_string()),
+                "{source}"
+            );
+        }
     }
 
     #[test]
