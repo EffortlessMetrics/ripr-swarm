@@ -2544,11 +2544,8 @@ mod python_eval_sweep_refresh {
         ))
     }
 
-    /// Resolves the built ripr binary anchored at the workspace root. The
-    /// shared fixture builder resolves `target/debug/ripr` against the test
-    /// process cwd (the xtask package dir), which is the wrong target dir for
-    /// a workspace-member test run; the workspace root is `xtask/..`.
-    fn built_ripr_binary() -> Result<String, String> {
+    /// Workspace-anchored `target/debug/ripr` for eval-sweep refresh tests (#4974).
+    fn workspace_eval_sweep_debug_ripr_binary() -> PathBuf {
         let binary_name = format!("ripr{}", std::env::consts::EXE_SUFFIX);
         let target_dir = match std::env::var_os("CARGO_TARGET_DIR") {
             Some(dir) => PathBuf::from(dir),
@@ -2558,10 +2555,19 @@ mod python_eval_sweep_refresh {
                 .unwrap_or_default()
                 .join("target"),
         };
-        let binary = target_dir.join("debug").join(binary_name);
+        target_dir.join("debug").join(binary_name)
+    }
+
+    /// Resolves the built ripr binary anchored at the workspace root. The
+    /// shared fixture builder resolves `target/debug/ripr` against the test
+    /// process cwd (the xtask package dir), which is the wrong target dir for
+    /// a workspace-member test run; the workspace root is `xtask/..`.
+    fn built_ripr_binary() -> Result<String, String> {
+        let binary = workspace_eval_sweep_debug_ripr_binary();
         if !binary.is_file() {
-            // Cold checkout: build through the shared fixture builder.
-            return crate::ripr_fixture_binary();
+            // Cold checkout: build once, but resolve the workspace target path
+            // above — not `ripr_fixture_binary()`'s CWD-relative path (#4974).
+            return super::super::fixtures::ripr_fixture_binary_at(binary);
         }
         std::path::absolute(&binary)
             .map(|path| path.to_string_lossy().to_string())
@@ -2602,6 +2608,29 @@ mod python_eval_sweep_refresh {
             ));
         }
         Ok(staged.to_string_lossy().to_string())
+    }
+
+    #[test]
+    fn built_ripr_binary_resolves_workspace_target_not_cwd_relative() -> Result<(), String> {
+        if std::env::var_os("CARGO_TARGET_DIR").is_some() {
+            return Ok(());
+        }
+        let workspace_binary = workspace_eval_sweep_debug_ripr_binary();
+        assert_ne!(
+            workspace_binary,
+            crate::ripr_debug_binary(),
+            "cargo test -p xtask runs with CWD at the xtask package (#4974)"
+        );
+        if !workspace_binary.is_file() {
+            return Ok(());
+        }
+        let resolved = built_ripr_binary()?;
+        let expected = std::path::absolute(&workspace_binary)
+            .map_err(|error| format!("resolve workspace binary: {error}"))?
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(resolved, expected);
+        Ok(())
     }
 
     #[test]
