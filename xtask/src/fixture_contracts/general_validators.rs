@@ -1248,9 +1248,7 @@ pub(crate) fn validate_dotnet_evidence_contract_fixture_corpus(
     if spec_path.exists() {
         let body = read_text_lossy(&spec_path)?;
         if !body.contains("RIPR-SPEC-0393") {
-            violations.push(
-                ".NET evidence contract SPEC.md must name RIPR-SPEC-0393".to_string(),
-            );
+            violations.push(".NET evidence contract SPEC.md must name RIPR-SPEC-0393".to_string());
         }
         for heading in ["## Given", "## When", "## Then", "## Must Not"] {
             if !body.contains(heading) {
@@ -1268,7 +1266,9 @@ pub(crate) fn validate_dotnet_evidence_contract_fixture_corpus(
     let value: serde_json::Value = match serde_json::from_str(&raw) {
         Ok(value) => value,
         Err(error) => {
-            violations.push(format!(".NET evidence contract corpus.json is invalid JSON: {error}"));
+            violations.push(format!(
+                ".NET evidence contract corpus.json is invalid JSON: {error}"
+            ));
             return Ok(());
         }
     };
@@ -1304,7 +1304,9 @@ pub(crate) fn validate_dotnet_evidence_contract_fixture_corpus(
             violations.push(format!(".NET evidence contract case {id} is duplicated"));
         }
         let Some(expect) = case.get("expect").and_then(|v| v.as_str()) else {
-            violations.push(format!(".NET evidence contract case {id} is missing expect"));
+            violations.push(format!(
+                ".NET evidence contract case {id} is missing expect"
+            ));
             continue;
         };
         if expect != "accept" && expect != "reject" {
