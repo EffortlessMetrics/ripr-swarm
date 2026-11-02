@@ -2947,7 +2947,12 @@ fn site_covers_assertion(
             scope_start <= assert_start && assert_end <= scope_end
         }
         (None, _) => true,
-        (Some(_), None) => false,
+        // A borrowed oracle (a check helper lends its own assertion, #6482)
+        // never resolves to bytes: `assertion_byte_range` reads only the
+        // test's own assertions. With no range to contain, keep the pre-#5695
+        // conservative cover instead of dropping the shadow and admitting a
+        // possibly replaced macro's expansion as a genuine check (#12461).
+        (Some(_), None) => true,
     }
 }
 
@@ -3012,15 +3017,21 @@ fn assertion_byte_range(index: &RustIndex, test: &TestSummary, line: usize) -> O
         .find(|assertion| assertion.line == line)?;
     let tree = crate::analysis::syntax::parse_clean_source_file(&facts.source)?.tree();
     let lines = LineIndex::new(&facts.source);
-    let needle = oracle.text.trim();
+    // The oracle text keeps its statement terminator while the `MacroCall`
+    // node's text stops before it; strip one trailing `;` so the test's own
+    // invocation still resolves to bytes (#12461).
+    let needle = oracle.text.trim().trim_end_matches(';').trim_end();
+    if needle.is_empty() {
+        return None;
+    }
     for call in tree.syntax().descendants().filter_map(ast::MacroCall::cast) {
         let range = call.syntax().text_range();
         if lines.line(range.start()) != line {
             continue;
         }
-        if call.syntax().text().to_string().trim() == needle
-            || call.syntax().text().to_string().contains(needle)
-        {
+        let invoked = call.syntax().text().to_string();
+        let invoked = invoked.trim();
+        if invoked == needle || invoked.contains(needle) {
             return Some((u32::from(range.start()), u32::from(range.end())));
         }
     }
