@@ -18,6 +18,7 @@ mod initialize_repair;
 mod input_identity;
 mod lens;
 mod panic_containment;
+mod parent_death_watchdog;
 mod payload_bounds;
 mod position;
 mod progress;
@@ -117,6 +118,7 @@ where
     // #11439: `exit` and the end of stdin cancel in-flight analysis, so the
     // server does not wait out a refresh that can no longer be delivered.
     let session_end = session_end::SessionEnd::new(service.inner().session_end_hook());
+    parent_death_watchdog::spawn_parent_death_watchdog(session_end.clone());
     let stdin = initialize_repair::InitializeRepairReader::new(stdin);
     let stdin = session_end::EndOfInput::new(stdin, session_end.clone());
     let order = ShutdownExitOrder::default().ending_session_with(session_end);

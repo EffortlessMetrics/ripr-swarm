@@ -1342,6 +1342,10 @@ fn serve_stdio_call_presence_observer() -> Result<(), String> {
         serve_streams.contains("order.exit_without_shutdown()"),
         "serve_streams should exit nonzero when `exit` arrives without a prior `shutdown` (LSP section exit, #5249)"
     );
+    assert!(
+        serve_streams.contains("parent_death_watchdog::spawn_parent_death_watchdog"),
+        "serve_streams should watch launcher parent death when stdio stays open (#12575)"
+    );
 
     Ok(())
 }

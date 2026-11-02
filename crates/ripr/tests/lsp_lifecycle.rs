@@ -29,12 +29,12 @@
 //! Named limitations (verified against tower-lsp-server 0.23, the transport
 //! stack in `crates/ripr/src/lsp.rs`):
 //!
-//! - `InitializeParams.processId` monitoring is NOT implemented: neither
-//!   tower-lsp-server 0.23 nor `lsp/backend.rs` watches the client process,
-//!   so a crashed editor leaves the server running until stdin closes.
+//! - `InitializeParams.processId` is still not monitored; the Unix parent-death
+//!   watchdog (#12575) observes launcher reparenting via `parent_id()` when
+//!   stdio stays open, not the LSP `processId` field.
 //!   `initialize_accepts_client_process_id_without_monitoring` documents the
-//!   accepted-but-unmonitored behavior; detecting a dead-but-pipe-holding
-//!   parent is out of scope.
+//!   accepted-but-unmonitored `processId` behavior. Windows has no safe
+//!   parent-PID probe yet (#12575).
 //! - LSP §exit says a server that receives `exit` without a prior `shutdown`
 //!   "should exit with an error code". tower-lsp-server treats `exit` as an
 //!   unconditional stop, so `ripr lsp` records the wire order itself and
