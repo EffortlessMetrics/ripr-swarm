@@ -51,6 +51,24 @@ fn repo_includes_preview_languages(languages: &[LanguageId]) -> bool {
     languages.iter().copied().any(is_preview_language)
 }
 
+const REPO_SCOPE_OVERSIZED_PREFIX: &str = "repo_scope_oversized:";
+const PARTIAL_BUDGET_INVALID_PREFIX: &str = "partial_budget_invalid:";
+
+/// Hard Rust repo guards stay top-level refusals even when preview languages
+/// are selected; they are not degradable adapter failures (#6470, #2109).
+fn rust_repo_err_must_propagate(reason: &str) -> bool {
+    let reason = reason.trim_start();
+    reason.starts_with(REPO_SCOPE_OVERSIZED_PREFIX)
+        || reason.starts_with(PARTIAL_BUDGET_INVALID_PREFIX)
+}
+
+/// Status for a recoverable Rust repo adapter failure in a mixed run. Rust
+/// was invoked, so the run is `Failed`, not preview-style `Unavailable`.
+fn rust_repo_run_status_for_err(reason: &str) -> LanguageRunStatus {
+    let _ = reason;
+    LanguageRunStatus::Failed
+}
+
 /// Reason prefix for a language adapter that panicked mid-run (#11132).
 ///
 /// A panic or unwind inside an adapter, or inside an AST consumer it drives
@@ -2528,10 +2546,12 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                     files_by_language.push((LanguageId::Rust, result.production_files));
                 }
                 Err(reason) => {
-                    if !repo_includes_preview_languages(languages) {
+                    if !repo_includes_preview_languages(languages)
+                        || rust_repo_err_must_propagate(&reason)
+                    {
                         return Err(reason);
                     }
-                    let status = adapter_run_status_for_err(&reason);
+                    let status = rust_repo_run_status_for_err(&reason);
                     repo_language_aggregate.record(LanguageAnalysisOutcomeV1::from_repo_err(
                         LanguageId::Rust,
                         reason.clone(),
@@ -6610,6 +6630,23 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    /// Hard Rust repo refusals stay top-level errors even when preview
+    /// languages are selected (#6470, #2109).
+    #[test]
+    fn rust_repo_hard_refusals_stay_non_recoverable() {
+        assert!(super::rust_repo_err_must_propagate(
+            "repo_scope_oversized: 900 indexed Rust files exceed the RIPR_MAX_REPO_INDEX_FILES limit (800); analysis was not run"
+        ));
+        assert!(super::rust_repo_err_must_propagate(
+            "partial_budget_invalid: RIPR_PARTIAL_DIFF_MAX_FILES must be a positive integer"
+        ));
+        assert!(!super::rust_repo_err_must_propagate(&format!(
+            "{}{}",
+            super::ADAPTER_PANIC_REASON_PREFIX,
+            "the rust adapter stopped"
+        )));
     }
 
     fn aggregate_options(root: PathBuf, diff_file: PathBuf) -> AnalysisOptions {
