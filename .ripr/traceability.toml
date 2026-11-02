@@ -21221,3 +21221,17 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0401"
+name = "R preview package testthat numerical data boundaries"
+spec = "docs/specs/RIPR-SPEC-0401-r-preview-package-testthat-numerical-data-boundaries.md"
+tests = []
+fixtures = []
+code = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0401-r-preview-package-testthat-numerical-data-boundaries.md",
+]
+metrics = [
+  "r_preview_contract_registered",
+]

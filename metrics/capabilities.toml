@@ -1774,6 +1774,18 @@ next = "dogfood/perl-real-repo-evals-v2"
 metric = "language_adapter_perl_facts_packet_v1, language_adapter_perl_gap_record_projection, language_adapter_perl_doctor_preview, language_adapter_perl_bespoke_card_advisory_only_invariant, language_adapter_perl_real_repo_eval_launchpoints"
 
 [[capability]]
+id = "r_preview_static_facts_contract"
+name = "R preview static facts contract"
+status = "planned"
+spec = "RIPR-SPEC-0401"
+evidence = [
+  "docs/specs/RIPR-SPEC-0401-r-preview-package-testthat-numerical-data-boundaries.md defines wire identity r, package/script/testthat/numerical/data/condition/snapshot/side-effect boundaries, typed NSE/dispatch/native limits, #5542 activation projection, #5559 native provenance, and contractual capability cell ids before any R adapter or parser lands (#5850, #5592).",
+]
+fixtures = []
+next = "epic/r/parser-and-routing"
+metric = "r_preview_contract_registered"
+
+[[capability]]
 id = "typescript_preview_static_facts"
 cells = [
   "typescript/any/diff/static_facts",
