@@ -1508,6 +1508,12 @@ fn find_related_tests_with_candidates<'a>(
                     && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
             }
         };
+        let reaches_owner_through_blanket_impl = test_in_owner_package
+            && owner_fn.is_some_and(|owner| {
+                super::transitive_reach::test_reaches_trait_owner_through_blanket_impl(
+                    test, owner, index,
+                )
+            });
         let dispatches_to_helper_fmt_entry = !calls_helper_entry
             && !property_only_owner_call
             && test_in_owner_package
@@ -1586,7 +1592,8 @@ fn find_related_tests_with_candidates<'a>(
                 || calls_method_entry
                 || dispatches_to_helper_fmt_entry
                 || calls_helper_method_entry
-                || hands_owner_path_to_helper);
+                || hands_owner_path_to_helper
+                || reaches_owner_through_blanket_impl);
 
         if !calls_owner
             && !equality_asserts_owner
@@ -8367,6 +8374,33 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         let related = find_related_tests(&probe, Some(&other), &index, true, None, None);
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #6732: `(-0.0f64).to_text()` reaches `impl Render for f64` through the
+    /// blanket `impl<T: Render> ToText for T` body calling `self.render()`.
+    #[test]
+    fn given_blanket_to_text_when_test_pins_f64_then_reaches_render_impl() {
+        let owner = impl_function("src/lib.rs", "render", "impl Render for f64");
+        let mut blanket = impl_function("src/lib.rs", "to_text", "impl <T: Render> ToText for T");
+        blanket.calls = vec![CallFact {
+            line: 3,
+            name: "render".to_string(),
+            text: "self.render()".into(),
+        }];
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), blanket],
+            tests: vec![test_with_call(
+                "src/lib.rs",
+                "negative_zero_keeps_its_sign",
+                "assert_eq!((-0.0f64).to_text(), \"-0.0\");",
+                "to_text",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "return String::from(\"-0.0\");");
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::HelperOwnerCall);
     }
 
     /// (#6732 review) An associated function with no `self` takes its `Self`

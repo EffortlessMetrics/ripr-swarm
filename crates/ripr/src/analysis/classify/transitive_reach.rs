@@ -881,6 +881,24 @@ impl<'a> ReachGraph<'a> {
             if !reaches {
                 continue;
             }
+            if let Some(header) = impl_method_header(&function.id.0) {
+                if blanket_impl_type_param(header).is_some()
+                    && blanket_impl_body_calls_self_method(function, owner_name)
+                {
+                    for bound in blanket_impl_bound_traits(header) {
+                        for owner_fn in self.by_name.get(owner_name).into_iter().flatten() {
+                            if super::related_tests::impl_trait_name(&owner_fn.id.0).as_deref()
+                                == Some(bound.as_str())
+                                && let Some(ty) =
+                                    super::related_tests::impl_self_type_name(&owner_fn.id.0)
+                            {
+                                self_types.push(ty);
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
             self_types.push(super::related_tests::impl_self_type_name(&function.id.0)?);
         }
         if self_types.is_empty() {
@@ -3280,6 +3298,127 @@ fn identifier_runs(text: &str) -> impl Iterator<Item = &str> {
 
 fn is_ascii_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// Trait-impl header from a parser-backed symbol id
+/// (`src/lib.rs::impl <T: Render> ToText for T::to_text` → `<T: Render> ToText for T`).
+fn impl_method_header(owner_id: &str) -> Option<&str> {
+    owner_id
+        .split("::impl ")
+        .nth(1)?
+        .rsplit_once("::")
+        .map(|(header, _)| header)
+}
+
+/// When the header is `impl<T: Bound> Trait for T` (also `&T`, `&mut T`, `&'a T`),
+/// the self type parameter name; otherwise `None`.
+fn blanket_impl_type_param(header: &str) -> Option<String> {
+    let (_, self_ty) = header.rsplit_once(" for ")?;
+    let mut self_ty = self_ty.trim();
+    self_ty = self_ty.strip_prefix('&').unwrap_or(self_ty).trim();
+    self_ty = self_ty.strip_prefix("mut ").unwrap_or(self_ty).trim();
+    if self_ty.starts_with('\'') {
+        self_ty = self_ty.split_whitespace().nth(1)?;
+    }
+    let param = self_ty.split('<').next()?.trim();
+    if param.is_empty() || !param.bytes().all(is_ascii_ident_byte) {
+        return None;
+    }
+    let trait_part = header.rsplit_once(" for ")?.0;
+    let generic = trait_part.split('<').nth(1)?.split('>').next()?;
+    let names_generic_param = generic.split(',').any(|chunk| {
+        chunk
+            .split(':')
+            .next()
+            .is_some_and(|name| name.trim() == param)
+    });
+    names_generic_param.then(|| param.to_string())
+}
+
+/// Trait names bound on the blanket impl's type parameter (`<T: Render + Clone>`).
+fn blanket_impl_bound_traits(header: &str) -> Vec<String> {
+    let trait_part = header
+        .rsplit_once(" for ")
+        .map(|(left, _)| left)
+        .unwrap_or(header);
+    let Some(generic) = trait_part.split('<').nth(1) else {
+        return Vec::new();
+    };
+    let generic = generic.split('>').next().unwrap_or("");
+    let Some((_, bounds)) = generic.split_once(':') else {
+        return Vec::new();
+    };
+    bounds
+        .split('+')
+        .filter_map(|bound| {
+            let bound = bound.trim();
+            let bound = bound.split('<').next()?.trim();
+            let name = bound.rsplit("::").next()?.trim();
+            (!name.is_empty()).then(|| name.to_string())
+        })
+        .collect()
+}
+
+/// Whether a captured call is `self.method(..)` rather than another receiver.
+fn self_method_call(text: &str, method: &str) -> bool {
+    text.match_indices(method).any(|(start, _)| {
+        let before = text.get(..start).unwrap_or("");
+        before.trim_end().ends_with("self.") || before.trim_end().ends_with("self .")
+    })
+}
+
+fn blanket_impl_body_calls_self_method(function: &FunctionSummary, method: &str) -> bool {
+    calls_of(function).any(|call| call.name == method && self_method_call(&call.text, method))
+}
+
+fn blanket_impl_entry_reaches_owner(
+    entry: &FunctionSummary,
+    owner_name: &str,
+    owner_trait: &str,
+) -> bool {
+    let Some(header) = impl_method_header(&entry.id.0) else {
+        return false;
+    };
+    if blanket_impl_type_param(header).is_none() {
+        return false;
+    }
+    if !blanket_impl_bound_traits(header)
+        .iter()
+        .any(|bound| bound == owner_trait)
+    {
+        return false;
+    }
+    blanket_impl_body_calls_self_method(entry, owner_name)
+}
+
+/// #6732: the test calls a blanket trait impl method on a receiver that resolves
+/// to the owner's concrete `Self`, and that impl's body calls the owner on `self`
+/// through the bound trait (one hop; generic free helpers stay out).
+pub(in crate::analysis) fn test_reaches_trait_owner_through_blanket_impl(
+    test: &TestFact,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let owner_name = owner.name.as_str();
+    let Some(owner_trait) = super::related_tests::impl_trait_name(&owner.id.0) else {
+        return false;
+    };
+    let Some(owner_impl_type) = super::related_tests::impl_self_type_name(&owner.id.0) else {
+        return false;
+    };
+    index.functions().iter().any(|entry| {
+        entry.id != owner.id
+            && blanket_impl_entry_reaches_owner(entry, owner_name, &owner_trait)
+            && {
+                let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+                super::related_tests::method_call_resolves_to_impl_type_in(
+                    test,
+                    &masked,
+                    entry.name.as_str(),
+                    &owner_impl_type,
+                )
+            }
+    })
 }
 
 fn calls_of(f: &FunctionSummary) -> impl Iterator<Item = &CallFact> {
@@ -5910,5 +6049,92 @@ case!(not_a_test);
 fn real() {}
 ";
         assert!(generated_test_sites(Path::new("src/lib.rs"), source).is_empty());
+    }
+
+    fn make_impl_fn(name: &str, impl_segment: &str, calls: Vec<(&str, &str)>) -> FunctionSummary {
+        let mut function = make_fn_with_body(name, Vec::new(), String::new());
+        function.id = SymbolId(format!("src/lib.rs::{impl_segment}::{name}"));
+        function.item.has_self_param = true;
+        function.calls = calls
+            .into_iter()
+            .map(|(call_name, text)| CallFact {
+                line: 2,
+                name: call_name.to_string(),
+                text: text.to_string().into(),
+            })
+            .collect();
+        function
+    }
+
+    #[test]
+    fn blanket_impl_header_reads_type_param_and_bounds() {
+        let header = "<T: Render + Clone> ToText for T";
+        assert_eq!(blanket_impl_type_param(header).as_deref(), Some("T"));
+        assert_eq!(
+            blanket_impl_bound_traits(header),
+            vec!["Render".to_string(), "Clone".to_string()]
+        );
+        assert!(blanket_impl_type_param("impl Render for f64").is_none());
+    }
+
+    #[test]
+    fn given_blanket_to_text_when_test_calls_f64_then_owner_is_reached() {
+        let render_f64 = make_impl_fn(
+            "render",
+            "impl Render for f64",
+            vec![("is_sign_negative", "self.is_sign_negative()")],
+        );
+        let to_text_blanket = make_impl_fn(
+            "to_text",
+            "impl <T: Render> ToText for T",
+            vec![("render", "self.render()")],
+        );
+        let mut test = make_test("negative_zero", vec!["to_text"]);
+        test.body = "assert_eq!((-0.0f64).to_text(), \"-0.0\");".into();
+        test.calls = vec![CallFact {
+            line: 1,
+            name: "to_text".to_string(),
+            text: "(-0.0f64).to_text()".into(),
+        }];
+        let index = index_with(
+            vec![render_f64.clone(), to_text_blanket],
+            vec![test.clone()],
+        );
+        assert!(test_reaches_trait_owner_through_blanket_impl(
+            &test,
+            &render_f64,
+            &index,
+        ));
+    }
+
+    #[test]
+    fn given_generic_free_helper_when_test_calls_it_then_blanket_hop_refuses() {
+        let render_f64 = make_impl_fn("render", "impl Render for f64", Vec::new());
+        let helper = {
+            let mut function = make_fn_with_body(
+                "text_of",
+                Vec::new(),
+                "fn text_of<T: Render>(x: &T) { x.render() }".into(),
+            );
+            function.calls = vec![CallFact {
+                line: 2,
+                name: "render".to_string(),
+                text: "x.render()".into(),
+            }];
+            function
+        };
+        let mut test = make_test("via_helper", vec!["text_of"]);
+        test.body = "text_of(&-0.0f64);".into();
+        test.calls = vec![CallFact {
+            line: 1,
+            name: "text_of".to_string(),
+            text: "text_of(&-0.0f64)".into(),
+        }];
+        let index = index_with(vec![render_f64.clone(), helper], vec![test.clone()]);
+        assert!(!test_reaches_trait_owner_through_blanket_impl(
+            &test,
+            &render_f64,
+            &index,
+        ));
     }
 }
