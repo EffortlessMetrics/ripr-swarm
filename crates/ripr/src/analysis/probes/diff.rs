@@ -28,7 +28,9 @@ use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::cfg_predicates::{attributes_require_test, split_leading_attribute};
 use crate::analysis::language::changed_let_binding;
+use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::domain::{Probe, ProbeFamily, SourceLocation};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// Test surface: the probe vec without the #3294 relations. Production
@@ -64,13 +66,6 @@ pub(crate) fn probes_for_file_with_relations(
     // Added-run starts once per file: `added_run_start` used to scan every
     // added line at every step of the run, once per added line (#7524).
     let added_run_starts = changed.added_run_starts();
-    let build_context = ProbeBuildContext {
-        root,
-        changed,
-        index,
-        changed_nodes: &changed_nodes,
-        added_run_starts: &added_run_starts,
-    };
     let mut emitted_parser_shapes = std::collections::BTreeMap::<(usize, String), usize>::new();
     let propagation_subjects = super::propagation_boundary::closing_propagation_subjects(
         index,
@@ -86,6 +81,16 @@ pub(crate) fn probes_for_file_with_relations(
     // Rebuilt once per file and shared by every reader of the old file (#7637).
     let old_source = super::classify::old_source(index, changed);
     let old_source = old_source.as_deref();
+    let entirely_removed_function_old_lines =
+        entirely_removed_function_old_lines(root, registrations, old_source, changed);
+    let build_context = ProbeBuildContext {
+        root,
+        changed,
+        index,
+        changed_nodes: &changed_nodes,
+        added_run_starts: &added_run_starts,
+        entirely_removed_function_old_lines: &entirely_removed_function_old_lines,
+    };
     // A positional replacement, or a rewrapped block, that is only an
     // elided-lifetime or primitive constant path respelling changes no
     // behavior: no probe on either side. String and comment text is output or
@@ -1965,6 +1970,51 @@ struct ProbeBuildContext<'a> {
     index: &'a RustIndex,
     changed_nodes: &'a [SyntaxNodeFact],
     added_run_starts: &'a std::collections::BTreeMap<usize, usize>,
+    entirely_removed_function_old_lines: &'a BTreeSet<usize>,
+}
+
+/// Old-side line numbers that belonged to a function whose whole span the diff
+/// removed. A removed-only probe on such a line must not borrow a neighbour
+/// through the projected new-side coordinate (#9168).
+fn entirely_removed_function_old_lines(
+    root: &Path,
+    registrations: &[crate::config::TestHarnessRegistration],
+    old_source: Option<&str>,
+    changed: &ChangedFile,
+) -> BTreeSet<usize> {
+    let mut ownerless = BTreeSet::new();
+    let Some(source) = old_source else {
+        return ownerless;
+    };
+    if changed.removed_lines.is_empty() {
+        return ownerless;
+    }
+    let removed_old_lines: BTreeSet<usize> =
+        changed.removed_lines.iter().map(|line| line.line).collect();
+    let Ok(facts) = RaRustSyntaxAdapter.summarize_file(&changed.path, source) else {
+        return ownerless;
+    };
+    let mut old_index = RustIndex::default();
+    old_index.insert_file(changed.path.clone(), facts, true);
+    if crate::analysis::facts::normalize_reconstructed_source_roles(
+        &mut old_index,
+        root,
+        registrations,
+    )
+    .is_err()
+    {
+        return ownerless;
+    }
+    let Some(file_facts) = find_file_facts(&old_index, &changed.path) else {
+        return ownerless;
+    };
+    for function in &file_facts.functions {
+        let span = function.start_line..=function.end_line;
+        if span.clone().all(|line| removed_old_lines.contains(&line)) {
+            ownerless.extend(span);
+        }
+    }
+    ownerless
 }
 
 fn build_probe(
@@ -1999,15 +2049,24 @@ fn build_probe(
     // by its `source_currentness` disposition, and re-coordinating
     // deleted-side evidence is the #3212 projection slice's consumer work.
     let new_line = changed_line.new_side_line;
-    let owner = context
-        .changed_nodes
-        .iter()
-        .find(|node| node.start_line <= new_line && new_line <= node.end_line)
-        .and_then(|node| node.owner.clone())
-        .or_else(|| {
-            find_owner_function(context.index, &context.changed.path, new_line)
-                .map(|function| function.id.clone())
-        });
+    let owner = if before.is_some()
+        && after.is_none()
+        && context
+            .entirely_removed_function_old_lines
+            .contains(&changed_line.line)
+    {
+        None
+    } else {
+        context
+            .changed_nodes
+            .iter()
+            .find(|node| node.start_line <= new_line && new_line <= node.end_line)
+            .and_then(|node| node.owner.clone())
+            .or_else(|| {
+                find_owner_function(context.index, &context.changed.path, new_line)
+                    .map(|function| function.id.clone())
+            })
+    };
     // Ordinal 1 here; post-hoc dedup in probes_for_file handles collisions.
     let id = diff_probe_id(&context.changed.path, &family, owner.as_ref(), text, 1);
     let expected_sinks = expected_sinks(text, &family);
@@ -2577,6 +2636,32 @@ mod tests {
     use crate::domain::SymbolId;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
+    #[test]
+    fn removed_entire_function_body_does_not_borrow_neighbour_owner() -> Result<(), String> {
+        let candidate = "pub struct Wrapper(pub u32);\n\npub trait Ext: Sized {\n    fn take(self, limit: u64) -> u64 {\n        limit + 1\n    }\n}\n";
+        let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,14 +1,7 @@\n pub struct Wrapper(pub u32);\n \n pub trait Ext: Sized {\n     fn take(self, limit: u64) -> u64 {\n         limit + 1\n     }\n-\n-    fn compat(self) -> Wrapper\n-    where\n-        Self: Into<u32>,\n-    {\n-        Wrapper::new(self)\n-    }\n }\n";
+        let path = PathBuf::from("src/lib.rs");
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), candidate.to_string()),
+        );
+        let changed = crate::analysis::diff::parse_unified_diff(diff)
+            .into_iter()
+            .next()
+            .ok_or_else(|| "diff fixture yields no changed file".to_string())?;
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let body = probes
+            .iter()
+            .find(|probe| probe.before.as_deref() == Some("Wrapper::new(self)"))
+            .ok_or_else(|| format!("expected deleted compat body probe: {probes:?}"))?;
+        assert_eq!(
+            body.owner, None,
+            "deleted compat body must not borrow take as owner: {body:?}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn probes_for_file_uses_syntax_shape_owner_and_removed_context() {
         let path = PathBuf::from("src/lib.rs");
