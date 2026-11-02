@@ -1,0 +1,1 @@
+xtask/src/repository_orientation.rs|Command::new|1|#2331|read-only orientation proof compares `git status --porcelain` before and after the harness run; no writes, network, or subprocess beyond local git status in the workspace root.

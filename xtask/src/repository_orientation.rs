@@ -16,8 +16,11 @@ use serde::{Deserialize, Serialize};
 use crate::current_state::{CURRENT_STATE_SCHEMA_VERSION, produce_current_state};
 use crate::issue_lifecycle_attempt::IssueLifecycleDispositionV1;
 use crate::work_portfolio::{
-    WorkCandidateV1, WorkPortfolioSnapshotV1, compile_work_portfolio_corpus,
+    WorkCandidateKindV1, WorkCandidateV1, WorkPortfolioSnapshotV1, compile_work_portfolio_corpus,
 };
+
+pub(crate) const REPOSITORY_ORIENTATION_PROVENANCE_SCHEMA_VERSION: &str =
+    "repository_orientation_provenance.v1";
 
 pub(crate) const REPOSITORY_ORIENTATION_CORPUS_SCHEMA_VERSION: &str =
     "repository_orientation_corpus.v1";
@@ -111,6 +114,7 @@ pub(crate) struct RepositoryOrientationReceiptV1 {
     pub disposition: OrientationDispositionV1,
     pub selected_issue: Option<u64>,
     pub duplicate_overlap_checks: Vec<String>,
+    pub conflict_resources: Vec<String>,
     pub governing_contracts: Vec<String>,
     pub proof_commands: Vec<String>,
     pub limitations: Vec<String>,
@@ -207,6 +211,19 @@ fn candidate_for_issue<'a>(
         .ok_or_else(|| format!("portfolio snapshot is missing issue #{issue}"))
 }
 
+fn duplicate_work_blocked(candidate: &WorkCandidateV1) -> bool {
+    !candidate.overlapping_candidates.is_empty()
+        || candidate.lifecycle_stage == IssueLifecycleDispositionV1::Duplicate
+}
+
+fn partial_acceptance_candidate(candidate: &WorkCandidateV1) -> bool {
+    matches!(
+        candidate.lifecycle_stage,
+        IssueLifecycleDispositionV1::PartiallyLanded
+            | IssueLifecycleDispositionV1::MergedPendingCloseout
+    )
+}
+
 fn disposition_for_candidate(
     scenario: &RepositoryOrientationScenarioV1,
     candidate: &WorkCandidateV1,
@@ -220,10 +237,11 @@ fn disposition_for_candidate(
     let mut overlap_checks = BTreeSet::new();
     let mut conflict_resources = candidate.conflict_resources.clone();
     conflict_resources.sort();
+    conflict_resources.dedup();
     for overlap in &candidate.overlapping_candidates {
         overlap_checks.insert(format!("overlap:{overlap}"));
     }
-    if scenario.category == "overlapping_open_pr" {
+    if duplicate_work_blocked(candidate) {
         return (
             OrientationDispositionV1::DuplicateBlocked,
             None,
@@ -231,12 +249,21 @@ fn disposition_for_candidate(
             conflict_resources,
         );
     }
-    if candidate.lifecycle_stage == IssueLifecycleDispositionV1::PartiallyLanded
-        || scenario.category == "partially_landed_issue"
-    {
+    if partial_acceptance_candidate(candidate) {
         return (
             OrientationDispositionV1::PartialAcceptance,
             Some(candidate.issue),
+            overlap_checks.into_iter().collect(),
+            conflict_resources,
+        );
+    }
+    if matches!(
+        candidate.kind,
+        WorkCandidateKindV1::Blocked | WorkCandidateKindV1::Complete
+    ) {
+        return (
+            OrientationDispositionV1::NoSafeWork,
+            None,
             overlap_checks.into_iter().collect(),
             conflict_resources,
         );
@@ -322,7 +349,7 @@ pub(crate) fn run_repository_orientation_scenario(
         }
     }
 
-    let (disposition, selected_issue, duplicate_overlap_checks, _conflict_resources) =
+    let (disposition, selected_issue, duplicate_overlap_checks, conflict_resources) =
         if scenario.source_release_issue.is_some() {
             (
                 OrientationDispositionV1::SourceReleaseRoute,
@@ -404,6 +431,7 @@ pub(crate) fn run_repository_orientation_scenario(
         disposition,
         selected_issue,
         duplicate_overlap_checks,
+        conflict_resources,
         governing_contracts: vec![
             "docs/REPO_TRACKING_MODEL.md".to_string(),
             "docs/ROADMAP.md".to_string(),
@@ -454,9 +482,9 @@ fn validate_receipt_against_expect(
     for resource in &expected.conflict_resources {
         if !resource.is_empty()
             && !receipt
-                .duplicate_overlap_checks
+                .conflict_resources
                 .iter()
-                .any(|item| item.contains(resource))
+                .any(|item| item == resource)
         {
             return Err(format!("missing conflict resource `{resource}`"));
         }
@@ -480,8 +508,86 @@ pub(crate) fn run_repository_orientation_corpus(
     Ok(())
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepositoryOrientationProvenanceFileV1 {
+    path: String,
+    sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepositoryOrientationProvenanceV1 {
+    schema_version: String,
+    repository: String,
+    captured_at: String,
+    capture_method: String,
+    files: Vec<RepositoryOrientationProvenanceFileV1>,
+}
+
+fn load_repository_orientation_provenance(
+    body: &str,
+) -> Result<RepositoryOrientationProvenanceV1, String> {
+    let provenance: RepositoryOrientationProvenanceV1 = serde_json::from_str(body)
+        .map_err(|error| format!("parse repository orientation provenance: {error}"))?;
+    if provenance.schema_version != REPOSITORY_ORIENTATION_PROVENANCE_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported repository orientation provenance schema `{}`",
+            provenance.schema_version
+        ));
+    }
+    if provenance.repository.trim().is_empty() || provenance.capture_method.trim().is_empty() {
+        return Err(
+            "repository orientation provenance must record repository and capture_method"
+                .to_string(),
+        );
+    }
+    Ok(provenance)
+}
+
+fn provenance_digest_matches(recorded: &str, bytes: &[u8]) -> bool {
+    recorded == crate::blind_journey::sha256_hex(bytes)
+}
+
 pub(crate) fn validate_repository_orientation_fixture_corpus(violations: &mut Vec<String>) {
     let root = workspace_path(DEFAULT_REPOSITORY_ORIENTATION_CORPUS_DIR);
+    let provenance_body = match fs::read_to_string(root.join("provenance.json")) {
+        Ok(body) => body,
+        Err(error) => {
+            violations.push(format!(
+                "fixtures/repository_orientation: provenance.json is unreadable: {error}"
+            ));
+            return;
+        }
+    };
+    let provenance = match load_repository_orientation_provenance(&provenance_body) {
+        Ok(provenance) => provenance,
+        Err(error) => {
+            violations.push(format!("fixtures/repository_orientation: {error}"));
+            return;
+        }
+    };
+    for file in &provenance.files {
+        let path = root.join(&file.path);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                violations.push(format!(
+                    "fixtures/repository_orientation: {} is unreadable: {error}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        if !provenance_digest_matches(&file.sha256, &bytes) {
+            violations.push(format!(
+                "fixtures/repository_orientation: {} digest drifted: recorded `{}`, recomputed `{}`",
+                path.display(),
+                file.sha256,
+                crate::blind_journey::sha256_hex(&bytes)
+            ));
+        }
+    }
     let corpus_body = match fs::read_to_string(root.join("corpus.json")) {
         Ok(body) => body,
         Err(error) => {
@@ -502,6 +608,22 @@ pub(crate) fn validate_repository_orientation_fixture_corpus(violations: &mut Ve
     if let Err(error) = run_repository_orientation_corpus(&repo_root, &corpus) {
         violations.push(format!("fixtures/repository_orientation: {error}"));
     }
+}
+
+fn git_porcelain_status(root: &Path) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["status", "--porcelain"])
+        .output()
+        .map_err(|error| format!("run git status: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git status failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[cfg(test)]
@@ -561,6 +683,60 @@ mod tests {
                 development_authority: "EffortlessMetrics/ripr-swarm".to_string(),
                 release_authority: "EffortlessMetrics/ripr#1463".to_string(),
                 limitations: Vec::new(),
+                conflict_resources: vec!["output-contract:rust-json".to_string()],
+                stale_item_refused: None,
+            },
+        };
+        let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
+        validate_receipt_against_expect(&receipt, &scenario.expected)
+    }
+
+    #[test]
+    fn repository_orientation_wrong_category_still_blocks_portfolio_overlap() -> Result<(), String> {
+        let scenario = RepositoryOrientationScenarioV1 {
+            id: "overlap-not-category-gated".to_string(),
+            category: "open_issue_no_pr".to_string(),
+            portfolio_corpus: "corpus".to_string(),
+            issue_number: Some(9101),
+            live_github: LiveGithubAvailabilityV1::Available,
+            inventory: GeneratedInventoryAvailabilityV1::Available,
+            historical_campaign_ref: None,
+            source_release_issue: None,
+            support_tier_overlay: None,
+            expected: RepositoryOrientationExpectV1 {
+                disposition: OrientationDispositionV1::DuplicateBlocked,
+                selected_issue: None,
+                requires_goals_machinery: false,
+                development_authority: "EffortlessMetrics/ripr-swarm".to_string(),
+                release_authority: "EffortlessMetrics/ripr#1463".to_string(),
+                limitations: Vec::new(),
+                conflict_resources: vec!["output-contract:rust-json".to_string()],
+                stale_item_refused: None,
+            },
+        };
+        let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
+        validate_receipt_against_expect(&receipt, &scenario.expected)
+    }
+
+    #[test]
+    fn repository_orientation_blocked_portfolio_candidate_is_no_safe_work() -> Result<(), String> {
+        let scenario = RepositoryOrientationScenarioV1 {
+            id: "blocked-upstream-dependency".to_string(),
+            category: "blocked_issue".to_string(),
+            portfolio_corpus: "corpus".to_string(),
+            issue_number: Some(9104),
+            live_github: LiveGithubAvailabilityV1::Available,
+            inventory: GeneratedInventoryAvailabilityV1::Available,
+            historical_campaign_ref: None,
+            source_release_issue: None,
+            support_tier_overlay: None,
+            expected: RepositoryOrientationExpectV1 {
+                disposition: OrientationDispositionV1::NoSafeWork,
+                selected_issue: None,
+                requires_goals_machinery: false,
+                development_authority: "EffortlessMetrics/ripr-swarm".to_string(),
+                release_authority: "EffortlessMetrics/ripr#1463".to_string(),
+                limitations: Vec::new(),
                 conflict_resources: Vec::new(),
                 stale_item_refused: None,
             },
@@ -573,15 +749,14 @@ mod tests {
     fn repository_orientation_read_only_proof_does_not_mutate_tracked_files() -> Result<(), String>
     {
         let corpus = committed_corpus()?;
-        let before = fs::read_dir(workspace_path(".git"))
-            .map(|_| ())
-            .unwrap_or(());
-        run_repository_orientation_corpus(&workspace_path(""), &corpus)?;
-        let after = fs::read_dir(workspace_path(".git"))
-            .map(|_| ())
-            .unwrap_or(());
+        let root = workspace_path("");
+        let before = git_porcelain_status(&root)?;
+        run_repository_orientation_corpus(&root, &corpus)?;
+        let after = git_porcelain_status(&root)?;
         if before != after {
-            return Err("orientation unexpectedly changed repository visibility".to_string());
+            return Err(format!(
+                "orientation changed tracked repository state:\nbefore:\n{before}\nafter:\n{after}"
+            ));
         }
         Ok(())
     }

@@ -73,14 +73,14 @@ fn read_crate_version(root: &Path) -> Result<String, String> {
 }
 
 fn read_msrv(root: &Path) -> Result<String, String> {
-    let body = fs::read_to_string(root.join("rust-toolchain.toml"))
-        .map_err(|error| format!("read rust-toolchain.toml: {error}"))?;
+    let body = fs::read_to_string(root.join("Cargo.toml"))
+        .map_err(|error| format!("read workspace Cargo.toml: {error}"))?;
     for line in body.lines() {
-        if let Some(rest) = line.strip_prefix("channel = ") {
+        if let Some(rest) = line.strip_prefix("rust-version = ") {
             return Ok(rest.trim_matches('"').to_string());
         }
     }
-    Err("rust-toolchain.toml is missing channel".to_string())
+    Err("workspace Cargo.toml is missing rust-version (MSRV)".to_string())
 }
 
 pub(crate) fn produce_current_state(root: &Path) -> Result<CurrentStateInventoryV1, String> {
