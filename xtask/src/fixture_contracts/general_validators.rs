@@ -1823,6 +1823,25 @@ pub(crate) fn validate_incomplete_diff_corpus_fixture_corpus(
             ));
             continue;
         };
+        for field in [
+            "role",
+            "expected_analysis_complete",
+            "expected_exit_code",
+            "expect_malformed_diff_limitation",
+        ] {
+            if row.get(field).is_none() {
+                violations.push(format!(
+                    "incomplete diff corpus row {id} is missing required field `{field}`"
+                ));
+            }
+        }
+        if let Some(role) = row.get("role").and_then(serde_json::Value::as_str) {
+            if role != "incomplete" && role != "complete_control" {
+                violations.push(format!(
+                    "incomplete diff corpus row {id} has unknown role `{role}`"
+                ));
+            }
+        }
         let path = root.join(diff_path);
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
