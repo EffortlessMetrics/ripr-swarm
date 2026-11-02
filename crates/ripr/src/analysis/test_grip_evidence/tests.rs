@@ -13729,6 +13729,52 @@ fn proximity_test_pinning_another_function_cannot_grade_a_match_arm_up() -> Resu
     Ok(())
 }
 
+/// #12434: the same refusal for a predicate boundary. `wait < 5` in `consume`
+/// is read through `reduce`, so a proximity test that pins `reduce` lends it no
+/// oracle, while a test that also calls `consume` still does. Full and compact
+/// entry points must agree on the stage they credit.
+#[test]
+fn proximity_test_pinning_another_function_lends_a_predicate_boundary_no_oracle()
+-> Result<(), String> {
+    let published_for = |extra_test: &str| -> Result<(Vec<OracleStrength>, bool), String> {
+        let prod = format!(
+            "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
+             pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
+             pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    {extra_test}\n}}\n"
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let boundary = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary && s.expression().contains("wait < 5")
+            })
+            .ok_or_else(|| "wait < 5 boundary seam present".to_string())?;
+        let full = evidence_for_seam(boundary, &index);
+        let context = CompactGripContext::new(&index);
+        let compact = compact_evidence_for_seam(boundary, &context);
+        let published = full
+            .related_tests
+            .iter()
+            .map(|grip| grip.oracle_strength.clone())
+            .collect();
+        let agree = full.observe.state == compact.observe.state
+            && full.discriminate.state == compact.discriminate.state;
+        Ok((published, agree))
+    };
+    let (other_only, other_agree) =
+        published_for("#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }")?;
+    let (owner_and_other, both_agree) = published_for(
+        "#[test] fn consume_and_reduce() { let _ = consume(3); assert_eq!(reduce(3), Reduction::Over(3)); }",
+    )?;
+    assert!(other_agree && both_agree, "full and compact agree");
+    assert_eq!(other_only, vec![OracleStrength::None], "other-function");
+    assert_eq!(owner_and_other, vec![OracleStrength::Strong], "owner+other");
+    Ok(())
+}
+
 /// #12053: a repo seam whose one-line arms all hold the same statement
 /// decides nothing an exact assertion can see, so it must not read propagated
 /// (and so not strongly gripped). Differing arms keep the propagated read.
