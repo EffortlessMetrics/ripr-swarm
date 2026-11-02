@@ -58,6 +58,7 @@ pub struct RouteInputFlagsV1 {
     pub slow_in_progress: bool,
     pub independent_defect_evidence_for_candidate_mutation: bool,
     pub material_finding_during_repair: bool,
+    pub instrument_repaired: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -199,7 +200,7 @@ fn route_for_class(packet: &AdmissionIncidentV1) -> ContinuationRouteV1 {
                 requires_new_ready_transaction: true,
                 requires_regression_guard_or_limitation: true,
                 route_complete: complete,
-                preserve_unaffected_review: packet.route_inputs.material_finding_during_repair,
+                preserve_unaffected_review: true,
                 handoff_repository_health_owner: false,
                 release_pr_local_actor: false,
                 forbid_poll_child: true,
@@ -250,12 +251,14 @@ fn route_for_class(packet: &AdmissionIncidentV1) -> ContinuationRouteV1 {
                 .route_inputs
                 .independent_defect_evidence_for_candidate_mutation
                 && packet.candidate_mutation_allowed == TriStateV1::Yes;
+            let retry = packet.same_subject_retry_allowed == TriStateV1::Yes
+                && packet.route_inputs.instrument_repaired;
             ContinuationRouteV1 {
                 route_id: "instrument_defect_repair".to_string(),
                 revoke_admission_custody: false,
                 return_pr_to_draft: false,
                 mutate_candidate_bytes: mutate,
-                same_subject_retry: packet.same_subject_retry_allowed == TriStateV1::Yes,
+                same_subject_retry: retry,
                 requires_new_ready_transaction: false,
                 requires_regression_guard_or_limitation: false,
                 route_complete: true,
@@ -269,24 +272,28 @@ fn route_for_class(packet: &AdmissionIncidentV1) -> ContinuationRouteV1 {
                 incomplete_reason: None,
             }
         }
-        IncidentClassV1::InfrastructureFailure => ContinuationRouteV1 {
-            route_id: "infrastructure_same_subject_retry".to_string(),
-            revoke_admission_custody: false,
-            return_pr_to_draft: false,
-            mutate_candidate_bytes: false,
-            same_subject_retry: packet.same_subject_retry_allowed == TriStateV1::Yes,
-            requires_new_ready_transaction: false,
-            requires_regression_guard_or_limitation: false,
-            route_complete: true,
-            preserve_unaffected_review: true,
-            handoff_repository_health_owner: false,
-            release_pr_local_actor: false,
-            forbid_poll_child: true,
-            retain_incident_lineage: retain_lineage,
-            visible_blocker: false,
-            owner_class: owner,
-            incomplete_reason: None,
-        },
+        IncidentClassV1::InfrastructureFailure => {
+            let retry = packet.same_subject_retry_allowed == TriStateV1::Yes
+                && !packet.route_inputs.slow_in_progress;
+            ContinuationRouteV1 {
+                route_id: "infrastructure_same_subject_retry".to_string(),
+                revoke_admission_custody: false,
+                return_pr_to_draft: false,
+                mutate_candidate_bytes: false,
+                same_subject_retry: retry,
+                requires_new_ready_transaction: false,
+                requires_regression_guard_or_limitation: false,
+                route_complete: true,
+                preserve_unaffected_review: true,
+                handoff_repository_health_owner: false,
+                release_pr_local_actor: false,
+                forbid_poll_child: true,
+                retain_incident_lineage: retain_lineage,
+                visible_blocker: false,
+                owner_class: owner,
+                incomplete_reason: None,
+            }
+        }
         IncidentClassV1::SupersededNoVerdict => ContinuationRouteV1 {
             route_id: "superseded_reclaim".to_string(),
             revoke_admission_custody: true,
@@ -397,6 +404,12 @@ pub fn validate_route_corpus(corpus: &RouteCorpusV1) -> Vec<String> {
                     findings.push(format!(
                         "scenario `{}`: expected route {:?}, got {:?}",
                         scenario.id, scenario.expected, route
+                    ));
+                }
+                if scenario.slow_in_progress && route.same_subject_retry {
+                    findings.push(format!(
+                        "scenario `{}`: slow in-progress must not authorize duplicate same-subject retry",
+                        scenario.id
                     ));
                 }
                 if scenario.slow_in_progress && !slowness_must_not_authorize_cancellation(&route) {

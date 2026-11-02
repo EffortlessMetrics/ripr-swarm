@@ -2500,6 +2500,24 @@ pub(crate) fn validate_packaged_repair_parity_fixture(
     Ok(())
 }
 
+pub(crate) fn validate_admission_incident_route_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/admission_incident_route");
+    let corpus_path = root.join("corpus.json");
+    if !corpus_path.exists() {
+        violations.push(format!(
+            "admission incident route fixture corpus is missing {}",
+            normalize_path(&corpus_path)
+        ));
+        return Ok(());
+    }
+    if let Err(error) = repo_policy::admission_incident_route::check_committed_route_corpus() {
+        violations.push(error);
+    }
+    Ok(())
+}
+
 /// Test-only compatibility shims so the unchanged per-language test modules
 /// keep exercising the shared owner through their historical entry points.
 #[cfg(test)]

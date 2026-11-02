@@ -40,7 +40,7 @@
         "requires_new_ready_transaction": true,
         "requires_regression_guard_or_limitation": true,
         "route_complete": true,
-        "preserve_unaffected_review": false,
+        "preserve_unaffected_review": true,
         "handoff_repository_health_owner": false,
         "release_pr_local_actor": false,
         "forbid_poll_child": true,
@@ -86,7 +86,7 @@
         "requires_new_ready_transaction": true,
         "requires_regression_guard_or_limitation": true,
         "route_complete": false,
-        "preserve_unaffected_review": false,
+        "preserve_unaffected_review": true,
         "handoff_repository_health_owner": false,
         "release_pr_local_actor": false,
         "forbid_poll_child": true,
@@ -250,7 +250,10 @@
         "incident_class": "instrument_defect",
         "candidate_mutation_allowed": "no",
         "same_subject_retry_allowed": "yes",
-        "owner_class": "instrument_owner"
+        "owner_class": "instrument_owner",
+        "route_inputs": {
+          "instrument_repaired": true
+        }
       },
       "context": {
         "candidate_head_sha": "sha256:head-h1",
@@ -263,6 +266,52 @@
         "return_pr_to_draft": false,
         "mutate_candidate_bytes": false,
         "same_subject_retry": true,
+        "requires_new_ready_transaction": false,
+        "requires_regression_guard_or_limitation": false,
+        "route_complete": true,
+        "preserve_unaffected_review": true,
+        "handoff_repository_health_owner": false,
+        "release_pr_local_actor": false,
+        "forbid_poll_child": true,
+        "retain_incident_lineage": false,
+        "visible_blocker": false,
+        "owner_class": "instrument_owner"
+      }
+    },
+    {
+      "id": "instrument_defect_retry_blocked_before_repair",
+      "packet": {
+        "schema": "admission_incident.v1",
+        "subject": {
+          "candidate_head_sha": "sha256:head-h1",
+          "merge_group_id": "g1",
+          "workflow_attempt_id": "attempt-1"
+        },
+        "currentness": {
+          "basis_is_current": true,
+          "observed_candidate_head_sha": "sha256:head-h1",
+          "observed_merge_group_id": "g1",
+          "observed_workflow_attempt_id": "attempt-1"
+        },
+        "incident_class": "instrument_defect",
+        "candidate_mutation_allowed": "no",
+        "same_subject_retry_allowed": "yes",
+        "owner_class": "instrument_owner",
+        "route_inputs": {
+          "instrument_repaired": false
+        }
+      },
+      "context": {
+        "candidate_head_sha": "sha256:head-h1",
+        "merge_group_id": "g1",
+        "workflow_attempt_id": "attempt-1"
+      },
+      "expected": {
+        "route_id": "instrument_defect_repair",
+        "revoke_admission_custody": false,
+        "return_pr_to_draft": false,
+        "mutate_candidate_bytes": false,
+        "same_subject_retry": false,
         "requires_new_ready_transaction": false,
         "requires_regression_guard_or_limitation": false,
         "route_complete": true,
@@ -490,7 +539,7 @@
         "requires_new_ready_transaction": true,
         "requires_regression_guard_or_limitation": true,
         "route_complete": true,
-        "preserve_unaffected_review": false,
+        "preserve_unaffected_review": true,
         "handoff_repository_health_owner": false,
         "release_pr_local_actor": false,
         "forbid_poll_child": true,
@@ -533,7 +582,7 @@
         "revoke_admission_custody": false,
         "return_pr_to_draft": false,
         "mutate_candidate_bytes": false,
-        "same_subject_retry": true,
+        "same_subject_retry": false,
         "requires_new_ready_transaction": false,
         "requires_regression_guard_or_limitation": false,
         "route_complete": true,
