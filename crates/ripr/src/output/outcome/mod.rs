@@ -476,7 +476,17 @@ fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>,
         // #12108: a pilot file whose seams[] the byte budget cut lists only
         // some seams, so a seam missing from it would read as removed or
         // fixed. Refuse it rather than compare.
+        let cut = crate::output::repo_exposure::seam_limit_cut_controls(&value);
         if crate::output::repo_exposure::is_byte_bounded_repo_exposure(&value) {
+            if !cut.is_empty() {
+                // #12226: cut both ways; name every control in this first refusal.
+                let controls = crate::output::repo_exposure::byte_and_seam_cut_controls(&cut);
+                return Err(format!(
+                    "static snapshot is a byte-bounded and seam-limited repo-exposure file (`ripr pilot` cut its seams[] by {}, so a missing seam cannot be read as removed; {})",
+                    controls.join(" and "),
+                    crate::output::repo_exposure::seam_limit_cut_repair(&controls)
+                ));
+            }
             return Err(
                 "static snapshot is a byte-bounded repo-exposure file (`ripr pilot` cut its seams[] to RIPR_PILOT_REPO_EXPOSURE_BYTES, so a missing seam cannot be read as removed; rerun `ripr pilot` with RIPR_PILOT_REPO_EXPOSURE_BYTES=0, or produce the snapshot with `ripr check --format repo-exposure-json`, then compare)"
                     .to_string(),
@@ -484,7 +494,6 @@ fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>,
         }
         // #12150: a seam-capped file is a prefix of the inventory, so a seam
         // missing from it is unobserved, not removed. Same shared owner.
-        let cut = crate::output::repo_exposure::seam_limit_cut_controls(&value);
         if !cut.is_empty() {
             return Err(format!(
                 "static snapshot is a seam-limited repo-exposure file (its seams[] is a prefix of the inventory cut by {}, so a missing seam cannot be read as removed; {})",
@@ -3494,6 +3503,69 @@ mod tests {
         assert!(
             matches!(result, Err(message) if message.contains("does not contain selected seam_id"))
         );
+    }
+
+    /// #12226: a snapshot the writer cut by bytes AND by the pilot seam budget
+    /// is refused once, naming both controls; single-cut files keep one.
+    #[test]
+    fn outcome_both_cuts_refusal_names_every_control() -> Result<(), String> {
+        let refuse = |json: &str| -> Result<String, String> {
+            targeted_test_outcome_report_from_json(
+                json,
+                json,
+                "before.json".to_string(),
+                "after.json".to_string(),
+            )
+            .err()
+            .ok_or_else(|| "a cut snapshot must not be compared".to_string())
+        };
+        let both = crate::output::repo_exposure::tests::both_cuts_document_from_writer()?;
+        let refusal = refuse(&both)?;
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        assert!(refusal.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{refusal}");
+        let byte_only = r#"{"run_status":"limited_repo_exposure_bytes","seams":[]}"#;
+        let refusal = refuse(byte_only)?;
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        assert!(!refusal.contains("RIPR_PILOT_SEAM_BUDGET"), "{refusal}");
+        let seam_only = r#"{"run_status":"seam_limit_applied","limitations":[{"category":"pilot_seam_budget_applied"}],"seams":[]}"#;
+        let refusal = refuse(seam_only)?;
+        assert!(refusal.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{refusal}");
+        assert!(
+            !refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    /// #12247: a snapshot cut by the pilot byte budget, both seam limits, and
+    /// the byte bound is refused once with every control named.
+    #[test]
+    fn outcome_three_cuts_refusal_names_every_control() -> Result<(), String> {
+        let json = crate::output::repo_exposure::tests::three_cuts_document_from_writer()?;
+        let Err(refusal) = targeted_test_outcome_report_from_json(
+            &json,
+            &json,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        ) else {
+            return Err("a three-cut snapshot must not be compared".to_string());
+        };
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        assert!(refusal.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{refusal}");
+        assert!(
+            refusal.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT=0"),
+            "{refusal}"
+        );
+        Ok(())
     }
 
     #[test]

@@ -18,7 +18,7 @@ pub(crate) const COMMAND_SHELL_DISCLOSURE: &str = "Commands are written for Bash
 /// #8152 review: PowerShell expands `$` and backtick inside double quotes
 /// just as Git Bash does, so a value carrying those characters keeps the
 /// single-quote form instead of the unsafe double-quoted one.
-pub(crate) const COMMAND_SHELL_DISCLOSURE_WINDOWS: &str = "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor for spaced paths. A value carrying `$` or backtick keeps the single-quote form instead — both Git Bash and PowerShell would expand it inside double quotes — so paste that value in Git Bash or PowerShell, not cmd.exe (cmd.exe passes single quotes through as literal characters); the same routing applies to a value carrying `%`, which cmd.exe expands even inside double quotes. An interior `\"` in an argument is kept by cmd.exe and PowerShell but dropped by Git Bash (`\"` cannot occur in a Windows filename, so this touches only exotic non-path arguments). A PowerShell form follows a command only when PowerShell needs a different one: the `&` call operator before a quoted program path, or a guarded BOM-free UTF-8 write in place of `>`. A command with no PowerShell form after it runs unchanged in cmd.exe and PowerShell, unless a line says its PowerShell form is unavailable. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
+pub(crate) const COMMAND_SHELL_DISCLOSURE_WINDOWS: &str = "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor for spaced paths. A value carrying `$` or backtick keeps the single-quote form instead — both Git Bash and PowerShell would expand it inside double quotes — so paste that value in Git Bash or PowerShell, not cmd.exe (cmd.exe passes single quotes through as literal characters); the same routing applies to a value carrying `%`, which cmd.exe expands even inside double quotes. An interior `\"` in an argument is kept by cmd.exe and PowerShell but dropped by Git Bash (`\"` cannot occur in a Windows filename, so this touches only exotic non-path arguments). A PowerShell form follows a command only when PowerShell needs a different one: the `&` call operator before a quoted program path, or a guarded BOM-free UTF-8 write in place of `>`. A command that begins with a `NAME=value` environment assignment is Bash syntax only: PowerShell writes it differently (`$env:NAME = 'value'`, which its PowerShell form already does), and cmd.exe rejects it as an unrecognized command. Paste the PowerShell form, or in cmd.exe run `set NAME=value` on its own line first and then the command without the assignment. A command with no PowerShell form after it runs unchanged in cmd.exe and PowerShell, unless a line says its PowerShell form is unavailable. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
 
 /// One-line shell note for a command that runs unchanged in PowerShell, so a
 /// first-time reader is not handed the whole quoting paragraph before any
@@ -1719,6 +1719,26 @@ mod tests {
         ] {
             assert_eq!(powershell_command(command), None, "{command}");
         }
+    }
+
+    /// #12217: pilot's seam-limited snapshot commands start with
+    /// `RIPR_REPO_EXPOSURE_SEAM_LIMIT=0`, which cmd.exe cannot run. The Windows
+    /// disclosure must say so and give the cmd.exe route instead of promising
+    /// that every command without a PowerShell form runs unchanged there.
+    #[test]
+    fn windows_disclosure_routes_an_env_prefixed_command_away_from_cmd_exe() {
+        let windows = COMMAND_SHELL_DISCLOSURE_WINDOWS;
+        assert!(
+            windows.contains("begins with a `NAME=value` environment assignment")
+                && windows.contains("is Bash syntax only")
+                && windows.contains("cmd.exe rejects it")
+                && windows.contains("`set NAME=value` on its own line"),
+            "{windows}"
+        );
+        // The Bash variant already says cmd.exe is unsupported; it must not
+        // grow a cmd.exe route it does not honor.
+        assert!(COMMAND_SHELL_DISCLOSURE.contains("cmd.exe is not supported"));
+        assert!(!COMMAND_SHELL_DISCLOSURE.contains("set NAME=value"));
     }
 
     #[test]

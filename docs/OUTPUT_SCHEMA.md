@@ -130,6 +130,8 @@ map is:
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v4`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
+| `ripr reports kani` | `schema_version` | `ripr_kani_report.v1` |
+| `ripr reports kani --binding` input | `schema_version` | `ripr_kani_binding.v1` |
 | `ripr help --json` | `schema_version` | `4` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
@@ -174,6 +176,34 @@ records that distinction.
 
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
+
+## Imported Kani observation (`ripr_kani_report.v1`)
+
+`ripr reports kani --input PATH --binding PATH [--root PATH] [--out PATH] [--out-md PATH]` reads a Kani schema `0.1.0` export and an explicit source binding. It executes no Kani command. `--out` writes JSON and `--out-md` writes Markdown from the same validated report. Full qualification of this development adapter profile remains outstanding. Its checked-in Kani examples are upstream contract fixtures. Each report replacement is atomic; the pair is not transactional. An output failure can leave the JSON report present without a Markdown report.
+
+| Report field | Contract |
+| --- | --- |
+| `schema_version` | `ripr_kani_report.v1`; independent of the native Kani version. |
+| `adapter_version`, `adapter_profile` | RIPR package version and pinned native-export adapter profile. |
+| `provenance` | Always `external_unattested`. Hashes do not authenticate a producer. |
+| `source_binding_state` | Always `listed_files_match`; no whole-repository or atomic-snapshot claim. |
+| `checked_root` | Canonical local directory whose listed files were checked. |
+| `artifact_sha256`, `binding_sha256` | SHA-256 commitments to the exact native-input and binding bytes. |
+| `binding` | Validated binding values; invocation tokens remain descriptive data. |
+| `native` | Typed native run/harness outcomes and original JSON value at `native.document`. |
+| `limitations` | Required disclosures of provenance, source, execution and assurance limits. |
+
+The binding uses `schema_version: "ripr_kani_binding.v1"` and these required fields:
+
+- `repository`: existing `RiprRepositorySnapshotV1` with `repository_id`, `snapshot_id`, `source_view: "captured_source_set"` and `source_digest`.
+- `run_id` and `artifact_sha256`: a caller-supplied run label and exact native-byte commitment. The label does not prove freshness or process identity.
+- `source_files[]`: unique portable relative `path`, `sha256` and nonempty unique `roles` from `configuration|dependency|harness|implementation|lockfile|specification|toolchain`. At least one implementation role and one harness role must be listed.
+- `context`: `target`, `cargo_features[]`, `default_features`, `toolchain`, `environment_sha256` and ordered `invocation[]` tokens.
+- `selected_harnesses[]`: unique `{crate_name, name}` identities. Its size must match the native selected count; every returned harness must belong to it.
+
+Digests use `sha256:<64 lowercase hex>`. To derive `repository.source_digest`, sort source files by path and hash the UTF-8 concatenation of each `path\tsha256:<filehex>\n` record. The snapshot identity is `captured:<source_digest>`. Each returned harness file must be listed with the harness role. Files are checked individually inside the selected root; symlinks, traversal, duplicate paths, malformed bindings and mismatched hashes are refused. Native input is bounded to 16 MiB, binding input to 2 MiB, source inventory to 4096 files, each source file to 16 MiB and total source bytes to 256 MiB.
+
+Target and selected identities are checked against native results. Other context fields are retained declarations, not evidence that the verifier used them. Partial runs retain missing selected scope. Native success, safety checks, unreachable checks and expected-panic results keep their native meaning; successful-property identities and functional coverage are not synthesized from counts. This report establishes no source-inventory completeness, authentic or fresh execution, non-vacuity, specification adequacy, discharged stub contracts, static exposure improvement, repair receipt or merge approval. See [the assurance contract](specs/RIPR-SPEC-0135-assurance-state-vocabulary.md#external-kani-observation-import).
 
 ## Repair card (`RepairCardV1`, schema `repair_card.v1`)
 
@@ -19413,7 +19443,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.133",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.134",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20198,7 +20228,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.133",
+      "schema_version": "1.134",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

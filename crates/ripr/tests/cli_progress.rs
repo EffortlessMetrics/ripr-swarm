@@ -3,6 +3,11 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[path = "common/mod.rs"]
+mod common;
+use common::fixture_git::fixture_git_ok;
 
 /// The binary with progress forced on, so the tests below that observe the
 /// stream keep their meaning now that a machine format on a piped stderr is
@@ -1289,5 +1294,475 @@ fn context_on_a_pipe_is_silent_by_default() -> Result<(), String> {
         stderr_text(&forced)
     );
     assert_eq!(default.stdout, forced.stdout);
+    Ok(())
+}
+
+/// Catalog paths whose production path can emit progress or `wrote` narration.
+/// A path not in this list or [`NO_NARRATION`] fails so a new command cannot
+/// rot into an unclassified default (#12103). Runtime lives here because a new
+/// process-spawn site in `quiet_narration_guard.rs` would need a process
+/// allowlist row; this file already owns the binary spawn.
+const HAS_NARRATION: &[&str] = &[
+    "agent",
+    "agent repair",
+    "check",
+    "context",
+    "continue",
+    "explain",
+    "pilot",
+    "repair",
+    "reports ci-packet",
+    "status",
+];
+
+const NO_NARRATION: &[&str] = &[
+    "agent brief",
+    "agent card",
+    "agent packet",
+    "agent receipt",
+    "agent review-summary",
+    "agent start",
+    "agent status",
+    "agent stub",
+    "agent verify",
+    "agent verify-execute",
+    "annotations",
+    "assistant-loop",
+    "assistant-loop health",
+    "assistant-loop proof",
+    "baseline",
+    "baseline create",
+    "baseline diff",
+    "baseline update",
+    "cache",
+    "cache clear",
+    "cache export",
+    "cache status",
+    "calibrate",
+    "calibrate cargo-mutants",
+    "capabilities",
+    "config",
+    "config validate",
+    "coverage-grip",
+    "coverage-grip frontier",
+    "diff",
+    "doctor",
+    "evidence-health",
+    "feedback",
+    "feedback export",
+    "feedback record",
+    "first-action",
+    "first-pr",
+    "gate",
+    "gate evaluate",
+    "help",
+    "impacted-evidence",
+    "init",
+    "lsp",
+    "mcp",
+    "outcome",
+    "plus",
+    "policy",
+    "policy history",
+    "policy operations",
+    "policy preview-promote",
+    "policy promote",
+    "policy readiness",
+    "policy suppression-health",
+    "policy waiver-aging",
+    "pr-comments",
+    "pr-comments existing",
+    "pr-comments plan",
+    "pr-comments requests",
+    "pr-comments summary",
+    "pr-evidence",
+    "pr-ledger",
+    "pr-ledger record",
+    "pr-review",
+    "pr-review front-panel",
+    "pr-summary",
+    "receipt",
+    "receipt check",
+    "receipt write",
+    "reports",
+    "reports ci-summary",
+    "reports gap-ledger",
+    "reports index",
+    "reports ts-false-actionable",
+    "reports ts-limitations",
+    "rerun",
+    "review-comments",
+    "start-here",
+    "swarm",
+    "swarm ingest",
+    "swarm queue",
+    "zero",
+    "zero status",
+];
+
+const WROTE_LINE_PREFIXES: &[&str] = &["ripr: wrote ", "wrote "];
+
+fn classify_catalog_path(path: &str) -> Result<bool, String> {
+    if HAS_NARRATION.contains(&path) {
+        return Ok(true);
+    }
+    if NO_NARRATION.contains(&path) {
+        return Ok(false);
+    }
+    Err(format!(
+        "unclassified catalog command `{path}`; add it to HAS_NARRATION or NO_NARRATION"
+    ))
+}
+
+fn catalog_paths() -> Result<Vec<String>, String> {
+    let output = ripr_default()
+        .args(["help", "--json"])
+        .output()
+        .map_err(|error| format!("run ripr help --json: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("help --json failed: {}", stderr_text(&output)));
+    }
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("help --json is not JSON: {error}"))?;
+    let commands = document["commands"]
+        .as_array()
+        .ok_or("help --json commands missing")?;
+    let mut paths = Vec::new();
+    for row in commands {
+        let path = row["path"]
+            .as_str()
+            .ok_or("help --json command row missing path")?
+            .to_string();
+        paths.push(path);
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+fn is_narration_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("ripr progress:")
+        || WROTE_LINE_PREFIXES
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
+}
+
+fn narration_lines(stderr: &str) -> Vec<String> {
+    stderr
+        .lines()
+        .filter(|line| is_narration_line(line))
+        .map(str::to_string)
+        .collect()
+}
+
+fn strip_narration(stderr: &str) -> String {
+    stderr
+        .lines()
+        .filter(|line| !is_narration_line(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn run_catalog_command(args: &[String], quiet_env: Option<&str>) -> Result<Output, String> {
+    let mut command = ripr();
+    command.args(args).env_remove("RIPR_QUIET");
+    if let Some(value) = quiet_env {
+        command.env("RIPR_QUIET", value);
+    }
+    command
+        .output()
+        .map_err(|error| format!("run ripr {args:?}: {error}"))
+}
+
+struct QuietScratch {
+    root: PathBuf,
+}
+
+impl QuietScratch {
+    fn new() -> Result<Self, String> {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let tag = format!(
+            "quiet-narration-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        );
+        let root = std::env::temp_dir().join(&tag);
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create src: {error}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname=\"ripr_quiet_guard\"\nversion=\"0.1.0\"\nedition=\"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| format!("write Cargo.toml: {error}"))?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+        )
+        .map_err(|error| format!("write src/lib.rs: {error}"))?;
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|error| format!("create tests: {error}"))?;
+        std::fs::write(
+            root.join("tests/threshold.rs"),
+            "use ripr_quiet_guard::over_threshold;\n\n#[test]\nfn either_side_of_threshold() {\n    assert!(over_threshold(11, 10));\n    assert!(!over_threshold(9, 10));\n}\n",
+        )
+        .map_err(|error| format!("write tests/threshold.rs: {error}"))?;
+        std::fs::write(
+            root.join("change.diff"),
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n-    amount > threshold\n+    amount >= threshold\n }\n",
+        )
+        .map_err(|error| format!("write diff: {error}"))?;
+        std::fs::write(root.join(".gitignore"), "/target/\n")
+            .map_err(|error| format!("write .gitignore: {error}"))?;
+        fixture_git_ok(&root, &["init", "-q", "-b", "main"])?;
+        fixture_git_ok(&root, &["config", "user.name", "Quiet Guard"])?;
+        fixture_git_ok(
+            &root,
+            &["config", "user.email", "quiet-guard@example.invalid"],
+        )?;
+        fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+        fixture_git_ok(&root, &["add", "Cargo.toml", "src/lib.rs", ".gitignore"])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "fixture"])?;
+        Ok(Self { root })
+    }
+
+    fn root_arg(&self) -> String {
+        self.root.display().to_string()
+    }
+
+    fn diff_arg(&self) -> String {
+        self.root.join("change.diff").display().to_string()
+    }
+
+    fn pilot_out_arg(&self) -> String {
+        self.root.join("pilot-out").display().to_string()
+    }
+}
+
+impl Drop for QuietScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+/// Catalog paths whose loud run on this fixture must actually reach a
+/// progress/`wrote` emitter. Refusal-only argv for the remaining
+/// `HAS_NARRATION` rows still compares quiet vs loud; those working paths
+/// need attempt/seam state this fixture does not seed.
+const MUST_EMIT_NARRATION: &[&str] = &["check", "context", "explain", "pilot", "reports ci-packet"];
+
+/// Commands whose default spawn is not a quiet/loud narration comparison:
+/// stdio servers hang, and `init` writes a workflow whose `--quiet` path
+/// is a different exit (not narration).
+const NO_NARRATION_NO_SPAWN: &[&str] = &["lsp", "mcp", "init"];
+
+fn narration_argv(
+    path: &str,
+    root: &str,
+    diff: &str,
+    finding: &str,
+    pilot_out: &str,
+) -> Result<Vec<String>, String> {
+    let args = match path {
+        "agent" => vec!["agent".to_string()],
+        "agent repair" => vec![
+            "agent".into(),
+            "repair".into(),
+            "--root".into(),
+            root.into(),
+            "--phase".into(),
+            "before".into(),
+        ],
+        "check" => vec![
+            "check".into(),
+            "--root".into(),
+            root.into(),
+            "--diff".into(),
+            diff.into(),
+            "--format".into(),
+            "json".into(),
+        ],
+        "context" => vec![
+            "context".into(),
+            "--root".into(),
+            root.into(),
+            "--diff".into(),
+            diff.into(),
+            "--at".into(),
+            finding.into(),
+        ],
+        "continue" => vec!["continue".into(), "--root".into(), root.into()],
+        "explain" => vec![
+            "explain".into(),
+            "--root".into(),
+            root.into(),
+            "--diff".into(),
+            diff.into(),
+            finding.into(),
+        ],
+        "pilot" => vec![
+            "pilot".into(),
+            "--root".into(),
+            root.into(),
+            "--out".into(),
+            pilot_out.into(),
+        ],
+        "repair" => vec!["repair".into(), "--root".into(), root.into()],
+        "reports ci-packet" => vec![
+            "reports".into(),
+            "ci-packet".into(),
+            "--root".into(),
+            root.into(),
+        ],
+        "status" => vec!["status".into(), "--root".into(), root.into()],
+        other => {
+            return Err(format!(
+                "HAS_NARRATION path `{other}` has no runtime argv; add one or reclassify"
+            ));
+        }
+    };
+    Ok(args)
+}
+
+fn first_finding_id(stdout: &[u8]) -> Result<String, String> {
+    let parsed: serde_json::Value = serde_json::from_slice(stdout)
+        .map_err(|error| format!("check stdout is not JSON: {error}"))?;
+    parsed["findings"]
+        .as_array()
+        .and_then(|findings| findings.first())
+        .and_then(|finding| finding["id"].as_str())
+        .map(str::to_string)
+        .ok_or_else(|| format!("scratch check must report a finding id: {parsed}"))
+}
+
+fn silent_catalog_argv(path: &str, root: &str) -> Option<Vec<String>> {
+    if NO_NARRATION_NO_SPAWN.contains(&path) {
+        return None;
+    }
+    let mut args: Vec<String> = path.split_whitespace().map(str::to_string).collect();
+    args.push("--root".to_string());
+    args.push(root.to_string());
+    Some(args)
+}
+
+/// #12103: every catalog command is classified, and each progress/`wrote`
+/// path stays silent under `RIPR_QUIET=1` without changing stdout, exit, or
+/// refusal prose.
+#[test]
+fn catalog_commands_with_narration_paths_stay_quiet_under_ripr_quiet() -> Result<(), String> {
+    let catalog = catalog_paths()?;
+    if catalog.is_empty() {
+        return Err("help --json returned no commands".to_string());
+    }
+    let mut classified = 0usize;
+    let mut narration_paths = Vec::new();
+    for path in &catalog {
+        if classify_catalog_path(path)? {
+            narration_paths.push(path.clone());
+        }
+        classified += 1;
+    }
+    if classified != catalog.len() {
+        return Err("catalog classification skipped a command".to_string());
+    }
+    for path in HAS_NARRATION {
+        if !catalog.iter().any(|row| row == path) {
+            return Err(format!(
+                "HAS_NARRATION path `{path}` is missing from help --json"
+            ));
+        }
+    }
+    for path in NO_NARRATION {
+        if !catalog.iter().any(|row| row == path) {
+            return Err(format!(
+                "NO_NARRATION path `{path}` is missing from help --json"
+            ));
+        }
+    }
+    if HAS_NARRATION.len() + NO_NARRATION.len() != catalog.len() {
+        return Err(format!(
+            "classification lists cover {} paths, catalog has {}",
+            HAS_NARRATION.len() + NO_NARRATION.len(),
+            catalog.len()
+        ));
+    }
+    let scratch = QuietScratch::new()?;
+    let root = scratch.root_arg();
+    let diff = scratch.diff_arg();
+    let pilot_out = scratch.pilot_out_arg();
+    let seed = narration_argv("check", &root, &diff, "", &pilot_out)?;
+    let seed_out = run_catalog_command(&seed, None)?;
+    if !seed_out.status.success() {
+        return Err(format!("scratch check failed: {}", stderr_text(&seed_out)));
+    }
+    let finding = first_finding_id(&seed_out.stdout)?;
+    let mut failures = Vec::new();
+    for path in narration_paths {
+        let args = narration_argv(&path, &root, &diff, &finding, &pilot_out)?;
+        let loud = run_catalog_command(&args, None)?;
+        let quiet = run_catalog_command(&args, Some("1"))?;
+        if loud.status.code() != quiet.status.code() {
+            failures.push(format!(
+                "{path}: RIPR_QUIET changed exit {:?} -> {:?}",
+                loud.status.code(),
+                quiet.status.code()
+            ));
+            continue;
+        }
+        // `reports ci-packet` nests other commands; quiet changes a later
+        // "Next:" line, which is not narration (#11955). The quiet/loud
+        // stderr narration comparison below still applies.
+        if path != "reports ci-packet" && loud.stdout != quiet.stdout {
+            failures.push(format!(
+                "{path}: RIPR_QUIET changed stdout\nloud={:?}\nquiet={:?}",
+                String::from_utf8_lossy(&loud.stdout),
+                String::from_utf8_lossy(&quiet.stdout)
+            ));
+            continue;
+        }
+        let quiet_err = stderr_text(&quiet);
+        let loud_err = stderr_text(&loud);
+        let leaked = narration_lines(&quiet_err);
+        if !leaked.is_empty() {
+            failures.push(format!(
+                "{path}: RIPR_QUIET=1 still printed narration: {leaked:?}\nstderr={quiet_err}"
+            ));
+            continue;
+        }
+        if MUST_EMIT_NARRATION.contains(&path.as_str()) && narration_lines(&loud_err).is_empty() {
+            failures.push(format!(
+                "{path} loud run emitted no progress, so RIPR_QUIET has nothing to drop: {loud_err}"
+            ));
+            continue;
+        }
+        if strip_narration(&loud_err) != strip_narration(&quiet_err) {
+            failures.push(format!(
+                "{path}: RIPR_QUIET changed refusal prose\nloud={loud_err}\nquiet={quiet_err}"
+            ));
+        }
+    }
+    for path in NO_NARRATION {
+        let Some(args) = silent_catalog_argv(path, &root) else {
+            continue;
+        };
+        let loud = run_catalog_command(&args, None)?;
+        let quiet = run_catalog_command(&args, Some("1"))?;
+        let leaked = narration_lines(&stderr_text(&quiet));
+        if !leaked.is_empty() {
+            failures.push(format!(
+                "{path}: classified NO_NARRATION but RIPR_QUIET=1 printed narration: {leaked:?}"
+            ));
+            continue;
+        }
+        if !narration_lines(&stderr_text(&loud)).is_empty() {
+            failures.push(format!(
+                "{path}: classified NO_NARRATION but the loud run printed narration: {}",
+                stderr_text(&loud)
+            ));
+        }
+    }
+    if !failures.is_empty() {
+        return Err(failures.join("\n---\n"));
+    }
     Ok(())
 }

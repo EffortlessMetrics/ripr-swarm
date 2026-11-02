@@ -32,6 +32,7 @@ use crate::output::agent_seam_packets::{
 use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY, repair_start_command_for,
 };
+use crate::output::human::plain_stop_condition;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1423,7 +1424,7 @@ fn first_repair_packet_text(
         lines.push("- Stop conditions:".to_string());
         for item in items {
             if let Some(text) = item.as_str().map(str::trim).filter(|text| !text.is_empty()) {
-                lines.push(format!("  - {text}"));
+                lines.push(format!("  - {}", plain_stop_condition(text)));
             }
         }
     }
@@ -1577,7 +1578,7 @@ fn python_repair_card_text(
         lines.push("Stop conditions:".to_string());
         for item in items {
             if let Some(text) = item.as_str().map(str::trim).filter(|text| !text.is_empty()) {
-                lines.push(format!("  - {text}"));
+                lines.push(format!("  - {}", plain_stop_condition(text)));
             }
         }
     }
@@ -1639,7 +1640,7 @@ fn python_pytest_skeleton_target(snapshot: &AnalysisSnapshot, data: &Value) -> O
         .map(str::trim)
         .filter(|item| !item.is_empty())
         .take(3)
-        .map(ToOwned::to_owned)
+        .map(plain_stop_condition)
         .collect::<Vec<_>>();
     if !stop_conditions.is_empty() {
         lines.push("# Stop if:".to_string());
@@ -2882,6 +2883,46 @@ mod tests {
             serde_json::json!(["python -m unittest tests.test_pricing.TestPricing.test_boundary"]);
         if python_pytest_skeleton_target(&snapshot, &data).is_some() {
             return Err("a unittest verify command must not get a pytest skeleton".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_skeleton_and_packet_render_the_stop_condition_in_plain_words() -> Result<(), String> {
+        let snapshot = python_snapshot();
+        let data = serde_json::json!({
+            "language": "python",
+            "canonical_gap_id": "gap:python:pricing",
+            "missing_discriminator": "amount == DISCOUNT_THRESHOLD",
+            "repair_route": {
+                "route_kind": "existing_test_strengthening",
+                "target_file": "tests/test_pricing.py",
+                "assertion_shape": "assert result == expected",
+                "stop_conditions": [
+                    "Stop if the expected value for the missing discriminator is ambiguous."
+                ]
+            },
+            "verification_commands": ["python -m pytest tests/test_pricing.py::test_boundary"]
+        });
+        let target = python_pytest_skeleton_target(&snapshot, &data)
+            .ok_or_else(|| "skeleton target was omitted".to_string())?;
+        let brief = target["brief"]
+            .as_str()
+            .ok_or_else(|| "skeleton target must contain a text brief".to_string())?;
+        let packet = first_repair_packet_text(
+            &data,
+            &data["repair_route"],
+            "python -m pytest tests/test_pricing.py::test_boundary",
+            "ripr agent receipt",
+        )
+        .ok_or_else(|| "packet text was omitted".to_string())?;
+        for (name, text) in [("skeleton", brief), ("packet", packet.as_str())] {
+            if !text.contains("Stop if the expected value for the missing check is ambiguous.") {
+                return Err(format!("{name} lacks the plain stop condition:\n{text}"));
+            }
+            if text.contains("missing discriminator is ambiguous") {
+                return Err(format!("{name} kept the jargon stop condition:\n{text}"));
+            }
         }
         Ok(())
     }

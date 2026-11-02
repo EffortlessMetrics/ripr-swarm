@@ -37,31 +37,27 @@ fn an_imported_patch_name_does_not_unsettle_the_argnames() -> Result<(), String>
 
 #[test]
 fn a_call_or_an_alias_of_the_writer_keeps_the_limit() -> Result<(), String> {
-    // An aliased call is not a recognised substitution form, so it only
-    // unsettles the argnames. A module-scope `patch(..)` or `setattr(..)` is a
-    // substitution form in top-level test-module code, so the stronger
-    // `mocked_module` limit (`fixture_substitution.rs`) may speak first;
-    // either way the finding keeps a static limit and earns no credit.
-    for (case, prefix) in [
+    for (case, prefix, expected) in [
         (
             "alias",
             "from unittest.mock import patch as p\n\np(\"pytest.mark\", None)\n",
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
         (
             "module-scope call",
             "from unittest.mock import patch\n\npatch(\"pytest.mark\", None)\n",
+            StaticLimitKind::MockedModule,
         ),
         (
             "module-scope setattr",
             "import os\n\nsetattr(os, \"x\", 1)\n",
+            StaticLimitKind::MockedModule,
         ),
     ] {
         let finding = classify_total(prefix)?;
-        assert!(
-            matches!(
-                finding.static_limit_kind,
-                Some(StaticLimitKind::UnresolvedPytestFixture | StaticLimitKind::MockedModule)
-            ),
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(expected),
             "{case}: {:?} {:?}",
             finding.static_limit_kind,
             finding.evidence

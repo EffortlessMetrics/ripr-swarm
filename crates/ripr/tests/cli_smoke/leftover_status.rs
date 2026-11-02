@@ -51,7 +51,10 @@ fn status_pilot_step_is_plain_and_uses_the_short_shell_note()
         "Cargo.toml",
         "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
     )?;
-    assert!(rendered.contains("no gap is selected yet"), "{rendered}");
+    assert!(
+        rendered.contains("no repair gap is known yet"),
+        "{rendered}"
+    );
     assert!(!rendered.contains("repair seam"), "{rendered}");
     if !cfg!(windows) {
         assert!(rendered.contains(SHORT_NOTE), "{rendered}");
