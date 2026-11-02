@@ -85,6 +85,28 @@ impl<'a> oxc_ast_visit::Visit<'a> for HiddenRouteFinder {
     fn visit_with_statement(&mut self, _it: &oxc_ast::ast::WithStatement<'a>) {
         self.0 = true;
     }
+    /// `globalThis["eval"]` reaches the same route as `globalThis.eval`, so a
+    /// computed key spelled as a hidden word is a route even though it is a
+    /// string. A string anywhere else (a title, an expected value) is not.
+    fn visit_computed_member_expression(
+        &mut self,
+        it: &oxc_ast::ast::ComputedMemberExpression<'a>,
+    ) {
+        let key = match &it.expression {
+            oxc_ast::ast::Expression::StringLiteral(lit) => Some(lit.value.as_str()),
+            oxc_ast::ast::Expression::TemplateLiteral(tpl)
+                if tpl.expressions.is_empty() && tpl.quasis.len() == 1 =>
+            {
+                tpl.quasis
+                    .first()
+                    .and_then(|q| q.value.cooked.as_ref())
+                    .map(|c| c.as_str())
+            }
+            _ => None,
+        };
+        self.0 |= key.is_some_and(|k| HIDDEN_ROUTE_WORDS.contains(&k));
+        oxc_ast_visit::walk::walk_computed_member_expression(self, it);
+    }
 }
 
 /// The one guard every row-table entry path runs on its whole call text
@@ -97,7 +119,8 @@ impl<'a> oxc_ast_visit::Visit<'a> for HiddenRouteFinder {
 /// are refused wherever they appear in code, and so is a `/` that could open
 /// a regular expression. The lexer pass skips quoted text and comments, and so
 /// does the syntax-tree backstop below when the text parses, so a title such
-/// as `"this works"` or `"handles input with spaces"` resolves (#12253); text
+/// as `"this works"` or `"handles input with spaces"` resolves (#12253),
+/// while a computed key such as `globalThis["eval"]` is still a route; text
 /// that does not parse keeps the whole-word check, which refuses those words
 /// even inside strings and comments.
 /// Fails closed on anything it cannot lex.
@@ -661,6 +684,9 @@ mod tests {
             "(t) => { expect(f(t.a, eval(\"t.out = 1\"))).toBe(t.out); }",
             "(t) => { expect(f(t.a, (0, eval)(\"1\"))).toBe(t.out); }",
             "(t) => { expect(f(t.a, globalThis.eval(\"1\"))).toBe(t.out); }",
+            "(t) => { globalThis[\"eval\"](\"p=1\"); expect(f(t.a)).toBe(t.out); }",
+            "(t) => { const F = window[\"Function\"]; F(\"return 1\")(); expect(f(t.a)).toBe(t.out); }",
+            "(t) => { x[`this`]; expect(f(t.a)).toBe(t.out); }",
             "(t) => { expect(f(t.a, new Function(\"1\")())).toBe(t.out); }",
             "(t) => { expect(f(t.a, this.x)).toBe(t.out); }",
             "(t) => { expect(f(t.a, new.target)).toBe(t.out); }",
