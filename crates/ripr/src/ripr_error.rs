@@ -113,7 +113,7 @@ impl RiprError {
                 RiprErrorCategory::CancelledOrTimedOut
             }
             Self::CheckFailure { category, .. } => *category,
-            Self::Unclassified { .. } => RiprErrorCategory::InternalInvariant,
+            Self::Unclassified { .. } => RiprErrorCategory::Analysis,
             Self::Context { source, .. } => source.category(),
         }
     }
@@ -295,10 +295,7 @@ impl fmt::Debug for RiprError {
                 .debug_struct("RiprError::CheckFailure")
                 .field("category", category)
                 .field("code", code)
-                .field(
-                    "detail",
-                    &crate::config::config_error_summary(detail.as_str()),
-                )
+                .field("detail", &"<redacted>")
                 .finish(),
             Self::CheckFailure {
                 category,
@@ -397,12 +394,22 @@ mod tests {
     }
 
     #[test]
+    fn unmigrated_message_uses_honest_analysis_fallback_not_internal_invariant() {
+        let error =
+            RiprError::from_core(CoreError::message("diff file missing.patch does not exist"));
+        assert_eq!(error.category(), RiprErrorCategory::Analysis);
+        assert_eq!(error.code(), crate::core_error::ANALYSIS_FAILED_IDENTITY);
+        assert_ne!(error.category(), RiprErrorCategory::InternalInvariant);
+    }
+
+    #[test]
     fn debug_redacts_config_excerpt() {
         let secret = "ripr.toml: invalid ripr.toml: expected table\npassword=\"secret\"";
         let error = RiprError::from_core(CoreError::config_invalid(secret));
         let debug = format!("{error:?}");
         assert!(!debug.contains("password"));
         assert!(!debug.contains("secret"));
+        assert!(debug.contains("redacted"));
     }
 
     #[test]
