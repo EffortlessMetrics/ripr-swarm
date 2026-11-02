@@ -156,8 +156,8 @@ fn semantic_projection_public_parent(
 }
 
 #[test]
-fn module_extraction_public_parent_same_named_sibling_with_wrapper_call_stays_witness(
-) -> Result<(), String> {
+fn module_extraction_public_parent_same_named_sibling_with_wrapper_call_stays_witness()
+-> Result<(), String> {
     for placement in HELPER_PLACEMENTS {
         let (_root, index, seam) = public_parent_fixture(placement, 9, true, true)?;
         let evidence = evidence_for_seam(&seam, &index);

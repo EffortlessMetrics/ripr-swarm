@@ -29,10 +29,7 @@
 
 use crate::analysis::classify::oracle_owner_call_is_shadowed;
 use crate::analysis::extract::{equality_assertion_arguments, outer_assertion_condition};
-use crate::analysis::facts::RustIndex;
-use crate::analysis::facts::TestFact as TestSummary;
-use crate::analysis::facts::{FunctionSummary, SourceText};
-use crate::analysis::rust_index::RustIndex;
+use crate::analysis::facts::{FunctionSummary, RustIndex, SourceText, TestFact as TestSummary};
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
 use std::collections::BTreeMap;
@@ -1106,7 +1103,7 @@ fn fold_through_unique_public_parent(
     if parent_name == owner.name {
         return None;
     }
-    let mut matching = index.functions().filter(|function| {
+    let mut matching = index.functions().into_iter().filter(|function| {
         !function.source_role.is_evidence_role() && function.name == parent_name
     });
     let parent = matching.next()?;
