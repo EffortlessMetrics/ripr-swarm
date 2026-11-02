@@ -58,8 +58,9 @@ pub(in crate::analysis) enum MacroSites {
     Unparsed { has_macro_rules: bool },
     Parsed {
         definitions: Vec<(String, String)>,
-        /// (macro name, masked arguments, item position)
-        invocations: Vec<(String, String, bool)>,
+        /// (macro name, masked arguments, item position, statement position,
+        /// qualified path)
+        invocations: Vec<(String, String, bool, bool, bool)>,
     },
 }
 
@@ -87,14 +88,17 @@ impl MacroSites {
             let Some(call) = ast::MacroCall::cast(node.clone()) else {
                 continue;
             };
-            let Some(macro_name) = call
-                .path()
-                .and_then(|path| path.segment())
+            let Some(path) = call.path() else {
+                continue;
+            };
+            let Some(macro_name) = path
+                .segment()
                 .and_then(|segment| segment.name_ref())
                 .map(|segment| segment.text().to_string())
             else {
                 continue;
             };
+            let qualified = path.qualifier().is_some();
             let arguments = call
                 .token_tree()
                 .map(|tree| mask_comments_and_strings(&tree.syntax().text().to_string()))
@@ -111,12 +115,40 @@ impl MacroSites {
                         })
             });
             if item_position || statement_position {
-                invocations.push((macro_name, arguments, item_position));
+                invocations.push((
+                    macro_name,
+                    arguments,
+                    item_position,
+                    statement_position,
+                    qualified,
+                ));
             }
         }
         Self::Parsed {
             definitions,
             invocations,
+        }
+    }
+
+    /// Whether the file invokes a macro at item or statement position whose
+    /// definition is not in this file, so expansion may emit unread items
+    /// (#7160).
+    pub(in crate::analysis) fn has_non_local_defining_invocation(&self) -> bool {
+        match self {
+            Self::Unparsed { has_macro_rules } => *has_macro_rules,
+            Self::Parsed {
+                definitions,
+                invocations,
+            } => invocations
+                .iter()
+                .any(|(macro_name, _, item_position, _, qualified)| {
+                    if !item_position {
+                        return false;
+                    }
+                    let local_for_unqualified =
+                        !qualified && definitions.iter().any(|(defined, _)| defined == macro_name);
+                    !local_for_unqualified && !STD_EXPRESSION_MACROS.contains(&macro_name.as_str())
+                }),
         }
     }
 
@@ -133,9 +165,8 @@ impl MacroSites {
                 invocations,
             } => (definitions, invocations),
         };
-        invocations
-            .iter()
-            .any(|(macro_name, arguments, item_position)| {
+        invocations.iter().any(
+            |(macro_name, arguments, item_position, _statement_position, _qualified)| {
                 let mentions_name = contains_as_whole_word(arguments, name);
                 let bare_item_argument =
                     *item_position && passes_name_as_bare_argument(arguments, name);
@@ -159,7 +190,8 @@ impl MacroSites {
                         || mentions_name && declares_item_through_binder(definition)
                         || declares_in_arguments && forwards_arguments_verbatim(definition)
                 })
-            })
+            },
+        )
     }
 }
 
@@ -180,6 +212,16 @@ pub(in crate::analysis) fn macro_may_define_item_named(source: &str, name: &str)
         return false;
     }
     MacroSites::scan(source).may_define(name)
+}
+
+/// Whether the file invokes an item- or statement-position macro whose body
+/// is not in the indexed source, so it may emit items the scan never reads
+/// (#7160).
+pub(in crate::analysis) fn file_has_non_local_defining_macro_invocation(source: &str) -> bool {
+    if !source.contains('!') {
+        return false;
+    }
+    MacroSites::scan(source).has_non_local_defining_invocation()
 }
 
 /// Whether the invocation's top-level arguments pass `name` as a bare
@@ -361,7 +403,7 @@ fn identifier_tokens(masked: &str) -> Vec<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::macro_may_define_item_named;
+    use super::{file_has_non_local_defining_macro_invocation, macro_may_define_item_named};
 
     const SHADOW: &str = "macro_rules! fake {\n    () => {\n        fn suit_color(_s: char) -> u8 { 1 }\n    };\n}\n";
 
@@ -450,6 +492,41 @@ mod tests {
             "#[test]\nfn t() {\n    assert_eq!(suit_color('S'), 1);\n}\n",
             "suit_color"
         ));
+    }
+
+    #[test]
+    fn a_non_local_item_macro_without_the_name_in_its_arguments_refuses_anyway() {
+        assert!(file_has_non_local_defining_macro_invocation(
+            "other::make_unit!();\n"
+        ));
+        assert!(!file_has_non_local_defining_macro_invocation(
+            "macro_rules! make_unit { () => {}; }\nmake_unit!();\n"
+        ));
+        assert!(!file_has_non_local_defining_macro_invocation(
+            "#[test]\nfn t() { assert_eq!(1, 1); }\n"
+        ));
+        assert!(!file_has_non_local_defining_macro_invocation(
+            "#[test]\nfn t() { log::info!(\"x\"); }\n"
+        ));
+    }
+
+    #[test]
+    fn a_qualified_external_item_macro_refuses_with_a_same_named_local_definition() {
+        assert!(file_has_non_local_defining_macro_invocation(
+            "macro_rules! reexport_max { () => {}; }\ndependency::reexport_max!();\n"
+        ));
+    }
+
+    #[test]
+    fn authored_spec_confirm_fixture_has_no_non_local_item_macro_refusal_input() {
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/rust-verdict-corpus/subjects/authored-spec-confirm/src/lib.rs.txt"
+        ));
+        assert!(
+            !file_has_non_local_defining_macro_invocation(src),
+            "unexpected #7160 refusal trigger in authored-spec-confirm"
+        );
     }
 
     #[test]
