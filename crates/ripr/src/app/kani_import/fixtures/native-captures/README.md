@@ -78,7 +78,8 @@ recipe; they are not the original capture bindings or executed commands.
 Source mutation and export substitution under an unchanged binding must refuse.
 
 The vacuous report has an independently authored complete owned-envelope oracle
-in `../captured-vacuous-honesty.json`. The existing evidence-promotion honesty
+in `fixtures/evidence-promotion-honesty-corpus/reports/kani-vacuous-capture-unattested.json`
+(relative to the repository root). The existing evidence-promotion honesty
 corpus rejects static/repair/receipt promotion, and the output test compares this
 oracle with a real import while retaining the complete native JSON in Markdown.
 Only volatile metadata and the separately checked external payloads are masked.

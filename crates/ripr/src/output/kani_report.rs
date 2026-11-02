@@ -166,7 +166,7 @@ mod tests {
                 .ok_or_else(|| format!("missing Kani field {pointer}"))? = marker.into();
         }
         let expected: serde_json::Value = serde_json::from_str(include_str!(
-            "../app/kani_import/fixtures/captured-vacuous-honesty.json"
+            "../../../../fixtures/evidence-promotion-honesty-corpus/reports/kani-vacuous-capture-unattested.json"
         ))
         .map_err(|err| err.to_string())?;
         assert_eq!(actual, expected);

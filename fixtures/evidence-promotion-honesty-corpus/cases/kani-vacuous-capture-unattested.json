@@ -2,7 +2,7 @@
   "id": "kani_vacuous_capture_external_unattested",
   "language": "rust",
   "tier": "pure",
-  "source_report": "crates/ripr/src/app/kani_import/fixtures/captured-vacuous-honesty.json",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/kani-vacuous-capture-unattested.json",
   "vector": "authored_report_expectation_compared_with_imported_genuine_vacuous_native_success",
   "assertions": [
     { "type": "must_not_report_clean" },

@@ -26,6 +26,6 @@ fixtures = [
   "crates/ripr/src/app/kani_import/fixtures/native-captures/bounded-success.native.json",
   "crates/ripr/src/app/kani_import/fixtures/native-captures/insufficient-bound.native.json",
   "crates/ripr/src/app/kani_import/fixtures/native-captures/partial.native.json",
-  "crates/ripr/src/app/kani_import/fixtures/captured-vacuous-honesty.json",
+  "fixtures/evidence-promotion-honesty-corpus/reports/kani-vacuous-capture-unattested.json",
   "fixtures/evidence-promotion-honesty-corpus/cases/kani-vacuous-capture-unattested.json",
 ]
