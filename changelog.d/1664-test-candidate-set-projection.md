@@ -1,0 +1,1 @@
+- Add `TestCandidateSet` projection for bounded seam-to-test candidate discovery (#1664): map `RelationReason` to `CandidateRelation`, split eligible vs context-only rows, and expose next-route plus optional truncated discovery totals.

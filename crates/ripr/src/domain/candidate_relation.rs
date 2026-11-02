@@ -114,12 +114,8 @@ impl RelationReason {
         match self {
             RelationReason::DirectOwnerCall => CandidateRelation::DirectOwnerCall,
             RelationReason::HelperOwnerCall => CandidateRelation::EstablishedOneHopHelperChain,
-            RelationReason::ReExportChainFollowed => {
-                CandidateRelation::EstablishedEntrypointRelation
-            }
-            RelationReason::FixtureOwnerAffinity => {
-                CandidateRelation::EstablishedFixtureOrGoldenOwner
-            }
+            RelationReason::ReExportChainFollowed => CandidateRelation::DirectOwnerCall,
+            RelationReason::FixtureOwnerAffinity => CandidateRelation::Unknown,
             RelationReason::SameTestFile | RelationReason::SameModule => {
                 CandidateRelation::FileProximityOnly
             }
@@ -204,7 +200,16 @@ mod tests {
         );
         assert_eq!(
             RelationReason::FixtureOwnerAffinity.candidate_relation(),
-            CandidateRelation::EstablishedFixtureOrGoldenOwner
+            CandidateRelation::Unknown
+        );
+        assert!(
+            RelationReason::FixtureOwnerAffinity
+                .candidate_relation()
+                .is_context_only()
+        );
+        assert_eq!(
+            RelationReason::ReExportChainFollowed.candidate_relation(),
+            CandidateRelation::DirectOwnerCall
         );
     }
 

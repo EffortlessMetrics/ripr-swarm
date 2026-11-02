@@ -52,7 +52,12 @@ pub struct TestCandidateRow {
 pub struct TestCandidateSet {
     pub selected: Vec<TestCandidateRow>,
     pub context_only: Vec<TestCandidateRow>,
+    /// Rows present in this bounded window (for example after reveal truncation).
     pub total_discovered: usize,
+    /// Producer-reported match count before any window cap, when known.
+    pub matched_total: usize,
+    /// False when upstream discovery omitted rows from this window.
+    pub complete: bool,
     pub next_route: TestCandidateNextRoute,
 }
 
@@ -61,6 +66,16 @@ impl TestCandidateSet {
     /// discovered for one seam. Producer-backed relations become `selected`;
     /// proximity/coincidence relations stay in `context_only`.
     pub fn from_related_tests(related: &[RelatedTest]) -> Self {
+        Self::from_bounded_related_tests(related, related.len(), true)
+    }
+
+    /// Same as [`Self::from_related_tests`], but preserves producer totals when
+    /// the input slice is a capped window over a larger discovery set.
+    pub fn from_bounded_related_tests(
+        related: &[RelatedTest],
+        matched_total: usize,
+        complete: bool,
+    ) -> Self {
         let mut selected = Vec::new();
         let mut context_only = Vec::new();
 
@@ -87,8 +102,11 @@ impl TestCandidateSet {
         selected.sort_by(candidate_row_order);
         context_only.sort_by(candidate_row_order);
 
+        let truncated = !complete || matched_total > related.len();
         let next_route = if !selected.is_empty() {
             TestCandidateNextRoute::RunTargetedPreflight
+        } else if truncated {
+            TestCandidateNextRoute::InspectWeakCandidates
         } else if !context_only.is_empty() {
             TestCandidateNextRoute::InspectWeakCandidates
         } else {
@@ -97,6 +115,8 @@ impl TestCandidateSet {
 
         Self {
             total_discovered: related.len(),
+            matched_total,
+            complete,
             selected,
             context_only,
             next_route,
@@ -179,6 +199,37 @@ mod tests {
     fn empty_related_tests_route_to_add_new_focused_test() {
         let set = TestCandidateSet::from_related_tests(&[]);
         assert_eq!(set.total_discovered, 0);
+        assert_eq!(set.matched_total, 0);
+        assert!(set.complete);
         assert_eq!(set.next_route, TestCandidateNextRoute::AddNewFocusedTest);
+    }
+
+    #[test]
+    fn fixture_owner_affinity_stays_context_only() {
+        let set = TestCandidateSet::from_related_tests(&[sample_test(
+            "fixture_helper",
+            RelationReason::FixtureOwnerAffinity,
+        )]);
+        assert!(set.selected.is_empty());
+        assert_eq!(set.context_only.len(), 1);
+        assert_eq!(
+            set.next_route,
+            TestCandidateNextRoute::InspectWeakCandidates
+        );
+    }
+
+    #[test]
+    fn truncated_window_never_routes_to_add_new_focused_test_when_matches_exist() {
+        let window: Vec<_> = (0..8)
+            .map(|idx| sample_test(&format!("ctx_{idx}"), RelationReason::SameTestFile))
+            .collect();
+        let set = TestCandidateSet::from_bounded_related_tests(&window, 9, false);
+        assert_eq!(set.total_discovered, 8);
+        assert_eq!(set.matched_total, 9);
+        assert!(!set.complete);
+        assert_eq!(
+            set.next_route,
+            TestCandidateNextRoute::InspectWeakCandidates
+        );
     }
 }
