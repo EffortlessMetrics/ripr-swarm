@@ -51,7 +51,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// `17`: `nested_called_by_parent` ignores calls from unused defs, classes and
 /// lambdas under compound blocks and fails closed on a name defined twice
 /// (#12197). `16` entries may still hold the over-credited value.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "17";
+/// `18`: a nested function owner records whether the enclosing body only calls
+/// it as an expression statement (`nested_result_discarded`, #12182). `17`
+/// entries lack the fact.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "18";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the

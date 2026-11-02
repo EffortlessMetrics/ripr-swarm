@@ -2,6 +2,7 @@ mod absorbing_tail;
 mod activation;
 mod argument_fold;
 mod arm_selection;
+mod binding_return_flow;
 mod boundary_pairing;
 mod builder_override;
 mod call_identity;
@@ -62,6 +63,9 @@ pub(in crate::analysis) use activation::{
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, unresolved_parameter_field_selector,
 };
+pub(in crate::analysis) use binding_return_flow::{
+    BindingReturnFlow, evaluate_binding_return_flow, same_file_binding_helpers,
+};
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
     wrapper_return_boundary_pinned,
@@ -77,9 +81,10 @@ pub(in crate::analysis) use call_identity::{
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use const_flow::{
-    ChangedConsts, ConstFlow, associated_const_binding, evaluate_const_flow, shares_module_scope,
+    ChangedConsts, ConstFlow, associated_const_binding, const_value_changes, evaluate_const_flow,
+    shares_module_scope,
 };
-pub(in crate::analysis) use const_readers::same_file_const_readers;
+pub(in crate::analysis) use const_readers::{const_reader_returns, same_file_const_readers};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
     classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,

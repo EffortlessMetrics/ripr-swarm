@@ -93,6 +93,15 @@ the oracle from `ExactValue` to `ExactErrorVariant` / `Strong`. This upgrade
 applies in BOTH the lexical path (`extract_assertions` in `scan.rs`) and the
 rust-analyzer path (`extract_parser_oracles` in `ra.rs`).
 
+The same upgrade applies to the inline spelling (#12266): an equality assertion
+whose one operand is the `<expr>.unwrap_err()` or `.expect_err("…")` result
+itself, and whose other operand names a specific error (an enum-variant token,
+an error-constructor call or a fixed payload), is `ExactErrorVariant` /
+`Strong`. `assert_eq!(f(-1).unwrap_err(), MyError::Negative)` pins what
+`let err = f(-1).unwrap_err(); assert_eq!(err, MyError::Negative)` pins.
+Negative assertions, an opaque expected value, an unwrapped `Ok` read and a
+method call on the error (`.unwrap_err().kind()`) are not upgraded.
+
 FAIL-CLOSED rule: when the binding is present but the assertion does NOT
 contain a named enum-variant token (e.g. `assert!(err.to_string().contains(…))`),
 do NOT upgrade. The classification stays at its original kind.
