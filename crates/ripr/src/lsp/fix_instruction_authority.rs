@@ -6,9 +6,17 @@
 
 use super::action_contract::ActionDisabledReason;
 use super::state::AnalysisSnapshot;
-use crate::domain::{DiagnosticWitness, FixInstructionState, FixInstructionSummary};
+use crate::analysis::ClassifiedSeam;
+use crate::analysis::repair_route::{
+    cross_language_test_target_unresolved, repair_packet_eligibility,
+};
+use crate::domain::{DiagnosticWitness, EvidenceState, FixInstructionState, FixInstructionSummary};
 use serde_json::Value;
 use tower_lsp_server::ls_types::Diagnostic;
+
+fn json_str<'a>(data: &'a Value, key: &str) -> Option<&'a str> {
+    data.get(key).and_then(Value::as_str)
+}
 
 fn summary_from_diagnostic_data(data: &Value) -> Option<FixInstructionSummary> {
     if let Some(value) = data.get("fix_instruction") {
@@ -18,14 +26,93 @@ fn summary_from_diagnostic_data(data: &Value) -> Option<FixInstructionSummary> {
     Some(FixInstructionSummary::from_witness(&witness))
 }
 
-/// The fix-instruction summary already projected into diagnostic data, if any.
-pub(super) fn optional_summary_from_diagnostic(
+fn witness_for_seam(
+    snapshot: &AnalysisSnapshot,
     diagnostic: &Diagnostic,
-) -> Option<FixInstructionSummary> {
-    diagnostic
-        .data
-        .as_ref()
-        .and_then(summary_from_diagnostic_data)
+    seam: &ClassifiedSeam,
+) -> Option<DiagnosticWitness> {
+    if let Some(finding) = snapshot.finding_for_diagnostic(diagnostic) {
+        return DiagnosticWitness::from_finding(finding);
+    }
+    let gap = crate::analysis::canonical_gap::canonical_gap_identity(seam)?;
+    snapshot
+        .findings
+        .iter()
+        .find(|finding| {
+            finding
+                .canonical_gap
+                .as_ref()
+                .is_some_and(|canonical| canonical.id == gap.id)
+        })
+        .and_then(DiagnosticWitness::from_finding)
+}
+
+fn summary_from_gap_ledger_data(data: &Value) -> FixInstructionSummary {
+    if let Some(summary) = summary_from_diagnostic_data(data) {
+        return summary;
+    }
+    let gap_state = json_str(data, "gap_state");
+    if gap_state.is_some_and(|state| state.contains("stale")) {
+        return FixInstructionSummary {
+            state: FixInstructionState::Stale,
+            has_fix_site: false,
+            has_suggested_assertion: false,
+            limitation_kinds: vec!["snapshot_stale".to_string()],
+        };
+    }
+    if json_str(data, "static_limit_kind").is_some()
+        || json_str(data, "evidence_class").is_some_and(|value| value == "static_limitation")
+    {
+        return FixInstructionSummary {
+            state: FixInstructionState::StaticLimitation,
+            has_fix_site: false,
+            has_suggested_assertion: false,
+            limitation_kinds: vec!["static_limitation".to_string()],
+        };
+    }
+    if gap_state.is_some_and(EvidenceState::is_actionable_word) {
+        let has_fix_site = data.get("anchor").is_some()
+            || data
+                .get("repair_route")
+                .and_then(|route| route.get("target_file"))
+                .is_some();
+        return FixInstructionSummary {
+            state: if has_fix_site {
+                FixInstructionState::FixSiteReady
+            } else {
+                FixInstructionState::InspectOnly
+            },
+            has_fix_site,
+            has_suggested_assertion: false,
+            limitation_kinds: Vec::new(),
+        };
+    }
+    FixInstructionSummary::unavailable()
+}
+
+fn summary_for_seam_without_witness(seam: &ClassifiedSeam) -> FixInstructionSummary {
+    if cross_language_test_target_unresolved(seam) {
+        return FixInstructionSummary {
+            state: FixInstructionState::StaticLimitation,
+            has_fix_site: false,
+            has_suggested_assertion: false,
+            limitation_kinds: vec!["cross_language_target_unresolved".to_string()],
+        };
+    }
+    if !repair_packet_eligibility(seam).eligible() {
+        return FixInstructionSummary {
+            state: FixInstructionState::StaticLimitation,
+            has_fix_site: false,
+            has_suggested_assertion: false,
+            limitation_kinds: vec!["repair_route_not_ready".to_string()],
+        };
+    }
+    FixInstructionSummary {
+        state: FixInstructionState::InspectOnly,
+        has_fix_site: false,
+        has_suggested_assertion: false,
+        limitation_kinds: Vec::new(),
+    }
 }
 
 /// Summary for a seam-addressed action: diagnostic payload first, then the
@@ -33,20 +120,26 @@ pub(super) fn optional_summary_from_diagnostic(
 pub(super) fn summary_for_seam_action(
     snapshot: &AnalysisSnapshot,
     diagnostic: &Diagnostic,
-) -> Option<FixInstructionSummary> {
-    if let Some(summary) = optional_summary_from_diagnostic(diagnostic) {
-        return Some(summary);
+    seam: &ClassifiedSeam,
+) -> FixInstructionSummary {
+    if let Some(data) = diagnostic.data.as_ref()
+        && let Some(summary) = summary_from_diagnostic_data(data)
+    {
+        return summary;
     }
-    snapshot
-        .finding_for_diagnostic(diagnostic)
-        .and_then(DiagnosticWitness::from_finding)
+    witness_for_seam(snapshot, diagnostic, seam)
         .map(|witness| FixInstructionSummary::from_witness(&witness))
+        .unwrap_or_else(|| summary_for_seam_without_witness(seam))
 }
 
-/// Summary for a gap-addressed action (witness/fix_instruction on the gap
-/// diagnostic only).
-pub(super) fn summary_for_gap_action(diagnostic: &Diagnostic) -> Option<FixInstructionSummary> {
-    optional_summary_from_diagnostic(diagnostic)
+/// Summary for a gap-addressed action from embedded witness/fix_instruction
+/// or producer-owned gap-ledger fields.
+pub(super) fn summary_for_gap_action(diagnostic: &Diagnostic) -> FixInstructionSummary {
+    diagnostic
+        .data
+        .as_ref()
+        .map(summary_from_gap_ledger_data)
+        .unwrap_or_else(FixInstructionSummary::unavailable)
 }
 
 /// Repair-packet and agent-loop actions require the shared `fix_site_ready`
@@ -112,9 +205,32 @@ mod tests {
             data: Some(data),
             ..Diagnostic::default()
         };
-        let parsed = optional_summary_from_diagnostic(&diagnostic);
-        assert_eq!(parsed.as_ref(), Some(&summary));
-        assert!(parsed.is_some_and(|parsed| !blocks_repair_ready_actions(&parsed)));
+        let parsed = summary_for_gap_action(&diagnostic);
+        assert_eq!(parsed, summary);
+        assert!(!blocks_repair_ready_actions(&parsed));
+    }
+
+    #[test]
+    fn gap_ledger_actionable_state_with_anchor_is_fix_site_ready() {
+        let data = serde_json::json!({
+            "source": "gap_decision_ledger",
+            "gap_state": "actionable",
+            "anchor": { "file": "src/lib.rs", "line": 1 }
+        });
+        let summary = summary_from_gap_ledger_data(&data);
+        assert_eq!(summary.state, FixInstructionState::FixSiteReady);
+        assert!(!blocks_repair_ready_actions(&summary));
+    }
+
+    #[test]
+    fn gap_ledger_static_limit_blocks_repair_ready_actions() {
+        let data = serde_json::json!({
+            "source": "gap_decision_ledger",
+            "gap_state": "actionable",
+            "static_limit_kind": "missing_discriminator"
+        });
+        let summary = summary_from_gap_ledger_data(&data);
+        assert!(blocks_repair_ready_actions(&summary));
     }
 
     #[test]
