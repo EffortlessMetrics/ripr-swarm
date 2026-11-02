@@ -348,49 +348,6 @@ impl ValueEnvFacts {
             bare_std_path_buf_imported: path_constructor_imports.path_buf,
         }
     }
-}
-
-/// Per-test, per-seam resolution environment. The expensive
-/// seam-independent scans live in [`ValueEnvFacts`]; each call-arg
-/// lookup is a `BTreeMap` lookup plus a small list scan.
-pub(crate) struct ValueEnv<'a> {
-    seam: &'a RepoSeam,
-    facts: &'a ValueEnvFacts,
-}
-
-impl<'a> ValueEnv<'a> {
-    pub(crate) fn new(seam: &'a RepoSeam, facts: &'a ValueEnvFacts) -> Self {
-        Self { seam, facts }
-    }
-
-    /// Resolve a single owner-call argument to one or more
-    /// `(value, ValueContext)` records. Empty vec means "could not
-    /// resolve" - caller leaves the arg as opaque (preserves the
-    /// existing `activation_unknown` classification semantics).
-    #[cfg(test)]
-    pub(crate) fn resolve(&self, arg: &str) -> Vec<(String, ValueContext)> {
-        let trimmed = arg.trim().trim_end_matches([',', ';']);
-        self.resolve_expr_at_position(
-            trimmed,
-            SourcePosition {
-                line: usize::MAX,
-                column: usize::MAX,
-            },
-            true,
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn resolve_at(&self, arg: &str, call_line: usize) -> Vec<(String, ValueContext)> {
-        self.resolve_at_position(
-            arg,
-            SourcePosition {
-                line: call_line,
-                column: usize::MAX,
-            },
-        )
-    }
-
     pub(crate) fn resolve_at_call(
         &self,
         arg: &str,
@@ -422,6 +379,30 @@ impl<'a> ValueEnv<'a> {
             || self.field_assignment_is_invalidated(object, assignment.position, call_position)
     }
 
+    #[cfg(test)]
+    pub(crate) fn resolve_at(&self, arg: &str, call_line: usize) -> Vec<(String, ValueContext)> {
+        self.resolve_at_position(
+            arg,
+            SourcePosition {
+                line: call_line,
+                column: usize::MAX,
+            },
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resolve(&self, arg: &str) -> Vec<(String, ValueContext)> {
+        let trimmed = arg.trim().trim_end_matches([',', ';']);
+        self.resolve_expr_at_position(
+            trimmed,
+            SourcePosition {
+                line: usize::MAX,
+                column: usize::MAX,
+            },
+            true,
+        )
+    }
+
     fn resolve_at_position(
         &self,
         arg: &str,
@@ -446,7 +427,7 @@ impl<'a> ValueEnv<'a> {
         if let Some(inner) = unwrap_option_or_result(trimmed) {
             return self.resolve_identifier_or_literal_at(inner.as_str(), call_position);
         }
-        if let Some(inner) = unwrap_path_literal_constructor(trimmed, self.facts) {
+        if let Some(inner) = unwrap_path_literal_constructor(trimmed, self) {
             return self.resolve_identifier_or_literal_at(inner.as_str(), call_position);
         }
         self.resolve_identifier_or_literal_at(trimmed, call_position)
@@ -457,9 +438,6 @@ impl<'a> ValueEnv<'a> {
         expr: &str,
         call_position: SourcePosition,
     ) -> Vec<(String, ValueContext)> {
-        // If it parses as a literal, just emit it. Re-uses the upstream
-        // scalar_values shape implicitly: integers, floats, strings,
-        // chars, simple paths.
         if looks_like_literal(expr) {
             return vec![(expr.to_string(), ValueContext::FunctionArgument)];
         }
@@ -477,10 +455,9 @@ impl<'a> ValueEnv<'a> {
                 .collect();
         }
         if let Some((object, field)) = field_projection(expr)
-            && let Some(binding) = self.facts.struct_field_bindings.get(object)
+            && let Some(binding) = self.struct_field_bindings.get(object)
             && binding.position.at_or_before(call_position)
             && !self
-                .facts
                 .struct_field_invalidations
                 .get(object)
                 .is_some_and(|positions| {
@@ -496,19 +473,16 @@ impl<'a> ValueEnv<'a> {
             return Vec::new();
         }
 
-        // 2. Let binding.
-        if let Some(value) = self.facts.let_bindings.get(expr) {
+        if let Some(value) = self.let_bindings.get(expr) {
             return vec![(value.as_ref().to_owned(), ValueContext::FunctionArgument)];
         }
-        // 3. Rstest case (positional).
         if let Some(idx) = self
-            .facts
             .case_param_names
             .iter()
             .position(|n| n.as_ref() == expr)
         {
             let mut out = Vec::new();
-            for case in &self.facts.rstest_cases {
+            for case in &self.rstest_cases {
                 if let Some(value) = case.get(idx) {
                     out.push((value.as_ref().to_owned(), ValueContext::TableRow));
                 }
@@ -517,15 +491,13 @@ impl<'a> ValueEnv<'a> {
                 return out;
             }
         }
-        // 4. Table-row binding.
-        if let Some(values) = self.facts.table_bindings.get(expr) {
+        if let Some(values) = self.table_bindings.get(expr) {
             return values
                 .iter()
                 .map(|v| (v.as_ref().to_owned(), ValueContext::TableRow))
                 .collect();
         }
-        // 5. Same-file const/static.
-        if let Some(value) = self.facts.module_constants.get(expr) {
+        if let Some(value) = self.module_constants.get(expr) {
             return vec![(value.as_ref().to_owned(), ValueContext::FunctionArgument)];
         }
         Vec::new()
@@ -538,7 +510,6 @@ impl<'a> ValueEnv<'a> {
         call_position: SourcePosition,
     ) -> Option<&FieldAssignmentBinding> {
         let local_binding = self
-            .facts
             .local_binding_positions
             .get(object)?
             .iter()
@@ -546,7 +517,6 @@ impl<'a> ValueEnv<'a> {
             .filter(|position| position.at_or_before(call_position))
             .max_by_key(|position| (position.line, position.column))?;
         let assignment = self
-            .facts
             .field_assignments
             .get(object)?
             .get(field)?
@@ -565,8 +535,7 @@ impl<'a> ValueEnv<'a> {
         assignment_position: SourcePosition,
         call_position: SourcePosition,
     ) -> bool {
-        self.facts
-            .field_assignment_invalidations
+        self.field_assignment_invalidations
             .get(object)
             .is_some_and(|positions| {
                 positions.iter().any(|position| {
@@ -574,6 +543,57 @@ impl<'a> ValueEnv<'a> {
                         && position.at_or_before(call_position)
                 })
             })
+    }
+
+}
+
+/// Per-test, per-seam resolution environment. The expensive
+/// seam-independent scans live in [`ValueEnvFacts`]; each call-arg
+/// lookup is a `BTreeMap` lookup plus a small list scan.
+pub(crate) struct ValueEnv<'a> {
+    seam: &'a RepoSeam,
+    facts: &'a ValueEnvFacts,
+}
+
+impl<'a> ValueEnv<'a> {
+    pub(crate) fn new(seam: &'a RepoSeam, facts: &'a ValueEnvFacts) -> Self {
+        Self { seam, facts }
+    }
+
+    /// Resolve a single owner-call argument to one or more
+    /// `(value, ValueContext)` records. Empty vec means "could not
+    /// resolve" - caller leaves the arg as opaque (preserves the
+    /// existing `activation_unknown` classification semantics).
+    #[cfg(test)]
+    pub(crate) fn resolve(&self, arg: &str) -> Vec<(String, ValueContext)> {
+        self.facts.resolve(arg)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resolve_at(&self, arg: &str, call_line: usize) -> Vec<(String, ValueContext)> {
+        self.facts.resolve_at(arg, call_line)
+    }
+
+    pub(crate) fn resolve_at_call(
+        &self,
+        arg: &str,
+        call_line: usize,
+        call_name: &str,
+        call_text: &str,
+    ) -> Vec<(String, ValueContext)> {
+        self.facts
+            .resolve_at_call(arg, call_line, call_name, call_text)
+    }
+
+    pub(crate) fn field_assignment_value_unresolved_at_call(
+        &self,
+        arg: &str,
+        call_line: usize,
+        call_name: &str,
+        call_text: &str,
+    ) -> bool {
+        self.facts
+            .field_assignment_value_unresolved_at_call(arg, call_line, call_name, call_text)
     }
 
     /// Builder-method facts for the test body. The method name must
