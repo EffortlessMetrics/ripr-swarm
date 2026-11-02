@@ -4922,6 +4922,42 @@ enum ImportMatch {
 /// this workspace (`crate`, `self`, `super`, or a workspace package), at
 /// any depth (#4478). Glob imports are not read: they prove nothing about
 /// which items they bring in.
+/// Whether a foreign glob `use` in `source` makes a bare call of `callee`
+/// ambiguous when the file does not explicitly import that callee from the
+/// workspace (#8053, #3731 glob residual). Own-crate globs (`use crate::*`,
+/// `use self::*`, `use this_package::*`) do not defeat.
+pub(in crate::analysis) fn file_foreign_glob_defeats_bare_callee_name(
+    source: &str,
+    callee: &str,
+    crate_names: &std::collections::BTreeSet<String>,
+) -> bool {
+    if file_imports_own_item(source, callee, crate_names) {
+        return false;
+    }
+    flattened_use_paths(source).iter().any(|import| {
+        let path = import.path.as_str();
+        if !path.ends_with('*') {
+            return false;
+        }
+        let Some(prefix) = path.strip_suffix("::*").or_else(|| path.strip_suffix('*')) else {
+            return true;
+        };
+        let Some(first_segment) = prefix
+            .split("::")
+            .next()
+            .filter(|segment| !segment.is_empty())
+        else {
+            return true;
+        };
+        first_segment != "crate"
+            && first_segment != "self"
+            && first_segment != "super"
+            && !crate_names
+                .iter()
+                .any(|name| name == first_segment || crate_identifier(name) == first_segment)
+    })
+}
+
 pub(in crate::analysis) fn file_imports_own_item(
     source: &str,
     name: &str,
@@ -11014,6 +11050,36 @@ return Err(\"typed pin\".into());
 
     /// #7985: the shared gate (also read by the owner-pin callers) treats a
     /// macro that may define the name as a rebind; an unrelated macro is not.
+    #[test]
+    fn foreign_glob_defeats_bare_callee_without_own_import() {
+        let demo: std::collections::BTreeSet<String> =
+            ["demo"].into_iter().map(str::to_string).collect();
+        let glob = "use foreign_parser::*;\n";
+        assert!(file_foreign_glob_defeats_bare_callee_name(
+            glob,
+            "parse_num",
+            &demo
+        ));
+        let named = "use foreign_parser::parse_num;\n";
+        assert!(!file_foreign_glob_defeats_bare_callee_name(
+            named,
+            "parse_num",
+            &demo
+        ));
+        let own = "use foreign_parser::*;\nuse demo::parse_num;\n";
+        assert!(!file_foreign_glob_defeats_bare_callee_name(
+            own,
+            "parse_num",
+            &demo
+        ));
+        let own_glob = "use demo::*;\n";
+        assert!(!file_foreign_glob_defeats_bare_callee_name(
+            own_glob,
+            "parse_num",
+            &demo
+        ));
+    }
+
     #[test]
     fn macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller() {
         let crate_names = std::collections::BTreeSet::new();

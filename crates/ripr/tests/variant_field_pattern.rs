@@ -186,6 +186,11 @@ fn a_test_side_build_or_input_stays_unconfirmed() -> Result<(), String> {
             "assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit { pos: 0 }));",
             "\n    use foreign_parser::parse_num;\n",
         ),
+        // A foreign glob may supply the same bare name (#8053 item 1).
+        (
+            "assert_matches!(parse_num(\"x1\"), Err(ParseError::BadDigit { pos: 0 }));",
+            "\n    use foreign_parser::*;\n",
+        ),
         // A `#[should_panic]` test passes when the pattern fails.
         (
             "let _ = 0;",
@@ -217,6 +222,21 @@ fn a_production_namesake_under_a_path_remap_stays_unconfirmed() -> Result<(), St
             "src/elsewhere.rs",
             "pub fn parse_num(_s: &str) -> u32 {\n    0\n}\n",
         )],
+    )?;
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn a_foreign_glob_integration_import_stays_unconfirmed() -> Result<(), String> {
+    let finding = pos_finding_at(
+        "",
+        "",
+        "",
+        Some(
+            "use assert_matches::assert_matches;\nuse foreign_parser::*;\n\n#[test]\nfn bad_digit_reports_position() {\n    assert_matches!(parse_num(\"x1\"), Err(demo::ParseError::BadDigit { pos: 0 }));\n}\n",
+        ),
+        &[],
     )?;
     assert_ne!(finding["classification"], "exposed", "{finding}");
     Ok(())
