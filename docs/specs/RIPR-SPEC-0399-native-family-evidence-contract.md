@@ -47,7 +47,8 @@ Linked specs:
 
 Support-tier impact:
 
-- None. Initial C and C++ support remains preview/advisory per
+- See: [support tiers](../status/SUPPORT_TIERS.md).
+- No support-tier promotion. Initial C and C++ support remains preview/advisory per
   language/framework/configuration/mode. This document defines contracts only;
   it does not enable adapters, promote support tiers, or change gates or badges.
 
