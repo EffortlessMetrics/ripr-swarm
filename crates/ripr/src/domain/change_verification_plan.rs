@@ -24,10 +24,6 @@ pub enum PlanRelationEvidenceClass {
     OpaqueBoundary,
 }
 
-#[expect(
-    dead_code,
-    reason = "wire-stable plan vocabulary token for VP2+ consumers"
-)]
 impl PlanRelationEvidenceClass {
     pub fn as_str(self) -> &'static str {
         match self {
