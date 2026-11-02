@@ -59,8 +59,10 @@ The parser:
 3. Names missing state-required fields precisely (`dual_run_expires` for
    `dual-running`, execution receipts for cutover/retirement).
 4. Treats `dual_run_expires` as hard invalidation against an injectable
-   `as_of`; `review_after` / `review_by` are warning-only and do not expire a
-   dual run.
+   `as_of`. The expiry date is the last valid day (`as_of == dual_run_expires`
+   still passes; `as_of > dual_run_expires` reports expired), matching
+   no-panic and clippy-exception `expires` ledgers. `review_after` /
+   `review_by` are warning-only and do not expire a dual run.
 5. Requires `control_semantics = "deny"` to name a `test:` or `receipt:`
    negative proof and a `required_claim_id`. Documentation in `rationale_refs`
    is not execution evidence.
@@ -77,7 +79,7 @@ CI behavior stay unchanged.
 ## Required Evidence
 
 - A valid registry, including the committed seed, parses with empty diagnostics
-  for an `as_of` before any `dual_run_expires`.
+  for an `as_of` on or before any `dual_run_expires`.
 - Unknown vocabularies, duplicate IDs, missing state-required fields, deny
   controls without execution proof, metadata-only blocking evidence, and an
   expired dual run are reported.
@@ -96,7 +98,8 @@ CI behavior stay unchanged.
 ## Acceptance Examples
 
 1. Given the committed seed and `--as-of 2026-11-02`, the parser reports pass
-   and includes generic, ripr-specific, hybrid, and dual-running examples.
+   and includes generic, ripr-specific, hybrid, and at least one dual-running
+   example.
 2. Given `kind = "magic"` or `schema_version = 2`, the parser reports a schema
    diagnostic naming the unknown value.
 3. Given two capabilities with the same `id` or `claim_id`, uniqueness fails.
@@ -107,7 +110,8 @@ CI behavior stay unchanged.
 6. Given `control_semantics = "metadata-only"` and `state = "cutover-ready"`,
    evidence honesty fails.
 7. Given `dual_run_expires = "2026-01-01"` and `--as-of 2026-11-02`, the dual
-   run is reported expired.
+   run is reported expired. Given `dual_run_expires = "2026-11-02"` and
+   `--as-of 2026-11-02`, it still passes; `--as-of 2026-11-03` reports expired.
 
 ## Test Mapping
 
@@ -125,6 +129,8 @@ CI behavior stay unchanged.
   `deny_with_docs_path_as_negative_proof_fails`,
   `metadata_only_cannot_satisfy_parity_or_cutover`,
   `expired_dual_run_reported_for_injected_as_of`,
+  `same_dual_run_is_valid_on_expiry_date`,
+  `dual_run_expires_the_day_after_expiry_date`,
   `output_is_byte_stable_for_identical_inputs`,
   `parser_source_has_no_network_or_github_client`,
   `issue_refs_are_syntax_only`,

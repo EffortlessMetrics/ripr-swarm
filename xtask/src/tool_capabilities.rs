@@ -637,6 +637,8 @@ fn validate_entry(entry: &CapabilityEntry, as_of: Option<&str>) -> Vec<String> {
         entry.review_by.as_deref(),
     );
 
+    // Same hard-expiry contract as no-panic and clippy-exception ledgers:
+    // expires == as_of is the last valid day; expired only when as_of > expires.
     if let (Some(as_of), Some(expires)) = (as_of, entry.dual_run_expires.as_deref())
         && validate_iso_date(as_of).is_ok()
         && validate_iso_date(expires).is_ok()

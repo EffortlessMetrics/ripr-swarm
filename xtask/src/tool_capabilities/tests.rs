@@ -269,7 +269,7 @@ fn expired_dual_run_reported_for_injected_as_of() {
 }
 
 #[test]
-fn same_dual_run_is_valid_before_expiry_date() -> Result<(), String> {
+fn same_dual_run_is_valid_on_expiry_date() -> Result<(), String> {
     let outcome = evaluate(
         &document(&deny_generic_dual_run("2026-11-02")),
         Some("2026-11-02"),
@@ -279,6 +279,20 @@ fn same_dual_run_is_valid_before_expiry_date() -> Result<(), String> {
         return Err(outcome.diagnostics.join("\n"));
     }
     Ok(())
+}
+
+#[test]
+fn dual_run_expires_the_day_after_expiry_date() {
+    let report = diagnostics_text(
+        &document(&deny_generic_dual_run("2026-11-02")),
+        Some("2026-11-03"),
+    );
+    assert!(
+        report.contains("[lifecycle]")
+            && report.contains("dual run expired as of 2026-11-03")
+            && report.contains("2026-11-02"),
+        "{report}"
+    );
 }
 
 #[test]

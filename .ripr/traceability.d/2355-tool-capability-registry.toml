@@ -16,6 +16,8 @@ tests = [
   "xtask/src/tool_capabilities/tests.rs::deny_with_docs_path_as_negative_proof_fails",
   "xtask/src/tool_capabilities/tests.rs::metadata_only_cannot_satisfy_parity_or_cutover",
   "xtask/src/tool_capabilities/tests.rs::expired_dual_run_reported_for_injected_as_of",
+  "xtask/src/tool_capabilities/tests.rs::same_dual_run_is_valid_on_expiry_date",
+  "xtask/src/tool_capabilities/tests.rs::dual_run_expires_the_day_after_expiry_date",
   "xtask/src/tool_capabilities/tests.rs::output_is_byte_stable_for_identical_inputs",
   "xtask/src/tool_capabilities/tests.rs::parser_source_has_no_network_or_github_client",
   "xtask/src/tool_capabilities/tests.rs::issue_refs_are_syntax_only",
