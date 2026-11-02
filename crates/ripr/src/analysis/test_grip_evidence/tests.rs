@@ -18228,6 +18228,137 @@ fn seam_behind_an_unresolved_transitive_path_is_opaque_not_ungripped() -> Result
     Ok(())
 }
 
+/// #6621 / RIPR-SPEC-0236 c10: an unreferenced same-named owner must not
+/// borrow another module's unresolved-reach witness.
+#[test]
+fn same_named_unreferenced_owner_stays_ungripped_without_sharing_witness() -> Result<(), String> {
+    let files = [
+        (
+            "src/lib.rs",
+            "mod other;\n\
+             pub fn checkout(amount: u32) -> u32 { route(amount) }\n\
+             fn route(amount: u32) -> u32 { tier(amount) }\n\
+             fn tier(amount: u32) -> u32 { if amount > 100 { amount + 5 } else { amount } }\n",
+        ),
+        (
+            "src/other.rs",
+            "pub(crate) fn tier(amount: u32) -> u32 { if amount > 100 { 1 } else { 0 } }\n",
+        ),
+        (
+            "tests/checkout.rs",
+            "#[test] fn checks_out() { assert_eq!(ripr_fixture::checkout(150), 155); }\n",
+        ),
+    ];
+    let (lib_reach, lib_class) =
+        unresolved_reach_for_owner_file("src/lib.rs", "amount > 100", &files)?;
+    assert_eq!(lib_reach.state, StageState::Opaque, "{lib_reach:?}");
+    assert!(
+        lib_reach.summary.contains("`checks_out`") && lib_reach.summary.contains("checkout"),
+        "lib tier keeps the witness: {}",
+        lib_reach.summary
+    );
+    assert_eq!(lib_class, SeamGripClass::Opaque);
+
+    let (other_reach, other_class) =
+        unresolved_reach_for_owner_file("src/other.rs", "amount > 100", &files)?;
+    assert_eq!(other_reach.state, StageState::No, "{other_reach:?}");
+    assert_eq!(other_class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+/// RIPR-SPEC-0236 example 23: macro-blocked reach names
+/// `rust_macro_reach_unresolved` (#6621).
+#[test]
+fn seam_macro_witness_names_rust_macro_reach_unresolved() -> Result<(), String> {
+    let files = [
+        (
+            "src/lib.rs",
+            "fn tier(total: u64) -> u64 { if total >= 100 { 20 } else { 0 } }\n\
+             macro_rules! priced { ($total:expr) => { tier($total) }; }\n\
+             pub fn run(total: u64) -> u64 { priced!(total) }\n",
+        ),
+        (
+            "tests/run.rs",
+            "#[test] fn runs_large_order() { assert_eq!(ripr_fixture::run(150), 20); }\n",
+        ),
+    ];
+    let (reach, class) = unresolved_reach_for_owner_file("src/lib.rs", "total >= 100", &files)?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains("rust_macro_reach_unresolved"),
+        "macro witness kind must be named: {}",
+        reach.summary
+    );
+    assert!(
+        reach.summary.contains("`runs_large_order`") && reach.summary.contains("priced!"),
+        "macro witness must name the test and macro: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+/// RIPR-SPEC-0236 example 24: a helper chain whose test lives in `src/`
+/// names `rust_transitive_reach_unresolved` (#6621).
+#[test]
+fn seam_src_test_chain_names_rust_transitive_reach_unresolved() -> Result<(), String> {
+    let files = [
+        (
+            "src/lib.rs",
+            "fn tier(total: u64) -> u64 { if total >= 100 { 20 } else { 0 } }\n\
+             fn route(total: u64) -> u64 { tier(total) }\n\
+             pub fn checkout(total: u64) -> u64 { route(total) }\n\
+             #[cfg(test)]\n\
+             mod checkout_tests;\n",
+        ),
+        (
+            "src/checkout_tests.rs",
+            "use super::checkout;\n\
+             #[test]\n\
+             fn checks_out() { assert_eq!(checkout(150), 20); }\n",
+        ),
+    ];
+    let (reach, class) = unresolved_reach_for_owner_file("src/lib.rs", "total >= 100", &files)?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains("rust_transitive_reach_unresolved"),
+        "src-hosted test must name transitive reach: {}",
+        reach.summary
+    );
+    assert!(
+        reach.summary.contains("`checks_out`") && reach.summary.contains("checkout"),
+        "witness must name the test and entry: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+fn unresolved_reach_for_owner_file(
+    owner_file: &str,
+    predicate_fragment: &str,
+    files: &[(&str, &str)],
+) -> Result<(StageEvidence, SeamGripClass), String> {
+    let files: Vec<(PathBuf, &str)> = files
+        .iter()
+        .map(|(path, source)| (PathBuf::from(path), *source))
+        .collect();
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from(owner_file)], &index);
+    let seam = seams
+        .iter()
+        .find(|s| s.expression().contains(predicate_fragment))
+        .ok_or_else(|| format!("seam with `{predicate_fragment}` in {owner_file}: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert!(
+        evidence.related_tests.is_empty(),
+        "fixture must leave the seam without related tests: {:?}",
+        evidence.related_tests
+    );
+    let class = crate::analysis::seam_classification::classify_seam(seam, &evidence);
+    Ok((evidence.reach, class))
+}
+
 #[test]
 fn trait_method_of_a_type_tests_use_is_opaque_not_ungripped() -> Result<(), String> {
     let (reach, class) = unresolved_reach_case(&[

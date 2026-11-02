@@ -20,6 +20,7 @@
 //!   This check only sets `static_limit_kind` to name the limitation.
 //! - If no candidate transitive path is found the finding is left exactly as-is.
 
+use crate::analysis::classify::call_identity::{shared_owner_call_identity, text_calls_owner};
 use crate::analysis::facts::{CallFact, FunctionContainer, FunctionSummary, RustIndex, TestFact};
 use crate::domain::StaticLimitKind;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -1209,6 +1210,96 @@ impl<'a> TransitiveReachIndex<'a> {
         self.witness_through(owner_name, &reaching)
     }
 
+    /// Like [`Self::transitive_witness`], but when same-package rivals share
+    /// `owner.name`, only call paths that resolve to this owner count (#6621).
+    pub(in crate::analysis) fn transitive_witness_for_owner(
+        &self,
+        owner: &FunctionSummary,
+    ) -> Option<TransitiveWitness> {
+        let owner = self
+            .index
+            .functions()
+            .iter()
+            .find(|function| function.id == owner.id)?;
+        let owner_name = owner.name.as_str();
+        if owner_name.is_empty() {
+            return None;
+        }
+        let graph = self.graph();
+        let reaching = if graph
+            .by_name
+            .get(owner_name)
+            .is_some_and(|functions| functions.len() > 1)
+            && shared_owner_call_identity(self.index, owner).is_some()
+        {
+            self.names_reaching_owner(owner)
+        } else {
+            graph.names_reaching(owner_name)
+        };
+        if reaching.is_empty() {
+            return None;
+        }
+        self.witness_through(owner_name, &reaching)
+    }
+
+    /// Production functions that call `callee`, using path-aware resolution
+    /// when same-package rivals share its name.
+    fn production_callers(&self, callee: &FunctionSummary) -> Vec<&'a FunctionSummary> {
+        let graph = self.graph();
+        let callee_name = callee.name.as_str();
+        let path_aware = graph
+            .by_name
+            .get(callee_name)
+            .is_some_and(|functions| functions.len() > 1)
+            && shared_owner_call_identity(self.index, callee).is_some();
+        graph
+            .by_name
+            .values()
+            .flatten()
+            .filter(|function| !function.source_role.is_evidence_role())
+            .filter(|function| {
+                calls_of(function)
+                    .any(|call| !is_macro_call(call.name.as_str()) && call.name == callee_name)
+            })
+            .filter(|function| {
+                !path_aware || {
+                    let summary = production_as_test(function);
+                    text_calls_owner(self.index, callee, &summary, function.body.as_ref())
+                }
+            })
+            .copied()
+            .collect()
+    }
+
+    /// Names that may lead to this owner when path-aware resolution applies.
+    fn names_reaching_owner(&self, owner: &FunctionSummary) -> HashSet<&'a str> {
+        let owner = self
+            .index
+            .functions()
+            .iter()
+            .find(|function| function.id == owner.id)
+            .unwrap_or(owner);
+        let mut reaching: HashSet<&str> = HashSet::new();
+        let mut seen_ids: HashSet<&str> = HashSet::from([owner.id.0.as_str()]);
+        let mut frontier = vec![owner];
+        for _ in 0..MAX_TRANSITIVE_DEPTH {
+            let mut next = Vec::new();
+            for current in frontier {
+                for caller in self.production_callers(current) {
+                    if seen_ids.insert(caller.id.0.as_str()) {
+                        reaching.insert(caller.name.as_str());
+                        next.push(caller);
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            frontier = next;
+        }
+        reaching
+    }
+
     /// The witness past the five-hop bound (#8047): a chain longer than the
     /// walk is still a path ripr does not trace, so it names the same limit
     /// rather than leave a bare gap. Callers try it after every other reach
@@ -1683,7 +1774,7 @@ fn find_macro_reach_witness(owner_name: &str, index: &RustIndex) -> Option<Macro
     TransitiveReachIndex::new(index).macro_reach_witness(owner_name)
 }
 
-impl TransitiveReachIndex<'_> {
+impl<'a> TransitiveReachIndex<'a> {
     /// The macro-blocked reach witness for `owner_name`, tried after the
     /// transitive witness finds no lexical path.
     pub(in crate::analysis) fn macro_reach_witness(
@@ -1699,6 +1790,47 @@ impl TransitiveReachIndex<'_> {
         }
         let mut sweep = ReachSweep::new(graph, owner_name);
         macro_reach_witness_with(graph, &mut sweep, owner_name)
+    }
+
+    /// Like [`Self::macro_reach_witness`], scoped to `owner` when rivals
+    /// share its name (#6621).
+    pub(in crate::analysis) fn macro_reach_witness_for_owner(
+        &self,
+        owner: &FunctionSummary,
+    ) -> Option<MacroReachWitness> {
+        let owner = self
+            .index
+            .functions()
+            .iter()
+            .find(|function| function.id == owner.id)?;
+        let owner_name = owner.name.as_str();
+        let graph = self.graph();
+        if graph
+            .by_name
+            .get(owner_name)
+            .is_some_and(|functions| functions.len() > 1)
+            && shared_owner_call_identity(self.index, owner).is_some()
+            && self.names_reaching_owner(owner).is_empty()
+        {
+            return None;
+        }
+        self.macro_reach_witness(owner_name)
+    }
+}
+
+fn production_as_test(function: &FunctionSummary) -> TestFact {
+    TestFact {
+        name: function.name.clone(),
+        file: function.file.clone(),
+        start_line: function.start_line,
+        end_line: function.end_line,
+        body: function.body.clone(),
+        calls: function.calls.clone(),
+        assertions: Vec::new(),
+        literals: function.literals.clone(),
+        attrs: function.attrs.clone(),
+        nested_fn_names: function.nested_fn_names.clone(),
+        let_bindings: function.let_bindings.clone(),
     }
 }
 
