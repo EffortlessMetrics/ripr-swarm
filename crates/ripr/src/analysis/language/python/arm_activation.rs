@@ -341,9 +341,10 @@ pub(super) fn builtin_names_intact(
         return false;
     }
     let lines: Vec<&str> = owner_source.lines().collect();
+    let modules = builtin_module_names(&lines);
     builtins.iter().all(|name| {
         !lines.iter().any(|line| binds_name(line.trim(), name))
-            && !lines.iter().any(|line| patches_builtin(line.trim(), name))
+            && !(0..lines.len()).any(|index| patches_builtin(&lines, index, name, &modules))
             && !lines.iter().any(|line| {
                 let trimmed = line.trim();
                 let names_it = mentions_identifier(trimmed, name);
@@ -363,22 +364,70 @@ pub(super) fn builtin_names_intact(
     })
 }
 
-/// Whether `line` rewrites the builtin `name` through the `builtins` module
-/// (`builtins.isinstance = f`, `setattr(builtins, ..)`), which no local binding
-/// shows (#12183). A line that mentions `builtins` together with `setattr` or
-/// `__dict__` is refused whatever it sets, because the written name may be
-/// computed; the guard then reads as unknown and keeps its credit.
-fn patches_builtin(line: &str, name: &str) -> bool {
-    if !mentions_identifier(line, "builtins") {
-        return false;
+/// The names the file can reach the builtins module by: `builtins`,
+/// `__builtins__`, and any `import builtins as <alias>` (#12206).
+fn builtin_module_names(lines: &[&str]) -> Vec<String> {
+    let mut modules = vec!["builtins".to_string(), "__builtins__".to_string()];
+    for line in lines {
+        let Some(imports) = line.trim().strip_prefix("import ") else {
+            continue;
+        };
+        for part in imports.split(',') {
+            let mut words = part.split_whitespace();
+            if let (Some("builtins"), Some("as"), Some(alias)) =
+                (words.next(), words.next(), words.next())
+            {
+                modules.push(alias.to_string());
+            }
+        }
     }
-    if line.contains("setattr") || line.contains("__dict__") {
+    modules
+}
+
+/// Whether the line at `index` rewrites the builtin `name` through the
+/// builtins module (`builtins.isinstance = f`, `__builtins__["isinstance"] =
+/// f`, `setattr(builtins, ..)`, `vars(builtins)[..] = f`), which no local
+/// binding shows (#12183, #12206). A `setattr`, `vars(` or `__dict__` line
+/// with a module name on it or in the next three lines (a call split across
+/// lines) is refused whatever it sets, because the written name may be
+/// computed. Whitespace is dropped before matching an assignment, so
+/// `builtins . isinstance = f` reads the same. A refusal only withholds a
+/// demotion: the guard reads as unknown and the arm keeps its credit.
+fn patches_builtin(lines: &[&str], index: usize, name: &str, modules: &[String]) -> bool {
+    let names_module = |text: &str| {
+        modules
+            .iter()
+            .any(|module| mentions_identifier(text, module))
+    };
+    let line = lines[index].trim();
+    if (line.contains("setattr") || line.contains("__dict__") || line.contains("vars("))
+        && lines[index..(index + 4).min(lines.len())]
+            .iter()
+            .any(|following| names_module(following))
+    {
         return true;
     }
-    let target = format!("builtins.{name}");
-    line.match_indices(&target).any(|(start, _)| {
-        let rest = line[start + target.len()..].trim_start();
-        rest.starts_with('=') && !rest.starts_with("==")
+    if !names_module(line) {
+        return false;
+    }
+    let compact: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+    modules.iter().any(|module| {
+        [
+            format!("{module}.{name}"),
+            format!("{module}[\"{name}\"]"),
+            format!("{module}['{name}']"),
+        ]
+        .iter()
+        .any(|target| {
+            compact.match_indices(target.as_str()).any(|(start, _)| {
+                let boundary = compact[..start]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
+                let rest = &compact[start + target.len()..];
+                boundary && rest.starts_with('=') && !rest.starts_with("==")
+            })
+        })
     })
 }
 

@@ -580,7 +580,7 @@ pub(crate) fn render_finding_with_config(
     root: &Path,
     wording: JsonPointerWording,
 ) -> String {
-    render_finding_with_shared_sections(finding, config, root, wording, None, None)
+    render_finding_with_shared_sections(finding, config, root, wording, None, None, true)
 }
 
 pub(super) fn render_finding_with_shared_sections(
@@ -590,6 +590,7 @@ pub(super) fn render_finding_with_shared_sections(
     wording: JsonPointerWording,
     shared: Option<&super::shared::SharedSections>,
     files: Option<&[Option<std::path::PathBuf>]>,
+    plain_repair_card_wording: bool,
 ) -> String {
     let mut out = String::new();
     let severity = display_severity(finding, config);
@@ -757,7 +758,7 @@ pub(super) fn render_finding_with_shared_sections(
     }
 
     if let Some(card) = python_repair_card(finding) {
-        push_python_repair_card(&mut out, &card, finding, root);
+        push_python_repair_card(&mut out, &card, finding, root, plain_repair_card_wording);
     } else if let Some(card) = typescript_preview_card(finding) {
         push_typescript_preview_card(&mut out, &card);
         // §PR8 (RIPR-SPEC-0088): surface the full work-packet field-note when
@@ -958,6 +959,7 @@ fn push_python_repair_card(
     card: &PythonRepairCard,
     finding: &Finding,
     root: &Path,
+    plain_wording: bool,
 ) {
     out.push_str("\nPython repair card (preview/advisory)\n");
     out.push_str(&format!("  card version: {}\n", card.card_version));
@@ -974,7 +976,12 @@ fn push_python_repair_card(
         card.current_test_evidence
     ));
     out.push_str(&format!(
-        "  missing discriminator: {}\n",
+        "  {}: {}\n",
+        if plain_wording {
+            "missing check"
+        } else {
+            crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_LABEL
+        },
         card.missing_discriminator
     ));
     out.push_str(&format!(
@@ -1013,7 +1020,12 @@ fn push_python_repair_card(
     out.push_str(&format!("  receipt guidance: {}\n", card.receipt_guidance));
     out.push_str("  stop conditions:\n");
     for condition in &card.stop_conditions {
-        out.push_str(&format!("    - {condition}\n"));
+        let line = if plain_wording {
+            super::evidence_lines::plain_stop_condition(condition)
+        } else {
+            condition.clone()
+        };
+        out.push_str(&format!("    - {line}\n"));
     }
     out.push_str("  limits:\n");
     for limit in &card.limits {
