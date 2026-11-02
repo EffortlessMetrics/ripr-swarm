@@ -14649,6 +14649,7 @@ tests = [
   "crates/ripr/src/analysis/facts/member_crates.rs::tests::an_unrelated_external_library_root_does_not_hide_a_local_macro_export",
   "crates/ripr/src/analysis/facts/member_crates.rs::tests::unchanged_index_reuse_refreshes_warmed_auxiliary_macro_export_witnesses",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::unchanged_index_reuse_refreshes_a_warmed_field_macro_blocker",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_nested_src_bin_main_target_does_not_reach_integration_tests",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_withheld_first_glob_cannot_certify_field_macro_safety",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_withheld_unparsable_sibling_disables_crate_root_routing",
   "crates/ripr/src/analysis/workspace/named_dependent_scope.rs::tests::withheld_unparsable_source_disables_crate_root_routing",

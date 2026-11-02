@@ -2294,6 +2294,12 @@ receiving call is itself resolved.
   #6950): the nested child test binds the parent module's own `Window`,
   so the pin is refused and the relation stays name-only
   (`weak_token_substring`).
+- Nested autodiscovered binary roots (#6916): `src/bin/NAME/main.rs` is a
+  recognized target root and manifest-established binary boundary, so a nested
+  binary's `#[macro_use] extern crate` site no longer refuses unrelated library
+  integration tests; pinned by
+  `a_nested_src_bin_main_target_does_not_reach_integration_tests` and
+  `binary_macro_boundaries_require_manifest_authority` (`src/bin/tool/main.rs`).
 - A fixture pins a single-file raw-identifier rename as non-exposed
   (`fixtures/owner_return_pin_single_file_raw_rename_shadow`, #7067):
   the test binds the renamed item through the plain spelling, so the
@@ -2425,9 +2431,9 @@ receiving call is itself resolved.
   `#![no_implicit_prelude]`, or a `macro_rules!` without `#[macro_export]`
   (a `macro` 2.0 item without visibility). Its crate is the root reached
   through resolved module edges, recognized only when that root is a Cargo
-  autodiscovered target (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, and
-  `tests/*.rs`, `benches/*.rs`, `examples/*.rs`, `build.rs` beside an
-  indexed `src/`). humantime's `benches/datetime_format.rs`
+  autodiscovered target (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`,
+  `src/bin/NAME/main.rs`, and `tests/*.rs`, `benches/*.rs`, `examples/*.rs`,
+  `build.rs` beside an indexed `src/`). humantime's `benches/datetime_format.rs`
   (`#[macro_use] extern crate bencher;`) no longer refuses the library's
   `tests/*.rs` assertions. An unresolved `#[macro_use] mod` may
   `#[macro_export]` its macros, so it stays workspace-wide like exported
@@ -2444,13 +2450,13 @@ receiving call is itself resolved.
   holds while any `#[path]` is unresolvable (`cfg_attr`, non-literal), which
   records no module edge for its target. A withheld file in the
   dependent scope is routed by root only when its own path is a `src/lib.rs`,
-  `src/main.rs` or `src/bin/*.rs` root, so named mode matches the full
-  closure; every other withheld site stays workspace-wide. Named dependent-scope
-  admission must recover the same disable signals from withheld bytes: a withheld
-  sibling that would use lexical fallback in the full index, and composition
-  spelled through attribute-head comments or non-ASCII gap whitespace after `[`,
-  so crate-root macro routing does not stay path-local when the full index refuses
-  it (#6919). Limits: a
+  `src/main.rs`, `src/bin/*.rs`, or `src/bin/NAME/main.rs` root, so named
+  mode matches the full closure; every other withheld site stays workspace-wide.
+  Named dependent-scope admission must recover the same disable signals from
+  withheld bytes: a withheld sibling that would use lexical fallback in the full
+  index, and composition spelled through attribute-head comments or non-ASCII
+  gap whitespace after `[`, so crate-root macro routing does not stay path-local
+  when the full index refuses it (#6919). Limits: a
   `[lib]`/`[[bin]]`/`[[test]]` `path` that moves a target is not read, so a
   file at a default target path that some other target includes through
   `#[path]` is still judged by its default root.
