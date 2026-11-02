@@ -291,7 +291,7 @@ pub(crate) fn resolve_repair_attempt_store(
             ));
         }
         let canonical_relative = relative_locator(&canonical_root, &canonical_store)?;
-        if canonical_relative != relative {
+        if store_spelling_is_rejected_alias(&relative, &canonical_relative) {
             return Err(format!(
                 "repair attempt store {} is a symlink, junction, or case-fold alias of `{}`; store identity uses the concrete contained locator, and aliases are rejected",
                 display_path(&requested),
@@ -337,7 +337,7 @@ pub(crate) fn resolve_repair_attempt_store(
                 ));
             }
             let canonical_relative = relative_locator(&canonical_root, &canonical_store)?;
-            if canonical_relative != relative {
+            if store_spelling_is_rejected_alias(&relative, &canonical_relative) {
                 let _ = std::fs::remove_dir_all(&cleaned);
                 return Err(format!(
                     "repair attempt store {} is a symlink, junction, or case-fold alias of `{}`; store identity uses the concrete contained locator, and aliases are rejected",
@@ -452,6 +452,19 @@ fn is_drive_relative(text: &str) -> bool {
         && bytes
             .get(2)
             .is_none_or(|next| *next != b'\\' && *next != b'/')
+}
+
+/// Whether the caller's contained locator spelling must be refused as an alias
+/// of the canonical contained locator (#4981 item 6 on Windows).
+fn store_spelling_is_rejected_alias(requested: &str, canonical: &str) -> bool {
+    if requested == canonical {
+        return false;
+    }
+    if cfg!(windows) {
+        requested.eq_ignore_ascii_case(canonical)
+    } else {
+        true
+    }
 }
 
 fn path_escapes_root(root: &Path, candidate: &Path) -> bool {

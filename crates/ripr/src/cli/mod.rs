@@ -538,10 +538,14 @@ fn persist_before_repair_attempt(
     })?;
     let mut policy =
         crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
-    crate::app::repair_attempt::include_explicit_store_operational_write(
+    crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
         &mut policy,
         root,
         options.store.as_deref(),
+        Some(&crate::app::repair_attempt::RepairAttemptId::parse(
+            identity.attempt_id(),
+        )?),
+        crate::app::repair_attempt::RepairAttemptStoreAccess::Prepare,
     )?;
     // Recheck immediately before baseline capture so ignore-rule drift observed
     // during preparation refuses attempt publication.
