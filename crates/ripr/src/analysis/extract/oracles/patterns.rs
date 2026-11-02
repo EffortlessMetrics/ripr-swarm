@@ -200,8 +200,9 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
         }
         let masked = mask_comments_and_strings(operand);
         // `map_err` keeps an `Ok` an `Ok` (so the uncompared-error reader
-        // accepts it) but replaces the error, which is what this pin reads.
-        super::scan::receiver_keeps_call_error(&masked) && !has_map_err_adapter(&masked)
+        // accepts it, method or UFCS form) but replaces the error, which is
+        // what this pin reads.
+        super::scan::receiver_keeps_call_error(&masked) && !has_error_replacing_adapter(&masked)
     };
     // The expected side names the error; another error read names nothing, so
     // comparing two reads pins no variant.
@@ -213,12 +214,30 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
     pins_against(left, right) || pins_against(right, left)
 }
 
-fn has_map_err_adapter(masked: &str) -> bool {
-    masked.match_indices("map_err").any(|(index, _)| {
-        let before = masked[..index].trim_end();
+/// Whether the error read goes through an adapter that can replace the error
+/// the owner returned. `map_err` is an identifier test, so the method form
+/// (`.map_err(..)`) and the UFCS form (`Result::map_err(call, ..)`) are both
+/// refused. Any other `Result::`/`Option::` path call (`Result::and`,
+/// `Result::or`, ..) is refused too: its first plain-path call is the adapter,
+/// not the owner.
+fn has_error_replacing_adapter(masked: &str) -> bool {
+    let has_map_err = masked.match_indices("map_err").any(|(index, _)| {
+        let before_ok = masked[..index]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
         let after = masked[index + "map_err".len()..].trim_start();
-        before.ends_with('.') && after.starts_with('(')
-    })
+        before_ok && after.starts_with('(')
+    });
+    if has_map_err {
+        return true;
+    }
+    let head = masked.split('(').next().unwrap_or("");
+    let segments: Vec<&str> = head.trim().split("::").map(str::trim).collect();
+    segments.len() >= 2
+        && segments
+            .get(segments.len() - 2)
+            .is_some_and(|owner| matches!(*owner, "Result" | "Option"))
 }
 
 fn is_bound_error_equality_assertion(
@@ -2360,6 +2379,9 @@ mod spec_0106_tests {
             "assert_eq!(parse(\"x\").map_err(|_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
             "assert_eq!(parse(\"x\").and(Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);",
             "assert_eq!(find(\"x\").ok_or(ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(Result::map_err(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(std::result::Result::map_err(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(Result::and(parse(\"x\"), Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);",
         ] {
             assert!(
                 !is_inline_unwrap_err_error_assertion(line),

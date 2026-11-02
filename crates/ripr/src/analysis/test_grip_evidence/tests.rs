@@ -21820,6 +21820,14 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
         StageState::Yes,
         "a mapped error is not a pin on the owner's error"
     );
+    let mapped_ufcs = read(
+        "#[test] fn odd() { assert_eq!(Result::map_err(parse(\"1\"), |_| Fault::Odd).unwrap_err(), Fault::Odd); }",
+    )?;
+    assert_ne!(
+        mapped_ufcs.0,
+        StageState::Yes,
+        "the UFCS map_err spelling is not a pin on the owner's error either"
+    );
     let grouped =
         read("#[test] fn odd() { assert_eq!((parse(\"1\").unwrap_err()), Fault::Odd); }")?;
     assert_eq!(grouped.0, StageState::Yes, "grouped error read");
