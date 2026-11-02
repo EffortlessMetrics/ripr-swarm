@@ -1,0 +1,550 @@
+{
+  "schema_version": "admission_incident_route_corpus.v1",
+  "claim_boundary": "Executable continuation routes for consumed admission_incident.v1 packets only; does not compile incidents (#5075) or mutate live settings.",
+  "scenarios": [
+    {
+      "id": "candidate_escape_complete_readmits",
+      "packet": {
+        "schema": "admission_incident.v1",
+        "subject": {
+          "candidate_head_sha": "sha256:head-h1",
+          "merge_group_id": "g1",
+          "workflow_attempt_id": "attempt-1"
+        },
+        "currentness": {
+          "basis_is_current": true,
+          "observed_candidate_head_sha": "sha256:head-h1",
+          "observed_merge_group_id": "g1",
+          "observed_workflow_attempt_id": "attempt-1"
+        },
+        "incident_class": "candidate_escape",
+        "classification_evidence": ["missed_local_gate"],
+        "candidate_mutation_allowed": "yes",
+        "same_subject_retry_allowed": "no",
+        "owner_class": "candidate_writer",
+        "route_inputs": {
+          "regression_guard_or_limitation_recorded": true
+        }
+      },
+      "context": {
+        "candidate_head_sha": "sha256:head-h1",
+        "merge_group_id": "g1",
+        "workflow_attempt_id": "attempt-1"
+      },
+      "expected": {
+        "route_id": "candidate_escape_repair",
+        "revoke_admission_custody": true,
+        "return_pr_to_draft": true,
+        "mutate_candidate_bytes": true,
+        "same_subject_retry": false,
+        "requires_new_ready_transaction": true,
+        "requires_regression_guard_or_limitation": true,
+        "route_complete": true,
+        "preserve_unaffected_review": false,
+        "handoff_repository_health_owner": false,
+        "release_pr_local_actor": false,
+        "forbid_poll_child": true,
+        "retain_incident_lineage": true,
+        "visible_blocker": false,
+        "owner_class": "candidate_writer"
+      }
+    },
+    {
+      "id": "candidate_escape_code_only_incomplete",
+      "packet": {
+        "schema": "admission_incident.v1",
+        "subject": {
+          "candidate_head_sha": "sha256:head-h1",
+          "merge_group_id": "g1",
+          "workflow_attempt_id": "attempt-1"
+        },
+        "currentness": {
+          "basis_is_current": true,
+          "observed_candidate_head_sha": "sha256:head-h1",
+          "observed_merge_group_id": "g1",
+          "observed_workflow_attempt_id": "attempt-1"
+        },
+        "incident_class": "candidate_escape",
+        "candidate_mutation_allowed": "yes",
+        "same_subject_retry_allowed": "no",
+        "owner_class": "candidate_writer",
+        "route_inputs": {
+          "regression_guard_or_limitation_recorded": false
+        }
+      },
+      "context": {
+        "candidate_head_sha": "sha256:head-h1",
+        "merge_group_id": "g1",
+        "workflow_attempt_id": "attempt-1"
+      },
+      "expected": {
+        "route_id": "candidate_escape_repair",
+        "revoke_admission_custody": true,
+        "return_pr_to_draft": true,
+        "mutate_candidate_bytes": true,
+        "same_subject_retry": false,
+        "requires_new_ready_transaction": true,
+        "requires_regression_guard_or_limitation": true,
+        "route_complete": false,
+        "preserve_unaffected_review": false,
+        "handoff_repository_health_owner": false,
+        "release_pr_local_actor": false,
+        "forbid_poll_child": true,
+        "retain_incident_lineage": true,
+        "visible_blocker": false,
+        "owner_class": "candidate_writer",
+        "incomplete_reason": "candidate escape requires regression-guard or reviewed limitation before re-admission"
+      }
+    },
+    {
+      "id": "integration_interaction_preserves_unrelated_review",
+      "packet": {
+        "schema": "admission_incident.v1",
+        "subject": {
+          "candidate_head_sha": "sha256:head-h1",
+          "merge_group_id": "g1",
+          "workflow_attempt_id": "attempt-1"
+        },
+        "currentness": {
+          "basis_is_current": true,
+          "observed_candidate_head_sha": "sha256:head-h1",
+          "observed_merge_group_id": "g1",
+          "observed_workflow_attempt_id": "attempt-1"
+        },
+        "incident_class": "integration_interaction",
+        "candidate_mutation_allowed": "yes",
+        "same_subject_retry_allowed": "no",
+        "owner_class": "candidate_writer",
+        "route_inputs": {
+          "behind_main_only": false
+        }
+      },
+      "context": {
+        "candidate_head_sha": "sha256:head-h1",
+        "merge_group_id": "g1",
+        "workflow_attempt_id": "attempt-1"
+      },
+      "expected": {
+        "route_id": "integration_interaction_repair",
+        "revoke_admission_custody": true,
+        "return_pr_to_draft": true,
+        "mutate_candidate_bytes": true,
+        "same_subject_retry": false,
+        "requires_new_ready_transaction": true,
+        "requires_regression_guard_or_limitation": false,
+        "route_complete": true,
+        "preserve_unaffected_review": true,
+        "handoff_repository_health_owner": false,
+        "release_pr_local_actor": false,
+        "forbid_poll_child": true,
+        "retain_incident_lineage": true,
+        "visible_blocker": false,
+        "owner_class": "candidate_writer"
+      }
+    },
+    {
+      "id": "integration_behind_main_only_blocked",
+      "packet": {
+        "schema": "admission_incident.v1",
+        "subject": {
+          "candidate_head_sha": "sha256:head-h1",
+          "merge_group_id": "g1",
+          "workflow_attempt_id": "attempt-1"
+        },
+        "currentness": {
+          "basis_is_current": true,
+          "observed_candidate_head_sha": "sha256:head-h1",
+          "observed_merge_group_id": "g1",
+          "observed_workflow_attempt_id": "attempt-1"
+        },
+        "incident_class": "integration_interaction",
+        "candidate_mutation_allowed": "yes",
+        "same_subject_retry_allowed": "no",
+        "owner_class": "candidate_writer",
+        "route_inputs": {
+          "behind_main_only": true
+        }
+      },
+      "context": {
+        "candidate_head_sha": "sha256:head-h1",
+        "merge_group_id": "g1",
+        "workflow_attempt_id": "attempt-1"
+      },
+      "expected": {
+        "route_id": "integration_interaction_repair",
+        "revoke_admission_custody": true,
+        "return_pr_to_draft": true,
+        "mutate_candidate_bytes": false,
+        "same_subject_retry": false,
+        "requires_new_ready_transaction": true,
+        "requires_regression_guard_or_limitation": false,
+        "route_complete": false,
+        "preserve_unaffected_review": true,
+        "handoff_repository_health_owner": false,
+        "release_pr_local_actor": false,
+        "forbid_poll_child": true,
+        "retain_incident_lineage": true,
+        "visible_blocker": true,
+        "owner_class": "candidate_writer",
+        "incomplete_reason": "integration interaction cannot be inferred from behind-main metadata alone"
+      }
+    },
+    {
+      "id": "infrastructure_failure_same_subject_retry",
+      "packet": {
+        "schema": "admission_incident.v1",
+        "subject": {
+          "candidate_head_sha": "sha256:head-h1",
+          "merge_group_id": "g1",
+          "workflow_attempt_id": "attempt-1"
+        },
+        "currentness": {
+          "basis_is_current": true,
+          "observed_candidate_head_sha": "sha256:head-h1",
+          "observed_merge_group_id": "g1",
+          "observed_workflow_attempt_id": "attempt-1"
+        },
+        "incident_class": "infrastructure_failure",
+        "candidate_mutation_allowed": "no",
+        "same_subject_retry_allowed": "yes",
+        "owner_class": "candidate_writer"
+      },
+      "context": {
+        "candidate_head_sha": "sha256:head-h1",
+        "merge_group_id": "g1",
+        "workflow_attempt_id": "attempt-1"
+      },
+      "expected": {
+        "route_id": "infrastructure_same_subject_retry",
+        "revoke_admission_custody": false,
+        "return_pr_to_draft": false,
+        "mutate_candidate_bytes": false,
+        "same_subject_retry": true,
+        "requires_new_ready_transaction": false,
+        "requires_regression_guard_or_limitation": false,
+        "route_complete": true,
+        "preserve_unaffected_review": true,
+        "handoff_repository_health_owner": false,
+        "release_pr_local_actor": false,
+        "forbid_poll_child": true,
+        "retain_incident_lineage": false,
+        "visible_blocker": false,
+        "owner_class": "candidate_writer"
+      }
+    },
+    {
+      "id": "instrument_defect_oracle_before_retry",
+      "packet": {
+        "schema": "admission_incident.v1",
+        "subject": {
+          "candidate_head_sha": "sha256:head-h1",
+          "merge_group_id": "g1",
+          "workflow_attempt_id": "attempt-1"
+        },
+        "currentness": {
+          "basis_is_current": true,
+          "observed_candidate_head_sha": "sha256:head-h1",
+          "observed_merge_group_id": "g1",
+          "observed_workflow_attempt_id": "attempt-1"
+        },
+        "incident_class": "instrument_defect",
+        "candidate_mutation_allowed": "no",
+        "same_subject_retry_allowed": "yes",
+        "owner_class": "instrument_owner"
+      },
+      "context": {
+        "candidate_head_sha": "sha256:head-h1",
+        "merge_group_id": "g1",
+        "workflow_attempt_id": "attempt-1"
+      },
+      "expected": {
+        "route_id": "instrument_defect_repair",
+        "revoke_admission_custody": false,
+        "return_pr_to_draft": false,
+        "mutate_candidate_bytes": false,
+        "same_subject_retry": true,
+        "requires_new_ready_transaction": false,
+        "requires_regression_guard_or_limitation": false,
+        "route_complete": true,
+        "preserve_unaffected_review": true,
+        "handoff_repository_health_owner": false,
+        "release_pr_local_actor": false,
+        "forbid_poll_child": true,
+        "retain_incident_lineage": false,
+        "visible_blocker": false,
+        "owner_class": "instrument_owner"
+      }
+    },
+    {
+      "id": "superseded_no_verdict_reclaim",
+      "packet": {
+        "schema": "admission_incident.v1",
+        "subject": {
+          "candidate_head_sha": "sha256:head-h0",
+          "merge_group_id": "g1",
+          "workflow_attempt_id": "attempt-0"
+        },
+        "currentness": {
+          "basis_is_current": true,
+          "observed_candidate_head_sha": "sha256:head-h0",
+          "observed_merge_group_id": "g1",
+          "observed_workflow_attempt_id": "attempt-0"
+        },
+        "incident_class": "superseded_no_verdict",
+        "candidate_mutation_allowed": "no",
+        "same_subject_retry_allowed": "no",
+        "owner_class": "orchestrator"
+      },
+      "context": {
+        "candidate_head_sha": "sha256:head-h0",
+        "merge_group_id": "g1",
+        "workflow_attempt_id": "attempt-0"
+      },
+      "expected": {
+        "route_id": "superseded_reclaim",
+        "revoke_admission_custody": true,
+        "return_pr_to_draft": false,
+        "mutate_candidate_bytes": false,
+        "same_subject_retry": false,
+        "requires_new_ready_transaction": false,
+        "requires_regression_guard_or_limitation": false,
+        "route_complete": true,
+        "preserve_unaffected_review": true,
+        "handoff_repository_health_owner": false,
+        "release_pr_local_actor": false,
+        "forbid_poll_child": true,
+        "retain_incident_lineage": true,
+        "visible_blocker": false,
+        "owner_class": "orchestrator"
+      }
+    },
+    {
+      "id": "not_proven_no_convenient_retry",
+      "packet": {
+        "schema": "admission_incident.v1",
+        "subject": {
+          "candidate_head_sha": "sha256:head-h1",
+          "merge_group_id": "g1",
+          "workflow_attempt_id": "attempt-1"
+        },
+        "currentness": {
+          "basis_is_current": true,
+          "observed_candidate_head_sha": "sha256:head-h1",
+          "observed_merge_group_id": "g1",
+          "observed_workflow_attempt_id": "attempt-1"
+        },
+        "incident_class": "not_proven",
+        "candidate_mutation_allowed": "not_proven",
+        "same_subject_retry_allowed": "not_proven",
+        "owner_class": "candidate_writer"
+      },
+      "context": {
+        "candidate_head_sha": "sha256:head-h1",
+        "merge_group_id": "g1",
+        "workflow_attempt_id": "attempt-1"
+      },
+      "expected": {
+        "route_id": "not_proven_block",
+        "revoke_admission_custody": false,
+        "return_pr_to_draft": false,
+        "mutate_candidate_bytes": false,
+        "same_subject_retry": false,
+        "requires_new_ready_transaction": false,
+        "requires_regression_guard_or_limitation": false,
+        "route_complete": true,
+        "preserve_unaffected_review": true,
+        "handoff_repository_health_owner": false,
+        "release_pr_local_actor": false,
+        "forbid_poll_child": true,
+        "retain_incident_lineage": false,
+        "visible_blocker": true,
+        "owner_class": "candidate_writer",
+        "incomplete_reason": "missing evidence; do not retry or mutate by inference"
+      }
+    },
+    {
+      "id": "main_unhealthy_repository_owner",
+      "packet": {
+        "schema": "admission_incident.v1",
+        "subject": {
+          "candidate_head_sha": "sha256:head-h1",
+          "merge_group_id": "g1",
+          "workflow_attempt_id": "attempt-1"
+        },
+        "currentness": {
+          "basis_is_current": true,
+          "observed_candidate_head_sha": "sha256:head-h1",
+          "observed_merge_group_id": "g1",
+          "observed_workflow_attempt_id": "attempt-1"
+        },
+        "incident_class": "main_unhealthy",
+        "candidate_mutation_allowed": "no",
+        "same_subject_retry_allowed": "no",
+        "owner_class": "repository_health_owner"
+      },
+      "context": {
+        "candidate_head_sha": "sha256:head-h1",
+        "merge_group_id": "g1",
+        "workflow_attempt_id": "attempt-1"
+      },
+      "expected": {
+        "route_id": "main_unhealthy_handoff",
+        "revoke_admission_custody": true,
+        "return_pr_to_draft": false,
+        "mutate_candidate_bytes": false,
+        "same_subject_retry": false,
+        "requires_new_ready_transaction": false,
+        "requires_regression_guard_or_limitation": false,
+        "route_complete": true,
+        "preserve_unaffected_review": true,
+        "handoff_repository_health_owner": true,
+        "release_pr_local_actor": true,
+        "forbid_poll_child": true,
+        "retain_incident_lineage": false,
+        "visible_blocker": false,
+        "owner_class": "repository_health_owner"
+      }
+    },
+    {
+      "id": "repair_material_finding_refresh_only_affected",
+      "packet": {
+        "schema": "admission_incident.v1",
+        "subject": {
+          "candidate_head_sha": "sha256:head-h1",
+          "merge_group_id": "g1",
+          "workflow_attempt_id": "attempt-1"
+        },
+        "currentness": {
+          "basis_is_current": true,
+          "observed_candidate_head_sha": "sha256:head-h1",
+          "observed_merge_group_id": "g1",
+          "observed_workflow_attempt_id": "attempt-1"
+        },
+        "incident_class": "candidate_escape",
+        "candidate_mutation_allowed": "yes",
+        "same_subject_retry_allowed": "no",
+        "owner_class": "candidate_writer",
+        "route_inputs": {
+          "regression_guard_or_limitation_recorded": true,
+          "material_finding_during_repair": true
+        }
+      },
+      "context": {
+        "candidate_head_sha": "sha256:head-h1",
+        "merge_group_id": "g1",
+        "workflow_attempt_id": "attempt-1"
+      },
+      "expected": {
+        "route_id": "candidate_escape_repair",
+        "revoke_admission_custody": true,
+        "return_pr_to_draft": true,
+        "mutate_candidate_bytes": true,
+        "same_subject_retry": false,
+        "requires_new_ready_transaction": true,
+        "requires_regression_guard_or_limitation": true,
+        "route_complete": true,
+        "preserve_unaffected_review": true,
+        "handoff_repository_health_owner": false,
+        "release_pr_local_actor": false,
+        "forbid_poll_child": true,
+        "retain_incident_lineage": true,
+        "visible_blocker": false,
+        "owner_class": "candidate_writer"
+      }
+    },
+    {
+      "id": "lineage_retained_after_h2_passes",
+      "packet": {
+        "schema": "admission_incident.v1",
+        "subject": {
+          "candidate_head_sha": "sha256:head-h2",
+          "merge_group_id": "g1",
+          "workflow_attempt_id": "attempt-2"
+        },
+        "currentness": {
+          "basis_is_current": true,
+          "observed_candidate_head_sha": "sha256:head-h2",
+          "observed_merge_group_id": "g1",
+          "observed_workflow_attempt_id": "attempt-2"
+        },
+        "incident_class": "candidate_escape",
+        "candidate_mutation_allowed": "yes",
+        "same_subject_retry_allowed": "no",
+        "owner_class": "candidate_writer",
+        "linked_prior_incident_id": "incident-h1-escape",
+        "route_inputs": {
+          "regression_guard_or_limitation_recorded": true
+        }
+      },
+      "context": {
+        "candidate_head_sha": "sha256:head-h2",
+        "merge_group_id": "g1",
+        "workflow_attempt_id": "attempt-2"
+      },
+      "expected": {
+        "route_id": "candidate_escape_repair",
+        "revoke_admission_custody": true,
+        "return_pr_to_draft": true,
+        "mutate_candidate_bytes": true,
+        "same_subject_retry": false,
+        "requires_new_ready_transaction": true,
+        "requires_regression_guard_or_limitation": true,
+        "route_complete": true,
+        "preserve_unaffected_review": false,
+        "handoff_repository_health_owner": false,
+        "release_pr_local_actor": false,
+        "forbid_poll_child": true,
+        "retain_incident_lineage": true,
+        "visible_blocker": false,
+        "owner_class": "candidate_writer"
+      }
+    },
+    {
+      "id": "slow_in_progress_infrastructure_no_cancel",
+      "slow_in_progress": true,
+      "packet": {
+        "schema": "admission_incident.v1",
+        "subject": {
+          "candidate_head_sha": "sha256:head-h1",
+          "merge_group_id": "g1",
+          "workflow_attempt_id": "attempt-1"
+        },
+        "currentness": {
+          "basis_is_current": true,
+          "observed_candidate_head_sha": "sha256:head-h1",
+          "observed_merge_group_id": "g1",
+          "observed_workflow_attempt_id": "attempt-1"
+        },
+        "incident_class": "infrastructure_failure",
+        "candidate_mutation_allowed": "no",
+        "same_subject_retry_allowed": "yes",
+        "owner_class": "candidate_writer",
+        "route_inputs": {
+          "slow_in_progress": true
+        }
+      },
+      "context": {
+        "candidate_head_sha": "sha256:head-h1",
+        "merge_group_id": "g1",
+        "workflow_attempt_id": "attempt-1"
+      },
+      "expected": {
+        "route_id": "infrastructure_same_subject_retry",
+        "revoke_admission_custody": false,
+        "return_pr_to_draft": false,
+        "mutate_candidate_bytes": false,
+        "same_subject_retry": true,
+        "requires_new_ready_transaction": false,
+        "requires_regression_guard_or_limitation": false,
+        "route_complete": true,
+        "preserve_unaffected_review": true,
+        "handoff_repository_health_owner": false,
+        "release_pr_local_actor": false,
+        "forbid_poll_child": true,
+        "retain_incident_lineage": false,
+        "visible_blocker": false,
+        "owner_class": "candidate_writer"
+      }
+    }
+  ]
+}

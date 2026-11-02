@@ -19,6 +19,20 @@ The selected PR has an exact current head, a current `review-pr` disposition, al
 - `finish_contract:duplicate_recheck`
 - `finish_contract:behind_only_no_restack`
 
+# Incident route markers
+
+When a current `admission_incident.v1` packet is available, route before opening a PR-local repair loop.
+
+- `incident_route:currentness_before_class`
+- `incident_route:candidate_escape_revoke_repair_ready`
+- `incident_route:candidate_escape_requires_proof_feedback`
+- `incident_route:integration_not_behind_main_only`
+- `incident_route:instrument_repair_before_retry`
+- `incident_route:infrastructure_same_subject_no_mutation`
+- `incident_route:superseded_no_h2_contamination`
+- `incident_route:not_proven_no_convenient_retry`
+- `incident_route:retain_incident_lineage`
+
 # Entry condition
 
 `finish-pr` owns publication, remote review/CI repair, merge, and reconciliation. It does not silently manufacture the substantive review pass.
