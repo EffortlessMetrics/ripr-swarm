@@ -176,6 +176,32 @@ lazy_static! { static ref CFG: u32 = load().expect("ok"); }
         candidates.may_bind("expect"),
         "verified import must still record the name"
     );
+    let without_import = r#"macro_rules! lazy_static { ($($t:tt)*) => { $($t)* }; }
+lazy_static! { static ref CFG: u32 = load().expect("ok"); }
+"#;
+    let parse = parse_clean_source_file(without_import)
+        .ok_or_else(|| "fixture source must parse".to_string())?;
+    assert!(
+        !macro_binding_candidates(&parse.tree()).may_bind("expect"),
+        "method `.expect(` alone must not add the trusted name"
+    );
+    let spaced = r#"macro_rules! lazy_static { ($($t:tt)*) => { $($t)* }; }
+lazy_static! { static ref CFG: u32 = load(). /* note */ expect("ok"); }
+"#;
+    let spaced_sites = crate::analysis::syntax::trusted_macro_binding_sites(
+        spaced,
+        &std::collections::BTreeSet::new(),
+        &["expect"],
+        &|_, _| false,
+        &|_| false,
+    );
+    assert!(
+        spaced_sites.iter().all(|(_, site)| !matches!(
+            site.kind,
+            crate::analysis::syntax::MacroBindingKind::MacroArgument(_)
+        )),
+        "whitespace must not split `.expect(`: {spaced_sites:?}"
+    );
     let sites = crate::analysis::syntax::trusted_macro_binding_sites(
         source,
         &std::collections::BTreeSet::new(),

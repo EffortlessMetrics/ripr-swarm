@@ -575,11 +575,27 @@ impl MacroBindingCandidates {
 
 /// In an untrusted macro's token tree, `.name(` is a method call on its
 /// receiver, not evidence that the trusted macro `name!` may bind there
-/// (#7901).
+/// (#7901). A fragment capture such as `define!(x.expect)` has no `(` after
+/// the identifier and stays ambiguous.
 fn untrusted_macro_argument_token_may_bind_name(token: &SyntaxToken) -> bool {
-    token
-        .prev_token()
-        .is_none_or(|prev| prev.kind() != ra_ap_syntax::SyntaxKind::DOT)
+    !looks_like_dot_paren_method_token(token)
+}
+
+fn prev_non_trivia_token(token: &SyntaxToken) -> Option<SyntaxToken> {
+    std::iter::successors(token.prev_token(), |previous| previous.prev_token())
+        .find(|previous| !previous.kind().is_trivia())
+}
+
+fn next_non_trivia_token(token: &SyntaxToken) -> Option<SyntaxToken> {
+    std::iter::successors(token.next_token(), |next| next.next_token())
+        .find(|next| !next.kind().is_trivia())
+}
+
+fn looks_like_dot_paren_method_token(token: &SyntaxToken) -> bool {
+    prev_non_trivia_token(token)
+        .is_some_and(|previous| previous.kind() == ra_ap_syntax::SyntaxKind::DOT)
+        && next_non_trivia_token(token)
+            .is_some_and(|next| next.kind() == ra_ap_syntax::SyntaxKind::L_PAREN)
 }
 
 /// [`MacroBindingCandidates`] of a parser-clean file. It mirrors every site
