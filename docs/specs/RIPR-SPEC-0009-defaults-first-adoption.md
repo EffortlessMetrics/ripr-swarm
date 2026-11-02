@@ -278,9 +278,9 @@ inclusive match head: the `match` keyword through the scrutinee, or the arm
 pattern and guard through `=>`. Separate arm-body lines do not touch that head.
 Token anchors, seam IDs and calibration spans stay unchanged. The coverage
 survives cached facts and classifications. When the change has no ranked seam, pilot says the
-recommendation is elsewhere in the repo, says why no seam on the change ranks
+gap is not on a line you changed, says why no seam on the change ranks
 (pilot withholds its seams as static limitations, they are already gripped,
-intentional or suppressed, the seam limit left seams unanalyzed, the change is
+intentional or suppressed, the pilot limit left spots unchecked, the change is
 in a file pilot's repo-wide ranking leaves out by design (a Cargo build script,
 repository automation under `xtask/`, or a crate source declared outside
 `src`, which only diff analysis covers, also named after a reason drawn from
@@ -692,8 +692,7 @@ body does not mark that match head as changed.
 
 Given a branch whose change touches no ranked seam,
 when a user runs ripr pilot,
-then pilot says the top recommendation is elsewhere in the repo, not part of
-the current change, and names ripr check for the change itself.
+then pilot says the top gap is not on a line you changed, and names ripr check for the change itself.
 
 Given a branch whose changed lines hold only seams pilot withholds as static
 limitations (opaque or an unknown class),
