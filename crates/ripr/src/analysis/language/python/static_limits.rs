@@ -599,6 +599,11 @@ pub(super) fn is_transparent_owner_decorator_for_owner(
             &owner.imports,
             &owner.cli_receiver_names,
         )
+        || (owner.trusted_stdlib_click_alias
+            && super::cli_runner::is_provenance_checked_click_alias_decorator(
+                decorator,
+                &owner.imports,
+            ))
         || is_imported_functools_memoization_decorator(decorator, &owner.imports)
         || (is_imported_typing_marker_decorator(decorator, &owner.imports)
             && !owner
@@ -1763,6 +1768,7 @@ pub(super) mod tests {
             cli_subcommand: None,
             nested_called_by_parent: false,
             nested_result_discarded: false,
+            trusted_stdlib_click_alias: false,
         }
     }
 
