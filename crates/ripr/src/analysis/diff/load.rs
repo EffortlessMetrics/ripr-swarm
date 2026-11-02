@@ -1756,6 +1756,14 @@ fn another_base_candidate_with_limits(
         let numstat = crate::git::run_git_output_with_deadline(
             root,
             &[
+                // Pin quoting like the analysis loader (#3601): ambient
+                // `quotePath=false` would emit raw non-UTF-8 bytes that
+                // the lossy decode below collapses, and the default-true
+                // C-quoted form must decode to the same native identity
+                // `language_admits_changed_path` compares against
+                // `handwritten_files` (#10821 Devin review).
+                "-c",
+                "core.quotePath=true",
                 "diff",
                 "--relative",
                 "--ignore-submodules=none",
@@ -1791,14 +1799,13 @@ fn another_base_candidate_with_limits(
                 .unwrap_or(0)
                 .saturating_add(deleted.parse::<usize>().unwrap_or(0));
             total_lines = total_lines.saturating_add(changed);
-            let dest = numstat_new_path(path);
-            let dest_path = Path::new(&dest);
-            if dest.ends_with(".rs") {
+            let dest_path = native_numstat_dest(path);
+            if dest_path.extension().is_some_and(|ext| ext == "rs") {
                 rust_lines = rust_lines.saturating_add(changed);
             }
             if python_enabled
                 && super::super::pipeline::language_admits_changed_path(
-                    dest_path,
+                    &dest_path,
                     LanguageId::Python,
                     limits.language_config,
                 )
@@ -1807,7 +1814,7 @@ fn another_base_candidate_with_limits(
             }
             if typescript_enabled
                 && super::super::pipeline::language_admits_changed_path(
-                    dest_path,
+                    &dest_path,
                     LanguageId::TypeScript,
                     limits.language_config,
                 )
@@ -1833,6 +1840,20 @@ fn another_base_candidate_with_limits(
         }
     }
     best.map(|(_, _, name)| name)
+}
+
+/// Native destination path of one `--numstat` field under
+/// `core.quotePath=true`. Rename forms still take the new path; C-quoted
+/// tokens then decode to the same identity the unified-diff parser uses
+/// so `handwritten_files` admission cannot miss a declared non-ASCII
+/// path (#10821).
+fn native_numstat_dest(path: &str) -> PathBuf {
+    let dest = numstat_new_path(path);
+    let unquoted = dest.trim().trim_matches('"');
+    if unquoted.is_empty() {
+        return PathBuf::new();
+    }
+    super::path::native_path_from_git_token(&format!("\"{unquoted}\""))
 }
 
 /// The destination path of one `--numstat` entry. Rename forms are
@@ -3421,6 +3442,16 @@ mod tests {
             "src/new.rs",
             "quoted rename paths must still classify by destination"
         );
+        assert_eq!(
+            native_numstat_dest("\"venv/caf\\303\\251.py\""),
+            PathBuf::from("venv/café.py"),
+            "C-quoted non-ASCII numstat paths must decode before admission"
+        );
+        assert_eq!(
+            native_numstat_dest("src/old.py => \"src/caf\\303\\251.py\""),
+            PathBuf::from("src/café.py"),
+            "quotePath=true rename destinations quote only the new path"
+        );
     }
 
     #[test]
@@ -3664,6 +3695,41 @@ mod tests {
             probe_with_preview_limits(&dir, &python_on, 2_000, 10, 2_000, 10_000),
             None,
             "renamed Python lines must count toward the preview budget"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_counts_quoted_handwritten_preview_python() -> std::io::Result<()> {
+        // #10821 Devin review: a non-ASCII handwritten_files path under an
+        // excluded directory is admitted by the guards after C-quote decode.
+        // The probe must use that same native identity, or it would advise
+        // `--base` for a diff `ripr check` refuses as oversized.
+        let dir = unique_fixture_root("another-base-candidate-quoted-handwritten")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        fs::write(dir.join("tiny.rs"), "fn only() {}\n")?;
+        fs::create_dir_all(dir.join("venv"))?;
+        fs::write(
+            dir.join("venv").join("café.py"),
+            numbered_source_lines("value_", 20),
+        )?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "quoted handwritten python"])?;
+        let mut declared = languages_enabling(&[LanguageId::Rust, LanguageId::Python]);
+        declared.python.handwritten_files = vec!["venv/café.py".to_string()];
+        assert_eq!(
+            probe_with_preview_limits(&dir, &declared, 2_000, 5, 2_000, 10_000),
+            None,
+            "a C-quoted handwritten Python path over budget must not be advised"
+        );
+        let undeclared = languages_enabling(&[LanguageId::Rust, LanguageId::Python]);
+        assert_eq!(
+            probe_with_preview_limits(&dir, &undeclared, 2_000, 5, 2_000, 10_000).as_deref(),
+            Some("ancient"),
+            "the same excluded path without a handwritten declaration must not count"
         );
         ignore_remove_dir_all(&dir);
         Ok(())
