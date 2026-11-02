@@ -7,7 +7,7 @@ use crate::config::{CONFIG_FILE_NAME, generated_init_config_for_root};
 use crate::output;
 use std::path::{Path, PathBuf};
 
-use super::init_workflow::{generated_github_actions_workflow, workflow_install_version};
+use super::init_workflow::{generated_ci_workflow, workflow_install_version};
 
 pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -50,19 +50,25 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     // not exist on crates.io, so the install step would fail. The workflow
     // pins the latest release instead; say so calmly, on stderr like the
     // root warning, in both dry-run and real runs.
-    if options.ci.is_some() {
+    if let Some(ci) = options.ci {
         let generator = env!("CARGO_PKG_VERSION");
         let pinned = workflow_install_version(generator);
         if pinned != generator {
-            let refresh = workflow_refresh_guidance(&options.root);
+            let refresh = workflow_refresh_guidance(&options.root, ci);
             let follow_up = if refresh.starts_with("refresh command omitted") {
                 format!("upgrade ripr and refresh the workflow ({refresh})")
             } else {
                 format!("upgrade ripr, then {refresh}")
             };
-            eprintln!(
-                "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. That release lacks commands this workflow runs (`ripr reports ci-packet`, `ripr pr-comments summary`), so its CI run fails until {generator} is published: hold off committing the workflow, or use it only to review the template. Once {generator} is published, {follow_up}"
-            );
+            let note = match ci {
+                InitCi::Github => format!(
+                    "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. That release lacks commands this workflow runs (`ripr reports ci-packet`, `ripr pr-comments summary`), so its CI run fails until {generator} is published: hold off committing the workflow, or use it only to review the template. Once {generator} is published, {follow_up}"
+                ),
+                InitCi::Gitlab => format!(
+                    "ripr: note: this build of ripr ({generator}) is a development version, so the generated pipeline installs ripr {pinned}, the latest published release. Once {generator} is published, {follow_up}"
+                ),
+            };
+            eprintln!("{note}");
         }
     }
     if options.dry_run {
@@ -328,7 +334,7 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         action: config_action,
         body: generated_init_config_for_root(&options.root),
     }];
-    if let Some(path) = workflow_path {
+    if let (Some(path), Some(ci)) = (workflow_path, options.ci.as_ref()) {
         let action = if path_is_occupied(&path)? {
             InitAction::Overwrite
         } else {
@@ -337,7 +343,7 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         targets.push(InitTarget {
             path,
             action,
-            body: generated_github_actions_workflow(),
+            body: generated_ci_workflow(ci),
         });
     }
     if let Some(path) = mcp_path {
@@ -446,7 +452,8 @@ fn existing_target_error(path: &Path, root: &Path, ci: Option<&InitCi>) -> Strin
         }
     };
     let root_arg = crate::agent::loop_commands::shell_arg(&root_display);
-    let workflow = format!("ripr init --ci github --force --root {root_arg}");
+    let provider = ci.map(InitCi::as_str).unwrap_or("github");
+    let workflow = format!("ripr init --ci {provider} --force --root {root_arg}");
     let overwrite = format!("ripr init --force --root {root_arg}");
     let preview = format!("ripr init --force --dry-run --root {root_arg}");
     let (mut message, commands) = if ci.is_some() {
@@ -497,7 +504,7 @@ fn without_current_dir_suffix(display: &str) -> String {
 
 /// Init and doctor prescribe the same workflow write. Bind it to the selected
 /// root just like init's successful follow-ups and existing-file retries.
-pub(super) fn workflow_refresh_guidance(root: &Path) -> String {
+pub(super) fn workflow_refresh_guidance(root: &Path, ci: InitCi) -> String {
     let root_display = match init_command_root(root) {
         Ok(root) => root,
         Err(error) => return format!("refresh command omitted: {error}."),
@@ -517,7 +524,7 @@ pub(super) fn workflow_refresh_guidance(root: &Path) -> String {
     } else {
         crate::agent::loop_commands::shell_arg(&root_display)
     };
-    let command = format!("ripr init --ci github --force --root {root_arg}");
+    let command = format!("ripr init --ci {} --force --root {root_arg}", ci.as_str());
     let mut guidance = format!("refresh with `{command}` and review the diff before committing.");
     if let Some(powershell) = output::markdown::powershell_text_variant(&command) {
         // Doctor escapes control characters in advisory evidence. Keep both
@@ -683,15 +690,22 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
             println!();
             println!("{}", init_agents::FOLLOW_UP);
         }
-        if let Some(workflow) = plan
-            .iter()
-            .find(|target| target.path == init_ci_workflow_path(root, &InitCi::Github))
-        {
+        if let Some((workflow, ci)) = plan.iter().find_map(|target| {
+            [InitCi::Github, InitCi::Gitlab]
+                .into_iter()
+                .find(|ci| target.path == init_ci_workflow_path(root, ci))
+                .map(|ci| (target, ci))
+        }) {
             println!();
-            println!(
-                "CI next: review `{}` (advisory by default; blocking gates are opt-in via the RIPR_GATE_MODE repository variable), commit the generated files, then open or update a pull request and read the workflow's job summary.",
-                output::path::human_path(&workflow.path)
-            );
+            let path = output::path::human_path(&workflow.path);
+            match ci {
+                InitCi::Github => println!(
+                    "CI next: review `{path}` (advisory by default; blocking gates are opt-in via the RIPR_GATE_MODE repository variable), commit the generated files, then open or update a pull request and read the workflow's job summary."
+                ),
+                InitCi::Gitlab => println!(
+                    "CI next: review `{path}` (advisory: `allow_failure: true`), commit the generated files, then open or update a merge request and download the `target/ripr/**` job artifacts."
+                ),
+            }
         }
         println!();
         if inside_git {
@@ -831,7 +845,12 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
 fn parse_init_ci(value: &str) -> Result<InitCi, String> {
     match value {
         "github" => Ok(InitCi::Github),
-        _ => Err(unknown_value("init --ci provider", value, &["github"])),
+        "gitlab" => Ok(InitCi::Gitlab),
+        _ => Err(unknown_value(
+            "init --ci provider",
+            value,
+            &["github", "gitlab"],
+        )),
     }
 }
 
@@ -870,11 +889,13 @@ fn render_init_dry_run(plan: &[InitTarget], windows: bool) -> String {
 fn init_ci_workflow_path(root: &Path, ci: &InitCi) -> PathBuf {
     match ci {
         InitCi::Github => root.join(".github/workflows/ripr.yml"),
+        InitCi::Gitlab => root.join(".gitlab-ci.yml"),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::init_workflow::generated_github_actions_workflow;
     use super::*;
     use crate::cli::commands_options::InitCi;
     use crate::config::generated_init_config;
@@ -1609,6 +1630,23 @@ mod tests {
     }
 
     #[test]
+    fn plan_adds_gitlab_ci_for_ci_gitlab() -> Result<(), String> {
+        let root = temp_root("ci-gitlab")?;
+        let mut opts = options(&root);
+        opts.ci = Some(InitCi::Gitlab);
+        let plan = init_plan(&opts)?;
+
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[1].action, InitAction::Create);
+        assert_eq!(plan[1].path, root.join(".gitlab-ci.yml"));
+        assert!(plan[1].body.contains("ripr-advisory:"));
+        assert!(plan[1].body.contains("allow_failure: true"));
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn plan_rejects_an_existing_config_without_force() -> Result<(), String> {
         let root = temp_root("exists")?;
         write(&root.join(CONFIG_FILE_NAME), "[analysis]\n")?;
@@ -1654,7 +1692,7 @@ mod tests {
         );
         assert!(!message.contains("/.`"), "{message}");
 
-        let guidance = workflow_refresh_guidance(&dotted);
+        let guidance = workflow_refresh_guidance(&dotted, InitCi::Github);
         assert!(
             guidance.contains(&format!("--root {}`", shell_quote_for_test(&shown))),
             "{guidance}"

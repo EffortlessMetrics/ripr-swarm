@@ -1015,6 +1015,7 @@ mod tests {
         assert!(INIT_HELP.starts_with("Write an optional repo policy file"));
         assert!(INIT_HELP.contains("Usage: ripr init"));
         assert!(INIT_HELP.contains("--ci github"));
+        assert!(INIT_HELP.contains("--ci gitlab") || INIT_HELP.contains("github|gitlab"));
         assert!(INIT_HELP.contains("--dry-run"));
         assert!(INIT_HELP.contains("--force"));
         // --force resets ripr.toml only for plain `ripr init`; with --ci/--mcp
