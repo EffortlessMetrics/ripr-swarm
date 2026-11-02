@@ -10,7 +10,6 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::cli::unknown_argument;
 use crate::output::workflow_escape::{
     escape_data, escape_property, path_is_unplaceable, unplaced_location_prefix,
 };
@@ -19,10 +18,10 @@ const DEFAULT_COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 const DEFAULT_ANNOTATIONS_TXT: &str = "target/ripr/review/annotations.txt";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct AnnotationOptions {
-    comments: String,
-    out: String,
-    check: bool,
+pub(crate) struct AnnotationOptions {
+    pub(crate) comments: String,
+    pub(crate) out: String,
+    pub(crate) check: bool,
 }
 
 impl Default for AnnotationOptions {
@@ -35,12 +34,7 @@ impl Default for AnnotationOptions {
     }
 }
 
-pub(crate) fn run_annotations(args: &[String]) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-    let options = parse_options(args)?;
+pub(crate) fn execute_annotations(options: AnnotationOptions) -> Result<(), String> {
     let repo = repo_root()?;
     let generated = render_annotations(&repo, &options)?;
     let out = repo.join(&options.out);
@@ -49,46 +43,6 @@ pub(crate) fn run_annotations(args: &[String]) -> Result<(), String> {
     } else {
         write_annotations(&out, &generated, &options)
     }
-}
-
-fn parse_options(args: &[String]) -> Result<AnnotationOptions, String> {
-    let mut options = AnnotationOptions::default();
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--comments" => {
-                i += 1;
-                options.comments = non_empty_arg(args, i, "--comments")?.to_string();
-            }
-            "--out" => {
-                i += 1;
-                options.out = non_empty_arg(args, i, "--out")?.to_string();
-            }
-            "--check" => options.check = true,
-            other => return Err(unknown_argument("annotations", other)),
-        }
-        i += 1;
-    }
-    Ok(options)
-}
-
-fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
-    let Some(value) = args.get(index) else {
-        return Err(format!("missing value for {flag}; pass a value after it"));
-    };
-    if value.trim().is_empty() {
-        return Err(format!(
-            "annotations {flag} requires a non-empty value; pass `{flag} <path>`"
-        ));
-    }
-    Ok(value)
-}
-
-fn print_help() {
-    println!(
-        "{}",
-        crate::cli::help::render_command_help(ANNOTATIONS_HELP, &[])
-    );
 }
 
 /// Help body for `ripr annotations`. Also the flag source for unknown-argument
@@ -285,32 +239,6 @@ fn repo_root() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_supports_paths_and_check() -> Result<(), String> {
-        let parsed = parse_options(&[
-            "--comments".to_string(),
-            "comments.json".to_string(),
-            "--out".to_string(),
-            "annotations.txt".to_string(),
-            "--check".to_string(),
-        ])?;
-        assert_eq!(parsed.comments, "comments.json");
-        assert_eq!(parsed.out, "annotations.txt");
-        assert!(parsed.check);
-        match parse_options(&["--comments".to_string(), "".to_string()]) {
-            Err(msg) if msg.contains("non-empty") => Ok(()),
-            other => Err(format!("expected non-empty error, got {other:?}")),
-        }
-    }
-
-    #[test]
-    fn parse_rejects_unknown_arg() -> Result<(), String> {
-        match parse_options(&["--bogus".to_string()]) {
-            Err(msg) if msg.contains("--bogus") => Ok(()),
-            other => Err(format!("expected unknown-arg error, got {other:?}")),
-        }
-    }
 
     fn unique_temp_dir(label: &str) -> Result<PathBuf, String> {
         let nanos = std::time::SystemTime::now()

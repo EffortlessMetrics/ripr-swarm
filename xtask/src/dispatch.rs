@@ -175,7 +175,8 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .ok_or_else(|| "xtask manifest must have a repository parent".to_string())?;
-            ripr::app::run_impacted_evidence_at(repo_root, &args)
+            let options = ripr::cli::parse_impacted_evidence_options(&args)?;
+            ripr::app::run_impacted_evidence_at(repo_root, &options)
         }
         XtaskCommand::RiprPr(args) => super::reports::ripr_pr(&args),
         XtaskCommand::FirstPr(args) => super::reports::first_pr(&args),

@@ -11,7 +11,6 @@
 //! This avoids recompilation and keeps the analysis in-process.
 
 use crate::app::{CheckInput, Mode, OutputFormat, check_workspace};
-use crate::cli::unknown_argument;
 use crate::output::markdown::{code_span, inline_prose, table_cell_text, table_code_span};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
@@ -27,14 +26,14 @@ const PR_EVIDENCE_MD: &str = "target/ripr/pr/repo-exposure.md";
 const PR_DIFF: &str = "target/ripr/pr/pr.diff";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PrEvidenceOptions {
-    root: String,
-    base: String,
+pub(crate) struct PrEvidenceOptions {
+    pub(crate) root: String,
+    pub(crate) base: String,
     /// `false` when `--base` was omitted: `base` then holds a placeholder
-    /// until [`run_pr_evidence`] resolves the repository's default branch.
-    base_explicit: bool,
-    head: String,
-    check: bool,
+    /// until [`execute_pr_evidence`] resolves the repository's default branch.
+    pub(crate) base_explicit: bool,
+    pub(crate) head: String,
+    pub(crate) check: bool,
 }
 
 impl Default for PrEvidenceOptions {
@@ -58,12 +57,7 @@ impl Default for PrEvidenceOptions {
 ///
 /// When the check fails, an `error` packet is still written so downstream
 /// consumers see a contract-valid, actionable artifact rather than a gap.
-pub(crate) fn run_pr_evidence(args: &[String]) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-    let mut options = parse_options(args)?;
+pub(crate) fn execute_pr_evidence(mut options: PrEvidenceOptions) -> Result<(), String> {
     let repo = repo_root()?;
     ensure_root_inside_invocation_repo(&repo, &options.root)?;
     if !options.base_explicit {
@@ -80,51 +74,6 @@ pub(crate) fn run_pr_evidence(args: &[String]) -> Result<(), String> {
     } else {
         write_pr_evidence(&repo, &options)
     }
-}
-
-fn parse_options(args: &[String]) -> Result<PrEvidenceOptions, String> {
-    let mut options = PrEvidenceOptions::default();
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--root" => {
-                i += 1;
-                options.root = non_empty_arg(args, i, "--root")?.to_string();
-            }
-            "--base" => {
-                i += 1;
-                options.base = non_empty_arg(args, i, "--base")?.to_string();
-                options.base_explicit = true;
-            }
-            "--head" => {
-                i += 1;
-                options.head = non_empty_arg(args, i, "--head")?.to_string();
-            }
-            "--check" => options.check = true,
-            other => return Err(unknown_argument("pr-evidence", other)),
-        }
-        i += 1;
-    }
-    Ok(options)
-}
-
-fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
-    let Some(value) = args.get(index) else {
-        return Err(format!("missing value for {flag}; pass a value after it"));
-    };
-    if value.trim().is_empty() {
-        return Err(format!(
-            "pr-evidence {flag} requires a non-empty value; pass `{flag} <value>`"
-        ));
-    }
-    Ok(value)
-}
-
-fn print_help() {
-    println!(
-        "{}",
-        crate::cli::help::render_command_help(PR_EVIDENCE_HELP, &[])
-    );
 }
 
 /// Help body for `ripr pr-evidence`. Also the flag source for unknown-argument
@@ -1459,6 +1408,7 @@ mod tests {
 
     #[test]
     fn parse_defaults_and_check_mode() -> Result<(), String> {
+        use crate::cli::commands::pr_evidence_command::parse_options;
         assert_eq!(
             parse_options(&[])?,
             PrEvidenceOptions {
@@ -1475,6 +1425,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_unknown_or_empty_args() -> Result<(), String> {
+        use crate::cli::commands::pr_evidence_command::parse_options;
         match parse_options(&["--bad".into()]) {
             Err(msg) if msg.contains("--bad") => Ok(()),
             other => Err(format!("expected unknown-arg error, got {other:?}")),

@@ -26,6 +26,8 @@ pub(crate) use parse::expect_value;
 pub use parse::extract_global_verbose;
 pub(crate) use suggest::{unknown_argument, unknown_value};
 
+pub use commands::impacted_evidence_command::parse_impacted_evidence_options;
+
 /// The command completed. Shared by `Ok(())` paths and by the
 /// `help --json` exit contract (`docs/EXIT_CODES.md`).
 pub(crate) const EXIT_COMPLETED: i32 = 0;

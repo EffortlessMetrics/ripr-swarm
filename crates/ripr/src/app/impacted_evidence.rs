@@ -11,7 +11,6 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::cli::unknown_argument;
 use crate::output::markdown::{code_span, inline_prose, table_cell_text, table_code_span};
 
 const DEFAULT_PR_EVIDENCE_JSON: &str = "target/ripr/pr/repo-exposure.json";
@@ -19,10 +18,10 @@ const IMPACTED_JSON: &str = "target/xtask/impacted-evidence/latest.json";
 const IMPACTED_MD: &str = "target/xtask/impacted-evidence/latest.md";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ImpactedEvidenceOptions {
-    pr_evidence: String,
-    labels: Vec<String>,
-    check: bool,
+pub struct ImpactedEvidenceOptions {
+    pub pr_evidence: String,
+    pub labels: Vec<String>,
+    pub check: bool,
 }
 
 impl Default for ImpactedEvidenceOptions {
@@ -35,35 +34,36 @@ impl Default for ImpactedEvidenceOptions {
     }
 }
 
-pub(crate) fn run_impacted_evidence(args: &[String]) -> Result<(), String> {
-    run_impacted_evidence_at(&repo_root()?, args)
-}
-
 /// Shared entry point for `ripr impacted-evidence` (rooted at the working
 /// directory) and the compatibility `cargo xtask impacted-evidence` route
 /// (rooted at the xtask workspace), so refusal and routing logic has one owner.
-pub fn run_impacted_evidence_at(repo: &Path, args: &[String]) -> Result<(), String> {
-    run_impacted_evidence_with(repo, args, require_pr_evidence)
+pub fn run_impacted_evidence_at(
+    repo: &Path,
+    options: &ImpactedEvidenceOptions,
+) -> Result<(), String> {
+    execute_impacted_evidence_at(repo, options)
+}
+
+pub(crate) fn execute_impacted_evidence_at(
+    repo: &Path,
+    options: &ImpactedEvidenceOptions,
+) -> Result<(), String> {
+    run_impacted_evidence_with(repo, options, require_pr_evidence)
 }
 
 /// The run with its evidence loader injected, so a test can stand in for a
 /// concurrent run that writes outputs while the evidence is being read.
 fn run_impacted_evidence_with(
     repo: &Path,
-    args: &[String],
+    options: &ImpactedEvidenceOptions,
     load_pr_evidence: impl FnOnce(&Path, &str) -> Result<PrEvidenceInput, String>,
 ) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-    let options = parse_options(args)?;
     // Taken before the evidence is read, so a refusal removes only outputs
     // that already existed when this run started (#5307).
     let previous = stamp_outputs(repo);
     let input = load_pr_evidence(repo, &options.pr_evidence)
         .map_err(|err| refuse_with_stale_cleanup(repo, err, options.check, &previous))?;
-    let packet = packet_from_input(&options, &input);
+    let packet = packet_from_input(options, &input);
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("serialize impacted evidence: {err}"))?;
     let markdown = render_impacted_evidence_markdown(&packet);
@@ -72,55 +72,6 @@ fn run_impacted_evidence_with(
     } else {
         write_outputs(repo, &json_text, &markdown)
     }
-}
-
-fn parse_options(args: &[String]) -> Result<ImpactedEvidenceOptions, String> {
-    let mut options = ImpactedEvidenceOptions::default();
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--pr-evidence" => {
-                i += 1;
-                options.pr_evidence = non_empty_arg(args, i, "--pr-evidence")?.to_string();
-            }
-            "--label" => {
-                i += 1;
-                options
-                    .labels
-                    .push(non_empty_arg(args, i, "--label")?.to_string());
-            }
-            "--labels" => {
-                i += 1;
-                options
-                    .labels
-                    .extend(split_labels(non_empty_arg(args, i, "--labels")?));
-            }
-            "--check" => options.check = true,
-            other => return Err(unknown_argument("impacted-evidence", other)),
-        }
-        i += 1;
-    }
-    options.labels = normalize_labels(&options.labels);
-    Ok(options)
-}
-
-fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
-    let Some(value) = args.get(index) else {
-        return Err(format!("missing value for {flag}; pass a value after it"));
-    };
-    if value.trim().is_empty() {
-        return Err(format!(
-            "impacted-evidence {flag} requires a non-empty value; pass `{flag} <value>`"
-        ));
-    }
-    Ok(value)
-}
-
-fn print_help() {
-    println!(
-        "{}",
-        crate::cli::help::render_command_help(IMPACTED_EVIDENCE_HELP, &[])
-    );
 }
 
 /// Help body for `ripr impacted-evidence`. Also the flag source for
@@ -734,7 +685,7 @@ fn split_labels(labels: &str) -> Vec<String> {
         .collect()
 }
 
-fn normalize_labels(labels: &[String]) -> Vec<String> {
+pub(crate) fn normalize_labels(labels: &[String]) -> Vec<String> {
     labels
         .iter()
         .map(|label| label.trim().to_ascii_lowercase())
@@ -748,47 +699,12 @@ fn first_line(value: &str) -> String {
     value.lines().next().unwrap_or(value).trim().to_string()
 }
 
-fn repo_root() -> Result<PathBuf, String> {
-    std::env::current_dir().map_err(|err| format!("failed to determine working directory: {err}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn parse_rejects_blank_label_values() -> Result<(), String> {
-        let err = match parse_options(&["--label".to_string(), "   ".to_string()]) {
-            Ok(_) => return Err("blank --label should fail".to_string()),
-            Err(err) => err,
-        };
-        assert_eq!(
-            err,
-            "impacted-evidence --label requires a non-empty value; pass `--label <value>`"
-                .to_string()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn parse_accepts_labels_and_check() -> Result<(), String> {
-        let parsed = parse_options(&[
-            "--label".to_string(),
-            "release-risk".to_string(),
-            "--labels".to_string(),
-            "mutation, docs".to_string(),
-            "--check".to_string(),
-        ])?;
-        assert_eq!(
-            parsed.labels,
-            vec![
-                "docs".to_string(),
-                "mutation".to_string(),
-                "release-risk".to_string()
-            ]
-        );
-        assert!(parsed.check);
-        Ok(())
+    fn default_options() -> ImpactedEvidenceOptions {
+        ImpactedEvidenceOptions::default()
     }
 
     #[test]
@@ -1035,7 +951,7 @@ mod tests {
         fs::write(repo.join(IMPACTED_JSON), "{}").map_err(|err| err.to_string())?;
         fs::write(repo.join(IMPACTED_MD), "old").map_err(|err| err.to_string())?;
         // No PR evidence exists, so the run refuses.
-        let result = run_impacted_evidence_at(&repo, &[]);
+        let result = run_impacted_evidence_at(&repo, &default_options());
         let json_left = repo.join(IMPACTED_JSON).exists();
         let md_left = repo.join(IMPACTED_MD).exists();
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
@@ -1062,7 +978,7 @@ mod tests {
             .map_err(|err| format!("create {}: {err}", repo.display()))?;
         fs::write(repo.join(IMPACTED_JSON), "{}").map_err(|err| err.to_string())?;
         fs::write(repo.join(IMPACTED_MD), "old").map_err(|err| err.to_string())?;
-        let result = run_impacted_evidence_with(&repo, &[], |repo, _relative| {
+        let result = run_impacted_evidence_with(&repo, &default_options(), |repo, _relative| {
             fs::write(repo.join(IMPACTED_JSON), r#"{"status":"concurrent"}"#)
                 .map_err(|err| err.to_string())?;
             Err("PR evidence is missing or unreadable.".to_string())
@@ -1239,7 +1155,7 @@ mod tests {
             r#"{"summary":{"ripr_severe_gap":false,"requires_targeted_mutation":false}}"#,
         )
         .map_err(|err| err.to_string())?;
-        run_impacted_evidence_at(&repo, &[])?;
+        run_impacted_evidence_at(&repo, &default_options())?;
         assert!(
             repo.join(IMPACTED_JSON).exists(),
             "outputs land under the given root"

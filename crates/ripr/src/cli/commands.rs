@@ -416,8 +416,22 @@ pub(super) fn assistant_loop(args: &[String]) -> Result<(), String> {
     }
 }
 
+#[path = "commands/first_pr_argv.rs"]
+mod first_pr_argv;
+
+#[path = "commands/annotations.rs"]
+mod annotations_command;
+#[path = "commands/pr_evidence.rs"]
+pub(crate) mod pr_evidence_command;
+#[path = "commands/impacted_evidence.rs"]
+pub(crate) mod impacted_evidence_command;
+#[path = "commands/ripr_plus.rs"]
+pub(crate) mod ripr_plus_command;
+#[path = "commands/pr_summary.rs"]
+pub(crate) mod pr_summary_command;
+
 pub(super) fn first_pr(args: &[String]) -> Result<(), String> {
-    output::first_pr::first_pr(args)
+    first_pr_argv::first_pr(args)
 }
 
 pub(super) fn first_action(args: &[String]) -> Result<(), String> {
@@ -3573,14 +3587,14 @@ fn lsp_with_serve(
 /// analysis or invoke Cargo. The canonical downstream replacement for
 /// `cargo xtask ripr-pr-summary`.
 pub(super) fn pr_summary(args: &[String]) -> Result<(), String> {
-    crate::app::pr_summary::run_pr_summary(args)
+    pr_summary_command::pr_summary(args)
 }
 
 /// `ripr annotations` — binary-first GitHub Actions annotations (item 8b).
 /// Reads comments.json and emits `::warning` annotation lines. The canonical
 /// downstream replacement for `cargo xtask ripr-annotations`.
 pub(super) fn annotations(args: &[String]) -> Result<(), String> {
-    crate::app::annotations::run_annotations(args)
+    annotations_command::annotations(args)
 }
 
 /// `ripr pr-evidence` — binary-first PR evidence packet (Campaign 31 item 8c).
@@ -3589,13 +3603,13 @@ pub(super) fn annotations(args: &[String]) -> Result<(), String> {
 /// `cargo xtask ripr-pr`. Unlike the xtask, it calls `check_workspace`
 /// directly instead of shelling out to `cargo run -p ripr -- check`.
 pub(super) fn pr_evidence(args: &[String]) -> Result<(), String> {
-    crate::app::pr_evidence::run_pr_evidence(args)
+    pr_evidence_command::pr_evidence(args)
 }
 
 /// `ripr impacted-evidence` — binary-first mutation-routing evidence (item 8e).
 /// Reads PR evidence + labels and emits routing decision JSON + Markdown.
 pub(super) fn impacted_evidence(args: &[String]) -> Result<(), String> {
-    crate::app::impacted_evidence::run_impacted_evidence(args)
+    impacted_evidence_command::impacted_evidence(args)
 }
 
 /// `ripr plus` — binary-first RIPR+ repo receipt (composition-only).
@@ -3604,7 +3618,7 @@ pub(super) fn impacted_evidence(args: &[String]) -> Result<(), String> {
 /// downstream replacement for `cargo xtask ripr-plus`. Unlike the xtask, it
 /// is artifact-composition-only and does not run an in-process full-repo scan.
 pub(super) fn ripr_plus(args: &[String]) -> Result<(), String> {
-    crate::app::ripr_plus::run_ripr_plus(args)
+    ripr_plus_command::ripr_plus(args)
 }
 
 #[cfg(test)]

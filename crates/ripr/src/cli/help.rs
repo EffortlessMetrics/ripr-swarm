@@ -1457,12 +1457,12 @@ mod tests {
     const SWARM_INGEST_PARSER_RS: &str = include_str!("commands/swarm/ingest.rs");
     const RERUN_PARSER_RS: &str = include_str!("rerun.rs");
     const MCP_PARSER_RS: &str = include_str!("../mcp/mod.rs");
-    const PR_SUMMARY_PARSER_RS: &str = include_str!("../app/pr_summary/mod.rs");
-    const ANNOTATIONS_PARSER_RS: &str = include_str!("../app/annotations.rs");
-    const PR_EVIDENCE_PARSER_RS: &str = include_str!("../app/pr_evidence.rs");
-    const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("../app/impacted_evidence.rs");
-    const RIPR_PLUS_PARSER_RS: &str = include_str!("../app/ripr_plus.rs");
-    const FIRST_PR_PARSER_RS: &str = include_str!("../output/first_pr/options.rs");
+    const PR_SUMMARY_PARSER_RS: &str = include_str!("commands/pr_summary.rs");
+    const ANNOTATIONS_PARSER_RS: &str = include_str!("commands/annotations.rs");
+    const PR_EVIDENCE_PARSER_RS: &str = include_str!("commands/pr_evidence.rs");
+    const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("commands/impacted_evidence.rs");
+    const RIPR_PLUS_PARSER_RS: &str = include_str!("commands/ripr_plus.rs");
+    const FIRST_PR_PARSER_RS: &str = include_str!("commands/first_pr_argv.rs");
 
     /// Each registered command path and the function(s) in its parser source
     /// that accept argv flags.
@@ -1525,7 +1525,7 @@ mod tests {
         (
             "annotations",
             ANNOTATIONS_PARSER_RS,
-            &["run_annotations", "parse_options"],
+            &["parse_options"],
         ),
         (
             "assistant-loop health",
@@ -1612,7 +1612,7 @@ mod tests {
         (
             "impacted-evidence",
             IMPACTED_EVIDENCE_PARSER_RS,
-            &["run_impacted_evidence", "parse_options"],
+            &["parse_options"],
         ),
         ("init", INIT_PARSER_RS, &["parse_init_options"]),
         ("lsp", CLI_COMMANDS_RS, &["lsp_with_serve"]),
@@ -1622,7 +1622,7 @@ mod tests {
         (
             "plus",
             RIPR_PLUS_PARSER_RS,
-            &["run_ripr_plus", "parse_options"],
+            &["parse_options"],
         ),
         (
             "policy history",
@@ -1682,7 +1682,7 @@ mod tests {
         (
             "pr-evidence",
             PR_EVIDENCE_PARSER_RS,
-            &["run_pr_evidence", "parse_options"],
+            &["parse_options"],
         ),
         (
             "pr-ledger record",
@@ -1697,7 +1697,7 @@ mod tests {
         (
             "pr-summary",
             PR_SUMMARY_PARSER_RS,
-            &["run_pr_summary", "parse_options"],
+            &["parse_options"],
         ),
         (
             "receipt check",
