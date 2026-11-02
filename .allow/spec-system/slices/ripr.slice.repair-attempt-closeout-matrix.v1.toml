@@ -1,0 +1,53 @@
+schema_version = "2.0"
+id = "ripr.slice.repair-attempt-closeout-matrix.v1"
+generation = 1
+
+source_issue = "issue:4799"
+design_reference = "RIPR-SPEC-0377"
+change_class = "evidence_only"
+
+claim_boundary = """
+Introduce the normalized #4799 closeout matrix DTO and R3 slice 1 runner
+exercising the five normal/repeat-use scenarios on Linux. Remaining scenarios
+stay explicitly missing_evidence until later slices; aggregate stays incomplete.
+"""
+
+non_goals = [
+  "interruption and publication scenarios (issue 4799 sections 6-11)",
+  "hosted Windows matrix receipts in slice 1",
+  "parent #2927 closeout",
+  "support-tier or release promotion",
+]
+
+return_conditions = [
+  "Return to root if aggregate claims complete while any required row is missing_evidence.",
+  "Return to root if human and JSON closeout views diverge.",
+]
+
+owned_seams = [
+  "seam:ripr:app:repair-attempt-closeout-matrix",
+]
+
+shared_seams = [
+  "seam:ripr:app:repair-attempt",
+  "seam:ripr:app:agent-status",
+]
+
+forbidden_seams = [
+  "seam:ripr:output:gate-authority",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0377"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+commands = [
+  "cargo test -p ripr --lib repair_attempt_closeout_matrix -- --nocapture",
+]
+
+[support_claim]
+state = "unchanged"
