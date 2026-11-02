@@ -12692,6 +12692,8 @@ tests = [
   "crates/ripr/tests/crate_qualified_entry_reach.rs::conditional_remapped_and_duplicate_chains_keep_a_relative_import_refused",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::an_in_file_test_module_import_resolves_from_its_own_scope",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::an_in_file_relative_import_of_another_scope_stays_refused",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::test_crate_reexport_module_routes_link_through_self",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::test_crate_reexport_module_routes_refuse_shadow_and_cycle",
   "crates/ripr/src/analysis/facts/build.rs::tests::root_library_name_reads_lib_name_then_package_and_refuses_moved_roots",
 ]
 fixtures = [

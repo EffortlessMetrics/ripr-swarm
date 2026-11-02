@@ -914,6 +914,36 @@ fn test_crate_reexport_module_routes_link_through_self() -> Result<(), String> {
     Ok(())
 }
 
+/// #9971: a test-module re-export must not credit through a locally shadowed
+/// crate-name module or a cyclic re-export chain.
+#[test]
+fn test_crate_reexport_module_routes_refuse_shadow_and_cycle() -> Result<(), String> {
+    let shadow = format!(
+        "mod api {{\n    pub mod qual_reach {{\n        pub mod inner {{\n            pub fn order_discount(_: u32) -> u32 {{ 5 }}\n        }}\n    }}\n    pub use qual_reach::inner;\n}}\nuse self::api::inner::order_discount;\n{}",
+        test_file(BARE)
+    );
+    let shadow_pkg = module_package("src/inner.rs", MODULE_LIB, shadow, vec![]);
+    assert_eq!(shadow_pkg.relation()?, None, "local qual_reach shadow");
+    assert_ne!(
+        shadow_pkg.classification()?,
+        "exposed",
+        "local qual_reach shadow"
+    );
+
+    let cycle = format!(
+        "mod api {{\n    pub use self::inner;\n    pub mod inner {{\n        pub use super::api;\n    }}\n}}\nuse self::api::inner::order_discount;\n{}",
+        test_file(BARE)
+    );
+    let cycle_pkg = module_package("src/inner.rs", MODULE_LIB, cycle, vec![]);
+    assert_eq!(cycle_pkg.relation()?, None, "cyclic module re-export");
+    assert_ne!(
+        cycle_pkg.classification()?,
+        "exposed",
+        "cyclic module re-export"
+    );
+    Ok(())
+}
+
 /// A nearer callable binding of the entry's name (a `const` or `static`)
 /// refuses the imported bare call; the call-fact line text is the whole line,
 /// so a quote or comment ending on a line with a real foreign call of the same

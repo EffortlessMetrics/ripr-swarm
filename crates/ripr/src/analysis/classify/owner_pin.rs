@@ -6343,7 +6343,7 @@ impl FreeOwnerBinding<'_> {
             return false;
         };
         let Some((target_file, target_stack)) =
-            self.resolve_use_prefix(first, &middle, context, index, syntax)
+            self.resolve_use_prefix(first, &middle, context, index, syntax, 1)
         else {
             return false;
         };
@@ -6449,7 +6449,7 @@ impl FreeOwnerBinding<'_> {
             return false;
         };
         let Some((target_file, target_stack)) =
-            self.resolve_use_prefix(first, &middle, scope, index, syntax)
+            self.resolve_use_prefix(first, &middle, scope, index, syntax, 1)
         else {
             return false;
         };
@@ -6471,7 +6471,7 @@ impl FreeOwnerBinding<'_> {
         let Some((first, middle)) = split_binding_use(use_path, self.name) else {
             return false;
         };
-        self.resolve_use_prefix(first, &middle, scope, index, syntax)
+        self.resolve_use_prefix(first, &middle, scope, index, syntax, 0)
             .is_some_and(|(file, stack)| {
                 file == *self.owner_file && stack.as_slice() == owner_inline
             })
@@ -6489,6 +6489,7 @@ impl FreeOwnerBinding<'_> {
         scope: ScopeContext<'_>,
         index: &RustIndex,
         syntax: &OwnerPinSyntax,
+        reexport_hops: u8,
     ) -> Option<(PathBuf, Vec<String>)> {
         match first {
             "self" | "super" => {
@@ -6500,23 +6501,56 @@ impl FreeOwnerBinding<'_> {
                     first,
                     segments,
                 )?;
-                self.resolve_module_path(index, syntax, scope, &file, &stack, &rest)
+                self.resolve_module_path(index, syntax, scope, &file, &stack, &rest, reexport_hops)
             }
             "crate" => {
                 let root = composed_root(self.owner_file, index);
                 if composed_root(scope.file, index) != root {
                     return None;
                 }
-                self.resolve_module_path(index, syntax, scope, &root, &[], segments)
+                self.resolve_module_path(index, syntax, scope, &root, &[], segments, reexport_hops)
             }
             _ => {
+                if let Some((file, stack)) =
+                    Self::local_module_child(scope.file, scope.stack, first, index, syntax)
+                {
+                    return self.resolve_module_path(
+                        index,
+                        syntax,
+                        scope,
+                        &file,
+                        &stack,
+                        segments,
+                        reexport_hops,
+                    );
+                }
                 if !self.krate_root_names_owner_crate(first, scope.file, scope.source, index) {
                     return None;
                 }
                 let root = composed_root(self.owner_file, index);
-                self.resolve_module_path(index, syntax, scope, &root, &[], segments)
+                self.resolve_module_path(index, syntax, scope, &root, &[], segments, reexport_hops)
             }
         }
+    }
+
+    fn local_module_child(
+        file: &Path,
+        stack: &[String],
+        segment: &str,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> Option<(PathBuf, Vec<String>)> {
+        let scopes = syntax.file_scopes(index, file)?;
+        let mut child = stack.to_vec();
+        child.push(segment.to_string());
+        if scopes.scope_with_stack(&child).is_some() {
+            return Some((file.to_path_buf(), child));
+        }
+        let key = (file.to_path_buf(), segment.to_string());
+        syntax
+            .mod_children(index)
+            .get(&key)
+            .and_then(|next| Some((next.clone()?, Vec::new())))
     }
 
     /// #9971: follow exactly one module `use` re-export in the current
@@ -6527,6 +6561,7 @@ impl FreeOwnerBinding<'_> {
         syntax: &OwnerPinSyntax,
         parent_scope: ScopeContext<'_>,
         segment: &str,
+        reexport_hops: u8,
     ) -> Option<(PathBuf, Vec<String>)> {
         let scopes = syntax.file_scopes(index, parent_scope.file)?;
         let module = scopes.scope_with_stack(parent_scope.stack)?;
@@ -6543,10 +6578,41 @@ impl FreeOwnerBinding<'_> {
             return None;
         }
         let use_path = reexports[0];
-        let (first, _) = split_binding_use(use_path, segment)?;
-        self.resolve_use_prefix(first, &[segment], parent_scope, index, syntax)
+        let stripped = use_path.path.strip_prefix("::").unwrap_or(&use_path.path);
+        let module_segments: Vec<&str> = stripped.split("::").map(strip_raw).collect();
+        if module_segments.last().copied() != Some(segment) {
+            return None;
+        }
+        if use_path.path.starts_with("::") {
+            let root = composed_root(parent_scope.file, index);
+            let source = index.files().get(&root)?.data().source.as_ref();
+            let scope_at_root = ScopeContext {
+                file: &root,
+                source,
+                stack: &[],
+            };
+            let [first, rest @ ..] = module_segments.as_slice() else {
+                return None;
+            };
+            return self.resolve_use_prefix(
+                first,
+                rest,
+                scope_at_root,
+                index,
+                syntax,
+                reexport_hops,
+            );
+        }
+        let [first, rest @ ..] = module_segments.as_slice() else {
+            return None;
+        };
+        self.resolve_use_prefix(first, rest, parent_scope, index, syntax, reexport_hops)
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "policy:9971: module path walk carries file, inline stack, segments, and one re-export hop budget"
+    )]
     fn resolve_module_path(
         &self,
         index: &RustIndex,
@@ -6555,6 +6621,7 @@ impl FreeOwnerBinding<'_> {
         file: &Path,
         stack: &[String],
         segments: &[&str],
+        reexport_hops: u8,
     ) -> Option<(PathBuf, Vec<String>)> {
         let mut file = file.to_path_buf();
         let mut stack = stack.to_vec();
@@ -6573,13 +6640,21 @@ impl FreeOwnerBinding<'_> {
                 stack = Vec::new();
                 continue;
             }
+            if reexport_hops == 0 {
+                return None;
+            }
             let parent_scope = ScopeContext {
                 file: &file,
                 source,
                 stack: &stack,
             };
-            let (next_file, next_stack) =
-                self.follow_module_reexport(index, syntax, parent_scope, segment)?;
+            let (next_file, next_stack) = self.follow_module_reexport(
+                index,
+                syntax,
+                parent_scope,
+                segment,
+                reexport_hops - 1,
+            )?;
             file = next_file;
             stack = next_stack;
         }
@@ -6651,7 +6726,7 @@ impl FreeOwnerBinding<'_> {
             return false;
         };
         let Some((target_file, target_stack)) =
-            self.resolve_use_prefix(first, &prefix, scope, index, syntax)
+            self.resolve_use_prefix(first, &prefix, scope, index, syntax, 1)
         else {
             return false;
         };
