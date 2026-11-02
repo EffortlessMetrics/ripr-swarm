@@ -3115,10 +3115,12 @@ fn caller_body_rebinds_free_callee_name(body: &str, callee: &str) -> bool {
     {
         return true;
     }
-    super::reveal::flattened_use_paths(body).iter().any(|import| {
-        import.alias.as_deref() == Some(callee)
-            || import.path.rsplit("::").next() == Some(callee)
-    })
+    super::reveal::flattened_use_paths(body)
+        .iter()
+        .any(|import| {
+            import.alias.as_deref() == Some(callee)
+                || import.path.rsplit("::").next() == Some(callee)
+        })
 }
 
 fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
