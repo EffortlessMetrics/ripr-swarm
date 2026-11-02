@@ -7612,6 +7612,10 @@ fn scalar_values(text: &str) -> Vec<String> {
             if let Some(radix_end) = radix_literal_end(&chars, idx) {
                 if let Some((end_byte, end_ch)) = chars.get(radix_end - 1)
                     && let Some(value) = text.get(byte_idx..end_byte + end_ch.len_utf8())
+                    && !is_truncated_by_cast(
+                        value,
+                        text.get(end_byte + end_ch.len_utf8()..).unwrap_or(""),
+                    )
                 {
                     values.push(value.to_string());
                 }
@@ -7718,13 +7722,40 @@ fn is_truncated_by_cast(literal: &str, rest: &str) -> bool {
         "isize" => (i128::from(i64::MIN), i128::from(i64::MAX)),
         _ => return false,
     };
+    // A whole-valued float (`1.0 as u8`) converts without changing; a fractional
+    // one truncates, and an out-of-range one saturates.
     if literal.contains('.') {
-        return true;
+        return match literal.replace('_', "").parse::<f64>() {
+            Ok(value) => value.fract() != 0.0 || value < min as f64 || value > max as f64,
+            Err(_) => true,
+        };
     }
-    match literal.replace('_', "").parse::<i128>() {
-        Ok(value) => value < min || value > max,
-        Err(_) => true,
+    match integer_literal_value(literal) {
+        Some(value) => value < min || value > max,
+        None => true,
     }
+}
+
+/// The value of an integer literal spelled in decimal or with a `0x`/`0b`/`0o`
+/// prefix, with `_` separators and a leading `-`; `None` when it does not fit
+/// or is not one.
+fn integer_literal_value(literal: &str) -> Option<i128> {
+    let digits = literal.replace('_', "");
+    let (negative, body) = match digits.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, digits.as_str()),
+    };
+    let lowered = body.to_ascii_lowercase();
+    let magnitude = if let Some(hex) = lowered.strip_prefix("0x") {
+        i128::from_str_radix(hex, 16).ok()?
+    } else if let Some(bin) = lowered.strip_prefix("0b") {
+        i128::from_str_radix(bin, 2).ok()?
+    } else if let Some(oct) = lowered.strip_prefix("0o") {
+        i128::from_str_radix(oct, 8).ok()?
+    } else {
+        lowered.parse::<i128>().ok()?
+    };
+    Some(if negative { -magnitude } else { magnitude })
 }
 
 /// The index one past a radix-prefixed integer literal (`0x1F`, `-0b101`,
@@ -10177,6 +10208,10 @@ assert_eq!(input.amount, 100);"#
             "score(128 as i8)",
             "score(1.5 as u8)",
             "score(70_000 as u16)",
+            "score(0x100 as u8)",
+            "score(0b1_0000_0000 as u8)",
+            "score(-0x81 as i8)",
+            "score(1.5e0 as u8)",
         ] {
             assert!(scalar_values(spelled).is_empty(), "{spelled}");
         }
@@ -10186,6 +10221,14 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(scalar_values("score(300 as u64)"), vec!["300".to_string()]);
         assert_eq!(scalar_values("score(-1 as i32)"), vec!["-1".to_string()]);
         assert_eq!(scalar_values("score(3 as f64)"), vec!["3".to_string()]);
+        // A whole-valued float and an in-range radix literal convert unchanged.
+        assert_eq!(scalar_values("score(1.0 as u8)"), vec!["1.0".to_string()]);
+        assert_eq!(scalar_values("score(0.0 as i32)"), vec!["0.0".to_string()]);
+        assert_eq!(scalar_values("score(0xFF as u8)"), vec!["0xFF".to_string()]);
+        assert_eq!(
+            scalar_values("score(0x100 as u16)"),
+            vec!["0x100".to_string()]
+        );
         assert_eq!(scalar_values("score(300 assert)"), vec!["300".to_string()]);
     }
 
