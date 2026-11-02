@@ -48,7 +48,7 @@
       "role": "incomplete",
       "category": "incomplete hunk that already emitted valid changed lines",
       "diff_path": "diffs/advisory_line_before_truncation.patch",
-      "diff_sha256": "5315c844d93612dcc9538ea7d9ad48e97e74abb467d784bd3c762cf94f01dc4c",
+      "diff_sha256": "4012aab2f4ed2c5461c9fb8589622e3bb89f37d4530f15132b8a7c1ca29db3cf",
       "expected_analysis_complete": false,
       "expected_exit_code": 2,
       "expect_malformed_diff_limitation": true,

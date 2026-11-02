@@ -134,15 +134,14 @@ fn assert_route(
             ));
         }
     }
-    if !complete
-        && human.contains("analysis complete")
-        && !human.to_ascii_lowercase().contains("incomplete")
-        && !human.contains("not supported")
-    {
-        return Err(format!(
-            "{} / {channel}: human output strengthened incomplete json state: {human:?}",
-            row.id
-        ));
+    if !complete {
+        let lower = human.to_ascii_lowercase();
+        if lower.contains("analysis complete") && !lower.contains("analysis incomplete") {
+            return Err(format!(
+                "{} / {channel}: human output claims analysis complete while JSON is incomplete: {human:?}",
+                row.id
+            ));
+        }
     }
     Ok(())
 }
@@ -176,6 +175,14 @@ fn run_row(row: &Row, check_root: &Path) -> Result<(), String> {
             )
         })?;
     let file_human = spawn_ripr(&human_args, None)?;
+    if file_human.status.code() != Some(row.expected_exit_code) {
+        return Err(format!(
+            "{} / file/human: expected exit {}, got {:?}",
+            row.id,
+            row.expected_exit_code,
+            file_human.status.code()
+        ));
+    }
     let file_human_text = String::from_utf8_lossy(&file_human.stdout).into_owned();
     assert_route(row, "file/json", &file_json, &file_report, &file_human_text)?;
 
@@ -189,6 +196,14 @@ fn run_row(row: &Row, check_root: &Path) -> Result<(), String> {
             )
         })?;
     let stdin_human = spawn_ripr(&stdin_human_args, Some(&bytes))?;
+    if stdin_human.status.code() != Some(row.expected_exit_code) {
+        return Err(format!(
+            "{} / stdin/human: expected exit {}, got {:?}",
+            row.id,
+            row.expected_exit_code,
+            stdin_human.status.code()
+        ));
+    }
     let stdin_human_text = String::from_utf8_lossy(&stdin_human.stdout).into_owned();
     assert_route(
         row,
