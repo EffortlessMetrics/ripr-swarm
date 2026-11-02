@@ -1118,15 +1118,30 @@ fn return_value_direct_at_probe_line(
         let seam_line = candidate.seam().display_line();
         (fn_start <= seam_line && seam_line <= fn_end).then(|| candidate.seam().owner().to_string())
     })?;
-    let code = code_lines_of(source);
-    let code_line = code.get(line.saturating_sub(1))?;
-    let expression = code_line.trim();
-    if expression.is_empty() || matches!(expression, "}" | ")" | "};" | "),") {
+    let raw_line = source.lines().nth(line.saturating_sub(1))?;
+    let trimmed = raw_line.trim();
+    if trimmed.is_empty() || matches!(trimmed, "}" | ")" | "};" | "),") {
+        return None;
+    }
+    if trimmed.starts_with("let ")
+        || trimmed.starts_with("const ")
+        || trimmed.starts_with("use ")
+        || (trimmed.ends_with(';') && !trimmed.starts_with("return"))
+    {
+        return None;
+    }
+    let expression = trimmed
+        .trim_end_matches(',')
+        .trim()
+        .trim_end_matches(';')
+        .trim();
+    if expression.is_empty() {
         return None;
     }
     let line_start = byte_offset_of_line(source, line)?;
+    let needle = trimmed.trim_end_matches(';').trim_end_matches(',');
     let trimmed_start = source[line_start..]
-        .find(expression)
+        .find(needle.trim_start())
         .map(|index| line_start + index)?;
     let crlf_pairs = CrlfPairPositions::build(source);
     let seam = RepoSeam::new_in_source(
@@ -1143,7 +1158,7 @@ fn return_value_direct_at_probe_line(
         &crlf_pairs,
     );
     let outcome = rust_test_stub(&seam, None, source);
-    outcome.is_ok().then(|| TestStubResolution {
+    Some(TestStubResolution {
         seam_id: seam.id().as_str().to_string(),
         owner: seam.owner().to_string(),
         source: source.to_string(),
@@ -1232,6 +1247,11 @@ fn resolve_at(
     if let Some(kind) = kind {
         candidates.retain(|candidate| candidate.seam().kind() == kind.seam_kind);
     }
+    let return_value_exact_line =
+        kind.is_some_and(|selected| selected.seam_kind == SeamKind::ReturnValue);
+    if return_value_exact_line {
+        candidates.retain(|candidate| candidate.seam().display_line() == line);
+    }
     candidates.sort_by_key(|candidate| candidate.seam().display_line().abs_diff(line));
     // A single-file parse lists every seam, not only the reported gaps, so
     // two disjoint seams of one kind that rank equally (`a > 10 && b > 20`)
@@ -1278,19 +1298,14 @@ fn resolve_at(
             });
         }
     }
-    let return_value_exact_line =
-        kind.is_some_and(|selected| selected.seam_kind == SeamKind::ReturnValue);
     let mut first_refusal = None;
     for candidate in candidates.iter().copied() {
         let seam_line = candidate.seam().display_line();
-        if return_value_exact_line && seam_line != line {
-            continue;
-        }
         let mut resolution = candidate.resolution(root, config, source.clone());
         // A finding line is the changed line, which need not hold a gap of
         // its own; when the stub is for a different line, say so (#6298).
-        // `return_value` skips off-line candidates above (#8444 item 2).
-        if seam_line != line {
+        // `return_value` keeps only on-line candidates (#8444 item 2).
+        if !return_value_exact_line && seam_line != line {
             resolution.at_note = Some(format!(
                 "note: {file}:{line} has no stubbable gap; this stub is for the nearest one in `{}`, {file}:{seam_line}",
                 resolution.owner
@@ -1302,13 +1317,10 @@ fn resolve_at(
         first_refusal.get_or_insert(resolution);
     }
     if return_value_exact_line {
-        let on_line_return_value = candidates.iter().any(|candidate| {
-            candidate.seam().kind() == SeamKind::ReturnValue
-                && candidate.seam().display_line() == line
-        });
+        let on_line_return_value = !candidates.is_empty();
         if !on_line_return_value
             && let Some(resolution) =
-                return_value_direct_at_probe_line(&candidates, file, line, &source)
+                return_value_direct_at_probe_line(&in_file, file, line, &source)
         {
             return Ok(resolution);
         }
@@ -2906,7 +2918,22 @@ impl Size {
         Ok(())
     }
 
-    /// A genuine open gap still yields a ready stub, and its inventory
+    #[test]
+    fn return_value_direct_stub_refuses_a_discarded_binding_line() -> Result<(), String> {
+        const SOURCE: &str = "pub fn f(x: i32) -> i32 {\n    let _unused = x + 1;\n    42\n}\n";
+        let root = scratch_stub_crate("rv-discarded", SOURCE)?;
+        let config = RiprConfig::default();
+        let selector = TestStubSelector::parse_at("src/lib.rs:2")?.with_kind("return_value")?;
+        let resolution = resolve_test_stub(&root, &config, &selector);
+        let _ = std::fs::remove_dir_all(&root);
+        match resolution {
+            Err(TestStubError::NotFound(_)) => Ok(()),
+            Ok(res) if res.outcome.is_err() => Ok(()),
+            other => Err(format!(
+                "discarded binding must not get a ready stub: {other:?}"
+            )),
+        }
+    }
     /// class is not the strongly-gripped omission case.
     #[test]
     fn at_kind_stub_on_an_open_gap_is_not_strongly_gripped() -> Result<(), String> {
