@@ -8,7 +8,7 @@
 //! while an `include!` is unresolved, so the finding is a named limitation, not
 //! a gap, and nothing is credited. Each control changes one thing about that
 //! shape and keeps the gap. Ready mode indexes every member; draft mode must
-//! still withhold when other members are unindexed (#10149).
+//! still withhold when an unindexed member may compile the receiver (#10149).
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -28,6 +28,10 @@ enum Placement {
     Resolved,
     /// No `b` and no `fakestd`: the standard macro, placement available.
     PlainStd,
+    /// Owner crate, dependent test crate, and a namesake with no `include!`
+    /// or `#[path]`. Draft indexes the owner and the test crate; the namesake
+    /// stays unindexed and must not withhold placement.
+    AcrossIndexedPackages,
 }
 
 struct Workspace {
@@ -140,8 +144,11 @@ impl Workspace {
             )
         };
         let members = match placement {
+            Placement::AcrossIndexedPackages => {
+                return Self::create_across_indexed_packages(root, test_statement);
+            }
             Placement::PlainStd => "[\"a\"]",
-            _ => "[\"a\", \"b\", \"fakestd\"]",
+            Placement::Generated | Placement::Resolved => "[\"a\", \"b\", \"fakestd\"]",
         };
         write(
             "Cargo.toml",
@@ -222,6 +229,69 @@ fn main() {
             root,
             diff,
             owner_line: 5 + shape.prelude.lines().count() as u64,
+        })
+    }
+
+    /// Owner in `meter`, test in `panel` via `use meter::Gauge`, namesake
+    /// `spare` with no include/path mount. Draft indexes meter and panel.
+    /// `test_statement` is unused: the corpus shape is an associated function
+    /// (`Gauge::reading`), not the inherent `Widget::read` control.
+    fn create_across_indexed_packages(
+        root: PathBuf,
+        _test_statement: &str,
+    ) -> Result<Self, String> {
+        let write = |path: &str, text: &str| -> Result<(), String> {
+            let file = root.join(path);
+            if let Some(parent) = file.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create {path} directory failed: {error}"))?;
+            }
+            std::fs::write(&file, text).map_err(|error| format!("write {path} failed: {error}"))
+        };
+        let package = |name: &str, extra: &str| {
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n{extra}"
+            )
+        };
+        let gauge_lib = |body: &str| {
+            format!(
+                "pub struct Gauge;\nimpl Gauge {{\n    pub fn reading() -> u32 {{{body}}}\n}}\n"
+            )
+        };
+        write(
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"meter\", \"panel\", \"spare\"]\nresolver = \"2\"\n",
+        )?;
+        write("meter/Cargo.toml", &package("meter", ""))?;
+        let before = gauge_lib("4");
+        let after = gauge_lib("5");
+        write("meter/src/lib.rs", &after)?;
+        write(
+            "panel/Cargo.toml",
+            &package(
+                "panel",
+                "\n[dependencies]\nmeter = { path = \"../meter\" }\nspare = { path = \"../spare\" }\n",
+            ),
+        )?;
+        write("panel/src/lib.rs", "")?;
+        write(
+            "panel/tests/direct.rs",
+            "use meter::Gauge;\n#[test]\nfn reads() { std::assert_eq!(Gauge::reading(), 4); }\n",
+        )?;
+        write("spare/Cargo.toml", &package("spare", ""))?;
+        write(
+            "spare/src/lib.rs",
+            "pub struct Gauge;\nimpl Gauge {\n    pub fn reading() -> u32 {0}\n}\npub fn reading() -> u32 {0}\n",
+        )?;
+        let diff = root.join("change.diff");
+        write(
+            "change.diff",
+            &whole_file_diff("meter/src/lib.rs", &before, &after),
+        )?;
+        Ok(Self {
+            root,
+            diff,
+            owner_line: 3,
         })
     }
 
@@ -389,6 +459,23 @@ fn draft_mode_withholds_the_unplaced_generated_mount_control() -> Result<(), Str
     let relative = workspace.finding_from(&workspace.run_with_relative_root(true, "draft")?)?;
     assert_eq!(text(&relative, "/classification")?, "static_unknown");
     assert_eq!(limit(&relative), Some(LIMIT), "{relative}");
+    Ok(())
+}
+
+/// Draft indexes the owner package and its dependent test crate. A namesake
+/// sibling with no `include!` / `#[path]` stays unindexed and must not
+/// withhold placement of the indexed members (#10149 narrowing).
+#[test]
+fn draft_mode_credits_indexed_members_across_packages() -> Result<(), String> {
+    let workspace = Workspace::create(Placement::AcrossIndexedPackages, CONTROL)?;
+    let finding = workspace.finding_from(&workspace.run_with_mode(true, "draft")?)?;
+    assert_ne!(limit(&finding), Some(LIMIT), "{finding}");
+    assert_eq!(text(&finding, "/classification")?, "exposed", "{finding}");
+    assert_eq!(
+        relations(&finding),
+        vec!["direct_owner_call".to_string()],
+        "{finding}"
+    );
     Ok(())
 }
 

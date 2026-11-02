@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- Draft and Fast diff indexes now treat target-root placement as unavailable when any workspace member has no indexed files, so an unindexed member's unresolved `include!` cannot let a false gap credit slip through on the inner-loop path (#10149).
+- Draft and Fast diff indexes now treat target-root placement as unavailable when an unindexed workspace member may compile other crates (`include!` or `#[path]`), so the generated-mount negative stays withheld while indexed members across packages stay credited (#10149).

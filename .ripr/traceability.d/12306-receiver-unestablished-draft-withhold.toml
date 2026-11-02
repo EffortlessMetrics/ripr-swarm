@@ -3,4 +3,5 @@
 id = "RIPR-SPEC-0352"
 tests = [
   "crates/ripr/tests/receiver_unestablished_limit.rs::draft_mode_withholds_the_unplaced_generated_mount_control",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::draft_mode_credits_indexed_members_across_packages",
 ]

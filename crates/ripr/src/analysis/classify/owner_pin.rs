@@ -2609,9 +2609,10 @@ fn merge_macro_site_rank<'a>(
 /// fragment, and the fragment's module children, looking like a root.
 #[derive(Clone, Debug)]
 struct TargetRoots {
-    /// An unresolved `include!`, or an unresolvable `#[path]` (which
-    /// records no module edge for its target), may compile any file into
-    /// another crate, so no file is charged to one root.
+    /// An unresolved `include!`, an unresolvable `#[path]` (which records
+    /// no module edge for its target), or an unindexed member that may
+    /// mount other crates that way, may compile any file into another
+    /// crate, so no file is charged to one root.
     disabled: bool,
     /// Every indexed `<package>/src` directory, for the `tests/`, `benches/`,
     /// `examples/` and `build.rs` roots beside one.
@@ -2623,7 +2624,13 @@ struct TargetRoots {
     binary_macro_roots: SyncMemo<BTreeMap<PathBuf, Option<BTreeSet<PathBuf>>>>,
 }
 
-fn workspace_has_unindexed_members(index: &RustIndex) -> bool {
+/// Draft/Fast indexes omit members that are not the changed package or its
+/// reverse path-dependents. An omitted member is an unseen compilation
+/// *target* of indexed files only when it may mount them (`include!` or
+/// `#[path]`): that is the #10149 generated-B case. A namesake sibling
+/// with no such mount is not a target of the receiver, so indexed members
+/// across packages stay placeable.
+fn unindexed_member_is_unseen_compilation_target(index: &RustIndex) -> bool {
     let Some(root) = index
         .workspace_authority
         .as_ref()
@@ -2638,12 +2645,62 @@ fn workspace_has_unindexed_members(index: &RustIndex) -> bool {
         let Some(relative) = member_canon.strip_prefix(root).ok() else {
             return false;
         };
-        !index.files().iter().any(|(path, _)| {
+        let indexed = index.files().iter().any(|(path, _)| {
             let path = path.as_path();
             let path = path.strip_prefix("./").unwrap_or(path);
             path.starts_with(relative)
-        })
+        });
+        !indexed && unindexed_member_may_mount_foreign_files(&member_canon)
     })
+}
+
+const UNINDEXED_MEMBER_ROOTS: &[&str] =
+    &["src/lib.rs", "src/main.rs", "build.rs", "lib.rs", "main.rs"];
+const UNINDEXED_MEMBER_SOURCE_BYTES: usize = 256 * 1024;
+
+/// Whether an unindexed member's crate-root sources look like they could
+/// compile another crate's files. Unreadable, oversized, or missing crate
+/// roots fail closed: the member exists and its compilation effect is
+/// unknown. A readable crate root with no `include!` / `#[path]` is not a
+/// mount, so a namesake dependency of an indexed test crate does not
+/// disable placement.
+fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
+    let mut inspected = false;
+    for candidate in UNINDEXED_MEMBER_ROOTS {
+        let path = member_dir.join(candidate);
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                if bytes.len() > UNINDEXED_MEMBER_SOURCE_BYTES {
+                    return true;
+                }
+                let Ok(source) = std::str::from_utf8(&bytes) else {
+                    return true;
+                };
+                inspected = true;
+                if source_may_mount_foreign_files(source) {
+                    return true;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return true,
+        }
+    }
+    !inspected
+}
+
+fn source_may_mount_foreign_files(source: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    whole_word_offsets(&masked, "include")
+        .into_iter()
+        .any(|offset| {
+            masked
+                .get(offset + "include".len()..)
+                .is_some_and(|rest| rest.trim_start().starts_with('!'))
+        })
+        || {
+            let compact: String = masked.chars().filter(|ch| !ch.is_whitespace()).collect();
+            compact.contains("#[path") || compact.contains("#![path")
+        }
 }
 
 impl TargetRoots {
@@ -2651,7 +2708,7 @@ impl TargetRoots {
         // A lexical-fallback file records no module declarations, so its
         // children get no edge either.
         let disabled = !index.include_limitations.is_empty()
-            || workspace_has_unindexed_members(index)
+            || unindexed_member_is_unseen_compilation_target(index)
             || index.files().iter().any(|(_, facts)| {
                 facts.used_lexical_fallback
                     || facts
