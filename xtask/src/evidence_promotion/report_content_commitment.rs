@@ -44,9 +44,8 @@ pub(super) fn recompute_raw_json_placeholder_v1(raw: &str) -> Result<String, Str
     let mut text = raw.to_string();
     let span = content_commitment_value_span(&text)?;
     text.replace_range(span, CONTENT_PLACEHOLDER);
-    if text.matches(CONTENT_PLACEHOLDER).count() != 1 {
-        return Err("recommit placeholder must appear exactly once".to_string());
-    }
+    // Only the governed commitment value is replaced; unrelated occurrences
+    // of the placeholder-shaped text remain part of the bytes being hashed.
     Ok(format!(
         "sha256:{}",
         hex_lower(&Sha256::digest(text.as_bytes()))
@@ -66,8 +65,14 @@ fn canonicalization(value: &Value) -> Option<&str> {
 }
 
 fn verify_one_report(path: &Path, text: &str, value: &Value) -> Option<String> {
-    let declared = declared_commitment(value)?;
     let path_label = normalize_path(path);
+    if value.pointer("/artifact/canonicalization").is_some() && declared_commitment(value).is_none()
+    {
+        return Some(format!(
+            "{path_label}: repo-exposure artifact envelope is missing artifact.content_sha256"
+        ));
+    }
+    let declared = declared_commitment(value)?;
     let Some(canonicalization) = canonicalization(value) else {
         return Some(format!(
             "{path_label}: artifact.content_sha256 is present but artifact.canonicalization is missing (status: unknown)"
@@ -121,9 +126,6 @@ pub(super) fn check_committed_report_content_commitments(
             .map_err(|error| format!("failed to read {}: {error}", normalize_path(&path)))?;
         let value: Value = serde_json::from_str(&text)
             .map_err(|error| format!("{} is not JSON: {error}", normalize_path(&path)))?;
-        if declared_commitment(&value).is_none() {
-            continue;
-        }
         if let Some(violation) = verify_one_report(&path, &text, &value) {
             violations.push(violation);
         }
@@ -196,6 +198,50 @@ mod tests {
             .ok_or_else(|| "expected unknown canonicalization violation".to_string())?;
         if !violation.contains("not recognised") {
             return Err(format!("unexpected violation: {violation}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_content_sha256_on_repo_exposure_envelope_fails() -> Result<(), String> {
+        let path = temp_report(
+            "missing-commitment.json",
+            r#"{"artifact":{"canonicalization":"raw_json_placeholder_v1","kind":"repo_exposure"},"seams":[]}"#,
+        )?;
+        let text = fs::read_to_string(&path).map_err(|error| format!("read temp: {error}"))?;
+        let value: Value =
+            serde_json::from_str(&text).map_err(|error| format!("parse temp: {error}"))?;
+        let violation = verify_one_report(&path, &text, &value)
+            .ok_or_else(|| "expected missing commitment violation".to_string())?;
+        if !violation.contains("missing artifact.content_sha256") {
+            return Err(format!("unexpected violation: {violation}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unrelated_placeholder_shaped_text_does_not_break_recompute() -> Result<(), String> {
+        let template = format!(
+            r#"{{"artifact":{{"canonicalization":"raw_json_placeholder_v1","content_sha256":"{CONTENT_PLACEHOLDER}"}},"seams":[{{"expression":"literal {CONTENT_PLACEHOLDER} in seam text"}}]}}"#
+        );
+        let recomputed = recompute_raw_json_placeholder_v1(&template)?;
+        let span = content_commitment_value_span(&template)?;
+        let bytes = template.as_bytes();
+        let mut file = Vec::new();
+        file.write_all(&bytes[..span.start])
+            .map_err(|error| format!("write prefix: {error}"))?;
+        file.write_all(recomputed.as_bytes())
+            .map_err(|error| format!("write digest: {error}"))?;
+        file.write_all(&bytes[span.end..])
+            .map_err(|error| format!("write suffix: {error}"))?;
+        let committed = String::from_utf8(file).map_err(|error| format!("utf8: {error}"))?;
+        let path = temp_report("placeholder-in-seam.json", &committed)?;
+        let value: Value = serde_json::from_str(&committed)
+            .map_err(|error| format!("parse committed report: {error}"))?;
+        if verify_one_report(&path, &committed, &value).is_some() {
+            return Err(
+                "report with unrelated placeholder-shaped seam text should verify".to_string(),
+            );
         }
         Ok(())
     }

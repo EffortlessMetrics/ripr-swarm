@@ -152,6 +152,16 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      each related test's `oracle_strength` and `relation_reason`. Producer
      version, timestamps and the root are not judged. A repo-seam case without a
      regenerable subject fails (#12144).
+2c. For each committed JSON report under
+   `fixtures/evidence-promotion-honesty-corpus/reports/` whose artifact envelope
+   carries `artifact.canonicalization`, the gate requires a string
+   `artifact.content_sha256`. When canonicalization is
+   `raw_json_placeholder_v1`, the gate recomputes that digest over the exact
+   file bytes (substituting the fixed zero digest at the one commitment value)
+   and fails when the declared digest differs, naming the file and regeneration
+   guidance. Unrecognised canonicalization values fail closed (unknown, not
+   pass). Legacy `source_report` artifacts without an artifact envelope are
+   unchanged (#12602).
 2a. Validates the case tier before trusting the expectation:
    - `pure` cases are checked-in tiny examples and must not carry
      pinned-external metadata.
