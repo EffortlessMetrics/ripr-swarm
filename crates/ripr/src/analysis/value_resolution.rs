@@ -544,7 +544,6 @@ impl ValueEnvFacts {
                 })
             })
     }
-
 }
 
 /// Per-test, per-seam resolution environment. The expensive
