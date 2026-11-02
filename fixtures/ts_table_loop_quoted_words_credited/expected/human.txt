@@ -1,0 +1,59 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/ts_table_loop_quoted_words_credited/input
+config: <cwd>/fixtures/ts_table_loop_quoted_words_credited/input/ripr.toml
+
+Summary: 2 changed behaviors checked: 1 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
+
+Changed file(s) by language: typescript = 2
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 2 changed file(s), 4 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: ripr cannot tell whether the test at `tests/realEval.test.ts:8` covers this change: its `.toBe(...)` compares against a variable or computed value, not a literal; replace that expected value with a literal, or check by hand that the test covers this change, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it
+  File: src/realEval.ts:2
+  Language: typescript
+  Language status: preview
+  Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Changed behavior: if (points >= 1000) {
+  Missing check (1 of 2): Related tests reach `realEval` with a strong oracle, but no strong
+    assertion observes a `realEval(...)` call at the changed predicate boundary `points == 1000`;
+    inputs on one side of the boundary do not discriminate the changed comparison
+  Related test: tests/realEval.test.ts:5 realEval for...of table (the preview adapter could not confirm that this assertion observes the changed behavior)
+  Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
+    check `points == 1000`; no actionable repair packet is emitted until verify, receipt, and
+    edit-boundary fields are available
+  Evidence: reach yes · infection unknown · propagation unknown · observation weak · assertion weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: 1 related test(s) found for owner `realEval`
+    - infection unknown: TypeScript preview adapter does not yet model infection
+    - 4 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/ts_table_loop_quoted_words_credited/input --diff <cwd>/fixtures/ts_table_loop_quoted_words_credited/diff.patch --mode fast probe:src_realEval.ts:typescript_preview:3ac0cec4
+  ripr context --root <cwd>/fixtures/ts_table_loop_quoted_words_credited/input --diff <cwd>/fixtures/ts_table_loop_quoted_words_credited/diff.patch --mode fast --at probe:src_realEval.ts:typescript_preview:3ac0cec4
+  no repair start offered: ripr has no complete repair packet for this TypeScript finding (ripr cannot tell whether the test at `tests/realEval.test.ts:8` covers this change: its `.toBe(...)` compares against a variable or computed value, not a literal); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).
+    - src/quotedWithTitle.ts:2 (exposed); kind: predicate; reason: Related test reaches `quotedWithTitle` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.
+  Hidden classes:
+    exposed = tests appear to notice the change
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 2 TypeScript files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

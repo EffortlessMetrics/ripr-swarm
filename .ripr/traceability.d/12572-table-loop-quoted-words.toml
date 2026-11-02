@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/table_rows.rs::statement_list_guard_ignores_quoted_with_and_refuses_real_routes",
+  "crates/ripr/src/analysis/language/typescript/tests/table_loop_tests.rs::loop_title_quoting_with_resolves_rows",
+  "crates/ripr/src/analysis/language/typescript/tests/table_loop_tests.rs::loop_body_real_eval_keeps_the_loop_unresolved",
+]
+fixtures = ["fixtures/ts_table_loop_quoted_words_credited"]
+code = [
+  "crates/ripr/src/analysis/language/typescript/table_rows.rs",
+  "crates/ripr/src/analysis/language/typescript/table_loop_rows.rs",
+]

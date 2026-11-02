@@ -2189,11 +2189,15 @@ keys); do not take the next number.
   longer unresolve the table; a text that does not parse keeps the
   whole-word check, which refuses them anywhere. A computed member key
   (`globalThis["eval"]`, `globalThis["eval" + ""]`) is a route when a string
-  or template text inside it holds one of the words. `for...of` tables keep
-  the raw-text statement-list and loop-body guards (#12572). Unit
-  `row_text_guard_refuses_hidden_mutation_routes_outside_quotes`; fixture
-  `ts_table_row_quoted_words_credited` pins a credited quoted-word title and a
-  refused real `this`.
+  or template text inside it holds one of the words. `for...of` tables parse
+  the test-body statement list and loop-body block when the text parses, with
+  the same whole-word backstop when it does not (#12572). Unit
+  `row_text_guard_refuses_hidden_mutation_routes_outside_quotes`,
+  `statement_list_guard_ignores_quoted_with_and_refuses_real_routes`, and
+  `table_loop_tests::loop_body_quoting_with_resolves_rows`; fixtures
+  `ts_table_row_quoted_words_credited` and
+  `ts_table_loop_quoted_words_credited` pin credited quoted words and refused
+  real routes.
 
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row
