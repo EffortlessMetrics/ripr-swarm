@@ -48,6 +48,7 @@ mod public_proof;
 mod gap_source_subject_shared;
 mod gh_pr_status_snapshot;
 mod identity_registry;
+mod issue_4678_acceptance;
 mod issue_lifecycle_attempt;
 mod issue_lifecycle_contract_plan;
 mod issue_lifecycle_intake;

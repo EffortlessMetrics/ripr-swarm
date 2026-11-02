@@ -2882,6 +2882,12 @@ pub(crate) fn cache_dir_not_a_directory_reason(base: &Path) -> Option<String> {
 /// deadline) refuses rather than admits, and the build recomputes cold.
 /// Limits: an extracted archive carries no Git evidence, and this does not
 /// authenticate entries an untracked process wrote into the root.
+///
+/// #12432: the tracked branch names the exact bound untrack command, so the
+/// post-trap advisory cures the trap instead of only naming it. The branch
+/// only fires when Git answered for the work tree containing `base`, so the
+/// command is applicable exactly when it is present. The in-file tests pin
+/// these reasons with `contains("tracked by Git")`, which appending keeps.
 pub(crate) fn cache_base_untrusted_reason(base: &Path) -> Option<String> {
     if !base.is_dir() {
         return None;
@@ -2889,17 +2895,146 @@ pub(crate) fn cache_base_untrusted_reason(base: &Path) -> Option<String> {
     match crate::git::tracked_files_under(base) {
         Ok(false) => None,
         Ok(true) => Some(format!(
-            "cache dir {} holds files tracked by Git, so its entries came with the repository \
+            "cache dir {} {TRACKED_CACHE_BASE_MARKER}, so its entries came with the repository \
              rather than from this checkout's ripr and were not used; untrack them or point \
-             RIPR_CACHE_DIR outside the repository",
-            base.display()
+             RIPR_CACHE_DIR outside the repository{}",
+            base.display(),
+            tracked_cache_base_untrack_clause(base)
         )),
         Err(error) => Some(format!(
-            "cache dir {} was not used because Git could not confirm it holds no tracked \
+            "cache dir {} {UNCONFIRMABLE_CACHE_BASE_MARKER} it holds no tracked \
              files: {error}",
             base.display()
         )),
     }
+}
+
+/// The stable phrase that marks the tracked-cache-base reason produced by
+/// [`cache_base_untrusted_reason`], shared by the producer and the
+/// emission classifier so the two cannot drift.
+pub(crate) const TRACKED_CACHE_BASE_MARKER: &str = "holds files tracked by Git";
+
+/// The stable phrase that marks the Git-unconfirmable-cache-base reason
+/// produced by [`cache_base_untrusted_reason`].
+pub(crate) const UNCONFIRMABLE_CACHE_BASE_MARKER: &str =
+    "was not used because Git could not confirm";
+
+/// Whether `reason` is one of the run-stable cache-base classifications (the
+/// tracked base or the base Git could not confirm), as opposed to an
+/// ordinary per-entry corruption reason (#12432). Both base-class reasons
+/// name their base, so every lookup in every build keyed to the same base
+/// carries the byte-identical string — the property that makes emission
+/// deduplication lossless.
+pub(crate) fn is_base_untrusted_reason(reason: &str) -> bool {
+    reason.starts_with("cache dir ")
+        && (reason.contains(TRACKED_CACHE_BASE_MARKER)
+            || reason.contains(UNCONFIRMABLE_CACHE_BASE_MARKER))
+}
+
+/// One stderr report per distinct untrusted cache base per process (#12432).
+/// The base-class reasons are byte-identical in every lookup of every build
+/// keyed to the same base (each names its own base path), so a later
+/// emission would repeat one line — a diff run builds the index several
+/// times (admission query, main build, reach builds) and every build would
+/// print the trap's advisory again. Ordinary per-entry corruption reasons
+/// can differ between builds, so they never reach this guard and keep
+/// today's per-build count+first-reason line. Keyed by the reason string,
+/// which embeds its base: a second base still reports, and a long-lived LSP
+/// sidecar keeps per-base reporting instead of a global mute. `true` when
+/// the caller should emit; a poisoned guard degrades to today's
+/// repeat-per-build behavior.
+pub(crate) fn claim_base_untrusted_reason_emission(reason: &str) -> bool {
+    if !is_base_untrusted_reason(reason) {
+        return true;
+    }
+    static REPORTED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+    REPORTED
+        .lock()
+        .map(|mut reported| reported.insert(reason.to_owned()))
+        .unwrap_or(true)
+}
+
+/// The `; exact untrack command: …` clause for a tracked cache base
+/// (#12432), or the empty string when the command cannot be named safely —
+/// the advisory then keeps the category advice. Three refusals: the
+/// work-tree root or the base's repo-relative pathspec cannot be
+/// established (no wrong-repository command); Git cannot list the indexed
+/// paths under the base; or a listed indexed path lies outside ripr's
+/// registered cache layers — a relocated `RIPR_CACHE_DIR` may share its
+/// directory with the project's own tracked files, and a base-wide
+/// `git rm --cached -r` would untrack files ripr neither created nor owns
+/// (PR #12582 review). When every indexed path is ripr's, the command binds
+/// `-C` to the containing work-tree root with the repo-relative base
+/// pathspec, so a relocated-but-ripr-owned base spells a runnable cure just
+/// like the default base does.
+fn tracked_cache_base_untrack_clause(base: &Path) -> String {
+    let canonical = std::fs::canonicalize(base).unwrap_or_else(|_| base.to_path_buf());
+    let Some(toplevel) =
+        crate::git::discovered_work_tree_toplevel(&canonical, std::time::Duration::from_secs(5))
+    else {
+        return String::new();
+    };
+    let Ok(relative) = canonical.strip_prefix(&toplevel) else {
+        return String::new();
+    };
+    if !indexed_paths_all_under_cache_layers(&toplevel, relative) {
+        return String::new();
+    }
+    format!(
+        "; exact untrack command: {}",
+        super::untrack_artifacts_command(&toplevel, &[relative.to_path_buf()])
+    )
+}
+
+/// Whether every Git-indexed path under `base_relative` sits in a
+/// first component naming a registered cache layer ([`cache_layer_names`])
+/// — the directories production caches write into. The tracked branch of
+/// [`cache_base_untrusted_reason`] guarantees at least one indexed path
+/// exists, so `true` names a set the base-wide untrack command owns
+/// entirely; an empty listing (the index moved between the two probes)
+/// refuses the same way. Git failing to answer (deadline, dubious
+/// ownership, output cap) refuses: the clause is omitted rather than
+/// guessed.
+fn indexed_paths_all_under_cache_layers(toplevel: &Path, base_relative: &Path) -> bool {
+    let pathspec = crate::analysis::artifact_root_pathspec(base_relative);
+    let probe = match crate::git::run_git_output_with_deadline_and_limit(
+        toplevel,
+        &[
+            "--literal-pathspecs",
+            "ls-files",
+            "-z",
+            "--",
+            pathspec.as_str(),
+        ],
+        std::time::Duration::from_secs(5),
+        64 * 1024,
+    ) {
+        Ok(probe) => probe,
+        Err(_) => return false,
+    };
+    if !probe.status.success() {
+        return false;
+    }
+    let mut indexed = false;
+    for path in String::from_utf8_lossy(&probe.stdout).split('\0') {
+        if path.is_empty() {
+            continue;
+        }
+        indexed = true;
+        let under_layer = Path::new(path)
+            .strip_prefix(base_relative)
+            .ok()
+            .and_then(|rest| rest.components().next())
+            .is_some_and(|first| {
+                cache_layer_names()
+                    .iter()
+                    .any(|layer| first.as_os_str() == *layer)
+            });
+        if !under_layer {
+            return false;
+        }
+    }
+    indexed
 }
 
 impl RepoFileFactCache {
@@ -7205,6 +7340,151 @@ mod tests {
             CacheLoad::CorruptIgnored { reason } if reason.contains("tracked by Git") => Ok(()),
             other => Err(format!("tracked entry must be refused, got {other:?}")),
         }
+    }
+
+    /// #12432: the tracked-base advisory names the exact bound untrack
+    /// command, so the operator can cure the trap instead of only reading
+    /// about it. The command binds `-C` to the containing work-tree root and
+    /// passes the repo-relative base pathspec — safe here because every
+    /// indexed path under the base sits in a registered cache layer.
+    #[test]
+    fn given_tracked_cache_base_when_reason_runs_then_it_names_the_bound_untrack_command()
+    -> Result<(), String> {
+        let (root, cache_dir) = work_tree_with_cache_dir("tracked-base-cure")?;
+        // Git does not index empty directories: plant the committed entry the
+        // trap is about before force-adding the base, under a registered
+        // cache layer so the base-wide command owns everything it names.
+        let layer_dir = cache_dir.join("repo-file-facts").join("v1");
+        std::fs::create_dir_all(&layer_dir).map_err(|err| format!("mkdir layer: {err}"))?;
+        std::fs::write(layer_dir.join("committed-entry.json"), "{}")
+            .map_err(|err| format!("plant entry: {err}"))?;
+        track_cache_dir(&root, &cache_dir)?;
+        let reason =
+            cache_base_untrusted_reason(&cache_dir).ok_or("tracked base must produce a reason")?;
+        ignore_remove_dir_all(&root);
+        let expected_pathspec = crate::analysis::artifact_root_pathspec(
+            cache_dir
+                .strip_prefix(&root)
+                .map_err(|err| format!("cache dir outside root: {err}"))?,
+        );
+        for needle in [
+            "tracked by Git",
+            "exact untrack command: git -C ",
+            &format!("--literal-pathspecs rm --cached -r -- {expected_pathspec}"),
+        ] {
+            assert!(
+                reason.contains(needle),
+                "reason missing {needle:?}: {reason}"
+            );
+        }
+        Ok(())
+    }
+
+    /// PR #12582 review control: a relocated cache base that shares its
+    /// directory with the project's own tracked files keeps the refusal but
+    /// names NO command — a base-wide `git rm --cached -r` would untrack
+    /// files ripr neither created nor owns, and a wrong actionable repair
+    /// signal is worse than a missed advisory.
+    #[test]
+    fn given_shared_base_with_non_cache_tracked_files_when_reason_runs_then_no_command_is_named()
+    -> Result<(), String> {
+        let (root, cache_dir) = work_tree_with_cache_dir("shared-base-cure")?;
+        // The reviewer's fixture shape: a tracked cache entry AND a tracked
+        // non-cache file under the same relocated base.
+        let layer_dir = cache_dir.join("repo-file-facts").join("v1");
+        std::fs::create_dir_all(&layer_dir).map_err(|err| format!("mkdir layer: {err}"))?;
+        std::fs::write(layer_dir.join("entry.json"), "{}")
+            .map_err(|err| format!("plant entry: {err}"))?;
+        std::fs::write(cache_dir.join("manifest.json"), "{}")
+            .map_err(|err| format!("plant non-cache file: {err}"))?;
+        track_cache_dir(&root, &cache_dir)?;
+        let reason =
+            cache_base_untrusted_reason(&cache_dir).ok_or("tracked base must produce a reason")?;
+        ignore_remove_dir_all(&root);
+        assert!(reason.contains("tracked by Git"), "{reason}");
+        assert!(
+            !reason.contains("exact untrack command"),
+            "shared base must not name a base-wide command: {reason}"
+        );
+        Ok(())
+    }
+
+    /// #12432 control: an untracked base keeps its silent warm path — no
+    /// reason, no command. A tracked base outside any Git work tree cannot
+    /// happen (the tracked answer requires a work tree), so the clause-less
+    /// degradation is covered by construction.
+    #[test]
+    fn given_untracked_cache_base_when_reason_runs_then_no_reason_and_no_command()
+    -> Result<(), String> {
+        let (root, cache_dir) = work_tree_with_cache_dir("untracked-base-cure")?;
+        let reason = cache_base_untrusted_reason(&cache_dir);
+        ignore_remove_dir_all(&root);
+        assert_eq!(reason, None, "untracked base must stay a silent miss");
+        Ok(())
+    }
+
+    /// #12432: the emission guard dedupes the run-stable base-class reasons
+    /// per process — one report per base, a second base still reports — and
+    /// never touches ordinary per-entry corruption reasons, which keep the
+    /// per-build count+first-reason line.
+    #[test]
+    fn given_base_class_reasons_when_emission_claims_run_then_one_per_base_and_ordinary_never_dedupes()
+    -> Result<(), String> {
+        let label = std::process::id();
+        let tracked_a = format!("cache dir /probe/{label}/a {TRACKED_CACHE_BASE_MARKER}, rest");
+        let tracked_b = format!("cache dir /probe/{label}/b {TRACKED_CACHE_BASE_MARKER}, rest");
+        // First claim per base wins; the byte-identical repeat of the same
+        // base (what every later build would carry) is suppressed.
+        assert!(claim_base_untrusted_reason_emission(&tracked_a));
+        assert!(!claim_base_untrusted_reason_emission(&tracked_a));
+        // The second-base control proves a key, not a global mute.
+        assert!(claim_base_untrusted_reason_emission(&tracked_b));
+        assert!(!claim_base_untrusted_reason_emission(&tracked_b));
+        // Ordinary corruption reasons never dedupe here.
+        for _ in 0..2 {
+            assert!(claim_base_untrusted_reason_emission("read failed"));
+        }
+        // The not-a-directory classification stays outside the guard.
+        let not_a_dir = format!("cache dir is not a directory: /probe/{label}");
+        for _ in 0..2 {
+            assert!(claim_base_untrusted_reason_emission(&not_a_dir));
+        }
+        // The unconfirmable class dedupes like the tracked class.
+        let unconfirmable =
+            format!("cache dir /probe/{label}/c {UNCONFIRMABLE_CACHE_BASE_MARKER} it: err");
+        assert!(claim_base_untrusted_reason_emission(&unconfirmable));
+        assert!(!claim_base_untrusted_reason_emission(&unconfirmable));
+        Ok(())
+    }
+
+    /// The producer's wordings and the classifier share the markers, so a
+    /// produced reason always classifies as base-class and a drifted wording
+    /// fails here instead of silently deduping (or not) at the emission sites.
+    #[test]
+    fn given_produced_base_reasons_when_classified_then_both_classes_match() -> Result<(), String> {
+        let (root, cache_dir) = work_tree_with_cache_dir("classify-tracked")?;
+        std::fs::write(cache_dir.join("committed-entry.json"), "{}")
+            .map_err(|err| format!("plant entry: {err}"))?;
+        track_cache_dir(&root, &cache_dir)?;
+        let tracked =
+            cache_base_untrusted_reason(&cache_dir).ok_or("tracked base must produce a reason")?;
+        ignore_remove_dir_all(&root);
+        assert!(is_base_untrusted_reason(&tracked), "{tracked}");
+        let unconfirmable = format!(
+            "cache dir /x {UNCONFIRMABLE_CACHE_BASE_MARKER} it holds no tracked files: boom"
+        );
+        assert!(is_base_untrusted_reason(&unconfirmable), "{unconfirmable}");
+        for ordinary in [
+            "read failed",
+            "cache dir is not a directory: /x",
+            "sharded manifest expected 1 shards but listed 2",
+        ] {
+            assert!(
+                !is_base_untrusted_reason(ordinary),
+                "ordinary reason must not dedupe: {ordinary}"
+            );
+        }
+        Ok(())
     }
 
     fn scoped_sample_inventory() -> PersistedScopedInventory {
