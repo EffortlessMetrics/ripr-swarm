@@ -1,0 +1,43 @@
+{
+  "case_id": "semver-display-val-le",
+  "subject_id": "semver-280ebcb",
+  "diff": "cases/semver-display-val-le.diff",
+  "anchor": {
+    "file": "src/display.rs",
+    "line": 157
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_public_api",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "val <= 10",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: components equal to 10 need one digit, but no test formats a padded version with a component equal to 10; mutation spot-check #5295 recorded this as missed"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "test_align never formats a component equal to 10, so the spot-check `<` to `<=` change keeps tests green. ripr reports no_static_path (limited), an acceptable abstention.",
+  "labeling_observation": {
+    "ripr_commit": "7a6d4b7a5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
