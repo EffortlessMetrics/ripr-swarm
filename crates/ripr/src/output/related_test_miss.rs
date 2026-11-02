@@ -1157,9 +1157,13 @@ mod tests {
                 &context["related_tests"],
             ] {
                 let row = json_row(rows, &explained.name)?;
+                let miss_token = explained
+                    .miss
+                    .ok_or("explained row should carry a miss token")?
+                    .as_str();
                 assert_eq!(
                     row.get("miss").and_then(serde_json::Value::as_str),
-                    Some(explained.miss.expect("miss token").as_str())
+                    Some(miss_token)
                 );
                 assert_eq!(
                     row.get("why").and_then(serde_json::Value::as_str),
