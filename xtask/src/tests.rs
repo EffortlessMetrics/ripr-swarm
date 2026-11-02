@@ -25133,6 +25133,52 @@ fn local_context_findings_are_sorted_deterministically() {
 }
 
 #[test]
+fn ripr_spec_0140_cli_smoke_trace_reference_matches_live_test_fn() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let manifest_path = root.join(".ripr/traceability.toml");
+    let (behaviors, manifest_violations) = super::parse_traceability_manifest(&manifest_path)?;
+    if !manifest_violations.is_empty() {
+        return Err(format!(
+            "manifest parse violations: {manifest_violations:?}"
+        ));
+    }
+    let behavior = behaviors
+        .iter()
+        .find(|entry| entry.id == "RIPR-SPEC-0140")
+        .ok_or_else(|| "RIPR-SPEC-0140 missing from .ripr/traceability.toml".to_string())?;
+    let reference = behavior
+        .tests
+        .iter()
+        .find(|entry| {
+            entry.contains("crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain")
+        })
+        .ok_or_else(|| {
+            "RIPR-SPEC-0140 missing cli_smoke check-artifact reuse test reference".to_string()
+        })?;
+    if reference.contains("byte_identical") {
+        return Err(format!(
+            "stale renamed test still referenced in manifest: {reference}"
+        ));
+    }
+    let (path_text, suffix) = super::split_trace_reference(reference);
+    let Some(symbol) = suffix else {
+        return Err(format!(
+            "expected `::symbol` proof reference, got `{reference}`"
+        ));
+    };
+    let path = root.join(path_text);
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| format!("read `{path_text}` for symbol audit: {error}"))?;
+    let needle = format!("fn {symbol}");
+    if !text.contains(&needle) {
+        return Err(format!(
+            "manifest references `{reference}` but `{path_text}` has no `{needle}` (#2345 live-manifest audit)"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn traceability_symbol_suffix_is_advisory_without_blocking() -> Result<(), String> {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs");
     let references = vec![format!("{}::tests::example", source.display())];
