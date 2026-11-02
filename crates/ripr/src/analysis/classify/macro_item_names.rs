@@ -58,8 +58,9 @@ pub(in crate::analysis) enum MacroSites {
     Unparsed { has_macro_rules: bool },
     Parsed {
         definitions: Vec<(String, String)>,
-        /// (macro name, masked arguments, item position, statement position)
-        invocations: Vec<(String, String, bool, bool)>,
+        /// (macro name, masked arguments, item position, statement position,
+        /// qualified path)
+        invocations: Vec<(String, String, bool, bool, bool)>,
     },
 }
 
@@ -87,14 +88,17 @@ impl MacroSites {
             let Some(call) = ast::MacroCall::cast(node.clone()) else {
                 continue;
             };
-            let Some(macro_name) = call
-                .path()
-                .and_then(|path| path.segment())
+            let Some(path) = call.path() else {
+                continue;
+            };
+            let Some(macro_name) = path
+                .segment()
                 .and_then(|segment| segment.name_ref())
                 .map(|segment| segment.text().to_string())
             else {
                 continue;
             };
+            let qualified = path.qualifier().is_some();
             let arguments = call
                 .token_tree()
                 .map(|tree| mask_comments_and_strings(&tree.syntax().text().to_string()))
@@ -111,7 +115,13 @@ impl MacroSites {
                         })
             });
             if item_position || statement_position {
-                invocations.push((macro_name, arguments, item_position, statement_position));
+                invocations.push((
+                    macro_name,
+                    arguments,
+                    item_position,
+                    statement_position,
+                    qualified,
+                ));
             }
         }
         Self::Parsed {
@@ -129,9 +139,10 @@ impl MacroSites {
             Self::Parsed {
                 definitions,
                 invocations,
-            } => invocations.iter().any(|(macro_name, _, _, _)| {
-                !definitions.iter().any(|(defined, _)| defined == macro_name)
-                    && !STD_EXPRESSION_MACROS.contains(&macro_name.as_str())
+            } => invocations.iter().any(|(macro_name, _, _, _, qualified)| {
+                let local_for_unqualified =
+                    !qualified && definitions.iter().any(|(defined, _)| defined == macro_name);
+                !local_for_unqualified && !STD_EXPRESSION_MACROS.contains(&macro_name.as_str())
             }),
         }
     }
@@ -150,7 +161,7 @@ impl MacroSites {
             } => (definitions, invocations),
         };
         invocations.iter().any(
-            |(macro_name, arguments, item_position, _statement_position)| {
+            |(macro_name, arguments, item_position, _statement_position, _qualified)| {
                 let mentions_name = contains_as_whole_word(arguments, name);
                 let bare_item_argument =
                     *item_position && passes_name_as_bare_argument(arguments, name);
@@ -488,6 +499,13 @@ mod tests {
         ));
         assert!(!file_has_non_local_defining_macro_invocation(
             "#[test]\nfn t() { assert_eq!(1, 1); }\n"
+        ));
+    }
+
+    #[test]
+    fn a_qualified_external_item_macro_refuses_with_a_same_named_local_definition() {
+        assert!(file_has_non_local_defining_macro_invocation(
+            "macro_rules! reexport_max { () => {}; }\ndependency::reexport_max!();\n"
         ));
     }
 
