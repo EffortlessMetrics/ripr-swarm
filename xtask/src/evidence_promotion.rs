@@ -4216,6 +4216,8 @@ pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), St
     // The repo-seam reports are hand-captured; regenerate each from its
     // subject so a stale capture or an analyzer regression turns red (#12144).
     repo_seam_reports::check_regenerated_reports(&mut pure_violations)?;
+    // Each committed report's own `content_sha256` must still match its bytes (#12602).
+    repo_seam_reports::check_report_digests(&mut pure_violations)?;
     let mut external_runs = Vec::new();
     if options.run_pinned_external {
         external_runs = run_evidence_promotion_pinned_external_cases(corpus_path, &options)?;

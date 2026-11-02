@@ -20,8 +20,9 @@ use super::{
     read_evidence_promotion_corpus, ripr_debug_binary, run,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const REGENERATION_TIMEOUT: Duration = Duration::from_mins(2);
@@ -232,6 +233,66 @@ pub(super) fn repo_seam_cases(
     regenerable
 }
 
+/// The producer's `raw_json_placeholder_v1` canonicalization: the digest is the
+/// sha256 of the file bytes with the stored `content_sha256` replaced by this
+/// placeholder.
+const CONTENT_DIGEST_CANONICALIZATION: &str = "raw_json_placeholder_v1";
+const CONTENT_DIGEST_PLACEHOLDER: &str =
+    "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Why one committed report's `artifact.content_sha256` cannot be trusted, or
+/// `None` when it verifies or the file makes no digest claim. A canonicalization
+/// this check does not know is a problem, not a pass: the digest is unknown.
+pub(super) fn report_digest_problem(label: &str, text: &str) -> Option<String> {
+    let Ok(report) = serde_json::from_str::<Value>(text) else {
+        return Some(format!(
+            "{label}: not JSON, so its digest cannot be checked"
+        ));
+    };
+    let artifact = report.get("artifact")?;
+    let stored = artifact.get("content_sha256").and_then(Value::as_str)?;
+    match artifact.get("canonicalization").and_then(Value::as_str) {
+        Some(CONTENT_DIGEST_CANONICALIZATION) => {}
+        other => {
+            return Some(format!(
+                "{label}: canonicalization {other:?} is not `{CONTENT_DIGEST_CANONICALIZATION}`, so its `content_sha256` is unknown (not verified)"
+            ));
+        }
+    }
+    let placeholder = text.replace(stored, CONTENT_DIGEST_PLACEHOLDER);
+    let actual = format!("sha256:{:x}", Sha256::digest(placeholder.as_bytes()));
+    (actual != stored).then(|| {
+        format!(
+            "{label}: `content_sha256` is {stored} but its bytes hash to {actual}; the file was edited after it was generated. Recapture it with `ripr check --mode draft --format repo-exposure-json` instead of editing it by hand"
+        )
+    })
+}
+
+/// Verify the self-digest of every committed report in the corpus (#12602).
+/// The regeneration guard above judges seams only and ignores the producer
+/// stamps, so a hand edit of a stamp left the digest stale with every gate green.
+pub(super) fn check_report_digests(violations: &mut Vec<String>) -> Result<(), String> {
+    let reports = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS)
+        .parent()
+        .map_or_else(|| PathBuf::from("reports"), |dir| dir.join("reports"));
+    let Ok(entries) = std::fs::read_dir(&reports) else {
+        return Ok(());
+    };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    files.sort();
+    for path in files {
+        let label = normalize_path(&path);
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {label}: {error}"))?;
+        violations.extend(report_digest_problem(&label, &text));
+    }
+    Ok(())
+}
+
 fn regenerate(subject: &Path, binary: &Path) -> Result<Value, String> {
     let mut args = vec!["check".to_string()];
     for arg in REGENERATION_ARGS {
@@ -330,6 +391,55 @@ mod tests {
                 ]
             }]
         })
+    }
+
+    /// A report whose `content_sha256` is computed the producer's way.
+    fn sealed_report(extra_stamp: &str) -> String {
+        let template = format!(
+            "{{\n  \"artifact\": {{\"canonicalization\": \"raw_json_placeholder_v1\", \"content_sha256\": \"{CONTENT_DIGEST_PLACEHOLDER}\"}},\n  \"stamp\": \"{extra_stamp}\"\n}}\n"
+        );
+        let digest = format!("sha256:{:x}", Sha256::digest(template.as_bytes()));
+        template.replace(CONTENT_DIGEST_PLACEHOLDER, &digest)
+    }
+
+    #[test]
+    fn a_sealed_report_verifies_and_a_hand_edit_of_a_stamp_does_not() {
+        let sealed = sealed_report("1.138");
+        assert_eq!(report_digest_problem("r.json", &sealed), None);
+        // The #12368 failure: a producer stamp changed, the digest left alone.
+        let edited = sealed.replace("1.138", "1.139");
+        let problem = report_digest_problem("r.json", &edited);
+        assert!(
+            problem
+                .as_deref()
+                .is_some_and(|text| text.contains("edited after it was generated")),
+            "{problem:?}"
+        );
+        // Restoring the stamp restores the pass.
+        assert_eq!(
+            report_digest_problem("r.json", &edited.replace("1.139", "1.138")),
+            None
+        );
+    }
+
+    #[test]
+    fn an_unknown_canonicalization_or_non_json_report_is_not_a_pass() {
+        let other =
+            r#"{"artifact": {"canonicalization": "other_v2", "content_sha256": "sha256:ab"}}"#;
+        let problem = report_digest_problem("r.json", other);
+        assert!(
+            problem
+                .as_deref()
+                .is_some_and(|text| text.contains("unknown")),
+            "{problem:?}"
+        );
+        assert!(report_digest_problem("r.json", "not json").is_some());
+        // No digest claim, no problem: such a file asserts nothing to verify.
+        assert_eq!(report_digest_problem("r.json", r#"{"seams": []}"#), None);
+        assert_eq!(
+            report_digest_problem("r.json", r#"{"artifact": {"generated_at": "unix_ms:1"}}"#),
+            None
+        );
     }
 
     #[test]
