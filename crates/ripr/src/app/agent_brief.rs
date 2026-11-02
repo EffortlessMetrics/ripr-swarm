@@ -818,10 +818,13 @@ fn relation_confidence_priority(confidence: RelationConfidence) -> u8 {
 /// and the four `*_unknown` classes) names evidence the analyzer could not
 /// establish, so selecting it would send the agent to repair a gap that may
 /// not exist; pilot withholds the same classes from its ranking (#5497,
-/// #6775). Omitted seams are named in warnings, never silently dropped
-/// (`AgentBriefOmission`).
-fn is_agent_actionable(class: SeamGripClass) -> bool {
-    class.is_headline_eligible() && !class.is_static_limitation()
+/// #6775). Gap-class seams that [`is_static_limited`] marks as static
+/// limitations are omitted for the same reason. Omitted seams are named in
+/// warnings, never silently dropped (`AgentBriefOmission`).
+fn is_agent_actionable(entry: &ClassifiedSeam) -> bool {
+    entry.class.is_headline_eligible()
+        && !entry.class.is_static_limitation()
+        && !crate::output::evidence_record::is_static_limited(entry)
 }
 
 /// Whether an explicitly named seam renders an agent result (packet,
@@ -845,7 +848,7 @@ impl AgentBriefOmission {
         if matches!(policy.severity_for(entry.class), ConfigSeverity::Off) {
             return Some(Self::ConfiguredOff(entry.class));
         }
-        if !is_agent_actionable(entry.class) {
+        if !is_agent_actionable(entry) {
             return Some(Self::NotActionable(entry.class));
         }
         None
@@ -2319,5 +2322,40 @@ weakly_gripped = "off"
                 "{class:?} omission must be named honestly"
             );
         }
+    }
+
+    #[test]
+    fn agent_brief_omits_gap_class_seams_when_is_static_limited_marks_them() {
+        let mut limited = classified(
+            "src/pricing.rs",
+            88,
+            "pricing::discounted_total",
+            "amount >= discount_threshold",
+            SeamGripClass::WeaklyGripped,
+        );
+        limited.evidence.propagate = stage(StageState::Unknown);
+        let gap = classified(
+            "src/pricing.rs",
+            101,
+            "pricing::taxed_total",
+            "amount >= tax_threshold",
+            SeamGripClass::Ungripped,
+        );
+        let seams = vec![limited, gap];
+        let selection = select(
+            &seams,
+            &AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/pricing.rs")]),
+            3,
+        );
+        assert_eq!(selection.top_seams.len(), 1);
+        assert_eq!(selection.top_seams[0].seam.class, SeamGripClass::Ungripped);
+        assert!(
+            selection
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("is weakly_gripped and is not included")),
+            "{:?}",
+            selection.warnings
+        );
     }
 }
