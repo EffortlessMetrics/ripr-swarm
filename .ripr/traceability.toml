@@ -18592,12 +18592,29 @@ tests = [
   "crates/ripr/src/analysis/committed_source/tests.rs::snapshot_inputs_differ_only_in_their_own_directory",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::vitest_string_values_are_not_keys_but_real_keys_still_refuse",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::snapshot_of_the_function_owner_result_confirms_the_effect_seam",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::snapshot_of_the_method_owner_result_confirms_the_effect_seam",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::snapshot_of_an_unrelated_function_subject_reads_weak",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::a_bound_local_that_is_rewritten_or_shadowed_reads_weak",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::snapshot_of_an_unrelated_method_subject_reads_weak",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::typed_locals_and_wrapped_subjects_are_deliberately_uncredited",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::an_unrelated_import_of_the_owner_name_does_not_inherit_the_owner_credit",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
+  "fixtures/typescript_snapshot_effect_owner_result_control",
+  "fixtures/typescript_snapshot_effect_method_owner_result_control",
+  "fixtures/typescript_snapshot_effect_unrelated_subject",
+  "fixtures/typescript_snapshot_effect_unrelated_committed",
+  "fixtures/typescript_snapshot_effect_rebound_local",
+  "fixtures/typescript_snapshot_effect_receiver_redeclared",
+  "fixtures/typescript_snapshot_effect_unrelated_import_binding",
+  "fixtures/typescript_snapshot_effect_conditional_receiver",
+  "fixtures/typescript_snapshot_effect_spy_calls_weak",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/committed_snapshot.rs",
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
   "crates/ripr/src/analysis/committed_source.rs",
   "crates/ripr/src/analysis/language/router.rs",
 ]
