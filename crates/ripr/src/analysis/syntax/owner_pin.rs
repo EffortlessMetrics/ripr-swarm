@@ -2763,7 +2763,15 @@ fn owner_pin_assertions_with_matches(
             &json_uses,
             matches_context,
         ) {
-            Some(refusal)
+            if let AssertionContextRefusal::OpaqueMacro(ref path) = refusal {
+                if super::bolero::bolero_macro_escape_allowed(&function, source, path) {
+                    None
+                } else {
+                    Some(refusal)
+                }
+            } else {
+                Some(refusal)
+            }
         } else if let Some(attr) = function.attrs().find(|attr| {
             !(runs_body_unchanged(attr, function.syntax())
                 || matches_context && matches_preserves_assertion_execution(attr, &function))
@@ -5289,6 +5297,9 @@ fn eager_path(
             }
             if through_closure {
                 return Err("a nested closure");
+            }
+            if let Some(statement) = super::bolero::bolero_for_each_consumer(&closure, function) {
+                return eager_path(statement, function, false, first_return);
             }
             if let Some(call) = closure_invocation(&closure, function, first_return) {
                 return eager_path(call.syntax().clone(), function, true, first_return);

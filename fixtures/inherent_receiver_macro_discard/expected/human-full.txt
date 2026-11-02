@@ -48,6 +48,7 @@ Weakness
 Next step
   The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/inherent_receiver_macro_discard/input --diff <cwd>/fixtures/inherent_receiver_macro_discard/diff.patch --mode fast probe:src_lib.rs:match_arm:f9032269
   ripr context --root <cwd>/fixtures/inherent_receiver_macro_discard/input --diff <cwd>/fixtures/inherent_receiver_macro_discard/diff.patch --mode fast --at probe:src_lib.rs:match_arm:f9032269
 
@@ -85,5 +86,6 @@ Weakness
 Next step
   The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/inherent_receiver_macro_discard/input --diff <cwd>/fixtures/inherent_receiver_macro_discard/diff.patch --mode fast probe:src_lib.rs:return_value:3068903e
   ripr context --root <cwd>/fixtures/inherent_receiver_macro_discard/input --diff <cwd>/fixtures/inherent_receiver_macro_discard/diff.patch --mode fast --at probe:src_lib.rs:return_value:3068903e
