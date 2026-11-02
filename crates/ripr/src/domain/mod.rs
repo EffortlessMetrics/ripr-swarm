@@ -152,8 +152,10 @@ pub use repair_card::{
 pub(crate) use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub(crate) use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
 pub(crate) use probe::boundary_input_observed_with_weak_oracle;
+pub(crate) use probe::declared_const_name;
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};
+pub(crate) use test_evidence_identity::normalize_transport_path;
 pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};
 pub(crate) use verification_result::CommandSpecDigest;
 pub use verification_result::{

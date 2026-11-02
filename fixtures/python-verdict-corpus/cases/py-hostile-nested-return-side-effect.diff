@@ -1,0 +1,12 @@
+diff --git a/hostile/nested_effect.py b/hostile/nested_effect.py
+--- a/hostile/nested_effect.py
++++ b/hostile/nested_effect.py
+@@ -2,7 +2,7 @@
+     values = []
+ 
+     def inner():
+-        return values.append(2)
++        return values.append(3)
+ 
+     inner()
+     return values

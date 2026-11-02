@@ -1760,7 +1760,7 @@ pub(crate) fn ava_assertion_from_expression(
             source,
         ),
         oracle_confidence,
-        rendered_call: None,
+        rendered_call: Some(format!("{receiver}.{method}(...)")),
         loose_number_expected: false,
         expected_object_const: None,
         compares_reference_identity: TypeScriptAssertion::ava_compares_reference_identity(method),
