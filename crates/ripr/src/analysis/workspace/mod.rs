@@ -4,6 +4,7 @@ mod cargo_targets;
 mod classify;
 mod discover;
 mod module_graph;
+mod named_dependent_scope;
 mod path_dependencies;
 mod select;
 mod source_role;
@@ -29,6 +30,9 @@ pub(crate) use source_role::{
 };
 
 pub(crate) use classify::{normalize_path, package_root};
+pub(crate) use named_dependent_scope::{
+    composes_modules, withheld_source_disables_crate_root_routing,
+};
 pub(crate) use discover::UnlinkedPythonTests;
 pub use discover::discover_rust_files;
 pub(crate) use discover::path_enters_ignored_dir;

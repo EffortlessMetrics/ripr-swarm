@@ -423,7 +423,7 @@ impl AdmissionQuery {
             || spells(&self.implemented_traits)
             || (self.binary_owner
                 && (contains(bytes, b"CARGO_BIN_EXE_") || contains(bytes, b"cargo_bin")))
-            || composes_modules(bytes)
+            || crate::analysis::workspace::composes_modules(bytes)
             || spells(&self.empty_macro_names)
             || (!self.impl_types.is_empty() && impl_header_names(bytes, &self.impl_types))
     }
@@ -699,6 +699,7 @@ pub(super) fn admit_dependents(
     // main index then counts twice, which a union absorbs.
     let mut withheld_macro_bindings = classify::WithheldMacroBindings::default();
     let mut bindings_saturated = false;
+    let mut withheld_routing_disabled = false;
     // File names spelled by `#[path]`/`include!` compositions, `"*"` for one
     // with no readable literal: a composed withheld binary's macros reach
     // the composing crate (#10191).
@@ -784,6 +785,11 @@ pub(super) fn admit_dependents(
                     admitted.push((*file).clone());
                 }
                 Some(file_tokens) => {
+                    if crate::analysis::workspace::withheld_source_disables_crate_root_routing(
+                        file, bytes,
+                    ) {
+                        withheld_routing_disabled = true;
+                    }
                     let id = u32::try_from(withheld.len()).map_err(|err| {
                         format!("dependent scope: too many withheld files: {err}")
                     })?;
@@ -816,6 +822,9 @@ pub(super) fn admit_dependents(
                 admitted.push(file.clone());
             }
         }
+    }
+    if withheld_routing_disabled {
+        withheld_macro_bindings.disable_crate_root_routing();
     }
     withheld_macro_bindings.widen_composed(&composed_names);
     admitted.sort();
@@ -1497,49 +1506,10 @@ fn is_identifier_byte(byte: u8) -> bool {
     byte == b'_' || byte.is_ascii_alphanumeric() || byte >= 0x80
 }
 
-/// `include!` and `#[path]` compose a file out of other files, so the
-/// composing file decides those files' module roles. A lexical superset:
-/// `include !`, `# [ path ..]` and any `cfg_attr`, which may carry a `path`
-/// with no static target that disables crate-root routing (#6909).
-fn composes_modules(bytes: &[u8]) -> bool {
-    let after_space = |at: usize| {
-        bytes.get(at..).map_or(at, |rest| {
-            at + rest
-                .iter()
-                .take_while(|byte| byte.is_ascii_whitespace())
-                .count()
-        })
-    };
-    let word_at = |at: usize, word: &[u8]| {
-        bytes.get(at..at + word.len()) == Some(word)
-            && bytes
-                .get(at + word.len())
-                .is_none_or(|next| !is_identifier_byte(*next))
-    };
-    (0..bytes.len()).any(|at| {
-        let starts_word = at == 0 || !is_identifier_byte(bytes[at - 1]);
-        if starts_word && word_at(at, b"include") {
-            return bytes.get(after_space(at + b"include".len())) == Some(&b'!');
-        }
-        if bytes[at] != b'#' {
-            return false;
-        }
-        let mut next = after_space(at + 1);
-        if bytes.get(next) == Some(&b'!') {
-            next = after_space(next + 1);
-        }
-        if bytes.get(next) != Some(&b'[') {
-            return false;
-        }
-        let name = after_space(next + 1);
-        word_at(name, b"path") || word_at(name, b"cfg_attr")
-    })
-}
-
 /// The `.rs` file names a composing file spells, or `"*"` when it composes
 /// modules without spelling one.
 fn note_composed_names(bytes: &[u8], names: &mut BTreeSet<String>) {
-    if !composes_modules(bytes) {
+    if !crate::analysis::workspace::composes_modules(bytes) {
         return;
     }
     let text = String::from_utf8_lossy(bytes);
@@ -2071,6 +2041,11 @@ mod tests {
         assert!(none.admits(b"#[cfg_attr(unix, path = \"u.rs\")] mod check;"));
         assert!(none.admits(b"# [ path = \"a.rs\" ] mod a;"));
         assert!(none.admits(b"include !(\"x.rs\");"));
+        assert!(none.admits(b"#[/*c*/ cfg_attr(unix, path = \"u.rs\")] mod check;"));
+        assert!(none.admits(b"# /*c*/ [path = \"a.rs\"] mod a;"));
+        assert!(none.admits(
+            "#[\u{00a0}path = \"a.rs\"] mod a;".as_bytes()
+        ));
         assert!(!none.admits(b"#[derive(Debug)] struct S; fn includes() {}"));
         assert!(!none.admits(b"#![doc = include_str!(\"../README.md\")]"));
         let cargo_bin = b"let tool = env!(\"CARGO_BIN_EXE_tool\");";
