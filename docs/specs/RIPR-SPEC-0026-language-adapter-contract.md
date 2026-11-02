@@ -270,6 +270,16 @@ Preview disable:
 - Removing `typescript` from `[languages] enabled` removes preview
   findings from every report without leaving stale artifacts.
 
+Mixed Rust + preview repo-mode run with a recoverable Rust adapter failure
+(#6470):
+
+- The run completes and retains preview-language sibling evidence.
+- The failed Rust adapter is recorded as a `Failed` child, not
+  `Unavailable`.
+- Hard Rust repo refusals (`repo_scope_oversized`,
+  `partial_budget_invalid`) still propagate as top-level errors with the
+  existing non-consumable refusal envelope.
+
 ## Test Mapping
 
 Follow-up fixtures and tests cover:
