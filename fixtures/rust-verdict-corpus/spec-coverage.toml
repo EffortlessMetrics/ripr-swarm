@@ -1010,8 +1010,3 @@ reason = "Gate/ledger refusal-admission behavior; not an exposure-verdict exampl
 id = "RIPR-SPEC-0363"
 scope = "out"
 reason = "TypeScript per-file fact persistence; a cache-admission behavior, not an exposure-verdict example a rust case labels"
-
-[[spec]]
-id = "RIPR-SPEC-0377"
-scope = "out"
-reason = "repair-attempt closeout integration matrix (#4799 R3); not an analyzer exposure verdict the rust corpus labels"
