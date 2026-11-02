@@ -72,6 +72,10 @@ const OWNER_SOURCE: &str = concat!(
     "  }\n",
     "  return 1;\n",
     "}\n",
+    "\n",
+    "export function resolveValue(input: unknown): unknown {\n",
+    "  return typeof input !== \"function\" ? (input as any)() : input;\n",
+    "}\n",
 );
 
 /// A changed line of `OWNER_SOURCE`, with the owner it belongs to.
@@ -120,6 +124,13 @@ const POLARITY: Change = Change {
     text: "  if (n <= 0) {",
 };
 
+/// #12281: the citty `resolveValue` guard, negated from `===` by the edit.
+const RESOLVE: Change = Change {
+    owner: "resolveValue",
+    line: 60,
+    text: "  return typeof input !== \"function\" ? (input as any)() : input;",
+};
+
 /// One evaluated finding: each row's test name, relation and activation,
 /// in candidate order, plus the finding-wide witness.
 struct Evaluated {
@@ -159,8 +170,19 @@ impl Evaluated {
 /// Runs the classifier on `change` against `test_source` in a fresh
 /// tempdir, removing the tempdir afterwards.
 fn evaluate(change: &Change, test_source: &str, expect_fact: bool) -> Result<Evaluated, String> {
+    evaluate_negation(change, test_source, expect_fact, false)
+}
+
+/// [`evaluate`] with the row context's `equality_negation` set as given
+/// (#12281).
+fn evaluate_negation(
+    change: &Change,
+    test_source: &str,
+    expect_fact: bool,
+    equality_negation: bool,
+) -> Result<Evaluated, String> {
     let root = ts_unique_tempdir("predicate-activation")?;
-    let result = evaluate_in(&root, change, test_source, expect_fact);
+    let result = evaluate_in(&root, change, test_source, expect_fact, equality_negation);
     let _ = std::fs::remove_dir_all(&root);
     result
 }
@@ -172,6 +194,7 @@ fn evaluate_in(
     change: &Change,
     test_source: &str,
     expect_fact: bool,
+    equality_negation: bool,
 ) -> Result<Evaluated, String> {
     std::fs::create_dir_all(root.join("src")).map_err(|err| format!("mkdir src: {err}"))?;
     std::fs::write(root.join(OWNER_FILE), OWNER_SOURCE)
@@ -221,7 +244,7 @@ fn evaluate_in(
         alias_map: None,
         workspace_root: Some(root),
         pin_facts: None,
-        equality_negation: false,
+        equality_negation,
     };
     let activations: Vec<TypeScriptPredicateActivation> = candidates
         .iter()
@@ -1153,5 +1176,51 @@ fn recursive_owner_is_unresolved_not_missed() -> Result<(), String> {
     let evaluated = evaluate(&TIER, &source, true)?;
     assert_eq!(evaluated.row("recursive")?.1, R::DirectOwnerCall);
     assert_eq!(evaluated.activation("recursive")?, A::Unresolved);
+    Ok(())
+}
+
+const IMPORT_RESOLVE: &str = "import { resolveValue } from '../src/pricing';";
+
+/// #12281: under a negated `typeof` guard an argument of any written kind
+/// witnesses the flip, and only the negation fact makes it do so: the same
+/// row without the fact is not witnessed.
+#[test]
+fn negated_typeof_guard_credits_a_written_input_of_another_kind() -> Result<(), String> {
+    let source = one_test(
+        "number input",
+        IMPORT_RESOLVE,
+        "  expect(resolveValue(42)).toBe(42);",
+    );
+    let negated = evaluate_negation(&RESOLVE, &source, false, true)?;
+    assert_eq!(negated.row("number input")?.1, R::DirectOwnerCall);
+    assert_eq!(negated.activation("number input")?, A::Witnessed);
+    assert!(negated.witnessed);
+    let exact_kind_only = evaluate_negation(&RESOLVE, &source, false, false)?;
+    assert_eq!(exact_kind_only.row("number input")?.1, R::DirectOwnerCall);
+    assert_ne!(exact_kind_only.activation("number input")?, A::Witnessed);
+    assert!(!exact_kind_only.witnessed);
+    Ok(())
+}
+
+/// #12281 review: the negation fact never credits an argument whose kind the
+/// text does not fix (a call result, a mutable local).
+#[test]
+fn negated_typeof_guard_credits_no_unreadable_argument() -> Result<(), String> {
+    for (name, body) in [
+        (
+            "call argument",
+            "  expect(resolveValue(makeValue())).toBe(42);",
+        ),
+        (
+            "mutable local",
+            "  let value = pick();\n  expect(resolveValue(value)).toBe(42);",
+        ),
+    ] {
+        let source = one_test(name, IMPORT_RESOLVE, body);
+        let evaluated = evaluate_negation(&RESOLVE, &source, false, true)?;
+        assert_eq!(evaluated.row(name)?.1, R::DirectOwnerCall, "{name}");
+        assert_ne!(evaluated.activation(name)?, A::Witnessed, "{name}");
+        assert!(!evaluated.witnessed, "{name}");
+    }
     Ok(())
 }

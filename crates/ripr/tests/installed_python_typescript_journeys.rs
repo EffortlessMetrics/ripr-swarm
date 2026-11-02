@@ -5025,3 +5025,173 @@ fn python_printed_verify_runs_in_selected_root_from_foreign_cwd() -> Result<(), 
     decoy_untouched(&decoy)?;
     Ok(())
 }
+
+/// A git repository built from inline file contents (#12281): `base` is
+/// committed first, then `head` is written over it and committed, so the
+/// subject of each case is bound to the source text in this file.
+#[cfg(feature = "lang-typescript")]
+fn inline_typescript_repo(
+    label: &str,
+    base: &[(&str, &str)],
+    head: &[(&str, &str)],
+) -> Result<(TempDirGuard, PathBuf, PathBuf, String), String> {
+    let guard = temp_dir(label)?;
+    let launch = guard.0.clone();
+    let root = launch.join("repo");
+    let write = |files: &[(&str, &str)]| -> Result<(), String> {
+        for (path, text) in files {
+            let target = root.join(path);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| format!("{path}: {error}"))?;
+            }
+            std::fs::write(&target, text).map_err(|error| format!("{path}: {error}"))?;
+        }
+        Ok(())
+    };
+    write(base)?;
+    fixture_git_ok(&root, &["init", "-q", "-b", "main"])?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+    fixture_git_ok(&root, &["config", "commit.gpgsign", "false"])?;
+    fixture_git_ok(&root, &["config", "user.name", "fixture"])?;
+    fixture_git_ok(&root, &["config", "user.email", "fixture@example.invalid"])?;
+    fixture_git_ok(&root, &["add", "-A"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+    let base_sha = fixture_git_output(&root, &["rev-parse", "HEAD"])?
+        .trim()
+        .to_string();
+    write(head)?;
+    fixture_git_ok(&root, &["add", "-A"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "head"])?;
+    Ok((guard, launch, root, base_sha))
+}
+
+#[cfg(feature = "lang-typescript")]
+const TYPEOF_PACKAGE_JSON: &str = "{\n  \"name\": \"typeof-guard\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"scripts\": { \"test\": \"vitest run\" },\n  \"devDependencies\": { \"vitest\": \"5.0.5\" }\n}\n";
+#[cfg(feature = "lang-typescript")]
+const TYPEOF_RIPR_TOML: &str = "[languages]\nenabled = [\"rust\", \"typescript\"]\n";
+#[cfg(feature = "lang-typescript")]
+const TYPEOF_TYPES: &str = "export type Resolvable<T> = T | (() => T);\n";
+#[cfg(feature = "lang-typescript")]
+const TYPEOF_BASE_UTILS: &str = "import type { Resolvable } from \"./types.ts\";\n\nexport function resolveValue<T>(input: Resolvable<T>): T | Promise<T> {\n  return typeof input === \"function\" ? (input as any)() : input;\n}\n";
+/// The citty `test/utils.test.ts` `resolveValue()` block: two immutable
+/// locals, `value` then `result`, observed through `result`.
+#[cfg(feature = "lang-typescript")]
+const TYPEOF_CITTY_TEST: &str = "import { describe, it, expect } from \"vitest\";\nimport { resolveValue } from \"../src/_utils.ts\";\nimport type { Resolvable } from \"../src/types.ts\";\n\ndescribe(\"resolveValue()\", () => {\n  it(\"should resolve a non-function value correctly\", () => {\n    const value: Resolvable<number> = 42;\n    const result = resolveValue(value);\n    expect(result).toBe(42);\n  });\n\n  it(\"should resolve a function value correctly\", () => {\n    const value: Resolvable<number> = () => 42;\n    const result = resolveValue(value);\n    expect(result).toBe(42);\n  });\n});\n";
+
+/// #12281 negative control: the citty false start. Negating the whole
+/// `typeof` condition sends `resolveValue(42)` down the other branch, so the
+/// existing exact assertion already notices the edit: `check` reads
+/// `exposed`, prints no start, and the before phase refuses the gap.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn negated_typeof_guard_with_citty_local_bindings_offers_no_start() -> Result<(), String> {
+    let base = [
+        ("package.json", TYPEOF_PACKAGE_JSON),
+        ("ripr.toml", TYPEOF_RIPR_TOML),
+        ("src/types.ts", TYPEOF_TYPES),
+        ("src/_utils.ts", TYPEOF_BASE_UTILS),
+        ("test/utils.test.ts", TYPEOF_CITTY_TEST),
+    ];
+    let flipped = TYPEOF_BASE_UTILS.replace("typeof input ===", "typeof input !==");
+    if flipped == TYPEOF_BASE_UTILS {
+        return Err("the head must flip the guard operator".to_string());
+    }
+    let head = [("src/_utils.ts", flipped.as_str())];
+    let (_guard, launch, root, base_sha) =
+        inline_typescript_repo("ts-typeof-negation", &base, &head)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, check) = ripr(
+        &launch,
+        &["check", "--root", &root_arg, "--base", &base_sha],
+    )?;
+    expect_exit(ok, true, "check of the negated guard")?;
+    need(
+        &check,
+        "Changed behavior: return typeof input !== \"function\" ? (input as any)() : input;",
+        "parsed subject",
+    )?;
+    need(&check, "src/_utils.ts:4", "changed line")?;
+    need(
+        &check,
+        "Static exposure: exposed",
+        "negated guard reads exposed",
+    )?;
+    if gap_start_tokens(&check).is_some() {
+        return Err(format!("check printed a repair start:\n{check}"));
+    }
+    let gap = selected_typescript_gap(&check)?;
+    let (ok, before) = ripr(
+        &launch,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base_sha, "--root", &root_arg,
+            "--phase", "before",
+        ],
+    )?;
+    expect_exit(ok, false, "before phase on the negated guard")?;
+    need(&before, "no repair attempt was started", "refusal")?;
+    if attempt_manifests(&root)? != 0 {
+        return Err(format!("a refused start published an attempt:\n{before}"));
+    }
+    Ok(())
+}
+
+/// #12281 positive control: changing the kind the guard tests (`"function"`
+/// to `"object"`) leaves `resolveValue(42)` on the same branch under both
+/// versions, and no test passes a function or an object, so the gap is real:
+/// `check` prints the start and the before phase accepts it.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn changed_typeof_kind_with_no_kind_input_still_starts() -> Result<(), String> {
+    let number_only_test = TYPEOF_CITTY_TEST.replace(
+        "\n  it(\"should resolve a function value correctly\", () => {\n    const value: Resolvable<number> = () => 42;\n    const result = resolveValue(value);\n    expect(result).toBe(42);\n  });\n",
+        "",
+    );
+    if number_only_test == TYPEOF_CITTY_TEST {
+        return Err("the positive must drop the function-value test".to_string());
+    }
+    let base = [
+        ("package.json", TYPEOF_PACKAGE_JSON),
+        ("ripr.toml", TYPEOF_RIPR_TOML),
+        ("src/types.ts", TYPEOF_TYPES),
+        ("src/_utils.ts", TYPEOF_BASE_UTILS),
+        ("test/utils.test.ts", number_only_test.as_str()),
+    ];
+    let kind_edit = TYPEOF_BASE_UTILS.replace("=== \"function\"", "=== \"object\"");
+    if kind_edit == TYPEOF_BASE_UTILS {
+        return Err("the head must change the guarded kind".to_string());
+    }
+    let head = [("src/_utils.ts", kind_edit.as_str())];
+    let (_guard, launch, root, base_sha) = inline_typescript_repo("ts-typeof-kind", &base, &head)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, check) = ripr(
+        &launch,
+        &["check", "--root", &root_arg, "--base", &base_sha],
+    )?;
+    expect_exit(ok, true, "check of the kind edit")?;
+    need(
+        &check,
+        "Changed behavior: return typeof input === \"object\" ? (input as any)() : input;",
+        "parsed subject",
+    )?;
+    need(&check, "Static exposure: weak", "kind edit reads weak")?;
+    need(&check, "typeof input == \"object\"", "named missing check")?;
+    let (gap, base) =
+        gap_start_tokens(&check).ok_or_else(|| format!("check printed no start:\n{check}"))?;
+    if base != base_sha {
+        return Err(format!("start names base {base}, expected {base_sha}"));
+    }
+    let (ok, before) = ripr(
+        &launch,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "before phase on the kind edit")?;
+    if attempt_manifests(&root)? != 1 {
+        return Err(format!(
+            "an accepted start must publish one attempt:\n{before}"
+        ));
+    }
+    Ok(())
+}

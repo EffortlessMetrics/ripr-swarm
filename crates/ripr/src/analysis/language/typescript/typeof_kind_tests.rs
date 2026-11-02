@@ -173,3 +173,65 @@ fn equality_negation_is_only_a_single_operator_flip() {
         flipped
     ));
 }
+
+/// #12281 review: only a comparison that is the whole condition (with at most
+/// `!` and parentheses around it) flips the outcome for every input. A clause
+/// joined by `&&` / `||` or nested in another conditional keeps the exact-kind
+/// rule, because another operand can decide the outcome on its own.
+#[test]
+fn equality_negation_requires_the_whole_condition() {
+    use super::typescript_changed_boundary_is_equality_negation as negation;
+    use crate::domain::ProbeFamily;
+    let file = std::path::Path::new("src/f.ts");
+    let flip = |line: &str| line.replacen("===", "!==", 1);
+    for old_line in [
+        "  if (typeof x === \"function\") return x();",
+        "  if (!(typeof x === \"function\")) return x;",
+        "  if ((typeof x === \"function\")) return x();",
+        "  return !(typeof x === \"function\") ? x : x();",
+        "  return (typeof x === \"function\") ? x() : x;",
+    ] {
+        let new_line = flip(old_line);
+        assert_ne!(old_line, new_line, "fixture must flip an operator");
+        assert!(
+            negation(file, &ProbeFamily::Predicate, Some(old_line), &new_line),
+            "{old_line} -> {new_line}"
+        );
+    }
+    for old_line in [
+        "  if (typeof x === \"function\" && flag) return x();",
+        "  if (typeof x === \"function\" || flag) return x();",
+        "  if (flag && typeof x === \"function\") return x();",
+        "  if (!(typeof x === \"function\" && flag)) return x;",
+        "  return (flag ? typeof x === \"function\" : false) ? x() : x;",
+        "  return flag ? (typeof x === \"function\" ? x() : x) : x;",
+    ] {
+        let new_line = flip(old_line);
+        assert_ne!(old_line, new_line, "fixture must flip an operator");
+        assert!(
+            !negation(file, &ProbeFamily::Predicate, Some(old_line), &new_line),
+            "{old_line} -> {new_line}"
+        );
+    }
+    // The `&&` / `||` subjects still name this comparison as their changed
+    // boundary, so their `false` above is the whole-condition rule, not a
+    // parse refusal.
+    for old_line in [
+        "  if (typeof x === \"function\" && flag) return x();",
+        "  if (typeof x === \"function\" || flag) return x();",
+        "  if (flag && typeof x === \"function\") return x();",
+    ] {
+        let new_line = flip(old_line);
+        assert_eq!(
+            super::typescript_changed_boundary_text(
+                file,
+                &ProbeFamily::Predicate,
+                Some(old_line),
+                &new_line
+            )
+            .as_ref(),
+            "typeof x !== \"function\"",
+            "{new_line}"
+        );
+    }
+}

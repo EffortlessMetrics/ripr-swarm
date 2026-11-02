@@ -22,6 +22,29 @@ struct BoundaryLine {
     sites: Vec<BoundarySite>,
     returned_condition: Option<Vec<String>>,
     direct: bool,
+    /// Token span `(first, last)` of the comparison that is the line's whole
+    /// condition: the root expression, or the test of a root conditional,
+    /// with only `!` and parentheses around it (#12281). `None` when any
+    /// other operator (`&&`, `||`, a nested conditional) surrounds it.
+    whole_condition: Option<(usize, usize)>,
+}
+
+/// The comparison that decides the whole condition of `root`, with only `!`
+/// and parentheses stripped: the root itself, or the test of a root
+/// conditional. Any logical, nested conditional or other wrapper fails
+/// closed to `None` (#12281).
+fn whole_condition_comparison<'a>(root: &'a Expression<'a>) -> Option<&'a Expression<'a>> {
+    let mut expression = ungroup(root);
+    if let Expression::ConditionalExpression(conditional) = expression {
+        expression = ungroup(&conditional.test);
+    }
+    while let Expression::UnaryExpression(unary) = expression {
+        if unary.operator.as_str() != "!" {
+            return None;
+        }
+        expression = ungroup(&unary.argument);
+    }
+    comparison(expression).then_some(expression)
 }
 
 fn operand_delimiter(text: &str) -> bool {
@@ -226,6 +249,16 @@ fn parse_line(file: &Path, line: &str, allocator: &Allocator) -> Option<Boundary
             ),
             _ => None,
         };
+        let whole_condition = whole_condition_comparison(root).and_then(|expression| {
+            let span = expression.span();
+            let first = tokens
+                .iter()
+                .position(|token| token.start >= span.start as usize)?;
+            let last = tokens
+                .iter()
+                .rposition(|token| token.end <= span.end as usize)?;
+            Some((first, last))
+        });
         let mut pending = vec![root];
         let mut sites = Vec::new();
         while let Some(expression) = pending.pop() {
@@ -253,6 +286,7 @@ fn parse_line(file: &Path, line: &str, allocator: &Allocator) -> Option<Boundary
             sites,
             returned_condition,
             direct: comparison(root),
+            whole_condition,
         });
     }
     None
@@ -421,9 +455,13 @@ fn negated_equality(operator: &str) -> Option<&'static str> {
 /// `typeof input !== "function"`) and changes nothing else (#12281). Every
 /// input that evaluates such a comparison gets the opposite result, so the
 /// branch it takes flips for an input on either side of the comparison, not
-/// only for the value or kind the comparison names. A failed parse, a
-/// multi-token edit, an added or removed clause, or a site the boundary
-/// reader refuses all fail closed to `false`.
+/// only for the value or kind the comparison names. The comparison must be
+/// the line's whole condition, with only `!` and parentheses around it: a
+/// clause joined by `&&` / `||` or nested in another conditional may never be
+/// evaluated, or its flip may not change the outcome, for a given input. A
+/// failed parse, a multi-token edit, an added or removed clause, a compound
+/// condition, or a site the boundary reader refuses all fail closed to
+/// `false`.
 pub(crate) fn typescript_changed_boundary_is_equality_negation(
     file: &Path,
     family: &ProbeFamily,
@@ -473,6 +511,8 @@ pub(crate) fn typescript_changed_boundary_is_equality_negation(
     match (owning.next(), owning.next()) {
         (Some(site), None) => {
             !site.text.is_empty()
+                && new.whole_condition == Some((site.first, site.last))
+                && old.whole_condition == Some((site.first, site.last))
                 && swap_parts(&new, site).is_some_and(|(_, operator, _)| operator == new_token.text)
         }
         _ => false,
