@@ -31,6 +31,16 @@ fn dimension(
         .ok_or_else(|| format!("missing dimension `{}`", id.as_str()))
 }
 
+fn fixture_receipt(name: &str) -> Result<RehearsalReceipt, String> {
+    let text =
+        fs::read_to_string(fixture(name)).map_err(|err| format!("read fixture `{name}`: {err}"))?;
+    parse_rehearsal_receipt(&text)
+}
+
+fn snapshot_subject_for_fixture(name: &str) -> Result<String, String> {
+    Ok(fixture_receipt(name)?.source_sha)
+}
+
 #[test]
 fn readiness_snapshot_artifacts_populates_only_proven_dimensions() -> Result<(), String> {
     let root = repo_root();
@@ -47,7 +57,7 @@ fn readiness_snapshot_artifacts_populates_only_proven_dimensions() -> Result<(),
 
     let snapshot = build_snapshot(&BuildInput {
         root: &root,
-        sha: "HEAD",
+        sha: &receipt.source_sha,
         rehearsal_receipt: Some(&fixture("rehearsal-receipt.complete.json")),
     })?;
 
@@ -69,9 +79,10 @@ fn readiness_snapshot_artifacts_populates_only_proven_dimensions() -> Result<(),
 #[test]
 fn readiness_snapshot_artifacts_rejects_mixed_source_receipt() -> Result<(), String> {
     let root = repo_root();
+    let subject = super::identity::git_rev_parse("HEAD")?;
     let snapshot = build_snapshot(&BuildInput {
         root: &root,
-        sha: "HEAD",
+        sha: &subject,
         rehearsal_receipt: Some(&fixture("rehearsal-receipt.wrong-sha.json")),
     })?;
 
@@ -125,9 +136,10 @@ fn readiness_snapshot_artifacts_fail_closed_on_missing_digest() -> Result<(), St
 #[test]
 fn readiness_snapshot_artifacts_keeps_supply_chain_records_distinct() -> Result<(), String> {
     let root = repo_root();
+    let subject = snapshot_subject_for_fixture("rehearsal-receipt.supply-chain.json")?;
     let snapshot = build_snapshot(&BuildInput {
         root: &root,
-        sha: "HEAD",
+        sha: &subject,
         rehearsal_receipt: Some(&fixture("rehearsal-receipt.supply-chain.json")),
     })?;
 
@@ -170,9 +182,10 @@ fn readiness_snapshot_artifacts_partial_package_receipt_is_limited() -> Result<(
 #[test]
 fn readiness_snapshot_json_and_markdown_agree() -> Result<(), String> {
     let root = repo_root();
+    let subject = snapshot_subject_for_fixture("rehearsal-receipt.complete.json")?;
     let snapshot = build_snapshot(&BuildInput {
         root: &root,
-        sha: "HEAD",
+        sha: &subject,
         rehearsal_receipt: Some(&fixture("rehearsal-receipt.complete.json")),
     })?;
     let json = render_json(&snapshot)?;
@@ -234,7 +247,7 @@ fn readiness_snapshot_fixture_receipt_matches_current_identity_or_skips() -> Res
     }
     let snapshot = build_snapshot(&BuildInput {
         root: &root,
-        sha: "HEAD",
+        sha: &receipt.source_sha,
         rehearsal_receipt: Some(&path),
     })?;
     if dimension(&snapshot, ReadinessDimensionId::PackageAndInstallability)?.state
