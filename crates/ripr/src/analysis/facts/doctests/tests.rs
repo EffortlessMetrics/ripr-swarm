@@ -31,7 +31,7 @@ pub fn read_u16(bytes: &[u8]) -> u16 {
 ";
 
 fn examples(source: &str) -> Vec<(usize, Vec<String>, usize)> {
-    doc_examples(source)
+    doc_examples(source, None)
         .into_iter()
         .map(
             |DocExample {
@@ -130,7 +130,7 @@ fn backticks_markdown_may_not_read_as_a_code_block_yield_nothing() {
 
 #[test]
 fn the_synthetic_source_keeps_the_comment_lines() {
-    let example = &doc_examples(WIRE)[0];
+    let example = &doc_examples(WIRE, None)[0];
     let source = example.synthetic_source();
     let lines: Vec<&str> = source.lines().collect();
     assert_eq!(lines[2], "#[test] fn ripr_doctest() {");
@@ -435,13 +435,17 @@ fn a_spaced_doc_attribute_before_the_run_is_a_shared_document() {
 fn cfg_doctest_attribute_is_allowed_between_doc_and_item() {
     use super::doc_examples;
     assert!(super::attribute_is_cfg_doctest("#[cfg(doctest)]"));
-    assert!(!super::between_doc_and_item_cfg_refuses("#[cfg(doctest)]"));
+    assert!(!super::between_doc_and_item_cfg_refuses(
+        "#[cfg(doctest)]",
+        None
+    ));
     assert!(super::between_doc_and_item_cfg_refuses(
-        "#[cfg(feature = \"x\")]"
+        "#[cfg(feature = \"x\")]",
+        None
     ));
     let example = "/// ```\n/// assert_eq!(1, 1);\n/// ```\n";
     let lib = format!("{example}#[cfg(doctest)]\npub fn read_u16() {{}}\n");
-    assert_eq!(doc_examples(&lib).len(), 1, "{lib}");
+    assert_eq!(doc_examples(&lib, None).len(), 1, "{lib}");
 }
 
 #[test]
@@ -455,11 +459,259 @@ fn a_doctest_source_answers_only_for_the_registered_test() -> Result<(), Box<dyn
         .find(|test| index.doctest_source(test).is_some())
         .cloned()
         .ok_or("doc example not indexed")?;
-    let expected = doc_examples(WIRE).first().map(DocExample::synthetic_source);
+    let expected = doc_examples(WIRE, None)
+        .first()
+        .map(DocExample::synthetic_source);
     assert_eq!(index.doctest_source(&test), expected.as_deref());
     // Another test at the same coordinates does not borrow the source.
     let mut other = test;
     other.name = "read_u16_works".to_string();
     assert_eq!(index.doctest_source(&other), None);
     Ok(())
+}
+
+const GATED_EXAMPLE: &str = "/// ```\n/// assert_eq!(wire::read_u16(&[0, 1]), 1);\n/// ```\n";
+
+/// How many doc examples register for `lib` in a package whose manifest has
+/// `manifest_extra` appended (RIPR-SPEC-0279, default-feature gates, #12230).
+fn registered_with_manifest(manifest_extra: &str, lib: &str) -> Result<usize, Box<dyn Error>> {
+    let dir = temp_dir("doctest-default-features")?;
+    package(&dir.0, manifest_extra, lib)?;
+    Ok(doctests(&dir.0, &["src/lib.rs"])?.len())
+}
+
+fn gated_item(gate: &str) -> String {
+    format!("{GATED_EXAMPLE}{gate}\npub fn read_u16() {{}}\n")
+}
+
+#[test]
+fn a_default_feature_gate_registers_the_example() -> Result<(), Box<dyn Error>> {
+    let features = "\n[features]\ndefault = [\"std\"]\nstd = [\"alloc\"]\nalloc = []\nextra = []\n";
+    for gate in [
+        "#[cfg(feature = \"std\")]",
+        // Reached through another default feature.
+        "#[cfg(feature = \"alloc\")]",
+        "#[cfg(feature=\"alloc\")]",
+        "#[cfg(all(feature = \"std\", feature = \"alloc\"))]",
+        "#[cfg(any(feature = \"extra\", feature = \"alloc\"))]",
+        "#[cfg(all(doctest, feature = \"alloc\"))]",
+        // Two stacked gates are a conjunction; both hold.
+        "#[cfg(feature = \"std\")]\n#[cfg(feature = \"alloc\")]",
+    ] {
+        assert_eq!(
+            registered_with_manifest(features, &gated_item(gate))?,
+            1,
+            "{gate}"
+        );
+    }
+    // The shape in rust-hex: a default feature that is a bare optional name.
+    assert_eq!(
+        registered_with_manifest(
+            "\n[features]\ndefault = [\"std\"]\nstd = [\"alloc\"]\nalloc = []\n",
+            &gated_item("#[must_use]\n#[cfg(feature = \"alloc\")]"),
+        )?,
+        1
+    );
+    // An inner gate that holds is no gate at all.
+    assert_eq!(
+        registered_with_manifest(features, &format!("#![cfg(feature = \"std\")]\n{WIRE}"))?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn a_gate_that_may_be_off_in_a_plain_cargo_test_still_refuses() -> Result<(), Box<dyn Error>> {
+    let features =
+        "\n[features]\ndefault = [\"std\"]\nstd = []\nextra = []\nserde = [\"dep:serde\"]\n";
+    for gate in [
+        // Declared but not default.
+        "#[cfg(feature = \"extra\")]",
+        // Not declared at all.
+        "#[cfg(feature = \"nope\")]",
+        // One false conjunct; `all()` has no operand to prove anything.
+        "#[cfg(all(feature = \"std\", feature = \"extra\"))]",
+        "#[cfg(all())]",
+        "#[cfg(any())]",
+        // Negations are never resolved, whichever way the default points.
+        "#[cfg(not(feature = \"extra\"))]",
+        "#[cfg(not(feature = \"std\"))]",
+        "#[cfg(not(not(feature = \"std\")))]",
+        "#[cfg(any(not(feature = \"extra\"), feature = \"extra\"))]",
+        // Other predicates: target, custom cfg, test, a feature next to one.
+        "#[cfg(target_os = \"linux\")]",
+        "#[cfg(unix)]",
+        "#[cfg(my_flag)]",
+        "#[cfg(all(feature = \"std\", target_os = \"linux\"))]",
+        "#[cfg(test)]",
+        "#[cfg(not(doctest))]",
+        // A stacked pair is a conjunction: one false gate refuses.
+        "#[cfg(feature = \"std\")]\n#[cfg(feature = \"extra\")]",
+        // `cfg_attr` never resolves, even around a default feature.
+        "#[cfg_attr(feature = \"std\", inline)]",
+        // A dependency's feature is not this package's feature.
+        "#[cfg(feature = \"serde\")]",
+        // Malformed predicates read as not true.
+        "#[cfg(feature)]",
+        "#[cfg(feature = std)]",
+        "#[cfg(feature = \"\")]",
+        "#[cfg(all(feature = \"std\",,feature = \"std\"))]",
+        "#[cfg(all(feature = \"std\"]",
+        "#[cfg(feature = \"std\" \"x\")]",
+    ] {
+        assert_eq!(
+            registered_with_manifest(features, &gated_item(gate))?,
+            0,
+            "{gate}"
+        );
+    }
+    // An inner gate that is not provably true still gates the file.
+    for inner in [
+        "#![cfg(feature = \"extra\")]",
+        "#![cfg(not(feature = \"std\"))]",
+        "#![cfg_attr(feature = \"std\", cfg(feature = \"std\"))]",
+    ] {
+        assert_eq!(
+            registered_with_manifest(features, &format!("{inner}\n{WIRE}"))?,
+            0,
+            "{inner}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn only_the_manifest_default_closure_counts_as_enabled() -> Result<(), Box<dyn Error>> {
+    let gate = gated_item("#[cfg(feature = \"std\")]");
+    // No `[features]` table, or none that names the feature.
+    assert_eq!(registered_with_manifest("", &gate)?, 0);
+    assert_eq!(
+        registered_with_manifest("\n[features]\nstd = []\n", &gate)?,
+        0,
+        "declared, but there is no `default` list"
+    );
+    assert_eq!(
+        registered_with_manifest("\n[features]\ndefault = []\nstd = []\n", &gate)?,
+        0
+    );
+    // `dep:` and `name/feature` entries add no feature of this package.
+    for default in ["\"dep:std\"", "\"std/extra\"", "\"std?/extra\""] {
+        assert_eq!(
+            registered_with_manifest(
+                &format!("\n[features]\ndefault = [{default}]\nstd = []\n"),
+                &gate
+            )?,
+            0,
+            "{default}"
+        );
+    }
+    // A value the reader cannot follow resolves nothing.
+    for manifest in [
+        "\n[features]\ndefault = \"std\"\nstd = []\n",
+        "\n[features]\ndefault = [1]\nstd = []\n",
+        "\n[features]\ndefault = [\"mid\"]\nmid = \"std\"\nstd = []\n",
+    ] {
+        assert_eq!(registered_with_manifest(manifest, &gate)?, 0, "{manifest}");
+    }
+    // An undeclared default entry is credited only as an optional
+    // dependency's implicit feature (review bot, #12368); `dep:` removes it.
+    let gate_serde = gated_item("#[cfg(feature = \"serde\")]");
+    for (manifest, expected) in [
+        (
+            "\n[features]\ndefault = [\"serde\"]\n\n[dependencies]\nserde = { version = \"1\", optional = true }\n",
+            1,
+        ),
+        (
+            "\n[features]\ndefault = [\"serde\"]\n\n[target.'cfg(unix)'.dependencies]\nserde = { version = \"1\", optional = true }\n",
+            1,
+        ),
+        // Not optional, not a dependency at all: Cargo would reject this.
+        (
+            "\n[features]\ndefault = [\"serde\"]\n\n[dependencies]\nserde = \"1\"\n",
+            0,
+        ),
+        ("\n[features]\ndefault = [\"serde\"]\n", 0),
+        // `dep:serde` anywhere switches the implicit feature off.
+        (
+            "\n[features]\ndefault = [\"serde\"]\njson = [\"dep:serde\"]\n\n[dependencies]\nserde = { version = \"1\", optional = true }\n",
+            0,
+        ),
+        // A dev-dependency never makes an implicit feature.
+        (
+            "\n[features]\ndefault = [\"serde\"]\n\n[dev-dependencies]\nserde = { version = \"1\", optional = true }\n",
+            0,
+        ),
+    ] {
+        assert_eq!(
+            registered_with_manifest(manifest, &gate_serde)?,
+            expected,
+            "{manifest}"
+        );
+    }
+    // `default` named in its own list, directly or through a cycle, must
+    // terminate: the walk never credits `default` as a feature (review of
+    // da949b6ea). Entries beside the cycle still resolve.
+    for manifest in [
+        "\n[features]\ndefault = [\"default\"]\nstd = []\n",
+        "\n[features]\ndefault = [\"default\", \"std\"]\nstd = []\n",
+        "\n[features]\ndefault = [\"a\"]\na = [\"default\", \"std\"]\nstd = []\n",
+        "\n[features]\ndefault = [\"a\"]\na = [\"a\", \"std\"]\nstd = []\n",
+    ] {
+        let expected = usize::from(manifest.contains("\"std\"]") || manifest.contains(", \"std\""));
+        assert_eq!(
+            registered_with_manifest(manifest, &gate)?,
+            expected,
+            "{manifest}"
+        );
+    }
+    // A cyclic feature list terminates and still resolves what it reaches.
+    assert_eq!(
+        registered_with_manifest(
+            "\n[features]\ndefault = [\"a\"]\na = [\"b\"]\nb = [\"a\", \"std\"]\nstd = []\n",
+            &gate
+        )?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn gate_resolution_answers_only_provably_true() {
+    use super::gate_is_provably_true;
+    use std::collections::BTreeSet;
+    let defaults: BTreeSet<String> = ["a", "b"].iter().map(|name| name.to_string()).collect();
+    for (predicate, expected) in [
+        ("feature = \"a\"", true),
+        ("feature=\"a\"", true),
+        (" feature = \"b\" ", true),
+        ("doctest", true),
+        ("all(feature = \"a\", feature = \"b\")", true),
+        ("all(feature = \"a\", feature = \"b\",)", true),
+        ("any(feature = \"c\", feature = \"a\")", true),
+        ("all(any(feature = \"c\", feature = \"a\"), doctest)", true),
+        ("feature = \"c\"", false),
+        ("feature = \"\"", false),
+        ("feature = a", false),
+        ("Feature = \"a\"", false),
+        ("all()", false),
+        ("any()", false),
+        ("not(feature = \"c\")", false),
+        ("all(feature = \"a\", not(feature = \"c\"))", false),
+        ("all(feature = \"a\", feature = \"c\")", false),
+        ("target_os = \"linux\"", false),
+        ("test", false),
+        ("all(feature = \"a\"", false),
+        ("all(feature = \"a\"))", false),
+        ("all(feature = \"a\" feature = \"b\")", false),
+        ("all(,feature = \"a\")", false),
+        ("any(feature = \"a\", ,)", false),
+        ("feature = \"a\\\"\"", false),
+        ("", false),
+    ] {
+        assert_eq!(
+            gate_is_provably_true(predicate, &defaults),
+            expected,
+            "{predicate}"
+        );
+    }
 }

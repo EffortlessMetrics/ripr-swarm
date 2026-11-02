@@ -415,7 +415,7 @@
       "analyzed_production_files": [
         "src/lib.rs"
       ],
-      "cache_schema_version": "1.135",
+      "cache_schema_version": "1.136",
       "files_content_hash": "16ab297ea99e68bf",
       "scope": "rust_workspace"
     },
