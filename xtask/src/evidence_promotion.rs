@@ -12,6 +12,7 @@ use super::*;
 
 mod partial_analysis;
 mod repo_seam_reports;
+mod report_content_commitment;
 
 pub(crate) const EVIDENCE_PROMOTION_HONESTY_CORPUS: &str =
     "fixtures/evidence-promotion-honesty-corpus/corpus.json";
@@ -4213,6 +4214,9 @@ pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), St
     let corpus_path = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS);
     let mut pure_violations = Vec::new();
     validate_evidence_promotion_honesty_corpus_at(corpus_path, &mut pure_violations)?;
+    // Committed repo-exposure captures must still match their declared
+    // `artifact.content_sha256` commitment (#12602).
+    report_content_commitment::check_committed_report_content_commitments(&mut pure_violations)?;
     // The repo-seam reports are hand-captured; regenerate each from its
     // subject so a stale capture or an analyzer regression turns red (#12144).
     repo_seam_reports::check_regenerated_reports(&mut pure_violations)?;
