@@ -5667,10 +5667,16 @@ fn unchanged_index_reuse_refreshes_a_warmed_field_macro_blocker() -> Result<(), 
 
 #[test]
 fn a_nested_src_bin_main_target_does_not_reach_integration_tests() {
-    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let tests = r#"use demo::weight;
+#[test]
+fn weighs() { assert_eq!(weight(4), 12); }
+"#;
     let main = (
         "src/bin/tool/main.rs",
-        "#[macro_use]\nextern crate bencher;\nfn main() {}\n",
+        r#"#[macro_use]
+extern crate bencher;
+fn main() {}
+"#,
     );
     assert_eq!(
         weight_refusal(tests, &[main]),
@@ -5679,7 +5685,11 @@ fn a_nested_src_bin_main_target_does_not_reach_integration_tests() {
     );
     let main_with_module = (
         "src/bin/tool/main.rs",
-        "mod cli;\n#[macro_use]\nextern crate bencher;\nfn main() {}\n",
+        r#"mod cli;
+#[macro_use]
+extern crate bencher;
+fn main() {}
+"#,
     );
     let cli = ("src/bin/tool/cli.rs", "pub fn run() {}\n");
     assert_eq!(
