@@ -1438,6 +1438,12 @@ fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
     if is_callee_only_reach(&ripr.reach) {
         return NO_CALLING_TEST_HINT;
     }
+    // #7330: generic weak reach (for example weak_token_substring) does not
+    // establish that a test calls the changed owner; do not claim reach in the
+    // digest hint.
+    if ripr.reach.state == StageState::Weak {
+        return NO_CALLING_TEST_HINT;
+    }
     let incomplete = |stage: &crate::domain::StageEvidence| stage.state != StageState::Yes;
     // An Unknown stage is not established, so its hint says so rather than
     // stating the gap as fact (#4411 review).
@@ -1553,6 +1559,7 @@ fn classification_hint(
         ExposureClass::ReachableUnrevealed => {
             if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED
                 && !callee_only
+                && ripr.reach.state != StageState::Weak
             {
                 // A compound oracle can carry no established assertion
                 // identity. Do not infer one from its probe family.
@@ -1873,6 +1880,35 @@ mod classification_hint_tests {
             Some("assert_eq"),
         );
         assert!(hint.is_some_and(|hint| hint.ends_with("the standard `assert_eq!`")));
+    }
+
+    // #7330: generic weak reach must not produce a "reaches this change" hint
+    // through partial_path_hint (trait-shadow and similar weak_token_substring
+    // witnesses).
+    #[test]
+    fn generic_weak_reach_never_claims_reaching_test_in_partial_path_hint() {
+        let mut evidence = ripr(StageState::Weak, StageState::No);
+        evidence.reach = StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            "No test is seen calling render; tests share only its file or a name token: render_is_empty",
+        );
+        for class in [
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+        ] {
+            let hint = classification_hint(&class, &evidence);
+            assert_eq!(
+                hint.as_deref(),
+                Some("no test is seen calling this change"),
+                "{class:?}"
+            );
+            assert!(
+                hint.as_deref()
+                    .is_none_or(|hint| !hint.contains("reaches this change")),
+                "{class:?}: {hint:?}"
+            );
+        }
     }
 
     // #7003 negative: the no-calling-test fallback is scoped to callee-only
