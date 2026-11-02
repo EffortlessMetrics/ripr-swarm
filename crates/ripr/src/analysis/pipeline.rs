@@ -41,7 +41,11 @@ use std::path::PathBuf;
 fn is_preview_language(language: LanguageId) -> bool {
     matches!(
         language,
-        LanguageId::TypeScript | LanguageId::JavaScript | LanguageId::Python | LanguageId::Perl
+        LanguageId::TypeScript
+            | LanguageId::JavaScript
+            | LanguageId::Python
+            | LanguageId::Perl
+            | LanguageId::Go
     )
 }
 
