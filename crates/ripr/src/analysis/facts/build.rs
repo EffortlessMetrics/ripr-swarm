@@ -162,12 +162,22 @@ pub(crate) fn build_index_from_paths_with_cache(
     paths: &[PathBuf],
     attribution: MissAttribution,
 ) -> Result<CachedRustIndex, String> {
+    build_index_from_paths_with_cache_and_consumed(root, paths, attribution, None)
+}
+
+pub(crate) fn build_index_from_paths_with_cache_and_consumed(
+    root: &Path,
+    paths: &[PathBuf],
+    attribution: MissAttribution,
+    consumed: Option<&mut crate::analysis::consumed_source::ConsumedRustSources>,
+) -> Result<CachedRustIndex, String> {
     build_index_from_paths_with_cache_and_adapters(
         root,
         paths,
         &RaRustSyntaxAdapter,
         &LexicalRustSyntaxAdapter,
         attribution,
+        consumed,
     )
 }
 
@@ -177,19 +187,26 @@ fn build_index_from_paths_with_cache_and_adapters(
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     attribution: MissAttribution,
+    mut consumed: Option<&mut crate::analysis::consumed_source::ConsumedRustSources>,
 ) -> Result<CachedRustIndex, String> {
     let cache = RepoFileFactCache::at(root);
     // Each batch is read only when the shared loop asks for it, so the
     // previous batch's bytes are dropped before the next read.
-    let batches = paths
-        .chunks(PARSE_BATCH_FILES)
-        .map(|chunk| StreamedBatch::read(root, chunk));
-    build_index_with_file_fact_cache_batches(root, batches, adapter, fallback, &cache, || {
-        match attribution {
+    let mut batches = Vec::new();
+    for chunk in paths.chunks(PARSE_BATCH_FILES) {
+        batches.push(StreamedBatch::read(root, chunk, consumed.as_deref_mut())?);
+    }
+    build_index_with_file_fact_cache_batches(
+        root,
+        batches.into_iter().map(Ok),
+        adapter,
+        fallback,
+        &cache,
+        || match attribution {
             MissAttribution::Named => cache.known_file_paths(),
             MissAttribution::Skipped => KnownFilePaths::default(),
-        }
-    })
+        },
+    )
 }
 
 fn build_index_with_file_fact_cache(
@@ -221,7 +238,11 @@ struct StreamedBatch {
 }
 
 impl StreamedBatch {
-    fn read(root: &Path, chunk: &[PathBuf]) -> Result<Self, String> {
+    fn read(
+        root: &Path,
+        chunk: &[PathBuf],
+        mut consumed: Option<&mut crate::analysis::consumed_source::ConsumedRustSources>,
+    ) -> Result<Self, String> {
         let mut files = Vec::with_capacity(chunk.len());
         #[cfg(test)]
         let mut charge = streamed_source_bytes::Charge::default();
@@ -229,6 +250,9 @@ impl StreamedBatch {
             cancellation::checkpoint()?;
             let bytes = std::fs::read(root.join(file))
                 .map_err(|err| format!("read {} failed: {err}", file.display()))?;
+            if let Some(consumed) = consumed.as_mut() {
+                consumed.record(file, Some(&bytes));
+            }
             #[cfg(test)]
             charge.add(bytes.len());
             files.push((file.clone(), bytes));
