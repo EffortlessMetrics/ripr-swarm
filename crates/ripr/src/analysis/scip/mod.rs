@@ -1,8 +1,7 @@
 //! Optional read-only SCIP index admission (#8115).
 //!
-//! SCIP types remain behind the generated protobuf module; production code
-//! projects admitted facts into portable identities for diagnostic/parity use
-//! without changing classification in the first slice.
+//! SCIP types remain behind checked-in prost output from `vendor/scip.proto`
+//! (regenerate with `prost-build` and `.disable_comments` when the pin changes).
 
 pub(crate) mod admission;
 pub(crate) mod generated {
@@ -12,6 +11,6 @@ pub(crate) mod generated {
         reason = "policy:8115-scip-generated: prost output from pinned scip.proto stays behind the adapter"
     )]
     pub mod scip {
-        include!(concat!(env!("OUT_DIR"), "/scip.rs"));
+        include!("generated/scip.rs");
     }
 }

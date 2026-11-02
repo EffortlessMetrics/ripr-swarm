@@ -6,7 +6,7 @@ use prost::Message;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// Maximum bytes read from a caller-supplied SCIP index file.
 pub(crate) const MAX_SCIP_INDEX_BYTES: u64 = 32 * 1024 * 1024;
@@ -273,11 +273,12 @@ fn resolve_bound_source_path(
     let project_root = project_root
         .canonicalize()
         .map_err(|error| ScipAdmissionError::Io(error.to_string()))?;
-    let resolved = candidate
-        .canonicalize()
-        .map_err(|_error| ScipAdmissionError::MissingSourceFile {
-            path: relative_path.to_string(),
-        })?;
+    let resolved =
+        candidate
+            .canonicalize()
+            .map_err(|_error| ScipAdmissionError::MissingSourceFile {
+                path: relative_path.to_string(),
+            })?;
     if !resolved.starts_with(&project_root) {
         return Err(ScipAdmissionError::ProjectRootEscape);
     }
@@ -299,19 +300,17 @@ fn verify_project_root(
     workspace_root: &Path,
     manifest: &ScipAdmissionManifest,
 ) -> Result<(), ScipAdmissionError> {
-    if manifest.project_root_relative.contains('\\')
-        || manifest
-            .project_root_relative
-            .split('/')
-            .any(|segment| segment == "..")
-    {
+    if !is_safe_relative_repo_path(&manifest.project_root_relative) {
         return Err(ScipAdmissionError::ProjectRootEscape);
     }
-    let joined = workspace_root.join(&manifest.project_root_relative);
-    if joined
-        .components()
-        .any(|component| matches!(component, Component::ParentDir))
-    {
+    let workspace = workspace_root
+        .canonicalize()
+        .map_err(|error| ScipAdmissionError::Io(error.to_string()))?;
+    let project_root = workspace.join(&manifest.project_root_relative);
+    let project_root = project_root
+        .canonicalize()
+        .map_err(|error| ScipAdmissionError::Io(error.to_string()))?;
+    if !project_root.starts_with(&workspace) {
         return Err(ScipAdmissionError::ProjectRootEscape);
     }
     Ok(())
@@ -475,12 +474,19 @@ mod tests {
         Ok(dir)
     }
 
-    fn write_minimal_fixture(root: &Path) -> Result<(PathBuf, PathBuf), String> {
-        let src_dir = root.join("crate/src");
-        std::fs::create_dir_all(&src_dir).map_err(|error| error.to_string())?;
+    fn write_minimal_fixture_with_project_root(
+        root: &Path,
+        project_root_relative: &str,
+        create_sources: bool,
+    ) -> Result<(PathBuf, PathBuf), String> {
         let source = "pub fn hello() -> &'static str { \"héllo\" }\n";
-        std::fs::write(src_dir.join("lib.rs"), source).map_err(|error| error.to_string())?;
         let source_digest = hex_sha256(source.as_bytes());
+        if create_sources {
+            let project_dir = root.join(project_root_relative).join("src");
+            std::fs::create_dir_all(&project_dir).map_err(|error| error.to_string())?;
+            std::fs::write(project_dir.join("lib.rs"), source)
+                .map_err(|error| error.to_string())?;
+        }
         let index = Index {
             metadata: Some(Metadata {
                 version: ProtocolVersion::UnspecifiedProtocolVersion as i32,
@@ -510,7 +516,7 @@ mod tests {
             "schema_version": "ripr-scip-admission-manifest-v1",
             "index_sha256": hex_sha256(&index_bytes),
             "producer": { "name": "fixture-scip", "version": "0.0.1" },
-            "project_root_relative": "crate",
+            "project_root_relative": project_root_relative,
             "toolchain_fingerprint": "stable-fixture",
             "source_files": [
                 { "relative_path": "src/lib.rs", "source_sha256": source_digest }
@@ -519,6 +525,10 @@ mod tests {
         let manifest_path = root.join("manifest.json");
         std::fs::write(&manifest_path, manifest.to_string()).map_err(|error| error.to_string())?;
         Ok((index_path, manifest_path))
+    }
+
+    fn write_minimal_fixture(root: &Path) -> Result<(PathBuf, PathBuf), String> {
+        write_minimal_fixture_with_project_root(root, "crate", true)
     }
 
     #[test]
@@ -645,6 +655,54 @@ mod tests {
             .err()
             .ok_or_else(|| "expected unbound index document".to_string())?;
         if !matches!(error, ScipAdmissionError::UnboundIndexDocument { .. }) {
+            return Err(format!("unexpected error: {}", error.reason()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_absolute_project_root_relative() -> Result<(), String> {
+        let temp = temp_dir("abs-root")?;
+        let (index, manifest) = write_minimal_fixture_with_project_root(&temp, "/etc", false)?;
+        let error = admit_scip_index(&temp, &index, &manifest)
+            .err()
+            .ok_or_else(|| "expected project root escape".to_string())?;
+        if !matches!(error, ScipAdmissionError::ProjectRootEscape) {
+            return Err(format!("unexpected error: {}", error.reason()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_parent_traversal_in_project_root_relative() -> Result<(), String> {
+        let temp = temp_dir("dotdot-root")?;
+        let (index, manifest) =
+            write_minimal_fixture_with_project_root(&temp, "../outside", false)?;
+        let error = admit_scip_index(&temp, &index, &manifest)
+            .err()
+            .ok_or_else(|| "expected project root escape".to_string())?;
+        if !matches!(error, ScipAdmissionError::ProjectRootEscape) {
+            return Err(format!("unexpected error: {}", error.reason()));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlink_project_root_that_escapes_workspace() -> Result<(), String> {
+        use std::os::unix::fs::symlink;
+        let temp = temp_dir("symlink-root")?;
+        let outside = temp_dir("outside")?;
+        std::fs::create_dir_all(outside.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(outside.join("src/lib.rs"), "pub fn hello() {}\n")
+            .map_err(|error| error.to_string())?;
+        symlink(&outside, temp.join("escape_link")).map_err(|error| error.to_string())?;
+        let (index, manifest) =
+            write_minimal_fixture_with_project_root(&temp, "escape_link", true)?;
+        let error = admit_scip_index(&temp, &index, &manifest)
+            .err()
+            .ok_or_else(|| "expected project root escape via symlink".to_string())?;
+        if !matches!(error, ScipAdmissionError::ProjectRootEscape) {
             return Err(format!("unexpected error: {}", error.reason()));
         }
         Ok(())
