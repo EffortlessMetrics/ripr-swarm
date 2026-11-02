@@ -5023,22 +5023,23 @@ mod tests {
         .map_err(|err| format!("write invalid config: {err}"))?;
 
         let report = evaluate_doctor_core(&dir, &[]);
+        let json = serde_json::to_string(&report).map_err(|err| format!("serialize: {err}"))?;
         let _ = std::fs::remove_dir_all(&dir);
 
-        let config_check = report
-            .checks
-            .iter()
-            .find(|check| check.name == "config")
-            .ok_or_else(|| "missing config check".to_string())?;
+        let document: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| format!("parse JSON: {err}"))?;
+        let config_check = document["checks"]
+            .as_array()
+            .and_then(|checks| checks.iter().find(|check| check["name"] == "config"))
+            .ok_or_else(|| format!("missing config check in JSON: {document}"))?;
         let validation = config_check
-            .validation
-            .as_ref()
-            .ok_or_else(|| "expected typed validation on semantic failure".to_string())?;
-        assert_eq!(validation.config_path.as_deref(), Some("analysis.mode"));
-        assert_eq!(validation.location_status, "exact");
-        assert_eq!(validation.start_line, Some(2));
-        assert!(validation.start_column.is_some());
-        assert_eq!(validation.invalid_value.as_deref(), Some("\"bad-mode\""));
+            .get("validation")
+            .ok_or_else(|| format!("missing validation in JSON: {document}"))?;
+        assert_eq!(validation["config_path"], "analysis.mode");
+        assert_eq!(validation["location_status"], "exact");
+        assert_eq!(validation["start_line"], 2);
+        assert_eq!(validation["start_column"], 8);
+        assert_eq!(validation["invalid_value"], "\"bad-mode\"");
         Ok(())
     }
 

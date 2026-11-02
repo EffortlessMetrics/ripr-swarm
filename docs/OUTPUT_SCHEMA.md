@@ -604,7 +604,14 @@ rust/Cargo.toml via workspace root rust/`) when the selected root has none.
 `skipped` (additive in schema `0.2`) marks a check that does not apply to the
 root, such as the `cargo_toml`, `tool_cargo`, and `tool_rustc` checks on a
 root where Rust is not in scope. A skipped check never fails the report, and
-its `evidence` states why it was skipped. See [Exit codes](EXIT_CODES.md).
+its `evidence` states why it was skipped. When the `config` check fails on a
+typed semantic validation error, an optional additive `checks[].validation`
+object (schema `0.4`) carries `kind`, `config_path`, `file`, `location_status`
+(`exact` or `unavailable`), one-based Unicode-scalar `start_*` / `end_*`
+coordinates, `invalid_value` when the offending token is safe to publish,
+`expected_values`, and `message`. Structural TOML parse failures omit
+`validation`; their redacted `evidence` keeps the parser location line only.
+See [Exit codes](EXIT_CODES.md).
 
 `ripr doctor --json` also carries an additive `binary` object (schema `0.2`)
 naming which `ripr` is running and which one PATH selects: `version` (the
