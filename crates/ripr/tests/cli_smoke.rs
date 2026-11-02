@@ -11491,6 +11491,47 @@ fn agent_verify_rejects_plausible_uncommitted_json() -> Result<(), Box<dyn std::
     assert!(diagnostic.contains(env!("CARGO_PKG_VERSION")));
     assert!(diagnostic.contains("recovered.repo-exposure.json"));
     assert!(diagnostic.contains("Replace this input"));
+    assert!(diagnostic.contains("artifact produced by legacy/unknown RIPR (schema 0.3)"));
+    assert!(diagnostic.contains("different ripr binary likely won PATH resolution"));
+    assert!(diagnostic.contains("`ripr --version`"));
+    assert!(!diagnostic.contains("missing field"));
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn agent_verify_refuses_older_producer_stamp_before_schema_error()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-verify-older-producer");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    let before = root.join("before.repo-exposure.json");
+    let after = root.join("after.repo-exposure.json");
+    let older = r#"{"schema_version":"0.3","scope":"repo","seams":[],"artifact":{"producer":{"tool":"ripr","version":"0.10.0"}}}"#;
+    std::fs::write(&before, older)?;
+    std::fs::write(&after, older)?;
+
+    let before_path = before.display().to_string();
+    let after_path = after.display().to_string();
+    let output = run_ripr(&[
+        "agent",
+        "verify",
+        "--root",
+        &root.display().to_string(),
+        "--before",
+        &before_path,
+        "--after",
+        &after_path,
+        "--json",
+    ]);
+    assert_failure(&output);
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(diagnostic.contains("produced by RIPR 0.10.0"));
+    assert!(diagnostic.contains("artifact produced by ripr 0.10.0 (schema 0.3)"));
+    assert!(diagnostic.contains(env!("CARGO_PKG_VERSION")));
+    assert!(diagnostic.contains("expects schema 0.5"));
+    assert!(diagnostic.contains("different ripr binary likely won PATH resolution"));
+    assert!(diagnostic.contains("`ripr --version`"));
     assert!(!diagnostic.contains("missing field"));
     std::fs::remove_dir_all(root)?;
     Ok(())
