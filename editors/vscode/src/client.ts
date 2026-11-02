@@ -1703,7 +1703,10 @@ export class RiprClientController {
     if (!packet || !this.currentDiagnosticMatchesFirstPrPacket(packet)) {
       return;
     }
-    await this.copyFirstPrText(packet.verifyCommand ?? '', 'verify command');
+    await this.copyFirstPrText(
+      packet.verifyCommandClipboard ?? packet.verifyCommand ?? '',
+      'verify command'
+    );
   }
 
   async copyFirstPrReceiptCommand(): Promise<void> {

@@ -939,11 +939,15 @@ fn push_gap_actions(
                 client_features,
             ));
         }
-        let verify_command = first_safe_command_at(
-            context.snapshot.root.as_path(),
-            context.data,
-            &["verification_commands"],
-        );
+        let verify_command = string_at(context.data, &["verify_command_clipboard"])
+            .map(str::to_string)
+            .or_else(|| {
+                first_safe_command_at(
+                    context.snapshot.root.as_path(),
+                    context.data,
+                    &["verification_commands"],
+                )
+            });
         match &verify_command {
             Some(command) => actions.push(copy_agent_loop_command_action(
                 AGENT_VERIFY_COMMAND_TITLE,
