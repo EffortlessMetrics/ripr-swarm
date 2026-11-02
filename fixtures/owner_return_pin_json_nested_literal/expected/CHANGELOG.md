@@ -265,3 +265,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_nested_literal (22)
+
+Reason:
+RIPR-SPEC-0004: side-effect-only predicate if arms bind side_effect sink; unrelated return-value oracles no longer promote weakly_exposed
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_nested_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
