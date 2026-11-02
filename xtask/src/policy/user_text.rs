@@ -2985,4 +2985,117 @@ mod tests {
         );
         Ok(())
     }
+    /// Prose string literals of a TypeScript source as `(line, text)`.
+    ///
+    /// Quoted segments (`'..'`, `".."`, `` `..` ``) are returned; a template
+    /// literal may span lines and is returned whole, tagged with the line it
+    /// opened on. Comment lines outside a template are skipped. A segment made
+    /// only of identifier characters (`'seam'`, `'seam_diagnostics'`) is a key,
+    /// not prose, and is dropped; a label such as `'Seam:'` is kept.
+    fn prose_segments(source: &str) -> Vec<(usize, String)> {
+        let mut out = Vec::new();
+        let mut open: Option<(char, String, usize)> = None;
+        for (index, line) in source.lines().enumerate() {
+            let number = index + 1;
+            if open.is_none() {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("//")
+                    || trimmed.starts_with('*')
+                    || trimmed.starts_with("/*")
+                {
+                    continue;
+                }
+            }
+            for ch in line.chars() {
+                match open.take() {
+                    Some((quote, mut text, start)) => {
+                        if ch == quote {
+                            out.push((start, text));
+                        } else {
+                            text.push(ch);
+                            open = Some((quote, text, start));
+                        }
+                    }
+                    None if matches!(ch, '\'' | '"' | '`') => {
+                        open = Some((ch, String::new(), number));
+                    }
+                    None => {}
+                }
+            }
+            // Only a template literal continues onto the next line.
+            match open.take() {
+                Some((quote, mut text, start)) if quote == '`' => {
+                    text.push('\n');
+                    open = Some((quote, text, start));
+                }
+                _ => {}
+            }
+        }
+        out.retain(|(_, text)| {
+            !text
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-' | '/'))
+        });
+        out
+    }
+
+    #[test]
+    fn prose_segments_keeps_labels_and_multiline_templates_and_drops_keys() {
+        let source = "const a = 'seam';\nconst b = 'Seam:';\nconst c = `line one\nMissing discriminator here`;\n// 'Seam: comment'\n";
+        let segments = prose_segments(source);
+        let texts: Vec<&str> = segments.iter().map(|(_, t)| t.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec!["Seam:", "line one\nMissing discriminator here"],
+            "{segments:?}"
+        );
+        assert_eq!(segments[1].0, 3);
+    }
+
+    #[test]
+    fn vscode_extension_prose_uses_plain_words() -> Result<(), String> {
+        // #12213: the extension's user-visible strings must not bring back the
+        // words the default `ripr check` screen retired. Only quoted strings
+        // are scanned (identifiers, comments and JSON keys such as
+        // `seam_diagnostics` or `seamId` are not prose), and only the two
+        // words #12213 audited; the rest of the glossary has its own rows.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let dir = root.join("editors/vscode/src");
+        let mut scanned_strings = 0usize;
+        let mut hits = Vec::new();
+        let entries = fs::read_dir(&dir).map_err(|e| format!("read {}: {e}", dir.display()))?;
+        for entry in entries {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.extension().is_none_or(|ext| ext != "ts") {
+                continue;
+            }
+            let text =
+                fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+            for (number, segment) in prose_segments(&text) {
+                scanned_strings += 1;
+                let terms = banned_terms_in_line(&segment);
+                if terms.iter().any(|t| matches!(*t, "seam" | "discriminator")) {
+                    hits.push(format!("{}:{}: {segment}", path.display(), number));
+                }
+            }
+        }
+        if scanned_strings < 200 {
+            return Err(format!(
+                "guard scanned too little ({scanned_strings} strings); is {} the right directory?",
+                dir.display()
+            ));
+        }
+        if !hits.is_empty() {
+            return Err(format!(
+                "retired words in VS Code extension strings:\n{}",
+                hits.join("\n")
+            ));
+        }
+        // Positive control: the matcher still flags the retired wording.
+        let flagged = banned_terms_in_line("Missing discriminator: x");
+        if !flagged.contains(&"discriminator") {
+            return Err("matcher no longer flags a retired word".to_string());
+        }
+        Ok(())
+    }
 }

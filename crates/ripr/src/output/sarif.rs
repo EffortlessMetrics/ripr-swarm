@@ -2177,6 +2177,12 @@ mod tests {
         let sarif = parse_json(&rendered)?;
         let result = first_result(&sarif)?;
         let card = &result["properties"]["perl_preview_card"];
+        let shared = perl_preview_card_json(&output.findings[0])
+            .ok_or_else(|| "expected shared perl_preview_card_json projection".to_string())?;
+        assert_eq!(
+            card, &shared,
+            "SARIF must embed the same shared JSON projection as check JSON (#3225)"
+        );
 
         assert_eq!(card["card_version"], "perl_preview_card.v1");
         assert_eq!(card["language"], "perl");

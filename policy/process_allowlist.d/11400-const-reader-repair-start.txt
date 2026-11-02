@@ -1,0 +1,1 @@
+crates/ripr/tests/const_reader_repair_start.rs|Command::new|2|11400-const-reader-repair-start|Fixture setup runs local git (init/commit) in a temp repository and the built ripr binary (check, repair) against it; no shell or network.

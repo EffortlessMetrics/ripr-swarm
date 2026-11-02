@@ -324,7 +324,7 @@ export function presentAttemptStatus(status: AgentAttemptStatus): AttemptStatusP
     `status: ${status.statusClass}`,
   ];
   if (status.seamId) {
-    lines.push(`seam: ${status.seamId}`);
+    lines.push(`spot: ${status.seamId}`);
   }
   if (status.state !== null) {
     lines.push(`state: ${status.state}`);

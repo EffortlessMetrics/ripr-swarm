@@ -55,7 +55,7 @@ fn boundary_stub_inserts_into_the_existing_inline_module_and_stops_at_the_expect
         SeamKind::PredicateBoundary,
         boundary("amount == threshold"),
     )?;
-    let stub = rust_test_stub(&seam, None, PRICE).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, PRICE, None).map_err(|r| r.reason().to_string())?;
     let close = PRICE.rfind('}').ok_or("module close brace")?;
     assert_eq!(
         stub.placement,
@@ -97,7 +97,7 @@ fn unrelated_generic_does_not_remove_a_concrete_stub_comparison() -> Result<(), 
         SeamKind::PredicateBoundary,
         boundary("amount == threshold"),
     )?;
-    let stub = rust_test_stub(&seam, None, &source).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
     assert!(
         stub.text.contains("let expected: u32 = todo!("),
         "{}",
@@ -123,7 +123,7 @@ fn recomputed_stub_for_the_same_seam_is_flagged_already_present() -> Result<(), 
         SeamKind::PredicateBoundary,
         boundary("amount == threshold"),
     )?;
-    let first = rust_test_stub(&seam, None, PRICE).map_err(|r| r.reason().to_string())?;
+    let first = rust_test_stub(&seam, None, PRICE, None).map_err(|r| r.reason().to_string())?;
     assert!(!first.already_present);
     assert_eq!(first.test_name, "price_boundary_discriminator");
     // Simulate the first `--write`: the insertion is the stub text at the
@@ -138,7 +138,8 @@ fn recomputed_stub_for_the_same_seam_is_flagged_already_present() -> Result<(), 
         SeamKind::PredicateBoundary,
         boundary("amount == threshold"),
     )?;
-    let second = rust_test_stub(&seam, None, &rewritten).map_err(|r| r.reason().to_string())?;
+    let second =
+        rust_test_stub(&seam, None, &rewritten, None).map_err(|r| r.reason().to_string())?;
     assert!(
         second.already_present,
         "the byte-identical recompute must be detected as already present"
@@ -176,7 +177,8 @@ mod tests {
         SeamKind::PredicateBoundary,
         boundary("amount == threshold"),
     )?;
-    let stub = rust_test_stub(&seam, None, with_other_test).map_err(|r| r.reason().to_string())?;
+    let stub =
+        rust_test_stub(&seam, None, with_other_test, None).map_err(|r| r.reason().to_string())?;
     assert_eq!(stub.test_name, "price_boundary_discriminator_2");
     assert!(
         !stub.already_present,
@@ -195,7 +197,8 @@ mod tests {
         SeamKind::PredicateBoundary,
         boundary("amount == threshold"),
     )?;
-    let second = rust_test_stub(&seam, None, &rewritten).map_err(|r| r.reason().to_string())?;
+    let second =
+        rust_test_stub(&seam, None, &rewritten, None).map_err(|r| r.reason().to_string())?;
     assert!(
         second.already_present,
         "the second run must find ripr's own `_2` write under the suffixed name, not suffix a `_3`"
@@ -224,7 +227,7 @@ fn commented_stub_does_not_count_as_written_or_named() -> Result<(), String> {
         SeamKind::PredicateBoundary,
         boundary("amount == threshold"),
     )?;
-    let rendered = rust_test_stub(&seam, None, PRICE).map_err(|r| r.reason().to_string())?;
+    let rendered = rust_test_stub(&seam, None, PRICE, None).map_err(|r| r.reason().to_string())?;
     let anchor = "    #[test]\n    fn price_works() {";
     for embedded in [
         // Block comment holding the exact proposed function.
@@ -243,7 +246,8 @@ fn commented_stub_does_not_count_as_written_or_named() -> Result<(), String> {
             SeamKind::PredicateBoundary,
             boundary("amount == threshold"),
         )?;
-        let stub = rust_test_stub(&seam, None, &source).map_err(|r| r.reason().to_string())?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
         assert_eq!(
             stub.test_name, "price_boundary_discriminator",
             "a commented-out stub does not occupy the base name: {embedded}"
@@ -273,7 +277,7 @@ impl ByteSize {
         SeamKind::PredicateBoundary,
         boundary("unit == 0"),
     )?;
-    let stub = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
     assert!(matches!(
         stub.placement,
         TestStubPlacement::NewInlineModule { offset, .. } if offset == source.len()
@@ -304,7 +308,7 @@ fn floor(x: i64, y: i64) -> i64 { if x <= -3 { y } else { x } }
         SeamKind::PredicateBoundary,
         boundary("score == LIMIT"),
     )?;
-    let stub = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
     assert_eq!(stub.derived_inputs, vec!["score = LIMIT".to_string()]);
     assert!(
         stub.text
@@ -318,7 +322,7 @@ fn floor(x: i64, y: i64) -> i64 { if x <= -3 { y } else { x } }
         SeamKind::PredicateBoundary,
         boundary("x == -3"),
     )?;
-    let stub = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
     assert_eq!(stub.derived_inputs, vec!["x = -3".to_string()]);
     Ok(())
 }
@@ -340,7 +344,7 @@ pub fn parse(input: &str) -> Result<u8, ParseError> {
             variant: "ParseError::TooLong".to_string(),
         },
     )?;
-    let stub = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
     assert!(stub.text.contains("let input: &str = todo!("));
     assert!(stub.text.contains(
         "assert!(matches!(actual, Err(ParseError::TooLong { .. })), \"expected Err(ParseError::TooLong {{ .. }})\");"
@@ -364,7 +368,7 @@ fn error_seam_without_a_nameable_variant_asserts_the_whole_value() -> Result<(),
             variant: "try_parse(raw).map_err(|error| error.to_string())".to_string(),
         },
     )?;
-    let stub = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
     assert!(!stub.text.contains("matches!"));
     assert!(
         stub.text
@@ -400,7 +404,8 @@ fn integration_proposal_writes_a_new_file_through_the_crate_path() -> Result<(),
         owner: "demo::price".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
     };
-    let stub = rust_test_stub(&seam, Some(&proposal), PRICE).map_err(|r| r.reason().to_string())?;
+    let stub =
+        rust_test_stub(&seam, Some(&proposal), PRICE, None).map_err(|r| r.reason().to_string())?;
     assert_eq!(
         stub.placement,
         TestStubPlacement::NewIntegrationFile {
@@ -428,7 +433,7 @@ pub fn count(n: u8) -> Option<Vec<u8>> { if n > 2 { Some(vec![n]) } else { None 
         SeamKind::PredicateBoundary,
         boundary(""),
     )?;
-    let stub = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
     assert!(stub.text.contains("let _ = &actual;"), "{}", stub.text);
     assert!(
         stub.text
@@ -446,7 +451,7 @@ pub fn count(n: u8) -> Option<Vec<u8>> { if n > 2 { Some(vec![n]) } else { None 
         SeamKind::PredicateBoundary,
         boundary(""),
     )?;
-    let stub = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
     assert!(
         stub.text.contains("let expected: Seen = todo!("),
         "{}",
@@ -464,7 +469,7 @@ pub fn count(n: u8) -> Option<Vec<u8>> { if n > 2 { Some(vec![n]) } else { None 
         SeamKind::PredicateBoundary,
         boundary(""),
     )?;
-    let stub = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
     assert!(stub.text.contains("assert_eq!(actual, expected);"));
     Ok(())
 }
@@ -479,7 +484,7 @@ fn existing_test_name_gets_a_numbered_suffix() -> Result<(), String> {
         SeamKind::PredicateBoundary,
         boundary("amount == threshold"),
     )?;
-    let stub = rust_test_stub(&seam, None, &source).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
     assert_eq!(stub.test_name, "price_boundary_discriminator_2");
     Ok(())
 }
@@ -527,7 +532,7 @@ fn refusals_name_the_blocker() -> Result<(), String> {
     for (source, needle, kind, refusal) in cases {
         let seam = seam_at("src/lib.rs", source, needle, kind, boundary(""))?;
         assert_eq!(
-            rust_test_stub(&seam, None, source),
+            rust_test_stub(&seam, None, source, None),
             Err(refusal),
             "{source}"
         );
@@ -540,7 +545,7 @@ fn refusals_name_the_blocker() -> Result<(), String> {
         boundary(""),
     )?;
     assert_eq!(
-        rust_test_stub(&seam, None, "def f(x):\n    return x > 1\n"),
+        rust_test_stub(&seam, None, "def f(x):\n    return x > 1\n", None),
         Err(TestStubRefusal::NotRustSource)
     );
     Ok(())
@@ -555,7 +560,7 @@ fn stub_text_never_uses_overclaiming_vocabulary() -> Result<(), String> {
         SeamKind::PredicateBoundary,
         boundary("amount == threshold"),
     )?;
-    let stub = rust_test_stub(&seam, None, PRICE).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, PRICE, None).map_err(|r| r.reason().to_string())?;
     for word in [
         "killed",   // ripr-allow: static-language: test guard verifying this term stays absent
         "survived", // ripr-allow: static-language: test guard verifying this term stays absent
@@ -581,7 +586,7 @@ fn lifetime_annotated_mut_reference_binds_the_referent_mutably() -> Result<(), S
         SeamKind::PredicateBoundary,
         boundary("*counter == limit"),
     )?;
-    let stub = rust_test_stub(&seam, None, SOURCE).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, SOURCE, None).map_err(|r| r.reason().to_string())?;
     assert!(
         stub.text.contains("let mut counter: u32 ="),
         "{}",
@@ -628,15 +633,16 @@ pub fn gate(n: u8) -> u8 {
             boundary("n == LIMIT"),
         )?;
         // Inline, the private constant is in scope through `use super::*`.
-        let inline = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+        let inline =
+            rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
         assert!(
             inline.text.contains("let n: u8 = LIMIT;"),
             "{}",
             inline.text
         );
         // A `tests/` file cannot see private or `pub(crate)` constants.
-        let stub =
-            rust_test_stub(&seam, Some(&proposal), source).map_err(|r| r.reason().to_string())?;
+        let stub = rust_test_stub(&seam, Some(&proposal), source, None)
+            .map_err(|r| r.reason().to_string())?;
         assert!(!stub.text.contains("= LIMIT;"), "{}", stub.text);
         assert!(stub.text.contains("let n: u8 = todo!("), "{}", stub.text);
         assert!(stub.derived_inputs.is_empty());
@@ -667,14 +673,14 @@ pub fn gate(n: u8) -> u8 {
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
     };
-    let inline = rust_test_stub(&seam, None, SOURCE).map_err(|r| r.reason().to_string())?;
+    let inline = rust_test_stub(&seam, None, SOURCE, None).map_err(|r| r.reason().to_string())?;
     assert!(
         inline.text.contains("let n: u8 = LIMIT;"),
         "{}",
         inline.text
     );
     let stub =
-        rust_test_stub(&seam, Some(&proposal), SOURCE).map_err(|r| r.reason().to_string())?;
+        rust_test_stub(&seam, Some(&proposal), SOURCE, None).map_err(|r| r.reason().to_string())?;
     assert!(!stub.text.contains("= LIMIT;"), "{}", stub.text);
     assert!(stub.text.contains("let n: u8 = todo!("), "{}", stub.text);
     assert!(stub.derived_inputs.is_empty());
@@ -706,7 +712,7 @@ pub fn gate(n: u8) -> u8 {
         provenance: NewTestProposalProvenance::ProducerOwned,
     };
     let stub =
-        rust_test_stub(&seam, Some(&proposal), SOURCE).map_err(|r| r.reason().to_string())?;
+        rust_test_stub(&seam, Some(&proposal), SOURCE, None).map_err(|r| r.reason().to_string())?;
     assert!(!stub.text.contains("= LIMIT;"), "{}", stub.text);
     assert!(stub.text.contains("let n: u8 = todo!("), "{}", stub.text);
     assert!(stub.derived_inputs.is_empty());
@@ -738,14 +744,14 @@ pub fn gate(n: u8) -> u8 {
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
     };
-    let inline = rust_test_stub(&seam, None, SOURCE).map_err(|r| r.reason().to_string())?;
+    let inline = rust_test_stub(&seam, None, SOURCE, None).map_err(|r| r.reason().to_string())?;
     assert!(
         inline.text.contains("let n: u8 = LIMIT;"),
         "{}",
         inline.text
     );
     let stub =
-        rust_test_stub(&seam, Some(&proposal), SOURCE).map_err(|r| r.reason().to_string())?;
+        rust_test_stub(&seam, Some(&proposal), SOURCE, None).map_err(|r| r.reason().to_string())?;
     assert!(!stub.text.contains("= LIMIT;"), "{}", stub.text);
     assert!(stub.text.contains("let n: u8 = todo!("), "{}", stub.text);
     assert!(stub.derived_inputs.is_empty());
@@ -778,7 +784,7 @@ pub fn gate(n: u8) -> u8 {
         provenance: NewTestProposalProvenance::ProducerOwned,
     };
     let stub =
-        rust_test_stub(&seam, Some(&proposal), SOURCE).map_err(|r| r.reason().to_string())?;
+        rust_test_stub(&seam, Some(&proposal), SOURCE, None).map_err(|r| r.reason().to_string())?;
     assert!(!stub.text.contains("= LIMIT;"), "{}", stub.text);
     assert!(stub.text.contains("let n: u8 = todo!("), "{}", stub.text);
     assert!(stub.derived_inputs.is_empty());
@@ -808,7 +814,7 @@ pub fn gate(n: u8, tag: crate::Tag) -> u8 {
         provenance: NewTestProposalProvenance::ProducerOwned,
     };
     let stub =
-        rust_test_stub(&seam, Some(&proposal), SOURCE).map_err(|r| r.reason().to_string())?;
+        rust_test_stub(&seam, Some(&proposal), SOURCE, None).map_err(|r| r.reason().to_string())?;
     assert_eq!(
         stub.placement,
         TestStubPlacement::NewIntegrationFile {
@@ -858,7 +864,7 @@ pub fn flag(cfg: &super::Cfg, n: i32) -> bool {
             boundary(""),
         )?;
         assert_eq!(
-            rust_test_stub(&seam, Some(&proposal("demo::flag")), source),
+            rust_test_stub(&seam, Some(&proposal("demo::flag")), source, None),
             Err(TestStubRefusal::ParameterUnsupported),
             "{source}"
         );
@@ -916,7 +922,7 @@ fn stub_module_name(source: &str, needle: &str) -> Result<String, String> {
         SeamKind::PredicateBoundary,
         boundary(""),
     )?;
-    match rust_test_stub(&seam, None, source).map_err(|r| r.as_str().to_string())? {
+    match rust_test_stub(&seam, None, source, None).map_err(|r| r.as_str().to_string())? {
         RustTestStub {
             placement: TestStubPlacement::ExistingInlineModule { module_name, .. },
             ..
@@ -1012,7 +1018,8 @@ fn lifetime_only_impl_binds_the_subject_with_an_elided_lifetime() -> Result<(), 
             SeamKind::PredicateBoundary,
             boundary("end == start"),
         )?;
-        let stub = rust_test_stub(&seam, None, &source).map_err(|r| r.reason().to_string())?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
         assert!(
             stub.text.contains(
                 "let mut subject: Parser<'_> = todo!(\"ripr: build the `Parser<'_>` that `parse_unit` runs on\");"
@@ -1035,7 +1042,8 @@ fn lifetime_only_impl_binds_the_subject_with_an_elided_lifetime() -> Result<(), 
             SeamKind::PredicateBoundary,
             boundary(""),
         )?;
-        let stub = rust_test_stub(&seam, None, &source).map_err(|r| r.reason().to_string())?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
         assert!(
             stub.text.contains("let actual = Parser::open(src, limit);"),
             "{header}: {}",
@@ -1060,7 +1068,7 @@ fn type_or_const_generic_impls_are_refused_as_generic_impls() -> Result<(), Stri
             boundary(""),
         )?;
         assert_eq!(
-            rust_test_stub(&seam, None, source),
+            rust_test_stub(&seam, None, source, None),
             Err(TestStubRefusal::OwnerGenericImpl),
             "{source}"
         );
@@ -1106,7 +1114,7 @@ fn trait_impl_method_is_called_through_its_trait_path() -> Result<(), String> {
             arm: "\"m\" => Ok(Unit::Minute)".to_string(),
         },
     )?;
-    let stub = rust_test_stub(&seam, None, FROM_STR).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, FROM_STR, None).map_err(|r| r.reason().to_string())?;
     assert!(
         stub.text
             .contains("let actual = <Unit as FromStr>::from_str(s);"),
@@ -1128,7 +1136,7 @@ fn trait_impl_method_is_called_through_its_trait_path() -> Result<(), String> {
             variant: "Error::Unknown".to_string(),
         },
     )?;
-    let stub = rust_test_stub(&seam, None, FROM_STR).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, FROM_STR, None).map_err(|r| r.reason().to_string())?;
     assert!(
         stub.text
             .contains("assert!(matches!(actual, Err(Error::Unknown { .. }))"),
@@ -1162,7 +1170,7 @@ impl std::fmt::Display for Meter {
         SeamKind::PredicateBoundary,
         boundary(""),
     )?;
-    let stub = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
     assert!(
         stub.text
             .contains("let actual = <Meter as std::fmt::Display>::fmt(&subject, &mut f);"),
@@ -1204,7 +1212,7 @@ fn field_of_the_returned_struct_literal_asserts_the_whole_return_value() -> Resu
         SeamKind::FieldConstruction,
         field("minor: self.minor + 1"),
     )?;
-    let stub = rust_test_stub(&seam, None, VERSION).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, VERSION, None).map_err(|r| r.reason().to_string())?;
     assert_eq!(stub.test_name, "next_minor_field_discriminator");
     assert!(
         stub.text.contains("let actual = subject.next_minor();"),
@@ -1228,7 +1236,7 @@ fn field_of_the_returned_struct_literal_asserts_the_whole_return_value() -> Resu
         field("minor: self.minor * 2"),
     )?;
     assert_eq!(
-        rust_test_stub(&seam, None, VERSION),
+        rust_test_stub(&seam, None, VERSION, None),
         Err(TestStubRefusal::FieldNotReturned)
     );
     assert!(
@@ -1269,7 +1277,7 @@ fn field_write_in_a_method_names_the_receiver_not_a_struct_literal() -> Result<(
     // #12061: `mut self` writes a moved copy, so the refusal is the by-value
     // one; only a borrowed receiver keeps the in-place wording.
     assert_eq!(
-        rust_test_stub(&write, None, BUILDER),
+        rust_test_stub(&write, None, BUILDER, None),
         Err(TestStubRefusal::FieldWrittenByValue)
     );
     assert!(
@@ -1292,7 +1300,7 @@ impl Req {
         field("self.timeout = t * 2"),
     )?;
     assert_eq!(
-        rust_test_stub(&borrowed, None, borrowed_source),
+        rust_test_stub(&borrowed, None, borrowed_source, None),
         Err(TestStubRefusal::FieldWrittenInMethod)
     );
     assert!(
@@ -1309,7 +1317,7 @@ impl Req {
         SeamKind::FieldConstruction,
         field("timeout: self.timeout * 2"),
     )?;
-    let stub = rust_test_stub(&literal, None, BUILDER).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&literal, None, BUILDER, None).map_err(|r| r.reason().to_string())?;
     assert!(stub.text.contains("subject.rebuilt()"), "{}", stub.text);
     Ok(())
 }
@@ -1339,7 +1347,7 @@ mod tests {
         SeamKind::PredicateBoundary,
         boundary(""),
     )?;
-    match rust_test_stub(&seam, None, gated_first).map_err(|r| r.as_str().to_string())? {
+    match rust_test_stub(&seam, None, gated_first, None).map_err(|r| r.as_str().to_string())? {
         RustTestStub {
             placement: TestStubPlacement::ExistingInlineModule { module_name, .. },
             ..
@@ -1373,7 +1381,7 @@ mod slow_tests {
             boundary(""),
         )?;
         assert_eq!(
-            rust_test_stub(&seam, None, only_gated).map(|stub| stub.test_name),
+            rust_test_stub(&seam, None, only_gated, None).map(|stub| stub.test_name),
             Err(TestStubRefusal::AmbiguousTestModule),
             "{only_gated}"
         );
@@ -1417,7 +1425,7 @@ const _: () = {
             boundary(""),
         )?;
         assert_eq!(
-            rust_test_stub(&seam, None, source).map(|stub| stub.test_name),
+            rust_test_stub(&seam, None, source, None).map(|stub| stub.test_name),
             Err(TestStubRefusal::OwnerUnsupported),
             "{source}"
         );
@@ -1453,7 +1461,7 @@ mod tests {
         SeamKind::PredicateBoundary,
         boundary(""),
     )?;
-    match rust_test_stub(&seam, None, source).map_err(|r| r.as_str().to_string())? {
+    match rust_test_stub(&seam, None, source, None).map_err(|r| r.as_str().to_string())? {
         RustTestStub {
             placement: TestStubPlacement::ExistingInlineModule { module_name, .. },
             ..
@@ -1483,7 +1491,7 @@ fn owners_behind_a_non_test_cfg_are_refused() -> Result<(), String> {
             boundary(""),
         )?;
         assert_eq!(
-            rust_test_stub(&seam, None, source).map(|stub| stub.test_name),
+            rust_test_stub(&seam, None, source, None).map(|stub| stub.test_name),
             Err(TestStubRefusal::OwnerUnsupported),
             "{source}"
         );
@@ -1498,7 +1506,7 @@ fn owners_behind_a_non_test_cfg_are_refused() -> Result<(), String> {
         SeamKind::PredicateBoundary,
         boundary(""),
     )?;
-    assert!(rust_test_stub(&seam, None, kept).is_ok(), "{kept}");
+    assert!(rust_test_stub(&seam, None, kept, None).is_ok(), "{kept}");
     Ok(())
 }
 
@@ -1521,7 +1529,7 @@ impl Bucket {
         SeamKind::PredicateBoundary,
         boundary("self.tokens > n"),
     )?;
-    let stub = rust_test_stub(&seam, None, SOURCE).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, SOURCE, None).map_err(|r| r.reason().to_string())?;
     assert!(
         stub.text.contains("choose `n` so that self.tokens == n"),
         "{}",
@@ -1607,7 +1615,7 @@ fn unit_result_owner_asserts_the_mut_input_after_the_call() -> Result<(), String
             arm: "2".to_string(),
         },
     )?;
-    let stub = rust_test_stub(&seam, None, source).map_err(|refusal| refusal.as_str())?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|refusal| refusal.as_str())?;
     for expected in [
         "let mut out: u64 = todo!(",
         "let actual = add_unit(unit, &mut out);",
@@ -1636,7 +1644,7 @@ fn unit_owner_with_a_mut_input_is_stubbed_without_a_unit_binding() -> Result<(),
         SeamKind::PredicateBoundary,
         boundary(""),
     )?;
-    let stub = rust_test_stub(&seam, None, source).map_err(|refusal| refusal.as_str())?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|refusal| refusal.as_str())?;
     assert!(stub.text.contains("bump(x, &mut total);"), "{}", stub.text);
     assert!(
         !stub.text.contains("let actual"),
@@ -1666,7 +1674,7 @@ impl Counter {
         SeamKind::PredicateBoundary,
         boundary(""),
     )?;
-    let stub = rust_test_stub(&seam, None, source).map_err(|refusal| refusal.as_str())?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|refusal| refusal.as_str())?;
     assert!(stub.text.contains("subject.tick("), "{}", stub.text);
     assert!(stub.text.contains("let _ = &subject;"), "{}", stub.text);
     assert!(
@@ -1700,7 +1708,7 @@ fn match_arm_on_a_unit_result_owner_without_a_mut_input_needs_an_observer() -> R
         },
     )?;
     assert_eq!(
-        rust_test_stub(&seam, None, source),
+        rust_test_stub(&seam, None, source, None),
         Err(TestStubRefusal::ObserverRequired)
     );
     Ok(())
@@ -1748,7 +1756,7 @@ fn impl_into_and_as_ref_parameters_get_a_concrete_stand_in() -> Result<(), Strin
         SeamKind::PredicateBoundary,
         boundary("n > 3"),
     )?;
-    let stub = rust_test_stub(&seam, None, source).map_err(|r| r.reason().to_string())?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|r| r.reason().to_string())?;
     assert!(
         stub.text.contains("let name: String = todo!("),
         "{}",
@@ -1787,7 +1795,7 @@ fn other_impl_trait_parameters_stay_refused() -> Result<(), String> {
             boundary("n > 3"),
         )?;
         assert_eq!(
-            rust_test_stub(&seam, None, &source),
+            rust_test_stub(&seam, None, &source, None),
             Err(TestStubRefusal::ParameterUnsupported),
             "{param}"
         );

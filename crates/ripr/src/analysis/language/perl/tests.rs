@@ -4434,7 +4434,8 @@ const PARTIAL_DYNAMIC_BOUNDARY_PACKET: &str = r#"{
 #[test]
 fn perl_to_domain_oracle_mapping_preserves_signal_kinds() -> Result<(), String> {
     use super::{
-        OracleKind, OracleStrength, perl_oracle_kind_to_domain, perl_oracle_strength_to_domain,
+        OracleKind, OracleStrength,
+        v2_projection::{perl_oracle_kind_to_domain, perl_oracle_strength_to_domain},
     };
     use crate::domain::{OracleKind as DomainOracleKind, OracleStrength as DomainOracleStrength};
 
@@ -4832,6 +4833,38 @@ fn perl_finding_lines_need_one_basis_across_the_packet() -> Result<(), String> {
         change.range.start_line = usize::MAX;
     }
     assert!(change_lines_from_diff(&top, &[diff_adding("lib/App/Discount.pm", &[9])]).is_empty());
+    Ok(())
+}
+
+/// Declared zero-based coordinates settle on the one-based diff line without
+/// treating the raw packet line as one-based when only that lower line is added.
+#[test]
+fn perl_declared_zero_based_basis_governs_diff_settlement() -> Result<(), String> {
+    let mut packet = real_producer_packet()?;
+    packet.coordinate_line_basis = CoordinateLineBasis::ZeroBased;
+    let change_id = "change:file:lib/App/Discount.pm:8:8";
+
+    assert!(
+        change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[8])]).is_empty(),
+        "zero-based start 8 maps to diff line 9, not 8"
+    );
+    let lines = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[9])]);
+    assert_eq!(lines.get(change_id), Some(&9));
+    Ok(())
+}
+
+/// Declared one-based coordinates settle on the packet line number in the diff.
+#[test]
+fn perl_declared_one_based_basis_governs_diff_settlement() -> Result<(), String> {
+    let mut packet = real_producer_packet()?;
+    packet.coordinate_line_basis = CoordinateLineBasis::OneBased;
+    let change_id = "change:file:lib/App/Discount.pm:8:8";
+
+    let lines = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[8])]);
+    assert_eq!(lines.get(change_id), Some(&8));
+    assert!(
+        change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[9])]).is_empty()
+    );
     Ok(())
 }
 
@@ -5426,6 +5459,73 @@ fn supplied_partial_packet_with_findings_does_not_hide_a_malformed_diff() -> Res
         "{limitations:?}"
     );
     Ok(())
+}
+
+/// #6606: on an empty git diff, a supplied complete Perl packet must still
+/// project findings and must not fail `NoScope` outcome validation.
+#[test]
+fn empty_diff_with_supplied_perl_packet_reports_findings() -> Result<(), String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("system time: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-perl-empty-diff-6606-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(root.join("src")).map_err(|error| format!("create src: {error}"))?;
+    let proof = (|| -> Result<(), String> {
+        std::fs::write(root.join("src/lib.rs"), "pub fn placeholder() {}\n")
+            .map_err(|error| error.to_string())?;
+        let facts = root.join("facts.json");
+        std::fs::write(&facts, bless_fingerprint(EXACT_RETURN_PACKET))
+            .map_err(|error| error.to_string())?;
+        let diff = root.join("empty.diff");
+        std::fs::write(&diff, "").map_err(|error| error.to_string())?;
+        let config =
+            crate::config::tests_only_parse("[languages]\nenabled = [\"rust\", \"perl\"]\n")?;
+        let output = crate::app::check_workspace_with_config(
+            crate::CheckInput {
+                root: root.clone(),
+                base: Some("origin/main".to_string()),
+                diff_file: Some(diff),
+                mode: crate::Mode::Draft,
+                format: crate::OutputFormat::Json,
+                include_unchanged_tests: false,
+                perl_facts_path: Some(facts),
+                suppression_policy: None,
+                git_timeout: None,
+                git_candidate: None,
+                scope: Default::default(),
+            },
+            &config,
+        )?;
+        assert!(
+            !output.findings.is_empty(),
+            "expected Perl findings on an empty diff with a supplied packet"
+        );
+        let outcome = output
+            .analysis_outcome
+            .as_ref()
+            .ok_or_else(|| "expected analysis_outcome on successful check".to_string())?;
+        assert_eq!(
+            outcome.kind,
+            crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings,
+            "empty diff with Perl findings must not read as NoScope"
+        );
+        let finding = output
+            .findings
+            .first()
+            .ok_or_else(|| "expected at least one finding".to_string())?;
+        assert_eq!(
+            finding.source_currentness,
+            crate::domain::SourceCurrentness::UnresolvedSubject,
+            "empty diff does not establish candidate-current Perl lines"
+        );
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    proof
 }
 
 /// A partial, finding-free Perl fact packet: it changes and tests nothing.

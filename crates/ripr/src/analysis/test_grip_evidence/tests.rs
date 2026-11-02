@@ -18228,6 +18228,173 @@ fn seam_behind_an_unresolved_transitive_path_is_opaque_not_ungripped() -> Result
     Ok(())
 }
 
+/// #6621 / RIPR-SPEC-0236 c10: an unreferenced same-named owner must not
+/// borrow another module's unresolved-reach witness.
+#[test]
+fn same_named_unreferenced_owner_stays_ungripped_without_sharing_witness() -> Result<(), String> {
+    let files = [
+        (
+            "src/lib.rs",
+            "mod other;\n\
+             pub fn checkout(amount: u32) -> u32 { route(amount) }\n\
+             fn route(amount: u32) -> u32 { tier(amount) }\n\
+             fn tier(amount: u32) -> u32 { if amount > 100 { amount + 5 } else { amount } }\n",
+        ),
+        (
+            "src/other.rs",
+            "pub(crate) fn tier(amount: u32) -> u32 { if amount > 100 { 1 } else { 0 } }\n",
+        ),
+        (
+            "tests/checkout.rs",
+            "#[test] fn checks_out() { assert_eq!(ripr_fixture::checkout(150), 155); }\n",
+        ),
+    ];
+    let (lib_reach, lib_class) =
+        unresolved_reach_for_owner_file("src/lib.rs", "amount > 100", &files)?;
+    assert_eq!(lib_reach.state, StageState::Opaque, "{lib_reach:?}");
+    assert!(
+        lib_reach.summary.contains("`checks_out`") && lib_reach.summary.contains("checkout"),
+        "lib tier keeps the witness: {}",
+        lib_reach.summary
+    );
+    assert_eq!(lib_class, SeamGripClass::Opaque);
+
+    let (other_reach, other_class) =
+        unresolved_reach_for_owner_file("src/other.rs", "amount > 100", &files)?;
+    assert_eq!(other_reach.state, StageState::No, "{other_reach:?}");
+    assert_eq!(other_class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+/// #6621: inline sibling modules in one file keep distinct reach witnesses and
+/// evaluation order must not share the run-scoped cache entry.
+#[test]
+fn same_file_inline_sibling_owners_keep_distinct_reach_witnesses() -> Result<(), String> {
+    let files = [
+        (
+            "src/lib.rs",
+            "mod a {\n\
+             pub fn route(total: u64) -> u64 { tier(total) }\n\
+             fn tier(total: u64) -> u64 { if total >= 100 { 20 } else { 0 } }\n\
+             }\n\
+             mod b {\n\
+             fn tier(total: u64) -> u64 { if total >= 50 { 99 } else { 0 } }\n\
+             }\n\
+             pub fn run(total: u64) -> u64 { a::route(total) }\n",
+        ),
+        (
+            "tests/run.rs",
+            "#[test] fn runs_large_order() { assert_eq!(ripr_fixture::run(150), 20); }\n",
+        ),
+    ];
+    let (a_reach, a_class) = unresolved_reach_for_owner_file("src/lib.rs", "total >= 100", &files)?;
+    assert_eq!(a_reach.state, StageState::Opaque, "{a_reach:?}");
+    assert!(
+        a_reach.summary.contains("runs_large_order") && a_reach.summary.contains("tier"),
+        "a::tier keeps the transitive witness: {}",
+        a_reach.summary
+    );
+    assert_eq!(a_class, SeamGripClass::Opaque);
+
+    let (b_reach, b_class) = unresolved_reach_for_owner_file("src/lib.rs", "total >= 50", &files)?;
+    assert_eq!(b_reach.state, StageState::No, "{b_reach:?}");
+    assert_eq!(b_class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+/// RIPR-SPEC-0236 example 23: macro-blocked reach names
+/// `rust_macro_reach_unresolved` (#6621).
+#[test]
+fn seam_macro_witness_names_rust_macro_reach_unresolved() -> Result<(), String> {
+    let files = [
+        (
+            "src/lib.rs",
+            "fn tier(total: u64) -> u64 { if total >= 100 { 20 } else { 0 } }\n\
+             macro_rules! priced { ($total:expr) => { tier($total) }; }\n\
+             pub fn run(total: u64) -> u64 { priced!(total) }\n",
+        ),
+        (
+            "tests/run.rs",
+            "#[test] fn runs_large_order() { assert_eq!(ripr_fixture::run(150), 20); }\n",
+        ),
+    ];
+    let (reach, class) = unresolved_reach_for_owner_file("src/lib.rs", "total >= 100", &files)?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains("rust_macro_reach_unresolved"),
+        "macro witness kind must be named: {}",
+        reach.summary
+    );
+    assert!(
+        reach.summary.contains("`runs_large_order`") && reach.summary.contains("priced!"),
+        "macro witness must name the test and macro: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+/// RIPR-SPEC-0236 example 24: a helper chain whose test lives in `src/`
+/// names `rust_transitive_reach_unresolved` (#6621).
+#[test]
+fn seam_src_test_chain_names_rust_transitive_reach_unresolved() -> Result<(), String> {
+    let files = [
+        (
+            "src/lib.rs",
+            "fn tier(total: u64) -> u64 { if total >= 100 { 20 } else { 0 } }\n\
+             fn route(total: u64) -> u64 { tier(total) }\n\
+             pub fn checkout(total: u64) -> u64 { route(total) }\n\
+             #[cfg(test)]\n\
+             mod checkout_tests;\n",
+        ),
+        (
+            "src/checkout_tests.rs",
+            "use super::checkout;\n\
+             #[test]\n\
+             fn checks_out() { assert_eq!(checkout(150), 20); }\n",
+        ),
+    ];
+    let (reach, class) = unresolved_reach_for_owner_file("src/lib.rs", "total >= 100", &files)?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains("rust_transitive_reach_unresolved"),
+        "src-hosted test must name transitive reach: {}",
+        reach.summary
+    );
+    assert!(
+        reach.summary.contains("`checks_out`") && reach.summary.contains("checkout"),
+        "witness must name the test and entry: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+fn unresolved_reach_for_owner_file(
+    owner_file: &str,
+    predicate_fragment: &str,
+    files: &[(&str, &str)],
+) -> Result<(StageEvidence, SeamGripClass), String> {
+    let files: Vec<(PathBuf, &str)> = files
+        .iter()
+        .map(|(path, source)| (PathBuf::from(path), *source))
+        .collect();
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from(owner_file)], &index);
+    let seam = seams
+        .iter()
+        .find(|s| s.expression().contains(predicate_fragment))
+        .ok_or_else(|| format!("seam with `{predicate_fragment}` in {owner_file}: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert!(
+        evidence.related_tests.is_empty(),
+        "fixture must leave the seam without related tests: {:?}",
+        evidence.related_tests
+    );
+    let class = crate::analysis::seam_classification::classify_seam(seam, &evidence);
+    Ok((evidence.reach, class))
+}
+
 #[test]
 fn trait_method_of_a_type_tests_use_is_opaque_not_ungripped() -> Result<(), String> {
     let (reach, class) = unresolved_reach_case(&[
@@ -21768,6 +21935,120 @@ fn given_integration_test_when_single_line_nested_module_reaches_rival_through_s
     assert!(
         related.is_empty(),
         "#10855: a single-line nested `super::` call to a local rival must not relate the owner: {related:?}"
+    );
+    Ok(())
+}
+
+/// #12266: a direct owner test that compares the inline `.unwrap_err()` result
+/// with the seam's own variant discriminates an `ErrorVariant` seam, as the
+/// bound-variable spelling already did. A different variant, or an opaque
+/// expected value, does not. Pinned through the full and compact paths.
+#[test]
+fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<(), String> {
+    let read = |test: &str| -> Result<(StageState, StageState), String> {
+        let prod = format!(
+            "#[derive(Debug, PartialEq)]\npub enum Fault {{ Odd, Bad }}\n\
+             pub fn parse(text: &str) -> Result<u8, Fault> {{\n    if text.len() % 2 != 0 {{\n        return Err(Fault::Odd);\n    }}\n    Ok(1)\n}}\n\
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    {test}\n}}\n"
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ErrorVariant && s.expression().contains("Odd"))
+            .ok_or_else(|| "error-variant seam present".to_string())?;
+        let full = evidence_for_seam(seam, &index);
+        let compact = compact_evidence_for_seam(seam, &CompactGripContext::new(&index));
+        assert_eq!(
+            full.discriminate.state, compact.discriminate.state,
+            "full and compact agree"
+        );
+        Ok((full.discriminate.state, compact.discriminate.state))
+    };
+    let pinned = read("#[test] fn odd() { assert_eq!(parse(\"1\").unwrap_err(), Fault::Odd); }")?;
+    assert_eq!(pinned.0, StageState::Yes, "inline pin of the seam variant");
+    let reversed = read("#[test] fn odd() { assert_eq!(Fault::Odd, parse(\"1\").unwrap_err()); }")?;
+    assert_eq!(reversed.0, StageState::Yes, "operands reversed");
+    let other_variant =
+        read("#[test] fn odd() { assert_eq!(parse(\"1\").unwrap_err(), Fault::Bad); }")?;
+    assert_ne!(
+        other_variant.0,
+        StageState::Yes,
+        "a different variant does not discriminate the seam"
+    );
+    // `map_err` replaces the error, so the asserted value no longer depends on
+    // what the owner returned (Devin finding on #12290).
+    let mapped = read(
+        "#[test] fn odd() { assert_eq!(parse(\"1\").map_err(|_| Fault::Odd).unwrap_err(), Fault::Odd); }",
+    )?;
+    assert_ne!(
+        mapped.0,
+        StageState::Yes,
+        "a mapped error is not a pin on the owner's error"
+    );
+    let mapped_ufcs = read(
+        "#[test] fn odd() { assert_eq!(Result::map_err(parse(\"1\"), |_| Fault::Odd).unwrap_err(), Fault::Odd); }",
+    )?;
+    assert_ne!(
+        mapped_ufcs.0,
+        StageState::Yes,
+        "the UFCS map_err spelling is not a pin on the owner's error either"
+    );
+    for turbofish in [
+        "Result::map_err::<_, _>(parse(\"1\"), |_| Fault::Odd)",
+        "Result::<u8, Fault>::map_err(parse(\"1\"), |_| Fault::Odd)",
+        "Result::or(parse(\"1\"), Err(Fault::Odd))",
+        "(Result::or(parse(\"1\"), Err(Fault::Odd)))",
+        "parse(\"1\").or(Err(Fault::Odd))",
+        "parse(\"1\").or((Err(Fault::Odd)))",
+        "parse(\"1\").or(Err (Fault::Odd))",
+        "parse(\"1\").or(Err/* c */(Fault::Odd))",
+        "((Result::map_err(parse(\"1\"), |_| Fault::Odd)))",
+        "parse(\"1\").map_err::<Fault, _>(|_| Fault::Odd)",
+    ] {
+        let mapped_turbofish = read(&format!(
+            "#[test] fn odd() {{ assert_eq!({turbofish}.unwrap_err(), Fault::Odd); }}"
+        ))?;
+        assert_ne!(
+            mapped_turbofish.0,
+            StageState::Yes,
+            "a turbofish map_err is not a pin on the owner's error: {turbofish}"
+        );
+    }
+    for spelled in [
+        "assert_eq!(parse(\"1\").or(Err (Fault::Odd)), Err(Fault::Odd));",
+        "assert_eq!(parse(\"1\").or(Err/* c */(Fault::Odd)), Err(Fault::Odd));",
+        "assert_eq!(parse(\"1\").or(Err(Fault::Odd)), Err(Fault::Odd));",
+    ] {
+        let spaced = read(&format!("#[test] fn odd() {{ {spelled} }}"))?;
+        assert_ne!(
+            spaced.0,
+            StageState::Yes,
+            "an Err constructor spelled with spacing or a comment is still the test's own error: {spelled}"
+        );
+    }
+    let grouped =
+        read("#[test] fn odd() { assert_eq!((parse(\"1\").unwrap_err()), Fault::Odd); }")?;
+    assert_eq!(grouped.0, StageState::Yes, "grouped error read");
+    let expected_err =
+        read("#[test] fn odd() { assert_eq!(parse(\"1\").expect_err(\"odd\"), Fault::Odd); }")?;
+    assert_eq!(expected_err.0, StageState::Yes, "expect_err spelling");
+    let ufcs_expect_err = read(
+        "#[test] fn odd() { assert_eq!(Result::expect_err(parse(\"1\"), \"odd\"), Fault::Odd); }",
+    )?;
+    assert_eq!(
+        ufcs_expect_err.0,
+        StageState::Yes,
+        "UFCS Result::expect_err spelling (#12336)"
+    );
+    let opaque = read(
+        "#[test] fn odd() { let want = Fault::Odd; assert_eq!(parse(\"1\").unwrap_err(), want); }",
+    )?;
+    assert_ne!(
+        opaque.0,
+        StageState::Yes,
+        "an opaque expected value is not a variant pin"
     );
     Ok(())
 }

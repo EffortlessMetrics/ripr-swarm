@@ -587,3 +587,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_verified_field_construction (49)
+
+Reason:
+RIPR-SPEC-0122: return_value --at stub route targets probe line not nearest gap
+
+Command:
+`cargo xtask goldens bless observation_verified_field_construction --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -74,6 +74,8 @@ mod javascript_awaited_roots;
 mod leftover_check_honesty;
 #[path = "cli_smoke/leftover_hints.rs"]
 mod leftover_hints;
+#[path = "cli_smoke/leftover_status.rs"]
+mod leftover_status;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/legend_first_run.rs"]
 mod legend_first_run;
@@ -6612,7 +6614,9 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(!packet.status.success());
     let stderr = String::from_utf8_lossy(&packet.stderr);
     assert!(
-        stderr.contains("is a `ripr check` finding ID, not a seam ID"),
+        stderr.contains(
+            "agent packet --seam-id `probe:src_lib.rs:predicate:566edf6b` names no current seam"
+        ) && stderr.contains("the `ripr check` finding ID is stale or maps to no current seam"),
         "{stderr}"
     );
     // The pilot route names the root the failing call used, not `.`.
@@ -6664,7 +6668,7 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     );
 
     // The other ID `ripr check` prints, its canonical gap ID, gets the same
-    // family-named refusal instead of the generic hint (#8158).
+    // stale-id refusal naming this command (#12420).
     let gap_packet = run_ripr(&[
         "agent",
         "packet",
@@ -6677,7 +6681,7 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(!gap_packet.status.success());
     let stderr = String::from_utf8_lossy(&gap_packet.stderr);
     assert!(
-        stderr.contains("is a `ripr check` canonical gap ID, not a seam ID"),
+        stderr.contains("agent packet --seam-id `gap:0123456789abcdef` names no current seam"),
         "{stderr}"
     );
     assert!(
@@ -6699,7 +6703,8 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(!repo_probe_packet.status.success());
     let stderr = String::from_utf8_lossy(&repo_probe_packet.stderr);
     assert!(
-        stderr.contains("`repo-probe:...` is a `ripr check` finding ID, not a seam ID"),
+        stderr.contains("agent packet --seam-id `repo-probe:src_lib.rs:predicate:566edf6b` names no current seam")
+            && stderr.contains("the `ripr check` finding ID is stale or maps to no current seam"),
         "{stderr}"
     );
     assert!(
@@ -6966,7 +6971,9 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
     );
     let stderr = String::from_utf8_lossy(&unknown.stderr);
     assert!(
-        stderr.contains("is a `ripr check` finding ID, not a seam ID"),
+        stderr.contains(
+            "agent card --seam-id `probe:src_lib.rs:predicate:566edf6b` names no current seam"
+        ) && stderr.contains("the `ripr check` finding ID is stale or maps to no current seam"),
         "{stderr}"
     );
     let typed = run_ripr(&[
@@ -6999,7 +7006,7 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
     assert!(
         envelope["error"]["message"]
             .as_str()
-            .is_some_and(|message| message.contains("was not found")),
+            .is_some_and(|message| message.contains("names no current seam")),
         "{envelope}"
     );
     assert!(
@@ -7009,7 +7016,7 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
         "{envelope}"
     );
     assert!(
-        typed_stderr.contains("is a `ripr check` finding ID, not a seam ID"),
+        typed_stderr.contains("the `ripr check` finding ID is stale or maps to no current seam"),
         "the human prose rendering stays on stderr: {typed_stderr}"
     );
     std::fs::remove_dir_all(root)?;
@@ -17202,6 +17209,30 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     assert!(!workflow.contains("RIPR_GATE_MODE: \"acknowledgeable\""));
     assert!(!workflow.contains("RIPR_GATE_MODE: \"baseline-check\""));
     assert!(!workflow.contains("RIPR_GATE_MODE: \"calibrated-gate\""));
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn init_ci_gitlab_writes_advisory_merge_request_pipeline() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["init", "--root", &root, "--ci", "gitlab"]);
+    assert_success(&output);
+
+    let pipeline_path = workspace.join(".gitlab-ci.yml");
+    let pipeline = std::fs::read_to_string(&pipeline_path)
+        .map_err(|e| format!("read generated pipeline: {e}"))?;
+    assert!(workspace.join("ripr.toml").exists());
+    assert!(pipeline.contains("allow_failure: true"));
+    assert!(pipeline.contains(r#"$CI_PIPELINE_SOURCE == "merge_request_event""#));
+    assert!(pipeline.contains("ripr check --root ."));
+    assert!(pipeline.contains("ripr review-comments --root ."));
+    assert!(pipeline.contains("target/ripr/"));
+    assert!(!pipeline.contains("RIPR_GATE_MODE"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("merge request"), "{stdout}");
 
     ignore_remove_dir_all(&workspace);
     Ok(())

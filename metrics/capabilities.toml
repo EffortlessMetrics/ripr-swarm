@@ -998,7 +998,7 @@ evidence = [
   "docs/PR_REVIEW_GUIDANCE.md documents the command, generated CI behavior, placement-safe reviewer loop, fixture matrix, and inline-comment opt-in boundary",
   "ripr review-comments --root . --base <sha> --head <sha> --out target/ripr/review/comments.json writes JSON plus Markdown without posting to GitHub",
   "ripr review-comments --gap-ledger renders changed-line repair cards only from PR-comment-eligible GapRecord records without rerunning analysis",
-  "crates/ripr/src/output/review_comments.rs renders bounded line annotations, GapRecord repair cards, summary-only fallbacks, cap suppression, nearby-test suppression, LLM guidance, and static limits",
+  "crates/ripr/src/output/review_comments/mod.rs renders bounded line annotations, GapRecord repair cards, summary-only fallbacks, cap suppression, nearby-test suppression, LLM guidance, and static limits",
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs renders repair_card bodies as repair instructions instead of raw classification labels or confidence scores",
   "crates/ripr/src/cli/commands.rs exposes the command and parses required revisions plus optional gap-ledger input",
   "docs/CI.md PR Test Guidance Annotations section documents the default job-summary and check-annotation posture",
@@ -1006,7 +1006,7 @@ evidence = [
   "ripr init --ci github generates an advisory workflow that runs ripr review-comments on pull requests, writes a RIPR advisory summary, and emits non-blocking changed-line check annotations when target/ripr/review/comments.json exists",
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_matches_smoke_fixture pins generated workflow artifact paths, top-seam extraction, review-comments execution before summary and annotation consumers, advisory posture, optional SARIF gates, badge output, summary sections, and annotation hooks",
   "fixtures/boundary_gap/expected/pr-guidance pins exact-line, owner-function-line, same-file-line, summary-only, capped, configured-off, and changed-test-skip JSON and Markdown outputs",
-  "crates/ripr/src/output/review_comments.rs::review_comments_pr_guidance_fixtures_pin_required_cases compares the PR guidance fixture matrix",
+  "crates/ripr/src/output/review_comments/mod.rs::review_comments_pr_guidance_fixtures_pin_required_cases compares the PR guidance fixture matrix",
   "docs/QUICKSTART.md routes CI-first users through the generated advisory workflow summary, uploaded artifact packet, optional SARIF, and non-blocking posture",
   "docs/handoffs/2026-05-08-campaign-13-closeout.md records the closeout proof and non-goals"
 ]

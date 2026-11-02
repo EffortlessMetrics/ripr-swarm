@@ -295,6 +295,125 @@ If those deltas cannot be shown, the implementation must keep the cases in
 `static_limitation` and report the missing proof instead of widening the
 supported scope.
 
+#### Returned-reader retarget (#11400)
+
+The retarget is decided when the diff probes are built, before any finding
+is classified. A retargeted constant has no declaration probe left, so the
+value-flow evaluation above never sees it. The retarget is therefore limited
+to readers whose returned value changes whenever the constant does, for every
+input. For those readers an exact check of the return is a check of the
+constant. Every other reader shape keeps the declaration probe, and the
+evaluation decides it as before. That includes a bare `N` return: a literal
+pin such as `assert_eq!(n(), 10)` on `fn n() -> u32 { N }`, with `N` changed
+from 10 to 11, is still decided by the evaluation and reads `exposed`.
+
+A changed `const` is described as the change to its readers' returned values
+only when all of these hold:
+
+- the changed line declares a `const` (never a `static`); a removed
+  declaration of the same name pairs with it; the pair has the same type; and
+  the two initializers evaluate to different values. A visibility-only edit,
+  a rewrite to the same value (`10` to `5 + 5`), a type-only edit or a value
+  that cannot be evaluated is not a changed value;
+- the declaration line holds no `{` or `}`; the file declares the name
+  exactly once, directly in a module (not in an `impl` or trait); no `use`
+  anywhere in the file imports an item spelled like it or a `format`; no
+  inline module chain is opened twice (`#[cfg]` alternatives);
+- over the raw text (comments, strings, doc comments and macro bodies
+  included) of every `.rs` file under the root, the name as a whole word
+  occurs exactly twice: once on the declaration and once in the reader's
+  returned `format!`. The walk skips only the root's own `.git` and
+  `target` directories, so `fixtures`, `tests/fixtures` and a nested
+  `src/target/` module directory are read. Any other occurrence refuses: a
+  test, a test helper, a doc test written in the file, a `use .. as` alias,
+  a path-qualified read (`crate::fx::BANNER`), a copy into another constant,
+  a macro body or a comment. Such a mention may carry the constant's value
+  into a test's expected side (`assert_eq!(banner_line(), format!("[{BANNER}]"))`
+  tracks the edit), which only the value-flow evaluation on the declaration
+  judges. The rule does not depend on where tests live, so an alias cannot
+  dodge it;
+- the same scan refuses, structurally and on the raw text, when any file
+  could bring in text it does not read or build a name it cannot see: the
+  whole words `include`, `include_str`, `include_bytes` or `paste` anywhere
+  (no `!` needed, so a renaming `use std::include as inc;` or
+  `use paste::paste as p;` refuses), any other `include`-prefixed macro, a
+  `path` attribute in any spacing (`#[path`, `# [ path`), or any `cfg_attr`
+  in a file that also says `mod`. It also refuses when any file defines
+  `macro_rules! format`;
+- the same scan refuses when any directory entry is neither a directory nor
+  a regular file (the walk does not follow links, so any symlink refuses,
+  even one to a harmless file), when a Rust file is unreadable or not UTF-8,
+  or past 200,000 directory entries, 20,000 Rust files or a 4 MiB Rust file.
+  It runs only after every cheaper guard has passed, once per surviving
+  changed constant;
+- there is exactly one reader in the file, defined once in the workspace
+  text. Across the whole scanned workspace its name may otherwise appear in
+  at most one call and at most one line that is exactly one plain `use ..;`
+  with no `as`. That one call must sit inside a `#[test]` function and
+  inside no macro invocation except `assert!`, `assert_eq!`, `assert_ne!`
+  and their `debug_` forms. A second call anywhere refuses. That stops the
+  common routes by which a test keeps the reader's own output as its
+  expected side (`let expected = banner_line(); assert_eq!(banner_line(), expected);`),
+  but not every one: `let a = banner_line(); let e = a.clone(); assert_eq!(a, e);`
+  calls the reader once, and the test-oracle grading, not this rule, judges
+  such a self-comparison.
+  A call from production code or from a test helper that is not a `#[test]`
+  function (`fn expected() -> String { fx::banner_line() }`), a call inside
+  another macro (`wrap! { #[test] fn .. }`, whose expansion is unknown), a
+  mention as a value (`const X: fn() -> String = banner_line;`), a mention
+  in a comment or string, and any mention in a file that defines a
+  `macro_rules!` (which can turn `#[test]`-spelled text into an ordinary
+  function) refuse. This rule reads the same raw scan as the name rule,
+  never an index, so `ripr check` in any mode (including `--mode instant`
+  and `--no-unchanged-tests`, whose index holds only changed files and
+  their parent modules) and `ripr repair` reach the same decision. Repair
+  indexes only the declaring files: each guard reads the declaring file's
+  own facts. A function's composed test-only role comes from the other
+  indexed files, so repair can name a returned line that check would not
+  (a reader check sees as test-only). That is harmless, because the repair
+  inventory drops test-only owners, so neither command starts there;
+- shadowing and other-path reads are not reads. The reader sits in the
+  declaration's own module, no module line leaves its `{` to a later line, and
+  no code outside a function reads the name (another constant's initializer,
+  a compile-time `assert!`, an array length);
+- each reader's whole body is one one-line returned value (a tail expression
+  or a single `return`): no branch, binding, closure, async block or second
+  return. None of those lines is itself changed, and the returned value is
+  one `format!` whose only reads of the constant are plain `{NAME}` inline
+  arguments, with no named argument and no other argument naming it. A bare
+  name or conversion return is left to the evaluation. A comparison
+  (`x > LIMIT`), arithmetic, a format spec or any other use can hide the
+  change for some input.
+
+Any failure keeps the declaration's `static_unknown` probe, with no repair
+start. `ripr repair` scopes to the same returned lines and expressions by
+running the same probe pipeline over the change, and both commands read
+the same raw-text scan of the same workspace file list, so they offer the
+same start or neither does.
+
+Known limits: the scan reads spelling, not expansion, so some routes stay
+outside it. A `macro_rules!` in another file can shadow `assert!` or
+`assert_eq!` around the one allowed call. A proc macro other than `paste`
+can build the constant's or the reader's name from pieces. A `cfg_attr` in
+one file can pass tokens to a module declared in another. An external crate
+can re-export `include!` under a name that is not one of the refused words.
+An attribute proc macro, or a shadowed `#[test]`, can turn a `#[test]`
+function into something else. A template engine or build script can call
+the reader from a file that is not `.rs`. None of these is detected; each
+would need expansion or build knowledge that a static reading does not
+have.
+
+Known missed advisory: the scan over-refuses on purpose. A constant that a
+test, a doc comment or any other file mentions, even harmlessly, keeps the
+declaration's unknown answer with no start. So does a reader called twice
+(even by two loose tests), called inside a non-`assert!` macro or a
+`#[tokio::test]`-style test, named in a doc comment, or mentioned in a file
+with any `macro_rules!`; any symlink in the tree; any `cfg_attr` in a file
+that declares a module; and any file that says `include` or `paste`. A
+returned value that a
+test checks exactly is reported as checked; a weak check gets the ordinary
+return-value repair.
+
 #### Associated-constant extension (selected by `shape-assoc-const-value`)
 
 The value-flow evaluation above refuses a constant declared more than once in

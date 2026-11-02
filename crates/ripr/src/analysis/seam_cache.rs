@@ -623,7 +623,15 @@ pub(crate) struct CachedSeamLimitInfo {
 /// local it reads no longer confirms the changed arm (#12056).
 /// `1.135`: a changed match arm whose `match` value is consumed before the
 /// owner returns it (method call, or a used `let`) is not confirmed (#12143).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.135";
+/// `1.136`: an inline `<call>.unwrap_err()` / `.expect_err(..)` equality that
+/// names the seam's variant is an `ExactErrorVariant` oracle, as the bound
+/// spelling already was (#12266).
+/// `1.137`: indirect-owner item scope decisions: item declarations and a known
+/// different same-name item no longer read as owner-value uses (#10162).
+/// `1.138`: an `Err(..)` constructor handed to a value-supplying adapter
+/// (`or`, `and`, `ok_or`, `unwrap_or`, `map_err`, ..) no longer makes an
+/// assertion an `ExactErrorVariant` oracle (#12359).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.138";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -800,7 +808,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.135";
 /// `0.135`: same identical-arms propagation rule as full `1.129` (#12053).
 /// `0.136`: same by-value receiver field-write rule as full `1.132` (#12061).
 /// `0.137`: same proximity-pins-another-function rule as full `1.133` (#12060).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.137";
+/// `0.138`: same inline `unwrap_err` variant pin as full `1.136` (#12266).
+/// `0.139`: same indirect-owner item scope decisions as full `1.137` (#10162).
+/// `0.140`: same adapter-fed `Err(..)` refusal as full `1.138` (#12359).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.140";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -979,7 +990,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.137";
 /// `0.135`: same identical-arms propagation rule as full `1.129` (#12053).
 /// `0.136`: same by-value receiver field-write rule as full `1.132` (#12061).
 /// `0.137`: same proximity-pins-another-function rule as full `1.133` (#12060).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.137";
+/// `0.138`: same inline `unwrap_err` variant pin as full `1.136` (#12266).
+/// `0.139`: same indirect-owner item scope decisions as full `1.137` (#10162).
+/// `0.140`: same adapter-fed `Err(..)` refusal as full `1.138` (#12359).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.140";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1176,7 +1190,13 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// expression (#10797); `1.49` facts keep the unsubstituted row.
 /// `1.51`: exact `#[kani::proof]` functions carry the proof-harness role
 /// (RIPR-SPEC-0367); `1.50` facts leave them production.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.51";
+/// `1.52`: an inline `unwrap_err` / `expect_err` equality against a named
+/// variant is an `ExactErrorVariant` oracle fact (#12266); `1.51` facts keep
+/// it `exact_value`.
+/// `1.53`: an assertion whose `Err(..)` constructor feeds a value-supplying
+/// adapter is no longer an `ExactErrorVariant` oracle fact (#12359); `1.52`
+/// facts keep the old kind.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.53";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1497,6 +1517,11 @@ impl RepoFileFactCacheKey {
             file_path: file_path.to_path_buf(),
             content_hash: hash_bytes(content),
         }
+    }
+
+    /// Workspace-relative path this key describes.
+    pub(crate) fn file_path(&self) -> &Path {
+        &self.file_path
     }
 
     /// Digest of the bytes this key was built from, in the per-file form
@@ -5417,7 +5442,7 @@ mod tests {
         // 1.47 -> 1.48: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.48 -> 1.49: call-in-term accumulator probe (RIPR-SPEC-0360, #9478).
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.51");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.53");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5581,7 +5606,10 @@ mod tests {
         // 1.133 -> 1.134: an assertion that pins another function through a
         // local it reads no longer confirms the arm (#12056).
         // 1.134 -> 1.135: a consumed `match` value remaps the arm result (#12143).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.135");
+        // 1.135 -> 1.136: inline unwrap_err variant pin (#12266).
+        // 1.136 -> 1.137: indirect-owner item scope decisions (#10162).
+        // 1.137 -> 1.138: adapter-fed Err refusal (#12359).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.138");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5698,8 +5726,11 @@ mod tests {
         // 0.134 -> 0.135: same identical-arms propagation rule as full 1.129.
         // 0.135 -> 0.136: same by-value receiver field-write rule as full 1.132.
         // 0.136 -> 0.137: same proximity rule as full 1.133 (#12060).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.137");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.137");
+        // 0.137 -> 0.138: same inline unwrap_err pin as full 1.136 (#12266).
+        // 0.138 -> 0.139: same indirect-owner item scope decisions as full 1.137 (#10162).
+        // 0.139 -> 0.140: same adapter-fed Err refusal as full 1.138 (#12359).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.140");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.140");
     }
 
     #[test]
