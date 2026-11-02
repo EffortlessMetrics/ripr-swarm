@@ -2786,7 +2786,7 @@ JSON fields:
   `<module>` as the owner segment.
 - `language` is the per-finding source language reported by the language
   adapter that produced it (see [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md)).
-  Values are `rust`, `typescript`, `javascript`, `python`, or `perl`. Omitted
+  Values are `rust`, `typescript`, `javascript`, `python`, `perl`, or `go`. Omitted
   when no adapter populated it. Rust findings always carry `language: "rust"`;
   preview adapters set the preview-language value when configured.
 - `language_status` is the per-finding adapter status. Values are `stable`

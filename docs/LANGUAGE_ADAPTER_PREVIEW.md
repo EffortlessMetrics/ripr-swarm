@@ -49,6 +49,9 @@ mutation outcome or a sufficiency claim, and promotes no tier.
 | `perl/any/diff/static_facts` | `not_proven` | `preview` |
 | `perl/any/repo/static_facts` | `not_proven` | `preview` |
 | `perl/any/diff/repair_routing` | `not_proven` | `preview` |
+| `go/any/diff/static_facts` | `not_proven` | `preview` |
+| `go/any/repo/static_facts` | `not_proven` | `preview` |
+| `go/any/diff/repair_routing` | `not_proven` | `preview` |
 
 <!-- capability-registry:end -->
 

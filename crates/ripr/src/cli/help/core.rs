@@ -666,7 +666,7 @@ Usage: ripr capabilities [--language NAME] [--json | --markdown]
 
 Options:
   --language NAME  Narrow to one language: rust, typescript, javascript,
-                   python or perl.
+                   python, perl or go.
   --json           Emit the versioned machine-readable registry.
   --markdown       Emit the generated registry block for
                    docs/status/SUPPORT_TIERS.md (whole table; not with

@@ -77,7 +77,7 @@ fork is permitted.
 
 Additive optional fields:
 
-- `language`: one of `rust`, `typescript`, `javascript`, `python`, `perl`.
+- `language`: one of `rust`, `typescript`, `javascript`, `python`, `perl`, `go`.
   Omitted when unknown.
 - `language_status`: `stable` or `preview`. Omitted when `rust`.
 - `probe.owner`: stable owner identifier when a preview adapter can map the

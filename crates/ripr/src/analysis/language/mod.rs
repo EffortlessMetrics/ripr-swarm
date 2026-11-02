@@ -21,6 +21,8 @@
 //! per RIPR-SPEC-0027 and RIPR-SPEC-0028.
 
 pub(crate) mod adapter;
+#[cfg(feature = "lang-go")]
+mod go;
 mod id;
 #[cfg(feature = "lang-perl")]
 mod perl;

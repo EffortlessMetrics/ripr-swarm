@@ -24,9 +24,11 @@ fn selected(language: Option<LanguageId>) -> Vec<&'static CapabilityCell> {
 fn language_status(language: LanguageId) -> &'static str {
     match language {
         LanguageId::Rust => "stable",
-        LanguageId::TypeScript | LanguageId::JavaScript | LanguageId::Python | LanguageId::Perl => {
-            "preview"
-        }
+        LanguageId::TypeScript
+        | LanguageId::JavaScript
+        | LanguageId::Python
+        | LanguageId::Perl
+        | LanguageId::Go => "preview",
     }
 }
 
@@ -105,6 +107,9 @@ fn plain_summary(language: LanguageId) -> &'static str {
         }
         LanguageId::Perl => {
             "not supported yet: it needs a special ripr build and a Perl facts exporter, and default builds only report that Perl files changed."
+        }
+        LanguageId::Go => {
+            "not supported yet: Go has a closed identity token only; default builds do not analyze `.go` files."
         }
     }
 }
@@ -202,6 +207,14 @@ mod tests {
             1,
             "{one}"
         );
+    }
+
+    #[test]
+    fn go_language_id_serializes_as_go_wire_token() {
+        let json = serde_json::to_string(&LanguageId::Go).unwrap_or_default();
+        assert_eq!(json, "\"go\"");
+        let round_trip: LanguageId = serde_json::from_str(&json).unwrap_or(LanguageId::Rust);
+        assert_eq!(round_trip, LanguageId::Go);
     }
 
     #[test]
