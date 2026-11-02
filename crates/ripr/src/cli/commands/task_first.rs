@@ -429,7 +429,8 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                 );
                 if action.action_class() == crate::domain::NextActionClass::ChooseItem {
                     print_retry_line(&format!(
-                        "ripr repair <seam-id> --root {}",
+                        "ripr repair {} --root {}",
+                        crate::output::next_action::SELECT_ITEM_RETRY_PLACEHOLDER,
                         crate::agent::loop_commands::shell_arg(&bound)
                     ));
                 }
@@ -1062,8 +1063,8 @@ mod tests {
             expected
         );
         assert_eq!(
-            retry_lines("ripr repair <seam-id> --root /work/proj"),
-            vec!["retry: ripr repair <seam-id> --root /work/proj".to_string()]
+            retry_lines("ripr repair <item-id> --root /work/proj"),
+            vec!["retry: ripr repair <item-id> --root /work/proj".to_string()]
         );
     }
 
