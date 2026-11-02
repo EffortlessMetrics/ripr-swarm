@@ -118,8 +118,11 @@ pub(crate) fn semantic_digest(facts: &ProjectFactsV1) -> Result<String, String> 
         currentness: &facts.currentness,
         limitations: &facts.limitations,
     };
-    let json = serde_json::to_vec(&input)
-        .map_err(|error| format!("project facts digest serialization failed: {error}"))?;
+    let json = serde_json::to_vec(&input).map_err(|error| {
+        format!(
+            "project facts digest serialization failed: {error}; report this as a ripr bug with the workspace command that produced it"
+        )
+    })?;
     Ok(crate::config::bytes_fingerprint(&json))
 }
 
