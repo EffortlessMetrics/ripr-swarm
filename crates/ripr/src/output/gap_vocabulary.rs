@@ -115,7 +115,7 @@ pub(crate) fn seam_discriminate_evidence_token(
     if class == SeamGripClass::WeaklyGripped || has_missing_discriminators {
         return StageState::Weak.as_str();
     }
-    StageState::Unknown.as_str()
+    StageState::Yes.as_str()
 }
 
 #[cfg(test)]
@@ -190,6 +190,21 @@ mod tests {
             != "yes"
         {
             return Err("strongly_gripped yes grade must stay yes".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn activation_unknown_yes_discriminate_stays_yes() -> Result<(), String> {
+        if seam_discriminate_evidence_token(
+            SeamGripClass::ActivationUnknown,
+            &StageState::Yes,
+            false,
+        ) != "yes"
+        {
+            return Err(
+                "activation_unknown with yes oracle grade must keep discriminate yes".to_string(),
+            );
         }
         Ok(())
     }

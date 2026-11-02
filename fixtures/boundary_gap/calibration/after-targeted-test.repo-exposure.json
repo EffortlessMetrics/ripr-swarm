@@ -20,7 +20,7 @@
     {
       "evidence": {
         "activate": "yes",
-        "discriminate": "weak",
+        "discriminate": "yes",
         "observe": "yes",
         "propagate": "yes",
         "reach": "yes"
