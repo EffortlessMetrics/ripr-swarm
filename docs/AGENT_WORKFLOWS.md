@@ -314,7 +314,7 @@ has several inline test modules enabled under plain `cfg(test)`, the stub goes
 into the one that already names the owner, else the nearest one after it, else
 the nearest one before it; feature- or target-gated modules are never chosen.
 An owner behind a cfg in its own file that a plain `cargo test` build may not
-enable (a gate on the parent's `mod` declaration is not yet seen, #5616), or in an impl
+enable (a gate on the parent's `mod` declaration is refused via the declaring-module chain, #5616), or in an impl
 local to a function body or `const` block, is refused as `owner_unsupported`.
 The expected value is a labelled `todo!()`, so the test fails until it is
 written. `--write` applies it; `--json` emits the `rust_test_stub` document.
