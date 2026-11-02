@@ -1086,7 +1086,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
         reason: "static limit rust_nesting_budget".to_string(),
     }];
     let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[])
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], false, &[])
             .with_declined_rust_files(declined);
     let declined_context = PilotSummaryContext {
         language_routes: Some(&routes),
@@ -1427,7 +1427,7 @@ fn pilot_terminal_qualifies_empty_ranking_when_rust_files_were_declined() {
         reason: "static limit rust_nesting_budget".to_string(),
     }];
     let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[])
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], false, &[])
             .with_declined_rust_files(declined);
     let context = PilotSummaryContext {
         language_routes: Some(&routes),
@@ -1455,9 +1455,14 @@ fn pilot_route_lines_say_no_gaps_only_about_the_rust_code_it_checked() {
         path: PathBuf::from("src/deep.rs"),
         reason: "static limit rust_nesting_budget".to_string(),
     }];
-    let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files)
-            .with_declined_rust_files(declined);
+    let routes = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Python],
+        false,
+        &files,
+    )
+    .with_declined_rust_files(declined);
     let limit = crate::analysis::SeamLimitInfo {
         analyzed: 2,
         total: 9,
@@ -2877,11 +2882,17 @@ fn pilot_language_routes_split_real_discovery_javascript_files() {
     let root = Path::new(".");
     let enabled = [LanguageId::Rust, LanguageId::TypeScript];
     let routes_of = |entries: &[(LanguageId, &str)]| {
-        PilotLanguageRoutes::from_discovered(root, false, &enabled, &discovered_files(entries))
-            .routes
-            .iter()
-            .map(|route| (route.language, route.file_count))
-            .collect::<Vec<_>>()
+        PilotLanguageRoutes::from_discovered(
+            root,
+            false,
+            &enabled,
+            false,
+            &discovered_files(entries),
+        )
+        .routes
+        .iter()
+        .map(|route| (route.language, route.file_count))
+        .collect::<Vec<_>>()
     };
 
     assert_eq!(
@@ -2915,10 +2926,11 @@ fn pilot_language_routes_split_real_discovery_javascript_files() {
 fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     use super::language_routes::PilotLanguageRoutesState;
     use crate::domain::LanguageId;
-    use crate::output::repo_exposure::{PythonRepoExposureGuidance, TsFullRepoGuidance};
+    use crate::output::repo_exposure::TsFullRepoGuidance;
 
     let root = Path::new(".");
-    let rust_only = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[]);
+    let rust_only =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], false, &[]);
     assert_eq!(rust_only.state, PilotLanguageRoutesState::NotDetected);
     assert!(rust_only.routes.is_empty());
     assert!(rust_only.required().is_none());
@@ -2931,7 +2943,7 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
         (LanguageId::TypeScript, "web/d.ts"),
     ]);
     let enabled = [LanguageId::Rust, LanguageId::TypeScript];
-    let required = PilotLanguageRoutes::from_discovered(root, false, &enabled, &files);
+    let required = PilotLanguageRoutes::from_discovered(root, false, &enabled, false, &files);
     assert_eq!(required.state, PilotLanguageRoutesState::Required);
     assert_eq!(required.state.as_str(), "required");
     // A language this binary cannot analyze (#4252: TypeScript and Python
@@ -2974,13 +2986,14 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     let python = &required.routes[2];
     if LanguageId::Python.is_available() {
         assert_eq!(python.command.as_deref(), Some(route_command().as_str()));
-        assert_eq!(
-            python.guidance_category,
-            Some(PythonRepoExposureGuidance::CATEGORY)
-        );
-        assert_eq!(
-            python.guidance.as_deref(),
-            Some(PythonRepoExposureGuidance::REPAIR_ROUTE)
+        assert!(!python.enabled);
+        assert!(
+            python
+                .guidance
+                .as_deref()
+                .is_some_and(|text| text.contains("[languages]")),
+            "{:?}",
+            python.guidance
         );
     } else {
         assert_unavailable(python);
@@ -3017,7 +3030,7 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
         assert!(required.supported_headline_route().is_none());
     }
 
-    let supplementary = PilotLanguageRoutes::from_discovered(root, true, &enabled, &files);
+    let supplementary = PilotLanguageRoutes::from_discovered(root, true, &enabled, false, &files);
     assert_eq!(supplementary.state, PilotLanguageRoutesState::Supplementary);
     assert_eq!(supplementary.routes, required.routes);
     assert!(supplementary.required().is_none());
@@ -3043,7 +3056,8 @@ fn pilot_terminal_route_label_has_one_shape_for_every_language() {
         (LanguageId::Python, "src/pricing.py"),
     ]);
     let enabled = [LanguageId::Rust, LanguageId::TypeScript, LanguageId::Python];
-    let routes = PilotLanguageRoutes::from_discovered(Path::new("."), false, &enabled, &files);
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &enabled, false, &files);
     let runnable: Vec<_> = routes
         .routes
         .iter()
@@ -3096,8 +3110,9 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
     // "complete", "none ranked", and offered a test-then-compare loop.
     let artifacts = pilot_artifacts();
     let root = Path::new(".");
-    let go_only = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[])
-        .with_unanalyzed(vec![("Go", 2)], false);
+    let go_only =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], false, &[])
+            .with_unanalyzed(vec![("Go", 2)], false);
     assert_eq!(go_only.state, PilotLanguageRoutesState::UnanalyzedOnly);
     let context = PilotSummaryContext {
         language_routes: Some(&go_only),
@@ -3143,8 +3158,9 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
 
     // Rust seams present: the ranking stands and the Go files stay a JSON
     // note, so Rust users' output is unchanged.
-    let with_rust = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[])
-        .with_unanalyzed(vec![("Go", 2)], true);
+    let with_rust =
+        PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], false, &[])
+            .with_unanalyzed(vec![("Go", 2)], true);
     assert_eq!(with_rust.state, PilotLanguageRoutesState::NotDetected);
     assert!(with_rust.unanalyzed_only().is_none());
     let json = render_pilot_summary_json(
@@ -3165,12 +3181,13 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
 
     // A Rust crate with no seams yet (a lone `pub const`) plus a CI script
     // is a Rust repository, not an unanalyzed one.
-    let seamless_rust = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[])
-        .with_unanalyzed(vec![("Shell", 1)], true);
+    let seamless_rust =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], false, &[])
+            .with_unanalyzed(vec![("Shell", 1)], true);
     assert!(seamless_rust.unanalyzed_only().is_none());
 
     // Nothing unanalyzed: the JSON shape is unchanged for Rust users.
-    let plain = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[]);
+    let plain = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], false, &[]);
     let json = render_pilot_summary_json(
         &[],
         PilotSummaryContext {
@@ -3202,9 +3219,10 @@ fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<()
     // config, not by merit, and all three surfaces say so.
     let artifacts = pilot_artifacts();
     let root = Path::new(".");
-    let excluded = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], &[])
-        .with_unanalyzed(Vec::new(), true)
-        .with_rust_exclusion(Some(3));
+    let excluded =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], false, &[])
+            .with_unanalyzed(Vec::new(), true)
+            .with_rust_exclusion(Some(3));
     assert_eq!(excluded.rust_exclusion(), Some(3));
     let context = PilotSummaryContext {
         language_routes: Some(&excluded),
@@ -3244,7 +3262,7 @@ fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<()
     assert!(parsed["next"]["outcome_command"].is_null(), "{json}");
 
     // No exclusion: the JSON shape is unchanged for Rust users.
-    let plain = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[])
+    let plain = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], false, &[])
         .with_rust_exclusion(None);
     let json = render_pilot_summary_json(
         &[],
@@ -3276,7 +3294,7 @@ fn pilot_names_declined_rust_files_in_every_surface() -> Result<(), String> {
         reason: "static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget; parse refused to avoid a stack overflow".to_string(),
     }];
     let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[])
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], false, &[])
             .with_declined_rust_files(declined);
     let context = PilotSummaryContext {
         language_routes: Some(&routes),
@@ -3313,7 +3331,7 @@ fn pilot_names_declined_rust_files_in_every_surface() -> Result<(), String> {
 
     // Nothing declined: the JSON shape is unchanged.
     let plain =
-        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[]);
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], false, &[]);
     let json = render_pilot_summary_json(
         &[],
         PilotSummaryContext {
@@ -3350,7 +3368,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         vec![related_test()],
     )];
     let supplementary =
-        PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &files);
+        PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], false, &files);
     let with_routes = PilotSummaryContext {
         language_routes: Some(&supplementary),
         seam_limit: None,
@@ -3373,7 +3391,8 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
     assert_eq!(parsed["language_routes"]["routes"][1]["language"], "perl");
 
     // No Rust seams: every surface names the routes and none reads as clean.
-    let required = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &files);
+    let required =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], false, &files);
     let context = PilotSummaryContext {
         language_routes: Some(&required),
         seam_limit: None,
@@ -3449,6 +3468,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             root,
             false,
             &[LanguageId::Rust, LanguageId::TypeScript],
+            false,
             &files,
         );
         let enabled_context = PilotSummaryContext {
@@ -3500,6 +3520,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             root,
             false,
             &[LanguageId::Rust],
+            false,
             &discovered_files(&[(LanguageId::Perl, "lib/App.pm")]),
         );
         let context = PilotSummaryContext {
@@ -3536,8 +3557,14 @@ fn pilot_omits_rust_gap_sentence_when_repo_has_no_rust() -> Result<(), String> {
     let artifacts = pilot_artifacts();
     let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
     let build = |rust_source_present: bool| {
-        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files)
-            .with_unanalyzed(Vec::new(), rust_source_present)
+        PilotLanguageRoutes::from_discovered(
+            Path::new("."),
+            false,
+            &[LanguageId::Python],
+            false,
+            &files,
+        )
+        .with_unanalyzed(Vec::new(), rust_source_present)
     };
     let render = |routes: &PilotLanguageRoutes| {
         render_pilot_terminal(
@@ -3592,8 +3619,13 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
 
     let artifacts = pilot_artifacts();
     let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
-    let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files);
+    let routes = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Python],
+        false,
+        &files,
+    );
     let python = PilotPythonFirstUse {
         status: super::types::PilotPythonFirstUseStatus::NoPythonFindings,
         findings_total: 0,
@@ -3693,8 +3725,13 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
     // Disabled TypeScript still lists the check route below, but must not
     // headline "analyze the TypeScript diff": check skips it until enabled.
     let ts_files = discovered_files(&[(LanguageId::TypeScript, "web/c.ts")]);
-    let disabled_ts =
-        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Rust], &ts_files);
+    let disabled_ts = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Rust],
+        false,
+        &ts_files,
+    );
     if LanguageId::TypeScript.is_available() {
         assert!(
             disabled_ts.supported_headline_route().is_none(),
@@ -3729,6 +3766,7 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
         Path::new("."),
         false,
         &[LanguageId::Python],
+        false,
         &mixed_files,
     );
     let Some((headline_route, _)) = mixed.supported_headline_route() else {
@@ -3764,8 +3802,13 @@ fn pilot_markdown_python_preview_matches_terminal_unscanned_gate() -> Result<(),
 
     let artifacts = pilot_artifacts();
     let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
-    let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files);
+    let routes = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Python],
+        false,
+        &files,
+    );
     let unscanned = PilotPythonFirstUse {
         status: PilotPythonFirstUseStatus::NoPythonFindings,
         findings_total: 0,
@@ -3827,8 +3870,13 @@ fn pilot_terminal_next_follows_the_python_repair_card_route() -> Result<(), Stri
     let artifacts = pilot_artifacts();
     let python = python_first_use();
     let files = discovered_files(&[(LanguageId::Python, "pricing/__init__.py")]);
-    let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files);
+    let routes = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Python],
+        false,
+        &files,
+    );
     let first_pr = format!(
         "ripr first-pr --root {}",
         crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root("."))
@@ -5111,7 +5159,8 @@ fn pilot_not_scanned_block_omits_python_pilot_analyzed() {
     let root = Path::new(".");
     let py = python_first_use();
     let files = discovered_files(&[(LanguageId::Python, "app/a.py")]);
-    let routes = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], &files);
+    let routes =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], false, &files);
     let analyzed = PilotSummaryContext {
         language_routes: Some(&routes),
         ..pilot_context_with_python(&artifacts, &py)
@@ -5135,7 +5184,8 @@ fn pilot_not_scanned_block_omits_python_pilot_analyzed() {
         (LanguageId::Python, "app/a.py"),
         (LanguageId::Perl, "lib/App.pm"),
     ]);
-    let routes = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], &mixed);
+    let routes =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], false, &mixed);
     let context = PilotSummaryContext {
         language_routes: Some(&routes),
         ..pilot_context_with_python(&artifacts, &py)

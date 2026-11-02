@@ -472,6 +472,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         &input.root,
         !classified.is_empty(),
         config.languages().enabled(),
+        config.source_text().is_none(),
         &analysis::workspace_preview_language_files(&input.root),
     )
     .with_unanalyzed(

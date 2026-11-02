@@ -127,11 +127,13 @@ pub(crate) struct PilotLanguageRoutes {
 impl PilotLanguageRoutes {
     /// Build the routes from preview-language file discovery
     /// (`analysis::workspace_preview_language_files`), whether pilot's Rust
-    /// scan produced any seam, and the effective enabled languages.
+    /// scan produced any seam, the effective enabled languages, and whether
+    /// that enablement came from built-in defaults rather than `ripr.toml`.
     pub(crate) fn from_discovered(
         root: &Path,
         rust_seams_present: bool,
         enabled_languages: &[LanguageId],
+        auto_defaulted: bool,
         discovered: &[(LanguageId, PathBuf)],
     ) -> Self {
         let mut routes = Vec::new();
@@ -146,7 +148,13 @@ impl PilotLanguageRoutes {
             if file_count == 0 {
                 continue;
             }
-            routes.push(route_for(root, *language, file_count, enabled_languages));
+            routes.push(route_for(
+                root,
+                *language,
+                file_count,
+                enabled_languages,
+                auto_defaulted,
+            ));
         }
         let state = if routes.is_empty() {
             PilotLanguageRoutesState::NotDetected
@@ -277,8 +285,17 @@ fn route_for(
     language: LanguageId,
     file_count: usize,
     enabled_languages: &[LanguageId],
+    auto_defaulted: bool,
 ) -> PilotLanguageRoute {
-    let available = language.is_available();
+    use crate::domain::language_availability::availability_report_for_detected;
+
+    let report = availability_report_for_detected(
+        language,
+        file_count,
+        Some(enabled_languages),
+        auto_defaulted,
+    );
+    let available = report.compiled_available;
     if !available {
         return PilotLanguageRoute {
             language,
@@ -290,32 +307,31 @@ fn route_for(
             guidance: language.unavailable_adapter_notice(),
         };
     }
-    let typescript_family = matches!(language, LanguageId::TypeScript | LanguageId::JavaScript);
-    // JavaScript runs through the TypeScript-family adapter, which the
-    // `[languages] enabled = ["typescript"]` entry turns on.
-    let config_language = if typescript_family {
-        LanguageId::TypeScript
-    } else {
-        language
-    };
-    let (guidance_category, guidance) = if typescript_family {
-        (
-            Some(TsFullRepoGuidance::CATEGORY),
-            Some(TsFullRepoGuidance::REPAIR_ROUTE.to_string()),
-        )
-    } else if language == LanguageId::Python {
-        (
-            Some(PythonRepoExposureGuidance::CATEGORY),
-            Some(PythonRepoExposureGuidance::REPAIR_ROUTE.to_string()),
-        )
-    } else {
+    let enabled = report.effective_enabled;
+    let (guidance_category, guidance) = if enabled {
+        if matches!(language, LanguageId::TypeScript | LanguageId::JavaScript) {
+            (
+                Some(TsFullRepoGuidance::CATEGORY),
+                Some(TsFullRepoGuidance::REPAIR_ROUTE.to_string()),
+            )
+        } else if language == LanguageId::Python {
+            (
+                Some(PythonRepoExposureGuidance::CATEGORY),
+                Some(PythonRepoExposureGuidance::REPAIR_ROUTE.to_string()),
+            )
+        } else {
+            (None, None)
+        }
+    } else if report.remediation.is_empty() {
         (None, None)
+    } else {
+        (None, Some(report.remediation.join("; ")))
     };
     PilotLanguageRoute {
         language,
         file_count,
         available,
-        enabled: enabled_languages.contains(&config_language),
+        enabled,
         // The route is pasted after the pilot report, often from another
         // directory, so it names the repository pilot analyzed (#4000).
         command: Some(format!(
@@ -324,5 +340,56 @@ fn route_for(
         )),
         guidance_category,
         guidance,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::LanguageId;
+
+    #[test]
+    fn auto_defaulted_python_is_effectively_enabled_for_pilot_routes() {
+        if !LanguageId::Python.is_available() {
+            return;
+        }
+        let files = [(LanguageId::Python, PathBuf::from("src/app.py"))];
+        let auto = PilotLanguageRoutes::from_discovered(
+            Path::new("."),
+            false,
+            &[LanguageId::Rust, LanguageId::Python],
+            true,
+            &files,
+        );
+        let python = auto
+            .routes
+            .iter()
+            .find(|route| route.language == LanguageId::Python);
+        assert!(python.is_some_and(|route| route.enabled));
+    }
+
+    #[test]
+    fn disabled_compiled_language_carries_shared_enable_remediation() {
+        if !LanguageId::Python.is_available() {
+            return;
+        }
+        let files = [(LanguageId::Python, PathBuf::from("src/app.py"))];
+        let routes = PilotLanguageRoutes::from_discovered(
+            Path::new("."),
+            false,
+            &[LanguageId::Rust],
+            false,
+            &files,
+        );
+        let python = &routes.routes[0];
+        assert!(!python.enabled);
+        assert!(
+            python
+                .guidance
+                .as_deref()
+                .is_some_and(|text| text.contains("[languages]")),
+            "{:?}",
+            python.guidance
+        );
     }
 }

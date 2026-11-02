@@ -315,10 +315,7 @@ fn detected_language_entries(
     enabled: Option<&[LanguageId]>,
     auto_defaulted: bool,
 ) -> Vec<output::doctor::DoctorDetectedLanguage> {
-    use crate::domain::language_availability::{
-        AutoDetectionPolicy, ConfiguredIntent, LanguageAvailabilityInput,
-        resolve_language_availability,
-    };
+    use crate::domain::language_availability::availability_report_for_detected;
     detected
         .iter()
         .map(|id| {
@@ -327,37 +324,18 @@ fn detected_language_entries(
             // through the same
             // mapping the gaps path uses. `None` (no loaded configuration)
             // stays unknown rather than reading as disabled.
-            let enabled = enabled.map(|list| list.contains(&config_entry(*id)));
-            let auto_enabled = auto_defaulted
-                && enabled == Some(true)
-                && matches!(
-                    config_entry(*id),
-                    LanguageId::Python | LanguageId::TypeScript
-                );
-            let report = resolve_language_availability(&LanguageAvailabilityInput {
-                project_detected: true,
-                configured: match enabled {
-                    Some(true) if !auto_enabled => ConfiguredIntent::Enabled,
-                    Some(false) => ConfiguredIntent::Disabled,
-                    _ => ConfiguredIntent::Unspecified,
-                },
-                auto_policy: if auto_enabled {
-                    AutoDetectionPolicy::WhenDetected
-                } else {
-                    AutoDetectionPolicy::Never
-                },
-                ..LanguageAvailabilityInput::for_language(*id)
-            });
+            let enabled_in_config = enabled.map(|list| list.contains(&config_entry(*id)));
+            let report = availability_report_for_detected(*id, 0, enabled, auto_defaulted);
             output::doctor::DoctorDetectedLanguage {
                 language: id.as_str().to_string(),
                 status: language_status(*id),
                 adapter_available: id.is_available(),
-                enabled,
+                enabled: enabled_in_config,
                 // Unloaded configuration leaves enablement unknown; the resolver
                 // has no unknown state, so publish none rather than a definite
                 // `not_enabled` plus an enable step the config may already satisfy.
-                availability_state: enabled.map(|_| report.state.as_str()),
-                remediation: if enabled.is_some() {
+                availability_state: enabled_in_config.map(|_| report.state.as_str()),
+                remediation: if enabled_in_config.is_some() {
                     report.remediation
                 } else {
                     Vec::new()
