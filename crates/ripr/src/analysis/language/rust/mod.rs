@@ -211,7 +211,7 @@ fn tracked_open_rust_index_paths(
     options: &AnalysisOptions,
     discovered: &[PathBuf],
     scope_limit: usize,
-) -> Result<BTreeSet<PathBuf>, String> {
+) -> Result<BTreeSet<PathBuf>, CoreError> {
     let discovered = discovered.iter().collect::<BTreeSet<_>>();
     let candidates = options
         .open_rust_index_paths
@@ -225,8 +225,7 @@ fn tracked_open_rust_index_paths(
                 candidates.len(),
                 scope_limit,
             ),
-        )
-        .into());
+        ));
     }
     let candidates = candidates.into_iter().collect::<Vec<_>>();
     let admitted = candidates.iter().cloned().collect::<BTreeSet<_>>();
@@ -241,12 +240,14 @@ fn tracked_open_rust_index_paths(
             options.git_timeout,
             4 * 1024 * 1024,
         )
-        .map_err(|error| format!("open Rust source tracking probe failed: {error}"))?;
+        .map_err(|error| {
+            CoreError::message(format!("open Rust source tracking probe failed: {error}"))
+        })?;
         if !output.status.success() {
-            return Err(format!(
+            return Err(CoreError::message(format!(
                 "open Rust source tracking probe exited with {}",
                 output.status
-            ));
+            )));
         }
         tracked.extend(
             output

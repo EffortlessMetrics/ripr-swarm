@@ -2074,22 +2074,14 @@ fn workspace_analysis_error_diagnostics(
         ));
     }
     // #4861: classify the typed diff-scope family before Display; repo scope
-    // guards stay on the legacy string path until a sibling slice types them.
+    // guards stay on the legacy no-snapshot `Err` path until a sibling slice
+    // types them.
     if error.is_diff_scope_oversized() {
         return Ok(oversized_diff_limited_diagnostics(
             root,
             config,
             defer_seam_inventory,
             error.to_string(),
-        ));
-    }
-    let message = error.to_string();
-    if message.trim_start().starts_with("repo_scope_oversized:") {
-        return Ok(oversized_diff_limited_diagnostics(
-            root,
-            config,
-            defer_seam_inventory,
-            message,
         ));
     }
     // The typed family survives `with_context`; classify before the Display

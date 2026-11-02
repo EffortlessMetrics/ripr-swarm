@@ -9347,7 +9347,7 @@ index 0000000..1111111 100644
     -> Result<(), String> {
         let files = vec![changed_line_file("pkg/mod.py", 2, 1)];
 
-        let message = match enforce_changed_language_line_limit(
+        let error = match enforce_changed_language_line_limit(
             &files,
             LanguageId::Python,
             "Python",
@@ -9356,8 +9356,14 @@ index 0000000..1111111 100644
             &crate::config::LanguagesConfig::default(),
         ) {
             Ok(()) => return Err("three changed Python lines should exceed limit two".to_string()),
-            Err(error) => error.to_string(),
+            Err(error) => error,
         };
+        if !matches!(error, CoreError::DiffScopeOversized(_)) {
+            return Err(format!(
+                "refusal must stay a typed DiffScopeOversized guard, got {error:?}"
+            ));
+        }
+        let message = error.to_string();
 
         for needle in [
             "diff_scope_oversized",
@@ -9398,7 +9404,7 @@ index 0000000..1111111 100644
     -> Result<(), String> {
         let files = vec![changed_line_file("web/app.ts", 2, 1)];
 
-        let message = match enforce_changed_language_line_limit(
+        let error = match enforce_changed_language_line_limit(
             &files,
             LanguageId::TypeScript,
             "TypeScript",
@@ -9409,8 +9415,14 @@ index 0000000..1111111 100644
             Ok(()) => {
                 return Err("three changed TypeScript lines should exceed limit two".to_string());
             }
-            Err(error) => error.to_string(),
+            Err(error) => error,
         };
+        if !matches!(error, CoreError::DiffScopeOversized(_)) {
+            return Err(format!(
+                "refusal must stay a typed DiffScopeOversized guard, got {error:?}"
+            ));
+        }
+        let message = error.to_string();
 
         for needle in [
             "diff_scope_oversized",
