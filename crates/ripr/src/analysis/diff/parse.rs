@@ -4,6 +4,7 @@ use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
     AnalysisStage,
 };
+use crate::core_error::CoreError;
 
 use super::model::{ChangedFile, ChangedLine};
 use super::path::{
@@ -42,32 +43,67 @@ pub(crate) const DIFF_CHANGED_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_LINE
 /// The effective changed-line ceiling. An invalid value (non-numeric, zero,
 /// non-UTF-8) is an error through the shared positive-limit policy, never an
 /// unbounded parse.
-pub(crate) fn diff_changed_line_limit_from_env() -> Result<usize, String> {
+pub(crate) fn diff_changed_line_limit_from_env_core() -> Result<usize, CoreError> {
     crate::analysis::language::positive_limit_from_env(
         DIFF_CHANGED_LINE_LIMIT_ENV,
         DEFAULT_DIFF_CHANGED_LINE_LIMIT,
         crate::analysis::language::diff_limit_env(DIFF_CHANGED_LINE_LIMIT_ENV),
     )
+    .map_err(Into::into)
 }
 
-pub(crate) fn parse_unified_diff_bounded_with_metadata(input: &str) -> Result<ParsedDiff, String> {
+/// String compatibility wrapper around [`diff_changed_line_limit_from_env_core`].
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "String boundary for diff parse tests; production uses diff_changed_line_limit_from_env_core"
+    )
+)]
+pub(crate) fn diff_changed_line_limit_from_env() -> Result<usize, String> {
+    diff_changed_line_limit_from_env_core().map_err(Into::into)
+}
+
+pub(crate) fn parse_unified_diff_bounded_with_metadata_core(
+    input: &str,
+) -> Result<ParsedDiff, CoreError> {
     let limit = diff_file_limit_from_env();
-    let line_limit = diff_changed_line_limit_from_env()?;
+    let line_limit = diff_changed_line_limit_from_env_core()?;
     stream::parse_bounded_lines_scoped(input.lines(), limit, line_limit, |_| true)
+}
+
+/// String compatibility wrapper around [`parse_unified_diff_bounded_with_metadata_core`].
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "String boundary for diff parse tests; production uses parse_unified_diff_bounded_with_metadata_core"
+    )
+)]
+pub(crate) fn parse_unified_diff_bounded_with_metadata(input: &str) -> Result<ParsedDiff, String> {
+    parse_unified_diff_bounded_with_metadata_core(input).map_err(Into::into)
 }
 
 /// #9331: the bounded parse with the operator's scope applied at path
 /// registration, so a diff whose bulk is out of scope fits the file bound.
+pub(crate) fn parse_unified_diff_bounded_scoped_core(
+    input: &str,
+    keep: impl Fn(&Path) -> bool,
+) -> Result<ParsedDiff, CoreError> {
+    stream::parse_bounded_lines_scoped(
+        input.lines(),
+        diff_file_limit_from_env(),
+        diff_changed_line_limit_from_env_core()?,
+        keep,
+    )
+}
+
+/// String compatibility wrapper around [`parse_unified_diff_bounded_scoped_core`].
 pub(crate) fn parse_unified_diff_bounded_scoped(
     input: &str,
     keep: impl Fn(&Path) -> bool,
 ) -> Result<ParsedDiff, String> {
-    stream::parse_bounded_lines_scoped(
-        input.lines(),
-        diff_file_limit_from_env(),
-        diff_changed_line_limit_from_env()?,
-        keep,
-    )
+    parse_unified_diff_bounded_scoped_core(input, keep).map_err(Into::into)
 }
 
 /// Parse with an explicit file-count limit. Exposed for testing (#2398).
@@ -84,7 +120,7 @@ fn parse_unified_diff_with_metadata_and_limit(
     input: &str,
     limit: usize,
 ) -> Result<ParsedDiff, String> {
-    stream::parse_bounded_lines(input.lines(), limit)
+    stream::parse_bounded_lines(input.lines(), limit).map_err(Into::into)
 }
 
 pub(crate) fn diff_file_limit_from_env() -> usize {
@@ -2418,6 +2454,28 @@ deleted file mode 100644
         assert!(
             err.contains("at least 6 changed files"),
             "error must name the observed lower bound, not the unread total: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_parse_core_rejects_invalid_changed_line_limit_without_string_matching()
+    -> Result<(), String> {
+        use crate::analysis::language::with_forced_diff_limit_env;
+        let env_name = DIFF_CHANGED_LINE_LIMIT_ENV;
+        let result = with_forced_diff_limit_env(&[(env_name, "not-a-number")], || {
+            diff_changed_line_limit_from_env_core()
+        });
+        let Err(error) = result else {
+            return Err("invalid env must fail closed".to_string());
+        };
+        assert!(
+            matches!(error, CoreError::Message(_)),
+            "env limit failures stay typed Message until a dedicated family exists"
+        );
+        assert!(
+            error.to_string().contains(env_name),
+            "Display must preserve the legacy env-limit wording: {error}"
         );
         Ok(())
     }

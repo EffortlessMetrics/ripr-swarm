@@ -27,7 +27,10 @@ fn scope_applied_at_registration_keeps_an_oversized_diff_under_the_file_bound() 
     let Err(error) = parse_bounded_lines(input.lines(), 2) else {
         return Err("control: 51 files under a limit of 2 must be refused".to_string());
     };
-    assert!(error.contains("diff_scope_oversized"), "{error}");
+    assert!(
+        error.to_string().contains("diff_scope_oversized"),
+        "{error}"
+    );
 
     let parsed = parse_bounded_lines_scoped(
         input.lines(),
@@ -63,7 +66,7 @@ fn the_bound_still_fires_on_in_scope_files() {
         outside_vendor,
     );
     assert!(
-        matches!(&result, Err(error) if error.contains("diff_scope_oversized")),
+        matches!(&result, Err(error) if error.to_string().contains("diff_scope_oversized")),
         "{result:?}"
     );
 }

@@ -28,10 +28,10 @@ fn assert_stops_at_header(prefix: &str, limit: usize, observed: usize) -> Result
         0,
         "the oversized file body must stay unread"
     );
-    assert!(error.starts_with(&format!(
+    assert!(error.to_string().starts_with(&format!(
         "diff_scope_oversized: at least {observed} changed files"
     )));
-    assert!(error.contains(&format!("limit ({limit})")));
+    assert!(error.to_string().contains(&format!("limit ({limit})")));
     Ok(())
 }
 
@@ -525,7 +525,10 @@ fn over_deep_path_header_is_refused_explicitly_before_resolution() -> Result<(),
     let Err(error) = parse_bounded_lines(input.lines(), 10) else {
         return Err("over-deep path header must not parse successfully".to_string());
     };
-    assert!(error.starts_with("diff_path_too_deep: "), "{error}");
+    assert!(
+        error.to_string().starts_with("diff_path_too_deep: "),
+        "{error}"
+    );
     Ok(())
 }
 
@@ -557,7 +560,7 @@ fn parse_with_line_limit<'a>(
     lines: impl Iterator<Item = &'a str>,
     line_limit: usize,
 ) -> Result<ParsedDiff, String> {
-    parse_bounded_lines_scoped(lines, FILE_LIMIT, line_limit, |_| true)
+    parse_bounded_lines_scoped(lines, FILE_LIMIT, line_limit, |_| true).map_err(Into::into)
 }
 
 fn one_file_header(path: &str, added: usize) -> String {
@@ -580,11 +583,15 @@ fn oversized_single_file_stops_at_the_first_line_past_the_ceiling_in_every_langu
             ));
         };
         assert!(
-            error.starts_with("diff_scope_oversized: at least 6 changed lines"),
+            error
+                .to_string()
+                .starts_with("diff_scope_oversized: at least 6 changed lines"),
             "{path}: {error}"
         );
         assert!(
-            error.contains("RIPR_MAX_DIFF_CHANGED_LINES limit (5)"),
+            error
+                .to_string()
+                .contains("RIPR_MAX_DIFF_CHANGED_LINES limit (5)"),
             "{error}"
         );
         // The sixth payload line is the last one read; the tail stays unread.
@@ -612,7 +619,9 @@ fn exact_limit_single_file_succeeds_with_exact_coordinates() -> Result<(), Strin
         return Err("one line over the ceiling must fail".to_string());
     };
     assert!(
-        error.starts_with("diff_scope_oversized: at least 4 changed lines"),
+        error
+            .to_string()
+            .starts_with("diff_scope_oversized: at least 4 changed lines"),
         "{error}"
     );
     Ok(())
@@ -627,7 +636,9 @@ fn many_tiny_files_still_trip_the_file_count_guard_not_the_line_guard() -> Resul
         return Err("two files must exceed a one-file limit".to_string());
     };
     assert!(
-        error.contains("changed files exceed the RIPR_MAX_DIFF_INDEX_FILES"),
+        error
+            .to_string()
+            .contains("changed files exceed the RIPR_MAX_DIFF_INDEX_FILES"),
         "{error}"
     );
     Ok(())
