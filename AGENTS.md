@@ -428,6 +428,7 @@ cargo xtask check-workflows
 cargo xtask check-droid-review-config
 cargo xtask check-spec-format
 cargo xtask check-spec-numbering
+cargo xtask check-generation-pins
 cargo xtask check-fixture-contracts
 cargo xtask check-evidence-promotion-honesty
 cargo xtask check-traceability
