@@ -58,7 +58,7 @@
       "end_line": 2,
       "evidence": {
         "activate": "yes",
-        "discriminate": "yes",
+        "discriminate": "weak",
         "observe": "yes",
         "propagate": "yes",
         "reach": "yes"

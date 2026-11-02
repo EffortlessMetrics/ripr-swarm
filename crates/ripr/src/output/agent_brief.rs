@@ -141,7 +141,11 @@ fn top_seam_json(
             "activate": evidence.activate.state.as_str(),
             "propagate": evidence.propagate.state.as_str(),
             "observe": evidence.observe.state.as_str(),
-            "discriminate": evidence.discriminate.state.as_str(),
+            "discriminate": crate::output::gap_vocabulary::seam_discriminate_evidence_token(
+                entry.class,
+                &evidence.discriminate.state,
+                !missing.is_empty(),
+            ),
         },
         "recommended_test": {
             "name": recommended.name,

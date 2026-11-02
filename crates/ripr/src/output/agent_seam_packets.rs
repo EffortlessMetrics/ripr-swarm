@@ -2543,7 +2543,11 @@ fn push_packet_json(
     ));
     out.push_str(&format!(
         "\"discriminate\": \"{}\"",
-        evidence.discriminate.state.as_str()
+        crate::output::gap_vocabulary::seam_discriminate_evidence_token(
+            entry.class,
+            &evidence.discriminate.state,
+            !evidence.missing_discriminators.is_empty(),
+        )
     ));
     out.push_str("},\n");
 
@@ -4384,6 +4388,31 @@ mod tests {
         }
         if !json.contains("\"static_evidence_boundary\": \"static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.\"") {
             return Err(format!("missing static_evidence_boundary: {json}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn weakly_gripped_packet_evidence_discriminate_is_not_yes() -> Result<(), String> {
+        let json = render_agent_seam_packets_json(&[weakly_gripped_classified()], None);
+        if json.contains("\"discriminate\": \"yes\"") {
+            return Err(format!(
+                "discriminate must not be yes for weakly_gripped packet: {json}"
+            ));
+        }
+        if !json.contains("\"discriminate\": \"weak\"") {
+            return Err(format!(
+                "expected reconciled weak discriminate token: {json}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn strongly_gripped_packet_keeps_discriminate_yes() -> Result<(), String> {
+        let json = render_agent_seam_packets_json(&[strongly_gripped_classified()], None);
+        if !json.contains("\"discriminate\": \"yes\"") {
+            return Err(format!("strongly_gripped should keep yes: {json}"));
         }
         Ok(())
     }

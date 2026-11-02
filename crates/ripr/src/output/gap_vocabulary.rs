@@ -21,6 +21,9 @@
 //! `static_unknown`), so no reverse lookup is offered and surfaces must not
 //! invent one.
 
+use crate::analysis::seams::SeamGripClass;
+use crate::domain::StageState;
+
 /// The canonical sentence for the shared missing-discriminator state.
 /// `ripr check` renders it as the `WeaklyExposed` classification hint.
 /// Surfaces that carry a specific missing value without reach evidence,
@@ -90,13 +93,39 @@ pub(crate) fn present_exposure_class(class: &str) -> String {
         .unwrap_or_else(|| class.to_string())
 }
 
+/// Project the seam-side evidence `discriminate` token at render time.
+///
+/// The producer grades the strongest related oracle; when the seam is
+/// `weakly_gripped` or names missing discriminators, emitting bare `yes`
+/// reads as "a discriminating test exists" and contradicts the same packet
+/// (#12415). Mirror the finding-side reconciliation: keep non-`yes` grades,
+/// preserve `yes` only for `strongly_gripped` seams with no missing list,
+/// otherwise project `weak`.
+pub(crate) fn seam_discriminate_evidence_token(
+    class: SeamGripClass,
+    discriminate_state: &StageState,
+    has_missing_discriminators: bool,
+) -> &'static str {
+    if *discriminate_state != StageState::Yes {
+        return discriminate_state.as_str();
+    }
+    if class == SeamGripClass::StronglyGripped && !has_missing_discriminators {
+        return StageState::Yes.as_str();
+    }
+    if class == SeamGripClass::WeaklyGripped || has_missing_discriminators {
+        return StageState::Weak.as_str();
+    }
+    StageState::Unknown.as_str()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         MISSING_DISCRIMINATOR_LABEL, MISSING_DISCRIMINATOR_SENTENCE, exposure_counterpart,
-        present_exposure_class,
+        present_exposure_class, seam_discriminate_evidence_token,
     };
     use crate::analysis::seams::SeamGripClass;
+    use crate::domain::StageState;
 
     /// The headline mapping this claim exists for: one shared weak state,
     /// `weakly_gripped` on the grip side, `weakly_exposed` on the exposure
@@ -146,6 +175,21 @@ mod tests {
             if exposure_counterpart(grip).is_some() {
                 return Err(format!("{grip} must not invent an exposure counterpart"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn seam_discriminate_token_pins_weakly_gripped_yes_reconciliation() -> Result<(), String> {
+        if seam_discriminate_evidence_token(SeamGripClass::WeaklyGripped, &StageState::Yes, true)
+            != "weak"
+        {
+            return Err("weakly_gripped yes grade must project weak".to_string());
+        }
+        if seam_discriminate_evidence_token(SeamGripClass::StronglyGripped, &StageState::Yes, false)
+            != "yes"
+        {
+            return Err("strongly_gripped yes grade must stay yes".to_string());
         }
         Ok(())
     }
