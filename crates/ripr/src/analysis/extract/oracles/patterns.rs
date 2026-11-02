@@ -215,34 +215,27 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
 }
 
 /// Whether the error read goes through an adapter that can replace the error
-/// the owner returned. `map_err` is an identifier test, so the method form
-/// (`.map_err(..)`) and the UFCS form (`Result::map_err(call, ..)`) are both
-/// refused. Any other `Result::`/`Option::` path call (`Result::and`,
-/// `Result::or`, ..) is refused too: its first plain-path call is the adapter,
-/// not the owner.
+/// the owner returned. Only named replacing adapters are refused (method or
+/// UFCS spelling): `map_err`, `and`, `or`, `ok_or`, and `ok_or_else`. Plain
+/// error reads such as `Result::expect_err(call, msg)` are not adapters (#12336).
 fn has_error_replacing_adapter(masked: &str) -> bool {
+    const REPLACING: &[&str] = &["map_err", "and", "or", "ok_or", "ok_or_else"];
     let stripped = strip_turbofish(masked);
     let masked = stripped.as_str();
-    let has_map_err = masked.match_indices("map_err").any(|(index, _)| {
+    REPLACING
+        .iter()
+        .any(|name| has_replacing_adapter_call(masked, name))
+}
+
+fn has_replacing_adapter_call(masked: &str, name: &str) -> bool {
+    masked.match_indices(name).any(|(index, _)| {
         let before_ok = masked[..index]
             .chars()
             .next_back()
             .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
-        let after = masked[index + "map_err".len()..].trim_start();
+        let after = masked[index + name.len()..].trim_start();
         before_ok && after.starts_with('(')
-    });
-    if has_map_err {
-        return true;
-    }
-    // Grouped receivers such as `(Result::or(call, Err(..)))` carry the callee
-    // path after the leading groups, which the error-read reader also traverses.
-    let ungrouped = masked.trim_start_matches(|ch: char| ch == '(' || ch.is_whitespace());
-    let head = ungrouped.split('(').next().unwrap_or("");
-    let segments: Vec<&str> = head.trim().split("::").map(str::trim).collect();
-    segments.len() >= 2
-        && segments
-            .get(segments.len() - 2)
-            .is_some_and(|owner| matches!(*owner, "Result" | "Option"))
+    })
 }
 
 /// Removes balanced `::<...>` generic arguments so `map_err::<_, _>(` and
@@ -1446,14 +1439,31 @@ fn result_ufcs_expect_err_start(masked: &str, name_at: usize) -> Option<usize> {
     if name_at < 2 || &bytes[name_at - 2..name_at] != b"::" {
         return None;
     }
-    let ident_end = name_at - 2;
-    let ident_start = bytes[..ident_end]
+    let type_end = name_at - 2;
+    let type_name_start = bytes[..type_end]
         .iter()
         .rposition(|byte| !is_expect_err_ident_byte(*byte))
         .map_or(0, |index| index + 1);
-    masked[ident_start..ident_end]
-        .eq_ignore_ascii_case("Result")
-        .then_some(ident_start)
+    if !masked[type_name_start..type_end].eq_ignore_ascii_case("Result") {
+        return None;
+    }
+    // `std::result::Result::expect_err` shares the same read as `Result::expect_err`;
+    // the UFCS anchor is the whole type path, not only the final `Result` segment.
+    let mut path_start = type_name_start;
+    while path_start > 0 {
+        let before = path_start.saturating_sub(2);
+        if before + 2 <= masked.len() && &masked[before..path_start] == "::" {
+            let seg_end = before;
+            let seg_start = bytes[..seg_end]
+                .iter()
+                .rposition(|byte| !is_expect_err_ident_byte(*byte))
+                .map_or(0, |index| index + 1);
+            path_start = seg_start;
+        } else {
+            break;
+        }
+    }
+    Some(path_start)
 }
 
 fn is_expect_err_ident_byte(byte: u8) -> bool {
@@ -2395,6 +2405,8 @@ mod spec_0106_tests {
             "assert_eq!(\n    parse(\"x\").unwrap_err(),\n    ParseError::Empty\n);",
             r#"assert_eq!(parse("x").expect_err("must fail"), ParseError::Empty);"#,
             r#"assert_eq!((parse("x").unwrap_err()), ParseError::Empty);"#,
+            r#"assert_eq!(Result::expect_err(parse("x"), "must fail"), ParseError::Empty);"#,
+            r#"assert_eq!(std::result::Result::expect_err(parse("x"), "must fail"), ParseError::Empty);"#,
         ] {
             assert!(
                 is_inline_unwrap_err_error_assertion(line),
