@@ -11,7 +11,7 @@
   },
   "findings": [
     {
-      "id": "probe:app_checkout.py:python_preview:c1a8e812",
+      "id": "probe:app_checkout.py:python_preview:v1-35ebabec",
       "canonical_gap_id": "gap:python:app/checkout.py:checkout:field_value:field_construction:return_detail_coupon_expired",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -28,7 +28,7 @@
       "severity": "warning",
       "confidence": 0.40,
       "probe": {
-        "id": "probe:app_checkout.py:python_preview:c1a8e812",
+        "id": "probe:app_checkout.py:python_preview:v1-35ebabec",
         "family": "field_construction",
         "delta": "value",
         "file": "app/checkout.py",

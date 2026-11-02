@@ -84,7 +84,7 @@ TypeScript repair packet (advisory)
   next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == total - penalty + 1`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
+  TypeScript preview advisory: add or strengthen a focused assertion for the missing check `return value == total - penalty + 1`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_t_wrong_receiver_no_oracle/input --diff <cwd>/fixtures/typescript_t_wrong_receiver_no_oracle/diff.patch --mode fast probe:src_score.ts:typescript_preview:e9473a29
   ripr context --root <cwd>/fixtures/typescript_t_wrong_receiver_no_oracle/input --diff <cwd>/fixtures/typescript_t_wrong_receiver_no_oracle/diff.patch --mode fast --at probe:src_score.ts:typescript_preview:e9473a29

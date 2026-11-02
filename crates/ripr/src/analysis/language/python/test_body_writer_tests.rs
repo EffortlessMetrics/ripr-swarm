@@ -34,8 +34,14 @@ fn module_with(other: &str) -> String {
     format!("import pytest\nfrom src.pricing import apply_discount\n\n{PARAMETRIZED}\n{other}")
 }
 
-fn is_fixture_limited(finding: &Finding) -> bool {
-    finding.static_limit_kind == Some(StaticLimitKind::UnresolvedPytestFixture)
+fn assert_limit_kind(finding: &Finding, case: &str, expected: StaticLimitKind) {
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(expected),
+        "{case}: {:?} {:?}",
+        finding.static_limit_kind,
+        finding.evidence
+    );
 }
 
 #[test]
@@ -56,7 +62,7 @@ fn a_writer_inside_a_test_body_does_not_unsettle_the_argnames() -> Result<(), St
     ] {
         let finding = classify_module(&module_with(other))?;
         assert!(
-            !is_fixture_limited(&finding),
+            finding.static_limit_kind != Some(StaticLimitKind::UnresolvedPytestFixture),
             "{other:?}: {:?}",
             finding.evidence
         );
@@ -66,47 +72,109 @@ fn a_writer_inside_a_test_body_does_not_unsettle_the_argnames() -> Result<(), St
 
 #[test]
 fn a_writer_anywhere_else_keeps_the_limit() -> Result<(), String> {
-    for other in [
-        // Module scope.
-        "setattr(object(), \"x\", 1)\n",
-        "globals()[\"pytest\"] = object()\n",
-        // A helper that module code calls at import, aliases or decorates with.
-        "def helper():\n    setattr(object(), \"x\", 1)\n\n\nhelper()\n",
-        "def helper():\n    setattr(object(), \"x\", 1)\n\n\nalias = helper\n",
-        "def helper(f):\n    setattr(object(), \"x\", 1)\n    return f\n\n\n@helper\ndef test_wrapped():\n    pass\n",
-        "async def helper():\n    setattr(object(), \"x\", 1)\n\n\nrun(helper)\n",
-        // A kept helper's body names a second helper, which is kept as well.
-        "def inner():\n    setattr(object(), \"x\", 1)\n\n\ndef outer():\n    inner()\n\n\nouter()\n",
-        // A helper defined twice and called at import keeps both bodies.
-        "def _twin():\n    globals()[\"x\"] = 1\n\n\ndef _twin():\n    return 1\n\n\n_twin()\n",
-        // A comment naming a helper keeps it too (the safe direction).
-        "def _quiet():\n    setattr(object(), \"x\", 1)\n\n\n# _quiet\n",
-        // A decorated helper may be invoked by its decorator.
-        "@register\ndef helper():\n    setattr(object(), \"x\", 1)\n",
-        // A class body and a non-test class's test-named method.
-        "class Holder:\n    setattr(object(), \"x\", 1)\n",
-        "class Helper:\n    def test_x(self):\n        setattr(object(), \"x\", 1)\n",
-        // A decorator argument, which runs at import.
-        "@pytest.mark.skipif(setattr(object(), \"x\", 1) is None, reason=\"r\")\ndef test_other():\n    pass\n",
-        // A fixture.
-        "@pytest.fixture\ndef fix():\n    setattr(object(), \"x\", 1)\n",
-        // Module-level assignment of a writer result.
-        "test_value = vars()\n",
-        // Writers in a default argument and in `Test*` class-level code.
-        "def test_default(x=setattr(object(), \"x\", 1)):\n    pass\n",
-        "class TestHolder:\n    setattr(object(), \"x\", 1)\n",
-        // A test-named fixture runs when requested, not as a test.
-        "@pytest.fixture\ndef test_fix():\n    setattr(object(), \"x\", 1)\n",
-        // A test function called at import, or used as a decorator.
-        "def test_helper():\n    setattr(object(), \"x\", 1)\n\n\ntest_helper()\n",
-        "def test_wrap(f):\n    globals()[\"pytest\"] = f\n    return f\n\n\n@test_wrap\ndef test_wrapped():\n    pass\n",
+    for (case, other, expected) in [
+        (
+            "module-scope setattr",
+            "setattr(object(), \"x\", 1)\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "module-scope globals write",
+            "globals()[\"pytest\"] = object()\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "helper called at import",
+            "def helper():\n    setattr(object(), \"x\", 1)\n\n\nhelper()\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "helper aliased at import",
+            "def helper():\n    setattr(object(), \"x\", 1)\n\n\nalias = helper\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "decorated helper",
+            "def helper(f):\n    setattr(object(), \"x\", 1)\n    return f\n\n\n@helper\ndef test_wrapped():\n    pass\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "async helper scheduled at import",
+            "async def helper():\n    setattr(object(), \"x\", 1)\n\n\nrun(helper)\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "nested helpers called at import",
+            "def inner():\n    setattr(object(), \"x\", 1)\n\n\ndef outer():\n    inner()\n\n\nouter()\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "duplicate helper bodies called at import",
+            "def _twin():\n    globals()[\"x\"] = 1\n\n\ndef _twin():\n    return 1\n\n\n_twin()\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "comment naming a helper",
+            "def _quiet():\n    setattr(object(), \"x\", 1)\n\n\n# _quiet\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "register-decorated helper",
+            "@register\ndef helper():\n    setattr(object(), \"x\", 1)\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "class body writer",
+            "class Holder:\n    setattr(object(), \"x\", 1)\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "non-test class method writer",
+            "class Helper:\n    def test_x(self):\n        setattr(object(), \"x\", 1)\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "decorator-argument writer",
+            "@pytest.mark.skipif(setattr(object(), \"x\", 1) is None, reason=\"r\")\ndef test_other():\n    pass\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "fixture body writer",
+            "@pytest.fixture\ndef fix():\n    setattr(object(), \"x\", 1)\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "module-level vars() assignment",
+            "test_value = vars()\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "default-argument writer",
+            "def test_default(x=setattr(object(), \"x\", 1)):\n    pass\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "Test* class body writer",
+            "class TestHolder:\n    setattr(object(), \"x\", 1)\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "test-named fixture writer",
+            "@pytest.fixture\ndef test_fix():\n    setattr(object(), \"x\", 1)\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "test function called at import",
+            "def test_helper():\n    setattr(object(), \"x\", 1)\n\n\ntest_helper()\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
+        (
+            "test function used as decorator",
+            "def test_wrap(f):\n    globals()[\"pytest\"] = f\n    return f\n\n\n@test_wrap\ndef test_wrapped():\n    pass\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
     ] {
-        let finding = classify_module(&module_with(other))?;
-        assert!(
-            is_fixture_limited(&finding),
-            "{other:?} must keep the limit: {:?}",
-            finding.evidence
-        );
+        assert_limit_kind(&classify_module(&module_with(other))?, case, expected);
     }
     Ok(())
 }

@@ -6784,10 +6784,40 @@ mod prelude_glob_audit_tests {
         roots.dedup();
         let mut audited = crate::analysis::facts::drop_in::audited_prelude_crates();
         audited.sort_unstable();
+        // A second audited version of one crate is a second row, not a second glob.
+        audited.dedup();
         assert!(!roots.is_empty(), "the trusted glob list must not be empty");
         assert_eq!(
             roots, audited,
             "trusted prelude glob roots and audited-version rows drifted"
+        );
+    }
+
+    /// #12049: the spec's glob column names the full glob path, not only its
+    /// crate segment, so `vstd::*` cannot stand in for `vstd::prelude::*`.
+    #[test]
+    fn spec_glob_column_matches_the_full_trusted_glob_paths() {
+        use std::collections::BTreeSet;
+        let spec = include_str!(
+            "../../../../../docs/specs/RIPR-SPEC-0369-verus-macro-region-and-verification-prelude-globs.md"
+        );
+        let spec_globs: BTreeSet<String> = spec
+            .lines()
+            .filter(|line| line.starts_with("| `"))
+            .filter_map(|line| line.split('|').map(str::trim).nth(1))
+            .map(|cell| cell.trim_matches('`').to_string())
+            .collect();
+        let code_globs: BTreeSet<String> = ASSERTION_FREE_PRELUDE_GLOBS
+            .iter()
+            .map(|glob| format!("{}::*", glob.join("::")))
+            .collect();
+        assert!(
+            !code_globs.is_empty(),
+            "the trusted glob list must not be empty"
+        );
+        assert_eq!(
+            spec_globs, code_globs,
+            "RIPR-SPEC-0369 glob column and ASSERTION_FREE_PRELUDE_GLOBS drifted"
         );
     }
 }

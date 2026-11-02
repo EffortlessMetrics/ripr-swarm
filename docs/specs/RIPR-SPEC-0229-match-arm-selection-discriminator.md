@@ -366,7 +366,9 @@ Implemented:
 - integer, char, bool, and cooked or raw string literals, compared by value.
   A char-literal pattern (`'C' | 'S' =>`) reads since #7981; before it the
   arm-head reader masked char literals as comments and no char arm ever
-  established;
+  established. The standard escapes (`\n`, `\r`, `\t`, `\0`, `\\`, `\'`,
+  `\"`, ASCII `\xNN`, `\u{...}` of one to six hex digits) decode to their
+  scalar value (#7990); any other escape stays unknown;
 - literal arguments a check helper lends to an owner call (decision 5,
   #7981), for credit only;
 - `param / N` and `param % N` integer scrutinees and value-equal literal
@@ -522,6 +524,11 @@ implies but does not spell out:
   The module-glob rule for bindings above is broad: a `use super::*` in an
   inline test module of the owner's file demotes every binding arm there.
 
+- A `match` whose value is consumed before the owner returns it (a method
+  call on the closing brace, or `let x = match ..;` followed by anything but
+  the bare `x`) can remap the arm's result, so no assertion confirms that
+  arm (#12143). A bare `let`-then-return and a tail `match` do not remap.
+
 ## Required Evidence
 
 - `fixtures/match_arm_blind` reads `weakly_exposed` with a missing
@@ -602,6 +609,8 @@ the diff changes `None => 1` to `None => 0`.
   rebindings. Verdict corpus cases `old-unit-assert-matches-macro` and
   `old-unit-assert-matches-sibling-arm` (negative control).
 
+- `fixtures/match_arm_result_method_tail_not_credited`,
+  `fixtures/match_arm_let_bound_returned_bare_credited` (#12143)
 - `fixtures/match_arm_blind` (example 1, with the arm added rather than
   changed; the expected result is the same)
 - `fixtures/match_arm_selected_credit` (example 2, with the arm added)

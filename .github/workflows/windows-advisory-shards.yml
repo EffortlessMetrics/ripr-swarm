@@ -72,10 +72,20 @@ jobs:
       # invocation unifies features differently from `nextest --workspace`, so on a
       # cold runner it rebuilds about six minutes of dependencies inside a test
       # (and the 6-minute kill fires). Running the same spawns here warms them.
+      #
+      # `check-covered-by` alone is not enough (#12035): `check-file-policy`,
+      # which `policy_checker_facade_runs_current_repo_checks` runs, issues a
+      # combined `cargo test --no-run -p ripr -p xtask --bin xtask --test ...`
+      # that `check-covered-by` never makes. Measured on windows-latest after
+      # `check-covered-by` had run twice: first `check-file-policy` 745 s,
+      # second 175 s, and the facade test 140 s once warm. Left cold, that
+      # first build ran inside the test and hit its 300 s child cap.
       - name: Warm the cargo builds the policy tests spawn
-        timeout-minutes: 20
+        timeout-minutes: 45
         shell: bash
-        run: cargo xtask check-covered-by
+        run: |
+          cargo xtask check-covered-by
+          cargo xtask check-file-policy
 
       # Nested-build tests (#10847). nextest runs every test in its own process,
       # so the build memoized in a OnceLock (`candidate_binary` in

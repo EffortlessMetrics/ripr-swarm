@@ -6987,7 +6987,7 @@ or {\"gap_id\": \"...\", \"gap_ledger\": \"target/ripr/reports/gap-decision-ledg
 
 /// Accepted argument shape for `ripr.collectEvidenceContext`.
 pub(crate) const COLLECT_EVIDENCE_CONTEXT_ARGUMENT_SHAPES: &str = "one object: \
-{\"seam_id\": \"...\", \"evidence_identity\": {...}}; copy both from a ripr seam \
+{\"seam_id\": \"...\", \"evidence_identity\": {...}}; copy both from a ripr spot \
 diagnostic's data";
 
 /// Accepted argument shapes for `ripr.collectRepairPacket`, quoted in its errors.
@@ -7615,7 +7615,7 @@ impl Backend {
         }
         if snapshot.seams_deferred {
             return Some(
-                "the current deferred refresh does not retain the cited full-seam evidence",
+                "the current deferred refresh does not retain the cited full spot evidence",
             );
         }
         let cited_identity = args
@@ -7626,14 +7626,14 @@ impl Backend {
                 Some(cited_identity),
                 Some(&snapshot.evidence_identity()),
             ) {
-                return Some("the cited seam evidence belongs to an older snapshot");
+                return Some("the cited spot evidence belongs to an older snapshot");
             }
         } else if !legacy_test_snapshot {
-            return Some("the cited seam action has no evidence identity");
+            return Some("the cited spot action has no evidence identity");
         }
         let seam_id = args.get("seam_id").and_then(|v| v.as_str());
         if seam_id.is_some_and(|id| snapshot.classified_seam_by_id(id).is_none()) {
-            return Some("the cited seam is absent from the current full-seam evidence");
+            return Some("the cited spot is absent from the current full spot evidence");
         }
         None
     }
@@ -13683,10 +13683,14 @@ fn cached_disk_content_digest(
 /// content is digested once per `(len, mtime, ctime, ino)` stat key on Unix,
 /// except that a file whose mtime or ctime is within
 /// [`DISK_EQUALITY_RACY_WINDOW`] of the check is not cached; off Unix every
-/// lookup rereads (#12046). The window assumes filesystem timestamps finer
-/// than the window and a clock that does not step backwards; a filesystem with
-/// timestamps as coarse as the window (for example 2 s FAT) can still reuse a
-/// digest across a same-key rewrite.
+/// lookup rereads (#12046). A cached entry needs `now - mtime >= window`, and
+/// any later rewrite happens at or after `now`, so its floored timestamp
+/// differs from the cached one whenever the filesystem's timestamp granularity
+/// is no larger than the window (2 s FAT is covered). That relies on the
+/// filesystem stamping with a clock that agrees with the local clock; a
+/// network mount with a skewed clock can still reuse a digest across a
+/// same-key rewrite. A clock stepping backwards reads as racy, which is safe
+/// (#12115).
 fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
     let Ok(text_len) = u64::try_from(text.len()) else {
         return false;

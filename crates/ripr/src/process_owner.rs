@@ -732,6 +732,30 @@ mod tests {
         }
     }
 
+    /// Force-stop test-owned processes by PID. An already-exited PID is a
+    /// silent no-op (`-ErrorAction SilentlyContinue`), so one gone survivor
+    /// does not keep the others running.
+    #[cfg(windows)]
+    fn stop_processes_on_windows(pids: &[u32]) {
+        if pids.is_empty() {
+            return;
+        }
+        let ids = pids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let _ = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!("Stop-Process -Id {ids} -Force -ErrorAction SilentlyContinue"),
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
     #[cfg(windows)]
     fn alive_on_windows(pid: u32) -> bool {
         #[cfg(windows)]
@@ -813,11 +837,15 @@ mod tests {
         }
         let marker = marker.replace('\'', "''");
         let mut command = Command::new("powershell");
+        // The primary records its own PID first (`{marker}.primary`) so the
+        // unbound control can end it too; the descendant marker is the
+        // readiness signal and is written last.
         command.args([
             "-NoProfile",
             "-Command",
             &format!(
-                "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 40') -NoNewWindow -PassThru; \
+                "Set-Content -LiteralPath '{marker}.primary' -Value $PID; \
+                 $p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 40') -NoNewWindow -PassThru; \
                  Set-Content -LiteralPath '{marker}' -Value $p.Id; Start-Sleep -Seconds 40"
             ),
         ]);
@@ -830,14 +858,24 @@ mod tests {
     /// Re-exec this test binary as the helper owner in `mode`, wait until its
     /// descendant is demonstrably alive, then hard-kill the helper with
     /// `TerminateProcess` (std `Child::kill`), so no `Drop` can run.
-    /// Returns the descendant PID.
+    /// Returns the descendant PID and the owned primary's PID, so the unbound
+    /// control can end both survivors.
     #[cfg(windows)]
-    fn hard_kill_helper_owner(mode: &str) -> Result<u32, String> {
+    fn hard_kill_helper_owner(mode: &str) -> Result<(u32, u32), String> {
+        /// End the helper and any survivor PIDs already learned, so a setup
+        /// failure leaves nothing holding the harness's inherited pipe (#12223).
+        fn abandon(helper: &mut std::process::Child, survivors: &[u32]) {
+            let _ = helper.kill();
+            let _ = helper.wait();
+            stop_processes_on_windows(survivors);
+        }
         let marker_path = std::env::temp_dir().join(format!(
             "ripr-owner-hardkill-{mode}-{}.pid",
             std::process::id()
         ));
+        let primary_path = std::path::PathBuf::from(format!("{}.primary", marker_path.display()));
         let _ = std::fs::remove_file(&marker_path);
+        let _ = std::fs::remove_file(&primary_path);
         let exe = std::env::current_exe().map_err(|err| format!("current_exe: {err}"))?;
         let mut helper = Command::new(exe)
             .args([
@@ -856,26 +894,47 @@ mod tests {
         let descendant_pid = match wait_for_descendant_marker(&marker_path) {
             Ok(pid) => pid,
             Err(err) => {
-                let _ = helper.kill();
-                let _ = helper.wait();
+                // No descendant PID was learned; the primary marker is written
+                // first, so it may still name a survivor.
+                let primary = std::fs::read_to_string(&primary_path)
+                    .ok()
+                    .and_then(|text| text.trim().parse::<u32>().ok());
+                abandon(&mut helper, primary.as_slice());
+                let _ = std::fs::remove_file(&primary_path);
                 return Err(err);
             }
         };
         let _ = std::fs::remove_file(&marker_path);
+        let primary_pid = std::fs::read_to_string(&primary_path)
+            .map_err(|err| format!("read primary PID marker: {err}"))
+            .and_then(|text| {
+                text.trim()
+                    .parse::<u32>()
+                    .map_err(|err| format!("primary PID marker {:?}: {err}", text.trim()))
+            });
+        let _ = std::fs::remove_file(&primary_path);
+        let primary_pid = match primary_pid {
+            Ok(pid) => pid,
+            Err(err) => {
+                abandon(&mut helper, &[descendant_pid]);
+                return Err(err);
+            }
+        };
         if !alive_on_windows(descendant_pid) {
-            let _ = helper.kill();
-            let _ = helper.wait();
+            abandon(&mut helper, &[descendant_pid, primary_pid]);
             return Err(format!(
                 "setup failure: descendant {descendant_pid} was not alive before the owner was terminated"
             ));
         }
-        helper
-            .kill()
-            .map_err(|err| format!("hard-kill helper owner: {err}"))?;
-        helper
-            .wait()
-            .map_err(|err| format!("reap helper owner: {err}"))?;
-        Ok(descendant_pid)
+        if let Err(err) = helper.kill() {
+            abandon(&mut helper, &[descendant_pid, primary_pid]);
+            return Err(format!("hard-kill helper owner: {err}"));
+        }
+        if let Err(err) = helper.wait() {
+            stop_processes_on_windows(&[descendant_pid, primary_pid]);
+            return Err(format!("reap helper owner: {err}"));
+        }
+        Ok((descendant_pid, primary_pid))
     }
 
     /// #9564 / #9323 F2: a force-terminated owner must not leak descendants once it
@@ -887,26 +946,21 @@ mod tests {
     #[test]
     fn force_terminated_owner_ends_descendants_only_when_bound() -> Result<(), String> {
         // Control: an unbound owner's descendant survives the hard kill.
-        let leaked_pid = hard_kill_helper_owner("nobind")?;
+        let (leaked_pid, leaked_primary_pid) = hard_kill_helper_owner("nobind")?;
         std::thread::sleep(Duration::from_secs(3));
         let leaked = alive_on_windows(leaked_pid);
-        // Clean the control's survivor before asserting so a failure leaks nothing.
-        let _ = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                &format!("Stop-Process -Id {leaked_pid} -Force -ErrorAction SilentlyContinue"),
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        // Clean both of the control's survivors before asserting so a failure
+        // leaks nothing. The unbound owned primary outlives the hard kill too,
+        // and left running it holds the harness's inherited output pipe for
+        // its remaining 40 s, which nextest reports as LEAK.
+        stop_processes_on_windows(&[leaked_pid, leaked_primary_pid]);
         if !leaked {
             return Err(format!(
                 "control invalid: descendant {leaked_pid} of an unbound force-terminated owner did not survive, so the bound cell proves nothing"
             ));
         }
         // Subject: a bound owner's descendant ends with it.
-        let bound_pid = hard_kill_helper_owner("bind")?;
+        let (bound_pid, _bound_primary_pid) = hard_kill_helper_owner("bind")?;
         assert_descendant_terminated(bound_pid, "hard kill of a kill-on-close-bound owner")
     }
 

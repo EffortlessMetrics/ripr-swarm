@@ -56,10 +56,13 @@ pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_read_confirms,
     call_parameter_names, chain_row_transfer_stop, comparison_operands, computed_input_parameters,
-    literal_operand_value, local_boundary, macro_names_rebound, pushed_collection_compared_whole,
-    pushed_literal_path, signature_parameters, sort_value_facts, unresolved_guard_error_edge,
+    literal_operand_value, local_boundary, macro_names_rebound, owner_receiver_borrow,
+    pushed_collection_compared_whole, pushed_literal_path, signature_parameters, sort_value_facts,
+    unresolved_guard_error_edge,
 };
-pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
+pub(in crate::analysis) use arm_selection::{
+    ArmSelector, error_path_arm_probe, unresolved_parameter_field_selector,
+};
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
     wrapper_return_boundary_pinned,
@@ -75,9 +78,10 @@ pub(in crate::analysis) use call_identity::{
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use const_flow::{
-    ChangedConsts, ConstFlow, associated_const_binding, evaluate_const_flow, shares_module_scope,
+    ChangedConsts, ConstFlow, associated_const_binding, const_value_changes, evaluate_const_flow,
+    shares_module_scope,
 };
-pub(in crate::analysis) use const_readers::same_file_const_readers;
+pub(in crate::analysis) use const_readers::{const_reader_returns, same_file_const_readers};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
     classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,
@@ -166,9 +170,9 @@ pub(in crate::analysis) use related_tests::{
     declared_dependent_package_calls_owner, find_related_tests_with_candidate_index,
     free_helper_call_resolves, impl_self_type_name, inherent_owner_call_resolves,
     is_display_fmt_owner, is_drop_destructor, is_partial_eq_method, manifests_with_unindexed_files,
-    method_call_resolves_to_impl, module_stem, owner_call_text, owner_dispatch_trait,
-    owner_impl_identity_shadowed, package_prefix, requires_inherent_receiver_identity,
-    resolves_method_in_prefix, test_calls_free_function,
+    method_call_resolves_to_impl, module_stem, owner_call_is_direct, owner_call_text,
+    owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name, package_prefix,
+    requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;

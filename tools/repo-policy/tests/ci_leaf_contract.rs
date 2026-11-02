@@ -3,6 +3,7 @@
 use std::process::{Command, Output};
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const WORKFLOW: &str = include_str!("../../../.github/workflows/ci.yml");
+const ROUTED_RUST: &str = include_str!("../../../.github/workflows/routed-rust.yml");
 const ORIGINAL: &str = include_str!("../../../fixtures/convergence/ci-exact-subject/original.yml");
 const JOBS: &[(&str, &str)] = &[
     ("rust-only-features", "run_rust_only"),
@@ -1030,4 +1031,112 @@ fn staged_and_explicit_activation_event_matrix() -> TestResult {
         "Ready was not an original trigger"
     );
     Ok(())
+}
+
+#[test]
+fn merge_ready_run_names_its_request_for_the_results_vscode_binding() {
+    // #12236: routed-rust.yml's Result admits a `vscode surface` check only from
+    // the ci.yml run whose title is exactly this string.
+    assert!(
+        WORKFLOW.contains(
+            "format('CI merge-ready request {0} {1} {2} full-ci={3} vscode={4}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.event.pull_request.base.sha, contains(github.event.pull_request.labels.*.name, 'full-ci'), contains(github.event.pull_request.labels.*.name, 'vscode'))"
+        ),
+        "ci.yml must title a merge-ready run with the head and the request time"
+    );
+    // The Result relies on this: an earlier request's run with the same title
+    // (two events in one second) is cancelled, never left with a green surface.
+    assert!(
+        WORKFLOW.contains("cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}"),
+        "ci.yml must cancel an earlier in-flight merge-ready run when a later request arrives"
+    );
+}
+
+/// Split `format('<template>', arg, ...)` starting at `marker` into its template and
+/// top-level arguments, then render each `{n}` with its argument text.
+fn rendered_format_call<'a>(workflow: &'a str, marker: &str) -> Option<(String, &'a str)> {
+    let start = workflow.find(marker)?;
+    let call = &workflow[start + "format(".len()..];
+    let mut depth = 0usize;
+    let mut in_quote = false;
+    let mut end = None;
+    let mut parts: Vec<String> = vec![String::new()];
+    for (idx, ch) in call.char_indices() {
+        match ch {
+            '\'' => in_quote = !in_quote,
+            '(' if !in_quote => depth += 1,
+            ')' if !in_quote => {
+                if depth == 0 {
+                    end = Some(idx);
+                    break;
+                }
+                depth -= 1;
+            }
+            ',' if !in_quote && depth == 0 => {
+                parts.push(String::new());
+                continue;
+            }
+            _ => {}
+        }
+        if let Some(last) = parts.last_mut() {
+            last.push(ch);
+        }
+    }
+    let after = &call[end? + 1..];
+    let template = parts[0].trim().trim_matches('\'').to_string();
+    let args: Vec<String> = parts[1..]
+        .iter()
+        .map(|arg| arg.trim().to_string())
+        .collect();
+    let mut rendered = template;
+    for (index, arg) in args.iter().enumerate().rev() {
+        rendered = rendered.replace(&format!("{{{index}}}"), arg);
+    }
+    Some((rendered, after))
+}
+
+#[test]
+fn routed_result_request_selection_matches_the_ci_run_name_tail() {
+    // #12255: the Result's `REQUEST_SELECTION` env and ci.yml's `run-name` both build the
+    // selection tail of the request title from the same event payload. If one side drifts, no
+    // title matches and the Result fails closed only after its 20 minute wait, so tie them here.
+    let ci = rendered_format_call(WORKFLOW, "format('CI merge-ready request ");
+    let routed = rendered_format_call(ROUTED_RUST, "format('{0} full-ci={1} vscode={2}'");
+    assert!(
+        ci.is_some(),
+        "ci.yml must carry the merge-ready run-name format call"
+    );
+    assert!(
+        routed.is_some(),
+        "routed-rust.yml must carry the REQUEST_SELECTION format call"
+    );
+    let (ci, _) = ci.unwrap_or_default();
+    let (routed, routed_after) = routed.unwrap_or_default();
+    let head_and_time = "CI merge-ready request github.event.pull_request.head.sha github.event.pull_request.updated_at ";
+    assert!(
+        ci.starts_with(head_and_time),
+        "ci.yml run-name must start with the head and request time: {ci}"
+    );
+    assert_eq!(
+        ci.strip_prefix(head_and_time).unwrap_or_default(),
+        routed,
+        "ci.yml run-name tail and routed-rust.yml REQUEST_SELECTION must render identically"
+    );
+    // The format call must be the whole env value: a trailing operator such as `&& 'x'` would
+    // change what Actions assigns while the call text stays the same.
+    assert!(
+        ROUTED_RUST.contains("REQUEST_SELECTION: ${{ format('{0} full-ci={1} vscode={2}'"),
+        "REQUEST_SELECTION must be assigned directly from the format call"
+    );
+    assert!(
+        routed_after.starts_with(" }}\n"),
+        "REQUEST_SELECTION must end at the format call, found: {}",
+        routed_after.lines().next().unwrap_or_default()
+    );
+    // The Result appends the env after the head and the request time, in the run-name order.
+    assert!(
+        ROUTED_RUST.contains(
+            "request_title=\"CI merge-ready request $EXPECTED_HEAD $REQUEST_AT $REQUEST_SELECTION\""
+        ),
+        "the Result must build its title as head, request time, then REQUEST_SELECTION"
+    );
 }

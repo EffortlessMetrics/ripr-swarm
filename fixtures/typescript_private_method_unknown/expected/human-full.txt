@@ -34,7 +34,7 @@ Language
 
 Preview actionability
   authority: preview_advisory_only
-  gap state: advisory
+  gap state: unknown
   category: private_member_reach_unknown
   repair packet ready: false
   why not actionable: reach into the private member through public callers is not established; no related-test path or missing assertion is inferred

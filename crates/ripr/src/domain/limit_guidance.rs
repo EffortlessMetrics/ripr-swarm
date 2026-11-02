@@ -204,7 +204,7 @@ impl StaticLimitKind {
 impl StopReason {
     /// Every reason, for the same walk as [`StaticLimitKind::ALL`].
     #[cfg(test)]
-    pub(crate) fn all() -> [StopReason; 16] {
+    pub(crate) fn all() -> [StopReason; 17] {
         [
             StopReason::MaxDepthReached,
             StopReason::ExternalCrateBoundary,
@@ -222,6 +222,7 @@ impl StopReason {
             StopReason::GapEvidenceUnresolved,
             StopReason::HelperIdentityUnresolved,
             StopReason::CompileTimeInvariant,
+            StopReason::UnsafeObligation,
         ]
     }
 
@@ -294,6 +295,10 @@ impl StopReason {
                 "Check the compile-time assertion by building with the target, features and \
                  cfg that include it (a gated assertion is not compiled otherwise); no test \
                  run observes it, so do not add a test for it."
+            }
+            StopReason::UnsafeObligation => {
+                "Check the safety contract and every caller or assumption site by hand; a \
+                 safe-code test cannot discharge an unsafe obligation, so do not add one for it."
             }
         }
     }
@@ -387,9 +392,10 @@ mod tests {
                 StopReason::GapEvidenceUnresolved => 13,
                 StopReason::HelperIdentityUnresolved => 14,
                 StopReason::CompileTimeInvariant => 15,
+                StopReason::UnsafeObligation => 16,
             }
         }
-        const COUNT: usize = 16;
+        const COUNT: usize = 17;
         let all = StopReason::all();
         assert_eq!(all.len(), COUNT);
         let ordinals: Vec<usize> = all.iter().map(ordinal).collect();

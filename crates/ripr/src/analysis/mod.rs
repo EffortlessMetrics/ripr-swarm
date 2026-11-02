@@ -53,7 +53,7 @@ pub(crate) mod seams;
 mod sort;
 #[cfg(test)]
 mod source_role_corpus;
-mod summary;
+pub(crate) mod summary;
 mod sync_memo;
 mod syntax;
 mod test_changes;
@@ -147,10 +147,11 @@ pub(crate) use seam_inventory::file_fact_store_failure_rows;
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
     ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, FileSeamIndex,
-    PilotInventoryDefault, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer, SeamLimitInfo,
-    SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
-    classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
-    diff_only_rust_files, inventory_changed_test_classified_seams_at_with_config_node,
+    PilotInventoryDefault, REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory,
+    ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
+    apply_pilot_seam_budget, classify_seams_in_file_with_shared_index,
+    classify_seams_in_files_at_with_config, diff_only_rust_files,
+    inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_bound_seams_at_with_config,
@@ -549,6 +550,40 @@ use crate::core_error::CoreError;
 use crate::domain::{Finding, Summary};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
+
+/// #11398: whether `seam` is a field write in a method (`self.count += 1`)
+/// rather than a field of a struct literal. Surfaces that word guidance for
+/// field seams read this so they do not describe a returned struct.
+pub(crate) fn is_field_write_seam(seam: &seams::RepoSeam) -> bool {
+    seam.kind() == seams::SeamKind::FieldConstruction
+        && classify::field_assignment_target(seam.expression()).is_some()
+}
+
+/// Where a field write is read back (#12061).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FieldWriteRead {
+    /// The owner borrows its receiver: read the field on the value the
+    /// method was called on.
+    Receiver,
+    /// The owner takes `self` by value and writes a moved copy: the caller's
+    /// binding never sees the write, so read the field on the value the call
+    /// returns.
+    CallResult,
+    /// The receiver mode is not recorded (a cache entry from before the
+    /// fact): word the read without naming a value.
+    Unspecified,
+}
+
+/// How `seam`'s field write is read back, or `None` when it is not a field
+/// write. The one place the receiver mode becomes wording, so the hover, the
+/// agent packet and the human step agree.
+pub(crate) fn field_write_read(seam: &seams::RepoSeam) -> Option<FieldWriteRead> {
+    is_field_write_seam(seam).then(|| match seam.owner_borrows_receiver() {
+        Some(true) => FieldWriteRead::Receiver,
+        Some(false) => FieldWriteRead::CallResult,
+        None => FieldWriteRead::Unspecified,
+    })
+}
 
 /// Render a path for textual identity without collapsing distinct Unix byte
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
@@ -1252,6 +1287,64 @@ pub(crate) fn changed_line_ownership_for_lines(
         owners: sorted_owners(owners),
         enclosing_owners: sorted_owners(enclosing_owners),
     })
+}
+
+/// #11400: the returned expressions a changed `const` reaches, as
+/// `(file, line)`. Read from the diff probe pipeline `ripr check` runs (the
+/// probes `retarget_changed_const_readers` marks), so `ripr repair` counts
+/// exactly the code `ripr check` names as the change. Only Rust files whose
+/// added lines declare a constant are indexed; an index that does not build
+/// reads as none.
+pub(crate) fn changed_const_reader_return_lines(
+    root: &Path,
+    files: &[ChangedFile],
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+) -> Vec<(PathBuf, usize, String)> {
+    let declaring = files
+        .iter()
+        .filter(|file| file.path.extension().is_some_and(|ext| ext == "rs"))
+        .filter(|file| {
+            file.added_lines
+                .iter()
+                .any(|line| crate::domain::declared_const_name(&line.text).is_some())
+        })
+        .collect::<Vec<_>>();
+    if declaring.is_empty() {
+        return Vec::new();
+    }
+    // Only the declaring files. Each retarget guard reads the declaring
+    // file's own facts, which check's index always holds, and the
+    // workspace-wide rules (`name_confined`) read the raw files from disk in
+    // both commands, never an index. A function's composed test-only role
+    // does come from the other indexed files, so this narrower index can
+    // emit a return line that check would not (a reader check sees as
+    // test-only). That is harmless: the repair inventory drops test-only
+    // owners, so neither command starts there.
+    let paths = declaring
+        .iter()
+        .map(|file| file.path.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let Ok(index) = rust_index::build_index(root, &paths) else {
+        return Vec::new();
+    };
+    declaring
+        .into_iter()
+        .flat_map(|file| {
+            probes::probes_for_file_with_relations(root, file, &index, test_harnesses)
+                .into_iter()
+                .filter(|seeded| seeded.const_reader)
+                .map(|seeded| {
+                    (
+                        file.path.clone(),
+                        seeded.probe.location.line,
+                        seeded.probe.expression.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 fn sorted_owners(mut owners: Vec<ChangedLineOwner>) -> Vec<ChangedLineOwner> {

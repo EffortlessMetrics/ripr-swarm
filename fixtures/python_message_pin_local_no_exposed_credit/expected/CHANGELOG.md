@@ -36,3 +36,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
+
+## Pending — python_message_pin_local_no_exposed_credit (3)
+
+Reason:
+RIPR-SPEC-0182: Python finding ids move to the versioned v1- namespace (#11368); classification and finding count unchanged
+
+Command:
+`cargo xtask goldens bless python_message_pin_local_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -56,7 +56,7 @@ Evidence
   - related test tests/load.test.ts:4 missing token rejects with the required literal uses strong exact error variant oracle: expect(...).rejects.toBe(...)
 
 Weakness
-  - Related test reaches `load` with an `exact_error_variant` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  - Related test reaches `load` with an `exact_error_variant` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1

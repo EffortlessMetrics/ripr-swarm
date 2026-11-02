@@ -44,3 +44,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_then_inline_receiver_shadow (4)
+
+Reason:
+RIPR-SPEC-0122: plain wording for the Evidence stage name and the stage and state legend in the check digest (#10692)
+
+Command:
+`cargo xtask goldens bless typescript_then_inline_receiver_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

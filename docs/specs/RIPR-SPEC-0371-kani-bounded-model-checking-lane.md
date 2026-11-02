@@ -67,7 +67,7 @@ unreachable would read as a pass.
 ### The command
 
 `cargo xtask kani [--allow-empty] [--harness <name>] [--default-unwind <n>]
-[--timeout-secs <n>]` discovers the harnesses under `crates/ripr/src`, runs
+[--timeout-secs <n>] [--harness-timeout-secs <n>]` discovers the harnesses under `crates/ripr/src`, runs
 `cargo kani -p ripr` once for them (Kani compiles the whole library, so a
 run per harness would multiply the build) and writes `target/ripr/reports/kani.md` with one
 row per harness. Each row is exactly one of:
@@ -76,7 +76,9 @@ row per harness. Each row is exactly one of:
   satisfied. The claim is bounded by the harness's assumptions.
 - `FAILED`: Kani reported a counterexample, or a `cover!` was unreachable.
 - `NOT-ESTABLISHED`: the tool is missing, the run timed out, the harness was
-  not found, or the output held no successful verdict.
+  not found, a single harness exceeded `--harness-timeout-secs` (default 900;
+  CBMC reports a timeout, not a counterexample, so it is never `FAILED`), or the
+  output held no successful verdict.
 
 The command exits nonzero when any harness is `FAILED` or `NOT-ESTABLISHED`,
 when `cargo kani` is not runnable, and when no harness is found unless

@@ -175,7 +175,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return x;","line":9}
       ],
-      "evidence": ["owner: floorAt", "missing_discriminator: return value == x", "typescript_oracle_observed: floorAt(-1, 0)", "typescript_oracle_expected: -5", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/floor_at.test.ts:4", "gap_state: actionable", "actionability_category: complete_repair_packet", "why_actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)", "repair_action: add a focused assertion for the missing discriminator `return value == x` in the related test, shaped like `expect(floorAt(-1, 0)).toBe(expected)`", "raw_evidence_ref: file=src/guard.ts;line=9;kind=typescript_preview_probe;source_id=probe:src_guard.ts:typescript_preview:2fd6b073;owner=floorAt", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: npx --no-install vitest run tests/floor_at.test.ts"],
+      "evidence": ["owner: floorAt", "missing_discriminator: return value == x", "typescript_oracle_observed: floorAt(-1, 0)", "typescript_oracle_expected: -5", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/floor_at.test.ts:4", "gap_state: actionable", "actionability_category: complete_repair_packet", "why_actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)", "repair_action: add a focused assertion for the missing check `return value == x` in the related test, shaped like `expect(floorAt(-1, 0)).toBe(expected)`", "raw_evidence_ref: file=src/guard.ts;line=9;kind=typescript_preview_probe;source_id=probe:src_guard.ts:typescript_preview:2fd6b073;owner=floorAt", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: npx --no-install vitest run tests/floor_at.test.ts"],
       "missing": ["Related test reaches `floorAt` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)."],
       "assertion_texts": {
       },
@@ -238,7 +238,7 @@
           "name": "floors"
         },
         "repair_packet_ready": true,
-        "repair_route": "add a focused assertion for the missing discriminator `return value == x` in the related test, shaped like `expect(floorAt(-1, 0)).toBe(expected)`",
+        "repair_route": "add a focused assertion for the missing check `return value == x` in the related test, shaped like `expect(floorAt(-1, 0)).toBe(expected)`",
         "source": "check_typescript_preview",
         "static_limits": [],
         "suggested_assertion_shape": "Add an exact return-value assertion for the changed output.",
@@ -298,15 +298,15 @@
           }
         ],
         "repair_packet_ready": true,
-        "repair_route": "add a focused assertion for the missing discriminator `return value == x` in the related test, shaped like `expect(floorAt(-1, 0)).toBe(expected)`",
+        "repair_route": "add a focused assertion for the missing check `return value == x` in the related test, shaped like `expect(floorAt(-1, 0)).toBe(expected)`",
         "unlock_condition": null,
         "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
       },
       "stop_reasons": [],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == x`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only).",
-      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == x`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only).",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `return value == x`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only).",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `return value == x`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only).",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
@@ -477,7 +477,7 @@
         {"kind":"return_value","text":"return a / b + 0;","line":24}
       ],
       "evidence": ["owner: div", "typescript_oracle_observed: div(4, 2)", "typescript_oracle_expected: 2", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/pricing.test.ts:8", "gap_state: already_observed", "actionability_category: strong_oracle_observed", "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted", "repair_route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior", "evidence_needed_to_promote: none for a repair packet; retain strong related-test evidence as non-actionable context", "raw_evidence_ref: file=src/pricing.ts;line=24;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:26f2aacf;owner=div", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: npx --no-install vitest run tests/pricing.test.ts"],
-      "missing": ["Related test reaches `div` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
+      "missing": ["Related test reaches `div` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
       "assertion_texts": {
       },
       "activation": {

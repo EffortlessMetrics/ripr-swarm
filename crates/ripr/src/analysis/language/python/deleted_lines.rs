@@ -9,15 +9,17 @@
 //! counted, gated, annotated and diagnostic surface skips it (#3281).
 
 use super::classify::{
-    ChangeSite, classify_change_for_owner_with_value_origins, is_python_declaration_line,
+    ChangeSite, OldGuardView, classify_change_for_owner_with_value_origins,
+    is_python_declaration_line,
 };
 use super::related_tests::RelatedCandidateMemo;
 use super::{
     ChangedFile, Finding, PythonNoBehaviorContext, PythonOwner, PythonTest, is_python_import_line,
-    is_python_no_behavior_line, is_python_structural_line, line_is_in_ranges, normalized_path,
+    is_python_no_behavior_line, is_python_structural_line, line_is_in_ranges,
+    normalize_python_expression, normalized_path,
 };
 use crate::analysis::diff::ChangedLine;
-use crate::analysis::probes::{collision_ordinals, collision_rank_key, normalize_expression};
+use crate::analysis::probes::{collision_ordinals, collision_rank_key};
 use crate::domain::{Probe, SourceCurrentness};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::RangeInclusive;
@@ -98,6 +100,7 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
             && is_removed_behavior_line(removed, old_side)
             && !opens_only_brackets(&removed.text)
     });
+    let identity_context = old_side.source.and_then(super::PythonIdentityContext::new);
     let mut pending: Vec<PendingDeleted> = Vec::new();
     for removed in &changed.removed_lines {
         if paired.contains(&removed.line)
@@ -119,10 +122,19 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
         };
         // Evidence names the projected new-side coordinate, as the Rust
         // adapter records it; only the owner comes from a live neighbour.
+        let old_guard = old_guard_view(
+            changed,
+            removed,
+            owner,
+            new_source,
+            old_side.source,
+            &paired,
+        );
         let site = ChangeSite {
             file: &changed.path,
             line: removed.new_side_line,
             owner,
+            old_guard,
         };
         let mut finding_origins = crate::value_origins::ValueOrigins::default();
         let Some(mut finding) = classify_change_for_owner_with_value_origins(
@@ -132,9 +144,9 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
             owners,
             tests,
             PythonNoBehaviorContext::default(),
-            // A deleted line is base-side evidence: the guarded-arm gate
-            // (#7392) reads new-side guards around a live line, so it stays
-            // off here.
+            // A deleted line is base-side evidence: the new-side guarded-arm
+            // gate (#7392) stays off here; its old-side reading rides in
+            // `site.old_guard` (#11889).
             None,
             Some(&mut finding_origins),
             Some(&mut *related),
@@ -142,6 +154,11 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
             continue;
         };
         let original_probe = finding.probe.clone();
+        let normalized = identity_context
+            .as_ref()
+            .and_then(|context| context.normalize_line(removed.line, &removed.text))
+            .unwrap_or_else(|| normalize_python_expression(&removed.text));
+        super::reidentify_python_finding(&mut finding, &normalized);
         let expression = removed.text.trim();
         // Same-text evidence is the only movement evidence; without it the
         // record stays `base_deleted` (RIPR-SPEC-0156).
@@ -156,11 +173,7 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
         };
         finding.probe.before = Some(removed.text.clone());
         finding.probe.after = None;
-        let key = collision_rank_key(
-            &finding.probe.id.0,
-            &owner.symbol_id().0,
-            &normalize_expression(&removed.text),
-        );
+        let key = collision_rank_key(&finding.probe.id.0, &owner.symbol_id().0, &normalized);
         pending.push(PendingDeleted {
             finding,
             original_probe,
@@ -196,6 +209,224 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
         out.push(finding);
     }
     out
+}
+
+/// The old-side view of a removed line inside a function owner (#11889).
+///
+/// A deleted line in a guarded arm ran only when the guard accepted a call's
+/// input. The guarded-arm reader walks the guards around a line in a source
+/// text, so it is handed the old file with the owner re-spanned there. A
+/// closed allow-list: the owner must be a single-line `def` whose header reads
+/// the same in the new and the old file, and the nearest enclosing scope above
+/// the line in the old file must be that header. Anything else answers `None`
+/// and the existing verdict stands.
+///
+/// A removed `if`/`elif`/`while`/`else` header is read at its first removed
+/// body line, so its own condition is among the guards walked.
+pub(super) fn old_guard_view<'a>(
+    changed: &ChangedFile,
+    removed: &ChangedLine,
+    owner: &PythonOwner,
+    new_source: NewSource<'_>,
+    old_source: Option<&'a str>,
+    paired: &BTreeSet<usize>,
+) -> Option<OldGuardView<'a>> {
+    let new_source = new_source?;
+    let old_source = old_source?;
+    // A call row resolves imported constants on the new side, so an edited
+    // module-level assignment could bind an old-side guard to a value the old
+    // test never saw. Refuse the view when the diff touches one.
+    if changed
+        .removed_lines
+        .iter()
+        .chain(changed.added_lines.iter())
+        .any(|line| is_module_assignment(&line.text))
+    {
+        return None;
+    }
+    let new_header = new_source
+        .lines()
+        .nth(owner.start_line.checked_sub(1)?)?
+        .trim_end();
+    let new_trimmed = new_header.trim_start();
+    if !(new_trimmed.starts_with("def ") || new_trimmed.starts_with("async def "))
+        || !new_trimmed.ends_with(':')
+    {
+        return None;
+    }
+    let old_lines: Vec<&str> = old_source.lines().collect();
+    let removed_index = removed.line.checked_sub(1)?;
+    let removed_text = old_lines.get(removed_index)?;
+    if removed_text.trim() != removed.text.trim() {
+        return None;
+    }
+    let mut threshold = indent_width(removed_text);
+    let mut header_index = None;
+    for index in (0..removed_index).rev() {
+        let raw = old_lines[index];
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = indent_width(raw);
+        if indent >= threshold {
+            continue;
+        }
+        if trimmed.starts_with("def ")
+            || trimmed.starts_with("async def ")
+            || trimmed.starts_with("class ")
+        {
+            header_index = Some(index);
+            break;
+        }
+        if indent == 0 {
+            return None;
+        }
+        threshold = indent;
+    }
+    let header_index = header_index?;
+    if old_lines[header_index].trim_end() != new_header {
+        return None;
+    }
+    let header_indent = indent_width(old_lines[header_index]);
+    let end_index = old_lines
+        .iter()
+        .enumerate()
+        .skip(header_index + 1)
+        .find(|(_, raw)| !raw.trim().is_empty() && indent_width(raw) <= header_indent)
+        .map_or(old_lines.len(), |(index, _)| index);
+    // A header opens a block whose first removed line carries the walk.
+    let opens_block = ["if ", "elif ", "else", "while "]
+        .iter()
+        .any(|keyword| removed_text.trim().starts_with(keyword))
+        && removed_text.trim_end().ends_with(':');
+    let mut line = removed.line;
+    if opens_block {
+        // Every line of the block must itself be a deleted line no added line
+        // pairs with: a guard dropped while any of its body is kept (dedented)
+        // leaves that body running unguarded, which is not a deletion of the
+        // block.
+        let block_indent = indent_width(removed_text);
+        let mut saw_body = false;
+        for (index, raw) in old_lines.iter().enumerate().skip(removed_index + 1) {
+            if raw.trim().is_empty() {
+                continue;
+            }
+            if indent_width(raw) <= block_indent {
+                break;
+            }
+            let deleted = changed
+                .removed_lines
+                .iter()
+                .any(|candidate| candidate.line == index + 1);
+            if !deleted || paired.contains(&(index + 1)) {
+                return None;
+            }
+            saw_body = true;
+        }
+        if !saw_body {
+            return None;
+        }
+        line += 1;
+    }
+    let mut old_owner = owner.clone();
+    old_owner.start_line = header_index + 1;
+    old_owner.end_line = end_index;
+    Some(OldGuardView {
+        owner: old_owner,
+        source: old_source,
+        line,
+        parameters: header_parameter_names(new_trimmed),
+    })
+}
+
+/// Whether a diff line is an unindented `NAME = value` / `NAME: T = value`.
+fn is_module_assignment(text: &str) -> bool {
+    if text.starts_with(char::is_whitespace) {
+        return false;
+    }
+    let Some(eq) = text.find('=') else {
+        return false;
+    };
+    let after = text.as_bytes().get(eq + 1).copied();
+    if after == Some(b'=') || eq == 0 {
+        return false;
+    }
+    let before = &text[..eq];
+    if before.ends_with(['!', '<', '>', '+', '-', '*', '/', '%', '|', '&', '^', '@']) {
+        return false;
+    }
+    let name = before.split(':').next().unwrap_or("").trim();
+    !name.is_empty()
+        && name.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        && !name.chars().next().is_some_and(|ch| ch.is_ascii_digit())
+}
+
+/// The parameter names of a single-line `def` header (`def f(self, a=1, *b,
+/// c: int = 2, **d):`).
+fn header_parameter_names(header: &str) -> Vec<String> {
+    let Some(open) = header.find('(') else {
+        return Vec::new();
+    };
+    let Some(close) = header.rfind(')') else {
+        return Vec::new();
+    };
+    let inner = header.get(open + 1..close).unwrap_or_default();
+    super::no_behavior::split_top_level_args(inner)
+        .into_iter()
+        .filter_map(|segment| {
+            let name = segment
+                .trim()
+                .trim_start_matches('*')
+                .split([':', '=', ' '])
+                .next()?
+                .trim();
+            (!name.is_empty() && name != "/").then(|| name.to_string())
+        })
+        .collect()
+}
+
+/// Whether every identifier in a guard condition is an owner parameter (or a
+/// keyword literal such as `None`). Module constants resolve on the new side,
+/// which an old-side guard cannot trust, so a condition that names anything
+/// else is refused (#11889).
+pub(super) fn guard_names_only_parameters(condition: &str, parameters: &[String]) -> bool {
+    let bytes = condition.as_bytes();
+    let mut index = 0;
+    let mut quote: Option<u8> = None;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(open) = quote {
+            if byte == open {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+        if byte.is_ascii_alphanumeric() || byte == b'_' {
+            let start = index;
+            while index < bytes.len()
+                && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+            {
+                index += 1;
+            }
+            let word = &condition[start..index];
+            let after_dot = start > 0 && bytes[start - 1] == b'.';
+            let numeric = word.as_bytes()[0].is_ascii_digit();
+            let keyword = ["and", "or", "not", "in", "is", "None", "True", "False"].contains(&word);
+            if !(after_dot || numeric || keyword || parameters.iter().any(|name| name == word)) {
+                return false;
+            }
+            continue;
+        }
+        index += 1;
+    }
+    true
 }
 
 /// A removed line that ran behavior: not a comment, blank line, docstring,

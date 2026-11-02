@@ -82,7 +82,7 @@
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
       "gap_state": "unknown",
-      "actionability_category": "incomplete_repair_packet",
+      "actionability_category": "missing_target_shape",
       "static_limit_kind": null,
       "repair_packet_ready": false,
       "authority_boundary": "preview_advisory_only",
@@ -92,8 +92,8 @@
       "receipt_command": "ripr agent receipt --source fixtures/typescript_jest_vitest_assertion_facts --out target/ripr/reports/typescript-smoke-return-preview-receipt.json",
       "receipt_state": "not_run_preview_route",
       "outcome": "weak_oracle_downgraded",
-      "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract",
-      "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+      "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape",
+      "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
       "operator_note": "Smoke-only evidence on a returned comparison stays weak and records the boundary observer shape without becoming actionability proof.",
       "must_not_change": [
         "production behavior",
@@ -440,7 +440,7 @@
       "receipt_state": "closed_advisory_outcome_receipt",
       "outcome": "resolved",
       "why_not_actionable": "complete repair packet; package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable as advisory preview evidence",
-      "repair_route": "add a focused assertion for the missing discriminator `amount == threshold` in the related test, shaped like `expect(result).toBe(expected)`",
+      "repair_route": "add a focused assertion for the missing check `amount == threshold` in the related test, shaped like `expect(result).toBe(expected)`",
       "operator_note": "This records the current complete TypeScript preview packet loop: the packet is delegatable as advisory evidence, the verify command is concrete, and the closed receipt proves static gap movement without support-tier promotion.",
       "must_not_change": [
         "src/discount.ts",

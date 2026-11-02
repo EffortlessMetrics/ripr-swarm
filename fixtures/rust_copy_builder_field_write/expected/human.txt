@@ -1,0 +1,50 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_copy_builder_field_write/input
+
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 1 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+Start here:
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
+  File: ./src/lib.rs:8
+  Static exposure: unknown (severity: note, confidence 0.92)
+  Why unknown: the analysis could not determine a static exposure state
+  Gap ID (for scripts): gap:rust:src/lib.rs:impl Opts::retries:field_construction:field_construction:self.retries=n*2
+  Changed behavior: self.retries = n * 2
+  Missing check (1 of 3): self.retries = n * 2
+  Related test: tests/opts_tests.rs:4 builder_leaves_the_callers_copy_alone
+  Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
+    gap. A related test mentions a fixture, builder, or generator; inspect its produced input before
+    deciding another case is needed. Add or strengthen a test only if this inspection finds a gap.
+    Compare the original and changed implementations with a focused run using the project's
+    configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
+    unknown
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach retries: builder_leaves_the_callers_copy_alone
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 7 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/rust_copy_builder_field_write/input --diff <cwd>/fixtures/rust_copy_builder_field_write/diff.patch --mode fast probe:src_lib.rs:field_construction:1a280454
+  ripr context --root <cwd>/fixtures/rust_copy_builder_field_write/input --diff <cwd>/fixtures/rust_copy_builder_field_write/diff.patch --mode fast --at probe:src_lib.rs:field_construction:1a280454
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that checks the changed field value; follow the Next step above, then rerun `ripr check`
+No test stub here: the change sets a field of a by-value `self` inside a method, which writes a moved copy the caller's binding never sees, so the stub cannot tell which value to assert on
+Write this test by hand: call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value the call returns; a by-value method writes a moved copy, so a read of the binding you called it on sees nothing; then rerun `ripr check`.
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

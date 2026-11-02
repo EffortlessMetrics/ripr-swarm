@@ -1699,13 +1699,13 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
     // example 10 is in the numpy subject (#7819). Examples 1 to 34 have `py-spec0233-exNN-` cases (the prefix of the
     // spec's draft number, RIPR-SPEC-0233); 35 to 40 were written from the
     // library cases that cite them, 41 from `py-fixtures-deposit` and 42 from
-    // `py-fixtures-fee-boundary`.
+    // `py-fixtures-fee-boundary`, 43 from the `py-coarse-*` cases.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0238")
         .ok_or("RIPR-SPEC-0238 is not in scope in the python ledger")?;
-    assert_eq!(spec.in_scope_examples, 42);
+    assert_eq!(spec.in_scope_examples, 43);
     assert!(spec.uncovered.is_empty(), "uncovered: {:?}", spec.uncovered);
     assert_eq!(spec.waived, 0);
     assert!(

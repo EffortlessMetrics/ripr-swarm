@@ -71,7 +71,7 @@ after that prefix MUST comply with the static-language vocabulary:
 | `snapshot == None` | Return empty `Vec` (no lens at all) |
 | `N == 0` | `"ripr: no related tests found (CLASS)"` |
 | `N >= 1`, class is `exposed` | `"ripr: N related tests (exposed) · static, cached"` |
-| `N >= 1`, class is not `exposed` | `"ripr: N related tests, no static discriminator (CLASS) · static, cached"` |
+| `N >= 1`, class is not `exposed` | `"ripr: N related tests, no static check of this change (CLASS) · static, cached"` |
 | Any TS/Python finding (preview) | Prefix with `"preview: "` |
 
 Forbidden words in any codeLens title (enforced by `check-static-language`):
@@ -170,7 +170,7 @@ Unit tests in `crates/ripr/src/lsp/lens.rs` (pure helpers):
    `language_status == Preview` (TypeScript). Title must contain "preview".
 
 6. `code_lens_response_uncertain_class_does_not_claim_grip` — `N == 2`,
-   class `reachable_unrevealed`. Title must contain "no static discriminator"
+   class `reachable_unrevealed`. Title must contain "no static check of this change"
    and "reachable_unrevealed".
 
 7. `code_lens_response_static_language_clean` — iterates all seven `ExposureClass`

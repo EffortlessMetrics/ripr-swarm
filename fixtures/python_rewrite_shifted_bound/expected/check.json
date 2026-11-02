@@ -169,5 +169,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"shop.py","digest":"sha256:c982e1bd5bfcc84d829f36d0388ab222361ae05e35ce1c6b3bf36c2e8a0d4966"},{"path":"tests/test_shop.py","digest":"sha256:b1ffeaf4339976b368aa19db747e4b030c56ddf38772936d2275e97fc465884b"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"shop.py","digest":"sha256:c3cc36a966b2647f6cdc63f9ed40f4c710ed3c5976a6f1f84e9e900518661f09"},{"path":"tests/test_shop.py","digest":"sha256:b1ffeaf4339976b368aa19db747e4b030c56ddf38772936d2275e97fc465884b"}]}
 }

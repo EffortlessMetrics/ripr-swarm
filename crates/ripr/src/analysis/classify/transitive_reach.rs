@@ -3204,11 +3204,11 @@ pub(in crate::analysis) const RUST_MACRO_REACH_MESSAGE: &str = "ripr saw a test 
      This is not a coverage assessment -- ripr cannot confirm or deny \
      that the macro-generated path observes the change.";
 
-/// The message emitted when the owner is called from several impls of one
-/// implicit-dispatch trait method (#11719). A named limitation, NOT a
+/// The message emitted when the owner is called from an impl of an
+/// implicit-dispatch trait method that the crate implements more than once (#11719). A named limitation, NOT a
 /// coverage claim and not a witness: no test is named.
 pub(in crate::analysis) const RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE: &str = "ripr saw production code that dispatches through a trait method toward this change, \
-     but the owner is called from several impls of that method and ripr does not guess which one a test reaches. \
+     but the crate has several impls of that method and ripr does not guess which one a test reaches. \
      This is not a coverage assessment -- ripr cannot confirm or deny \
      that the change is observed.";
 
@@ -3263,20 +3263,15 @@ pub(in crate::analysis) fn trait_dispatch_ambiguity_pointer(
     ambiguity: &TraitDispatchAmbiguity,
     owner_name: &str,
 ) -> String {
-    let calls = match ambiguity.impl_count {
-        1 => "1 impl".to_string(),
-        n => format!("{n} impls"),
-    };
     format!(
-        "{}owner `{}` is called from {} of `{}` ({}), one of {} `{}` impls in this crate; ripr cannot tell whether any test reaches one of these impls. \
+        "{}owner `{}` is called from {} of the {} `{}` impls in this crate ({}); ripr cannot tell which of the calling impls, if any, a test reaches. \
          Inspect the tests that format or compare these types to judge whether this change is observed.",
         TRAIT_DISPATCH_AMBIGUITY_PREFIX,
         owner_name,
-        calls,
-        ambiguity.method,
-        bounded_candidates(ambiguity),
+        ambiguity.impl_count,
         ambiguity.method_impl_count,
-        ambiguity.method
+        ambiguity.method,
+        bounded_candidates(ambiguity)
     )
 }
 

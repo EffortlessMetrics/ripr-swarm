@@ -46,7 +46,7 @@ Evidence
   - related test tests/test_rates.py:4 test_lookup_unknown_tier uses strong exact value oracle: assert lookup("platinum") == 1
 
 Weakness
-  - Related Python test reaches `lookup` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  - Related Python test reaches `lookup` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check
 
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior

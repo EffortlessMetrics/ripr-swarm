@@ -10,7 +10,7 @@ mod candidate_control;
 mod ci_budget;
 pub(crate) mod distribution_catalog;
 mod dogfood;
-mod dx_scoreboard;
+pub(crate) mod dx_scoreboard;
 mod eval_sweep;
 mod eval_sweep_check;
 mod eval_sweep_refresh;

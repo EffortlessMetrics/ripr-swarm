@@ -173,7 +173,7 @@
         {"kind":"return_value","text":"return \"%03d\" % (year % 100)","line":6}
       ],
       "evidence": ["owner: format_year", "owner_kind: function", "owner_decorators: lru_cache", "test_framework: pytest (test_format_year_width)", "test_verify_command: python -m pytest tests/test_memo.py::test_format_year_width (test_format_year_width)", "related_test_relation: syntactic_call (test_format_year_width)", "test_oracle: exact_value strong (test_format_year_width)"],
-      "missing": ["Related Python test reaches `format_year` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `format_year` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {

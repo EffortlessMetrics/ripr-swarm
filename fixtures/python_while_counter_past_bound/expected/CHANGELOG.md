@@ -61,3 +61,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_while_counter_past_bound (6)
+
+Reason:
+RIPR-SPEC-0122 / #10692: plain wording for the stage legend, evidence row and repair-start refusal on the integrated tree
+
+Command:
+`cargo xtask goldens bless python_while_counter_past_bound --reason "..."`
+
+Updated:
+- `expected/human.txt`

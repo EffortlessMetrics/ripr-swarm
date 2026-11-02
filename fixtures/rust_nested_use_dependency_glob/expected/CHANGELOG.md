@@ -130,3 +130,29 @@ Updated:
 
 Removed:
 - `expected/human.txt` (optional; its repair-advisory line now uses the shared legend wording that the user-text merge-base matcher bans as a new path)
+
+## Pending — rust_nested_use_dependency_glob (11)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_glob (12)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

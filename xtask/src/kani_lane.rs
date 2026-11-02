@@ -24,6 +24,11 @@ const REPORT_DIR: &str = "target/ripr/reports";
 const REPORT_FILE: &str = "kani.md";
 /// Whole-run wall-clock deadline; a wedged solver is `NOT-ESTABLISHED`.
 const DEFAULT_TIMEOUT_SECS: u64 = 3600;
+/// Per-harness deadline handed to Kani, so one non-terminating harness is
+/// `NOT-ESTABLISHED` for itself and the rest of the lane still reports. The
+/// slowest verified harness runs about four minutes; this leaves headroom
+/// without letting one wedge consume the whole-run deadline.
+const DEFAULT_HARNESS_TIMEOUT_SECS: u64 = 900;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct KaniArgs {
@@ -31,6 +36,7 @@ pub(crate) struct KaniArgs {
     pub(crate) harness: Option<String>,
     pub(crate) default_unwind: Option<u32>,
     pub(crate) timeout_secs: u64,
+    pub(crate) harness_timeout_secs: u64,
 }
 
 pub(crate) fn parse_args(args: &[String]) -> Result<KaniArgs, String> {
@@ -39,6 +45,7 @@ pub(crate) fn parse_args(args: &[String]) -> Result<KaniArgs, String> {
         harness: None,
         default_unwind: None,
         timeout_secs: DEFAULT_TIMEOUT_SECS,
+        harness_timeout_secs: DEFAULT_HARNESS_TIMEOUT_SECS,
     };
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -55,9 +62,14 @@ pub(crate) fn parse_args(args: &[String]) -> Result<KaniArgs, String> {
                 let value = next_value(&mut iter, "--timeout-secs")?;
                 parsed.timeout_secs = u64::from(parse_positive(&value, "--timeout-secs")?);
             }
+            "--harness-timeout-secs" => {
+                let value = next_value(&mut iter, "--harness-timeout-secs")?;
+                parsed.harness_timeout_secs =
+                    u64::from(parse_positive(&value, "--harness-timeout-secs")?);
+            }
             other => {
                 return Err(format!(
-                    "unknown kani argument `{other}`; usage: cargo xtask kani [--allow-empty] [--harness <name>] [--default-unwind <n>] [--timeout-secs <n>]"
+                    "unknown kani argument `{other}`; usage: cargo xtask kani [--allow-empty] [--harness <name>] [--default-unwind <n>] [--timeout-secs <n>] [--harness-timeout-secs <n>]"
                 ));
             }
         }
@@ -171,6 +183,13 @@ impl HarnessStatus {
 /// Only an explicit success verdict with every `cover!` satisfied is
 /// `Verified`; a missing verdict is never a pass.
 pub(crate) fn classify_output(output: &str) -> HarnessStatus {
+    // Kani prints `VERIFICATION:- FAILED` for a solver timeout too; that is no
+    // counterexample, so it is checked first and stays `NOT-ESTABLISHED`.
+    if output.contains("CBMC timed out") {
+        return HarnessStatus::NotEstablished(
+            "CBMC exceeded the per-harness timeout; no verdict".to_string(),
+        );
+    }
     if output.contains("VERIFICATION:- FAILED") {
         return HarnessStatus::Failed("verification failed (counterexample)".to_string());
     }
@@ -370,7 +389,9 @@ fn all_not_established(harnesses: &[Harness], reason: &str) -> Vec<HarnessResult
         .collect()
 }
 
-fn run_kani(harnesses: &[Harness], args: &KaniArgs) -> Vec<HarnessResult> {
+/// The exact `cargo` arguments for the lane, kept separate so a test can pin
+/// what Kani actually receives.
+fn kani_command(args: &KaniArgs) -> Vec<String> {
     let mut command = vec!["kani".to_string(), "-p".to_string(), "ripr".to_string()];
     if let Some(wanted) = &args.harness {
         command.push("--harness".to_string());
@@ -380,6 +401,16 @@ fn run_kani(harnesses: &[Harness], args: &KaniArgs) -> Vec<HarnessResult> {
         command.push("--default-unwind".to_string());
         command.push(unwind.to_string());
     }
+    // `--harness-timeout` is gated behind `-Z unstable-options` in Kani 0.68.
+    command.push("-Z".to_string());
+    command.push("unstable-options".to_string());
+    command.push("--harness-timeout".to_string());
+    command.push(format!("{}s", args.harness_timeout_secs));
+    command
+}
+
+fn run_kani(harnesses: &[Harness], args: &KaniArgs) -> Vec<HarnessResult> {
+    let command = kani_command(args);
     let output = match run::capture_output_with_timeout(
         "cargo",
         &command,
@@ -485,6 +516,48 @@ mod tests {
     }
 
     #[test]
+    fn a_solver_timeout_is_not_a_counterexample() {
+        // Kani reports a timed-out harness as FAILED; it has no verdict.
+        let timed_out = "CBMC failed\nVERIFICATION:- FAILED\nCBMC timed out. You may want to rerun your proof with a larger timeout\n";
+        assert!(matches!(
+            classify_output(timed_out),
+            HarnessStatus::NotEstablished(_)
+        ));
+        // A real counterexample without the timeout text stays FAILED.
+        assert!(matches!(
+            classify_output("VERIFICATION:- FAILED\n"),
+            HarnessStatus::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn the_per_harness_timeout_reaches_the_kani_command() {
+        let parsed = parse_args(&strings(&["--harness-timeout-secs", "60"]));
+        assert!(parsed.is_ok());
+        let command = parsed.map(|args| kani_command(&args)).unwrap_or_default();
+        let position = command.iter().position(|arg| arg == "--harness-timeout");
+        assert_eq!(
+            position
+                .and_then(|index| command.get(index + 1))
+                .map(String::as_str),
+            Some("60s")
+        );
+        let gate = command.iter().position(|arg| arg == "unstable-options");
+        assert!(gate.is_some() && gate < position);
+    }
+
+    #[test]
+    fn harness_timeout_flag_parses() {
+        let parsed = parse_args(&strings(&["--harness-timeout-secs", "60"]));
+        assert_eq!(parsed.map(|args| args.harness_timeout_secs), Ok(60));
+        assert!(
+            parse_args(&strings(&["--harness-timeout-secs", "0"]))
+                .err()
+                .is_some()
+        );
+    }
+
+    #[test]
     fn unreachable_cover_makes_the_proof_vacuous() {
         let vacuous =
             "** 1 of 2 cover properties satisfied (1 unreachable)\nVERIFICATION:- SUCCESSFUL\n";
@@ -518,6 +591,7 @@ mod tests {
                 harness: None,
                 default_unwind: Some(8),
                 timeout_secs: DEFAULT_TIMEOUT_SECS,
+                harness_timeout_secs: DEFAULT_HARNESS_TIMEOUT_SECS,
             })
         );
         assert!(parse_args(&strings(&["--bogus"])).err().is_some());

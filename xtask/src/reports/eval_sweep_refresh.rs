@@ -2723,15 +2723,16 @@ mod python_eval_sweep_refresh {
         "pytest_library",
     ];
 
-    /// A synthetic Python subject seed: one tiny module whose boundary the
-    /// synthetic diff flips, plus the language-enablement config. The commit
+    /// A synthetic Python subject seed: one tiny module holding the diff's
+    /// post-image (a worktree always carries the changed side, and Python
+    /// source identity now refuses a diff its source does not match, #11368), plus the language-enablement config. The commit
     /// SHA becomes the manifest pin, so materialization verifies exactly.
     fn build_seed(seed_dir: &Path) -> Result<String, String> {
         std::fs::create_dir_all(seed_dir).map_err(|error| format!("create seed: {error}"))?;
         let app = seed_dir.join("app.py");
         std::fs::write(
             &app,
-            "def boundary(value):\n    if value >= 0:\n        return \"ok\"\n    return \"negative\"\n",
+            "def boundary(value):\n    if value > 0:\n        return \"ok\"\n    return \"negative\"\n",
         )
         .map_err(|error| format!("write app.py: {error}"))?;
         std::fs::write(

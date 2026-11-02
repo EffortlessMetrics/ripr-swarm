@@ -203,12 +203,12 @@ impl RepairRouteRefusal {
                  read; fix the ripr.toml error at the root, then rerun `ripr check`"
                 .to_string(),
             Self::ClassificationFailed => format!(
-                "no repair start offered: classifying the finding's seams failed; \
+                "no repair start offered: classifying the finding's spots failed; \
                  `{full_gate_command}` may print the underlying error"
             ),
             Self::SeamLimit => {
                 format!(
-                    "no repair start offered: the seam budget left the repair candidate set unreadable or truncated; {}",
+                    "no repair start offered: the limit on how many gaps ripr analyzes left the repair candidates unreadable or truncated; {}",
                     super::task_first::WIDEN_SEAM_BUDGET
                 )
             }
@@ -234,12 +234,10 @@ impl RepairRouteRefusal {
                  code as a whole) and ripr does not start a repair on conflicting evidence; follow the \
                  Next step above"
                 .to_string(),
-            Self::SeveralBindingSeams => {
-                "no repair start offered: several seams bind this finding \
-                 and the check screen never picks one; `ripr repair` needs the ID of the seam \
+            Self::SeveralBindingSeams => "no repair start offered: several gaps bind this finding \
+                 and the check screen never picks one; `ripr repair` needs the ID of the gap \
                  you choose"
-                    .to_string()
-            }
+                .to_string(),
             Self::Ineligible {
                 kind: super::task_first::RefusalKind::RouteNotReady,
                 missing,
@@ -1002,15 +1000,15 @@ mod tests {
         );
         let classification = RepairRouteRefusal::ClassificationFailed.advisory(gate);
         assert!(
-            classification.contains("classifying the finding's seams failed")
+            classification.contains("classifying the finding's spots failed")
                 && classification.contains(&format!("`{gate}` may print the underlying error"))
                 && !classification.contains("full gate's answer"),
             "classification refusal must say what the gate yields: {classification}"
         );
         let several = RepairRouteRefusal::SeveralBindingSeams.advisory(gate);
         assert!(
-            several.contains("several seams bind")
-                && several.contains("needs the ID of the seam you choose")
+            several.contains("several gaps bind")
+                && several.contains("needs the ID of the gap you choose")
                 && !several.contains("ripr pilot")
                 && !several.contains("full gate's answer"),
             "several-seams refusal must not promise a seam listing: {several}"
@@ -1037,7 +1035,7 @@ mod tests {
         );
         let budget = RepairRouteRefusal::SeamLimit.advisory(gate);
         assert!(
-            budget.contains("seam budget") && budget.contains("wider seam budget"),
+            budget.contains("how many gaps ripr analyzes") && budget.contains("wider gap budget"),
             "seam-budget refusal must name the budget recovery: {budget}"
         );
         assert!(

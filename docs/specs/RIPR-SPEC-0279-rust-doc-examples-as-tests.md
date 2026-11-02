@@ -194,10 +194,11 @@ package (`[lib] name`, else the package name with `-` read as `_`):
   same-named rivals.
 - A runtime claim: a registered example is static evidence that a test
   appears to discriminate, not a claim that it compiles or passes.
-- Feature, platform or `cfg(not(doctest))` gating of the documented
-  function: like an ordinary `#[test]`, an example on a gated function
-  registers without establishing that default `cargo test` enables the
-  gate.
+- Resolving a cfg gate: any `#[cfg(..)]` or `#[cfg_attr(..)]` between the
+  comment and the item other than `#[cfg(doctest)]`, and any inner
+  `#![cfg(..)]` (or `#![cfg_attr(.., cfg(..))]`) on the file, refuses the
+  example instead of guessing whether default `cargo test` enables the gate
+  (#8639). Feature, target and custom `--cfg` values are not evaluated.
 
 ## Acceptance Examples
 

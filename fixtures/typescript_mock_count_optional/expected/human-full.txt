@@ -84,7 +84,7 @@ TypeScript repair packet (advisory)
   next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 
 Next step
-  TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe discriminator for `call sender.send includes 2 * id`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries
+  TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe check for `call sender.send includes 2 * id`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_mock_count_optional/input --diff <cwd>/fixtures/typescript_mock_count_optional/diff.patch --mode fast probe:src_notify.ts:typescript_preview:ea4f6421
   ripr context --root <cwd>/fixtures/typescript_mock_count_optional/input --diff <cwd>/fixtures/typescript_mock_count_optional/diff.patch --mode fast --at probe:src_notify.ts:typescript_preview:ea4f6421

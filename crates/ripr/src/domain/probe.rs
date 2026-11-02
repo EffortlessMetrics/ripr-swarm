@@ -114,6 +114,12 @@ pub enum StopReason {
     /// line in a function. Classification stays `static_unknown`, never
     /// `exposed` (#11547).
     CompileTimeInvariant,
+    /// The changed code states an unsafe contract the compiler does not
+    /// check: an `unsafe fn` (callers now carry a safety obligation) or an
+    /// unchecked assumption (`unreachable_unchecked`, `assert_unchecked`).
+    /// A safe-code test cannot discharge it. Classification stays
+    /// `static_unknown`, never `exposed` (#11549).
+    UnsafeObligation,
 }
 
 impl StopReason {
@@ -135,6 +141,7 @@ impl StopReason {
             StopReason::GapEvidenceUnresolved => "gap_evidence_unresolved",
             StopReason::HelperIdentityUnresolved => "helper_identity_unresolved",
             StopReason::CompileTimeInvariant => "compile_time_invariant",
+            StopReason::UnsafeObligation => "unsafe_obligation",
         }
     }
 
@@ -200,6 +207,10 @@ impl StopReason {
                 "the changed line is a compile-time assertion, so a violating edit fails to \
                  build instead of failing a test"
             }
+            StopReason::UnsafeObligation => {
+                "the change adds or alters an unsafe contract (an unsafe function or an \
+                 unchecked assumption) that safe test code cannot discharge"
+            }
         }
     }
 
@@ -235,36 +246,44 @@ impl Probe {
         if self.family != ProbeFamily::StaticUnknown {
             return None;
         }
-        let mut rest = self.expression.trim_start();
-        if let Some(after_pub) = rest.strip_prefix("pub") {
-            rest = after_pub.trim_start();
-            if rest.starts_with('(') {
-                rest = rest[rest.find(')')? + 1..].trim_start();
-            }
-        }
-        rest = rest
-            .strip_prefix("const ")
-            .or_else(|| rest.strip_prefix("static "))?
-            .trim_start();
-        rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
-        let end = rest
-            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .unwrap_or(rest.len());
-        let name = &rest[..end];
-        let declaration = rest[end..].trim_start();
-        // An initializer on the line separates an item from a generics or
-        // parameter continuation line such as `const N: usize,`.
-        let named_item = !name.is_empty()
-            && name != "_"
-            && declaration.starts_with(':')
-            && declaration.contains('=');
-        named_item.then_some(name)
+        declared_const_name(&self.expression)
     }
 
     /// Whether `ripr check` resolves a stub route for this probe.
     pub(crate) fn offers_stub_route(&self) -> bool {
         self.family.offers_stub_route() || self.changed_const_name().is_some()
     }
+}
+
+/// The name of the `const` or `static` item a changed line declares
+/// (`pub const GREETING: &str = "hi";` names `GREETING`), when the line holds
+/// its initializer. Shared by the static-unknown const probe and the #11400
+/// reader retarget, so both read one declaration rule.
+pub(crate) fn declared_const_name(expression: &str) -> Option<&str> {
+    let mut rest = expression.trim_start();
+    if let Some(after_pub) = rest.strip_prefix("pub") {
+        rest = after_pub.trim_start();
+        if rest.starts_with('(') {
+            rest = rest[rest.find(')')? + 1..].trim_start();
+        }
+    }
+    rest = rest
+        .strip_prefix("const ")
+        .or_else(|| rest.strip_prefix("static "))?
+        .trim_start();
+    rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+    let end = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let name = &rest[..end];
+    let declaration = rest[end..].trim_start();
+    // An initializer on the line separates an item from a generics or
+    // parameter continuation line such as `const N: usize,`.
+    let named_item = !name.is_empty()
+        && name != "_"
+        && declaration.starts_with(':')
+        && declaration.contains('=');
+    named_item.then_some(name)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -877,6 +896,17 @@ pub(crate) fn boundary_input_observed_with_weak_oracle(
 }
 
 impl Finding {
+    /// The (file, line, expression) a finding speaks about. Probes of
+    /// different families can sit on one expression (#11554); they share this
+    /// key, so counts and selection can treat them as one verdict.
+    pub(crate) fn expression_key(&self) -> (&std::path::Path, usize, &str) {
+        (
+            self.probe.location.file.as_path(),
+            self.probe.location.line,
+            self.probe.expression.as_str(),
+        )
+    }
+
     /// A weak predicate finding whose related tests already supply the changed
     /// boundary input (infection `yes`): the remaining gap is the oracle, not
     /// the input (#10622). Static evidence only. The finding must also carry
@@ -1080,6 +1110,7 @@ mod tests {
             StopReason::GapEvidenceUnresolved,
             StopReason::HelperIdentityUnresolved,
             StopReason::CompileTimeInvariant,
+            StopReason::UnsafeObligation,
         ] {
             let gloss = reason.describe();
             assert!(!gloss.contains("  "), "{}: {gloss}", reason.as_str());

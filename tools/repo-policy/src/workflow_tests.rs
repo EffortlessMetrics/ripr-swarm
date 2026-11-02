@@ -1373,8 +1373,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
     );
     assert_ne!(
         skippable_result, workflow,
@@ -1387,6 +1387,66 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         "a skippable result reports success when skipped: {:?}",
         routed_rust_ready_event_contract_violations(&skippable_result)
     );
+    for (what, from, to, needle) in [
+        (
+            "the extension e2e step",
+            "      - name: Read the extension e2e check for the admitted head\n        id: vscode\n",
+            "      - name: Read something else\n        id: other\n",
+            "read the extension e2e check for the admitted head",
+        ),
+        (
+            "the summary branch that fails the Result",
+            "[ \"$VSCODE_CHECK_RESULT\" != success ]",
+            "[ \"$VSCODE_CHECK_RESULT\" = never ]",
+            "fail the Result when the selected extension e2e did not succeed",
+        ),
+        (
+            "the check-run read permission",
+            "  checks: read\n",
+            "",
+            "grant the Result's check-run read",
+        ),
+        (
+            "the same-suite binding of the skip",
+            "((.check_suite.id | tostring) == $suite)",
+            "true",
+            "bind the extension e2e verdict to this request's own successful",
+        ),
+        (
+            "the request-identity surface binding",
+            "[ \"$candidate_title\" = \"$request_title\" ]",
+            "true",
+            "bind the `vscode surface` to the ci.yml run that names this request's head and request time",
+        ),
+        (
+            "the selection inputs in the request title",
+            "$REQUEST_AT $REQUEST_SELECTION",
+            "$REQUEST_AT",
+            "include every extension-selection input (base and labels) in the request title",
+        ),
+        (
+            "the identical-title ambiguity refusal",
+            "more than one ci.yml run",
+            "more than one ci.yml rub",
+            "refuse distinct ci.yml runs that carry the identical request title",
+        ),
+        (
+            "the skipped-check exclusion from the verdict",
+            "[.[] | select(.conclusion != \"skipped\")] | last // {}",
+            "[.[]] | last // {}",
+            "decide the extension e2e verdict by the newest executed check",
+        ),
+    ] {
+        let mutated = workflow.replacen(from, to, 1);
+        assert_ne!(mutated, workflow, "fixture must remove {what}");
+        assert!(
+            routed_rust_ready_event_contract_violations(&mutated)
+                .iter()
+                .any(|violation| violation.contains(needle)),
+            "removing {what} must be rejected (#12122): {:?}",
+            routed_rust_ready_event_contract_violations(&mutated)
+        );
+    }
     for job in ["route", "detect-docs-only", "admission"] {
         let unguarded = workflow.replace(
             "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'\n",

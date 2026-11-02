@@ -4166,7 +4166,7 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
             && packet.contains("Language status: preview")
             && packet.contains("Static limit: missing_import_graph")
             && packet.contains("Suggested action:")
-            && packet.contains("Missing discriminator: price(threshold) == expected")
+            && packet.contains("Missing check: price(threshold) == expected")
             && packet.contains("Focused proof intent:")
             && packet.contains("Artifacts:")
             && packet.contains("Verify command:")
@@ -4223,7 +4223,7 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
         "Freshness: current validated GapRecord diagnostic.".to_string(),
         "Changed owner:\n  python:app/pricing.py::calculate_discount".to_string(),
         "Current test evidence:".to_string(),
-        "Missing discriminator:\n  price(threshold) == expected".to_string(),
+        "Missing check:\n  price(threshold) == expected".to_string(),
         format!("Verify:\n  ripr agent verify --root {bound} --json"),
         format!("Receipt:\n  ripr agent receipt --root {bound} --json"),
         "Static preview evidence only".to_string(),
@@ -4573,7 +4573,7 @@ fn gap_code_actions_project_python_pytest_skeleton_and_target_file() -> Result<(
         "Python repair card (preview/advisory)",
         "Freshness: current validated GapRecord diagnostic.",
         "Changed behavior:\n  if amount >= threshold:",
-        "Missing discriminator:\n  amount == threshold",
+        "Missing check:\n  amount == threshold",
         "Suggested assertion:\n  assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
         "Verify:\n  pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
     ] {
@@ -4598,7 +4598,7 @@ fn gap_code_actions_project_python_pytest_skeleton_and_target_file() -> Result<(
         .ok_or_else(|| format!("missing skeleton brief: {skeleton:?}"))?;
     for needle in [
         "# RIPR Python repair skeleton",
-        "# Missing discriminator: amount == threshold",
+        "# Missing check: amount == threshold",
         "# Verify: pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
         "def test_calculate_discount_threshold_boundary():",
         "# assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
@@ -5049,7 +5049,7 @@ fn editor_adoption_baseline_pins_gap_repair_action_contract() -> Result<(), Stri
         .ok_or_else(|| "missing first repair packet text".to_string())?;
     assert!(packet.contains("Language status: preview"));
     assert!(packet.contains("Static limit: missing_import_graph"));
-    assert!(packet.contains("Missing discriminator: price(threshold) == expected"));
+    assert!(packet.contains("Missing check: price(threshold) == expected"));
     assert!(packet.contains("Focused proof intent:"));
     assert!(packet.contains("Artifacts:"));
     let bound = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
@@ -16745,7 +16745,7 @@ fn finding_hover_with_named_missing_discriminator_spells_markers_in_words() -> R
         return Err(format!("hover kept the producer marker:\n{text}"));
     }
     for needle in [
-        "* discriminator missing: `amount == threshold`, `other`; related oracle: strong oracle, changed value never named\n",
+        "* missing check: `amount == threshold`, `other`; related oracle: strong oracle, changed value never named\n",
         "- missing value or check: `amount == threshold` \u{2014} input unexecuted\n",
         "`raise ValueError(\"observation_unverified\")`.",
     ] {
@@ -18208,11 +18208,11 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
         for (cited_identity, expected_reason) in [
             (
                 serde_json::json!({"snapshot_id": "snapshot:older"}),
-                "the cited seam evidence belongs to an older snapshot",
+                "the cited spot evidence belongs to an older snapshot",
             ),
             (
                 serde_json::Value::Null,
-                "the cited seam action has no evidence identity",
+                "the cited spot action has no evidence identity",
             ),
         ] {
             let stale = backend
@@ -18249,7 +18249,7 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
         assert_eq!(stale_without_identity["status"], "stale");
         assert_eq!(
             stale_without_identity["invalidation_reason"],
-            "the cited seam action has no evidence identity"
+            "the cited spot action has no evidence identity"
         );
 
         let mut deferred = sample_workspace_diagnostics(
@@ -18418,7 +18418,7 @@ fn execute_command_collect_evidence_context_returns_typed_stale_for_unknown_seam
         assert_eq!(packet["seam_id"], "unknown-seam");
         assert_eq!(
             packet["invalidation_reason"],
-            "the cited seam is absent from the current full-seam evidence"
+            "the cited spot is absent from the current full spot evidence"
         );
         assert_eq!(packet["recovery_command"], REFRESH_COMMAND);
         // #5274: the emitted recovery command must execute through the
@@ -29084,12 +29084,92 @@ fn finding_hover_markdown_for(finding: &Finding) -> Result<String, String> {
     }
 }
 
+/// Plain-language guard for editor text (#12213): the words the default
+/// `ripr check` screen retired ("seam", "discriminator") must not come
+/// back in LSP status prose. Tokens are split on anything that is not a
+/// letter, digit or underscore, so machine identifiers such as
+/// `seam_diagnostics_not_enabled` or `seam_diagnostics = true` (config
+/// keys users must type verbatim) are not prose and are not flagged.
+pub(crate) fn jargon_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| {
+            matches!(
+                word.to_ascii_lowercase().as_str(),
+                "seam" | "seams" | "discriminator" | "discriminators"
+            )
+        })
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+#[test]
+fn hover_and_lens_prose_uses_plain_words() -> Result<(), String> {
+    // #12213: editor hover and code lens must not bring back the words the
+    // default `ripr check` screen retired. The hover's stage rows keep the
+    // exempt stage vocabulary (`* discriminator yes/no/weak ...`), the same
+    // exemption the CLI's Evidence line has, so rows that open with the stage
+    // name are skipped; everything else is scanned.
+    let finding = fix_route_rust_finding();
+    let markdown = finding_hover_markdown_for(&finding)?;
+    let lens = super::lens::related_test_lens_title(&finding, None);
+    let mut scanned = 0;
+    for line in markdown.lines().chain(std::iter::once(lens.as_str())) {
+        // A stage row keeps its exempt stage label (`* discriminator yes:`);
+        // its summary after the first colon is scanned like any other prose,
+        // outside backticks (the user's own source text).
+        let trimmed = line.trim_start_matches(['*', '-', ' ']);
+        let scanned_text = if trimmed.starts_with("discriminator ") {
+            trimmed.split_once(": ").map_or("", |(_, summary)| summary)
+        } else {
+            line
+        };
+        let prose: String = scanned_text
+            .split('`')
+            .step_by(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let hits = jargon_words(&prose);
+        if !hits.is_empty() {
+            return Err(format!("jargon {hits:?} in editor text: {line}"));
+        }
+        scanned += 1;
+    }
+    if scanned < 5 {
+        return Err(format!(
+            "guard scanned too little text ({scanned} lines):\n{markdown}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn hover_stage_summary_label_colon_prose_uses_plain_words() -> Result<(), String> {
+    // The pairing-missing summary puts producer prose after a label colon.
+    // A colon rule that leaves the tail verbatim would show "discriminator"
+    // in the hover again (delta review of #12258).
+    let mut finding = fix_route_rust_finding();
+    finding.ripr.reveal.discriminate.summary = "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator".to_string();
+    let markdown = finding_hover_markdown_for(&finding)?;
+    let row = markdown
+        .lines()
+        .find(|line| line.contains("unconfirmed"))
+        .ok_or_else(|| format!("no discriminate row in hover:\n{markdown}"))?;
+    let summary = row.split_once(": ").map_or("", |(_, summary)| summary);
+    if !jargon_words(summary).is_empty() {
+        return Err(format!("jargon in hover stage summary: {row}"));
+    }
+    Ok(())
+}
+
 #[test]
 fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), String> {
     let finding = fix_route_rust_finding();
     let markdown = finding_hover_markdown_for(&finding)?;
     let lens = super::lens::related_test_lens_title(&finding, None);
-    assert!(lens.contains("no static discriminator (weak)"), "{lens}");
+    assert!(
+        lens.contains("no static check of this change (weak)"),
+        "{lens}"
+    );
     if markdown.contains("* discriminator yes") {
         return Err(format!(
             "hover claims a discriminator while the lens says none:\n{markdown}"
@@ -29097,7 +29177,7 @@ fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), Strin
     }
     assert!(
         markdown.contains(
-            "* discriminator missing: `amount == threshold`; related oracle: Strong oracle found: exact value or pattern assertion"
+            "* missing check: `amount == threshold`; related oracle: Strong oracle found: exact value or pattern assertion"
         ),
         "{markdown}"
     );

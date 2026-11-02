@@ -1349,7 +1349,7 @@ fn seam_inventory_not_enabled_outcome(config: &LspAnalysisConfig) -> ComponentOu
         let (message, recovery) = if session_controlled("diagnostic_profile") {
             (
                 format!(
-                    "seam diagnostics require the full diagnostic profile (current: {}, \
+                    "repo-wide spot diagnostics require the full diagnostic profile (current: {}, \
                      from a session setting)",
                     config.diagnostic_profile.as_str()
                 ),
@@ -1359,7 +1359,7 @@ fn seam_inventory_not_enabled_outcome(config: &LspAnalysisConfig) -> ComponentOu
         } else {
             (
                 format!(
-                    "seam diagnostics require the full diagnostic profile (current: {})",
+                    "repo-wide spot diagnostics require the full diagnostic profile (current: {})",
                     config.diagnostic_profile.as_str()
                 ),
                 "set [lsp] diagnostic_profile = \"full\" in ripr.toml, then run ripr.refresh",
@@ -1374,13 +1374,13 @@ fn seam_inventory_not_enabled_outcome(config: &LspAnalysisConfig) -> ComponentOu
     } else if !config.enable_seam_diagnostics {
         let (message, recovery) = if session_controlled("seam_diagnostics") {
             (
-                "seam diagnostics are disabled by a session setting",
+                "repo-wide spot diagnostics are disabled by a session setting",
                 "set the seamDiagnostics session setting (VS Code setting \
                  ripr.seamDiagnostics) to true, then run ripr.refresh",
             )
         } else {
             (
-                "seam diagnostics are disabled by configuration",
+                "repo-wide spot diagnostics are disabled by configuration",
                 "set [lsp] seam_diagnostics = true in ripr.toml, then run ripr.refresh",
             )
         };
@@ -1394,7 +1394,7 @@ fn seam_inventory_not_enabled_outcome(config: &LspAnalysisConfig) -> ComponentOu
         ComponentOutcome::unavailable_recoverable(
             AnalysisComponent::SeamInventory,
             "seam_diagnostics_not_enabled",
-            "seam diagnostics require the rust language to be enabled",
+            "repo-wide spot diagnostics require the rust language to be enabled",
             "enable the rust language in the [languages] configuration, then run ripr.refresh",
         )
     }
@@ -1559,7 +1559,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             ComponentOutcome::deferred(
                 AnalysisComponent::SeamInventory,
                 "interactive_refresh_deferral",
-                "run ripr.refreshDiagnostics for the full seam inventory",
+                "run ripr.refreshDiagnostics for the full spot inventory",
             ),
         )
     } else if !seam_inventory_enabled {
@@ -1584,7 +1584,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
                 ComponentOutcome::failed(
                     AnalysisComponent::SeamInventory,
                     "seam_inventory_failed",
-                    format!("seam diagnostics skipped this refresh: {err}"),
+                    format!("repo-wide spot diagnostics skipped this refresh: {err}"),
                     true,
                     "retry ripr.refreshDiagnostics",
                 ),
@@ -4168,7 +4168,7 @@ fn lsp_message(finding: &Finding) -> String {
                 Some("struct_field") => "Exact field value",
                 Some("event_call" | "call_effect") => "Expected call/effect",
                 Some("match_arm") => "Expected match-arm result",
-                _ => "Exact discriminator",
+                _ => "Exact expected value",
             };
             let fix_site = witness.fix_site.as_ref();
             let detail = match fix_site {
@@ -7479,12 +7479,12 @@ mod diagnostic_policy_tests {
             ComponentOutcome::deferred(
                 AnalysisComponent::SeamInventory,
                 "interactive_refresh_deferral",
-                "run ripr.refreshDiagnostics for the full seam inventory",
+                "run ripr.refreshDiagnostics for the full spot inventory",
             ),
             ComponentOutcome::unavailable_recoverable(
                 AnalysisComponent::SeamInventory,
                 "seam_diagnostics_not_enabled",
-                "seam diagnostics require the full diagnostic profile (current: actionable)",
+                "repo-wide spot diagnostics require the full diagnostic profile (current: actionable)",
                 "set [lsp] diagnostic_profile = \"full\" in ripr.toml, then run ripr.refresh",
             ),
         ];
@@ -7500,6 +7500,53 @@ mod diagnostic_policy_tests {
                 "deferred seam inventory without degradation must stay seams_deferred, got {run_status}"
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn seam_inventory_status_prose_uses_plain_words() -> Result<(), String> {
+        let features = crate::lsp::client_features::ClientFeatureProfile::unsupported();
+        let mut rust_off = LspAnalysisConfig {
+            diagnostic_profile: LspDiagnosticProfile::Full,
+            ..LspAnalysisConfig::default()
+        };
+        rust_off.repo_config.languages.enabled = vec![LanguageId::TypeScript];
+        let configs = [
+            LspAnalysisConfig::default(),
+            LspAnalysisConfig {
+                diagnostic_profile: LspDiagnosticProfile::Full,
+                enable_seam_diagnostics: false,
+                ..LspAnalysisConfig::default()
+            },
+            rust_off,
+            LspAnalysisConfig {
+                session_options: Some(serde_json::json!({ "diagnosticProfile": "actionable" })),
+                ..LspAnalysisConfig::default()
+            },
+        ];
+        let mut checked = 0;
+        for config in &configs {
+            let payload =
+                seam_inventory_not_enabled_outcome(config).status_payload(Some("s:g"), &features);
+            for field in ["message", "recovery"] {
+                let text = payload[field].as_str().unwrap_or_default();
+                if text.is_empty() {
+                    return Err(format!("status payload lost its {field}: {payload}"));
+                }
+                let hits = crate::lsp::tests::jargon_words(text);
+                if !hits.is_empty() {
+                    return Err(format!("jargon {hits:?} in status {field}: {text}"));
+                }
+                checked += 1;
+            }
+        }
+        // Positive control: the scanner flags prose but not the config key.
+        assert_eq!(
+            crate::lsp::tests::jargon_words("the seam is a Discriminator"),
+            ["seam", "Discriminator"]
+        );
+        assert!(crate::lsp::tests::jargon_words("set seam_diagnostics = true").is_empty());
+        assert_eq!(checked, 8);
         Ok(())
     }
 
@@ -7534,7 +7581,9 @@ mod diagnostic_policy_tests {
             ));
         }
         if payload["message"].as_str()
-            != Some("seam diagnostics require the full diagnostic profile (current: actionable)")
+            != Some(
+                "repo-wide spot diagnostics require the full diagnostic profile (current: actionable)",
+            )
         {
             return Err(format!(
                 "message must name the current profile so the agent sees it is not full: {payload}"
@@ -7740,7 +7789,7 @@ mod lsp_next_step_parity_tests {
                 role: crate::domain::RelatedTestRole::Contributing,
             }],
             recommended_next_step: Some(
-                "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.".to_string(),
+                "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.".to_string(),
             ),
             language: Some(LanguageId::TypeScript),
             language_status: Some(LanguageStatus::Preview),

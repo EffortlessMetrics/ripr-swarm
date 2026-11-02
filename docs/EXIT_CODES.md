@@ -252,7 +252,7 @@ reached the caller.
 - **Typed reason codes for `repair` and `continue` (#11597)**: beside the
   unchanged prose, the `ripr repair` / `ripr continue` refusals listed in the
   table below (and the matching `ripr agent repair` phases at the sites that
-  assign a code) write one stderr line
+  assign a code) write one stderr line, after the plain-words prose (#12193),
   `ripr: refusal code=<code> disposition=<disposition>`, so a script
   switches on the state instead of parsing prose. `disposition` is
   `retryable` (the same attempt proceeds after the stated action),

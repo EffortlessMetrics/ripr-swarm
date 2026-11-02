@@ -5903,6 +5903,37 @@ pub(in crate::analysis) fn inherent_owner_call_resolves(
         ) == RelationReason::DirectOwnerCall
 }
 
+/// Whether `caller`'s call of `owner` is a direct call of the production
+/// owner under the same relation rules `ripr check` applies (unique name or
+/// resolved receiver, no test-module type or trait shadow, no rename). The
+/// caller must already be known to call `owner` by name; this only refuses.
+/// Same-name workspace functions are read from a full scan, so ambiguity
+/// refuses exactly as it does for the check-side relation.
+pub(in crate::analysis) fn owner_call_is_direct(
+    caller: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let same_name_ids: Vec<&str> = index
+        .functions()
+        .iter()
+        .filter(|function| function.name == owner.name)
+        .map(|function| function.id.0.as_str())
+        .collect();
+    owner_call_relation_reason(
+        caller,
+        Some(owner),
+        &owner.name,
+        &same_name_ids,
+        index
+            .files()
+            .get(&caller.file)
+            .map(|facts| facts.data().source.as_ref()),
+        index,
+        false,
+    ) == RelationReason::DirectOwnerCall
+}
+
 /// Whether `test` fails the inherent receiver check for `owner` only because
 /// the standard assertion macro binding cannot be verified for lack of
 /// target-root placement (RIPR-SPEC-0352). The complete owner-call relation is
