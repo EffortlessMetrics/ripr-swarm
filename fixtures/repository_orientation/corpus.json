@@ -1,0 +1,195 @@
+{
+  "schema_version": "repository_orientation_corpus.v1",
+  "issue": 2331,
+  "scenarios": [
+    {
+      "id": "open-issue-no-overlap",
+      "category": "open_issue_no_pr",
+      "portfolio_corpus": "corpus",
+      "issue_number": 9202,
+      "live_github": "available",
+      "inventory": "available",
+      "historical_campaign_ref": null,
+      "source_release_issue": null,
+      "support_tier_overlay": null,
+      "expected": {
+        "disposition": "bounded_next_action",
+        "selected_issue": 9202,
+        "requires_goals_machinery": false,
+        "development_authority": "EffortlessMetrics/ripr-swarm",
+        "release_authority": "EffortlessMetrics/ripr#1463",
+        "limitations": [],
+        "conflict_resources": [],
+        "stale_item_refused": null
+      }
+    },
+    {
+      "id": "partially-landed-umbrella",
+      "category": "partially_landed_issue",
+      "portfolio_corpus": "corpus",
+      "issue_number": 9109,
+      "live_github": "available",
+      "inventory": "available",
+      "historical_campaign_ref": null,
+      "source_release_issue": null,
+      "support_tier_overlay": null,
+      "expected": {
+        "disposition": "partial_acceptance",
+        "selected_issue": 9109,
+        "requires_goals_machinery": false,
+        "development_authority": "EffortlessMetrics/ripr-swarm",
+        "release_authority": "EffortlessMetrics/ripr#1463",
+        "limitations": [],
+        "conflict_resources": [],
+        "stale_item_refused": null
+      }
+    },
+    {
+      "id": "closed-premise-historical-doc",
+      "category": "closed_issue_historical_premise",
+      "portfolio_corpus": "corpus",
+      "issue_number": null,
+      "live_github": "available",
+      "inventory": "available",
+      "historical_campaign_ref": "Historical Operating Sequence: 0.9.0 Release and Evidence-To-Repair Routing",
+      "source_release_issue": null,
+      "support_tier_overlay": null,
+      "expected": {
+        "disposition": "historical_only",
+        "selected_issue": null,
+        "requires_goals_machinery": false,
+        "development_authority": "EffortlessMetrics/ripr-swarm",
+        "release_authority": "EffortlessMetrics/ripr#1463",
+        "limitations": ["stale_historical_item_refused"],
+        "conflict_resources": [],
+        "stale_item_refused": "stale_historical_item_refused"
+      }
+    },
+    {
+      "id": "historical-campaign-no-authority",
+      "category": "historical_campaign_item",
+      "portfolio_corpus": "corpus",
+      "issue_number": null,
+      "live_github": "available",
+      "inventory": "available",
+      "historical_campaign_ref": "historical release-control campaign",
+      "source_release_issue": null,
+      "support_tier_overlay": null,
+      "expected": {
+        "disposition": "historical_only",
+        "selected_issue": null,
+        "requires_goals_machinery": false,
+        "development_authority": "EffortlessMetrics/ripr-swarm",
+        "release_authority": "EffortlessMetrics/ripr#1463",
+        "limitations": ["stale_historical_item_refused"],
+        "conflict_resources": [],
+        "stale_item_refused": "stale_historical_item_refused"
+      }
+    },
+    {
+      "id": "source-release-owned-by-ripr",
+      "category": "source_release_item",
+      "portfolio_corpus": "corpus",
+      "issue_number": null,
+      "live_github": "available",
+      "inventory": "available",
+      "historical_campaign_ref": null,
+      "source_release_issue": 1463,
+      "support_tier_overlay": null,
+      "expected": {
+        "disposition": "source_release_route",
+        "selected_issue": 1463,
+        "requires_goals_machinery": false,
+        "development_authority": "EffortlessMetrics/ripr-swarm",
+        "release_authority": "EffortlessMetrics/ripr#1463",
+        "limitations": [],
+        "conflict_resources": [],
+        "stale_item_refused": null
+      }
+    },
+    {
+      "id": "support-tier-backed-by-proof",
+      "category": "support_tier_proof_ok",
+      "portfolio_corpus": "corpus",
+      "issue_number": 9202,
+      "live_github": "available",
+      "inventory": "available",
+      "historical_campaign_ref": null,
+      "source_release_issue": null,
+      "support_tier_overlay": "pass",
+      "expected": {
+        "disposition": "bounded_next_action",
+        "selected_issue": 9202,
+        "requires_goals_machinery": false,
+        "development_authority": "EffortlessMetrics/ripr-swarm",
+        "release_authority": "EffortlessMetrics/ripr#1463",
+        "limitations": [],
+        "conflict_resources": [],
+        "stale_item_refused": null
+      }
+    },
+    {
+      "id": "support-tier-inconsistency-rejected",
+      "category": "support_tier_inconsistency",
+      "portfolio_corpus": "corpus",
+      "issue_number": 9202,
+      "live_github": "available",
+      "inventory": "available",
+      "historical_campaign_ref": null,
+      "source_release_issue": null,
+      "support_tier_overlay": "reject",
+      "expected": {
+        "disposition": "support_claim_rejected",
+        "selected_issue": null,
+        "requires_goals_machinery": false,
+        "development_authority": "EffortlessMetrics/ripr-swarm",
+        "release_authority": "EffortlessMetrics/ripr#1463",
+        "limitations": [],
+        "conflict_resources": [],
+        "stale_item_refused": null
+      }
+    },
+    {
+      "id": "generated-inventory-stale",
+      "category": "generated_inventory_stale",
+      "portfolio_corpus": "corpus",
+      "issue_number": 9202,
+      "live_github": "available",
+      "inventory": "stale",
+      "historical_campaign_ref": null,
+      "source_release_issue": null,
+      "support_tier_overlay": null,
+      "expected": {
+        "disposition": "bounded_next_action",
+        "selected_issue": 9202,
+        "requires_goals_machinery": false,
+        "development_authority": "EffortlessMetrics/ripr-swarm",
+        "release_authority": "EffortlessMetrics/ripr#1463",
+        "limitations": ["generated_inventory_stale"],
+        "conflict_resources": [],
+        "stale_item_refused": null
+      }
+    },
+    {
+      "id": "live-github-unavailable",
+      "category": "live_state_unavailable",
+      "portfolio_corpus": "variants/missing_github",
+      "issue_number": 9202,
+      "live_github": "unavailable",
+      "inventory": "available",
+      "historical_campaign_ref": null,
+      "source_release_issue": null,
+      "support_tier_overlay": null,
+      "expected": {
+        "disposition": "no_safe_work",
+        "selected_issue": null,
+        "requires_goals_machinery": false,
+        "development_authority": "EffortlessMetrics/ripr-swarm",
+        "release_authority": "EffortlessMetrics/ripr#1463",
+        "limitations": ["live_state_unavailable"],
+        "conflict_resources": [],
+        "stale_item_refused": null
+      }
+    }
+  ]
+}
