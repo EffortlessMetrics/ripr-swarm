@@ -49,6 +49,10 @@ fn strict_equality_custom_matcher_reads_exact() {
         "expect.extend({ toBeCents(r, e) { return { pass: typeof r === \"number\" && !Number.isNaN(r) && `${r}` !== \"a=b\" && (r === e) }; } });\n",
         // A plain `import { expect }`, array patterns, literals and types.
         "import { expect, test } from \"@jest/globals\";\nconst [a, b]: number[] = [1, 2];\nconst xs = [a, b][0];\nexpect.extend({ toBeCents(r, e) { return { pass: r === e }; } });\n",
+        // #7916: trivia between `expect` and `.extend`, and harmless `\u` in
+        // parameter names, must not refuse the whole file.
+        "expect /* token */ .extend({ toBeCents(r, e) { return { pass: r === e }; } });\n",
+        "expect.extend({ toBeCents(\\u0072eceived, \\u0065xpected) { return { pass: \\u0072eceived === \\u0065xpected }; } });\n",
     ] {
         assert_eq!(
             cents_oracles(&format!("{matcher}{CENTS_TEST}")),

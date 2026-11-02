@@ -81,7 +81,7 @@ fn extend_mentions(source: &str) -> usize {
 /// holds `expect` under another spelling is named. Comments and strings
 /// count too, so a mention only refuses.
 fn names_expect_plainly(statements: &oxc_allocator::Vec<'_, Statement<'_>>, source: &str) -> bool {
-    if source.contains("\\u") || computed_member_access(source) {
+    if unicode_escape_hides_routing_name(source) || computed_member_access(source) {
         return false;
     }
     let mut imports = 0;
@@ -120,9 +120,7 @@ fn names_expect_plainly(statements: &oxc_allocator::Vec<'_, Statement<'_>>, sour
         .match_indices("expect")
         .filter(|(index, matched)| {
             word_at(source, *index, matched.len())
-                && !source
-                    .get(index + matched.len()..)
-                    .is_some_and(|rest| rest.starts_with('(') || rest.starts_with('.'))
+                && !expect_mention_reaches_runner(source, index + matched.len())
         })
         .count();
     other_mentions == imported_expect
@@ -394,6 +392,108 @@ fn word_mentions(source: &str, word: &str) -> usize {
         .match_indices(word)
         .filter(|(index, matched)| word_at(source, *index, matched.len()))
         .count()
+}
+
+/// Text after skipping whitespace, `/* */` comments and `//` line comments.
+fn skip_trivia(mut text: &str) -> &str {
+    loop {
+        text = text.trim_start();
+        if let Some(inner) = text.strip_prefix("//") {
+            text = inner
+                .split_once(['\n', '\r', '\u{2028}', '\u{2029}'])
+                .map_or("", |(_, after)| after);
+        } else if let Some((_, after)) = text
+            .strip_prefix("/*")
+            .and_then(|inner| inner.split_once("*/"))
+        {
+            text = after;
+        } else {
+            return text;
+        }
+    }
+}
+
+/// `true` when `expect` at `index_after_expect` is followed, after trivia,
+/// by `(` or `.` (a call or member access on the runner binding).
+fn expect_mention_reaches_runner(source: &str, index_after_expect: usize) -> bool {
+    let rest = skip_trivia(source.get(index_after_expect..).unwrap_or_default());
+    rest.starts_with('(') || rest.starts_with('.')
+}
+
+/// `true` when a `\u` identifier escape outside strings and comments decodes
+/// to a name the plain-text route scan must not miss (`extend`, `expect`,
+/// `eval`, `Object`, or a [`GLOBAL_ROOTS`] spelling).
+fn unicode_escape_hides_routing_name(source: &str) -> bool {
+    let masked = ts_mask_literals_and_comments(source);
+    let mut index = 0;
+    while let Some(at) = masked[index..].find("\\u") {
+        let start = index + at;
+        if let Some(name) = decoded_identifier_at_escape(&masked, start)
+            && routing_name_hidden_by_unicode(&name)
+        {
+            return true;
+        }
+        index = start + 2;
+    }
+    false
+}
+
+fn routing_name_hidden_by_unicode(name: &str) -> bool {
+    name == "extend"
+        || name == "eval"
+        || name == "expect"
+        || name == "Object"
+        || GLOBAL_ROOTS.contains(&name)
+}
+
+/// The identifier containing a `\u` escape at `escape_at` (which must point at `\`).
+fn decoded_identifier_at_escape(text: &str, escape_at: usize) -> Option<String> {
+    let mut start = escape_at;
+    while start > 0 {
+        let prev = text[..start].chars().next_back()?;
+        if !is_identifier_char(prev) {
+            break;
+        }
+        start -= prev.len_utf8();
+    }
+    let mut name = String::new();
+    let mut index = start;
+    while index < text.len() {
+        if text.as_bytes().get(index) == Some(&b'\\')
+            && text.as_bytes().get(index + 1) == Some(&b'u')
+        {
+            let (ch, next) = decode_unicode_escape(text, index)?;
+            name.push(ch);
+            index = next;
+            continue;
+        }
+        let ch = text[index..].chars().next()?;
+        if !is_identifier_char(ch) {
+            break;
+        }
+        name.push(ch);
+        index += ch.len_utf8();
+    }
+    (!name.is_empty()).then_some(name)
+}
+
+fn decode_unicode_escape(text: &str, start: usize) -> Option<(char, usize)> {
+    let rest = text.get(start..)?;
+    let hex = rest.strip_prefix("\\u")?;
+    let (value, end) = if hex.starts_with('{') {
+        let inner = hex.get(1..)?.split_once('}')?;
+        let code = u32::from_str_radix(inner.0, 16).ok()?;
+        (code, 3 + inner.0.len())
+    } else {
+        let digits = hex.get(..4)?;
+        let code = u16::from_str_radix(digits, 16).ok()?;
+        (u32::from(code), 6)
+    };
+    char::from_u32(value).map(|ch| (ch, start + end))
+}
+
+fn is_identifier_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$')
 }
 
 /// `true` when `source[index..index + len]` is not inside a longer
