@@ -649,7 +649,8 @@ mod tests {
 
     #[test]
     fn duplicate_source_names_never_share_a_native_result() {
-        let success = "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
+        let success =
+            "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
         let failure = "Checking harness b::same...\nVERIFICATION:- FAILED\n";
         let unique = "Checking harness m::unique...\nVERIFICATION:- SUCCESSFUL\n";
         // Duplicate names in separate files and in one file are both ambiguous:
@@ -696,9 +697,9 @@ mod tests {
                 }
                 let report = render_report(&results, "");
                 assert!(report.contains("| `same` | `a.rs` | NOT-ESTABLISHED |"));
-                assert!(report.contains(&format!(
-                    "| `same` | `{second_file}` | NOT-ESTABLISHED |"
-                )));
+                assert!(
+                    report.contains(&format!("| `same` | `{second_file}` | NOT-ESTABLISHED |"))
+                );
                 assert!(!report.contains("| `same` | `a.rs` | VERIFIED |"));
                 assert!(report.contains("| `unique` | `unique.rs` | VERIFIED |"));
             }
@@ -711,7 +712,8 @@ mod tests {
             file: "one.rs".to_string(),
             name: "same".to_string(),
         }];
-        let success = "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
+        let success =
+            "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
         let other_failure = "Checking harness b::same...\nVERIFICATION:- FAILED\n";
         let repeated_failure = "Checking harness a::same...\nVERIFICATION:- FAILED\n";
         for output in [
