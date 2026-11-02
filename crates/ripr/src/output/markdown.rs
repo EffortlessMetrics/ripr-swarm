@@ -418,6 +418,62 @@ pub(crate) fn powershell_form(command: &str) -> PowershellForm {
     }
 }
 
+/// Read `typescript_package_root` from a gap-ledger record or embedded evidence lines.
+pub(crate) fn typescript_package_root_from_gap_record(
+    record: &serde_json::Value,
+) -> Option<String> {
+    record
+        .get("typescript_package_root")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            record.get("evidence").and_then(|evidence| {
+                evidence.as_array().and_then(|lines| {
+                    lines
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .find_map(|line| {
+                            line.strip_prefix("typescript_package_root: ")
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(str::to_string)
+                        })
+                })
+            })
+        })
+}
+
+/// Effective working directory for advisory command context: nested TypeScript
+/// packages run from their package root, not the repository root (#5439).
+pub(crate) fn command_context_directory(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+) -> std::path::PathBuf {
+    match typescript_package_root_from_gap_record(record) {
+        Some(rel) if rel != "." => workspace_root.join(rel),
+        _ => workspace_root.to_path_buf(),
+    }
+}
+
+/// Bash clipboard form for a verify command, using [`command_context_directory`].
+pub(crate) fn verify_command_clipboard_from_context(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+    verify: &str,
+) -> String {
+    let directory = command_context_directory(workspace_root, record);
+    let context = selected_command_context(&directory, verify, verify);
+    context
+        .get("verify")
+        .and_then(|forms| forms.get("bash"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|command| !command.is_empty())
+        .unwrap_or(verify)
+        .to_string()
+}
+
 /// Advisory human forms for the current ledger selection. Raw verification
 /// and receipt strings retain their identity; this is not a CommandSpec and
 /// grants no execution, eligibility, or receipt authority.
