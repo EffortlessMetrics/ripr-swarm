@@ -265,7 +265,7 @@ fn a_contradicted_boolean_assertion_withholds_the_whole_tests_promotion() -> Res
         .ok_or("fixture lost its paired test")?;
     assert_eq!(test.assertions.len(), 2, "extraction keeps both assertions");
     assert!(
-        test_has_contradicted_assertion(test, Some(owner)),
+        test_has_contradicted_assertion(test, Some(owner), &index),
         "the contradictory boolean assertion must count beside an equality one: {test:?}"
     );
 

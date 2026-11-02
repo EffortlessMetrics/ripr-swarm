@@ -28,6 +28,7 @@
 //! pass that new pin's consistency gate; unknown is never promotion evidence.
 
 use crate::analysis::extract::{equality_assertion_arguments, outer_assertion_condition};
+use crate::analysis::facts::RustIndex;
 use crate::analysis::facts::TestFact as TestSummary;
 use crate::analysis::facts::{FunctionSummary, SourceText};
 use crate::analysis::syntax::parse_clean_source_file;
@@ -63,6 +64,10 @@ pub(super) enum ExactValueVerdict {
 /// body. `owner` is the seam's owning function; `oracle_text` is the
 /// assertion fact's text (for example
 /// `assert_eq!(discounted_total(5_000, 5_000), 5_000)`).
+#[allow(
+    dead_code,
+    reason = "policy:allow-attributes value-contradiction-bare-entry (#4681)"
+)]
 pub(super) fn exact_value_assertion_verdict(
     owner: Option<&FunctionSummary>,
     oracle_text: &str,
@@ -74,7 +79,7 @@ pub(super) fn exact_value_assertion_verdict(
         // assertion never called.
         return ExactValueVerdict::NotEvaluable;
     }
-    verdict_in(owner, oracle_text, &BTreeMap::new())
+    verdict_in(owner, oracle_text, &BTreeMap::new(), None)
 }
 
 /// [`exact_value_assertion_verdict`] for an assertion of `test`. An rstest
@@ -87,17 +92,18 @@ pub(super) fn exact_value_assertion_verdict_for_test(
     owner: Option<&FunctionSummary>,
     oracle_text: &str,
     test: &TestSummary,
+    index: &RustIndex,
 ) -> ExactValueVerdict {
     let shadowed = owner.is_some_and(|owner| bare_owner_call_is_shadowed(test, &owner.name));
-    let Some(rows) = case_row_bindings(test) else {
-        return exact_value_assertion_verdict(owner, oracle_text, shadowed);
-    };
     if shadowed {
         return ExactValueVerdict::NotEvaluable;
     }
+    let Some(rows) = case_row_bindings(test) else {
+        return verdict_in(owner, oracle_text, &BTreeMap::new(), Some(index));
+    };
     let mut verdict = ExactValueVerdict::Consistent;
     for row in &rows {
-        match verdict_in(owner, oracle_text, row) {
+        match verdict_in(owner, oracle_text, row, Some(index)) {
             contradicted @ ExactValueVerdict::Contradicted { .. } => return contradicted,
             ExactValueVerdict::NotEvaluable => verdict = ExactValueVerdict::NotEvaluable,
             ExactValueVerdict::Consistent => {}
@@ -309,6 +315,7 @@ fn verdict_in(
     owner: Option<&FunctionSummary>,
     oracle_text: &str,
     environment: &BTreeMap<String, i128>,
+    index: Option<&RustIndex>,
 ) -> ExactValueVerdict {
     let Some(owner) = owner else {
         return ExactValueVerdict::NotEvaluable;
@@ -319,20 +326,27 @@ fn verdict_in(
     let [actual, expected, ..] = arguments.as_slice() else {
         return ExactValueVerdict::NotEvaluable;
     };
-    let Some(call_arguments) = owner_call_arguments(actual, &owner.name) else {
-        return ExactValueVerdict::NotEvaluable;
-    };
-    let mut values = Vec::with_capacity(call_arguments.len());
-    for argument in &call_arguments {
-        let Some(value) = fold_expression(argument, environment) else {
+    let actual_value = if let Some(call_arguments) = owner_call_arguments(actual, &owner.name) {
+        let mut values = Vec::with_capacity(call_arguments.len());
+        for argument in &call_arguments {
+            let Some(value) = fold_expression(argument, environment) else {
+                return ExactValueVerdict::NotEvaluable;
+            };
+            values.push(value);
+        }
+        let Some(actual_value) = fold_owner_call(owner, &values) else {
             return ExactValueVerdict::NotEvaluable;
         };
-        values.push(value);
-    }
-    let Some(expected_value) = fold_expression(expected, environment) else {
+        actual_value
+    } else if let Some(index) = index {
+        let Some(actual_value) = fold_through_unique_public_parent(actual, owner, index) else {
+            return ExactValueVerdict::NotEvaluable;
+        };
+        actual_value
+    } else {
         return ExactValueVerdict::NotEvaluable;
     };
-    let Some(actual_value) = fold_owner_call(owner, &values) else {
+    let Some(expected_value) = fold_expression(expected, environment) else {
         return ExactValueVerdict::NotEvaluable;
     };
     // `assert_eq!` fails at baseline exactly when the folded values differ;
@@ -924,6 +938,150 @@ fn equality_assertion_shape_uncached(oracle_text: &str) -> Option<(bool, Vec<Str
 /// The call arguments when `operand` is a bare-name call to `owner_name`
 /// (`owner(..)`). See the in-function guard for why receivers and
 /// qualified paths stay not evaluable.
+fn public_parent_callee_name(operand: &str) -> Option<String> {
+    let trimmed = operand.trim();
+    let open = trimmed.find('(')?;
+    let head = trimmed[..open].trim();
+    if !trimmed[open + 1..].contains(')') {
+        return None;
+    }
+    let mut depth = 0i32;
+    let mut close = None;
+    for (offset, byte) in trimmed.as_bytes()[open..].iter().enumerate() {
+        match byte {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(open + offset);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    if !trimmed[close + 1..].trim().is_empty() {
+        return None;
+    }
+    let name = head
+        .strip_prefix("super::")
+        .or_else(|| head.strip_prefix("self::"))
+        .or_else(|| head.strip_prefix("crate::"))
+        .unwrap_or(head);
+    if name.contains("::") || name.is_empty() {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+fn parent_delegates_uniquely_to_owner(parent: &FunctionSummary, owner_name: &str) -> bool {
+    use super::related_tests::context::{
+        call_text_routes_directly_to_named_call, owner_token_is_specific_enough,
+    };
+    if parent.name == owner_name
+        || !call_text_routes_directly_to_named_call(&parent.body, owner_name)
+    {
+        return false;
+    }
+    let mut routed_owners = 0usize;
+    for call in &parent.calls {
+        if call.name == parent.name {
+            continue;
+        }
+        if !owner_token_is_specific_enough(&call.name.to_ascii_lowercase()) {
+            continue;
+        }
+        if call_text_routes_directly_to_named_call(&parent.body, &call.name) {
+            routed_owners += 1;
+            if call.name != owner_name {
+                return false;
+            }
+        }
+    }
+    routed_owners == 1
+}
+
+fn delegation_module_path_for_owner(owner: &FunctionSummary, index: &RustIndex) -> Option<String> {
+    let file_prefix = format!("{}::", owner.file.display());
+    if let Some(rest) = owner.id.0.strip_prefix(&file_prefix)
+        && let Some(module) = rest
+            .strip_suffix(&format!("::{}", owner.name))
+            .filter(|module| !module.is_empty())
+    {
+        return Some(module.replace('/', "::"));
+    }
+    super::related_tests::module_path_for_index(index, &owner.file)
+        .map(|path| path.replace('/', "::"))
+}
+
+fn parent_uniquely_delegates_to_owner(
+    parent: &FunctionSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    use super::related_tests::context::{
+        call_text_routes_directly_to_named_call, code_contains_qualified_helper_call,
+        owner_token_is_specific_enough,
+    };
+    use super::related_tests::strip_comments_and_strings;
+    let body = strip_comments_and_strings(&parent.body);
+    let bare = parent_delegates_uniquely_to_owner(parent, &owner.name);
+    let qualified = delegation_module_path_for_owner(owner, index).is_some_and(|module_path| {
+        code_contains_qualified_helper_call(&body, &module_path, &owner.name)
+            && !index.functions().iter().any(|candidate| {
+                candidate.name == owner.name
+                    && candidate.file != owner.file
+                    && delegation_module_path_for_owner(candidate, index).is_some_and(|other| {
+                        other != module_path
+                            && code_contains_qualified_helper_call(&body, &other, &candidate.name)
+                    })
+            })
+    });
+    if bare && qualified {
+        return false;
+    }
+    if bare {
+        return true;
+    }
+    if !qualified {
+        return false;
+    }
+    for call in &parent.calls {
+        if call.name == parent.name || call.name == owner.name {
+            continue;
+        }
+        if owner_token_is_specific_enough(&call.name.to_ascii_lowercase())
+            && call_text_routes_directly_to_named_call(&parent.body, &call.name)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// #4681: tests may observe a public parent while the seam sits on the
+/// private helper it delegates to. Fail closed unless the parent is a
+/// same-file production function with one direct routed call to the owner
+/// and the owner folds with no forwarded arguments.
+fn fold_through_unique_public_parent(
+    actual: &str,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Option<i128> {
+    let parent_name = public_parent_callee_name(actual)?;
+    if parent_name == owner.name {
+        return None;
+    }
+    let parent = index.functions().iter().find(|function| {
+        !function.source_role.is_evidence_role() && function.name == parent_name
+    })?;
+    if !parent_uniquely_delegates_to_owner(parent, owner, index) {
+        return None;
+    }
+    fold_owner_call(owner, &[])
+}
+
 fn owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> {
     let trimmed = operand.trim();
     let open = super::named_call_open_paren_index(trimmed, owner_name)?;
@@ -1836,7 +1994,9 @@ fn fold_block(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::facts::FileFacts;
     use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+    use std::collections::BTreeMap;
 
     #[test]
     fn equality_shape_memo_returns_what_a_fresh_shape_would() {
@@ -2338,10 +2498,26 @@ mod tests {
                 .assertions
                 .first()
                 .ok_or("the rstest test carries its assertion")?;
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                files: BTreeMap::from([(
+                    std::path::PathBuf::from("src/lib.rs"),
+                    FileFacts {
+                        path: std::path::PathBuf::from("src/lib.rs"),
+                        functions: facts.functions.clone(),
+                        tests: facts.tests.clone(),
+                        source: source.into(),
+                        ..FileFacts::default()
+                    },
+                )]),
+                functions: facts.functions.clone(),
+                tests: facts.tests.clone(),
+                ..Default::default()
+            });
             Ok(exact_value_assertion_verdict_for_test(
                 Some(owner),
                 &assertion.text,
                 test,
+                &index,
             ))
         };
         assert_eq!(
