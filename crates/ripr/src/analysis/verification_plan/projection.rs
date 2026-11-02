@@ -119,12 +119,12 @@ fn project_plan_from_witness_and_tests(
                 head_presence: if has_target {
                     "selected_existing".to_string()
                 } else {
-                    "typed_absence".to_string()
+                    "unknown".to_string()
                 },
                 target_state: if has_target {
                     "selected_existing".to_string()
                 } else {
-                    "typed_absence".to_string()
+                    "unknown".to_string()
                 },
                 currentness: input_currentness_label(input.adapter_input.currentness),
                 applicability: applicability_for_class(evidence_class),

@@ -245,6 +245,43 @@ fn candidate_relation_does_not_upgrade_witness_reach_by_rendering() {
 }
 
 #[test]
+fn finding_impacted_tests_use_unknown_target_when_producer_has_no_target_fact() {
+    let finding = finding_with_related(
+        vec![RelatedTest {
+            name: "checks_total".to_string(),
+            file: PathBuf::from("tests/pricing.rs"),
+            line: 8,
+            oracle: None,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            relation_confidence: Some(RelationReason::DirectOwnerCall.confidence()),
+            relation_reason: Some(RelationReason::DirectOwnerCall),
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        }],
+        ripr(
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Yes,
+        ),
+    );
+    let plan = ok_plan(project_plan_from_finding(
+        &finding,
+        &plan_input(subject_identity("base", "head")),
+    ));
+    let impacted = plan
+        .impacted_tests
+        .iter()
+        .find(|row| row.relation_basis == RelationReason::DirectOwnerCall.as_str())
+        .expect("direct owner row");
+    assert_eq!(impacted.head_presence, "unknown");
+    assert_eq!(impacted.target_state, "unknown");
+}
+
+#[test]
 fn wrong_sink_oracle_stays_impacted_at_most() {
     let stages = ChangeVerificationPlanStageStates {
         reach: "yes".to_string(),
