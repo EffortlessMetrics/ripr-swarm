@@ -29,11 +29,17 @@ const FLOAT_OWNER: &str =
     "pub fn scale(v: i32) -> f64 {\n    if v >= 3 { v as f64 * 1.5 } else { 0.0 }\n}\n";
 const FLOAT_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn scale(v: i32) -> f64 {\n-    if v > 3 { v as f64 * 1.5 } else { 0.0 }\n+    if v >= 3 { v as f64 * 1.5 } else { 0.0 }\n }\n";
 
-/// An owner and the diff that changes it.
-type Subject = (&'static str, &'static str);
-const OPTION: Subject = (OPTION_OWNER, OPTION_DIFF);
-const RESULT: Subject = (RESULT_OWNER, RESULT_DIFF);
-const FLOAT: Subject = (FLOAT_OWNER, FLOAT_DIFF);
+/// An owner, the diff that changes it, and the probe family of the finding
+/// under test.
+type Subject = (&'static str, &'static str, &'static str);
+const OPTION: Subject = (OPTION_OWNER, OPTION_DIFF, "predicate");
+const RESULT: Subject = (RESULT_OWNER, RESULT_DIFF, "predicate");
+const FLOAT: Subject = (FLOAT_OWNER, FLOAT_DIFF, "predicate");
+/// A changed `Ok(..)` tail, which the owner-return pin can credit.
+const DIVISION: Subject = (DIVISION_OWNER, DIVISION_DIFF, "return_value");
+
+const DIVISION_OWNER: &str = "pub fn checked_div(a: u32, b: u32) -> Result<u32, ()> {\n    if b == 0 {\n        return Err(());\n    }\n    Ok(a / b)\n}\n";
+const DIVISION_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,6 +1,6 @@\n pub fn checked_div(a: u32, b: u32) -> Result<u32, ()> {\n     if b == 0 {\n         return Err(());\n     }\n-    Ok(a / b + 1)\n+    Ok(a / b)\n }\n";
 
 const CLAIMS: &str = "claims = \"0.8\"";
 const APPROX: &str = "approx = \"0.5\"";
@@ -45,6 +51,8 @@ struct Row {
     name: &'static str,
     owner: &'static str,
     diff: &'static str,
+    /// The probe family of the finding under test.
+    family: &'static str,
     dependency: &'static str,
     imports: &'static str,
     body: &'static str,
@@ -56,7 +64,7 @@ struct Row {
 
 const fn row(
     name: &'static str,
-    (owner, diff): Subject,
+    (owner, diff, family): Subject,
     dependency: &'static str,
     imports: &'static str,
     body: &'static str,
@@ -67,6 +75,7 @@ const fn row(
         name,
         owner,
         diff,
+        family,
         dependency,
         imports,
         body,
@@ -210,10 +219,21 @@ fn rows() -> Vec<Row> {
             ("smoke_only", "smoke"),
             None,
         ),
-        // Debug-only: the check can be compiled out, so ripr reads no oracle,
-        // and names no limitation either (filed as a gap).
+        // Debug-only: the check is compiled out under `--release`, so ripr
+        // reads no oracle. Where the `assert_eq!` twin would be credited, the
+        // gap is withheld under a named profile limit (RIPR-SPEC-0240); where
+        // the twin would not be credited, the gap stays by design.
         row(
-            "std_debug_assert_eq_is_not_an_oracle",
+            "std_debug_assert_eq_pin_is_withheld_under_a_profile_limit",
+            DIVISION,
+            "",
+            "",
+            "debug_assert_eq!(checked_div(17, 5), Ok(3));",
+            none,
+            Some("rust_debug_assertion_profile_unresolved"),
+        ),
+        row(
+            "std_debug_assert_eq_off_the_boundary_keeps_its_gap",
             RESULT,
             "",
             "",
@@ -270,12 +290,13 @@ fn provider_assertion_macro_inventory_matches_current_behavior() -> Result<(), S
         let predicates: Vec<_> = report
             .findings
             .iter()
-            .filter(|f| f.probe.family.as_str() == "predicate")
+            .filter(|f| f.probe.family.as_str() == case.family)
             .collect();
         let [finding] = predicates.as_slice() else {
             return Err(format!(
-                "{}: expected one predicate finding, got {}",
+                "{}: expected one {} finding, got {}",
                 case.name,
+                case.family,
                 predicates.len()
             ));
         };
