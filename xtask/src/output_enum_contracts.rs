@@ -492,6 +492,33 @@ mod profile {
     }
 
     #[test]
+    fn diff_report_field_contract_is_documented() -> Result<(), String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let doc = std::fs::read_to_string(root.join("docs/OUTPUT_SCHEMA.md"))
+            .map_err(|err| format!("read docs/OUTPUT_SCHEMA.md: {err}"))?;
+        assert!(
+            doc.contains("## Diff Report"),
+            "docs/OUTPUT_SCHEMA.md must include a ## Diff Report section (#5083)"
+        );
+        assert!(
+            doc.contains("kind: \"ripr_diff\""),
+            "Diff Report section must document kind ripr_diff"
+        );
+        assert!(
+            doc.contains("diff_complete_full_repo_limited")
+                && doc.contains("diff_incomplete_full_repo_limited"),
+            "Diff Report section must document run_status value sets"
+        );
+        let registry = std::fs::read_to_string(root.join("policy/output_contracts.txt"))
+            .map_err(|err| format!("read policy/output_contracts.txt: {err}"))?;
+        assert!(
+            registry.contains("kind|ripr_diff|"),
+            "policy/output_contracts.txt must register kind|ripr_diff"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn current_tree_output_enums_are_registered_and_documented() -> Result<(), String> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let read = |path: &str| {
