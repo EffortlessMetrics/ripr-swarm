@@ -87,24 +87,26 @@ jobs:
           cargo xtask check-covered-by
           cargo xtask check-file-policy
 
-      - name: Explain the flip between xtask-only and combined builds
+      - name: Check whether splitting the combined build removes the flip
         timeout-minutes: 40
         shell: bash
         run: |
-          cargo tree -e features --prefix none -p xtask | sort -u > target/tree-a.txt
-          cargo tree -e features --prefix none -p ripr -p xtask | sort -u > target/tree-c.txt
-          echo "== feature lines only in xtask-alone"; comm -23 target/tree-a.txt target/tree-c.txt | head -20
-          echo "== feature lines only in combined"; comm -13 target/tree-a.txt target/tree-c.txt | head -20
-          export CARGO_LOG=cargo::core::compiler::fingerprint=info
           run() {
             label="$1"; shift
             start=$(date +%s)
             "$@" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > target/step.log || true
             echo "== $label: $(( $(date +%s) - start ))s"
-            grep -E "^\s*Dirty|dirty:|Compiling (xtask|ripr|zip|tower-lsp-server)" target/step.log | cut -c1-260 | head -8 || true
           }
-          T="cargo test --no-run -v"
-          run "C1 combined" $T -p ripr -p xtask --bin xtask --test hard_cut_admission_selftest
-          run "A3 build -p xtask" cargo build -p xtask -v
-          run "A4 build -p xtask again" cargo build -p xtask -v
-          run "C2 combined" $T -p ripr -p xtask --bin xtask --test hard_cut_admission_selftest
+          X="cargo test --no-run -p xtask --bin xtask --test hard_cut_admission_selftest --test contabo_result_policy --example contabo_product_proof"
+          R="cargo test --no-run -p ripr --lib --test causal_delta_fixture --test mcp_stdio"
+          run "A0 build -p xtask (settle)" cargo build -p xtask
+          run "A1 build -p xtask" cargo build -p xtask
+          run "X1 xtask group" $X
+          run "R1 ripr group" $R
+          run "A2 build -p xtask after ripr group" cargo build -p xtask
+          run "X2 xtask group after ripr group" $X
+          run "H1 hard_cut alone" cargo test --no-run -p xtask --test hard_cut_admission_selftest
+          run "R2 ripr group again" $R
+          run "H2 hard_cut after ripr group" cargo test --no-run -p xtask --test hard_cut_admission_selftest
+          run "A3 build -p xtask" cargo build -p xtask
+          run "R3 ripr group" $R
