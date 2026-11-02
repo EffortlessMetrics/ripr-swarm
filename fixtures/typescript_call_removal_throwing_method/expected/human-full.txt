@@ -66,7 +66,7 @@ TypeScript preview card (advisory)
   changed behavior: predicate changed at src/audit.ts:2: `void event;`
   related test: test/audit.test.ts:4 writes once
   oracle: exact_value (strong)
-  suggested assertion shape: The related test's check is already strong, but ripr cannot tie it to the changed line. Exercise the changed branch with an input that flips it.
+  suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
   verify: node --test test/audit.test.ts
   repair packet ready: false
   why not actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
@@ -82,7 +82,7 @@ TypeScript repair packet (advisory)
   next capability needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
 
 Next step
-  TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit
+  TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_call_removal_throwing_method/input --diff <cwd>/fixtures/typescript_call_removal_throwing_method/diff.patch --mode fast probe:src_audit.ts:typescript_preview:a853f862
   ripr context --root <cwd>/fixtures/typescript_call_removal_throwing_method/input --diff <cwd>/fixtures/typescript_call_removal_throwing_method/diff.patch --mode fast --at probe:src_audit.ts:typescript_preview:a853f862

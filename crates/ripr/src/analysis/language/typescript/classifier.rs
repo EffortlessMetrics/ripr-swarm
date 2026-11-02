@@ -7002,6 +7002,12 @@ pub(crate) fn classify_resolved_owner(
                 })
             },
         );
+    // #12463: a deleted call has no branch and no input that flips it, so the
+    // strong-check "flip the changed branch" advice never applies, whether or
+    // not the removal was counted above (fail closed).
+    let removed_call_change =
+        super::call_removal_guard::removed_method_call(line_text, old_line_text).is_some()
+            || super::call_removal_guard::replaced_call_with_discard(line_text, old_line_text);
     let probe_shape = if counted_removal {
         TypeScriptProbeShape::new(ProbeFamily::CallDeletion, DeltaKind::Effect)
     } else {
@@ -7971,7 +7977,8 @@ pub(crate) fn classify_resolved_owner(
             )
         }
         _ if strongest_strength >= OracleStrength::Strong.rank()
-            && !input_free_field_update =>
+            && !input_free_field_update
+            && !removed_call_change =>
         {
             crate::domain::STRONG_CHECK_UNTIED_NEXT_STEP.to_string()
         }

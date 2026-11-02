@@ -717,7 +717,9 @@ update of a field (`this.hits += 1`) whose new value reads none of the owner's
 parameters, as when the test overwrites the field before reading it, reads an
 accessor-backed field, or runs a table whose rows never call the method
 (`ts_field_update_overwrite_*`, `ts_field_update_table_zero_rows`,
-`ts_field_update_getter_backed`). The positive fixtures are
+`ts_field_update_getter_backed`). A deleted call is also excluded, counted or
+not, because it has no branch for an input to flip; the
+`typescript_call_removal_*` fixtures keep their previous wording. The positive fixtures are
 `ts_strong_snapshot_untied` (literal inline snapshot) and
 `ts_coincident_state_update`.
 
