@@ -74,12 +74,13 @@ jobs:
       # (and the 6-minute kill fires). Running the same spawns here warms them.
       #
       # `check-covered-by` alone is not enough (#12035): `check-file-policy`,
-      # which `policy_checker_facade_runs_current_repo_checks` runs, issues a
-      # combined `cargo test --no-run -p ripr -p xtask --bin xtask --test ...`
-      # that `check-covered-by` never makes. Measured on windows-latest after
-      # `check-covered-by` had run twice: first `check-file-policy` 745 s,
-      # second 175 s, and the facade test 140 s once warm. Left cold, that
-      # first build ran inside the test and hit its 300 s child cap.
+      # which `policy_checker_facade_runs_current_repo_checks` runs, issues
+      # combined `cargo test --no-run` builds, one per package set (`-p xtask`
+      # and `-p ripr`, #12245), that `check-covered-by` never makes. Measured
+      # on windows-latest after `check-covered-by` had run twice, before the
+      # per-package split: first `check-file-policy` 745 s, second 175 s, and
+      # the facade test 140 s once warm. Left cold, that first build ran
+      # inside the test and hit its 300 s child cap.
       - name: Warm the cargo builds the policy tests spawn
         timeout-minutes: 45
         shell: bash

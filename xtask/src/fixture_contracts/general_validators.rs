@@ -2439,6 +2439,67 @@ pub(crate) fn validate_blind_journey_installed_rust_fixture(
     validate_installed_journey_fixture(&INSTALLED_RUST_CONTRACT, violations)
 }
 
+pub(crate) fn validate_packaged_repair_parity_fixture(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = workspace.join("fixtures/packaged-repair-parity");
+    let manifest_path = root.join("manifest.json");
+    let schema_path = root.join("channel-receipt.schema.json");
+    for path in [&manifest_path, &schema_path] {
+        if !path.is_file() {
+            violations.push(format!(
+                "packaged-repair-parity fixture missing required file {}",
+                path.display()
+            ));
+        }
+    }
+    if !manifest_path.is_file() || !schema_path.is_file() {
+        return Ok(());
+    }
+    let manifest = read_json_value(&manifest_path)?;
+    if manifest.get("schema_version").and_then(Value::as_str)
+        != Some("packaged_repair_channel_receipt.v0")
+    {
+        violations.push(
+            "packaged-repair-parity manifest.schema_version must be packaged_repair_channel_receipt.v0"
+                .to_string(),
+        );
+    }
+    let schema = read_json_value(&schema_path)?;
+    if schema.get("title").and_then(Value::as_str) != Some("packaged_repair_channel_receipt.v0") {
+        violations.push(
+            "packaged-repair-parity channel-receipt.schema.json title must match receipt schema_version"
+                .to_string(),
+        );
+    }
+    if manifest.get("schema_path").and_then(Value::as_str) != Some("channel-receipt.schema.json") {
+        violations.push(
+            "packaged-repair-parity manifest.schema_path must be channel-receipt.schema.json"
+                .to_string(),
+        );
+    }
+    if schema
+        .pointer("/properties/vsix_parity_claimed/const")
+        .and_then(Value::as_bool)
+        != Some(false)
+    {
+        violations.push(
+            "packaged-repair-parity channel-receipt.schema.json must pin vsix_parity_claimed to false"
+                .to_string(),
+        );
+    }
+    let digest_pattern = schema
+        .pointer("/properties/artifact/properties/sha256/pattern")
+        .and_then(Value::as_str);
+    if digest_pattern != Some("^sha256:[0-9a-f]{64}$") {
+        violations.push(format!(
+            "packaged-repair-parity channel-receipt.schema.json artifact.sha256 pattern must accept shared digest format; got {digest_pattern:?}"
+        ));
+    }
+    Ok(())
+}
+
 /// Test-only compatibility shims so the unchanged per-language test modules
 /// keep exercising the shared owner through their historical entry points.
 #[cfg(test)]
