@@ -3039,6 +3039,17 @@ mod tests {
     }
 
     #[test]
+    fn check_verification_contracts_surfaces_corpus_gate_failures() {
+        let err = check_verification_contracts_with_hooks(
+            &["--check".to_string()],
+            |_| Err("verification corpus gate failed: fixture".to_string()),
+            |_, _| false,
+        )
+        .expect_err("corpus gate errors must fail the required command");
+        assert!(err.contains("verification corpus gate failed"), "{err}");
+    }
+
+    #[test]
     fn valid_badge_fixture_matches_shields_schema() -> Result<(), String> {
         let root = repo_root()?;
         let schema = read_json(root.join("schemas/badges/shields-endpoint.schema.json"))?;

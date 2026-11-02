@@ -2141,34 +2141,39 @@ mod tests {
         Ok(())
     }
 
-    /// A schema tightened to reject a shape some committed producer golden
-    /// carries must fail the corpus gate (#3919 acceptance 5).
+    /// A schema tightened to reject a shape a committed producer golden carries
+    /// must fail the corpus gate (#3919 acceptance 5).
     #[test]
-    fn tightened_check_schema_fails_on_committed_producer_golden() -> Result<(), String> {
-        let root = crate::repo_root()?;
-        let schema_path = root.join("schemas/ripr/check.schema.json");
-        let original = std::fs::read_to_string(&schema_path)
-            .map_err(|error| format!("read {}: {error}", schema_path.display()))?;
-        let tightened = original.replace("\"flow_sink\": {", "\"flow_sink\": { \"not\": {},");
-        if tightened == original {
+    fn tightened_schema_rejects_a_committed_producer_golden() -> Result<(), String> {
+        let root = example_root();
+        write(
+            &root.join("fixtures/a/expected/example.json"),
+            r#"{"schema_version":"0.1","status":"pass","note":"producer"}"#,
+        );
+        write(
+            &root.join(EXAMPLE_SCHEMA),
+            r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/example.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "status": { "enum": ["pass", "fail"] }
+  }
+}"#,
+        );
+        let report = run(
+            &root,
+            &[binding(Corpus::FileName("example.json"), &[])],
+            &[],
+        )?;
+        if report.violations.is_empty() {
             return Err(
-                "expected check schema to contain a flow_sink object definition to tighten"
-                    .to_string(),
+                "expected a violation when the schema rejects a producer field".to_string(),
             );
         }
-        std::fs::write(&schema_path, &tightened)
-            .map_err(|error| format!("write {}: {error}", schema_path.display()))?;
-        let result = verification_corpus_gate_check(&root);
-        std::fs::write(&schema_path, original)
-            .map_err(|error| format!("restore {}: {error}", schema_path.display()))?;
-        match result {
-            Err(message) if message.contains("verification corpus gate failed") => Ok(()),
-            Err(message) => Err(format!(
-                "expected corpus gate failure on committed golden, got: {message}"
-            )),
-            Ok(_) => Err(
-                "tightened check schema must fail against a committed producer golden".to_string(),
-            ),
-        }
+        Ok(())
     }
 }
