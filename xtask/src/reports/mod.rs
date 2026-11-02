@@ -69,6 +69,7 @@ mod targeted_rerun;
 mod targeted_test;
 mod test_oracles;
 mod verdict_corpus;
+mod verdict_corpus_perl_edit_replay;
 mod verdict_corpus_relabel;
 
 pub(crate) use agentic_bench::agentic_bench;
