@@ -747,7 +747,8 @@ under `rust_indirect_owner_call_unresolved`:
   strings counted) outside its own definition, so an unused macro cannot
   withhold the gap (#12231). Any other occurrence, including a forwarded
   `forward!(name)` that expands `$m!()` and a comment-separated `name/**/!()`,
-  keeps the limit. This is not general name resolution or
+  keeps the limit, as does any scan containing `include!` or a `#[path]` module,
+  whose unseen text may invoke the macro. This is not general name resolution or
   macro expansion (#10162).
 - **generated owner**: the changed line lies in no function of its file and the
   changed expression is an item-position macro invocation
