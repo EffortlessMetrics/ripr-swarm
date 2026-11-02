@@ -480,6 +480,9 @@ fn observed_discriminator_values(
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
         .flatten();
+    let left_constant = (left_resolved.is_none() && left_parameter.is_none())
+        .then(|| boundary_constant(owner, &left, index))
+        .flatten();
     let mut facts = Vec::new();
     let replaced = replaced_equality_constant(probe, owner, owner_source);
 
@@ -604,14 +607,41 @@ fn observed_discriminator_values(
             related_tests,
             index,
             Some(constant),
-            |test, call_line, call_text, value| {
+            |test, call_line, _call_text, value| {
                 if !field_boundary_values_equal(value, &boundary_value, constant) {
                     return;
                 }
                 facts.push(ValueFact {
                     file: Some(test.file.clone()),
                     line: call_line,
-                    text: call_text.to_string(),
+                    text: String::new(),
+                    value: format!("{left} == {right}"),
+                    context: ValueContext::FunctionArgument,
+                });
+            },
+        );
+    }
+    if let Some(constant) = &left_constant
+        && boundary_parameter_field_projection(&parameters, &right).is_some()
+        && let Some(boundary_value) =
+            visible_operand(&left, Some(constant)).map(|operand| operand.value)
+    {
+        collect_boundary_field_values_at_owner_calls(
+            owner,
+            &parameters,
+            &right,
+            probe.location.line,
+            related_tests,
+            index,
+            Some(constant),
+            |test, call_line, _call_text, value| {
+                if !field_boundary_values_equal(value, &boundary_value, constant) {
+                    return;
+                }
+                facts.push(ValueFact {
+                    file: Some(test.file.clone()),
+                    line: call_line,
+                    text: String::new(),
                     value: format!("{left} == {right}"),
                     context: ValueContext::FunctionArgument,
                 });
@@ -2801,6 +2831,9 @@ fn missing_boundary_discriminator(
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
         .flatten();
+    let left_constant = (left_resolved.is_none() && left_parameter.is_none())
+        .then(|| boundary_constant(owner, &left, index))
+        .flatten();
     let exact_rows: Vec<(Vec<ExactOperand>, Vec<ExactOperand>)> = call_values
         .iter()
         .map(|row| {
@@ -2904,6 +2937,21 @@ fn missing_boundary_discriminator(
             .iter()
             .any(|value| {
                 visible_operand(&right, Some(constant)).is_some_and(|operand| {
+                    field_boundary_values_equal(value, &operand.value, constant)
+                })
+            })
+    }) || left_constant.as_ref().is_some_and(|constant| {
+        boundary_parameter_field_projection(&parameters, &right).is_some()
+            && boundary_operand_values_at_owner_calls(
+                owner,
+                &right,
+                probe.location.line,
+                related_tests,
+                index,
+            )
+            .iter()
+            .any(|value| {
+                visible_operand(&left, Some(constant)).is_some_and(|operand| {
                     field_boundary_values_equal(value, &operand.value, constant)
                 })
             })
@@ -6082,7 +6130,7 @@ fn boundary_operand_parameter(
         .or_else(|| boundary_local_operand_parameter(function, owner_source, parameters, operand))
 }
 
-fn boundary_parameter_field_projection(
+pub(in crate::analysis) fn boundary_parameter_field_projection(
     parameters: &[String],
     operand: &str,
 ) -> Option<(String, String)> {

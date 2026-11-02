@@ -10,7 +10,8 @@ use super::super::rust_index::{
     FunctionSummary, OracleFact, RustIndex, TestSummary, extract_literals,
 };
 use super::activation::{
-    call_arguments, comparison_operands, function_parameters, owner_argument_values,
+    boundary_parameter_field_projection, call_arguments, comparison_operands, function_parameters,
+    owner_argument_values,
 };
 use super::helper_transfer::{HelperChain, asserting_method_entry, chain_forwards_owner_result};
 use super::owner_pin::closure_adaptor::{
@@ -258,7 +259,8 @@ fn test_pairs_boundary_input_with_oracle(
         }
         let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
             .unwrap_or_else(|| assertion.text.clone());
-        (calls_resolve(&operands, assertion.line)
+        ((calls_resolve(&operands, assertion.line)
+            || assertion_is_discriminating(assertion))
             && assertion_observes_boundary_owner_call(
                 probe, owner, test, assertion, &operands, activation, scope,
             ))
@@ -1359,8 +1361,27 @@ fn owner_call_arguments_admit_activation_fallback(
         arguments.get(idx).is_some_and(|argument| {
             let argument = argument.trim();
             argument_is_activation_fallback_shape(argument)
+                || argument_names_boundary_parameter(
+                    argument,
+                    &parameters,
+                    left.as_str(),
+                    right.as_str(),
+                )
                 || (slice_len_operand && literal_slice_length(argument).is_some())
         })
+    })
+}
+
+fn argument_names_boundary_parameter(
+    argument: &str,
+    parameters: &[String],
+    left: &str,
+    right: &str,
+) -> bool {
+    let argument = argument.trim().trim_start_matches('&').trim();
+    [left, right].into_iter().any(|operand| {
+        boundary_parameter_field_projection(parameters, operand)
+            .is_some_and(|(parameter, _)| argument == parameter.trim())
     })
 }
 
@@ -1499,8 +1520,18 @@ fn activation_marks_boundary_call(activation: &ActivationEvidence, call: &CallFa
     activation.observed_values.iter().any(|fact| {
         fact.line == call.line
             && fact.value.contains(" == ")
-            && (fact.text.is_empty() || fact.text.contains(&*call.text))
+            && activation_fact_text_pairs_call(fact.text.as_str(), call.text.as_str())
     })
+}
+
+/// Pair activation rows keyed by a bare owner call with assertions that embed
+/// that call (`assert_eq!(owner(x), ..)`), and keep the existing superset match
+/// when the row carries the full assertion text.
+fn activation_fact_text_pairs_call(fact_text: &str, call_text: &str) -> bool {
+    if fact_text.is_empty() {
+        return true;
+    }
+    fact_text.contains(call_text) || call_text.contains(fact_text)
 }
 
 #[cfg(test)]
@@ -1564,6 +1595,26 @@ mod tests {
             None,
             &index,
         )
+    }
+
+    #[test]
+    fn field_assignment_row_pairs_assert_eq_call_text() {
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                file: None,
+                line: 53,
+                text: "is_stale(&manifest)".to_string(),
+                value: "manifest.version == CURRENT".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        let call = CallFact {
+            line: 53,
+            name: "is_stale".into(),
+            text: "assert_eq!(is_stale(&manifest), true);".into(),
+        };
+        assert!(activation_marks_boundary_call(&activation, &call));
     }
 
     #[test]
