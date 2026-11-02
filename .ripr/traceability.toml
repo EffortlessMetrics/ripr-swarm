@@ -21337,3 +21337,26 @@ metrics = [
   "jvm_evidence_contract_registered",
   "jvm_capability_cell_index_complete",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0406"
+name = "Terraform module, native-test, plan/apply, provider, value, state, and external-edge preview boundaries"
+spec = "docs/specs/RIPR-SPEC-0406-terraform-module-native-test-plan-apply-provider-value-state-and-external-edge-boundaries.md"
+tests = []
+fixtures = [
+  "fixtures/rust-verdict-corpus/spec-scopes/RIPR-SPEC-0406.toml",
+  "fixtures/python-verdict-corpus/spec-scopes/RIPR-SPEC-0406.toml",
+  "fixtures/typescript-verdict-corpus/spec-scopes/RIPR-SPEC-0406.toml",
+  "fixtures/perl-verdict-corpus/spec-scopes/RIPR-SPEC-0406.toml",
+]
+code = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0406-terraform-module-native-test-plan-apply-provider-value-state-and-external-edge-boundaries.md",
+  "docs/spec-index.d/RIPR-SPEC-0406.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0406.toml",
+]
+metrics = [
+  "terraform_evidence_contract_registered",
+  "terraform_capability_cell_index_complete",
+  "terraform_generic_hcl_non_claim_registered",
+]
