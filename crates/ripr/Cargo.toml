@@ -88,6 +88,10 @@ rustpython-parser = { version = "0.4", optional = true, default-features = false
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 sha2 = "0.10"
+# Optional SCIP index admission (#8115): decode user-supplied indexes only;
+# no indexer or network is invoked at runtime.
+prost = "0.13"
+bytes = "1"
 toml = "1"
 unicode-segmentation = "=1.13.3"
 unicode-width = "=0.2.2"
@@ -163,6 +167,10 @@ lang-rust = ["dep:ra_ap_syntax", "dep:unicode-ident", "dep:unicode-properties"]
 lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span"]
 lang-python = ["dep:rustpython-parser", "dep:unicode-ident"]
 lang-perl = []
+
+[build-dependencies]
+prost-build = "0.13"
+protoc-bin-vendored = "3.1.0"
 
 [dev-dependencies]
 proptest = "1"

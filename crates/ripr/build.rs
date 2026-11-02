@@ -26,6 +26,7 @@ use build_commit_record::{is_full_commit_id, parse_cargo_vcs_info};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    compile_scip_proto();
     let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR");
     let identity = manifest_dir.as_deref().map(Path::new).and_then(|dir| {
         let vcs_info = dir.join(".cargo_vcs_info.json");
@@ -112,7 +113,35 @@ fn collect_files(path: &Path, files: &mut Vec<PathBuf>) -> Option<()> {
 
 /// Crate sources that decide whether the built binary differs from the
 /// commit, relative to the manifest directory.
-const CRATE_SOURCES: [&str; 3] = ["src", "Cargo.toml", "build.rs"];
+const CRATE_SOURCES: [&str; 4] = ["src", "Cargo.toml", "build.rs", "vendor"];
+
+/// Compile the pinned upstream SCIP proto (#8115) into `OUT_DIR` for the
+/// read-only admission adapter. SCIP types stay behind this generated module.
+fn compile_scip_proto() {
+    let manifest_dir = match std::env::var_os("CARGO_MANIFEST_DIR") {
+        Some(value) => PathBuf::from(value),
+        None => return,
+    };
+    let proto = manifest_dir.join("vendor/scip.proto");
+    if !proto.is_file() {
+        return;
+    }
+    println!("cargo:rerun-if-changed=vendor/scip.proto");
+    let protoc = match protoc_bin_vendored::protoc_bin_path() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("scip.proto compile: vendored protoc unavailable: {error}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(error) = prost_build::Config::new()
+        .protoc_executable(protoc)
+        .compile_protos(&["vendor/scip.proto"], &["vendor/"])
+    {
+        eprintln!("scip.proto compile failed (#8115): {error}");
+        std::process::exit(1);
+    }
+}
 
 /// Repository-root Cargo inputs a workspace member inherits: the package
 /// version, lints and profiles, the lockfile, and Cargo configuration.
