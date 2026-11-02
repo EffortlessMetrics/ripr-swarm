@@ -247,13 +247,9 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
         // Stdout stays empty on every refusal: the release negative corpus
         // (RIPR-SPEC-0134) treats a rendered stdout on rejection as a breach,
         // because the verify command's stdout is the verify artifact.
-        AgentCommand::Verify(options) => run_agent_verify(options).map_err(|error| {
-            if agent_verify_error_is_typed_refusal(&error) {
-                CommandError::Decision(error)
-            } else {
-                CommandError::Failure(error)
-            }
-        }),
+        AgentCommand::Verify(options) => {
+            run_agent_verify(options).map_err(AgentVerifyError::into_command_error)
+        }
         // Typed refusals carry the Decision variant (exit code 3).
         AgentCommand::VerifyExecute(options) => run_agent_verify_execute(options),
         AgentCommand::Receipt(options) => run_agent_receipt(options).map_err(CommandError::from),
@@ -975,13 +971,103 @@ fn render_agent_packet_for_seam_with_report(
     Ok(output::agent_seam_packets::render_agent_seam_packet_json_with_context(entry, context))
 }
 
-fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), String> {
+fn run_agent_verify(options: AgentVerifyOptions) -> Result<(), AgentVerifyError> {
     let rendered = render_agent_verify(&options)?;
     print!("{rendered}");
     Ok(())
 }
 
-fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
+/// Deliberate named refusals from `render_agent_verify`; exit mapping reads
+/// this type, not message prefixes (#12102).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum AgentVerifyRefusalKind {
+    InputDrift,
+    NoMovement,
+    GapBinding,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum AgentVerifyError {
+    Operational(String),
+    Refusal {
+        kind: AgentVerifyRefusalKind,
+        message: String,
+    },
+}
+
+impl AgentVerifyError {
+    pub(super) fn message(&self) -> &str {
+        match self {
+            Self::Operational(message) | Self::Refusal { message, .. } => message,
+        }
+    }
+
+    pub(super) fn into_command_error(self) -> CommandError {
+        match self {
+            Self::Operational(message) => CommandError::Failure(message),
+            Self::Refusal { message, .. } => CommandError::Decision(message),
+        }
+    }
+}
+
+impl std::fmt::Display for AgentVerifyError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.message())
+    }
+}
+
+impl From<String> for AgentVerifyError {
+    fn from(message: String) -> Self {
+        Self::Operational(message)
+    }
+}
+
+impl From<AgentVerifyError> for String {
+    fn from(error: AgentVerifyError) -> Self {
+        error.message().to_string()
+    }
+}
+
+/// Exact `render_agent_verify` error for drifted analysis inputs.
+const AGENT_VERIFY_INPUT_DRIFT_ERROR: &str =
+    "agent verify artifacts are incomparable: analysis input identities differ";
+
+pub(super) fn classify_incomparable_pair_error(error: String) -> AgentVerifyError {
+    if error == "analysis input identities differ" {
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::InputDrift,
+            message: AGENT_VERIFY_INPUT_DRIFT_ERROR.to_string(),
+        }
+    } else {
+        AgentVerifyError::Operational(format!("agent verify artifacts are incomparable: {error}"))
+    }
+}
+
+pub(super) fn classify_verify_movement_error(error: String) -> AgentVerifyError {
+    if error.contains("no repository movement") {
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::NoMovement,
+            message: format!("agent verify {error}"),
+        }
+    } else {
+        AgentVerifyError::Operational(format!("agent verify {error}"))
+    }
+}
+
+pub(super) fn classify_gap_binding_error(error: String) -> AgentVerifyError {
+    if error.starts_with(crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX) {
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::GapBinding,
+            message: error,
+        }
+    } else {
+        AgentVerifyError::Operational(error)
+    }
+}
+
+pub(super) fn render_agent_verify(
+    options: &AgentVerifyOptions,
+) -> Result<String, AgentVerifyError> {
     let before_path =
         validate_agent_verify_snapshot_path(&options.root, &options.before, "--before")?;
     let after_path = validate_agent_verify_snapshot_path(&options.root, &options.after, "--after")?;
@@ -992,11 +1078,15 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     let after_identity =
         crate::agent::artifact::validate_verify_snapshot(&options.root, &after_json, "after")?;
     crate::agent::artifact::validate_comparable_pair(&before_identity, &after_identity)
-        .map_err(|error| format!("agent verify artifacts are incomparable: {error}"))?;
+        .map_err(classify_incomparable_pair_error)?;
     crate::agent::artifact::validate_pair_lineage(&options.root, &before_identity, &after_identity)
-        .map_err(|error| format!("agent verify artifacts are incomparable: {error}"))?;
+        .map_err(|error| {
+            AgentVerifyError::Operational(format!(
+                "agent verify artifacts are incomparable: {error}"
+            ))
+        })?;
     crate::agent::artifact::validate_verify_movement(&before_identity, &after_identity)
-        .map_err(|error| format!("agent verify {error}"))?;
+        .map_err(classify_verify_movement_error)?;
     // `--gap-id` adds a positive closure requirement on top of the pair
     // checks: the named gap must be open before and `exposed` after.
     let bound_gap = options
@@ -1009,6 +1099,7 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
                 &after_json,
                 gap_id,
             )
+            .map_err(classify_gap_binding_error)
         })
         .transpose()?;
     let before_produced_from_dirty = before_identity.historical_produced_from_dirty();
@@ -1050,25 +1141,7 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
         &binding,
         bound_gap.as_ref(),
     )
-}
-
-/// Exact `render_agent_verify` error for drifted analysis inputs.
-const AGENT_VERIFY_INPUT_DRIFT_ERROR: &str =
-    "agent verify artifacts are incomparable: analysis input identities differ";
-
-/// Prefix of the `render_agent_verify` error for a no-movement refusal.
-const AGENT_VERIFY_NO_MOVEMENT_PREFIX: &str =
-    "agent verify no repository movement between before and after artifacts";
-
-/// True when a `render_agent_verify` error is a deliberate named refusal
-/// (input-identity drift or a no-movement verify refusal) rather than an
-/// operational failure. Matched on the whole message or its leading clause,
-/// never a substring: path-bearing operational errors echo user-supplied
-/// paths, and a path must not turn an unreadable input into a refusal.
-fn agent_verify_error_is_typed_refusal(error: &str) -> bool {
-    error == AGENT_VERIFY_INPUT_DRIFT_ERROR
-        || error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX)
-        || error.starts_with(crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX)
+    .map_err(AgentVerifyError::from)
 }
 
 fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), CommandError> {
@@ -2853,50 +2926,48 @@ fn run_agent_repair_phase(
             let rendered_verify = match render_agent_verify(&verify_options) {
                 Ok(rendered) => rendered,
                 Err(error) => {
-                    // Only deliberate named refusals are typed (exit 3):
-                    // drifted analysis inputs and a no-movement verify
-                    // refusal. Snapshot canonicalization, reads, artifact
-                    // validation, and rendering failures are operational
-                    // (exit 2) even though the attempt was already selected.
-                    if agent_verify_error_is_typed_refusal(&error) {
-                        if error == AGENT_VERIFY_INPUT_DRIFT_ERROR {
-                            for line in
-                                repair_after_input_drift_lines(&caller_root, store_ref, &attempt)
-                            {
-                                refusal.narrate(line);
+                    // Deliberate named refusals are typed (exit 3) from
+                    // [`AgentVerifyError`], not message-prefix matching (#12102).
+                    if let AgentVerifyError::Refusal { kind, message } = &error {
+                        match kind {
+                            AgentVerifyRefusalKind::InputDrift => {
+                                for line in repair_after_input_drift_lines(
+                                    &caller_root,
+                                    store_ref,
+                                    &attempt,
+                                ) {
+                                    refusal.narrate(line);
+                                }
                             }
-                        } else if error
-                            .starts_with(crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX)
-                        {
-                            // The named gap did not close: it is absent, was
-                            // never open, or still reads open. Counts against
-                            // the same retry budget as a no-movement refusal.
-                            refusal.narrate(format!("{error}."));
-                            refusal.code = Some(no_movement_refusal_code(prior_refusals));
-                            for line in repair_after_no_movement_lines(
-                                &caller_root,
-                                store_ref,
-                                &attempt,
-                                &cage_policy,
-                                prior_refusals,
-                            ) {
-                                refusal.narrate(line);
+                            AgentVerifyRefusalKind::GapBinding => {
+                                refusal.narrate(format!("{message}."));
+                                refusal.code = Some(no_movement_refusal_code(prior_refusals));
+                                for line in repair_after_no_movement_lines(
+                                    &caller_root,
+                                    store_ref,
+                                    &attempt,
+                                    &cage_policy,
+                                    prior_refusals,
+                                ) {
+                                    refusal.narrate(line);
+                                }
                             }
-                        } else if error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX) {
-                            refusal.code = Some(no_movement_refusal_code(prior_refusals));
-                            for line in repair_after_no_movement_lines(
-                                &caller_root,
-                                store_ref,
-                                &attempt,
-                                &cage_policy,
-                                prior_refusals,
-                            ) {
-                                refusal.narrate(line);
+                            AgentVerifyRefusalKind::NoMovement => {
+                                refusal.code = Some(no_movement_refusal_code(prior_refusals));
+                                for line in repair_after_no_movement_lines(
+                                    &caller_root,
+                                    store_ref,
+                                    &attempt,
+                                    &cage_policy,
+                                    prior_refusals,
+                                ) {
+                                    refusal.narrate(line);
+                                }
                             }
                         }
                         refusal.typed = true;
                     }
-                    return Err(error);
+                    return Err(error.message().to_string());
                 }
             };
             refusal

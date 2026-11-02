@@ -46,36 +46,52 @@ fn require_contains(haystack: &str, fragments: &[&str]) -> Result<(), String> {
 
 #[test]
 fn verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses() {
-    assert!(agent_verify_error_is_typed_refusal(
-        AGENT_VERIFY_INPUT_DRIFT_ERROR
+    assert!(matches!(
+        classify_incomparable_pair_error("analysis input identities differ".to_string()),
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::InputDrift,
+            ..
+        }
     ));
-    assert!(agent_verify_error_is_typed_refusal(&format!(
-        "{AGENT_VERIFY_NO_MOVEMENT_PREFIX}: nothing changed"
-    )));
-    assert!(agent_verify_error_is_typed_refusal(&format!(
-        "{}: gap `g` is still open",
-        crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX
-    )));
-    // A path-bearing operational error that merely echoes refusal text must
-    // stay a failure, as must a drift message with trailing text.
-    assert!(!agent_verify_error_is_typed_refusal(&format!(
-        "failed to read agent verify --before snapshot dir/{AGENT_VERIFY_INPUT_DRIFT_ERROR}"
-    )));
-    for prefix in [
-        AGENT_VERIFY_NO_MOVEMENT_PREFIX,
-        crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX,
-    ] {
-        assert!(!agent_verify_error_is_typed_refusal(&format!(
-            "failed to read agent verify --before snapshot dir/{prefix}"
-        )));
-    }
-    assert!(!agent_verify_error_is_typed_refusal(&format!(
-        "{AGENT_VERIFY_INPUT_DRIFT_ERROR} (extra)"
-    )));
-    assert!(!agent_verify_error_is_typed_refusal(
-        "agent verify artifacts are incomparable: repository heads differ"
+    assert!(matches!(
+        classify_verify_movement_error(
+            "no repository movement between before and after artifacts: still at abc".to_string()
+        ),
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::NoMovement,
+            ..
+        }
     ));
-    assert!(!agent_verify_error_is_typed_refusal(""));
+    assert!(matches!(
+        classify_gap_binding_error(format!(
+            "{}: gap `g` is still open",
+            crate::agent::artifact::GAP_BINDING_REFUSAL_PREFIX
+        )),
+        AgentVerifyError::Refusal {
+            kind: AgentVerifyRefusalKind::GapBinding,
+            ..
+        }
+    ));
+    assert!(matches!(
+        classify_incomparable_pair_error("repository heads differ".to_string()),
+        AgentVerifyError::Operational(_)
+    ));
+    assert!(matches!(
+        classify_verify_movement_error("unexpected movement shape".to_string()),
+        AgentVerifyError::Operational(_)
+    ));
+}
+
+#[test]
+fn verify_exit_class_follows_refusal_kind_not_reworded_message() {
+    let operational = AgentVerifyError::Operational("failed to read snapshot".to_string());
+    assert_eq!(operational.into_command_error().exit_code(), 2);
+
+    let reworded = AgentVerifyError::Refusal {
+        kind: AgentVerifyRefusalKind::NoMovement,
+        message: "custom prose that omits the historical prefix entirely".to_string(),
+    };
+    assert_eq!(reworded.into_command_error().exit_code(), 3);
 }
 
 #[test]
