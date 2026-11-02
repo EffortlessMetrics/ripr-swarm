@@ -2346,6 +2346,9 @@ mod route_identity_tests;
 mod row_miss_tests;
 
 #[cfg(test)]
+pub(crate) use row_miss_tests::{python_direct_and_advisory_finding, python_miss_matrix_findings};
+
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]

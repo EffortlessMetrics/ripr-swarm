@@ -1063,4 +1063,224 @@ mod tests {
             Ok(())
         }
     }
+
+    /// #5496: production-classified Python findings through every report
+    /// surface this module's callers own.
+    #[cfg(feature = "lang-python")]
+    mod python_production {
+        use super::*;
+
+        fn report_with(findings: Vec<crate::domain::Finding>) -> crate::app::CheckOutput {
+            crate::app::CheckOutput {
+                value_origins: Default::default(),
+                harness_projections: Vec::new(),
+                schema_version: "0.2".to_string(),
+                tool: "ripr".to_string(),
+                mode: crate::app::Mode::Draft,
+                root: PathBuf::from("."),
+                base: None,
+                summary: crate::domain::Summary::default(),
+                findings,
+                preview_language_advisories: Vec::new(),
+                language_runs: Vec::new(),
+                no_scope_provided: false,
+                unanalyzed_working_tree: false,
+                untracked_working_tree_source_paths: Vec::new(),
+                ignored_working_tree_source_paths: Vec::new(),
+                suppression: None,
+                analysis_outcome: None,
+                partial_scope: None,
+                unlinked_python_tests: None,
+                analyzed_revisions: None,
+            }
+        }
+
+        fn json_row<'a>(
+            rows: &'a serde_json::Value,
+            name: &str,
+        ) -> Result<&'a serde_json::Map<String, serde_json::Value>, String> {
+            rows.as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_object)
+                .find(|row| row.get("name").and_then(serde_json::Value::as_str) == Some(name))
+                .ok_or_else(|| format!("no JSON row for `{name}` in {rows}"))
+        }
+
+        fn line_naming<'a>(text: &'a str, prefix: &str, name: &str) -> Result<&'a str, String> {
+            let mut lines = text
+                .lines()
+                .filter(|line| line.trim_start().starts_with(prefix) && line.contains(name));
+            match (lines.next(), lines.next()) {
+                (Some(line), None) => Ok(line),
+                _ => Err(format!(
+                    "expected one `{prefix}` line for `{name}` in:\n{text}"
+                )),
+            }
+        }
+
+        #[test]
+        fn python_production_rows_agree_across_report_surfaces() -> Result<(), String> {
+            let finding = crate::analysis::python_direct_and_advisory_finding()?;
+            let explained = finding
+                .related_tests
+                .iter()
+                .find(|row| row.miss.is_some())
+                .ok_or("expected one explained row")?;
+            let withheld = finding
+                .related_tests
+                .iter()
+                .find(|row| row.miss.is_none())
+                .ok_or("expected one withheld row")?;
+            let why = related_test_miss_reason(explained, &finding.probe.family)
+                .ok_or("the explained row should have a reason")?;
+            assert_eq!(
+                related_test_miss_reason(withheld, &finding.probe.family),
+                None
+            );
+            let label = related_test_miss_label(explained);
+            let output = report_with(vec![finding.clone()]);
+
+            let json: serde_json::Value =
+                serde_json::from_str(&crate::output::json::render(&output))
+                    .map_err(|error| format!("parse check JSON: {error}"))?;
+            let context: serde_json::Value =
+                serde_json::from_str(&crate::output::json::render_context_packet(
+                    &finding,
+                    8,
+                    &crate::config::RiprConfig::default(),
+                    std::path::Path::new("."),
+                ))
+                .map_err(|error| format!("parse context packet: {error}"))?;
+            for rows in [
+                &json["findings"][0]["related_tests"],
+                &context["related_tests"],
+            ] {
+                let row = json_row(rows, &explained.name)?;
+                assert_eq!(
+                    row.get("miss").and_then(serde_json::Value::as_str),
+                    Some(explained.miss.expect("miss token").as_str())
+                );
+                assert_eq!(
+                    row.get("why").and_then(serde_json::Value::as_str),
+                    Some(why.as_str())
+                );
+                let row = json_row(rows, &withheld.name)?;
+                assert!(!row.contains_key("miss") && !row.contains_key("why"));
+            }
+
+            let full = crate::render_check(&output, &crate::OutputFormat::HumanFull)?;
+            let explain = crate::output::human::render_finding_with_context_command(
+                &finding,
+                &crate::config::RiprConfig::default(),
+                "ripr explain probe",
+                std::path::Path::new("."),
+            );
+            let (evidence, verdict) = explain
+                .split_once("Why this verdict")
+                .ok_or("explain should add the verdict section")?;
+            for (text, prefix, separator) in [
+                (full.as_str(), "- related test", "; "),
+                (evidence, "- related test", "; "),
+                (verdict, "- tests/test_subject.py", ": "),
+            ] {
+                let line = line_naming(text, prefix, &explained.name)?;
+                assert!(
+                    line.ends_with(&format!("{separator}{label}: {why}")),
+                    "{line}"
+                );
+                let line = line_naming(text, prefix, &withheld.name)?;
+                assert!(
+                    !line.contains(&why) && !line.contains(&format!("{label}:")),
+                    "{line}"
+                );
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn python_production_miss_changes_no_projected_decision() -> Result<(), String> {
+            use crate::domain::Finding;
+
+            fn without_miss_keys(value: &mut serde_json::Value) {
+                match value {
+                    serde_json::Value::Object(map) => {
+                        map.remove("miss");
+                        map.remove("why");
+                        map.values_mut().for_each(without_miss_keys);
+                    }
+                    serde_json::Value::Array(items) => items.iter_mut().for_each(without_miss_keys),
+                    _ => {}
+                }
+            }
+            fn decisions(finding: &Finding) -> Result<String, String> {
+                let output = report_with(vec![finding.clone()]);
+                let config = crate::config::RiprConfig::default();
+                let mut report: serde_json::Value =
+                    serde_json::from_str(&crate::output::json::render(&output))
+                        .map_err(|error| format!("parse check JSON: {error}"))?;
+                without_miss_keys(&mut report);
+                let mut context: serde_json::Value =
+                    serde_json::from_str(&crate::output::json::render_context_packet(
+                        finding,
+                        8,
+                        &config,
+                        std::path::Path::new("."),
+                    ))
+                    .map_err(|error| format!("parse context packet: {error}"))?;
+                without_miss_keys(&mut context);
+                let mut sarif: serde_json::Value = serde_json::from_str(
+                    &crate::output::sarif::render_findings_sarif(&output, &config, &[]),
+                )
+                .map_err(|error| format!("parse SARIF: {error}"))?;
+                without_miss_keys(&mut sarif);
+                Ok(format!(
+                    "{report}\n{context}\n{sarif}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}",
+                    crate::output::github::render_with_config(&output, &config),
+                    crate::output::badge::ripr_badge_summary(
+                        &output,
+                        crate::output::badge::BadgePolicy::default()
+                    ),
+                    crate::domain::DiagnosticWitness::from_finding(finding),
+                    crate::output::preview_actionability::preview_actionability_for(finding),
+                    crate::output::python_repair_card::python_repair_card(finding),
+                    crate::output::next_step::reconcile_next_step(finding),
+                    finding
+                        .oracle_related_tests()
+                        .map(|test| &test.name)
+                        .collect::<Vec<_>>(),
+                ))
+            }
+            let mut explained_rows = 0;
+            let findings = crate::analysis::python_miss_matrix_findings()?;
+            let current = findings.iter().cloned().map(|mut finding| {
+                finding.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+                finding
+            });
+            let findings = findings
+                .clone()
+                .into_iter()
+                .chain(current)
+                .collect::<Vec<_>>();
+            for finding in findings {
+                let mut cleared = finding.clone();
+                for row in &mut cleared.related_tests {
+                    row.miss = None;
+                    row.miss_support = None;
+                }
+                assert_eq!(decisions(&finding)?, decisions(&cleared)?);
+                let mut full = crate::output::human::render_finding(&finding);
+                for row in &finding.related_tests {
+                    if let Some(why) = related_test_miss_reason(row, &finding.probe.family) {
+                        explained_rows += 1;
+                        full =
+                            full.replace(&format!("; {}: {why}", related_test_miss_label(row)), "");
+                    }
+                }
+                assert_eq!(full, crate::output::human::render_finding(&cleared));
+            }
+            assert!(explained_rows > 0, "matrix should explain at least one row");
+            Ok(())
+        }
+    }
 }

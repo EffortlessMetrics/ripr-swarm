@@ -10293,4 +10293,53 @@ mod tests {
         assert!(!digest.contains(&why), "{digest}");
         Ok(())
     }
+
+    /// #5496: the human digest names a related test with the shared sentence
+    /// when that row owns a miss, and with no reason when the first row is the
+    /// withheld mock-oracle row.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn python_production_digest_reason_follows_the_named_row() -> Result<(), String> {
+        use crate::output::related_test_miss::related_test_miss_reason;
+        let finding = crate::analysis::python_direct_and_advisory_finding()?;
+        let explained = finding
+            .related_tests
+            .iter()
+            .find(|row| row.miss.is_some())
+            .ok_or("expected one explained row")?;
+        let withheld = finding
+            .related_tests
+            .iter()
+            .find(|row| row.miss.is_none())
+            .ok_or("expected one withheld row")?;
+        let why = related_test_miss_reason(explained, &finding.probe.family)
+            .ok_or("the explained row should have a reason")?;
+        assert_eq!(
+            related_test_miss_reason(withheld, &finding.probe.family),
+            None
+        );
+        let config = crate::config::RiprConfig::default();
+        let digest =
+            super::sections::render_finding_digest_with_config(&finding, &config, Path::new("."));
+        assert!(
+            digest.contains(&format!(" {}\n", withheld.name)),
+            "{digest}"
+        );
+        assert!(!digest.contains(&why), "{digest}");
+        let mut explained_first = finding.clone();
+        explained_first
+            .related_tests
+            .retain(|row| row.name != explained.name);
+        explained_first.related_tests.insert(0, explained.clone());
+        let digest = super::sections::render_finding_digest_with_config(
+            &explained_first,
+            &config,
+            Path::new("."),
+        );
+        assert!(
+            digest.contains(&format!(" {} ({why})\n", explained.name)),
+            "{digest}"
+        );
+        Ok(())
+    }
 }

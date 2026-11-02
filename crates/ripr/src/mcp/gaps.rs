@@ -2434,6 +2434,46 @@ mod tests {
         Ok(())
     }
 
+    /// #5496: the MCP gap evidence carries the production-classified Python
+    /// rows with the shared sentence on the explained row only.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn python_production_rows_agree_in_gap_evidence() -> Result<(), String> {
+        use crate::output::related_test_miss::related_test_miss_reason;
+        let finding = crate::analysis::python_direct_and_advisory_finding()?;
+        let explained = finding
+            .related_tests
+            .iter()
+            .find(|row| row.miss.is_some())
+            .ok_or("expected one explained row")?;
+        let withheld = finding
+            .related_tests
+            .iter()
+            .find(|row| row.miss.is_none())
+            .ok_or("expected one withheld row")?;
+        let why = related_test_miss_reason(explained, &finding.probe.family)
+            .ok_or("the explained row should have a reason")?;
+        let item = GapItem::from_finding(&finding, Path::new("/test-root"))?;
+        let rows = item.evidence_core["related_tests"]
+            .as_array()
+            .ok_or("expected related_tests in gap evidence")?;
+        let explained_row = rows
+            .iter()
+            .find(|row| row["name"] == explained.name)
+            .ok_or("explained row in evidence")?;
+        let withheld_row = rows
+            .iter()
+            .find(|row| row["name"] == withheld.name)
+            .ok_or("withheld row in evidence")?;
+        assert_eq!(
+            explained_row["miss"].as_str(),
+            explained.miss.map(|miss| miss.as_str())
+        );
+        assert_eq!(explained_row["why"], why.as_str());
+        assert!(withheld_row["miss"].is_null() && withheld_row["why"].is_null());
+        Ok(())
+    }
+
     #[test]
     fn gap_projection_renders_every_served_file_root_relative() -> Result<(), String> {
         // #5254 item 6: the observed wire leak was a canonicalized finding

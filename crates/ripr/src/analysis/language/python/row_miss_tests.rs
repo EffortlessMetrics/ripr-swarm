@@ -2739,3 +2739,94 @@ fn multiline_sibling_only_row_is_observation_unconfirmed() -> Result<(), String>
     );
     Ok(())
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// #5496 — production-classified findings for cross-surface parity tests
+// (`output::related_test_miss`, `lsp`, `mcp::gaps`, human digest). The
+// classifier matrix lives above; these exports pin the shared renderer on
+// real Python rows without packet indirection.
+// ──────────────────────────────────────────────────────────────────────
+
+const MOCK_AND_WEAK_TESTS: &str = "def test_mock():\n    cb = Mock()\n    score(cb)\n    cb.assert_called_once_with(1)\n\ndef test_weak():\n    assert score(1)\n";
+
+const MIXED_NO_CALL_PATH_AND_WEAK_TESTS: &str = "def test_score_is_importable():\n    assert callable(score)\n\ndef test_weak():\n    assert score(1)\n";
+
+/// Mock-oracle row keeps `miss: None`; the weak sibling carries
+/// `weak_assertion`. Used as the primary two-row surface-parity fixture.
+pub(crate) fn python_mock_and_weak_finding() -> Result<Finding, String> {
+    score_case(MOCK_AND_WEAK_TESTS)
+}
+
+/// Heuristic-only row plus a direct weak row; both carry distinct misses.
+pub(crate) fn python_mixed_no_call_path_and_weak_finding() -> Result<Finding, String> {
+    score_case(MIXED_NO_CALL_PATH_AND_WEAK_TESTS)
+}
+
+/// The two-row finding for surface parity: the explained row is `test_weak`,
+/// the withheld row is `test_mock`.
+pub(crate) fn python_direct_and_advisory_finding() -> Result<Finding, String> {
+    python_mock_and_weak_finding()
+}
+
+fn python_miss_matrix_cases() -> Result<Vec<Finding>, String> {
+    Ok(vec![
+        python_mock_and_weak_finding()?,
+        python_mixed_no_call_path_and_weak_finding()?,
+        score_case(
+            "def test_exact():\n    assert score(0) == 8\n\ndef test_weak():\n    assert score(1)\n",
+        )?,
+        score_case("def test_score():\n    score(0)\n")?,
+        score_case(
+            "from src.subject import other\n\ndef test_score():\n    score(0)\n    assert other(1) == 2\n",
+        )?,
+        reserve_case("def test_off():\n    assert can_reserve(5, 3) == True\n")?,
+    ])
+}
+
+/// Production-classified matrix findings for output-side invariance tests.
+pub(crate) fn python_miss_matrix_findings() -> Result<Vec<Finding>, String> {
+    python_miss_matrix_cases()
+}
+
+/// Verdict invariance, producer side (#5496): clearing every row miss leaves
+/// each decision field unchanged on production-classified findings.
+#[test]
+fn python_related_test_miss_is_the_only_field_the_rule_writes() -> Result<(), String> {
+    let mut explained_rows = 0;
+    for finding in python_miss_matrix_findings()? {
+        let mut cleared = finding.clone();
+        for row in &mut cleared.related_tests {
+            explained_rows += usize::from(row.miss.is_some());
+            row.miss = None;
+            row.miss_support = None;
+        }
+        assert_eq!(finding.class, cleared.class);
+        assert_eq!(finding.ripr, cleared.ripr);
+        assert_eq!(finding.confidence, cleared.confidence);
+        assert_eq!(finding.stop_reasons, cleared.stop_reasons);
+        assert_eq!(finding.canonical_gap, cleared.canonical_gap);
+        assert_eq!(
+            finding.activation.missing_discriminators,
+            cleared.activation.missing_discriminators
+        );
+        assert_eq!(finding.related_tests.len(), cleared.related_tests.len());
+        for (row, base) in finding
+            .related_tests
+            .iter()
+            .zip(cleared.related_tests.iter())
+        {
+            assert_eq!(row.name, base.name);
+            assert_eq!(row.file, base.file);
+            assert_eq!(row.line, base.line);
+            assert_eq!(row.oracle, base.oracle);
+            assert_eq!(row.oracle_kind, base.oracle_kind);
+            assert_eq!(row.oracle_strength, base.oracle_strength);
+            assert_eq!(row.relation_reason, base.relation_reason);
+            assert_eq!(row.relation_confidence, base.relation_confidence);
+            assert_eq!(row.role, base.role);
+            assert_eq!(row.is_contributing(), base.is_contributing());
+        }
+    }
+    assert!(explained_rows > 0, "matrix should explain at least one row");
+    Ok(())
+}
