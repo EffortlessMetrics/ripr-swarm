@@ -1,0 +1,1 @@
+- Draft and Fast diff indexes now treat target-root placement as unavailable when any workspace member has no indexed files, so an unindexed member's unresolved `include!` cannot let a false gap credit slip through on the inner-loop path (#10149).
