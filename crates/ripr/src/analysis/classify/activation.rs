@@ -7682,6 +7682,10 @@ fn float_exponent_end(chars: &[(usize, char)], cursor: usize) -> Option<usize> {
     if matches!(chars.get(digits_at).map(|(_, ch)| *ch), Some('+' | '-')) {
         digits_at += 1;
     }
+    // Rust allows separators before the exponent digits (`1.0e_5`).
+    while chars.get(digits_at).is_some_and(|(_, ch)| *ch == '_') {
+        digits_at += 1;
+    }
     if !chars
         .get(digits_at)
         .is_some_and(|(_, ch)| ch.is_ascii_digit())
@@ -7704,18 +7708,42 @@ fn float_exponent_end(chars: &[(usize, char)], cursor: usize) -> Option<usize> {
 /// value it is spelled as, so it yields no exact value (#6912). A cast that
 /// keeps the value, or a cast to a type this does not know, is left alone.
 fn is_truncated_by_cast(literal: &str, rest: &str) -> bool {
-    let Some(after_as) = rest.trim_start().strip_prefix("as") else {
-        return false;
-    };
-    if !after_as.starts_with(char::is_whitespace) {
-        return false;
+    // A type suffix on the literal (`300u16`) and closing parentheses around it
+    // (`(300) as u8`) sit between the literal and its first `as`. A closing
+    // parenthesis may also end a call (`f(300) as u8` casts the call), which
+    // only makes this abstain more: the value is dropped, never kept.
+    let mut remaining = rest;
+    if remaining.starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_') {
+        let suffix_len = remaining
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .unwrap_or(remaining.len());
+        remaining = &remaining[suffix_len..];
     }
-    let target: String = after_as
-        .trim_start()
-        .chars()
-        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-        .collect();
-    let (min, max): (i128, i128) = match target.as_str() {
+    // The value survives a cast chain (`300 as u16 as u8`) only if it fits
+    // every target, so each step is checked against the literal itself.
+    loop {
+        remaining = remaining.trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')');
+        let Some(after_as) = remaining.strip_prefix("as") else {
+            return false;
+        };
+        if !after_as.starts_with(char::is_whitespace) {
+            return false;
+        }
+        let after_as = after_as.trim_start();
+        let target_len = after_as
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .unwrap_or(after_as.len());
+        if cast_changes_value(literal, &after_as[..target_len]) {
+            return true;
+        }
+        remaining = &after_as[target_len..];
+    }
+}
+
+/// Whether casting the literal to the named integer type changes its value.
+/// A type this does not know (a float, `char`, a user alias) is left alone.
+fn cast_changes_value(literal: &str, target: &str) -> bool {
+    let (min, max): (i128, i128) = match target {
         "u8" => (0, i128::from(u8::MAX)),
         "i8" => (i128::from(i8::MIN), i128::from(i8::MAX)),
         "u16" => (0, i128::from(u16::MAX)),
@@ -10190,6 +10218,8 @@ assert_eq!(input.amount, 100);"#
             "score(1e+5)",
             "score(1e5_f32)",
             "score(1_0e1_0)",
+            "score(1.0e_5)",
+            "score(1.0e-_5)",
         ] {
             assert!(scalar_values(spelled).is_empty(), "{spelled}");
         }
@@ -10218,6 +10248,11 @@ assert_eq!(input.amount, 100);"#
             "score(0b1_0000_0000 as u8)",
             "score(-0x81 as i8)",
             "score(1.5e0 as u8)",
+            "score(300u16 as u8)",
+            "score((300) as u8)",
+            "score(300 as u16 as u8)",
+            "score(300_u16 as u8)",
+            "score(0x100u16 as u8)",
         ] {
             assert!(scalar_values(spelled).is_empty(), "{spelled}");
         }
