@@ -11,6 +11,7 @@ Linked issues:
 - #9013 (empty-diff --base candidate can name a branch whose diff ripr
   itself refuses as oversized)
 - #7644 (first-run empty-diff guidance, delivered)
+- #10821 (preview-language budgets on the same probe)
 
 Linked PRs:
 
@@ -42,6 +43,13 @@ advised run would itself be analyzed:
 - the diff's Rust changed lines (including rename destinations, brace
   and quoted numstat forms) stay within the changed-Rust-line guard
   (`RIPR_MAX_DIFF_CHANGED_RUST_LINES`);
+- admitted changed lines of each *enabled* preview language stay within
+  that language's budget, using the same admission predicate the
+  pipeline guards use (`language_admits_changed_path`): Python under
+  `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES`, and the routed TypeScript /
+  JavaScript family under `RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES`.
+  Disabled languages are not counted. An unreadable or invalid preview
+  budget yields no advice, matching the Rust fail-closed rule (#10821);
 - the diff's changed-file count stays within the parser guard
   (`RIPR_MAX_DIFF_INDEX_FILES`);
 - submodule state is compared with `--ignore-submodules=none`, matching
@@ -55,7 +63,9 @@ commit/`--worktree` safe action owns the empty state.
 ## Required Evidence
 
 - Red-to-green unit tests beside the probe for the oversized-line,
-  oversized-file, rename-counting, and smallest-diff cases.
+  oversized-file, rename-counting, smallest-diff, preview-language
+  budget, excluded/disabled preview, renamed-Python, and invalid
+  preview-budget cases.
 - Existing probe rejection tests unchanged (alias, descendant,
   tree-restoring range, outside-root changes).
 - Live scratch-repo witness: the oversized branch is not advised and
@@ -68,6 +78,11 @@ commit/`--worktree` safe action owns the empty state.
 - `another_base_candidate_counts_renamed_rust_lines`
 - `another_base_candidate_prefers_the_smallest_analyzable_diff`
 - `numstat_new_path_unwraps_rename_and_quote_forms`
+- `another_base_candidate_rejects_python_over_its_preview_budget`
+- `another_base_candidate_counts_javascript_against_the_typescript_budget`
+- `another_base_candidate_ignores_disabled_or_excluded_preview_python`
+- `another_base_candidate_counts_renamed_python_lines`
+- `another_base_candidate_yields_no_advice_for_an_invalid_preview_budget`
 
 ## Acceptance Examples
 
@@ -86,6 +101,9 @@ commit/`--worktree` safe action owns the empty state.
 
 - `crates/ripr/src/analysis/diff/load.rs` — `another_base_candidate`,
   `another_base_candidate_with_limits`, `numstat_new_path`.
+- `crates/ripr/src/analysis/pipeline.rs` — shared
+  `language_admits_changed_path`, `diff_changed_python_line_limit`,
+  `diff_changed_typescript_line_limit` (visibility only).
 - `crates/ripr/src/analysis/language/rust/mod.rs` — shared
   `diff_changed_rust_line_limit` guard.
 - `crates/ripr/src/analysis/diff/parse.rs` — shared
@@ -93,5 +111,5 @@ commit/`--worktree` safe action owns the empty state.
 
 ## Metrics
 
-- Gate: the five mapped tests pass; no advised candidate's root-scoped
-  diff exceeds either guard.
+- Gate: the mapped tests pass; no advised candidate's root-scoped
+  diff exceeds the Rust, file, or enabled preview-language guards.

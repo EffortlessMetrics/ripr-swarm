@@ -1,0 +1,13 @@
+# Alternate-base probe screens enabled preview-language budgets (#10821).
+[[extend]]
+id = "RIPR-SPEC-0286"
+tests = [
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_rejects_python_over_its_preview_budget",
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_counts_javascript_against_the_typescript_budget",
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_ignores_disabled_or_excluded_preview_python",
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_counts_renamed_python_lines",
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_yields_no_advice_for_an_invalid_preview_budget",
+]
+code = [
+  "crates/ripr/src/analysis/pipeline.rs",
+]
