@@ -144,7 +144,6 @@ fn top_seam_json(
             "discriminate": crate::output::gap_vocabulary::seam_discriminate_evidence_token(
                 entry.class,
                 &evidence.discriminate.state,
-                !missing.is_empty(),
             ),
         },
         "recommended_test": {

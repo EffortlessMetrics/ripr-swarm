@@ -1571,7 +1571,6 @@ fn push_classified_json(
         crate::output::gap_vocabulary::seam_discriminate_evidence_token(
             entry.class,
             &evidence.discriminate.state,
-            !evidence.missing_discriminators.is_empty(),
         )
     );
     out.push_str("      },\n");
@@ -1887,7 +1886,6 @@ fn push_top_gap_md(out: &mut String, entry: &ClassifiedSeam) {
         crate::output::gap_vocabulary::seam_discriminate_evidence_token(
             entry.class,
             &evidence.discriminate.state,
-            !evidence.missing_discriminators.is_empty(),
         )
     ));
 

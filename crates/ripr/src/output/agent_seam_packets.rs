@@ -2546,7 +2546,6 @@ fn push_packet_json(
         crate::output::gap_vocabulary::seam_discriminate_evidence_token(
             entry.class,
             &evidence.discriminate.state,
-            !evidence.missing_discriminators.is_empty(),
         )
     ));
     out.push_str("},\n");

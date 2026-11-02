@@ -95,24 +95,23 @@ pub(crate) fn present_exposure_class(class: &str) -> String {
 
 /// Project the seam-side evidence `discriminate` token at render time.
 ///
-/// The producer grades the strongest related oracle; when the seam is
-/// `weakly_gripped` or names missing discriminators, emitting bare `yes`
-/// reads as "a discriminating test exists" and contradicts the same packet
-/// (#12415). Mirror the finding-side reconciliation: keep non-`yes` grades,
-/// preserve `yes` only for `strongly_gripped` seams with no missing list,
-/// otherwise project `weak`.
+/// The producer grades the strongest related oracle; on a `weakly_gripped`
+/// seam a bare `yes` reads as "a discriminating test exists" and contradicts
+/// the same packet (#12415), so the grade projects `weak` — the classification
+/// itself reads weak grip from `discriminate == Weak` or the missing list.
+/// Every other class keeps the raw oracle grade: its own stage fields carry
+/// the contradicting signal (for example `activate: "unknown"` on an
+/// `activation_unknown` seam), and the audited proptest pin
+/// `ordinary_nonfree_equal_typed_arguments_keep_existing_boundary_pairing`
+/// requires that shape to keep `yes` beside its missing list.
 pub(crate) fn seam_discriminate_evidence_token(
     class: SeamGripClass,
     discriminate_state: &StageState,
-    has_missing_discriminators: bool,
 ) -> &'static str {
     if *discriminate_state != StageState::Yes {
         return discriminate_state.as_str();
     }
-    if class == SeamGripClass::StronglyGripped && !has_missing_discriminators {
-        return StageState::Yes.as_str();
-    }
-    if class == SeamGripClass::WeaklyGripped || has_missing_discriminators {
+    if class == SeamGripClass::WeaklyGripped {
         return StageState::Weak.as_str();
     }
     StageState::Yes.as_str()
@@ -181,12 +180,12 @@ mod tests {
 
     #[test]
     fn seam_discriminate_token_pins_weakly_gripped_yes_reconciliation() -> Result<(), String> {
-        if seam_discriminate_evidence_token(SeamGripClass::WeaklyGripped, &StageState::Yes, true)
+        if seam_discriminate_evidence_token(SeamGripClass::WeaklyGripped, &StageState::Yes)
             != "weak"
         {
             return Err("weakly_gripped yes grade must project weak".to_string());
         }
-        if seam_discriminate_evidence_token(SeamGripClass::StronglyGripped, &StageState::Yes, false)
+        if seam_discriminate_evidence_token(SeamGripClass::StronglyGripped, &StageState::Yes)
             != "yes"
         {
             return Err("strongly_gripped yes grade must stay yes".to_string());
@@ -194,13 +193,15 @@ mod tests {
         Ok(())
     }
 
+    /// The audited proptest pin
+    /// `ordinary_nonfree_equal_typed_arguments_keep_existing_boundary_pairing`
+    /// fixes this exact shape: an `activation_unknown` seam keeps the raw
+    /// `yes` oracle grade beside its missing list; the contradicting signal
+    /// lives in its own `activate: "unknown"` stage field.
     #[test]
     fn activation_unknown_yes_discriminate_stays_yes() -> Result<(), String> {
-        if seam_discriminate_evidence_token(
-            SeamGripClass::ActivationUnknown,
-            &StageState::Yes,
-            false,
-        ) != "yes"
+        if seam_discriminate_evidence_token(SeamGripClass::ActivationUnknown, &StageState::Yes)
+            != "yes"
         {
             return Err(
                 "activation_unknown with yes oracle grade must keep discriminate yes".to_string(),
