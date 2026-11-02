@@ -67,95 +67,9 @@ mod tests {
     use super::*;
     use std::env;
     use std::fs;
-    use std::sync::{Mutex, MutexGuard};
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    fn env_lock() -> MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner())
-    }
-
-    #[test]
-    fn non_empty_arg_rejects_missing_value() {
-        let args = vec!["--root".to_string()];
-        let err = non_empty_arg(
-            "pr-evidence",
-            &args,
-            1,
-            "--root",
-            NonEmptyPlaceholder::Value,
-        )
-        .unwrap_err();
-        assert_eq!(
-            err,
-            "missing value for --root; pass a value after it".to_string()
-        );
-    }
-
-    #[test]
-    fn non_empty_arg_rejects_whitespace_only() {
-        let args = vec!["--comments".to_string(), "   ".to_string()];
-        let err = non_empty_arg(
-            "annotations",
-            &args,
-            1,
-            "--comments",
-            NonEmptyPlaceholder::Path,
-        )
-        .unwrap_err();
-        assert_eq!(
-            err,
-            "annotations --comments requires a non-empty value; pass `--comments <path>`"
-                .to_string()
-        );
-    }
-
-    #[test]
-    fn non_empty_arg_accepts_trimmed_content() {
-        let args = vec!["--head".to_string(), "  HEAD  ".to_string()];
-        let value = non_empty_arg(
-            "impacted-evidence",
-            &args,
-            1,
-            "--head",
-            NonEmptyPlaceholder::Value,
-        )
-        .expect("non-empty");
-        assert_eq!(value, "  HEAD  ");
-    }
-
-    #[test]
-    fn resolve_selected_root_keeps_absolute() -> Result<(), String> {
-        let absolute = if cfg!(windows) {
-            PathBuf::from(r"C:\repo")
-        } else {
-            PathBuf::from("/tmp/repo")
-        };
-        assert_eq!(resolve_selected_root(&absolute)?, absolute);
-        Ok(())
-    }
-
-    #[test]
-    fn resolve_selected_root_anchors_relative_to_cwd() -> Result<(), String> {
-        let _lock = env_lock();
-        let temp = env::temp_dir().join(format!(
-            "ripr-subcommand-root-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or(0)
-        ));
-        fs::create_dir_all(&temp).map_err(|err| format!("mkdir: {err}"))?;
-        env::set_current_dir(&temp).map_err(|err| format!("chdir: {err}"))?;
-        let resolved = resolve_selected_root(Path::new("nested"))?;
-        assert_eq!(resolved, temp.join("nested"));
-        Ok(())
-    }
-
-    #[test]
-    fn invocation_repo_root_returns_cwd() -> Result<(), String> {
-        let _lock = env_lock();
+    fn with_temp_cwd<T>(run: impl FnOnce(&Path) -> Result<T, String>) -> Result<T, String> {
+        let _cwd = crate::testing::cwd_lock::hold_cwd();
         let temp = env::temp_dir().join(format!(
             "ripr-subcommand-cwd-{}-{}",
             std::process::id(),
@@ -165,9 +79,103 @@ mod tests {
                 .unwrap_or(0)
         ));
         fs::create_dir_all(&temp).map_err(|err| format!("mkdir: {err}"))?;
-        env::set_current_dir(&temp).map_err(|err| format!("chdir: {err}"))?;
-        assert_eq!(invocation_repo_root()?, temp);
-        assert_eq!(invocation_repo_root_with_directory_hint()?, temp);
+        let previous = env::current_dir().map_err(|err| format!("cwd: {err}"))?;
+        let result = (|| {
+            env::set_current_dir(&temp).map_err(|err| format!("chdir: {err}"))?;
+            run(&temp)
+        })();
+        let _ = env::set_current_dir(&previous);
+        result
+    }
+
+    #[test]
+    fn non_empty_arg_rejects_missing_value() -> Result<(), String> {
+        let args = vec!["--root".to_string()];
+        match non_empty_arg(
+            "pr-evidence",
+            &args,
+            1,
+            "--root",
+            NonEmptyPlaceholder::Value,
+        ) {
+            Err(err) if err == "missing value for --root; pass a value after it" => Ok(()),
+            other => Err(format!("unexpected result: {other:?}")),
+        }
+    }
+
+    #[test]
+    fn non_empty_arg_rejects_whitespace_only() -> Result<(), String> {
+        let args = vec!["--comments".to_string(), "   ".to_string()];
+        match non_empty_arg(
+            "annotations",
+            &args,
+            1,
+            "--comments",
+            NonEmptyPlaceholder::Path,
+        ) {
+            Err(err)
+                if err
+                    == "annotations --comments requires a non-empty value; pass `--comments <path>`" =>
+            {
+                Ok(())
+            }
+            other => Err(format!("unexpected result: {other:?}")),
+        }
+    }
+
+    #[test]
+    fn non_empty_arg_accepts_trimmed_content() -> Result<(), String> {
+        let args = vec!["--head".to_string(), "  HEAD  ".to_string()];
+        let value = non_empty_arg(
+            "impacted-evidence",
+            &args,
+            1,
+            "--head",
+            NonEmptyPlaceholder::Value,
+        )
+        .map_err(|err| format!("expected non-empty value: {err}"))?;
+        if value != "  HEAD  " {
+            return Err(format!("unexpected value: {value:?}"));
+        }
         Ok(())
+    }
+
+    #[test]
+    fn resolve_selected_root_keeps_absolute() -> Result<(), String> {
+        let absolute = env::temp_dir().join("ripr-subcommand-absolute-root");
+        if resolve_selected_root(&absolute)? != absolute {
+            return Err("absolute root must be returned unchanged".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_selected_root_anchors_relative_to_cwd() -> Result<(), String> {
+        with_temp_cwd(|temp| {
+            let resolved = resolve_selected_root(Path::new("nested"))?;
+            if resolved != temp.join("nested") {
+                return Err(format!(
+                    "expected {}, got {}",
+                    temp.join("nested").display(),
+                    resolved.display()
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn invocation_repo_root_returns_cwd() -> Result<(), String> {
+        with_temp_cwd(|temp| {
+            if invocation_repo_root()? != *temp {
+                return Err("invocation_repo_root must match temp cwd".to_string());
+            }
+            if invocation_repo_root_with_directory_hint()? != *temp {
+                return Err(
+                    "invocation_repo_root_with_directory_hint must match temp cwd".to_string(),
+                );
+            }
+            Ok(())
+        })
     }
 }

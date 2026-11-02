@@ -8,7 +8,7 @@
 
 use serde_json::Value;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::cli::unknown_argument;
 use crate::output::workflow_escape::{
@@ -280,6 +280,7 @@ fn write_annotations(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn parse_supports_paths_and_check() -> Result<(), String> {
