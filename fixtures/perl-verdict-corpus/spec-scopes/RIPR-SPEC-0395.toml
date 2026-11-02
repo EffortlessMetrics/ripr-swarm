@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0395"
+scope = "out"
+reason = "Normative Apple project/Swift/Objective-C contract only (#5682); producer fixtures and judged corpora land in #5685–#5694"
