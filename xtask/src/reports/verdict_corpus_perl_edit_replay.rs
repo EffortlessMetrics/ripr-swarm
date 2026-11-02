@@ -737,14 +737,15 @@ mod parse_tests {
     }
 
     #[test]
-    fn json_object_with_brace_inside_string_value_parses() {
+    fn json_object_with_brace_inside_string_value_parses() -> Result<(), String> {
         let tail =
             r#"{"changed_observable": "return \"}\""}; the packet fingerprint was recomputed."#;
         let ops = super::parse_edit_ops(&format!(
             "in changes where {{\"change_id\": \"$CHANGE_ID\"}} set {tail}"
         ))
-        .expect("parse");
+        .map_err(|err| format!("parse: {err}"))?;
         assert_eq!(ops.len(), 1);
+        Ok(())
     }
 }
 
