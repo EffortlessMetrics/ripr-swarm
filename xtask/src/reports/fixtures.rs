@@ -747,6 +747,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "issue_lifecycle_real_rows"
                     | "github_unanalyzed_states"
                     | "orchestration_attempt_receipts"
+                    | "packaged_repair_parity"
                     | "perl_lsp_facts_exporter"
                     | "perl-real-repo-evals"
                     | "perl_packet_contract_migration"

@@ -1,0 +1,120 @@
+{
+  "schema_version": "packaged_repair_parity_fixture.v1",
+  "issues": ["#2929", "#4648"],
+  "spec": "RIPR-SPEC-0217",
+  "synthetic_qualification": true,
+  "dogfood_denominator": "excluded",
+  "parent_fixture": {
+    "manifest": "fixtures/blind_journey_installed_rust/manifest.json",
+    "repository": "fixtures/blind_journey_installed_rust/repository"
+  },
+  "fixture": {
+    "name": "packaged-repair-parity-rust",
+    "language": "rust",
+    "summary": "Cross-channel parity contract over the installed-rust tier-boundary journey: one canonical gap, one test-only edit cage, and shared repair-attempt semantics."
+  },
+  "repository": {
+    "identity": "fixtures/blind_journey_installed_rust/repository",
+    "default_base_ref": "main",
+    "snapshots": {
+      "base": {
+        "commit": "01821f774cb2cc2bc745b7506a3941312456fb4e",
+        "tree": "8c3a6ff250d34675386567f37ccf05d8a0dd6d6e"
+      },
+      "head": {
+        "commit": "18a45fa5cd718f85dc60fcb27495b24dbd9715e7",
+        "tree": "60374952915a027947d4e1654bd6e945834114c3"
+      }
+    }
+  },
+  "canonical_transaction": {
+    "canonical_gap_id": "seam-tier-boundary-equality",
+    "allowed_edit_surface": ["tests/tier_boundary.rs"],
+    "must_not_change": ["src/lib.rs", "Cargo.toml", "target/notes.rs"],
+    "expected_movement": "improved",
+    "controlled_edit": {
+      "target": "tests/tier_boundary.rs",
+      "summary": "add one equality assertion at the inclusive boundary"
+    }
+  },
+  "semantic_comparison_axes": [
+    "candidate_binary_or_server_digest",
+    "fixture_root_base_head_identity",
+    "canonical_gap_id",
+    "repair_attempt_schema_and_state_vocabulary",
+    "selected_test_and_fix_site_identity",
+    "allowed_edit_surface",
+    "must_not_change",
+    "before_after_snapshot_semantics",
+    "analysis_outcome",
+    "verify_status",
+    "movement_state",
+    "receipt_status_and_claim_boundary",
+    "limitations_and_non_claims",
+    "next_action_and_recovery_route"
+  ],
+  "channels": {
+    "installed_cli": {
+      "label": "installed_cli",
+      "artifact_kinds": ["crate_archive", "installed_binary"],
+      "journey_template": [
+        "isolated install outside checkout",
+        "ripr check identifies canonical gap",
+        "ripr agent repair --phase before",
+        "controlled test-only edit",
+        "ripr agent repair --phase after",
+        "movement result and receipt"
+      ]
+    },
+    "packaged_vsix": {
+      "label": "packaged_vsix",
+      "artifact_kinds": ["vsix", "bundled_server"],
+      "journey_template": [
+        "exact VSIX and candidate server",
+        "Start Repair",
+        "equivalent controlled test-only edit",
+        "Continue/Finish Repair",
+        "movement result and receipt authority"
+      ]
+    }
+  },
+  "required_qualification_sections": [
+    "installed_cli_positive_journey",
+    "packaged_vsix_positive_journey",
+    "unchanged_edit_control",
+    "limited_item_cannot_start",
+    "restart_survives_status",
+    "no_manual_artifact_threading"
+  ],
+  "negative_controls": [
+    "wrong_root_selection",
+    "changed_base_after_before_phase",
+    "stale_diagnostic_start",
+    "multiple_active_attempts_require_selection",
+    "attempt_manifest_tamper",
+    "wrong_binary_server_vsix_identity",
+    "untrusted_workspace",
+    "extension_restart_during_awaiting_edit",
+    "after_phase_wrong_gap",
+    "failed_result_not_closed",
+    "cleanup_failure_visible"
+  ],
+  "anti_ambient_controls": [
+    "no_workspace_binary",
+    "no_source_tree_asset_reads",
+    "no_sibling_worktree",
+    "no_path_shadow",
+    "no_shared_mutable_attempt_state"
+  ],
+  "claims": {
+    "limitations": [
+      "This manifest establishes the comparison contract only; channel journeys remain missing_evidence until #4650 and #4651 execute them.",
+      "Physical attempt ids may differ per isolated run; semantic fields compare deterministically."
+    ],
+    "non_claims": [
+      "no installed CLI or VSIX journey is claimed complete in this slice",
+      "no real-repository support-tier promotion",
+      "no runtime mutation result"
+    ]
+  }
+}

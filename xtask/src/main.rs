@@ -55,6 +55,7 @@ mod no_panic;
 mod orchestration_attempt;
 mod output_enum_contracts;
 mod package_qualification;
+mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
