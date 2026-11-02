@@ -105,9 +105,7 @@ impl TestCandidateSet {
         let truncated = !complete || matched_total > related.len();
         let next_route = if !selected.is_empty() {
             TestCandidateNextRoute::RunTargetedPreflight
-        } else if truncated {
-            TestCandidateNextRoute::InspectWeakCandidates
-        } else if !context_only.is_empty() {
+        } else if truncated || !context_only.is_empty() {
             TestCandidateNextRoute::InspectWeakCandidates
         } else {
             TestCandidateNextRoute::AddNewFocusedTest
