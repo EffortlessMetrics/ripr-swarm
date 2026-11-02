@@ -3,13 +3,16 @@
 //! These tests exercise the built binary rather than matching help source text,
 //! so parser and dispatch routing are part of the contract.
 
-use std::process::{Command, Output};
+use std::process::Output;
+
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
 
 fn run_xtask(args: &[&str]) -> Result<Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(args)
-        .output()
-        .map_err(|error| format!("failed to run xtask {args:?}: {error}"))
+    xtask_bin::output(|command| {
+        command.args(args);
+    })
+    .map_err(|error| format!("failed to run xtask {args:?}: {error}"))
 }
 
 fn rendered_help(args: &[&str]) -> Result<String, String> {
