@@ -21,6 +21,7 @@ mod model;
 mod perl_executable_tests;
 mod python;
 mod toolchain_file;
+pub(crate) mod verification_contract;
 // The exclusion path authorities are pure predicates, needed by the
 // diff-scope guard's admission counting in every feature lane (mirroring the
 // always-compiled Python authorities), so the module compiles unconditionally.
@@ -327,6 +328,14 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
     // spelling (#7652).
     config.source_path = Some(path);
     config.source_text = Some(text);
+    let _verification_contract = verification_contract::compile_repository_verification_contract(
+        verification_contract::VerificationContractCompileInput {
+            repository_root: root,
+            ripr_toml_path: config.source_path.as_deref(),
+            ripr_toml_content_digest: loaded_config_identity(&config),
+            config: &config,
+        },
+    );
     Ok(config)
 }
 
