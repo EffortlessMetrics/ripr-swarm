@@ -2888,6 +2888,46 @@ mod tests {
     }
 
     #[test]
+    fn python_skeleton_and_packet_render_the_stop_condition_in_plain_words() -> Result<(), String> {
+        let snapshot = python_snapshot();
+        let data = serde_json::json!({
+            "language": "python",
+            "canonical_gap_id": "gap:python:pricing",
+            "missing_discriminator": "amount == DISCOUNT_THRESHOLD",
+            "repair_route": {
+                "route_kind": "existing_test_strengthening",
+                "target_file": "tests/test_pricing.py",
+                "assertion_shape": "assert result == expected",
+                "stop_conditions": [
+                    "Stop if the expected value for the missing discriminator is ambiguous."
+                ]
+            },
+            "verification_commands": ["python -m pytest tests/test_pricing.py::test_boundary"]
+        });
+        let target = python_pytest_skeleton_target(&snapshot, &data)
+            .ok_or_else(|| "skeleton target was omitted".to_string())?;
+        let brief = target["brief"]
+            .as_str()
+            .ok_or_else(|| "skeleton target must contain a text brief".to_string())?;
+        let packet = first_repair_packet_text(
+            &data,
+            &data["repair_route"],
+            "python -m pytest tests/test_pricing.py::test_boundary",
+            "ripr agent receipt",
+        )
+        .ok_or_else(|| "packet text was omitted".to_string())?;
+        for (name, text) in [("skeleton", brief), ("packet", packet.as_str())] {
+            if !text.contains("Stop if the expected value for the missing check is ambiguous.") {
+                return Err(format!("{name} lacks the plain stop condition:\n{text}"));
+            }
+            if text.contains("missing discriminator is ambiguous") {
+                return Err(format!("{name} kept the jargon stop condition:\n{text}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn lsp_actions_do_not_relabel_prose_as_a_missing_discriminator() -> Result<(), String> {
         let snapshot = python_snapshot();
         let data = serde_json::json!({
