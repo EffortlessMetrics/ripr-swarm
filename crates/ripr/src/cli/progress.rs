@@ -469,7 +469,11 @@ impl CliProgressSink {
     }
 
     fn emit_event(&self, event: AnalysisProgressEvent) {
-        let mut projection = Self::lock_state(&self.inner);
+        Self::emit_event_inner(&self.inner, event);
+    }
+
+    fn emit_event_inner(inner: &Arc<SinkInner>, event: AnalysisProgressEvent) {
+        let mut projection = Self::lock_state(inner);
         if projection.terminal {
             return;
         }
@@ -484,8 +488,13 @@ impl CliProgressSink {
             projection.total_units = None;
         }
         if let (Some(completed), Some(total)) = (event.completed_units, event.total_units) {
-            projection.completed_units = Some(completed);
             projection.total_units = Some(total);
+            projection.completed_units = Some(
+                projection
+                    .completed_units
+                    .map(|prev| prev.max(completed))
+                    .unwrap_or(completed),
+            );
         }
         projection.current_stage = Some(event.stage);
         projection.current_scope = Some(event.scope);
@@ -514,8 +523,8 @@ impl CliProgressSink {
         let line = format_stage_line_with_units(
             event.stage,
             event.scope,
-            event.completed_units,
-            event.total_units,
+            projection.completed_units,
+            projection.total_units,
         );
         Self::write_line(&mut projection, &line);
     }
@@ -603,26 +612,34 @@ impl CliProgressSink {
         let Some(class) = elapsed_class(stage_age) else {
             return;
         };
-        let line = format_heartbeat_line_with_units(
-            stage,
-            class,
-            projection.completed_units,
-            projection.total_units,
-        );
+        let line = if projection.completed_units.is_none() && projection.total_units.is_none() {
+            format_heartbeat_line(stage, class)
+        } else {
+            format_heartbeat_line_with_units(
+                stage,
+                class,
+                projection.completed_units,
+                projection.total_units,
+            )
+        };
         Self::write_line(&mut projection, &line);
         projection.last_heartbeat = Some(now);
         projection.heartbeat_count = projection.heartbeat_count.saturating_add(1);
     }
 
     fn start_heartbeat_thread(&self) {
-        let mut slot = match self.inner.heartbeat.lock() {
+        Self::start_heartbeat_thread_inner(&self.inner);
+    }
+
+    fn start_heartbeat_thread_inner(inner: &Arc<SinkInner>) {
+        let mut slot = match inner.heartbeat.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
-        if slot.is_some() || self.inner.stop.load(Ordering::Relaxed) {
+        if slot.is_some() || inner.stop.load(Ordering::Relaxed) {
             return;
         }
-        let inner = Arc::clone(&self.inner);
+        let inner = Arc::clone(inner);
         *slot = Some(thread::spawn(move || {
             while !inner.stop.load(Ordering::Relaxed) {
                 // Parked rather than slept: `stop_heartbeat` unparks the
@@ -680,20 +697,18 @@ impl AnalysisProgressSink for CliProgressSink {
                     .unwrap_or(u64::MAX);
                 (scope, elapsed_ms)
             };
-            // Share the inner sink without running `Drop`, which would stop
-            // the heartbeat of the still-live command owner.
-            let sink = std::mem::ManuallyDrop::new(CliProgressSink {
-                inner: Arc::clone(&inner),
-            });
-            sink.emit_event(AnalysisProgressEvent {
-                stage: AnalysisProgressStage::Analyzing,
-                scope,
-                completed_units: Some(completed),
-                total_units: Some(total),
-                elapsed_ms,
-            });
+            CliProgressSink::emit_event_inner(
+                &inner,
+                AnalysisProgressEvent {
+                    stage: AnalysisProgressStage::Analyzing,
+                    scope,
+                    completed_units: Some(completed),
+                    total_units: Some(total),
+                    elapsed_ms,
+                },
+            );
             if !CliProgressSink::lock_state(&inner).terminal {
-                sink.start_heartbeat_thread();
+                CliProgressSink::start_heartbeat_thread_inner(&inner);
             }
         }))
     }
@@ -1066,6 +1081,60 @@ mod tests {
         for line in text.lines() {
             assert!(progress_line_is_safe(line), "unsafe progress line: {line}");
         }
+    }
+
+    #[test]
+    fn unit_emitter_does_not_leak_inner_arc() {
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer), false, non_tty_policy());
+        let before = Arc::strong_count(&sink.inner);
+        assert!(sink.unit_emitter().is_some());
+        if let Some(emitter) = sink.unit_emitter() {
+            emitter(1, 10);
+            let after_first = Arc::strong_count(&sink.inner);
+            emitter(2, 10);
+            assert_eq!(
+                Arc::strong_count(&sink.inner),
+                after_first,
+                "each unit update must not retain another inner Arc clone"
+            );
+            drop(emitter);
+            sink.stop_heartbeat();
+            assert_eq!(
+                Arc::strong_count(&sink.inner),
+                before,
+                "dropped emitter and heartbeat must release borrowed inner handles"
+            );
+        }
+    }
+
+    #[test]
+    fn out_of_order_unit_reports_keep_monotonic_display_count() {
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.emit(AnalysisProgressEvent {
+            stage: AnalysisProgressStage::Analyzing,
+            scope: AnalysisProgressScope::Repo,
+            completed_units: Some(1_000),
+            total_units: Some(10_000),
+            elapsed_ms: 0,
+        });
+        sink.emit(AnalysisProgressEvent {
+            stage: AnalysisProgressStage::Analyzing,
+            scope: AnalysisProgressScope::Repo,
+            completed_units: Some(500),
+            total_units: Some(10_000),
+            elapsed_ms: 0,
+        });
+        let text = buffer.text();
+        assert!(
+            text.contains("processed_1000_of_10000"),
+            "displayed count must not regress on delayed worker reports: {text}"
+        );
+        assert!(
+            !text.contains("processed_500_of_10000"),
+            "stale lower counts must not overwrite the row: {text}"
+        );
     }
 
     #[test]
