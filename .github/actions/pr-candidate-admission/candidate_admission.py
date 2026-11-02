@@ -72,12 +72,19 @@ GENERATED_DECLARATION_ALLOWED = (
     # (.json), sha256-pinned by the case rows, whose provenance and edits stay
     # in the counted cases/ files.
     re.compile(r"^fixtures/[a-z]+-verdict-corpus/packets/\*\*$"),
+    # Repo-exposure snapshots recaptured by `ripr check --format repo-exposure-json`
+    # for RIPR-SPEC-0108 honesty cases; corpus.json rows stay counted.
+    re.compile(r"^fixtures/evidence-promotion-honesty-corpus/reports/\*\*$"),
 )
 # Families narrower than the global data extensions: only these file types in
 # the family are ever exempt, so a note or log dropped beside the packets stays
 # counted.
 GENERATED_FAMILY_EXTENSIONS = (
     (re.compile(r"^fixtures/[a-z]+-verdict-corpus/packets/"), {".json"}),
+    (
+        re.compile(r"^fixtures/evidence-promotion-honesty-corpus/reports/"),
+        {".json"},
+    ),
 )
 DEFAULT_MAX_GENERATED_LINES = 40000
 # Bounds on the hand-written blobs read to cap count-less files.
@@ -292,7 +299,7 @@ def check_generated_declarations(text: str) -> list[str]:
             generated_state(attributes) is not False
         ) and not declaration_allowed(pattern):
             problems.append(
-                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/**, fixtures/<language>-verdict-corpus/packets/** and metrics/public-proof/** (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
+                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/**, fixtures/<language>-verdict-corpus/packets/**, fixtures/evidence-promotion-honesty-corpus/reports/** and metrics/public-proof/** (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
             )
     return problems
 
@@ -889,6 +896,7 @@ def self_test() -> None:
         "package-lock.json linguist-generated\nfixtures/**/expected/** linguist-generated\n"
         "metrics/public-proof/** linguist-generated\ncrates/x/*.rs -linguist-generated\n"
         "fixtures/perl-verdict-corpus/packets/** linguist-generated\n"
+        "fixtures/evidence-promotion-honesty-corpus/reports/** linguist-generated\n"
     ) == []
     for bad in (
         "fixtures/notexpected/**", "fixtures/myexpected/**", "fixtures/a/xexpected/**",
@@ -900,6 +908,9 @@ def self_test() -> None:
         "fixtures/perl-corpus/packets/**", "fixtures/Perl-verdict-corpus/packets/**",
         "fixtures/a/b-verdict-corpus/packets/**", "fixtures/perl-verdict-corpus/packets/*.rs",
         "fixtures/perl-verdict-corpus/xpackets/**", "xtask/fixtures/perl-verdict-corpus/packets/**",
+        "fixtures/evidence-promotion-honesty-corpus/**",
+        "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+        "fixtures/evidence-promotion-honesty-corpus/cases/**",
     ):
         assert check_generated_declarations(f"{bad} linguist-generated\n"), bad
     corpus_rules = parse_generated_rules("fixtures/perl-verdict-corpus/packets/** linguist-generated\n")
@@ -911,6 +922,16 @@ def self_test() -> None:
         {"filename": "fixtures/perl-verdict-corpus/packets/run.stdout", "status": "added", "additions": 10, "deletions": 0},
     ]
     assert generated_totals(beside, corpus_rules, 3) == (1, 900)
+    honesty_rules = parse_generated_rules(
+        "fixtures/evidence-promotion-honesty-corpus/reports/** linguist-generated\n"
+    )
+    assert is_generated(
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
+        honesty_rules,
+    )
+    assert not is_generated(
+        "fixtures/evidence-promotion-honesty-corpus/corpus.json", honesty_rules
+    )
     for kept in (
         "fixtures/perl-verdict-corpus/packets/notes.md", "fixtures/perl-verdict-corpus/packets/a.jsonl",
         "fixtures/perl-verdict-corpus/cases/a.json", "fixtures/perl-verdict-corpus/packets/a.pm",
