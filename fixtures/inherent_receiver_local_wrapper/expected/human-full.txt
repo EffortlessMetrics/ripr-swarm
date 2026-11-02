@@ -48,6 +48,7 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/inherent_receiver_local_wrapper/input --diff <cwd>/fixtures/inherent_receiver_local_wrapper/diff.patch --mode fast probe:src_lib.rs:match_arm:f9032269
   ripr context --root <cwd>/fixtures/inherent_receiver_local_wrapper/input --diff <cwd>/fixtures/inherent_receiver_local_wrapper/diff.patch --mode fast --at probe:src_lib.rs:match_arm:f9032269
 
@@ -77,5 +78,6 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/inherent_receiver_local_wrapper/input --diff <cwd>/fixtures/inherent_receiver_local_wrapper/diff.patch --mode fast probe:src_lib.rs:return_value:3068903e
   ripr context --root <cwd>/fixtures/inherent_receiver_local_wrapper/input --diff <cwd>/fixtures/inherent_receiver_local_wrapper/diff.patch --mode fast --at probe:src_lib.rs:return_value:3068903e
