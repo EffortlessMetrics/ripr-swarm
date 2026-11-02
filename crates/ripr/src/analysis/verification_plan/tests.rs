@@ -170,6 +170,10 @@ fn direct_owner_and_strong_oracle_split_impacted_and_validating_rows() {
 #[test]
 fn weak_affinity_is_never_resolved_may_depend() {
     assert_eq!(
+        classify_relation_evidence(RelationReason::WeakTokenSubstring).as_str(),
+        "affinity_candidate"
+    );
+    assert_eq!(
         classify_relation_evidence(RelationReason::WeakTokenSubstring),
         PlanRelationEvidenceClass::AffinityCandidate
     );
