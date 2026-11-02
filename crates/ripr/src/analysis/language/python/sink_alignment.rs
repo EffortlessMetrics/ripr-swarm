@@ -853,36 +853,40 @@ fn not_applicable_row_sink_alignments(related: &[RelatedTest]) -> Vec<PythonRowS
         .collect()
 }
 
-fn reduce_row_sink_alignments(
-    row_alignments: &[PythonRowSinkAlignment],
+fn finding_sink_alignment_from_units<'a>(
+    units: &[AlignmentUnit<'a>],
+    branches: &[CreditBranch<'_, 'a>],
     changed_sink: Option<String>,
     fallback_observed: Option<String>,
 ) -> SinkAlignment {
-    if let Some(confirmed) = row_alignments
-        .iter()
-        .find(|row| row.state == PythonRowSinkAlignmentState::ConfirmedChangedSink)
-    {
-        return SinkAlignment {
+    let credit = branches.iter().find_map(|(alignment, reason, credits)| {
+        units
+            .iter()
+            .find(|unit| credits(unit))
+            .map(|unit| (*alignment, *reason, unit))
+    });
+    match credit {
+        Some((alignment, reason, unit)) => SinkAlignment {
             changed_sink,
-            observed_sink: confirmed.observed_sink.clone(),
-            oracle_alignment: confirmed.category.unwrap_or("direct").to_string(),
-            alignment_reason: confirmed.reason.to_string(),
-            credited: confirmed.credited.clone(),
-        };
-    }
-    if let Some(strong) = row_alignments
-        .iter()
-        .find(|row| row.state != PythonRowSinkAlignmentState::NotApplicable)
-    {
-        return SinkAlignment {
+            observed_sink: Some(unit.reported.clone()),
+            oracle_alignment: alignment.to_string(),
+            alignment_reason: reason.to_string(),
+            credited: Some(CreditedAssertion {
+                test_name: unit.related.name.clone(),
+                test_file: unit.related.file.clone(),
+                text: unit.reported.clone(),
+                kind: unit.kind.clone(),
+            }),
+        },
+        None if !units.is_empty() || fallback_observed.is_some() => SinkAlignment {
             changed_sink,
-            observed_sink: strong.observed_sink.clone().or(fallback_observed),
+            observed_sink: fallback_observed,
             oracle_alignment: "orthogonal".to_string(),
             alignment_reason: "strong_oracle_observes_different_sink".to_string(),
             credited: None,
-        };
+        },
+        None => SinkAlignment::unknown(changed_sink),
     }
-    SinkAlignment::unknown(changed_sink)
 }
 
 fn row_units<'a, 'u>(
@@ -912,6 +916,19 @@ fn row_sink_alignment_affirms_other<'a>(
 ) -> bool {
     if related.oracle_strength.rank() < OracleStrength::Strong.rank() {
         return false;
+    }
+    if related.oracle.as_ref().is_some_and(|oracle| {
+        let names_owner = (!owner.name.is_empty()
+            && owner.name != "<module>"
+            && oracle_text_observes_token(oracle, &owner.name))
+            || owner
+                .qualified_name
+                .split('.')
+                .filter(|part| !part.is_empty() && *part != "<module>")
+                .any(|part| oracle_text_observes_token(oracle, part));
+        !names_owner
+    }) {
+        return true;
     }
     if strong_tests_import_only_rival_modules(owner, &[related], test_lookup) {
         return true;
@@ -967,6 +984,15 @@ fn evaluate_row_sink_alignment<'a>(
             credited: None,
         };
     }
+    if units_for_row.is_empty() && related.oracle_strength.rank() >= OracleStrength::Strong.rank() {
+        return PythonRowSinkAlignment {
+            state: PythonRowSinkAlignmentState::AffirmativelyOtherSink,
+            observed_sink,
+            category: Some("orthogonal"),
+            reason: "strong_oracle_observes_different_sink",
+            credited: None,
+        };
+    }
     if row_sink_alignment_affirms_other(
         owner,
         related,
@@ -974,13 +1000,23 @@ fn evaluate_row_sink_alignment<'a>(
         test_lookup,
         field_construction_credit_ok,
         fstring_credit_ok,
-    ) || related.oracle_strength.rank() >= OracleStrength::Strong.rank()
-    {
+    ) {
         return PythonRowSinkAlignment {
             state: PythonRowSinkAlignmentState::AffirmativelyOtherSink,
             observed_sink,
             category: Some("orthogonal"),
             reason: "strong_oracle_observes_different_sink",
+            credited: None,
+        };
+    }
+    if related.oracle_strength.rank() >= OracleStrength::Strong.rank()
+        || matches!(related.oracle_kind, OracleKind::MockExpectation)
+    {
+        return PythonRowSinkAlignment {
+            state: PythonRowSinkAlignmentState::Unresolved,
+            observed_sink,
+            category: None,
+            reason: "sink_alignment_unresolved",
             credited: None,
         };
     }
@@ -1140,7 +1176,7 @@ fn sink_alignment_and_rows(
             return (SinkAlignment::unknown(changed_sink), row_alignments);
         }
         return (
-            reduce_row_sink_alignments(&row_alignments, changed_sink, observed_sink),
+            finding_sink_alignment_from_units(&units, &[], changed_sink, observed_sink),
             row_alignments,
         );
     }
@@ -1594,7 +1630,7 @@ fn sink_alignment_and_rows(
         &fstring_credit_ok,
     );
     (
-        reduce_row_sink_alignments(&row_alignments, changed_sink, observed_sink),
+        finding_sink_alignment_from_units(&units, &branches, changed_sink, observed_sink),
         row_alignments,
     )
 }
@@ -2282,10 +2318,6 @@ mod row_sink_alignment_tests {
         let aggregate = classify_sink_alignment(&owner, line, &related, &all);
         assert_eq!(aggregate.oracle_alignment, "direct");
         assert!(aggregate.observes());
-        assert_eq!(
-            reduce_row_sink_alignments(&rows, aggregate.changed_sink.clone(), None),
-            aggregate
-        );
     }
 
     #[test]
@@ -2308,14 +2340,20 @@ mod row_sink_alignment_tests {
             false,
             None,
         );
-        let reverse = row_sink_alignments_prepared(&owner, line, None, &[b, a], &prep, false, None);
+        let reverse = row_sink_alignments_prepared(
+            &owner,
+            line,
+            None,
+            &[b.clone(), a.clone()],
+            &prep,
+            false,
+            None,
+        );
         assert_eq!(forward[0].state, reverse[1].state);
         assert_eq!(forward[1].state, reverse[0].state);
         assert_eq!(
-            reduce_row_sink_alignments(&forward, Some("amount, rate".to_string()), None)
-                .oracle_alignment,
-            reduce_row_sink_alignments(&reverse, Some("amount, rate".to_string()), None)
-                .oracle_alignment,
+            classify_sink_alignment(&owner, line, &[a, b], &all).oracle_alignment,
+            "direct"
         );
     }
 
