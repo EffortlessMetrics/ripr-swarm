@@ -177,8 +177,11 @@ same `repair_packet_eligibility` decision. In the default check and with
 `--mode instant` or `--no-unchanged-tests`:
 - a pinning count read starts in both commands, on the same gap;
 - a followed read that does not pin refuses in both, and in the default check
-  both name the same reason: "an exact check of the full contents the test
-  reads back after the call, which ripr cannot write yet".
+  both name the same reason: "an exact count the test checks after the
+  call, such as `assert_eq!(v.len(), 1)`, that would fail if nothing were
+  pushed; until then, check the full contents by hand". (Slice 1 named the
+  contents check as one ripr could not write yet; the stub now writes it, so
+  the reason names what the start still needs.)
 
 Bare `ripr repair` also needs a test file it may edit: a test surface, or
 the owner file's own inline test module when the new-test producer admits it.

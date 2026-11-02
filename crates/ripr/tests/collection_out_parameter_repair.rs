@@ -25,7 +25,7 @@ const NEW: &str =
     "pub fn log_line(buf: &mut Vec<String>, msg: &str) {\n    buf.push(msg.to_uppercase());\n}\n";
 
 /// The plain reason both commands give once the value is followed.
-const CONTENTS_CHECK: &str = "an exact check of the full contents the test reads back after the call, which ripr cannot write yet";
+const CONTENTS_CHECK: &str = "an exact count the test checks after the call, such as `assert_eq!(v.len(), 1)`, that would fail if nothing were pushed; until then, check the full contents by hand";
 /// The plain reason both commands give while the value is not followed.
 const NOT_FOLLOWED: &str = "a way to follow the changed value to something a test can check";
 

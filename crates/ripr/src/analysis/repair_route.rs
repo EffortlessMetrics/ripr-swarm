@@ -48,10 +48,11 @@ pub(crate) fn humanize_evidence(evidence: &str) -> String {
     if evidence == "observable sink localization" {
         return "a way to follow the changed value to something a test can check".to_string();
     }
-    // #11402: the value is followed to a vector the test holds, but ripr
-    // cannot yet write the exact check of its contents.
+    // #11402: the value is followed to a vector the test holds, but no count
+    // read pins the single push, so the contents-check start is withheld;
+    // name the read that would admit it and the by-hand route meanwhile.
     if evidence == COLLECTION_CONTENTS_CHECK_EVIDENCE {
-        return "an exact check of the full contents the test reads back after the call, which ripr cannot write yet"
+        return "an exact count the test checks after the call, such as `assert_eq!(v.len(), 1)`, that would fail if nothing were pushed; until then, check the full contents by hand"
             .to_string();
     }
     // #11025: the stage the static chain stopped at, in plain words. The
@@ -1206,7 +1207,7 @@ mod tests {
             // #11402: the contents check the route cannot propose yet.
             (
                 COLLECTION_CONTENTS_CHECK_EVIDENCE,
-                "an exact check of the full contents the test reads back after the call, which ripr cannot write yet",
+                "an exact count the test checks after the call, such as `assert_eq!(v.len(), 1)`, that would fail if nothing were pushed; until then, check the full contents by hand",
             ),
         ];
         for (internal, plain) in cases {
