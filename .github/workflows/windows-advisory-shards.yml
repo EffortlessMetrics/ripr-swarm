@@ -87,12 +87,29 @@ jobs:
           cargo xtask check-covered-by
           cargo xtask check-file-policy
 
-      - name: Show the nested cargo output of the warm combined build
-        timeout-minutes: 30
+      - name: Find which cargo invocations make each other rebuild
+        timeout-minutes: 40
         shell: bash
         run: |
-          cargo xtask check-file-policy > target/fp-a.log 2>&1 || true
-          export WV_PROBE_STDERR=1 CARGO_TERM_VERBOSE=true CARGO_LOG=cargo::core::compiler::fingerprint=info
-          cargo xtask check-file-policy > target/fp-b.log 2>&1 || true
-          grep -n "WVPROBE" target/fp-b.log | head -3
-          grep -E "Dirty|dirty|Compiling|Fresh xtask|xtask.exe|Access is denied|relink|stale|newer" target/fp-b.log | cut -c1-300 | head -40 || true
+          export CARGO_LOG=cargo::core::compiler::fingerprint=info
+          step() {
+            label="$1"; shift
+            start=$(date +%s)
+            "$@" > target/step.log 2>&1 || true
+            echo "== $label: $(( $(date +%s) - start ))s"
+            grep -E "^\s*(Dirty|Compiling)" target/step.log | cut -c1-220 | head -6 || true
+          }
+          T="cargo test --no-run -v"
+          step "A1 build -p xtask" cargo build -p xtask -v
+          step "B1 test -p xtask --test hard_cut" $T -p xtask --test hard_cut_admission_selftest
+          step "A2 build -p xtask" cargo build -p xtask -v
+          step "B2 test -p xtask --test hard_cut" $T -p xtask --test hard_cut_admission_selftest
+          step "C1 combined" $T -p ripr -p xtask --bin xtask --test hard_cut_admission_selftest --test causal_delta_fixture
+          step "A3 build -p xtask" cargo build -p xtask -v
+          step "C2 combined" $T -p ripr -p xtask --bin xtask --test hard_cut_admission_selftest --test causal_delta_fixture
+          step "B3 test -p xtask --test hard_cut" $T -p xtask --test hard_cut_admission_selftest
+          step "D1 build -p ripr" cargo build -p ripr --locked -v
+          step "C3 combined" $T -p ripr -p xtask --bin xtask --test hard_cut_admission_selftest --test causal_delta_fixture
+          step "D2 build -p ripr" cargo build -p ripr --locked -v
+          step "E1 test -p ripr --test causal_delta_fixture" $T -p ripr --test causal_delta_fixture
+          step "C4 combined" $T -p ripr -p xtask --bin xtask --test hard_cut_admission_selftest --test causal_delta_fixture
