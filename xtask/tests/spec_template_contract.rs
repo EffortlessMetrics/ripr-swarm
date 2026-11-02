@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct TempRoot(PathBuf);
@@ -40,11 +42,9 @@ fn materialize_template(root: &Path) -> Result<(), String> {
 fn canonical_template_materializes_into_a_valid_spec() -> Result<(), String> {
     let root = temp_root()?;
     materialize_template(&root.0)?;
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .arg("check-spec-format")
-        .current_dir(&root.0)
-        .output()
-        .map_err(|error| error.to_string())?;
+    let output = xtask_bin::output(|command| {
+        command.arg("check-spec-format").current_dir(&root.0);
+    })?;
     if output.status.success() {
         Ok(())
     } else {
