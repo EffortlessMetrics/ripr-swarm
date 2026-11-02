@@ -6128,7 +6128,26 @@ fn owner_rebinds_boundary_field(
     predicate_line: usize,
 ) -> bool {
     let operand = format!("{parameter}.{field}");
-    owner_rebinds_operand(owner, &operand, predicate_line)
+    if owner_rebinds_operand(owner, &operand, predicate_line) {
+        return true;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    masked.lines().enumerate().any(|(offset, line)| {
+        owner.start_line.saturating_add(offset) <= predicate_line
+            && owner_line_assigns_field(line, &operand)
+    })
+}
+
+fn owner_line_assigns_field(line: &str, operand: &str) -> bool {
+    let line = code_line_before_comment(line);
+    let trimmed = line.trim_start();
+    trimmed.strip_prefix(operand).is_some_and(|rest| {
+        let rest = rest.trim_start();
+        (rest.starts_with('=') && !rest.starts_with("=="))
+            || ["+=", "-=", "*=", "/=", "%=", "^=", "&=", "|=", "<<=", ">>="]
+                .iter()
+                .any(|assignment| rest.starts_with(assignment))
+    })
 }
 
 fn boundary_field_credit_permitted(
@@ -9425,6 +9444,16 @@ mod tests {
     ) -> super::ActivationWithBoundaryInput {
         let mut owner = function(owner_body);
         owner.name = "is_stale".to_string();
+        owner.end_line = owner.start_line + owner.body.lines().count().saturating_sub(1);
+        let probe_line = owner
+            .body
+            .lines()
+            .enumerate()
+            .find_map(|(offset, line)| {
+                line.contains("CURRENT > manifest.version")
+                    .then_some(owner.start_line + offset)
+            })
+            .unwrap_or(owner.end_line);
         let mut test = test_with_body_calls(test_body, calls);
         for call in &mut test.calls {
             call.name = "is_stale".into();
@@ -9455,7 +9484,18 @@ mod tests {
             },
         );
         activation_and_boundary_input(
-            &probe(ProbeFamily::Predicate, "CURRENT > manifest.version"),
+            &Probe {
+                id: ProbeId("probe:src/lib.rs:field-boundary".to_string()),
+                location: SourceLocation::new("src/lib.rs", probe_line, 5),
+                owner: None,
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                before: None,
+                after: Some("CURRENT > manifest.version".to_string()),
+                expression: "CURRENT > manifest.version".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
             Some(&owner),
             &[&test],
             &[],
@@ -9467,6 +9507,17 @@ mod tests {
     }
 
     #[test]
+    fn owner_rebinds_field_assignment_before_comparison() {
+        let owner = function(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    manifest.version = 6;\n    CURRENT > manifest.version\n}",
+        );
+        let probe_line = owner.start_line + 2;
+        assert!(owner_rebinds_boundary_field(
+            &owner, "manifest", "version", probe_line
+        ));
+    }
+
+    #[test]
     fn given_field_assignment_boundary_then_wrong_object_owner_write_or_shadow_do_not_credit() {
         let positive = field_named_constant_boundary_gathered(
             "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
@@ -9475,7 +9526,7 @@ mod tests {
              manifest.version = 7;\n\
              is_stale(&manifest);\n\
              }\n",
-            &[(11, "is_stale(&manifest);")],
+            &[(13, "is_stale(&manifest);")],
             "",
         );
         assert!(has_observed_boundary_equality(&positive.activation));
@@ -9489,7 +9540,7 @@ mod tests {
              other.version = 6;\n\
              is_stale(&other);\n\
              }\n",
-            &[(13, "is_stale(&other);")],
+            &[(15, "is_stale(&other);")],
             "",
         );
         assert!(!has_observed_boundary_equality(&wrong_object.activation));
@@ -9504,7 +9555,7 @@ mod tests {
              manifest.version = 7;\n\
              is_stale(&manifest);\n\
              }\n",
-            &[(11, "is_stale(&manifest);")],
+            &[(13, "is_stale(&manifest);")],
             "",
         );
         assert!(!has_observed_boundary_equality(&owner_write.activation));
@@ -9516,7 +9567,7 @@ mod tests {
              manifest.version = CURRENT;\n\
              is_stale(&manifest);\n\
              }\n",
-            &[(11, "is_stale(&manifest);")],
+            &[(13, "is_stale(&manifest);")],
             "const CURRENT: u32 = 8;\n",
         );
         assert!(!has_observed_boundary_equality(&shadowed.activation));
@@ -9531,7 +9582,7 @@ mod tests {
              manifest.version = 6;\n\
              is_stale(&manifest);\n\
              }\n",
-            &[(11, "is_stale(&manifest);")],
+            &[(13, "is_stale(&manifest);")],
             "",
         );
         assert!(!has_observed_boundary_equality(&gathered.activation));
