@@ -5170,7 +5170,7 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
     // row that expected one by accident would admit an incomplete analysis.
     for entry in &config.corpus {
         let expected = (entry.id == "typescript-compiler")
-            .then_some("typescript_workspace_discovery_truncated");
+            .then_some("language_scope_unsupported");
         if entry.expected_partial.as_deref() != expected {
             return Err(format!(
                 "{} expected_partial must be {expected:?}, got {:?}",

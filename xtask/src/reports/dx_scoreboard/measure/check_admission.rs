@@ -132,12 +132,16 @@ impl CheckAdmission {
     }
 }
 
-/// The typed outcome limitation that makes an analysis stop at a declared
-/// static limit. A finding carrying the static limit alone does not show it
-/// is why the analysis is partial.
+/// The typed outcome limitation that makes an analysis partial for a declared
+/// expectation. A static limit (`typescript_workspace_discovery_truncated`)
+/// maps to the limitation that causes it, and a finding carrying the static
+/// limit alone does not show it is why the analysis is partial. A typed
+/// limitation kind (`language_scope_unsupported`) names itself: the pinned
+/// diff is partial because of that limitation, with no static-limit finding.
 pub(crate) fn typed_cause_of_static_limit(limit: &str) -> Option<&'static str> {
     match limit {
         "typescript_workspace_discovery_truncated" => Some("diff_scope_oversized"),
+        "language_scope_unsupported" => Some("language_scope_unsupported"),
         _ => None,
     }
 }
@@ -356,12 +360,15 @@ fn admit_expected_partial(
             extra.unwrap_or("unnamed")
         ));
     }
-    let names_limit = object
-        .get("findings")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .any(|finding| finding.get("static_limit_kind").and_then(Value::as_str) == Some(limit));
+    // A typed limitation kind is its own cause; only a static limit also
+    // needs a finding that carries it.
+    let names_limit = limit == cause
+        || object
+            .get("findings")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|finding| finding.get("static_limit_kind").and_then(Value::as_str) == Some(limit));
     if !names_limit {
         return rejected(&format!(
             "partial outcome carries no finding with static limit `{limit}`"
@@ -1468,6 +1475,51 @@ mod tests {
         assert!(
             admission.reason().contains("no typed cause"),
             "{admission:?}"
+        );
+    }
+
+    /// The pinned `typescript-compiler` diff no longer reaches the walk cap:
+    /// it is partial because of typed `language_scope_unsupported`
+    /// limitations (skipped generated baseline, unindexed test shapes, a
+    /// parse error) and no finding carries a static limit (#12052).
+    #[test]
+    fn a_typed_limitation_kind_can_be_the_expected_partial() {
+        let kind = "language_scope_unsupported";
+        let subject = CheckSubject {
+            expected_partial: Some(kind.to_string()),
+            ..self::subject()
+        };
+        let mut doc = partial_document(None);
+        doc["analysis_outcome"]["outcome"]["limitations"] = json!([
+            { "kind": kind },
+            { "kind": kind },
+            { "kind": kind }
+        ]);
+        let admission = admit_check_document(&doc, &subject);
+        assert!(admission.is_admitted(), "{admission:?}");
+        assert!(!admission.is_complete(), "{admission:?}");
+        // A different limitation beside it is a degraded run.
+        let mut extra = doc.clone();
+        extra["analysis_outcome"]["outcome"]["limitations"] =
+            json!([{ "kind": kind }, { "kind": "diff_scope_oversized" }]);
+        let admission = admit_check_document(&extra, &subject);
+        assert!(!admission.is_admitted(), "{admission:?}");
+        assert!(
+            admission.reason().contains("diff_scope_oversized"),
+            "{admission:?}"
+        );
+        // Only that kind of limitation is missing: not the expected partial.
+        let mut other = doc.clone();
+        other["analysis_outcome"]["outcome"]["limitations"] =
+            json!([{ "kind": "diff_scope_oversized" }]);
+        assert!(!admit_check_document(&other, &subject).is_admitted());
+        // A complete outcome means the pin no longer reproduces the partial.
+        assert!(
+            !admit_check_document(
+                &complete_document("complete_with_findings", vec![]),
+                &subject
+            )
+            .is_admitted()
         );
     }
 
