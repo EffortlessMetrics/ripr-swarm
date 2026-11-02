@@ -21831,6 +21831,9 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
     for turbofish in [
         "Result::map_err::<_, _>(parse(\"1\"), |_| Fault::Odd)",
         "Result::<u8, Fault>::map_err(parse(\"1\"), |_| Fault::Odd)",
+        "Result::or(parse(\"1\"), Err(Fault::Odd))",
+        "(Result::or(parse(\"1\"), Err(Fault::Odd)))",
+        "parse(\"1\").or(Err(Fault::Odd))",
         "((Result::map_err(parse(\"1\"), |_| Fault::Odd)))",
         "parse(\"1\").map_err::<Fault, _>(|_| Fault::Odd)",
     ] {

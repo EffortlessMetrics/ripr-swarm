@@ -121,6 +121,63 @@ pub(super) fn is_exact_error_variant_assertion(line: &str) -> bool {
     (line.contains("assert_matches!") || line.contains("matches!") || line.contains("assert_eq!"))
         && line.contains("Err(")
         && !line.contains("Err(_")
+        && !err_constructor_feeds_value_adapter(line)
+}
+
+/// Value-supplying adapters: each returns its argument when the receiver does
+/// not already hold the success or error the caller wants. An `Err(V)` handed
+/// to one of them is written by the test itself, so equality with `V` can pass
+/// whatever the owner returns (#12359).
+const VALUE_SUPPLYING_ADAPTERS: &[&str] = &[
+    "or",
+    "or_else",
+    "and",
+    "and_then",
+    "ok_or",
+    "ok_or_else",
+    "unwrap_or",
+    "unwrap_or_else",
+    "map_err",
+    "map_or",
+    "map_or_else",
+];
+
+/// True when an `Err(..)` constructor is an argument of a value-supplying
+/// adapter call, in method or UFCS spelling, grouped or not. Other enclosing
+/// calls (`Some(..)`, `Result::eq(..)`, the assertion macro) keep their reading.
+fn err_constructor_feeds_value_adapter(line: &str) -> bool {
+    let masked = strip_turbofish(&mask_comments_and_strings(line));
+    masked.match_indices("Err(").any(|(index, _)| {
+        let before_ok = masked[..index]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
+        before_ok
+            && enclosing_callee(&masked[..index])
+                .is_some_and(|name| VALUE_SUPPLYING_ADAPTERS.contains(&name))
+    })
+}
+
+/// The last path segment of the call whose argument list contains the end of
+/// `prefix`, or `None` for a grouping parenthesis or top level.
+fn enclosing_callee(prefix: &str) -> Option<&str> {
+    let mut depth = 0usize;
+    for (offset, ch) in prefix.char_indices().rev() {
+        match ch {
+            ')' => depth += 1,
+            '(' if depth > 0 => depth -= 1,
+            '(' => {
+                let head = prefix[..offset].trim_end();
+                let start = head
+                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .map_or(0, |i| i + 1);
+                let name = &head[start..];
+                return (!name.is_empty()).then_some(name);
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Returns true when `line` is an assertion on a variable known to hold an
@@ -2694,6 +2751,40 @@ mod oracle_text_shape_tests {
                 expected,
                 "text-shape classification mismatch for {shape:?} and {text}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod issue_12359_tests {
+    use super::is_exact_error_variant_assertion;
+
+    #[test]
+    fn an_err_constructor_compared_or_matched_still_pins_an_error_variant() {
+        for line in [
+            r#"assert_eq!(parse("x"), Err(ParseError::Empty));"#,
+            r#"assert_eq!(Err(ParseError::Empty), parse("x"));"#,
+            r#"assert_eq!(parse("x"), Err(ParseError::Empty), "message");"#,
+            r#"assert!(matches!(parse("x"), Err(ParseError::Empty)));"#,
+            r#"assert_eq!(Some(r), Some(Err(E::Bad)));"#,
+            r#"assert_eq!(Result::eq(&r, &Err(E::Bad)), true);"#,
+        ] {
+            assert!(is_exact_error_variant_assertion(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn an_err_handed_to_a_value_supplying_adapter_pins_nothing() {
+        for line in [
+            r#"assert_eq!(Result::or(parse("x"), Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);"#,
+            r#"assert_eq!((Result::or(parse("x"), Err(ParseError::Empty))).unwrap_err(), ParseError::Empty);"#,
+            r#"assert_eq!(parse("x").or(Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);"#,
+            r#"assert_eq!(parse("x").or(Err(ParseError::Empty)), Err(ParseError::Empty));"#,
+            r#"assert_eq!(Result::or::<u8, E>(parse("x"), Err(ParseError::Empty)), Err(ParseError::Empty));"#,
+            r#"assert_eq!(find("x").ok_or(Err(ParseError::Empty)), Err(ParseError::Empty));"#,
+            r#"assert_eq!(parse("x"), Err(_));"#,
+        ] {
+            assert!(!is_exact_error_variant_assertion(line), "{line}");
         }
     }
 }
