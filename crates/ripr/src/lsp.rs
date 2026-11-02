@@ -25,6 +25,8 @@ mod progress_stages;
 mod refresh_scheduler;
 mod repair_card;
 #[cfg(test)]
+mod saved_edit_measurement;
+#[cfg(test)]
 mod saved_edit_sequence;
 mod session_end;
 #[cfg(test)]

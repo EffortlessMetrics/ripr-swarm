@@ -13,6 +13,7 @@ use std::fs;
 use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "ripr-lsp-saved-edit-sequence-v1";
+const MEASUREMENT_SCHEMA: &str = "ripr-lsp-saved-edit-measurement-v1";
 const REPORT_ENV: &str = "RIPR_LSP_PERFORMANCE_REPORT";
 const HARNESS_FILTER: &str = "saved_edit_sequence";
 const DEFAULT_TIMEOUT: Duration = Duration::from_mins(3);
@@ -69,6 +70,23 @@ pub(crate) fn lsp_performance_report() -> Result<(), String> {
     overlay_identity(&mut receipt)?;
     reject_promoted_proposals(&receipt)?;
 
+    let reports = crate::reports_dir();
+    let measurement_path = reports.join("lsp-performance-measurement.json");
+    if measurement_path.is_file() {
+        let measurement_raw = fs::read_to_string(&measurement_path)
+            .map_err(|err| format!("read {}: {err}", measurement_path.display()))?;
+        let mut measurement: Value = serde_json::from_str(&measurement_raw)
+            .map_err(|err| format!("parse {}: {err}", measurement_path.display()))?;
+        overlay_measurement_identity(&mut measurement)?;
+        let json_text = serde_json::to_string_pretty(&measurement)
+            .map_err(|err| format!("serialize lsp-performance measurement packet: {err}"))?;
+        crate::write_report(
+            "lsp-performance-measurement.json",
+            &format!("{json_text}\n"),
+        )?;
+        println!("Wrote target/ripr/reports/lsp-performance-measurement.json");
+    }
+
     let json_text = serde_json::to_string_pretty(&receipt)
         .map_err(|err| format!("serialize lsp-performance receipt: {err}"))?;
     crate::write_report("lsp-performance.json", &format!("{json_text}\n"))?;
@@ -108,6 +126,61 @@ pub(crate) fn overlay_identity(receipt: &mut Value) -> Result<(), String> {
     );
     identity.insert("binary_digest".to_string(), json!("not_measured"));
     identity.insert("host_class".to_string(), json!(host_class()));
+    Ok(())
+}
+
+pub(crate) fn overlay_measurement_identity(measurement: &mut Value) -> Result<(), String> {
+    let schema = measurement
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if schema != MEASUREMENT_SCHEMA {
+        return Err(format!(
+            "lsp-performance-report: expected measurement schema `{MEASUREMENT_SCHEMA}`, got `{schema}`"
+        ));
+    }
+    let Some(subjects) = measurement
+        .get_mut("subjects")
+        .and_then(Value::as_array_mut)
+    else {
+        return Err("lsp-performance-report: measurement packet is missing subjects".to_string());
+    };
+    let head = git_revision();
+    for subject in subjects {
+        let tier = subject
+            .get("tier")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if subject.get("run_state").and_then(Value::as_str) != Some("executed") {
+            continue;
+        }
+        let Some(identity) = subject.get_mut("identity").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        identity.insert("host_class".to_string(), json!(host_class()));
+        if tier == "ripr_swarm_self_dogfood" {
+            identity.insert("source_sha".to_string(), json!(head.clone()));
+        }
+        if let Some(receipt) = subject
+            .get_mut("sequence_receipt")
+            .and_then(Value::as_object_mut)
+        {
+            if let Some(receipt_identity) =
+                receipt.get_mut("identity").and_then(Value::as_object_mut)
+            {
+                receipt_identity.insert("source_sha".to_string(), json!(head.clone()));
+                receipt_identity.insert("host_class".to_string(), json!(host_class()));
+                if tier == "deterministic_fixture" {
+                    receipt_identity.insert(
+                        "binary_path".to_string(),
+                        json!("ripr --lib saved_edit_sequence"),
+                    );
+                    receipt_identity.insert("binary_digest".to_string(), json!("not_measured"));
+                }
+            }
+        }
+    }
     Ok(())
 }
 
