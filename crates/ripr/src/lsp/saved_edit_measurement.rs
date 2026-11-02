@@ -102,10 +102,16 @@ pub(super) fn build_measurement_packet(
     fixture_cold_ms: u128,
     dogfood_cold_ms: u128,
 ) -> Result<Value, String> {
-    evaluate_sequence(fixture_receipt)
-        .map_err(|violations| format!("fixture sequence failed evaluation: {violations:?}"))?;
-    evaluate_sequence(self_dogfood_receipt)
-        .map_err(|violations| format!("self-dogfood sequence failed evaluation: {violations:?}"))?;
+    evaluate_sequence(fixture_receipt).map_err(|violations| {
+        format!(
+            "fixture sequence failed evaluation: {violations:?}; inspect step receipts and re-run the saved_edit_sequence harness"
+        )
+    })?;
+    evaluate_sequence(self_dogfood_receipt).map_err(|violations| {
+        format!(
+            "self-dogfood sequence failed evaluation: {violations:?}; inspect step receipts and re-run the saved_edit_sequence harness"
+        )
+    })?;
 
     validate_cold_warm_honesty(&fixture_receipt.identity.cache_reset_procedure, "cold")?;
     validate_cold_warm_honesty(&self_dogfood_receipt.identity.cache_reset_procedure, "cold")?;
@@ -337,11 +343,15 @@ pub(super) fn validate_cold_warm_honesty(
             .to_ascii_lowercase()
             .contains("warm reuse")
     {
-        return Err("cold run marked warm without the declared cache-reset state".to_string());
+        return Err(
+            "cold run marked warm without the declared cache-reset state; declare an isolated cache-reset procedure and rebuild the packet"
+                .to_string(),
+        );
     }
     Ok(())
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -369,7 +379,7 @@ mod tests {
         let second = packet_digest_semantic(&packet)?;
         if first != second {
             return Err(format!(
-                "digest must not depend on subject order: {first} vs {second}"
+                "digest must not depend on subject order: {first} vs {second}; fix normalize_subject_order and re-run this test"
             ));
         }
         Ok(())
@@ -379,7 +389,9 @@ mod tests {
     fn cold_run_marked_warm_without_cache_state_is_rejected() -> Result<(), String> {
         match validate_cold_warm_honesty("warm reuse cache", "cold") {
             Err(message) if message.contains("cold run marked warm") => Ok(()),
-            other => Err(format!("expected cold/warm rejection, got {other:?}")),
+            other => Err(format!(
+                "expected cold/warm rejection, got {other:?}; fix validate_cold_warm_honesty and re-run this test"
+            )),
         }
     }
 
@@ -391,34 +403,57 @@ mod tests {
         let subjects = packet
             .get("subjects")
             .and_then(Value::as_array)
-            .ok_or_else(|| "missing subjects".to_string())?;
+            .ok_or_else(|| {
+                "missing subjects; rebuild build_measurement_packet and re-run this test".to_string()
+            })?;
         if subjects.len() != 3 {
-            return Err(format!("expected three subjects, got {}", subjects.len()));
+            return Err(format!(
+                "expected three subjects, got {}. Re-run build_measurement_packet after fixing subject rows",
+                subjects.len()
+            ));
         }
         let fixture_row = &subjects[0];
         if fixture_row.get("tier").and_then(Value::as_str) != Some("deterministic_fixture") {
-            return Err("first subject must be deterministic_fixture".to_string());
+            return Err(
+                "first subject must be deterministic_fixture; fix subject row order and re-run this test"
+                    .to_string(),
+            );
         }
         if fixture_row.get("run_state").and_then(Value::as_str) != Some("executed") {
-            return Err("fixture row must be executed".to_string());
+            return Err(
+                "fixture row must be executed; set run_state to executed and re-run this test"
+                    .to_string(),
+            );
         }
         let dogfood_row = &subjects[1];
         if dogfood_row.get("tier").and_then(Value::as_str) != Some("ripr_swarm_self_dogfood") {
-            return Err("second subject must be ripr_swarm_self_dogfood".to_string());
+            return Err(
+                "second subject must be ripr_swarm_self_dogfood; fix subject rows and re-run this test"
+                    .to_string(),
+            );
         }
         if dogfood_row.get("repository").and_then(Value::as_str) != Some(SWARM_REPOSITORY) {
-            return Err("self-dogfood row must name ripr-swarm".to_string());
+            return Err(
+                "self-dogfood row must name ripr-swarm; set repository and re-run this test"
+                    .to_string(),
+            );
         }
         let external = &subjects[2];
         if external.get("run_state").and_then(Value::as_str) != Some("not_authorized") {
-            return Err("external row must stay not_authorized".to_string());
+            return Err(
+                "external row must stay not_authorized; keep governed external honest and re-run this test"
+                    .to_string(),
+            );
         }
         if packet
             .get("packet_digest")
             .and_then(Value::as_str)
             .is_none()
         {
-            return Err("packet must include packet_digest".to_string());
+            return Err(
+                "packet must include packet_digest. Re-run after computing packet_digest_semantic on the packet"
+                    .to_string(),
+            );
         }
         Ok(())
     }
@@ -452,13 +487,19 @@ mod tests {
         }
         let endpoints = endpoints_from_receipt(&fixture);
         if endpoints.get("first_health_ms").and_then(Value::as_u64) != Some(10) {
-            return Err(format!("unexpected endpoints: {endpoints}"));
+            return Err(format!(
+                "unexpected endpoints: {endpoints}; fix cumulative endpoints_from_receipt and re-run this test"
+            ));
         }
         if endpoints.get("first_useful_ms").and_then(Value::as_u64) != Some(15) {
-            return Err(format!("unexpected endpoints: {endpoints}"));
+            return Err(format!(
+                "unexpected endpoints: {endpoints}; fix cumulative endpoints_from_receipt and re-run this test"
+            ));
         }
         if endpoints.get("complete_ms").and_then(Value::as_u64) != Some(22) {
-            return Err(format!("unexpected endpoints: {endpoints}"));
+            return Err(format!(
+                "unexpected endpoints: {endpoints}; fix cumulative endpoints_from_receipt and re-run this test"
+            ));
         }
         Ok(())
     }
