@@ -7,7 +7,7 @@
 //! and keeps the update's existing `static_unknown`.
 
 use ra_ap_syntax::{
-    AstNode, AstToken, SyntaxKind,
+    AstNode, AstToken, SyntaxKind, SyntaxToken,
     ast::{self, HasArgList, HasName},
 };
 
@@ -180,7 +180,11 @@ pub(crate) fn loop_accumulator(
         .syntax()
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
-        .filter(|token| token.kind() == SyntaxKind::IDENT && token.text() == local)
+        .filter(|token| {
+            token.kind() == SyntaxKind::IDENT
+                && token.text() == local
+                && !token_is_method_name_ref(token)
+        })
         .count();
     let expected = if update.op_token().is_some_and(|op| op.text() == "=") {
         4
@@ -410,6 +414,22 @@ fn path_ident(expr: &ast::Expr) -> Option<String> {
     Some(path.segment()?.name_ref()?.text().to_string())
 }
 
+fn token_is_method_name_ref(token: &SyntaxToken) -> bool {
+    let Some(name_ref) = token
+        .parent()
+        .filter(|parent| parent.kind() == SyntaxKind::NAME_REF)
+    else {
+        return false;
+    };
+    name_ref
+        .parent()
+        .and_then(ast::MethodCallExpr::cast)
+        .is_some_and(|call| {
+            call.name_ref()
+                .is_some_and(|method| method.syntax().text_range() == name_ref.text_range())
+        })
+}
+
 /// The parameter name `for _ in items` / `items.iter()` walks.
 fn walked_parameter(for_expr: &ast::ForExpr) -> Option<String> {
     let iterable = for_expr.iterable()?;
@@ -450,27 +470,18 @@ fn parameter_is_str_lines_slice_named(param: &ast::Param, name: &str) -> bool {
 }
 
 fn type_spelling_without_lifetimes(ty: &ast::Type) -> String {
-    let mut ty_str = String::new();
-    let mut chars = ty
+    let mut spelling = String::new();
+    for token in ty
         .syntax()
-        .text()
-        .to_string()
-        .chars()
-        .filter(|ch| !ch.is_whitespace())
-        .peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\'' {
-            while chars
-                .peek()
-                .is_some_and(|next| next.is_alphanumeric() || *next == '_')
-            {
-                chars.next();
-            }
-        } else {
-            ty_str.push(ch);
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+    {
+        if token.kind() == SyntaxKind::LIFETIME_IDENT {
+            continue;
         }
+        spelling.push_str(token.text());
     }
-    ty_str
+    spelling.chars().filter(|ch| !ch.is_whitespace()).collect()
 }
 
 fn parameter_is_integer_slice_named(param: &ast::Param, name: &str) -> bool {
