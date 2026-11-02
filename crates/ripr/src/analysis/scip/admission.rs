@@ -211,6 +211,10 @@ fn read_bounded_file(
     Ok(buffer)
 }
 
+pub(crate) fn read_admitted_index_bytes(path: &Path) -> Result<Vec<u8>, ScipAdmissionError> {
+    read_bounded_index_file(path)
+}
+
 fn read_bounded_index_file(path: &Path) -> Result<Vec<u8>, ScipAdmissionError> {
     read_bounded_file(
         path,

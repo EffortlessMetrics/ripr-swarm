@@ -1,6 +1,6 @@
 //! Admitted SCIP reference-to-definition bindings for relation consumers (#8116).
 
-use super::admission::{ScipAdmissionError, admit_scip_index};
+use super::admission::{ScipAdmissionError, admit_scip_index, read_admitted_index_bytes};
 use super::generated::scip::{Index, Occurrence, SymbolRole};
 use prost::Message;
 use std::collections::BTreeMap;
@@ -10,9 +10,8 @@ use std::path::Path;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ScipReferenceBindings {
     project_root_relative: String,
-    /// SCIP symbol for each local definition keyed by workspace-relative path
-    /// and the item's simple name (`expect_response`, etc.).
-    owner_definition_symbols: BTreeMap<(String, String), String>,
+    /// SCIP definition symbols keyed by workspace-relative path and terminal name.
+    owner_definition_symbols: BTreeMap<(String, String), Vec<String>>,
     /// Reference occurrences keyed by `(relative_path, line, start_character)`.
     reference_symbols: BTreeMap<(String, i32, i32), String>,
 }
@@ -24,8 +23,7 @@ impl ScipReferenceBindings {
         manifest_path: &Path,
     ) -> Result<Self, ScipAdmissionError> {
         let _admitted = admit_scip_index(workspace_root, index_path, manifest_path)?;
-        let index_bytes =
-            std::fs::read(index_path).map_err(|error| ScipAdmissionError::Io(error.to_string()))?;
+        let index_bytes = read_admitted_index_bytes(index_path)?;
         let index = Index::decode(index_bytes.as_slice())
             .map_err(|error| ScipAdmissionError::IndexDecode(error.to_string()))?;
         let manifest = super::admission::read_manifest(manifest_path)?;
@@ -33,7 +31,7 @@ impl ScipReferenceBindings {
     }
 
     fn from_index(project_root_relative: &str, index: &Index) -> Self {
-        let mut owner_definition_symbols = BTreeMap::new();
+        let mut owner_definition_symbols: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
         let mut reference_symbols = BTreeMap::new();
         for document in &index.documents {
             let relative_path = normalize_relative_path(&document.relative_path);
@@ -47,7 +45,9 @@ impl ScipReferenceBindings {
                 if is_definition(occurrence) {
                     if let Some(name) = simple_symbol_name(&occurrence.symbol) {
                         owner_definition_symbols
-                            .insert((relative_path.clone(), name), occurrence.symbol.clone());
+                            .entry((relative_path.clone(), name))
+                            .or_default()
+                            .push(occurrence.symbol.clone());
                     }
                 } else if is_reference(occurrence) {
                     reference_symbols.insert(
@@ -66,6 +66,10 @@ impl ScipReferenceBindings {
 
     /// Whether a bare call to `callee` in `test_file` at `call_line` resolves
     /// through admitted SCIP to the owner's definition symbol.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "policy:8116-scip-owner-call-site: call-site tuple matches related-test admit inputs"
+    )]
     pub(crate) fn call_resolves_to_owner(
         &self,
         workspace_root: &Path,
@@ -74,7 +78,11 @@ impl ScipReferenceBindings {
         callee: &str,
         owner_file: &Path,
         owner_name: &str,
+        same_line_same_name_calls: usize,
     ) -> bool {
+        if same_line_same_name_calls != 1 {
+            return false;
+        }
         let Some(owner_symbol) =
             self.owner_definition_symbol(workspace_root, owner_file, owner_name)
         else {
@@ -84,14 +92,17 @@ impl ScipReferenceBindings {
             return false;
         };
         let line = i32::try_from(call_line.saturating_sub(1)).unwrap_or(i32::MAX);
-        self.reference_symbols.iter().any(
-            |((path, reference_line, _), symbol)| {
+        let matching_references = self
+            .reference_symbols
+            .iter()
+            .filter(|((path, reference_line, _), symbol)| {
                 path.as_str() == test_path
                     && *reference_line == line
                     && **symbol == owner_symbol
                     && simple_symbol_name(symbol).is_some_and(|name| name == callee)
-            },
-        )
+            })
+            .count();
+        matching_references == 1
     }
 
     fn owner_definition_symbol(
@@ -101,9 +112,13 @@ impl ScipReferenceBindings {
         owner_name: &str,
     ) -> Option<String> {
         let path = self.relative_path(workspace_root, owner_file)?;
-        self.owner_definition_symbols
-            .get(&(path, owner_name.to_string()))
-            .cloned()
+        let symbols = self
+            .owner_definition_symbols
+            .get(&(path, owner_name.to_string()))?;
+        match symbols.len() {
+            1 => Some(symbols[0].clone()),
+            _ => None,
+        }
     }
 
     fn relative_path(&self, workspace_root: &Path, file: &Path) -> Option<String> {
@@ -145,8 +160,19 @@ fn is_reference(occurrence: &Occurrence) -> bool {
 }
 
 fn simple_symbol_name(symbol: &str) -> Option<String> {
-    let tail = symbol.split(' ').next_back()?.trim_end_matches('#');
-    let name = tail.split('.').next()?.trim_end_matches("()");
+    let descriptor = symbol.split(' ').next_back()?.trim_end_matches('#');
+    let scoped = descriptor
+        .rsplit('/')
+        .next()
+        .unwrap_or(descriptor)
+        .rsplit('#')
+        .next()
+        .unwrap_or(descriptor);
+    let name = scoped
+        .strip_suffix("().")
+        .or_else(|| scoped.strip_suffix("()"))
+        .or_else(|| scoped.strip_suffix('.'))
+        .unwrap_or(scoped);
     if name.is_empty() {
         None
     } else {
@@ -178,6 +204,7 @@ mod tests {
         )
         .map_err(|e| e.to_string())?;
         let owner_symbol = "scip-test crates/alpha/src/lib.rs expect_response().";
+        let scoped_owner_symbol = "scip rust-analyzer cargo crate_a 0.1.0 crate_a/score().";
         let index = Index {
             metadata: Some(Metadata {
                 version: ProtocolVersion::UnspecifiedProtocolVersion as i32,
@@ -210,10 +237,24 @@ mod tests {
                     }],
                     ..Document::default()
                 },
+                Document {
+                    relative_path: "crates/alpha/src/scoped.rs".to_string(),
+                    occurrences: vec![Occurrence {
+                        symbol: scoped_owner_symbol.to_string(),
+                        range: vec![0, 3, 8],
+                        symbol_roles: SymbolRole::Definition as i32,
+                        ..Occurrence::default()
+                    }],
+                    ..Document::default()
+                },
             ],
             ..Index::default()
         };
         let bindings = ScipReferenceBindings::from_index(".", &index);
+        assert_eq!(
+            simple_symbol_name(scoped_owner_symbol),
+            Some("score".to_string())
+        );
         assert!(bindings.call_resolves_to_owner(
             &project,
             &project.join("crates/beta/tests/protocol.rs"),
@@ -221,6 +262,7 @@ mod tests {
             "expect_response",
             &project.join("crates/alpha/src/lib.rs"),
             "expect_response",
+            1,
         ));
         assert!(!bindings.call_resolves_to_owner(
             &project,
@@ -229,7 +271,52 @@ mod tests {
             "expect_response",
             &project.join("crates/alpha/src/lib.rs"),
             "other_name",
+            1,
         ));
+        assert!(!bindings.call_resolves_to_owner(
+            &project,
+            &project.join("crates/beta/tests/protocol.rs"),
+            1,
+            "expect_response",
+            &project.join("crates/alpha/src/lib.rs"),
+            "expect_response",
+            2,
+        ));
+        let duplicate_owner_index = Index {
+            metadata: index.metadata.clone(),
+            documents: vec![Document {
+                relative_path: "crates/alpha/src/lib.rs".to_string(),
+                occurrences: vec![
+                    Occurrence {
+                        symbol: "scip-test mod_a/score().".to_string(),
+                        range: vec![0, 3, 8],
+                        symbol_roles: SymbolRole::Definition as i32,
+                        ..Occurrence::default()
+                    },
+                    Occurrence {
+                        symbol: "scip-test mod_b/score().".to_string(),
+                        range: vec![1, 3, 8],
+                        symbol_roles: SymbolRole::Definition as i32,
+                        ..Occurrence::default()
+                    },
+                ],
+                ..Document::default()
+            }],
+            ..Index::default()
+        };
+        let ambiguous = ScipReferenceBindings::from_index(".", &duplicate_owner_index);
+        assert!(
+            !ambiguous.call_resolves_to_owner(
+                &project,
+                &project.join("crates/beta/tests/protocol.rs"),
+                1,
+                "score",
+                &project.join("crates/alpha/src/lib.rs"),
+                "score",
+                1,
+            ),
+            "duplicate same-name owners in one file must fail closed"
+        );
         Ok(())
     }
 

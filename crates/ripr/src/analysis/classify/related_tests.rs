@@ -1818,6 +1818,13 @@ struct SameNameDefinitions<'s> {
 /// - the index must span the workspace (`workspace_complete`), except for
 ///   the type-path route on an inherent-impl owner whose whole package is
 ///   indexed (#6617): see `type_path_index_covers_competitors`.
+fn same_line_same_name_call_count(test: &TestSummary, callee: &str, line: usize) -> usize {
+    test.calls
+        .iter()
+        .filter(|call| call.name == callee && call.line == line)
+        .count()
+}
+
 fn scip_reference_admits_owner_call(
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
     owner: &FunctionSummary,
@@ -1839,6 +1846,7 @@ fn scip_reference_admits_owner_call(
                 callee,
                 &owner.file,
                 &owner.name,
+                same_line_same_name_call_count(test, callee, call.line),
             )
     })
 }
