@@ -314,12 +314,14 @@ pub(crate) fn admit_check_document(value: &Value, subject: &CheckSubject) -> Che
 }
 
 /// A row that declares an expected partial outcome passes only when the
-/// analysis is the typed `partial_with_limitations` outcome, the typed
-/// limitation that causes the declared static limit is present, and a finding
-/// names that static limit. A complete result means the pinned diff no longer
-/// reproduces the refusal; another limit or kind is a different failure.
-/// Counts get the same consistency checks as a complete document. The result
-/// is `ExpectedPartial`, never `Complete` (#12052).
+/// analysis is the typed `partial_with_limitations` outcome and every
+/// limitation is of the declared kind (the single-cause rule). The declared
+/// value is either a typed limitation kind such as `language_scope_unsupported`,
+/// or a static limit, which also needs the typed limitation that causes it and
+/// a finding that names the limit. A complete result means the pinned diff no
+/// longer reproduces the partial; another limitation or kind is a different
+/// failure. Counts get the same consistency checks as a complete document. The
+/// result is `ExpectedPartial`, never `Complete` (#12052).
 fn admit_expected_partial(
     envelope: &Value,
     outcome: &serde_json::Map<String, Value>,
