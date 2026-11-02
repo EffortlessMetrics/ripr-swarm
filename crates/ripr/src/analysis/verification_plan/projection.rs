@@ -495,10 +495,7 @@ pub(crate) fn retain_finding_plan_projection(finding: &Finding, input: AdapterIn
         plan.as_ref().is_ok_and(|value| value.digest_matches()),
         "change verification plan digest must match canonical bytes"
     );
-    let _ = crate::app::change_verification_plan::build_change_verification_plan_from_finding(
-        finding,
-        &plan_input,
-    );
+    let _ = plan;
 }
 
 pub(crate) fn retain_classified_seam_plan_projection(seam: &ClassifiedSeam, input: AdapterInput) {
@@ -524,6 +521,7 @@ pub(crate) fn retain_classified_seam_plan_projection(seam: &ClassifiedSeam, inpu
         plan.as_ref().is_ok_and(|value| value.digest_matches()),
         "change verification plan digest must match canonical bytes"
     );
+    let _ = plan;
 }
 
 #[cfg(test)]
