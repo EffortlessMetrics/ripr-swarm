@@ -5309,10 +5309,7 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
 #[test]
 fn repair_card_action_fails_closed_outside_a_git_workspace() -> Result<(), String> {
     let root = unique_lsp_test_root("repair-card-no-git")?;
-    if std::process::Command::new("git")
-        .current_dir(root.path())
-        .args(["rev-parse", "HEAD"])
-        .output()
+    if lsp_scope_git_output(root.path(), &["rev-parse", "HEAD"])
         .ok()
         .is_some_and(|output| output.status.success())
     {
