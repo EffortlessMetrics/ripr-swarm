@@ -89,6 +89,27 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # Hosted shard losses ("runner received a shutdown signal", exit 143, or "lost
+      # communication") happened inside the test-profile compile of
+      # `cargo nextest run --workspace`, which builds the `ripr` lib test and the
+      # `xtask` bin test at the same time. Each rustc peaks at roughly 9-11 GB; on a
+      # 4 CPU / 16 GB hosted runner (the same shape, where it reproduced as kernel
+      # OOM kills) the pair starves the runner agent. Build the workspace without
+      # xtask first, then add xtask, so the two never overlap. The test step below
+      # still runs the full unchanged nextest command; a build failure here fails
+      # the shard, and `verify` still requires every shard green. The sampler
+      # leaves a memory trace in the log for the next incident.
+      - name: Build the test binaries one memory-heavy crate at a time
+        timeout-minutes: 30
+        env:
+          CARGO_BUILD_JOBS: "3"
+        run: |
+          ( while true; do echo "$(date +%T) $(free -m | awk '/^Mem:/{print "used_mb="$3" available_mb="$7}')"; sleep 5; done ) > "$RUNNER_TEMP/memory.log" &
+          sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true; echo "peak memory sample:"; sort -t= -k2 -n -r "$RUNNER_TEMP/memory.log" | head -1' EXIT
+          cargo test --no-run --locked --workspace --exclude xtask
+          cargo test --no-run --locked --workspace
+
       - name: Required Rust tests (shard ${{ matrix.shard }} of 4)
         id: rust-test-shard
         timeout-minutes: 40
