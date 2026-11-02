@@ -118,10 +118,6 @@ impl CompletedAnalysisSnapshotId {
     }
 }
 
-#[expect(
-    dead_code,
-    reason = "policy:4807: typed DiagnosticResultId surface is consumed from tests and future LSP wiring"
-)]
 impl DiagnosticResultId {
     pub(crate) fn from_producer_id(
         value: &str,
