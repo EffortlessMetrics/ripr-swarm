@@ -485,10 +485,6 @@
         {
           "command": "ripr.copyAgentReceiptCommand",
           "when": "false"
-        },
-        {
-          "command": "ripr.startCurrentRepair",
-          "when": "false"
         }
       ]
     },
