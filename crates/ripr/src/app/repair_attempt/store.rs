@@ -500,7 +500,7 @@ fn store_open_spelling_matches_disk(
             return Err(format!(
                 "repair attempt store {} is a symlink, junction, or case-fold alias of `{}`; store identity uses the concrete contained locator, and aliases are rejected",
                 display_path(requested),
-                display_path(&canonical_store)
+                display_path(canonical_store)
             ));
         }
     }
