@@ -18,8 +18,8 @@ mod tests {
     };
     use crate::work_portfolio::workspace_path;
     use crate::work_selection_identity::{
-        DEFAULT_WORK_SELECTION_CORPUS_DIR, WORK_IDENTITY_FRESH_ROOT_DOMAINS,
-        load_work_identity_fresh_root_receipt, load_work_selection_corpus,
+        DEFAULT_WORK_SELECTION_CORPUS_DIR, WORK_IDENTITY_FRESH_ROOT_DOMAINS, WorkSelectionLawV1,
+        WorkSelectionRouteV1, load_work_identity_fresh_root_receipt, load_work_selection_corpus,
         run_work_selection_check, verify_work_identity_fresh_root_receipt,
     };
     use crate::work_wave_identity::{
@@ -66,7 +66,7 @@ mod tests {
     }
 
     /// Acceptance: cross-repository / wrong-basis selection fails closed
-    /// (shared identity law engine, RIPR-SPEC-0244 scenario-09).
+    /// (shared identity law engine, RIPR-SPEC-0244 scenario-09 case 0).
     #[test]
     fn issue_4678_selection_wrong_repository_fails_closed() -> Result<(), String> {
         let body = fs::read_to_string(
@@ -80,13 +80,25 @@ mod tests {
             .iter()
             .find(|scenario| scenario.scenario_id == "scenario-09-wrong-identities-fail-visibly")
             .ok_or_else(|| "missing wrong-identity scenario".to_string())?;
-        let failing = scenario
+        let wrong_repo = scenario
             .cases
-            .iter()
-            .filter(|case| !case.violations.is_empty())
-            .count();
-        if failing == 0 {
-            return Err("wrong-identity scenario must fail at least one case".to_string());
+            .first()
+            .ok_or_else(|| "scenario-09 must include a wrong-repository case".to_string())?;
+        if wrong_repo.status != "passed" || wrong_repo.expected != "fail" {
+            return Err(format!(
+                "wrong-repository case must pass as an expected fail, got status={} expected={}",
+                wrong_repo.status, wrong_repo.expected
+            ));
+        }
+        let has_repo_law = wrong_repo.violations.iter().any(|violation| {
+            violation.law == WorkSelectionLawV1::RepositoryIdentity
+                && violation.route == WorkSelectionRouteV1::RecompileBasis
+        });
+        if !has_repo_law {
+            return Err(
+                "wrong-repository case must fail with repository_identity/recompile_basis"
+                    .to_string(),
+            );
         }
         Ok(())
     }
