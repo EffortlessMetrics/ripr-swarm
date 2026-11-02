@@ -1472,6 +1472,7 @@ tests = [
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::fixed_root_probe_timeout_names_only_effective_consumer_recovery",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::task_first_commands_resolve_workspace_root_from_a_member_directory",
   "crates/ripr/tests/task_first_facade.rs::member_directory_commands_use_the_resolved_workspace_root",
+  "crates/ripr/tests/task_first_facade.rs::continue_outside_any_workspace_refuses_without_scanning",
   "crates/ripr/tests/task_first_facade.rs::member_relative_selector_never_reaches_a_sibling_members_file",
   "crates/ripr/tests/task_first_facade.rs::member_directory_agent_rerun_diff_explain_use_the_resolved_workspace_root",
   "crates/ripr/tests/task_first_facade.rs::member_directory_root_resolution_failure_keeps_the_json_refusal_envelope",
