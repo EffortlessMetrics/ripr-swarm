@@ -135,18 +135,15 @@ fn derived_name(function_name: &str) -> Option<String> {
 }
 
 /// The click decorators that build a command without changing its call.
-fn is_click_decorator(decorator: &Expr) -> bool {
-    expr_full_name(decorator).is_some_and(|name| {
-        matches!(
-            name.as_str(),
-            "click.command" | "click.group" | "click.option" | "click.argument"
-        )
-    })
+fn is_click_decorator(decorator: &Expr, alias: &str) -> bool {
+    expr_full_name(decorator)
+        .is_some_and(|name| super::cli_runner::is_click_decorator_name(&name, alias))
 }
 
-/// Whether the decorator is `click.group` without a replacement `cls`.
-fn is_plain_group_decorator(decorator: &Expr) -> bool {
-    if expr_full_name(decorator).as_deref() != Some("click.group") {
+/// Whether the decorator is `<alias>.group` without a replacement `cls`.
+fn is_plain_group_decorator(decorator: &Expr, alias: &str) -> bool {
+    let group = format!("{alias}.group");
+    if expr_full_name(decorator).as_deref() != Some(group.as_str()) {
         return false;
     }
     match decorator {
@@ -163,17 +160,21 @@ fn is_plain_group_decorator(decorator: &Expr) -> bool {
     }
 }
 
-fn is_group_function(function: &ast::StmtFunctionDef) -> bool {
+fn is_group_function(function: &ast::StmtFunctionDef, alias: &str) -> bool {
+    let group = format!("{alias}.group");
     function
         .decorator_list
         .iter()
-        .any(|decorator| expr_full_name(decorator).as_deref() == Some("click.group"))
-        && function.decorator_list.iter().all(is_click_decorator)
+        .any(|decorator| expr_full_name(decorator).as_deref() == Some(group.as_str()))
         && function
             .decorator_list
             .iter()
-            .filter(|decorator| expr_full_name(decorator).as_deref() == Some("click.group"))
-            .all(is_plain_group_decorator)
+            .all(|decorator| is_click_decorator(decorator, alias))
+        && function
+            .decorator_list
+            .iter()
+            .filter(|decorator| expr_full_name(decorator).as_deref() == Some(group.as_str()))
+            .all(|decorator| is_plain_group_decorator(decorator, alias))
 }
 
 /// How often `needle` is written at an identifier boundary: not after a name
@@ -202,8 +203,10 @@ pub(super) fn mark_cli_subcommands(
     imports: &[PythonImport],
     owners: &mut [PythonOwner],
 ) {
-    if !imports.iter().any(super::cli_runner::is_plain_click_import)
-        || module_binding_count(statements, source, "click") != Some(1)
+    let Some(alias) = super::cli_runner::stdlib_click_alias(imports) else {
+        return;
+    };
+    if module_binding_count(statements, source, &alias) != Some(1)
         || source.contains("add_command")
         || source.contains(".commands")
     {
@@ -230,10 +233,14 @@ pub(super) fn mark_cli_subcommands(
         };
         if !function.decorator_list.iter().all(|decorator| {
             expr_full_name(decorator).is_some_and(|spelled| {
-                matches!(spelled.as_str(), "click.option" | "click.argument")
+                super::cli_runner::is_click_decorator_name(&spelled, &alias)
+                    && matches!(
+                        spelled.rsplit_once('.').map(|(_, method)| method),
+                        Some("option" | "argument")
+                    )
             }) || registration(decorator, function.name.as_str()).is_some()
         }) || module_binding_count(statements, source, function.name.as_str()) != Some(1)
-            || !group_is_trusted(source, statements, &functions, &only.group)
+            || !group_is_trusted(source, statements, &functions, &only.group, &alias)
         {
             continue;
         }
@@ -258,11 +265,12 @@ fn group_is_trusted(
     statements: &[Stmt],
     functions: &[&ast::StmtFunctionDef],
     group: &str,
+    alias: &str,
 ) -> bool {
     if module_binding_count(statements, source, group) != Some(1)
         || !functions
             .iter()
-            .any(|function| function.name.as_str() == group && is_group_function(function))
+            .any(|function| function.name.as_str() == group && is_group_function(function, alias))
     {
         return false;
     }

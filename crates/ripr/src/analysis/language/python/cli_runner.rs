@@ -128,25 +128,55 @@ pub(super) fn runner_invoking_test<'a>(
 }
 
 fn is_click_command(owner: &PythonOwner) -> bool {
+    let Some(alias) = stdlib_click_alias(&owner.imports) else {
+        return false;
+    };
     owner.owner_kind == Some(OwnerKind::Function)
         && owner.class_path.is_empty()
         && owner.qualified_name == owner.name
-        && owner.imports.iter().any(is_plain_click_import)
+        && owner.decorators.iter().any(|decorator| {
+            is_click_decorator_name(decorator, &alias)
+                && matches!(
+                    decorator.rsplit_once('.').map(|(_, method)| method),
+                    Some("command" | "group")
+                )
+        })
         && owner
             .decorators
             .iter()
-            .any(|decorator| matches!(decorator.as_str(), "click.command" | "click.group"))
-        && owner.decorators.iter().all(|decorator| {
-            matches!(
-                decorator.as_str(),
-                "click.command" | "click.group" | "click.option" | "click.argument"
-            )
-        })
+            .all(|decorator| is_click_decorator_name(decorator, &alias))
 }
 
-/// `import click`, not `from helpers import click`.
-pub(super) fn is_plain_click_import(import: &PythonImport) -> bool {
-    import.imported == "click" && import.alias == "click" && import.source_module.is_empty()
+fn import_binds_stdlib_click_module(import: &PythonImport) -> bool {
+    import.imported == "click" && import.source_module.is_empty()
+}
+
+fn alias_rebound_from_non_stdlib_click(imports: &[PythonImport], alias: &str) -> bool {
+    imports
+        .iter()
+        .any(|import| import.alias == alias && !import_binds_stdlib_click_module(import))
+}
+
+/// The alias bound to stdlib `click` when the module imports it exactly once.
+pub(super) fn stdlib_click_alias(imports: &[PythonImport]) -> Option<String> {
+    let mut alias = None;
+    for import in imports {
+        if !import_binds_stdlib_click_module(import) {
+            continue;
+        }
+        if alias.is_some() {
+            return None;
+        }
+        alias = Some(import.alias.clone());
+    }
+    alias.filter(|candidate| !alias_rebound_from_non_stdlib_click(imports, candidate))
+}
+
+pub(super) fn is_click_decorator_name(decorator: &str, alias: &str) -> bool {
+    let Some((receiver, method)) = decorator.rsplit_once('.') else {
+        return false;
+    };
+    receiver == alias && matches!(method, "command" | "group" | "option" | "argument")
 }
 
 /// Whether `rhs` is exactly one `alias(...)` construction and nothing else:

@@ -528,19 +528,17 @@ fn owner_from_function(
     // invoked, so a helper it calls is reached through the command (#9226).
     let click_command = !is_async
         && decorator_names.len() == decorators.len()
-        && decorator_names
-            .iter()
-            .any(|decorator| matches!(decorator.as_str(), "click.command" | "click.group"))
-        && decorator_names.iter().all(|decorator| {
-            matches!(
-                decorator.as_str(),
-                "click.command" | "click.group" | "click.option" | "click.argument"
-            )
-        })
-        && context
-            .imports
-            .iter()
-            .any(super::cli_runner::is_plain_click_import);
+        && super::cli_runner::stdlib_click_alias(context.imports).is_some_and(|alias| {
+            decorator_names.iter().any(|decorator| {
+                super::cli_runner::is_click_decorator_name(decorator, &alias)
+                    && matches!(
+                        decorator.rsplit_once('.').map(|(_, method)| method),
+                        Some("command" | "group")
+                    )
+            }) && decorator_names
+                .iter()
+                .all(|decorator| super::cli_runner::is_click_decorator_name(decorator, &alias))
+        });
     // A decorator whose name cannot be read still wraps the call.
     let binding_only = !is_async
         && decorator_names.len() == decorators.len()

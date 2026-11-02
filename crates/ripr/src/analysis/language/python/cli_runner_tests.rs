@@ -327,3 +327,46 @@ fn without_a_recognised_runner_invoke_the_generic_line_stays() -> Result<(), Str
     }
     Ok(())
 }
+
+const ALIAS_APP_PY: &str = "import click as c\n\n\n@c.command()\n@c.option('--name')\ndef hello(name):\n    c.echo(greeting(name))\n\n\ndef greeting(name):\n    if name:\n        return 'hi ' + name\n    return 'hi'\n";
+
+fn finding_with_app(
+    app: &str,
+    line: usize,
+    text: &str,
+    tests_source: &str,
+) -> Result<Finding, String> {
+    let owners = extract_owners(Path::new("src/app.py"), app);
+    let tests = extract_tests(Path::new("tests/test_commands.py"), tests_source);
+    classify_change(Path::new("src/app.py"), line, text, &owners, &tests)
+        .ok_or_else(|| "expected a finding".to_string())
+}
+
+#[test]
+fn a_command_decorated_through_a_click_import_alias_is_reached() -> Result<(), String> {
+    let finding = finding_with_app(ALIAS_APP_PY, 7, "    c.echo(greeting(name))", LOCAL_RUNNER)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::NoStaticPath,
+        "{:?}",
+        finding.evidence
+    );
+    assert_eq!(
+        relation_evidence(&finding),
+        vec!["related_test_relation: cli_runner_invoke (test_run_with_flag)"]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_click_alias_rebound_from_another_module_is_not_a_command() -> Result<(), String> {
+    let app = ALIAS_APP_PY.replace("import click as c", "import click_helpers as c");
+    let finding = finding_with_app(&app, 7, "    c.echo(greeting(name))", LOCAL_RUNNER)?;
+    assert!(
+        relation_evidence(&finding).is_empty(),
+        "{:?}",
+        finding.evidence
+    );
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
