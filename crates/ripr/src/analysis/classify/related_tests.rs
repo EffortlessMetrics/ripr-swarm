@@ -6332,7 +6332,12 @@ pub(in crate::analysis) fn test_dispatches_trait_impl(
                 continue;
             };
             let receiver = after[..end].trim();
-            if dispatch_operand_has_type(receiver, &body[..for_at], &impl_type) {
+            let Some(receiver_rel) = after[..end].find(receiver) else {
+                continue;
+            };
+            let use_at = at + 2 + receiver_rel;
+            if dispatch_operand_has_type(receiver, &body[..for_at], &impl_type, &test.body, use_at)
+            {
                 return true;
             }
         }
@@ -6374,18 +6379,32 @@ pub(in crate::analysis) fn test_dispatches_trait_impl(
             return false;
         }
         let prior_bindings = before.rfind(';').map_or("", |end| &before[..=end]);
-        ident_ending_at(before, before.len())
-            .is_some_and(|receiver| dispatch_operand_has_type(receiver, prior_bindings, &impl_type))
-            || receiver_expr_resolves_to_type(before, before.len(), &impl_type, prior_bindings)
+        ident_ending_at(before, before.len()).is_some_and(|receiver| {
+            dispatch_operand_has_type(
+                receiver,
+                prior_bindings,
+                &impl_type,
+                &test.body,
+                before.len(),
+            )
+        }) || receiver_expr_resolves_to_type(before, before.len(), &impl_type, prior_bindings)
     })
 }
 
-fn dispatch_operand_has_type(expr: &str, preceding: &str, impl_type: &str) -> bool {
+fn dispatch_operand_has_type(
+    expr: &str,
+    preceding: &str,
+    impl_type: &str,
+    parse_body: &str,
+    use_at: usize,
+) -> bool {
     let preceding = preceding.rfind(';').map_or("", |end| &preceding[..=end]);
     let expr = expr.trim().strip_prefix('&').unwrap_or(expr).trim();
     let expr = expr.strip_prefix("mut ").unwrap_or(expr).trim();
     if !expr.is_empty() && expr.bytes().all(is_ident_byte) {
-        return let_binding_mentions_type(preceding, expr, impl_type);
+        return let_binding_mentions_type_at(
+            preceding, parse_body, parse_body, use_at, expr, impl_type,
+        );
     }
     bracketed_expr_has_type(expr, expr.len(), impl_type, preceding, true)
 }
