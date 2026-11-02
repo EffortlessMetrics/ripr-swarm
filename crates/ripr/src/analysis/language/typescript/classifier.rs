@@ -7087,6 +7087,23 @@ pub(crate) fn classify_resolved_owner(
             !ts_field_has_accessor(&change, owner, owners)
                 && ts_field_update_witnessed(&change, owner, related_candidates)
         });
+    // #12463: an unwitnessed update of a field whose new value reads none of
+    // the owner's parameters has no input to flip, so the strong-check advice
+    // "exercise the changed branch with an input that flips it" would mislead
+    // (the test overwrites the field, never calls the method, or reads an
+    // accessor-backed field). Those keep the generic next step.
+    let input_free_field_update = !probe_shape.specific
+        && lookup_change.is_none()
+        && !returns_changed_state
+        && !field_update_witnessed
+        && ts_field_update_change(owner, line_text, old_line_text).is_some()
+        && {
+            let masked_line = ts_mask_literals_and_comments(line_text);
+            owner
+                .params
+                .iter()
+                .all(|param| identifier_offsets(&masked_line, param).is_empty())
+        };
     let probe_shape = if lookup_change.is_some()
         || returns_changed_state
         || arm_change_witnessed
@@ -7120,6 +7137,12 @@ pub(crate) fn classify_resolved_owner(
                 })
             },
         );
+    // #12463: a deleted call has no branch and no input that flips it, so the
+    // strong-check "flip the changed branch" advice never applies, whether or
+    // not the removal was counted above (fail closed).
+    let removed_call_change =
+        super::call_removal_guard::removed_method_call(line_text, old_line_text).is_some()
+            || super::call_removal_guard::replaced_call_with_discard(line_text, old_line_text);
     let probe_shape = if counted_removal {
         TypeScriptProbeShape::new(ProbeFamily::CallDeletion, DeltaKind::Effect)
     } else {
@@ -8087,6 +8110,12 @@ pub(crate) fn classify_resolved_owner(
                 "TypeScript preview advisory: related module-initializer observer reaches `{}` but no safe target shape is available; add an exact value assertion for the exported value and keep the finding advisory until repair-card fields are complete.",
                 owner.name
             )
+        }
+        _ if strongest_strength >= OracleStrength::Strong.rank()
+            && !input_free_field_update
+            && !removed_call_change =>
+        {
+            crate::domain::STRONG_CHECK_UNTIED_NEXT_STEP.to_string()
         }
         _ => {
             "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.".to_string()

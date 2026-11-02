@@ -3543,6 +3543,7 @@ id = "RIPR-SPEC-0027"
 name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests.rs::spec_0027_ambiguous_fallback_is_never_exposed_and_punctuation_is_ignored",
   "crates/ripr/src/analysis/language/typescript/asymmetric_matcher_tests.rs::top_level_asymmetric_matchers_read_weak",
   "crates/ripr/src/analysis/language/typescript/asymmetric_matcher_tests.rs::derived_property_observations_read_weak",
   "crates/ripr/src/analysis/language/typescript/asymmetric_matcher_tests.rs::literal_and_value_expectations_stay_exact_value",
@@ -3820,6 +3821,18 @@ code = [
   "xtask/src/main.rs",
 ]
 outputs = [
+  "fixtures/ts_strong_snapshot_untied/expected/check.json",
+  "fixtures/ts_strong_snapshot_untied/expected/human.txt",
+  "fixtures/ts_field_update_getter_backed/expected/check.json",
+  "fixtures/ts_field_update_getter_backed/expected/human.txt",
+  "fixtures/ts_field_update_overwrite_alias/expected/check.json",
+  "fixtures/ts_field_update_overwrite_alias/expected/human.txt",
+  "fixtures/ts_field_update_overwrite_assign/expected/check.json",
+  "fixtures/ts_field_update_overwrite_assign/expected/human.txt",
+  "fixtures/ts_field_update_overwrite_computed/expected/check.json",
+  "fixtures/ts_field_update_overwrite_computed/expected/human.txt",
+  "fixtures/ts_field_update_table_zero_rows/expected/check.json",
+  "fixtures/ts_field_update_table_zero_rows/expected/human.txt",
   "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md",
   "docs/OUTPUT_SCHEMA.md",
   "docs/specs/README.md",
