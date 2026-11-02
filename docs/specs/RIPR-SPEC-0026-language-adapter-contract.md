@@ -23,6 +23,7 @@ specs:
 
 - [RIPR-SPEC-0027: TypeScript preview static facts](RIPR-SPEC-0027-typescript-preview-static-facts.md)
 - [RIPR-SPEC-0028: Python preview static facts](RIPR-SPEC-0028-python-preview-static-facts.md)
+- [RIPR-SPEC-0405: Julia preview package, dispatch, Test, numerical, array, and native boundaries](RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md) (proposed contract; no adapter yet)
 
 The proposal context is in
 [RIPR-PROP-0001: Multi-Language Adapter Preview](../proposals/RIPR-PROP-0001-multi-language-adapter-preview.md).
