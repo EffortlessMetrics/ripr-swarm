@@ -872,6 +872,77 @@ fn member_directory_commands_use_the_resolved_workspace_root() -> Result<(), Str
     Ok(())
 }
 
+/// #12417: `continue` with no attempt, run from a directory that no
+/// workspace, package or Git top level encloses, must say so and stop. The
+/// repair selector it used to consult reads the whole current directory, which
+/// on a large tree ran for minutes with no output. Unix-only like the other
+/// implicit-root smoke tests (the temp parent must hold no manifest or repo).
+#[cfg(unix)]
+#[test]
+fn continue_outside_any_workspace_refuses_without_scanning() -> Result<(), String> {
+    // The claim needs a directory no project encloses. `TMPDIR` can sit inside
+    // a checkout (an anchored root, where the refusal is the ordinary scan), so
+    // fall back to `/tmp` and fail loudly if neither is free of markers: a
+    // silent early return would leave the refusal unchecked.
+    let anchored = |dir: &Path| {
+        dir.ancestors().any(|ancestor| {
+            [
+                "Cargo.toml",
+                ".git",
+                "package.json",
+                "pyproject.toml",
+                "setup.py",
+                "setup.cfg",
+            ]
+            .iter()
+            .any(|name| ancestor.join(name).exists())
+        })
+    };
+    let base = [std::env::temp_dir(), PathBuf::from("/tmp")]
+        .into_iter()
+        .filter_map(|dir| dir.canonicalize().ok())
+        .find(|dir| !anchored(dir))
+        .ok_or("no temp directory outside every project was found for the unanchored control")?;
+    let outer = base.join(format!(
+        "ripr-facade-unanchored-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&outer).map_err(|e| e.to_string())?;
+    let _cleanup = Fixture {
+        root: outer.clone(),
+    };
+    std::fs::write(outer.join("loose.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    let output = run_ripr(&outer, &["continue"])?;
+    assert_exit(&output, 3, "continue outside any workspace");
+    let all = stderr_text(&output);
+    assert!(
+        all.contains("no current attempt to continue")
+            && all.contains("no workspace, package or Git repository was found"),
+        "must name the cause:\n{all}"
+    );
+    assert!(
+        !all.contains("starts nothing right now"),
+        "must not consult the repair selector:\n{all}"
+    );
+    assert!(
+        stdout_text(&output).is_empty(),
+        "typed refusal keeps stdout empty"
+    );
+
+    // A plain package manifest is a project even without a workspace marker:
+    // it keeps the ordinary explanation.
+    std::fs::write(outer.join("package.json"), "{\"name\":\"shop\"}").map_err(|e| e.to_string())?;
+    let packaged = run_ripr(&outer, &["continue"])?;
+    assert_exit(&packaged, 3, "continue in a plain package");
+    assert!(
+        !stderr_text(&packaged).contains("no workspace, package or Git repository was found"),
+        "a plain package must not be called unanchored:\n{}",
+        stderr_text(&packaged)
+    );
+    Ok(())
+}
+
 /// #8872: from a workspace member directory `diff` uses the resolved
 /// workspace root (same stderr disclosure as `check`), and `--root .` keeps
 /// the member. Unix-only like the other implicit-root smoke tests: the
