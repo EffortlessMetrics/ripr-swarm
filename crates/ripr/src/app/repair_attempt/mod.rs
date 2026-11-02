@@ -3031,13 +3031,30 @@ pub(crate) fn include_resolved_explicit_store_operational_write(
     root: &Path,
     store: Option<&Path>,
     attempt_id: Option<&RepairAttemptId>,
-    access: RepairAttemptStoreAccess,
+    _access: RepairAttemptStoreAccess,
 ) -> Result<(), String> {
-    let resolved = resolve_store(root, store, access)?;
+    let (canonical_root, locator) = match resolve_store(root, store, RepairAttemptStoreAccess::Open)
+    {
+        Ok(resolved) => (
+            resolved.canonical_root().to_path_buf(),
+            resolved.locator().to_string(),
+        ),
+        Err(_) if store.is_some() => {
+            let canonical_root = root.canonicalize().map_err(|error| {
+                format!(
+                    "canonicalize repair attempt repository root {} failed: {error}",
+                    root.display()
+                )
+            })?;
+            let locator = store.unwrap().to_string_lossy().replace('\\', "/");
+            (canonical_root, locator)
+        }
+        Err(error) => return Err(error),
+    };
     include_explicit_store_operational_write(
         policy,
-        resolved.canonical_root(),
-        Some(Path::new(resolved.locator())),
+        &canonical_root,
+        Some(Path::new(&locator)),
         attempt_id,
     )
 }

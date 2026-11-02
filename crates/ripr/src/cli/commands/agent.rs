@@ -2234,7 +2234,13 @@ fn run_agent_repair_phase(
                 let base = base
                     .as_deref()
                     .ok_or_else(|| "agent repair --gap-id lost its parsed --base".to_string())?;
-                return run_gap_bound_before_phase(&root, gap_id, base, store_ref, quiet, refusal);
+                let identity = identity.ok_or_else(|| {
+                    "repair before requires its identity from the locked CLI publication driver"
+                        .to_string()
+                })?;
+                return run_gap_bound_before_phase(
+                    &root, gap_id, base, store_ref, quiet, refusal, identity,
+                );
             }
             let seam_id = seam_id.ok_or_else(|| {
                 "agent repair --phase before lost its parsed seam identity".to_string()
@@ -2370,7 +2376,7 @@ fn run_agent_repair_phase(
                 Some(&crate::app::repair_attempt::RepairAttemptId::parse(
                     identity.attempt_id(),
                 )?),
-                crate::app::repair_attempt::RepairAttemptStoreAccess::Prepare,
+                crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
             )?;
             crate::edit_cage::validate_build_output_precondition(&root, &policy)
                 .map_err(|error| format!("{error} Nothing was started."))?;
@@ -3892,6 +3898,7 @@ fn run_gap_bound_before_phase(
     store_ref: Option<&Path>,
     quiet: bool,
     refusal: &mut AfterPhaseRefusalContext,
+    identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
 ) -> Result<(), String> {
     use crate::agent::loop_commands::{bound_root, shell_arg};
     use crate::app::gap_bound_repair::{
@@ -3915,12 +3922,14 @@ fn run_gap_bound_before_phase(
     // refuse an obviously production dirty file before the gap snapshot;
     // any doubt falls through to the exact policy check below.
     if let Ok(preflight_head) = crate::agent::artifact::current_git_head(root)
+        && let Ok(preflight_attempt) =
+            crate::app::repair_attempt::RepairAttemptId::parse(identity.attempt_id())
         && let Ok(preflight_violations) =
             crate::app::repair_attempt::conservative_dirty_premise_violations(
                 root,
                 &preflight_head,
                 store_ref,
-                None,
+                Some(&preflight_attempt),
             )
         && !preflight_violations.is_empty()
     {
@@ -4004,8 +4013,10 @@ fn run_gap_bound_before_phase(
         &mut policy,
         root,
         store_ref,
-        None,
-        crate::app::repair_attempt::RepairAttemptStoreAccess::Prepare,
+        Some(&crate::app::repair_attempt::RepairAttemptId::parse(
+            identity.attempt_id(),
+        )?),
+        crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
     )?;
     crate::edit_cage::validate_build_output_precondition(root, &policy)
         .map_err(|error| format!("{error} Nothing was started."))?;

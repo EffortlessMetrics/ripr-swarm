@@ -545,7 +545,7 @@ fn persist_before_repair_attempt(
         Some(&crate::app::repair_attempt::RepairAttemptId::parse(
             identity.attempt_id(),
         )?),
-        crate::app::repair_attempt::RepairAttemptStoreAccess::Prepare,
+        crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
     )?;
     // Recheck immediately before baseline capture so ignore-rule drift observed
     // during preparation refuses attempt publication.
