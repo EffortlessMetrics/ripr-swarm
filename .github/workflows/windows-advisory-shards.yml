@@ -87,30 +87,20 @@ jobs:
           cargo xtask check-covered-by
           cargo xtask check-file-policy
 
-      - name: Time check-file-policy and its child cargo calls
+      - name: Explain why hard_cut_admission_selftest rebuilds when warm
         timeout-minutes: 30
         shell: bash
         run: |
+          cargo xtask check-covered-by
+          cargo xtask check-file-policy > target/fp-warm.log 2>&1 || true
           for i in 1 2; do
             start=$(date +%s)
-            cargo xtask check-file-policy > "target/fp-$i.log" 2>&1 || true
-            echo "RUN $i total $(( $(date +%s) - start ))s"
-            cp target/ripr/reports/file-policy.md "target/fp-$i.md"
-            python3 - "$i" <<'PY'
-          import re,sys
-          rows=[]
-          for line in open(f"target/fp-{sys.argv[1]}.md",encoding="utf-8"):
-              m=re.search(r'argv=\[(.*?)\]; .*?elapsed_ms=(\d+)',line)
-              if line.startswith("- program=") and m:
-                  rows.append((int(m.group(2)),m.group(1)[:150]))
-          print("RUN",sys.argv[1],"child rows",len(rows),"sum_ms",sum(r[0] for r in rows))
-          for ms,a in sorted(rows,reverse=True)[:12]:
-              print("  ",ms,a)
-          PY
+            cargo test -p xtask --test hard_cut_admission_selftest --no-run -v > "target/hc-$i.log" 2>&1 || true
+            echo "HC RUN $i $(( $(date +%s) - start ))s"
+            grep -E "Dirty|Fresh xtask|Compiling|Running .*hard_cut|Finished|Executable" "target/hc-$i.log" | cut -c1-300 | head -12
           done
           start=$(date +%s)
-          cargo test -p xtask --bin xtask policy_checker_facade -- --list --format terse > /dev/null 2>&1 || true
-          echo "ONE list spawn $(( $(date +%s) - start ))s"
-          start=$(date +%s)
-          cargo test -p xtask --bin xtask policy_checker_facade --no-run > /dev/null 2>&1 || true
-          echo "ONE no-run spawn $(( $(date +%s) - start ))s"
+          CARGO_LOG=cargo::core::compiler::fingerprint=debug cargo test -p xtask --test hard_cut_admission_selftest --no-run > target/hc-fp.log 2>&1 || true
+          echo "FINGERPRINT RUN $(( $(date +%s) - start ))s"
+          grep -iE "dirty|stale|newer|outdated|hard_cut" target/hc-fp.log | cut -c1-300 | head -20
+          ls -la target/debug/deps/hard_cut_admission_selftest* 2>/dev/null | head
