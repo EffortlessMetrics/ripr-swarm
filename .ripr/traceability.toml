@@ -3900,6 +3900,17 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::truthiness_swap_fails_open_on_assert_named_helpers_and_result_callees",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::truthiness_swap_fails_open_on_fstring_alias_and_doctest_reach",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::truthiness_swap_fails_open_on_a_separating_default_or_a_branch_value_edit",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_block_no_observed_input_enters_is_weakly_exposed",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_block_an_observed_input_enters_stays_exposed",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_block_fails_open_on_unreadable_or_changed_structure",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_block_reads_a_conjunction_past_an_unreadable_conjunct",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_block_naming_a_changed_module_constant_fails_open",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_header_with_a_dedented_body_line_fails_open",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::guard_names_only_parameters_is_a_closed_reading",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_header_view_requires_an_unpaired_removed_body",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_header_view_covers_elif_else_while_nested_methods_and_decorators",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_reads_a_false_conjunct_past_an_unreadable_one",
+  "crates/ripr/src/analysis/language/python/tests.rs::caplog_text_reads_a_conjunction_guard_past_an_unreadable_conjunct",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::a_class_header_lookalike_inside_a_multiline_string_keeps_its_probe",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::object_base_class_change_pins_type_params_keywords_and_header_shapes",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_stays_uncredited_without_a_bound_owner_receiver",
@@ -12917,6 +12928,7 @@ name = "Unsafe execution boundary probes"
 spec = "docs/specs/RIPR-SPEC-0168-unsafe-boundary-probes.md"
 tests = [
   "crates/ripr/src/analysis/syntax/ra.rs::tests",
+  "crates/ripr/src/analysis/syntax/ra/probe_shape_walk_tests.rs::probe_walk_resolves_unchecked_assumption_through_use_bindings",
   "crates/ripr/src/analysis/probes/classify.rs::tests",
 ]
 fixtures = [
@@ -19111,6 +19123,26 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::method_parameters_shadow_the_receiver",
   "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::ordinary_spies_and_destructuring_do_not_over_refuse",
   "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::owner_side_casts_and_decorators_record_no_entry",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::loop_over_a_const_object_table_reads_one_literal_assertion_per_row",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::container_cells_resolve_only_as_bare_values",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::every_row_must_hold_a_literal_at_every_key_read",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::a_touched_table_is_never_resolved",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::a_reassignable_or_outer_or_exported_table_is_never_resolved",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::only_a_plain_row_key_read_in_a_lone_registration_resolves",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::inline_each_object_rows_resolve_for_one_parameter_or_a_plain_pattern",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::a_destructuring_pattern_repeating_a_key_is_never_resolved",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::loop_parameter_in_registration_arguments_is_never_resolved",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::scalar_cells_resolve_only_as_direct_reads_in_a_lone_expect",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::hidden_mutation_routes_are_refused_on_every_entry_path",
+  "crates/ripr/src/analysis/language/typescript/tests/table_loop_tests.rs::dynamic_code_in_the_test_body_keeps_the_loop_unresolved",
+  "crates/ripr/src/analysis/language/typescript/tests/object_row_tests.rs::tuple_row_container_cells_never_resolve",
+  "crates/ripr/src/analysis/language/typescript/table_rows.rs::tests::row_text_guard_refuses_hidden_mutation_routes_outside_quotes",
+  "crates/ripr/src/analysis/language/typescript/object_rows.rs::tests::single_expect_statement_accepts_only_one_expect_chain",
+  "crates/ripr/src/analysis/language/typescript/object_rows.rs::tests::container_read_needs_a_word_bounded_direct_expect_or_matcher",
+  "crates/ripr/src/app/tests/typescript_table_row_packets.rs::const_object_row_table_resolves_the_expected_value",
+  "crates/ripr/src/app/tests/typescript_table_row_packets.rs::inline_each_object_rows_resolve_the_expected_value",
+  "crates/ripr/src/app/tests/typescript_table_row_packets.rs::touched_partial_or_derived_tables_keep_the_dynamic_refusal",
+  "crates/ripr/src/app/tests/typescript_table_row_packets.rs::resolved_table_off_the_boundary_does_not_expose_the_change",
 ]
 fixtures = [
   "fixtures/typescript_mock_count_nested_alias",
@@ -19141,6 +19173,8 @@ fixtures = [
   "fixtures/ts_dead_assertion_after_try_empty_catch",
   "fixtures/ts_class_getter_factory_read",
   "fixtures/ts_class_getter_factory_rebound",
+  "fixtures/ts_table_row_expected_credit",
+  "fixtures/ts_table_row_expected_refused",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/declaration_bindings.rs",
@@ -19162,6 +19196,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/table_rows.rs",
   "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
   "crates/ripr/src/analysis/language/typescript/helper_inline.rs",
+  "crates/ripr/src/analysis/language/typescript/object_rows.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md",

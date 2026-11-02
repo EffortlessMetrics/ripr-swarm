@@ -221,6 +221,8 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
 /// `Result::or`, ..) is refused too: its first plain-path call is the adapter,
 /// not the owner.
 fn has_error_replacing_adapter(masked: &str) -> bool {
+    let stripped = strip_turbofish(masked);
+    let masked = stripped.as_str();
     let has_map_err = masked.match_indices("map_err").any(|(index, _)| {
         let before_ok = masked[..index]
             .chars()
@@ -238,6 +240,40 @@ fn has_error_replacing_adapter(masked: &str) -> bool {
         && segments
             .get(segments.len() - 2)
             .is_some_and(|owner| matches!(*owner, "Result" | "Option"))
+}
+
+/// Removes balanced `::<...>` generic arguments so `map_err::<_, _>(` and
+/// `Result::<A, B>::map_err(` read like their un-annotated spellings.
+fn strip_turbofish(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(index) = rest.find("::<") {
+        out.push_str(&rest[..index]);
+        let mut depth = 0usize;
+        let mut end = None;
+        for (offset, ch) in rest[index + 2..].char_indices() {
+            match ch {
+                '<' => depth += 1,
+                '>' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = Some(index + 2 + offset + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match end {
+            Some(end) => rest = &rest[end..],
+            None => {
+                out.push_str(&rest[index..]);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn is_bound_error_equality_assertion(
@@ -2380,6 +2416,9 @@ mod spec_0106_tests {
             "assert_eq!(parse(\"x\").and(Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);",
             "assert_eq!(find(\"x\").ok_or(ParseError::Empty).unwrap_err(), ParseError::Empty);",
             "assert_eq!(Result::map_err(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(Result::map_err::<_, _>(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(Result::<u8, ParseError>::map_err(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(parse(\"x\").map_err::<ParseError, _>(|_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
             "assert_eq!(std::result::Result::map_err(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
             "assert_eq!(Result::and(parse(\"x\"), Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);",
         ] {

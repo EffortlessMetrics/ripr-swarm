@@ -1413,10 +1413,22 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "bind the extension e2e verdict to this request's own successful",
         ),
         (
-            "the two-sided newest-run surface binding",
-            "[ \"$delta\" -le 30 ]",
+            "the request-identity surface binding",
+            "[ \"$candidate_title\" = \"$request_title\" ]",
             "true",
-            "bind the `vscode surface` to the ci.yml run created for this same label event",
+            "bind the `vscode surface` to the ci.yml run that names this request's head and request time",
+        ),
+        (
+            "the selection inputs in the request title",
+            "$REQUEST_AT $REQUEST_SELECTION",
+            "$REQUEST_AT",
+            "include every extension-selection input (base and labels) in the request title",
+        ),
+        (
+            "the identical-title ambiguity refusal",
+            "more than one ci.yml run",
+            "more than one ci.yml rub",
+            "refuse distinct ci.yml runs that carry the identical request title",
         ),
         (
             "the skipped-check exclusion from the verdict",

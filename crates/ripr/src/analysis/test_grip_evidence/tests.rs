@@ -21828,6 +21828,20 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
         StageState::Yes,
         "the UFCS map_err spelling is not a pin on the owner's error either"
     );
+    for turbofish in [
+        "Result::map_err::<_, _>(parse(\"1\"), |_| Fault::Odd)",
+        "Result::<u8, Fault>::map_err(parse(\"1\"), |_| Fault::Odd)",
+        "parse(\"1\").map_err::<Fault, _>(|_| Fault::Odd)",
+    ] {
+        let mapped_turbofish = read(&format!(
+            "#[test] fn odd() {{ assert_eq!({turbofish}.unwrap_err(), Fault::Odd); }}"
+        ))?;
+        assert_ne!(
+            mapped_turbofish.0,
+            StageState::Yes,
+            "a turbofish map_err is not a pin on the owner's error: {turbofish}"
+        );
+    }
     let grouped =
         read("#[test] fn odd() { assert_eq!((parse(\"1\").unwrap_err()), Fault::Odd); }")?;
     assert_eq!(grouped.0, StageState::Yes, "grouped error read");

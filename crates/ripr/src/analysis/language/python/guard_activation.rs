@@ -853,6 +853,7 @@ pub(super) fn condition_holds(
     if has_boolean_operator(condition) {
         return None;
     }
+    let mut unreadable = false;
     for conjunct in condition.split(" and ") {
         let conjunct = conjunct.trim();
         match eval_comparison(
@@ -865,10 +866,12 @@ pub(super) fn condition_holds(
         ) {
             Some(true) => {}
             Some(false) => return Some(false),
-            None => return None,
+            // A conjunction with one false conjunct is false whatever the
+            // unreadable one says (#11889), so keep reading.
+            None => unreadable = true,
         }
     }
-    Some(true)
+    (!unreadable).then_some(true)
 }
 
 /// True when `text` applies `or`, `not` or a conditional expression
@@ -1620,6 +1623,29 @@ mod tests {
             condition_holds("force or total > 1000 and ready", 1, &row, &[], source, 0),
             None
         );
+    }
+
+    #[test]
+    fn condition_holds_reads_a_false_conjunct_past_an_unreadable_one() {
+        // #11889: `A and B` is false whenever either side is, so an unreadable
+        // conjunct hides neither a false one before it nor after it; a true
+        // comparison beside an unreadable one stays undecided.
+        let source =
+            "def quote(total, force):\n    if force and total > 1000:\n        return 42\n";
+        let small = test_row(&[("total", "5")]);
+        let large = test_row(&[("total", "2000")]);
+        for condition in ["force and total > 1000", "total > 1000 and force"] {
+            assert_eq!(
+                condition_holds(condition, 1, &small, &[], source, 0),
+                Some(false),
+                "{condition}"
+            );
+            assert_eq!(
+                condition_holds(condition, 1, &large, &[], source, 0),
+                None,
+                "{condition}"
+            );
+        }
     }
 
     #[test]

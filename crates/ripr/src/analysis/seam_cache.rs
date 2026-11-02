@@ -621,10 +621,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// or discrimination credit (#12060).
 /// `1.134`: a proximity test assertion that pins another function through a
 /// local it reads no longer confirms the changed arm (#12056).
-/// `1.135`: an inline `<call>.unwrap_err()` / `.expect_err(..)` equality that
+/// `1.135`: a changed match arm whose `match` value is consumed before the
+/// owner returns it (method call, or a used `let`) is not confirmed (#12143).
+/// `1.136`: an inline `<call>.unwrap_err()` / `.expect_err(..)` equality that
 /// names the seam's variant is an `ExactErrorVariant` oracle, as the bound
 /// spelling already was (#12266).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.135";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.136";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -801,7 +803,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.135";
 /// `0.135`: same identical-arms propagation rule as full `1.129` (#12053).
 /// `0.136`: same by-value receiver field-write rule as full `1.132` (#12061).
 /// `0.137`: same proximity-pins-another-function rule as full `1.133` (#12060).
-/// `0.138`: same inline `unwrap_err` variant pin as full `1.135` (#12266).
+/// `0.138`: same inline `unwrap_err` variant pin as full `1.136` (#12266).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.138";
 
 /// Compact-classified seam cache schema. This cache stores the same
@@ -981,7 +983,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.138";
 /// `0.135`: same identical-arms propagation rule as full `1.129` (#12053).
 /// `0.136`: same by-value receiver field-write rule as full `1.132` (#12061).
 /// `0.137`: same proximity-pins-another-function rule as full `1.133` (#12060).
-/// `0.138`: same inline `unwrap_err` variant pin as full `1.135` (#12266).
+/// `0.138`: same inline `unwrap_err` variant pin as full `1.136` (#12266).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.138";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
@@ -5586,8 +5588,9 @@ mod tests {
         // 1.132 -> 1.133: proximity assertions pinning another function (#12060).
         // 1.133 -> 1.134: an assertion that pins another function through a
         // local it reads no longer confirms the arm (#12056).
-        // 1.134 -> 1.135: inline unwrap_err variant pin (#12266).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.135");
+        // 1.134 -> 1.135: a consumed `match` value remaps the arm result (#12143).
+        // 1.135 -> 1.136: inline unwrap_err variant pin (#12266).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.136");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5704,7 +5707,7 @@ mod tests {
         // 0.134 -> 0.135: same identical-arms propagation rule as full 1.129.
         // 0.135 -> 0.136: same by-value receiver field-write rule as full 1.132.
         // 0.136 -> 0.137: same proximity rule as full 1.133 (#12060).
-        // 0.137 -> 0.138: same inline unwrap_err pin as full 1.135 (#12266).
+        // 0.137 -> 0.138: same inline unwrap_err pin as full 1.136 (#12266).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.138");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.138");
     }

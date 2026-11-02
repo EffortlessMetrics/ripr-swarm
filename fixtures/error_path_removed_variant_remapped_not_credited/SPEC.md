@@ -24,13 +24,12 @@ cargo xtask fixtures error_path_removed_variant_remapped_not_credited
 The `error_path` finding is not `exposed`. The assertion holds before and
 after the change, because the remap makes the arm's variant unobservable.
 
-The companion `match_arm` finding reads `exposed` today through the arm
-selector, which does not require a tail `match`. That predates this fixture
-and is tracked in #12143; this fixture claims only the `error_path` finding.
+The companion `match_arm` finding is not `exposed` either (#12143): the
+remap leaves the arm's result unobservable.
 
 ## Must Not
 
 - Credit a pin of the removed variant when the arm's result is not the
   owner's return value (the `match` is not the owner's tail expression).
 
-Refs #12110.
+Refs #12110, #12143.

@@ -1370,8 +1370,16 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "[.[] | select(.conclusion != \"skipped\")] | last // {}",
         ),
         (
-            "bind the `vscode surface` to the ci.yml run created for this same label event, newest first, so an earlier request's suite is not read (#12191)",
-            "[ \"$delta\" -le 30 ]",
+            "bind the `vscode surface` to the ci.yml run that names this request's head and request time, so an earlier request's suite is never read (#12236)",
+            "[ \"$candidate_title\" = \"$request_title\" ]",
+        ),
+        (
+            "include every extension-selection input (base and labels) in the request title the surface is bound to (#12236)",
+            "$REQUEST_AT $REQUEST_SELECTION",
+        ),
+        (
+            "refuse distinct ci.yml runs that carry the identical request title instead of choosing between their suites (#12236)",
+            "more than one ci.yml run",
         ),
         (
             "fail the Result when the selected extension e2e did not succeed (#12122)",
