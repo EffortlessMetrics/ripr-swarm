@@ -1,3 +1,4 @@
+pub(crate) mod analysis_execution_identity;
 mod candidate_relation;
 mod causal_delta;
 mod classification;
@@ -34,6 +35,10 @@ mod test_evidence_identity;
 mod test_evidence_summary;
 mod verification_result;
 
+pub(crate) use analysis_execution_identity::{
+    AnalysisAttemptId, AnalysisExecutionIdentityParseError, CompletedAnalysisSnapshotId,
+    ContinuationId, DiagnosticResultId,
+};
 pub use candidate_relation::CandidateRelation;
 pub use causal_delta::{
     AttributionBasis, CanonicalDelta, CanonicalEvidenceState, ComparisonConfidence,

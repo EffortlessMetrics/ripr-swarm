@@ -5610,7 +5610,9 @@ pub(super) fn diagnostics_by_uri_from_batches(
 }
 
 fn snapshot_id_for_generation(generation: u64) -> String {
-    format!("snapshot:{generation}")
+    crate::domain::AnalysisAttemptId::from_refresh_generation(generation)
+        .as_str()
+        .to_string()
 }
 
 fn bind_seam_evidence_identity(snapshot: &mut AnalysisSnapshot, batches: &mut [DiagnosticBatch]) {

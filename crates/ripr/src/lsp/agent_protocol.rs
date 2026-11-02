@@ -223,6 +223,48 @@ fn require_nullable_nonempty_string(
     }
 }
 
+fn require_nullable_analysis_attempt_id(
+    value: serde_json::Value,
+    field: &'static str,
+) -> Result<RiprAgentRequiredNullable<String>, String> {
+    match require_nullable_nonempty_string(value, field)? {
+        RiprAgentRequiredNullable::Null => Ok(RiprAgentRequiredNullable::Null),
+        RiprAgentRequiredNullable::Value(text) => {
+            crate::domain::AnalysisAttemptId::parse_agent_snapshot_id(&text)
+                .map(|id| RiprAgentRequiredNullable::Value(id.as_str().to_string()))
+                .map_err(|error| format!("{field}: {error}"))
+        }
+    }
+}
+
+fn require_nullable_continuation_id(
+    value: serde_json::Value,
+    field: &'static str,
+) -> Result<RiprAgentRequiredNullable<String>, String> {
+    match require_nullable_nonempty_string(value, field)? {
+        RiprAgentRequiredNullable::Null => Ok(RiprAgentRequiredNullable::Null),
+        RiprAgentRequiredNullable::Value(text) => {
+            crate::domain::ContinuationId::parse_request(&text)
+                .map(|id| RiprAgentRequiredNullable::Value(id.as_str().to_string()))
+                .map_err(|error| format!("{field}: {error}"))
+        }
+    }
+}
+
+fn require_nullable_continuation_success_alias(
+    value: serde_json::Value,
+    field: &'static str,
+) -> Result<RiprAgentRequiredNullable<String>, String> {
+    match require_nullable_nonempty_string(value, field)? {
+        RiprAgentRequiredNullable::Null => Ok(RiprAgentRequiredNullable::Null),
+        RiprAgentRequiredNullable::Value(text) => {
+            crate::domain::ContinuationId::parse_success_alias(&text)
+                .map(|id| RiprAgentRequiredNullable::Value(id.as_str().to_string()))
+                .map_err(|error| format!("{field}: {error}"))
+        }
+    }
+}
+
 fn readiness_from_execution_mode(mode: CommandExecutionMode) -> RiprAgentRouteReadiness {
     match mode {
         CommandExecutionMode::Direct => RiprAgentRouteReadiness::TypedDirect,
@@ -577,8 +619,8 @@ impl TryFrom<RiprAgentRequestEnvelopeWire> for RiprAgentRequestEnvelope {
             request: value.request,
             mode: value.mode,
             profile: require_nullable(value.profile, "profile")?,
-            snapshot_id: require_nullable_nonempty_string(value.snapshot_id, "snapshot_id")?,
-            continuation_id: require_nullable_nonempty_string(
+            snapshot_id: require_nullable_analysis_attempt_id(value.snapshot_id, "snapshot_id")?,
+            continuation_id: require_nullable_continuation_id(
                 value.continuation_id,
                 "continuation_id",
             )?,
@@ -904,7 +946,7 @@ impl TryFrom<RiprAgentSuccessEnvelopeWire> for RiprAgentSuccessEnvelope {
             request: value.request,
             kind: value.kind,
             status: value.status,
-            snapshot_id: require_nullable_nonempty_string(value.snapshot_id, "snapshot_id")?,
+            snapshot_id: require_nullable_analysis_attempt_id(value.snapshot_id, "snapshot_id")?,
             input_identity: require_nullable_nonempty_string(
                 value.input_identity,
                 "input_identity",
@@ -929,7 +971,7 @@ impl TryFrom<RiprAgentSuccessEnvelopeWire> for RiprAgentSuccessEnvelope {
                 value.complete_evidence_identity,
                 "complete_evidence_identity",
             )?,
-            continuation_identity: require_nullable_nonempty_string(
+            continuation_identity: require_nullable_continuation_success_alias(
                 value.continuation_identity,
                 "continuation_identity",
             )?,
@@ -991,7 +1033,7 @@ impl TryFrom<RiprAgentErrorWire> for RiprAgentError {
             kind: value.kind,
             retryable: value.retryable,
             recovery_route: require_nullable(value.recovery_route, "recovery_route")?,
-            snapshot_id: require_nullable_nonempty_string(value.snapshot_id, "snapshot_id")?,
+            snapshot_id: require_nullable_analysis_attempt_id(value.snapshot_id, "snapshot_id")?,
         })
     }
 }
