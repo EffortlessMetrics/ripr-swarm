@@ -427,7 +427,7 @@ fn native_context_cache_rebuilds_on_remove_flip_revert_and_provider_edits() -> R
                 .find(|function| function.name == "exact")
                 .ok_or("proof missing after context transition")?
                 .source_role,
-            if selected.is_some_and(|selected| selected.source == PathBuf::from("src/lib.rs")) {
+            if selected.is_some_and(|selected| selected.source == "src/lib.rs") {
                 FunctionSourceRole::KaniProofHarness
             } else {
                 FunctionSourceRole::ProofHarness
