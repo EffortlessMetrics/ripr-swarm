@@ -41,10 +41,11 @@ use related_tests::{
 
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
-    call_text_may_call_free_function, direct_collection_mutation_receiver, is_ignored,
-    owner_call_text, predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
+    assertion_pins_pushed_collection_count, call_text_may_call_free_function,
+    direct_collection_mutation_receiver, is_ignored, owner_call_text,
+    predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
     related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
-    test_counts_pushed_collection_argument,
+    test_count_pins_pushed_collection, test_counts_pushed_collection_argument,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -118,6 +119,17 @@ impl TestGripEvidence {
         ]
         .iter()
         .any(|stage| stage.summary.contains(limit.as_str()))
+    }
+
+    /// #11402: whether the changed push is followed only to a local the
+    /// test reads back by a count that pins the single push, the
+    /// propagation stage's own marker.
+    pub(crate) fn follows_push_to_counted_local(&self) -> bool {
+        self.propagate.state == StageState::Yes
+            && self
+                .propagate
+                .summary
+                .contains(PUSHED_COLLECTION_COUNT_PINNED)
     }
 }
 
@@ -3825,22 +3837,43 @@ fn propagate_evidence(
     // matches the expected sink class (e.g., return value -> assert_eq!),
     // call it Yes. Otherwise Unknown.
     let any_oracle = related.iter().any(|t| !t.assertions.is_empty());
-    let any_matching_sink = related.iter().any(|t| {
-        oracles_match_sink(seam, t, owner_fn, index, pin_syntax)
-            || pushed_collection_argument_followed(seam, t, owner_fn, index, pin_syntax)
-    });
-    let state = match (any_oracle, any_matching_sink) {
+    let sink_matched = related
+        .iter()
+        .any(|t| oracles_match_sink(seam, t, owner_fn, index, pin_syntax));
+    let pushed_followed = !sink_matched
+        && related
+            .iter()
+            .any(|t| pushed_collection_argument_followed(seam, t, owner_fn, index, pin_syntax));
+    let state = match (any_oracle, sink_matched || pushed_followed) {
         (true, true) => StageState::Yes,
         (true, false) => StageState::Unknown,
         (false, _) => StageState::Unknown,
     };
-    let summary = format!(
+    let mut summary = format!(
         "Static propagation to `{}` sink is {}",
         seam.expected_sink().as_str(),
         state.as_str()
     );
+    // #11402: name, for the repair route, that the value is followed only to
+    // a local the test reads back by a count that pins the single push, so
+    // an exact check of that local's contents is the one thing missing.
+    if state == StageState::Yes
+        && pushed_followed
+        && related
+            .iter()
+            .any(|t| pushed_collection_count_pins_push(seam, t, owner_fn, index, pin_syntax))
+    {
+        summary.push_str("; ");
+        summary.push_str(PUSHED_COLLECTION_COUNT_PINNED);
+    }
     StageEvidence::new(state, Confidence::Low, summary)
 }
+
+/// #11402: the propagation-stage marker for a push followed only to a local
+/// the test reads back by a count that pins the single push. Read through
+/// [`TestGripEvidence::follows_push_to_counted_local`].
+pub(crate) const PUSHED_COLLECTION_COUNT_PINNED: &str =
+    "followed to a local the test reads back only by a count that pins the single push";
 
 fn oracles_match_sink(
     seam: &RepoSeam,
@@ -3903,6 +3936,23 @@ fn pushed_collection_argument_followed(
             .zip(owner_fn)
             .is_some_and(|(receiver, owner)| {
                 test_counts_pushed_collection_argument(receiver, owner, index, test, pin_syntax)
+            })
+}
+
+/// #11402: as [`pushed_collection_argument_followed`], and one count read
+/// pins the single push.
+fn pushed_collection_count_pins_push(
+    seam: &RepoSeam,
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> bool {
+    matches!(seam.kind(), SeamKind::SideEffect | SeamKind::CallPresence)
+        && direct_collection_mutation_receiver(seam.expression())
+            .zip(owner_fn)
+            .is_some_and(|(receiver, owner)| {
+                test_count_pins_pushed_collection(receiver, owner, index, test, pin_syntax)
             })
 }
 
@@ -4228,9 +4278,17 @@ fn oracle_discriminates_seam_in_test(
             .zip(owner)
             .is_some_and(|(receiver, owner)| {
                 collection_state_write_oracle_kind(&oracle.kind)
-                    && assertion_observes_collection_argument(
+                    && (assertion_observes_collection_argument(
                         receiver, owner, index, test, oracle, pin_syntax,
                     )
+                        // #11402: a count read that pins the single push
+                        // notices a deleted push into the passed local, by
+                        // the same rule the diff-side deleted-call probe
+                        // reads; it never notices a changed pushed value.
+                        || (seam.kind() == SeamKind::CallPresence
+                            && assertion_pins_pushed_collection_count(
+                                receiver, owner, index, test, oracle, pin_syntax,
+                            )))
             })
 }
 

@@ -27,6 +27,7 @@
 use crate::analysis::classify::OwnerPinSyntax;
 use crate::analysis::classify::call_identity::{CallTarget, shared_owner_call_identity};
 use crate::analysis::classify::targeted_free_call_reaches_owner;
+use crate::analysis::facts::OracleFact;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{
@@ -46,13 +47,66 @@ pub(in crate::analysis) fn test_counts_pushed_collection_argument(
     followed_by_count(receiver, owner, index, test, syntax).is_some()
 }
 
+/// Whether `test` is followed under the rules above and one of its count
+/// reads pins the single push: `assert_eq!(b.len(), N)` (either order) with
+/// a positive integer `N`. One push into a fresh, empty local leaves it
+/// non-empty, and a deleted push leaves it empty, so such a read notices the
+/// deletion. It still cannot tell a changed pushed value apart. Only this
+/// exact equality pins: both the diff side and the repository side grade it
+/// a strong exact check, so they agree that the deletion is noticed. A
+/// boolean read such as `assert!(!b.is_empty())` grades weaker there, so it
+/// pins nothing here either.
+pub(in crate::analysis) fn test_count_pins_pushed_collection(
+    receiver: &str,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    test: &TestSummary,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    followed_by_count(receiver, owner, index, test, syntax)
+        .is_some_and(|reads| reads.iter().any(|read| read.pins_push))
+}
+
+/// Whether `assertion` is one of `test`'s count reads that pins the single
+/// push (see [`test_count_pins_pushed_collection`]). The one rule both the
+/// diff-side deleted-call probe and the repository-side call-presence seam
+/// read, so they grade a deleted push the same way.
+pub(in crate::analysis) fn assertion_pins_pushed_collection_count(
+    receiver: &str,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    // Cheap text gates first: this runs per (probe, test, assertion).
+    if !assertion.text.contains(".len()") {
+        return false;
+    }
+    followed_by_count(receiver, owner, index, test, syntax).is_some_and(|reads| {
+        reads.iter().any(|read| {
+            read.pins_push
+                && read.line == assertion.line
+                && read.text == compact(&assertion.text).trim_end_matches(';')
+        })
+    })
+}
+
+/// One count read of the followed local: its line, its compact text
+/// without the trailing `;`, and whether it pins the single push.
+struct CountRead {
+    line: usize,
+    text: String,
+    pins_push: bool,
+}
+
 fn followed_by_count(
     receiver: &str,
     owner: &FunctionSummary,
     index: &RustIndex,
     test: &TestSummary,
     syntax: &OwnerPinSyntax,
-) -> Option<()> {
+) -> Option<Vec<CountRead>> {
     // Cheap text gates first: this runs per (seam, related test).
     if owner.item.has_self_param
         || !owner.body.contains("&mut")
@@ -73,6 +127,10 @@ fn followed_by_count(
     let tree = parse_clean_source_file(&test.body)?.tree();
     let function = tree.syntax().descendants().find_map(ast::Fn::cast)?;
     let body = function.body()?.stmt_list()?;
+    // An inner attribute (`#![cfg(..)]`) may remove the whole body.
+    if body.attrs().next().is_some() {
+        return None;
+    }
     let statements: Vec<ast::Stmt> = body.statements().collect();
     // The one top-level call of the owner, with `&mut <local>` at the pushed
     // parameter's position.
@@ -137,16 +195,21 @@ fn followed_by_count(
     {
         return None;
     }
-    let mut reads = 0;
+    let mut reads = Vec::new();
     let mut last_read = *call_at;
     for (at, statement) in statements.iter().enumerate().skip(call_at + 1) {
         if mentions_word(statement.syntax(), &local) == 0 {
             continue;
         }
-        if !count_read_assertion(statement, &local, test, index, syntax) {
-            return None;
-        }
-        reads += 1;
+        let line = count_read_assertion(statement, &local, test, index, syntax)?;
+        let text = compact(&statement.syntax().text().to_string())
+            .trim_end_matches(';')
+            .to_string();
+        reads.push(CountRead {
+            pins_push: pins_single_push(&text, &local),
+            line,
+            text,
+        });
         last_read = at;
     }
     // Straight line up to the last read: nothing but the definition, the
@@ -162,7 +225,29 @@ fn followed_by_count(
                     if fresh_empty_definition(definition, &local, parameter.string))
                 || (at > *call_at && mentions_word(statement.syntax(), &local) > 0)
         });
-    (reads > 0 && straight).then_some(())
+    (!reads.is_empty() && straight).then_some(reads)
+}
+
+/// Whether the compact read `text` is `assert_eq!(b.len(), N)` (either
+/// order) with a positive integer literal `N`.
+fn pins_single_push(text: &str, local: &str) -> bool {
+    let positive = |literal: &str| {
+        !literal.is_empty()
+            && literal.bytes().all(|byte| byte.is_ascii_digit())
+            && literal.bytes().any(|byte| byte != b'0')
+    };
+    let count = format!("{local}.len()");
+    let Some(operands) = text
+        .strip_prefix("assert_eq!(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return false;
+    };
+    match operands.split_once(',') {
+        Some((left, right)) if left == count => positive(right),
+        Some((left, right)) if right == count => positive(left),
+        _ => false,
+    }
 }
 
 /// The pushed parameter's position, the parameter count, and whether the
@@ -349,16 +434,16 @@ fn fresh_empty_definition(definition: &ast::LetStmt, local: &str, string: bool) 
         && constructor.is_some_and(|constructor| expected.contains(&constructor.as_str()))
 }
 
-/// A statement that is one recorded, admitted `assert!`, `assert_eq!` or
-/// `assert_ne!` whose every mention of `local` is `local.len()` or
-/// `local.is_empty()`.
+/// The line of a statement that is one recorded, admitted `assert!`,
+/// `assert_eq!` or `assert_ne!` whose every mention of `local` is
+/// `local.len()` or `local.is_empty()`; `None` for any other statement.
 fn count_read_assertion(
     statement: &ast::Stmt,
     local: &str,
     test: &TestSummary,
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
-) -> bool {
+) -> Option<usize> {
     // An attribute on the check (`#[cfg(any())] assert_eq!(..)`) may
     // remove it.
     if statement
@@ -366,22 +451,15 @@ fn count_read_assertion(
         .descendants()
         .any(|node| node.kind() == SyntaxKind::ATTR)
     {
-        return false;
+        return None;
     }
     let Some(ast::Expr::MacroExpr(expression)) = statement_expression(statement) else {
-        return false;
+        return None;
     };
-    let Some(call) = expression.macro_call() else {
-        return false;
-    };
-    let Some(name) = call
-        .path()
-        .map(|path| compact(&path.syntax().text().to_string()))
-    else {
-        return false;
-    };
+    let call = expression.macro_call()?;
+    let name = compact(&call.path()?.syntax().text().to_string());
     if !matches!(name.as_str(), "assert" | "assert_eq" | "assert_ne") {
-        return false;
+        return None;
     }
     let text = compact(&statement.syntax().text().to_string());
     let line = test.start_line
@@ -397,7 +475,7 @@ fn count_read_assertion(
             && syntax.admits(test, assertion, index)
             && syntax.targeted_macro_binding_is_unambiguous(test, line, &name, index)
     });
-    recorded && every_mention_counts(statement.syntax(), local)
+    (recorded && every_mention_counts(statement.syntax(), local)).then_some(line)
 }
 
 /// Whether each `local` token is followed by `.len()` or `.is_empty()`.
@@ -451,7 +529,7 @@ fn compact(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::test_counts_pushed_collection_argument;
+    use super::{test_count_pins_pushed_collection, test_counts_pushed_collection_argument};
     use crate::analysis::classify::OwnerPinSyntax;
     use crate::analysis::facts::build_index;
     use std::path::PathBuf;
@@ -470,6 +548,11 @@ mod tests {
     /// `src/lib.rs`, with one inline test whose header is `header` and whose
     /// body is `body`. The owner is the `log_line`/`add_mark` defined first.
     fn follows(owner: &str, extra: &str, header: &str, body: &str) -> Result<bool, String> {
+        Ok(judge(owner, extra, header, body)?.0)
+    }
+
+    /// Whether the rule holds, and whether a count read pins the push.
+    fn judge(owner: &str, extra: &str, header: &str, body: &str) -> Result<(bool, bool), String> {
         let source = format!(
             "{owner}{extra}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{header}\n    fn t() {{\n{body}    }}\n}}\n"
         );
@@ -496,12 +579,10 @@ mod tests {
             .find(|test| test.name == "t")
             .ok_or("test")?;
         let receiver = "buf";
-        Ok(test_counts_pushed_collection_argument(
-            receiver,
-            owner,
-            &index,
-            test,
-            &OwnerPinSyntax::default(),
+        let syntax = OwnerPinSyntax::default();
+        Ok((
+            test_counts_pushed_collection_argument(receiver, owner, &index, test, &syntax),
+            test_count_pins_pushed_collection(receiver, owner, &index, test, &syntax),
         ))
     }
 
@@ -538,6 +619,8 @@ mod tests {
             // A read of the contents is not this rule's to grade.
             format!("{CALL}        assert_eq!(b.len(), 1);\n        assert_eq!(b[0], \"HI\");\n"),
             format!("{CALL}        assert_eq!(b, vec![\"HI\".to_string()]);\n"),
+            // An inner attribute may remove the body.
+            format!("        #![cfg(any())]\n{CALL}        assert_eq!(b.len(), 1);\n"),
             // A final contents check written without `;` is the tail.
             format!("{CALL}        assert_eq!(b.len(), 1);\n        assert_eq!(b[0], \"HI\")\n"),
             // An attribute may remove the check.
@@ -595,6 +678,31 @@ mod tests {
         ] {
             if follows(owner, "", TEST, &read)? {
                 return Err(format!("must refuse the owner:\n{owner}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn only_an_exact_nonzero_count_pins_the_push() -> Result<(), String> {
+        for read in [
+            "assert_eq!(b.len(), 1);",
+            "assert_eq!(1, b.len());",
+            "assert_eq!(b.len(), 12);",
+        ] {
+            if judge(OWNER, "", TEST, &format!("{CALL}        {read}\n"))? != (true, true) {
+                return Err(format!("must be followed and pin the push: {read}"));
+            }
+        }
+        for read in [
+            "assert_ne!(b.len(), 2);",
+            "assert!(!b.is_empty());",
+            "assert_eq!(b.len(), 0);",
+            "assert_eq!(b.len(), 1, \"one line\");",
+            "assert!(b.len() < 3);",
+        ] {
+            if judge(OWNER, "", TEST, &format!("{CALL}        {read}\n"))? != (true, false) {
+                return Err(format!("must be followed without pinning the push: {read}"));
             }
         }
         Ok(())
