@@ -175,7 +175,7 @@ jobs:
             while IFS= read -r -d '' path; do
               case "$path" in
                 CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) reason=release_surface; return 0 ;;
-                docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
+                docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|.github/workflows/routed-rust.yml|tools/repo-policy/tests/docs_only_routing.rs|*.md) ;;
                 *) return 0 ;;
               esac
             done < "$changed"
