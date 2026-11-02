@@ -21221,3 +21221,25 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0394"
+name = "JVM shared build facts and separate Java, Kotlin, and Scala evidence contracts"
+spec = "docs/specs/RIPR-SPEC-0394-jvm-shared-build-and-separate-language-evidence-contracts.md"
+tests = []
+fixtures = [
+  "fixtures/rust-verdict-corpus/spec-scopes/RIPR-SPEC-0394.toml",
+  "fixtures/python-verdict-corpus/spec-scopes/RIPR-SPEC-0394.toml",
+  "fixtures/typescript-verdict-corpus/spec-scopes/RIPR-SPEC-0394.toml",
+  "fixtures/perl-verdict-corpus/spec-scopes/RIPR-SPEC-0394.toml",
+]
+code = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0394-jvm-shared-build-and-separate-language-evidence-contracts.md",
+  "docs/spec-index.d/RIPR-SPEC-0394.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0394.toml",
+]
+metrics = [
+  "jvm_evidence_contract_registered",
+  "jvm_capability_cell_index_complete",
+]
