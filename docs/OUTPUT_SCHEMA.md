@@ -9767,6 +9767,21 @@ Success payload (200-level result object, no `protocol_version`,
   exceeds the listed entries.
 - `suppression_disclosure` — a sentence naming the withholding and the
   `diagnosticProfile: "full"` escape hatch; `null` when nothing is withheld.
+- `analysis_outcome` — #12416: the committed snapshot's typed producer
+  outcome, serialized exactly as the `analysis_outcome` member of
+  `ripr.collectWorkspaceStatus` (versioned `AnalysisOutcome`: `kind`,
+  counts, limitations, claim boundary); `null` when the snapshot carries no
+  typed outcome.
+- `scope_disclosure` — #12416: for an empty-scope snapshot only
+  (`kind` ∈ `no_scope` | `no_changed_lines` | `no_behavioral_candidates` AND
+  zero canonical items), one human sentence carrying the same
+  not-all-clear fact and cause wording as MCP's `empty_scope_hint` plus the
+  editor set-a-base recovery route (the `baseRef` session option or
+  `[lsp] base_ref` in `ripr.toml`, then `ripr.refresh`); `null` for a
+  populated or complete-clean scope (`complete_no_findings` and
+  `complete_with_findings` are real answers and stay silent). A different
+  fact from `suppression_disclosure` (which names withheld live findings);
+  never downgrades `status: "ok"`.
 - `budget_identity` — the snapshot profile budget identity string.
 - `complete_evidence_identity` — the complete-evidence identity string.
 - `continuation_or_inspect_route` — the route string for continuing or
@@ -9914,7 +9929,8 @@ JSON shape:
           "name": "applies_discount_above_threshold",
           "file": "tests/pricing.rs",
           "line": 18
-        }
+        },
+        "proposed_target": null
       },
       "llm_guidance": {
         "prompt": "Write one focused Rust test for the missing equality boundary. Place it near tests/pricing.rs::applies_discount_above_threshold. Do not change production code. Preserve existing fixture style. Verify with ripr agent verify.",
@@ -10038,6 +10054,13 @@ Field contract:
   object adds a directly navigable `file:line` when the related-test location
   is resolved. On the gap-ledger card path `file` and `line` may be `null`
   when the supplied repair route names only the related test.
+- `comments[].suggested_test.proposed_target` - producer-owned new-test
+  proposal `{proposal_kind, file, owner, provenance}` projected from
+  `new_test_target`, or `null` when the producer has no governed proposal.
+  `proposal_kind` is `inline_unit` or `integration`; `provenance` is
+  `producer_owned`. This is not an existing test: `related_test` remains the
+  existing-test object, and the gate prefers that object when both are
+  present. `recommended_file` is not a proposal.
 - `comments[].suggested_test.recommended_file` /
   `comments[].suggested_test.recommended_name` - strings on working-set cards
   (`not_applicable` on non-actionable cards). On `--gap-ledger` cards they are
@@ -11201,6 +11224,14 @@ Field contract:
   caller, generic evidence-vector position is not treated as seam identity,
   and path/line is not manufactured into an exact inspection selector. The
   `authority_boundary` is `static_ripr_evidence_only`.
+- `decisions[].repair_route.repair_target` - tagged target or `null`. Kinds
+  are `related_test` (existing test `{name, file, line}`), `proposed`
+  (`{proposal_kind, file, owner, provenance}` for a producer-owned
+  InlineUnit or Integration new-test proposal), and `production_caller`.
+  `proposed` is not `related_test`: RIPR has not observed a test at that
+  location. An existing related test wins over a proposal. A missing or
+  ungoverned proposal stays `null`; the gate does not invent one from
+  `recommended_file`.
 - `decisions[].repair_route.analysis_outcome_command` is optional and copied
   unchanged from a review card. Older cards and GapRecord routes omit it. It
   is not a route-completeness or repair-eligibility requirement; Markdown
@@ -15844,8 +15875,8 @@ Field contract:
   `pilot-boundary-fixture`, `outcome-boundary-fixture`,
   `agent-verify-boundary-fixture`, `agent-receipt-boundary-fixture`,
   `repo-exposure-latency`, `lsp-cockpit`, `github-workflow-defaults`,
-  `vsix-packaging-path`, `extension-version-match`, `init-pin-version`, or
-  `known-limits-docs`.
+  `vsix-packaging-path`, `extension-version-match`, `init-pin-version`,
+  `init-generator-self-pin`, or `known-limits-docs`.
 - `checks[].status` - `pass`, `warn`, `fail`, or `not_run`.
 - `checks[].required` - `true` for checks that must pass in the normal local
   readiness run. Release-only package and publish dry-run checks can be
@@ -19562,7 +19593,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.138",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.139",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20347,7 +20378,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.138",
+      "schema_version": "1.139",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

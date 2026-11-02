@@ -3404,6 +3404,28 @@ fn gap_record_diagnostic_data_with_causal(
         "receipt": record.receipt,
         "authority_boundary": record.authority_boundary,
     });
+    if let Some(package_root) = record.typescript_package_root.as_deref()
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert(
+            "typescript_package_root".to_string(),
+            serde_json::Value::String(package_root.to_string()),
+        );
+        if let Some(verify) = record.verification_commands.first()
+            && let Some(clipboard) = crate::output::markdown::verify_command_clipboard_for_record(
+                root,
+                &serde_json::json!({
+                    "typescript_package_root": package_root,
+                }),
+                verify,
+            )
+        {
+            object.insert(
+                "verify_command_clipboard".to_string(),
+                serde_json::Value::String(clipboard),
+            );
+        }
+    }
     if let Some(error) = regeneration_command_specs_error
         && let Some(object) = data.as_object_mut()
     {
@@ -5394,6 +5416,7 @@ mod seam_diagnostic_tests {
                 missing_discriminator: Some("amount == threshold".to_string()),
                 changed_behavior: Some("amount >= threshold".to_string()),
                 inspection_command: None,
+                proposed_target: None,
                 stop_conditions: vec!["Stop if the target owner moved.".to_string()],
             }),
             static_limit_kind: None,
@@ -5416,6 +5439,7 @@ mod seam_diagnostic_tests {
             receipt: None,
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
+            typescript_package_root: None,
         }
     }
 
@@ -6128,6 +6152,7 @@ mod diagnostic_policy_tests {
                 missing_discriminator: None,
                 changed_behavior: Some("amount >= threshold".to_string()),
                 inspection_command: None,
+                proposed_target: None,
                 stop_conditions: Vec::new(),
             }),
             static_limit_kind: None,
@@ -6151,6 +6176,7 @@ mod diagnostic_policy_tests {
             receipt: None,
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
+            typescript_package_root: None,
         }
     }
 

@@ -13,6 +13,7 @@ use crate::output::agent_seam_packets::{
 use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::human::{plain_observation_wording, plain_stop_condition};
+use crate::output::placeholder_assertion::fill_in_note_line;
 use crate::output::preview_actionability::{PreviewActionability, preview_actionability_for};
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use serde_json::Value;
@@ -53,6 +54,16 @@ pub(super) enum NoEvidenceState {
     /// A snapshot committed and its producer outcome is `no_changed_lines`:
     /// the diff against the base has no changed lines.
     AnalyzedNoChanges { base: Option<String> },
+    /// A snapshot committed and its producer outcome is `no_scope` or
+    /// `no_behavioral_candidates`: the last analysis analyzed nothing at all,
+    /// which is not an all-clear for the change an agent believes it made
+    /// (#12416). Carries the outcome kind (the default-base cause sentence
+    /// differs per kind) and the requested base (`None` = the loader's
+    /// default resolution).
+    AnalyzedNoScope {
+        kind: crate::analysis_outcome::AnalysisOutcomeKind,
+        requested_base: Option<String>,
+    },
     /// A snapshot committed; this position simply has no evidence.
     Analyzed,
 }
@@ -147,6 +158,23 @@ pub(super) fn hover_response_without_evidence(
             );
             format!(
                 "**ripr** found no changed lines against {base_text} at its last analysis, so there is nothing to grade. ripr estimates static RIPR exposure for changed {language_text} behavior; findings appear here after a change against the base is saved and analyzed."
+            )
+        }
+        // #12416: the shared not-all-clear fact plus the editor set-a-base
+        // recovery. The cause sentence is the same bytes MCP's
+        // `empty_scope_hint` carries; only the surface wrapper differs, so a
+        // no-scope session never dead-ends in the generic analyzed advice.
+        NoEvidenceState::AnalyzedNoScope {
+            kind,
+            requested_base,
+        } => {
+            let cause = kind.empty_scope_cause_sentence(
+                requested_base.as_deref(),
+                crate::analysis_outcome::EmptyScopeDiffAuthority::SavedWorktree,
+            );
+            format!(
+                "**ripr** {cause}. {}",
+                super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE
             )
         }
         NoEvidenceState::Analyzing => format!(
@@ -851,6 +879,9 @@ fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness)
     }
     if let Some(assertion) = &witness.suggested_assertion {
         lines.push(format!("- suggested assertion: `{assertion}`"));
+        if let Some(note) = fill_in_note_line("  ", assertion) {
+            lines.push(note);
+        }
     }
     lines.push(format!("- explain: `{}`", witness.explain_command));
     if let Some(value) = witness.confidence.value {
@@ -1252,8 +1283,20 @@ fn push_test_shape(lines: &mut Vec<String>, entry: &ClassifiedSeam) {
         lines.push(format!("- candidate value: `{candidate}`"));
     }
     lines.push(format!("- assertion shape: {}", outline.assertion_shape));
-    if let Some(assertion) = suggested_assertion_for_classified_seam(entry) {
-        lines.push(format!("- assertion template: `{assertion}`"));
+    if let Some(note) = fill_in_note_line("  ", &outline.assertion_shape) {
+        lines.push(note);
+    }
+    // #9244 item 3: do not print a second "assertion template" line. That
+    // label reads as unfilled template text; the outline already carries the
+    // shape, and a distinct suggested assertion is still a shape, not a
+    // paste-ready template.
+    if let Some(assertion) = suggested_assertion_for_classified_seam(entry)
+        && assertion != outline.assertion_shape
+    {
+        lines.push(format!("- assertion shape: `{assertion}`"));
+        if let Some(note) = fill_in_note_line("  ", &assertion) {
+            lines.push(note);
+        }
     }
 }
 
@@ -2377,11 +2420,16 @@ mod seam_hover_tests {
             "- name: `discounted_total_boundary_discriminator`",
             "- candidate value: `discount_threshold (equality boundary)`",
             "- assertion shape: assert_eq!(discounted_total",
-            "- assertion template: `assert_eq!(discounted_total",
+            "  (replace each /* ... */ comment with a real value from your test before using it)",
         ] {
             if !md.contains(needle) {
                 return Err(format!("missing {needle:?} in:\n{md}"));
             }
+        }
+        if md.contains("assertion template") {
+            return Err(format!(
+                "placeholder assertion must not be labelled a template:\n{md}"
+            ));
         }
         Ok(())
     }
