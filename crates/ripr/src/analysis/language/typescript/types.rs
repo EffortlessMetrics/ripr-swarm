@@ -597,7 +597,7 @@ pub(crate) struct TypeScriptTestExtractionGap {
     pub(crate) file: PathBuf,
     pub(crate) sample_line: usize,
     /// Detected shape, one of `template-literal title`, `tagged-template .each`,
-    /// or `test/it call in loop/callback/nested body`.
+    /// `test.for registration`, or `test/it call in loop/callback/nested body`.
     pub(crate) shape: &'static str,
     /// Source snippet (single-line, bounded) of the unextracted registration.
     pub(crate) snippet: String,
@@ -643,6 +643,7 @@ impl PersistedPartialExtraction {
         let shape = [
             "template-literal title",
             "tagged-template .each",
+            "test.for registration",
             "test/it call in loop/callback/nested body",
             "runner registration kind mismatch",
         ]
