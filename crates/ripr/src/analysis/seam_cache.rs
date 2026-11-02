@@ -623,7 +623,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// local it reads no longer confirms the changed arm (#12056).
 /// `1.135`: a changed match arm whose `match` value is consumed before the
 /// owner returns it (method call, or a used `let`) is not confirmed (#12143).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.135";
+/// `1.136`: a file-backed insta snapshot whose committed `.snap` file is
+/// certainly missing no longer discriminates a seam, and the `.snap` listing is
+/// part of the key (#12189).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.136";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -800,7 +803,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.135";
 /// `0.135`: same identical-arms propagation rule as full `1.129` (#12053).
 /// `0.136`: same by-value receiver field-write rule as full `1.132` (#12061).
 /// `0.137`: same proximity-pins-another-function rule as full `1.133` (#12060).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.137";
+/// `0.138`: same missing-committed-snapshot rule as full `1.134` (#12189).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.138";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -979,7 +983,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.137";
 /// `0.135`: same identical-arms propagation rule as full `1.129` (#12053).
 /// `0.136`: same by-value receiver field-write rule as full `1.132` (#12061).
 /// `0.137`: same proximity-pins-another-function rule as full `1.133` (#12060).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.137";
+/// `0.138`: same missing-committed-snapshot rule as full `1.134` (#12189).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.138";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1747,6 +1752,15 @@ impl WorkspaceKeyContext<'_> {
             } else {
                 workspace_manifests_hash
             };
+        // #12189 (before the Cargo identity, whose unavailable marker must stay
+        // the key's suffix): a committed `.snap` file decides whether a file-backed
+        // snapshot assertion can fail, so adding, deleting or (un)tracking
+        // one must move the key. Existence and tracking are the inputs;
+        // content is not.
+        let workspace_manifests_hash = hash_str(&format!(
+            "{workspace_manifests_hash}:rust-snapshot-files:{}",
+            super::rust_snapshot_files::SnapshotListing::read(self.workspace_root).identity()
+        ));
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -5581,7 +5595,8 @@ mod tests {
         // 1.133 -> 1.134: an assertion that pins another function through a
         // local it reads no longer confirms the arm (#12056).
         // 1.134 -> 1.135: a consumed `match` value remaps the arm result (#12143).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.135");
+        // 1.135 -> 1.136: file-backed snapshot with no committed `.snap` (#12189).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.136");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5697,9 +5712,9 @@ mod tests {
         // 0.133 -> 0.134: same imported-variant receiver as full 1.127 (#8782).
         // 0.134 -> 0.135: same identical-arms propagation rule as full 1.129.
         // 0.135 -> 0.136: same by-value receiver field-write rule as full 1.132.
-        // 0.136 -> 0.137: same proximity rule as full 1.133 (#12060).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.137");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.137");
+        // 0.137 -> 0.138: same missing-snapshot rule as full 1.134 (#12189).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.138");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.138");
     }
 
     #[test]

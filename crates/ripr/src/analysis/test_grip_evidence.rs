@@ -4190,6 +4190,15 @@ fn oracle_discriminates_seam_in_test(
     {
         return false;
     }
+    // #12189: a file-backed insta assertion whose committed `.snap` file is
+    // certainly missing fails on its first run, so it notices nothing. An
+    // inline snapshot, or a shape whose file name is not certain, keeps its
+    // grade.
+    if matches!(oracle.kind, OracleKind::Snapshot)
+        && crate::analysis::rust_snapshot_files::file_backed_snapshot_missing(index, test, oracle)
+    {
+        return false;
+    }
     // #11398: a field write is checked only by an exact read of the written
     // field that the diff probe's own rule confirms. The seam's field name
     // alone (any binding, any sibling) is never a discriminator.

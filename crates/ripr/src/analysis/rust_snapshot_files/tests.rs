@@ -1,0 +1,323 @@
+use super::*;
+
+fn names(test: &str, attrs: &[&str], body: &str, oracle: &str, file: &str) -> Option<Vec<String>> {
+    let attrs: Vec<String> = attrs.iter().map(|attr| attr.to_string()).collect();
+    expected_snapshot_names(test, &attrs, body, oracle, file)
+}
+
+const FILE: &str = "use insta::assert_json_snapshot;\n";
+
+#[test]
+fn unnamed_assertion_names_the_function_and_its_test_stripped_form() {
+    let body = "fn test_record() { insta::assert_json_snapshot!(record.items); }";
+    assert_eq!(
+        names(
+            "test_record",
+            &["#[test]"],
+            body,
+            "insta::assert_json_snapshot!(record.items);",
+            FILE
+        ),
+        Some(vec!["test_record".to_string(), "record".to_string()])
+    );
+}
+
+#[test]
+fn string_named_assertion_names_the_literal() {
+    let body = "fn t() { insta::assert_snapshot!(\"report\", render()); }";
+    assert_eq!(
+        names(
+            "t",
+            &["#[test]"],
+            body,
+            "insta::assert_snapshot!(\"report\", render());",
+            FILE
+        ),
+        Some(vec!["report".to_string()])
+    );
+}
+
+#[test]
+fn an_unqualified_macro_needs_insta_in_the_file() {
+    let body = "fn t() { assert_snapshot!(render()); }";
+    assert!(
+        names(
+            "t",
+            &["#[test]"],
+            body,
+            "assert_snapshot!(render());",
+            "use insta::assert_snapshot;\n"
+        )
+        .is_some()
+    );
+    // A mention of insta is not an import, and a local macro of the same name
+    // is not insta's.
+    for file in [
+        "// uses insta elsewhere\n",
+        "use insta::assert_json_snapshot;\n",
+        "use insta::assert_snapshot;\nmacro_rules! assert_snapshot { ($v:expr) => {}; }\n",
+    ] {
+        assert!(
+            names("t", &["#[test]"], body, "assert_snapshot!(render());", file).is_none(),
+            "{file}"
+        );
+    }
+    assert!(
+        names(
+            "t",
+            &["#[test]"],
+            body,
+            "assert_snapshot!(render());",
+            "use insta::*;\n"
+        )
+        .is_some()
+    );
+    assert!(
+        names(
+            "t",
+            &["#[test]"],
+            body,
+            "assert_snapshot!(render());",
+            "use insta::{assert_snapshot, Settings};\n"
+        )
+        .is_some()
+    );
+    assert!(names("t", &["#[test]"], body, "assert_snapshot!(render());", "").is_none());
+    let other = "fn t() { other::assert_snapshot!(render()); }";
+    assert!(
+        names(
+            "t",
+            &["#[test]"],
+            other,
+            "other::assert_snapshot!(render());",
+            FILE
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn inline_repeated_redirected_and_parameterized_shapes_are_unresolved() {
+    let one = "fn t() { insta::assert_snapshot!(v); }";
+    let call = "insta::assert_snapshot!(v);";
+    // Inline snapshots carry their expected value.
+    for inline in [
+        "insta::assert_snapshot!(v, @\"2\");",
+        "insta::assert_snapshot!(v, @r#\"2\"#);",
+    ] {
+        assert_eq!(
+            names("t", &["#[test]"], inline, inline, FILE),
+            None,
+            "{inline}"
+        );
+    }
+    // A second assertion advances insta's counter.
+    let two = "fn t() { insta::assert_snapshot!(a); insta::assert_snapshot!(b); }";
+    assert_eq!(names("t", &["#[test]"], two, call, FILE), None);
+    // The assertion is not in this test's body (a helper's).
+    assert_eq!(
+        names("t", &["#[test]"], "fn t() { helper(); }", call, FILE),
+        None
+    );
+    // Snapshot redirection or globbing in the file.
+    for redirect in [
+        "settings.set_snapshot_path(\"x\");",
+        "insta::glob!(\"in/*\", |p| {});",
+        "std::env::var(\"INSTA_UPDATE\")",
+    ] {
+        assert_eq!(
+            names("t", &["#[test]"], one, call, &format!("{FILE}{redirect}")),
+            None
+        );
+    }
+    // Case-driven tests write one snapshot per case.
+    assert_eq!(
+        names("t", &["#[rstest]", "#[case(1)]"], one, call, FILE),
+        None
+    );
+    // Three arguments, or a non-literal name, are not a shape resolved here.
+    for odd in [
+        "insta::assert_snapshot!(\"n\", v, \"dbg\");",
+        "insta::assert_snapshot!(name, v);",
+        "insta::assert_snapshot!(\"a/b\", v);",
+        "insta::assert_snapshot!();",
+    ] {
+        let body = format!("fn t() {{ {odd} }}");
+        assert_eq!(names("t", &["#[test]"], &body, odd, FILE), None, "{odd}");
+    }
+}
+
+#[test]
+fn a_macro_whose_first_argument_is_not_a_name_is_unresolved() {
+    // `assert_binary_snapshot!(".json", bytes)` names an extension, not a file.
+    let call = "insta::assert_binary_snapshot!(\".json\", bytes);";
+    let body = format!("fn t() {{ {call} }}");
+    assert_eq!(names("t", &["#[test]"], &body, call, FILE), None);
+    let unknown = "insta::assert_future_snapshot!(\"x\", v);";
+    let body = format!("fn t() {{ {unknown} }}");
+    assert_eq!(names("t", &["#[test]"], &body, unknown, FILE), None);
+}
+
+#[test]
+fn a_multibyte_character_before_the_macro_path_does_not_split_a_char() {
+    // `→` is three bytes; slicing one byte past its start would panic.
+    for text in [
+        "→insta::assert_snapshot!(v);",
+        "// 日本語\ninsta::assert_snapshot!(v);",
+        "é insta::assert_snapshot!(v);",
+    ] {
+        assert_eq!(
+            snapshot_call(text, FILE).map(|call| call.macro_name),
+            Some("assert_snapshot".to_string()),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn arguments_split_only_at_top_level_outside_strings() {
+    assert_eq!(
+        split_top_level("\"a,b\", f(x, y), [1, 2],"),
+        Some(vec![
+            "\"a,b\"".to_string(),
+            "f(x, y)".to_string(),
+            "[1, 2]".to_string()
+        ])
+    );
+    assert_eq!(split_top_level("a, ,b"), None);
+    assert_eq!(split_top_level("a)"), None);
+    let call = snapshot_call("insta::assert_snapshot!(f(')'), \"x\");", FILE);
+    assert_eq!(call.map(|call| call.arguments.len()), Some(2));
+}
+
+#[test]
+fn stem_matching_is_lenient_about_prefix_counter_and_suffix() {
+    for stem in [
+        "record",
+        "krate__tests__record",
+        "krate__tests__record-2",
+        "krate__tests__record@linux",
+        "krate__tests__record-3@linux",
+    ] {
+        assert!(stem_names_snapshot(stem, "record"), "{stem}");
+    }
+    for stem in [
+        "krate__tests__other",
+        "krate__tests__my_record",
+        "records",
+        "krate__recordx",
+    ] {
+        assert!(!stem_names_snapshot(stem, "record"), "{stem}");
+    }
+}
+
+fn scratch(label: &str) -> Result<std::path::PathBuf, String> {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-snap-listing-{label}-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
+#[test]
+fn listing_sees_snapshots_outside_skipped_directories_and_moves_its_identity() -> Result<(), String>
+{
+    let root = scratch("identity")?;
+    std::fs::create_dir_all(root.join("src/snapshots")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("target/debug")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("target/debug/ignored.snap"), "x").map_err(|e| e.to_string())?;
+    let empty = SnapshotListing::read(&root);
+    assert!(empty.files.is_empty());
+    assert!(!empty.holds_any(&["record".to_string()]));
+
+    std::fs::write(root.join("src/snapshots/krate__tests__record.snap"), "x")
+        .map_err(|e| e.to_string())?;
+    let present = SnapshotListing::read(&root);
+    assert!(present.holds_any(&["record".to_string()]));
+    assert!(!present.holds_any(&["other".to_string()]));
+    assert_ne!(empty.identity(), present.identity());
+
+    std::fs::remove_file(root.join("src/snapshots/krate__tests__record.snap"))
+        .map_err(|e| e.to_string())?;
+    assert_eq!(empty.identity(), SnapshotListing::read(&root).identity());
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn an_untracked_snapshot_is_not_one_ci_sees() -> Result<(), String> {
+    let listing = SnapshotListing {
+        files: vec![ListedSnapshot {
+            path: "src/snapshots/krate__tests__record.snap".to_string(),
+            tracked: Some(false),
+        }],
+        unknown: false,
+    };
+    assert!(!listing.holds_any(&["record".to_string()]));
+    let unlisted = SnapshotListing {
+        files: vec![ListedSnapshot {
+            path: "src/snapshots/krate__tests__record.snap".to_string(),
+            tracked: None,
+        }],
+        unknown: false,
+    };
+    assert!(unlisted.holds_any(&["record".to_string()]));
+    assert_ne!(listing.identity(), unlisted.identity());
+    Ok(())
+}
+
+#[test]
+fn an_unknown_listing_never_says_a_snapshot_is_missing() {
+    let names = ["record".to_string()];
+    let complete = SnapshotListing {
+        files: Vec::new(),
+        unknown: false,
+    };
+    let unknown = SnapshotListing {
+        files: Vec::new(),
+        unknown: true,
+    };
+    assert!(complete.certainly_lacks(&names));
+    assert!(!unknown.certainly_lacks(&names));
+    assert_ne!(complete.identity(), unknown.identity());
+}
+
+#[test]
+fn an_unreadable_directory_makes_the_listing_unknown() -> Result<(), String> {
+    let missing = scratch("unreadable")?.join("gone");
+    let mut out = Vec::new();
+    assert!(
+        collect(&missing, &missing, &mut out),
+        "a directory that cannot be read is incomplete"
+    );
+    assert!(out.is_empty());
+    let root = scratch("readable")?;
+    assert!(!collect(&root, &root, &mut out));
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_searchable_but_unlistable_directory_is_not_read_as_empty() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let root = scratch("execute-only")?;
+    let dir = root.join("src/snapshots");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("krate__tests__check.snap"), "x").map_err(|e| e.to_string())?;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o111))
+        .map_err(|e| e.to_string())?;
+    // The walk may run as a user that ignores permissions; only assert the
+    // behavior when the directory really is unlistable.
+    let unlistable = std::fs::read_dir(&dir).is_err();
+    let mut out = Vec::new();
+    let incomplete = collect(&root, &root, &mut out);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(incomplete, unlistable);
+    Ok(())
+}

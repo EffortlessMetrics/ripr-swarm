@@ -12427,6 +12427,13 @@
           "expression": "items: count + 0",
           "grip_class": "weakly_gripped",
           "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::make_record",
+          "expression": "record",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
         }
       ]
     },

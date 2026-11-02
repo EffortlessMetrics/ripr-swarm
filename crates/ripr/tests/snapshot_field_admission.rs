@@ -60,6 +60,38 @@ impl Fixture {
     }
 
     fn field(&self) -> Result<Value, String> {
+        self.seam(|seam| {
+            seam["kind"] == "field_construction"
+                && seam["owner"] == "src/lib.rs::make_record"
+                && seam["expression"]
+                    .as_str()
+                    .is_some_and(|expression| expression.starts_with("items:"))
+        })
+    }
+
+    /// The `return_value` seam of the same owner.
+    fn record(&self) -> Result<Value, String> {
+        self.seam(|seam| {
+            seam["kind"] == "return_value" && seam["owner"] == "src/lib.rs::make_record"
+        })
+    }
+
+    fn git(&self, args: &[&str]) -> Result<(), String> {
+        let status = std::process::Command::new("git")
+            .current_dir(&self.root)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|error| error.to_string())?;
+        status
+            .success()
+            .then_some(())
+            .ok_or(format!("git {args:?} failed"))
+    }
+
+    fn seam(&self, wanted: impl Fn(&Value) -> bool) -> Result<Value, String> {
         let output = ripr::app::repo_seam_inventory_input(CheckInput {
             root: self.root.clone(),
             ..CheckInput::default()
@@ -68,17 +100,8 @@ impl Fixture {
         let report: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
         assert_eq!(report["run_status"], "complete");
         let seams = report["seams"].as_array().ok_or("missing seams")?;
-        let matching: Vec<_> = seams
-            .iter()
-            .filter(|seam| {
-                seam["kind"] == "field_construction"
-                    && seam["owner"] == "src/lib.rs::make_record"
-                    && seam["expression"]
-                        .as_str()
-                        .is_some_and(|expression| expression.starts_with("items:"))
-            })
-            .collect();
-        assert_eq!(matching.len(), 1, "must inspect one actual owner field");
+        let matching: Vec<_> = seams.iter().filter(|seam| wanted(seam)).collect();
+        assert_eq!(matching.len(), 1, "must inspect one actual owner seam");
         Ok(matching[0].clone())
     }
 }
@@ -171,5 +194,93 @@ fn inline_snapshot_expected_text_cannot_borrow_another_receiver_field() -> Resul
         None,
     )?;
     assert_weak(&fixture.field()?);
+    Ok(())
+}
+
+const ASSERTION: &str = "insta::assert_json_snapshot!(record.items);";
+
+fn grip(seam: &Value) -> &Value {
+    &seam["grip_class"]
+}
+
+// #12189: a file-backed snapshot with no committed expected file fails on its
+// first run, so it cannot close the owner's return seam either.
+#[test]
+fn snapshot_without_an_expected_file_cannot_close_the_return_seam() -> Result<(), String> {
+    let fixture = Fixture::new(ASSERTION, None)?;
+    let record = fixture.record()?;
+    assert_eq!(grip(&record), "weakly_gripped");
+    assert_eq!(record["evidence"]["discriminate"], "weak");
+    assert_ne!(
+        record["evidence_record"]["canonical_item"]["gap_state"],
+        "already_observed"
+    );
+    Ok(())
+}
+
+#[test]
+fn snapshot_with_a_committed_expected_file_keeps_the_return_seam_credit() -> Result<(), String> {
+    let fixture = Fixture::new(ASSERTION, Some("2"))?;
+    let record = fixture.record()?;
+    assert_eq!(grip(&record), "strongly_gripped");
+    assert_eq!(record["evidence"]["discriminate"], "yes");
+    Ok(())
+}
+
+// Adding or removing the expected file between runs of one workspace must
+// move the cached grade (the cache key tracks `.snap` files).
+#[test]
+fn adding_and_removing_the_expected_file_moves_the_cached_return_grade() -> Result<(), String> {
+    let fixture = Fixture::new(ASSERTION, None)?;
+    assert_eq!(grip(&fixture.record()?), "weakly_gripped");
+    fixture.expected(Some("2"))?;
+    assert_eq!(grip(&fixture.record()?), "strongly_gripped");
+    fixture.expected(None)?;
+    assert_eq!(grip(&fixture.record()?), "weakly_gripped");
+    Ok(())
+}
+
+// A `.snap` file the repository does not track is a local file CI never sees
+// (#7708), so it cannot credit a `--worktree`-style run.
+#[test]
+fn an_untracked_expected_file_does_not_credit_the_return_seam() -> Result<(), String> {
+    let fixture = Fixture::new(ASSERTION, Some("2"))?;
+    fixture.git(&["init", "-q"])?;
+    fixture.git(&["add", "Cargo.toml", "src/lib.rs"])?;
+    fixture.git(&["commit", "-q", "-m", "base"])?;
+    assert_eq!(grip(&fixture.record()?), "weakly_gripped");
+    fixture.git(&["add", SNAPSHOT])?;
+    assert_eq!(grip(&fixture.record()?), "strongly_gripped");
+    Ok(())
+}
+
+// `assert_binary_snapshot!` takes an extension first; its committed file is
+// named for the function, so it must keep credit.
+#[test]
+fn a_committed_binary_snapshot_keeps_the_return_seam_credit() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "insta::assert_binary_snapshot!(\".json\", record.items.to_string().into_bytes());",
+        Some("2"),
+    )?;
+    assert_eq!(grip(&fixture.record()?), "strongly_gripped");
+    // Its file name is not resolved, so a missing file keeps today's grade
+    // rather than being guessed.
+    fixture.expected(None)?;
+    assert_eq!(grip(&fixture.record()?), "strongly_gripped");
+    Ok(())
+}
+
+// A shape whose file name is not certain keeps today's grade rather than
+// guessing a missing file.
+#[test]
+fn an_unresolvable_snapshot_shape_keeps_its_grade() -> Result<(), String> {
+    for assertion in [
+        "// snapshot_path is set by the test harness\n        insta::assert_json_snapshot!(record.items);",
+        "insta::assert_json_snapshot!(record.items);\n        insta::assert_json_snapshot!(record.items);",
+        "insta::assert_json_snapshot!(\"a\", record.items, \"debug\");",
+    ] {
+        let fixture = Fixture::new(assertion, None)?;
+        assert_eq!(grip(&fixture.record()?), "strongly_gripped", "{assertion}");
+    }
     Ok(())
 }
