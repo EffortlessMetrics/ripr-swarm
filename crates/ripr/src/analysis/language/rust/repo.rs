@@ -94,8 +94,12 @@ impl RustAdapter {
             .iter()
             .map(|file| {
                 let full = options.root.join(file);
-                let bytes = std::fs::read(&full)
-                    .map_err(|err| format!("failed to read {}: {err}", full.display()))?;
+                let bytes = std::fs::read(&full).map_err(|err| {
+                    format!(
+                        "failed to read {}: {err}; repair route: ensure the file exists under the analysis root and is readable",
+                        full.display()
+                    )
+                })?;
                 rust_consumed_sources.record(file, Some(&bytes));
                 Ok((file.clone(), bytes))
             })
