@@ -3237,7 +3237,7 @@ pub(crate) fn is_constant_shaped_operand(operand: &str) -> bool {
 /// declaration of the name at all, the owner's file is read once through the
 /// workspace root (fail-closed on any read error, and only ever for a
 /// constant-shaped operand of a changed boundary).
-fn ts_owner_module_constant_value(
+pub(crate) fn ts_owner_module_constant_value(
     name: &str,
     owner: &TypeScriptOwner,
     workspace_root: Option<&Path>,
@@ -8923,7 +8923,9 @@ pub(crate) fn ts_dropped_term_witness(
                         bindings.push((name.clone(), value));
                     }
                 }
-                match fold_numeric_expression(term, &bindings) {
+                match fold_numeric_expression(term, &bindings).or_else(|| {
+                    ts_fold_same_module_call_term(term, owner, &bindings, workspace_root)
+                }) {
                     // A double sum absorbs an addend below 2^-52 of its
                     // magnitude (`6499 + 1e-13 === 6499`). A term of at least
                     // 1e-6 changes every sum below about 4.5e9.
