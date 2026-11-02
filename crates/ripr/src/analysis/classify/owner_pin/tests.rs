@@ -5554,6 +5554,28 @@ fn a_withheld_crate_roots_private_glob_is_routed_by_root() {
 }
 
 #[test]
+fn a_withheld_unparsable_sibling_disables_crate_root_routing() {
+    let packages = BTreeSet::from(["core".to_string()]);
+    let mut withheld = WithheldMacroBindings::default();
+    let root = Path::new("e/src/lib.rs");
+    assert!(!withheld.absorb(
+        root,
+        "use proptest::prelude::*;",
+        &packages,
+        &Default::default()
+    ));
+    assert!(
+        withheld
+            .by_root
+            .get(root)
+            .is_some_and(|names| names.contains("assert_eq"))
+    );
+    withheld.disable_crate_root_routing();
+    assert!(withheld.by_root.is_empty());
+    assert!(withheld.trusted.contains("assert_eq"));
+}
+
+#[test]
 fn a_withheld_first_glob_cannot_certify_field_macro_safety() {
     let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
     let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
@@ -5641,6 +5663,50 @@ fn unchanged_index_reuse_refreshes_a_warmed_field_macro_blocker() -> Result<(), 
     }
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
+}
+
+#[test]
+fn a_nested_src_bin_main_target_does_not_reach_integration_tests() {
+    let tests = r#"use demo::weight;
+#[test]
+fn weighs() { assert_eq!(weight(4), 12); }
+"#;
+    let main = (
+        "src/bin/tool/main.rs",
+        r#"#[macro_use]
+extern crate bencher;
+fn main() {}
+"#,
+    );
+    assert_eq!(
+        weight_refusal(tests, &[main]),
+        None,
+        "a nested binary root must confine its macro site"
+    );
+    let main_with_module = (
+        "src/bin/tool/main.rs",
+        r#"mod cli;
+#[macro_use]
+extern crate bencher;
+fn main() {}
+"#,
+    );
+    let cli = ("src/bin/tool/cli.rs", "pub fn run() {}\n");
+    assert_eq!(
+        weight_refusal(tests, &[main_with_module, cli]),
+        None,
+        "sibling modules under the nested binary root must not look like roots"
+    );
+    let files = vec![(LIB, WEIGHT_LIB), (TESTS, tests), main_with_module, cli];
+    let index = index(&files);
+    assert_eq!(
+        TargetRoots::new(&index).root(Path::new("src/bin/tool/main.rs"), &index),
+        Some(PathBuf::from("src/bin/tool/main.rs"))
+    );
+    assert_eq!(
+        TargetRoots::new(&index).root(Path::new("src/bin/tool/cli.rs"), &index),
+        Some(PathBuf::from("src/bin/tool/main.rs"))
+    );
 }
 
 #[test]

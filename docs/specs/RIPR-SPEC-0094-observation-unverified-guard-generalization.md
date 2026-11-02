@@ -519,7 +519,10 @@ the arm, instead of claiming no assertion names it.
 Proof: `match_arm_proximity_test_cannot_confirm_beside_reaching_test`, the
 `match_arm_proximity_confirmation_not_credited` fixture, and its control
 `match_arm_proximity_wrapper_confirms` (a same-file test of a public wrapper
-keeps `exposed`), both registered in the honesty corpus.
+keeps `exposed`), both registered in the honesty corpus. The production-path
+two-state pin `editing_from_str_fortnight_does_not_flip_the_seconds_arm`
+runs both of the issue's `from_str_fortnight` assertion shapes through
+`check_workspace` and requires the same `weakly_exposed` class.
 
 A test related only by file or module is also withheld when one of its
 assertions calls an indexed function with no call or `macro_rules!` path to the
@@ -540,6 +543,22 @@ Proof: `match_arm_proximity_test_pinning_another_function_cannot_confirm`, the
 `match_arm_proximity_other_function_not_credited` and
 `match_arm_proximity_bound_other_function_not_credited` fixtures; the wrapper control
 above shows a call that reaches the owner is not withheld.
+
+The repo-seam grip view applies the same refusal to a `predicate_boundary` seam
+(#12434), gated differently. A related test whose only relation is proximity
+(`same_test_file`, `same_module`, and the other relations that do not establish
+reach) lends the seam no oracle strength when its assertion pins another
+indexed function, but only once some related test establishes reach of the
+owner (a direct or helper owner call, or a followed re-export). With no such
+test the proximity test keeps its credit and the seam stays
+`activation_unknown`, because the refusal would otherwise turn a missing reach
+into a `reachable_unrevealed` verdict. The gate reads every related test, not
+only the rank-limited set that is published. `match_arm` seams refuse
+unconditionally (#12132).
+
+Proof: `proximity_test_pinning_another_function_lends_a_predicate_boundary_no_oracle`
+and the `rust_repo_exposure_proximity_other_function` honesty case, whose
+`wait < 5` boundary pin is `none` beside the `same_test_file` relation.
 
 ## Owner-scoped tokens and self-computed expected values (#5830)
 

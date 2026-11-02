@@ -191,6 +191,9 @@ mod issue7813_alias_member_tests;
 #[path = "tests/issue7815_typeof_mixed_tests.rs"]
 mod issue7815_typeof_mixed_tests;
 mod rethrow_wrapper;
+#[cfg(test)]
+#[path = "tests/snapshot_subject_binding_tests.rs"]
+mod snapshot_subject_binding_tests;
 mod suite_factory;
 mod tests_extract;
 #[cfg(test)]

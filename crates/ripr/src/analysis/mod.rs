@@ -93,7 +93,8 @@ pub(crate) use diff::{
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
     probe_head_ref_state, probe_working_tree_tracked_changes_within, resolve_base_commit,
     resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
-    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
+    untrack_artifacts_command, working_tree_has_tracked_changes,
+    working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -162,6 +163,7 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_bound_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
+    inventory_diff_scoped_streamed_seams_with_optional_prepared,
     inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config,
     prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
     scoped_file_seams, seam_kind_for_probe_family,

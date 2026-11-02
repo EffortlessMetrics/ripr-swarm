@@ -62,6 +62,7 @@ mod perl_composition_tests;
 pub(crate) mod perl_gap_record_projection;
 pub(crate) mod perl_preview_card;
 pub(crate) mod pilot;
+pub(crate) mod placeholder_assertion;
 pub(crate) mod policy_history;
 pub(crate) mod policy_operations;
 pub(crate) mod policy_preview_promotion;

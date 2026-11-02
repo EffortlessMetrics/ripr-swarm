@@ -95,6 +95,7 @@ pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::{
     drop_is_plain_in_closed_sources, observes_returned_element_field,
+    returned_array_construction_plain,
 };
 pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
@@ -154,7 +155,7 @@ pub(in crate::analysis) use propagation_witness::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
     assigned_field_path, concat_literal_tail, concat_tail_witness, current_path_witness_with,
     direct_collection_mutation_receiver, field_assignment_target, owner_may_exit_before_line,
-    retain_returned_ledger, returned_ledger_witness,
+    retain_returned_ledger, returned_ledger_witness, test_counts_pushed_collection_argument,
 };
 pub(in crate::analysis) use propagation_witness::{
     constant_tail_witness, fallible_literal_witness, format_tail_witness, result_map_witness,
