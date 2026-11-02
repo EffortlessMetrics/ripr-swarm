@@ -2464,7 +2464,7 @@ deleted file mode 100644
         use crate::analysis::language::with_forced_diff_limit_env;
         let env_name = DIFF_CHANGED_LINE_LIMIT_ENV;
         let result = with_forced_diff_limit_env(&[(env_name, "not-a-number")], || {
-            diff_changed_line_limit_from_env_core()
+            parse_unified_diff_bounded_with_metadata_core("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n")
         });
         let Err(error) = result else {
             return Err("invalid env must fail closed".to_string());
