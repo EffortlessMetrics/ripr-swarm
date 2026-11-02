@@ -1846,12 +1846,6 @@ export class RiprClientController {
     return execRiprProcess(command, args, cwd);
   }
 
-    }
-    const root = this.workspaceRoot ?? this.runtime.workspaceRootState().root;
-    if (!root) {
-      this.runtime.showInformationMessage(
-  }
-
   async copySuggestedAssertion(target?: RiprSuggestedAssertionTarget): Promise<void> {
     return this.agentHandoff.copySuggestedAssertion(target);
   }
