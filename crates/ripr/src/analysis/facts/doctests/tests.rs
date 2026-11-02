@@ -715,3 +715,36 @@ fn gate_resolution_answers_only_provably_true() {
         );
     }
 }
+
+#[test]
+fn the_feature_table_is_read_where_the_analyzed_sources_are_read() -> Result<(), Box<dyn Error>> {
+    use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
+    use std::sync::Arc;
+    let gated = gated_item("#[cfg(feature = \"alloc\")]");
+    let worktree_on = "\n[features]\ndefault = [\"alloc\"]\nalloc = []\n";
+    let committed_off = "[package]\nname = \"wire\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\ndefault = []\nalloc = []\n";
+    let committed_on = "[package]\nname = \"wire\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\ndefault = [\"alloc\"]\nalloc = []\n";
+    let worktree_off = "\n[features]\ndefault = []\nalloc = []\n";
+    // (worktree manifest, committed manifest, registered under the overlay)
+    for (worktree, committed, expected) in [
+        // A dirty manifest that turns the feature on does not credit the commit.
+        (worktree_on, committed_off, 0),
+        // A dirty manifest that turns it off does not hide the commit's default.
+        (worktree_off, committed_on, 1),
+    ] {
+        let dir = temp_dir("doctest-overlay-features")?;
+        package(&dir.0, worktree, &gated)?;
+        let overlay = CommittedSourceOverlay::from_entries(
+            &dir.0,
+            [("Cargo.toml", Some(committed.as_bytes()))],
+        );
+        let registered = with_overlay(Some(Arc::new(overlay)), || {
+            doctests(&dir.0, &["src/lib.rs"]).map(|found| found.len())
+        })?;
+        assert_eq!(registered, expected, "{worktree} / {committed}");
+        // With no overlay the worktree manifest is the authority.
+        let plain = doctests(&dir.0, &["src/lib.rs"])?.len();
+        assert_eq!(plain, usize::from(worktree == worktree_on), "{worktree}");
+    }
+    Ok(())
+}
