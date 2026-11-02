@@ -3040,13 +3040,17 @@ pub(crate) fn include_resolved_explicit_store_operational_write(
             resolved.locator().to_string(),
         ),
         Err(_) if store.is_some() => {
+            let store = store.ok_or_else(|| {
+                "explicit repair attempt store path missing after guard; report this as a ripr bug"
+                    .to_string()
+            })?;
             let canonical_root = root.canonicalize().map_err(|error| {
                 format!(
                     "canonicalize repair attempt repository root {} failed: {error}",
                     root.display()
                 )
             })?;
-            let locator = store.unwrap().to_string_lossy().replace('\\', "/");
+            let locator = store.to_string_lossy().replace('\\', "/");
             (canonical_root, locator)
         }
         Err(error) => return Err(error),
