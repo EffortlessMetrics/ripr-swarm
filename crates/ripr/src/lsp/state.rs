@@ -4478,7 +4478,7 @@ mod tests {
             return Err("exact limit must be retained".to_string());
         }
         let rejection = set
-            .apply_event(&[folder(&format!("file:///workspace/extra"))?], &[])
+            .apply_event(&[folder("file:///workspace/extra")?], &[])
             .err()
             .ok_or_else(|| "cumulative growth past the cap must be rejected".to_string())?;
         if rejection.kind != WorkspaceFolderEventRejectionKind::MembershipCapacityExceeded {
