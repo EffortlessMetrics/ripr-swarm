@@ -1,0 +1,837 @@
+{
+  "schema_version": "verification_run_snapshot_binding_corpus.v1",
+  "cases": [
+    {
+      "id": "committed_exact_pair",
+      "plan": {
+        "plan_id": "plan-vp25a-committed",
+        "plan_digest": "sha256:1010101010101010101010101010101010101010101010101010101010101010",
+        "declared_model_generation": "change_verification_plan.v1:1"
+      },
+      "requested": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "subject_kind": "committed_head",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": "commit:head",
+          "tree": "tree:head",
+          "base": "base:merge",
+          "head": "head:feature",
+          "index": null,
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {}
+        },
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "prepared": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receipt_digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "subject_kind": "committed_head",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": "commit:head",
+          "tree": "tree:head",
+          "base": "base:merge",
+          "head": "head:feature",
+          "index": null,
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {}
+        },
+        "content_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "inventory_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "prepared_root": "/tmp/prepared-root-a",
+        "completeness": "complete",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "live_relation": "same_as_captured",
+      "expect": {
+        "compatibility": "compatible",
+        "first_mismatch_axis": null,
+        "completeness": "complete",
+        "live_relation": "same_as_captured",
+        "portable_binding_identity": null,
+        "reorder_invariance": true
+      }
+    },
+    {
+      "id": "committed_request_dirty_worktree_prepared",
+      "plan": {
+        "plan_id": "plan-vp25a-committed",
+        "plan_digest": "sha256:1010101010101010101010101010101010101010101010101010101010101010",
+        "declared_model_generation": "change_verification_plan.v1:1"
+      },
+      "requested": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "subject_kind": "committed_head",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": "commit:head",
+          "tree": "tree:head",
+          "base": "base:merge",
+          "head": "head:feature",
+          "index": null,
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {}
+        },
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "prepared": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receipt_digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "subject_kind": "committed_head",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": "commit:head",
+          "tree": "tree:head",
+          "base": "base:merge",
+          "head": "head:feature",
+          "index": null,
+          "worktree": "worktree:dirty",
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {}
+        },
+        "content_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "inventory_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "prepared_root": "/tmp/prepared-root-a",
+        "completeness": "complete",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "live_relation": "same_as_captured",
+      "expect": {
+        "compatibility": "incompatible",
+        "first_mismatch_axis": "committed_vs_dirty_worktree",
+        "completeness": "partial",
+        "live_relation": "same_as_captured",
+        "portable_binding_identity": null,
+        "reorder_invariance": false
+      }
+    },
+    {
+      "id": "staged_deletion_unstaged_replacement",
+      "plan": {
+        "plan_id": "plan-vp25a-staged",
+        "plan_digest": "sha256:2020202020202020202020202020202020202020202020202020202020202020",
+        "declared_model_generation": "change_verification_plan.v1:1"
+      },
+      "requested": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "subject_kind": "staged_index",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": null,
+          "tree": null,
+          "base": null,
+          "head": null,
+          "index": "index:staged",
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": ["src/removed.rs"],
+          "extra": {}
+        },
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "prepared": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receipt_digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "subject_kind": "staged_index",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": null,
+          "tree": null,
+          "base": null,
+          "head": null,
+          "index": "index:staged",
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": ["src/removed.rs"],
+          "extra": {
+            "unstaged_replacement_for_staged_deletion": "src/removed.rs"
+          }
+        },
+        "content_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "inventory_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "prepared_root": "/tmp/prepared-root-a",
+        "completeness": "complete",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "live_relation": "same_as_captured",
+      "expect": {
+        "compatibility": "incompatible",
+        "first_mismatch_axis": "staged_vs_worktree_replacement",
+        "completeness": "partial",
+        "live_relation": "same_as_captured",
+        "portable_binding_identity": null,
+        "reorder_invariance": false
+      }
+    },
+    {
+      "id": "saved_worktree_changed_untracked",
+      "plan": {
+        "plan_id": "plan-vp25a-worktree",
+        "plan_digest": "sha256:3030303030303030303030303030303030303030303030303030303030303030",
+        "declared_model_generation": "change_verification_plan.v1:1"
+      },
+      "requested": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "subject_kind": "saved_worktree",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": null,
+          "tree": null,
+          "base": null,
+          "head": null,
+          "index": null,
+          "worktree": "worktree:saved-w0",
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {}
+        },
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "prepared": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receipt_digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "subject_kind": "saved_worktree",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": null,
+          "tree": null,
+          "base": null,
+          "head": null,
+          "index": null,
+          "worktree": "worktree:saved-w0",
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {
+            "changed_untracked_after_save": "true"
+          }
+        },
+        "content_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "inventory_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "prepared_root": "/tmp/prepared-root-a",
+        "completeness": "complete",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "live_relation": "same_as_captured",
+      "expect": {
+        "compatibility": "incompatible",
+        "first_mismatch_axis": "worktree_identity",
+        "completeness": "partial",
+        "live_relation": "same_as_captured",
+        "portable_binding_identity": null,
+        "reorder_invariance": false
+      }
+    },
+    {
+      "id": "overlay_wrong_base_or_generation",
+      "plan": {
+        "plan_id": "plan-vp25a-overlay",
+        "plan_digest": "sha256:4040404040404040404040404040404040404040404040404040404040404040",
+        "declared_model_generation": "change_verification_plan.v1:1"
+      },
+      "requested": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "subject_kind": "overlay",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": null,
+          "tree": null,
+          "base": null,
+          "head": null,
+          "index": null,
+          "worktree": null,
+          "overlay_set": "overlay:set-a",
+          "overlay_base": "overlay:base-a",
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {
+            "overlay_document_generation": "gen-1"
+          }
+        },
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "prepared": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receipt_digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "subject_kind": "overlay",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": null,
+          "tree": null,
+          "base": null,
+          "head": null,
+          "index": null,
+          "worktree": null,
+          "overlay_set": "overlay:set-a",
+          "overlay_base": "overlay:base-a",
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {
+            "overlay_document_generation": "gen-2"
+          }
+        },
+        "content_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "inventory_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "prepared_root": "/tmp/prepared-root-a",
+        "completeness": "complete",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "live_relation": "same_as_captured",
+      "expect": {
+        "compatibility": "incompatible",
+        "first_mismatch_axis": "overlay_identity",
+        "completeness": "partial",
+        "live_relation": "same_as_captured",
+        "portable_binding_identity": null,
+        "reorder_invariance": false
+      }
+    },
+    {
+      "id": "captured_external_path_moved_live",
+      "plan": {
+        "plan_id": "plan-vp25a-external",
+        "plan_digest": "sha256:5050505050505050505050505050505050505050505050505050505050505050",
+        "declared_model_generation": "change_verification_plan.v1:1"
+      },
+      "requested": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "subject_kind": "captured_external",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": null,
+          "tree": null,
+          "base": null,
+          "head": null,
+          "index": null,
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": "capture:fixture-a",
+          "staged_deletions": [],
+          "extra": {
+            "original_path": "/data/fixture-a"
+          }
+        },
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "prepared": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receipt_digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "subject_kind": "captured_external",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": null,
+          "tree": null,
+          "base": null,
+          "head": null,
+          "index": null,
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": "capture:fixture-a",
+          "staged_deletions": [],
+          "extra": {
+            "original_path": "/data/fixture-a"
+          }
+        },
+        "content_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "inventory_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "prepared_root": "/tmp/prepared-root-a",
+        "completeness": "complete",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "live_relation": "moved_after_capture",
+      "expect": {
+        "compatibility": "compatible",
+        "first_mismatch_axis": null,
+        "completeness": "complete",
+        "live_relation": "moved_after_capture",
+        "portable_binding_identity": null,
+        "reorder_invariance": false
+      }
+    },
+    {
+      "id": "equivalent_checkout_root_relocation",
+      "plan": {
+        "plan_id": "plan-vp25a-committed",
+        "plan_digest": "sha256:1010101010101010101010101010101010101010101010101010101010101010",
+        "declared_model_generation": "change_verification_plan.v1:1"
+      },
+      "requested": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "subject_kind": "committed_head",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": "commit:head",
+          "tree": "tree:head",
+          "base": "base:merge",
+          "head": "head:feature",
+          "index": null,
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {}
+        },
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "prepared": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receipt_digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "subject_kind": "committed_head",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": "commit:head",
+          "tree": "tree:head",
+          "base": "base:merge",
+          "head": "head:feature",
+          "index": null,
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {}
+        },
+        "content_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "inventory_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "prepared_root": "/tmp/prepared-root-relocated",
+        "completeness": "complete",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "live_relation": "same_as_captured",
+      "expect": {
+        "compatibility": "compatible",
+        "first_mismatch_axis": null,
+        "completeness": "complete",
+        "live_relation": "same_as_captured",
+        "portable_binding_identity": null,
+        "reorder_invariance": false
+      }
+    },
+    {
+      "id": "partial_unsupported_inventory_rows",
+      "plan": {
+        "plan_id": "plan-vp25a-partial",
+        "plan_digest": "sha256:6060606060606060606060606060606060606060606060606060606060606060",
+        "declared_model_generation": "change_verification_plan.v1:1"
+      },
+      "requested": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "subject_kind": "committed_head",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": "commit:head",
+          "tree": "tree:head",
+          "base": "base:merge",
+          "head": "head:feature",
+          "index": null,
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {}
+        },
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": ["symlink_target_unresolved"],
+        "unsupported_entries": ["symlink:src/link", "submodule:vendor/ext", "path:bad\\u{0}", "object:missing-tree"]
+      },
+      "prepared": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receipt_digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "subject_kind": "committed_head",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": "commit:head",
+          "tree": "tree:head",
+          "base": "base:merge",
+          "head": "head:feature",
+          "index": null,
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {}
+        },
+        "content_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "inventory_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "prepared_root": "/tmp/prepared-root-a",
+        "completeness": "partial",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": ["symlink_target_unresolved"],
+        "unsupported_entries": ["symlink:src/link", "submodule:vendor/ext", "path:bad\\u{0}", "object:missing-tree"]
+      },
+      "live_relation": "unavailable",
+      "expect": {
+        "compatibility": "incompatible",
+        "first_mismatch_axis": "unsupported_or_partial_inventory",
+        "completeness": "unsupported",
+        "live_relation": "unavailable",
+        "portable_binding_identity": null,
+        "reorder_invariance": false
+      }
+    },
+    {
+      "id": "deterministic_output_under_input_reordering",
+      "plan": {
+        "plan_id": "plan-vp25a-committed",
+        "plan_digest": "sha256:1010101010101010101010101010101010101010101010101010101010101010",
+        "declared_model_generation": "change_verification_plan.v1:1"
+      },
+      "requested": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "subject_kind": "committed_head",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": "commit:head",
+          "tree": "tree:head",
+          "base": "base:merge",
+          "head": "head:feature",
+          "index": null,
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {}
+        },
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": ["z-last", "a-first"],
+        "unsupported_entries": []
+      },
+      "prepared": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receipt_digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "subject_kind": "committed_head",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": "commit:head",
+          "tree": "tree:head",
+          "base": "base:merge",
+          "head": "head:feature",
+          "index": null,
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {}
+        },
+        "content_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "inventory_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "prepared_root": "/tmp/prepared-root-a",
+        "completeness": "complete",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": ["a-first", "z-last"],
+        "unsupported_entries": []
+      },
+      "live_relation": "same_as_captured",
+      "expect": {
+        "compatibility": "compatible",
+        "first_mismatch_axis": null,
+        "completeness": "complete",
+        "live_relation": "same_as_captured",
+        "portable_binding_identity": null,
+        "reorder_invariance": true
+      }
+    },
+    {
+      "id": "plan_identity_invalidates_compatibility",
+      "plan": {
+        "plan_id": "plan-vp25a-committed",
+        "plan_digest": "sha256:7070707070707070707070707070707070707070707070707070707070707070",
+        "declared_model_generation": "change_verification_plan.v1:2"
+      },
+      "requested": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "subject_kind": "committed_head",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": "commit:head",
+          "tree": "tree:head",
+          "base": "base:merge",
+          "head": "head:feature",
+          "index": null,
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {}
+        },
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "prepared": {
+        "envelope_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receipt_digest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "subject_kind": "committed_head",
+        "identities": {
+          "repository": "repo:effortless/ripr",
+          "commit": "commit:head",
+          "tree": "tree:head",
+          "base": "base:merge",
+          "head": "head:feature",
+          "index": null,
+          "worktree": null,
+          "overlay_set": null,
+          "overlay_base": null,
+          "captured_external": null,
+          "staged_deletions": [],
+          "extra": {}
+        },
+        "content_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "inventory_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "selected_closure_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "closure_complete": true,
+        "decision_bearing_inputs_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "resource_configuration_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "prepared_root": "/tmp/prepared-root-a",
+        "completeness": "complete",
+        "policy": {
+          "include_untracked_when_selected": true,
+          "include_ignored_when_selected": false,
+          "admit_symlinks": false,
+          "admit_submodules": false
+        },
+        "limitations": [],
+        "unsupported_entries": []
+      },
+      "live_relation": "same_as_captured",
+      "expect": {
+        "compatibility": "incompatible",
+        "first_mismatch_axis": "resource_configuration",
+        "completeness": "partial",
+        "live_relation": "same_as_captured",
+        "portable_binding_identity": null,
+        "reorder_invariance": false
+      }
+    }
+  ]
+}
