@@ -17079,6 +17079,7 @@ tests = [
   "xtask/src/work_wave_identity.rs::tests::work_wave_identity_provenance_fails_closed",
   "xtask/src/work_wave_identity.rs::tests::work_wave_identity_committed_provenance_covers_every_corpus_byte",
   "xtask/src/work_wave_identity.rs::tests::work_wave_identity_command_mutate_nothing_mutation_negative",
+  "xtask/src/issue_4678_acceptance.rs::tests::issue_4678_disjoint_cross_campaign_waves_admitted",
 ]
 fixtures = [
   "fixtures/work_wave_identity",
@@ -17255,6 +17256,8 @@ tests = [
   "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_committed_provenance_covers_every_corpus_byte",
   "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_merged_item_keeps_open_acceptance_visible",
   "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_command_mutate_nothing_mutation_negative",
+  "xtask/src/issue_4678_acceptance.rs::tests::issue_4678_burndown_committed_corpus_binds_selected_work",
+  "xtask/src/issue_4678_acceptance.rs::tests::portfolio_burndown_committed_corpus_matches_work_burndown_law",
 ]
 fixtures = [
   "fixtures/work_burndown_identity",
@@ -17262,6 +17265,7 @@ fixtures = [
 code = [
   "xtask/src/work_burndown_identity.rs",
   "xtask/src/work_selection_identity.rs",
+  "xtask/src/issue_4678_acceptance.rs",
   "xtask/src/command.rs",
   "xtask/src/dispatch.rs",
 ]
@@ -17403,6 +17407,8 @@ tests = [
   "xtask/src/work_selection_identity.rs::tests::work_selection_identity_scenario_captured_resolution",
   "xtask/src/work_selection_identity.rs::tests::work_selection_identity_spec_ref_wire_shape",
   "xtask/src/work_selection_identity.rs::tests::work_selection_identity_committed_provenance_covers_every_corpus_byte",
+  "xtask/src/issue_4678_acceptance.rs::tests::issue_4678_selection_wrong_repository_fails_closed",
+  "xtask/src/issue_4678_acceptance.rs::tests::issue_4678_fresh_root_receipt_covers_burndown_domain",
 ]
 fixtures = [
   "fixtures/work_selection_identity",
@@ -20124,6 +20130,7 @@ tests = [
   "xtask/src/issue_lifecycle_real_rows.rs::tests::uncovered_acceptance_row_keeps_a_merge_partial",
   "xtask/src/issue_lifecycle_real_rows.rs::tests::duplicate_import_deduplicates_by_observation_key",
   "xtask/src/issue_lifecycle_real_rows.rs::tests::synthetic_fixtures_stay_outside_the_real_count",
+  "xtask/src/issue_4678_acceptance.rs::tests::issue_4678_lifecycle_merge_without_closeout_stays_pending",
 ]
 fixtures = [
   "fixtures/issue_lifecycle_real_rows",
