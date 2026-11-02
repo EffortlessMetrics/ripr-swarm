@@ -1,6 +1,23 @@
 use super::*;
 use crate::analysis::seams::{ExpectedSink, RepoSeam, SeamKind};
 
+fn interned(s: &str) -> Arc<str> {
+    Arc::from(s)
+}
+
+fn interned_pairs<const N: usize>(pairs: [(&str, &str); N]) -> BTreeMap<Arc<str>, Arc<str>> {
+    pairs
+        .into_iter()
+        .map(|(key, value)| (interned(key), interned(value)))
+        .collect()
+}
+
+fn interned_keys<V>(map: BTreeMap<String, V>) -> BTreeMap<Arc<str>, V> {
+    map.into_iter()
+        .map(|(key, value)| (interned(&key), value))
+        .collect()
+}
+
 fn predicate_seam() -> RepoSeam {
     RepoSeam::new(
         "src/pricing.rs",
@@ -48,8 +65,14 @@ fn extract_struct_field_bindings_picks_up_literal_fields_only() -> Result<(), St
         .ok_or_else(|| "same-test struct literal should be indexed".to_string())?;
     let fields = &binding.fields;
 
-    assert_eq!(fields.get("amount").map(String::as_str), Some("100"));
-    assert_eq!(fields.get("threshold").map(String::as_str), Some("100"));
+    assert_eq!(
+        fields.get("amount").map(|value| value.as_ref()),
+        Some("100")
+    );
+    assert_eq!(
+        fields.get("threshold").map(|value| value.as_ref()),
+        Some("100")
+    );
     assert!(
         !fields.contains_key("computed"),
         "non-literal struct fields must stay unresolved"
@@ -177,8 +200,8 @@ fn resolve_same_test_struct_field_projection() {
         &[],
     );
     let facts = ValueEnvFacts {
-        struct_field_bindings,
-        struct_field_invalidations,
+        struct_field_bindings: interned_keys(struct_field_bindings),
+        struct_field_invalidations: interned_keys(struct_field_invalidations),
         ..ValueEnvFacts::default()
     };
     let env = ValueEnv::new(&seam, &facts);
@@ -197,7 +220,7 @@ fn resolve_same_test_struct_field_projection() {
 fn resolve_shared_borrowed_identifier_once() {
     let seam = predicate_seam();
     let facts = ValueEnvFacts {
-        let_bindings: BTreeMap::from([("amount".to_string(), "100".to_string())]),
+        let_bindings: interned_pairs([("amount", "100")]),
         ..ValueEnvFacts::default()
     };
     let env = ValueEnv::new(&seam, &facts);
@@ -225,8 +248,8 @@ fn resolve_same_test_struct_field_projection_is_source_order_scoped() {
     let (struct_field_bindings, struct_field_invalidations) =
         extract_struct_field_bindings(body, 10, &[]);
     let facts = ValueEnvFacts {
-        struct_field_bindings,
-        struct_field_invalidations,
+        struct_field_bindings: interned_keys(struct_field_bindings),
+        struct_field_invalidations: interned_keys(struct_field_invalidations),
         ..ValueEnvFacts::default()
     };
     let env = ValueEnv::new(&seam, &facts);
@@ -250,8 +273,8 @@ fn resolve_same_test_struct_field_projection_requires_value_visible_at_call() {
     let (struct_field_bindings, struct_field_invalidations) =
         extract_struct_field_bindings(body, 10, &[]);
     let facts = ValueEnvFacts {
-        struct_field_bindings,
-        struct_field_invalidations,
+        struct_field_bindings: interned_keys(struct_field_bindings),
+        struct_field_invalidations: interned_keys(struct_field_invalidations),
         ..ValueEnvFacts::default()
     };
     let env = ValueEnv::new(&seam, &facts);
@@ -275,8 +298,8 @@ fn resolve_same_test_struct_field_projection_is_column_scoped_on_same_line() {
     let (struct_field_bindings, struct_field_invalidations) =
         extract_struct_field_bindings(late_body, 10, &[]);
     let facts = ValueEnvFacts {
-        struct_field_bindings,
-        struct_field_invalidations,
+        struct_field_bindings: interned_keys(struct_field_bindings),
+        struct_field_invalidations: interned_keys(struct_field_invalidations),
         ..ValueEnvFacts::default()
     };
     let env = ValueEnv::new(&seam, &facts);
@@ -291,8 +314,8 @@ fn resolve_same_test_struct_field_projection_is_column_scoped_on_same_line() {
     let (struct_field_bindings, struct_field_invalidations) =
         extract_struct_field_bindings(visible_body, 10, &[]);
     let facts = ValueEnvFacts {
-        struct_field_bindings,
-        struct_field_invalidations,
+        struct_field_bindings: interned_keys(struct_field_bindings),
+        struct_field_invalidations: interned_keys(struct_field_invalidations),
         ..ValueEnvFacts::default()
     };
     let env = ValueEnv::new(&seam, &facts);
@@ -312,8 +335,8 @@ fn resolve_same_test_struct_field_projection_is_mutation_scoped() {
     let (struct_field_bindings, struct_field_invalidations) =
         extract_struct_field_bindings(body, 10, &[]);
     let facts = ValueEnvFacts {
-        struct_field_bindings,
-        struct_field_invalidations,
+        struct_field_bindings: interned_keys(struct_field_bindings),
+        struct_field_invalidations: interned_keys(struct_field_invalidations),
         ..ValueEnvFacts::default()
     };
     let env = ValueEnv::new(&seam, &facts);
@@ -676,7 +699,7 @@ fn builder_facts_skips_bodies_that_name_no_allowed_token_and_matches_the_full_sc
 
 #[test]
 fn field_assignment_named_constant_values_are_exact_and_bounded() -> Result<(), String> {
-    let constants = BTreeMap::from([("SUPPORTED_VERSION".to_string(), "1".to_string())]);
+    let constants = interned_pairs([("SUPPORTED_VERSION", "1")]);
     for (expression, expected) in [
         ("SUPPORTED_VERSION", vec!["SUPPORTED_VERSION".to_string()]),
         ("SUPPORTED_VERSION - 1", vec!["0".to_string()]),
@@ -695,10 +718,7 @@ fn field_assignment_named_constant_values_are_exact_and_bounded() -> Result<(), 
 #[test]
 fn field_assignment_values_fail_closed_for_unresolved_or_ambiguous_expressions()
 -> Result<(), String> {
-    let constants = BTreeMap::from([
-        ("SUPPORTED_VERSION".to_string(), "1".to_string()),
-        ("SUPPORTED_VERSION_COPY".to_string(), "1".to_string()),
-    ]);
+    let constants = interned_pairs([("SUPPORTED_VERSION", "1"), ("SUPPORTED_VERSION_COPY", "1")]);
     if resolve_field_assignment_values("SUPPORTED_VERSION_COPY", &constants)
         != vec!["SUPPORTED_VERSION_COPY".to_string()]
     {
@@ -761,18 +781,18 @@ fn field_assignment_control_flow_and_mutable_alias_guards_are_conservative() -> 
 fn mutable_borrow_before_assignment_does_not_invalidate_the_later_value() -> Result<(), String> {
     let mut facts = ValueEnvFacts::default();
     facts.local_binding_positions.insert(
-        "file".to_string(),
+        interned("file"),
         vec![SourcePosition { line: 1, column: 0 }],
     );
     facts.field_assignment_invalidations.insert(
-        "file".to_string(),
+        interned("file"),
         vec![SourcePosition { line: 2, column: 0 }],
     );
     facts.field_assignments.insert(
         ("file".to_string(), "body_model_version".to_string()),
         vec![FieldAssignmentBinding {
             position: SourcePosition { line: 3, column: 0 },
-            values: vec!["SUPPORTED_VERSION".to_string()],
+            values: vec![interned("SUPPORTED_VERSION")],
         }],
     );
     let seam = predicate_seam();
@@ -794,25 +814,25 @@ fn mutable_borrow_before_assignment_does_not_invalidate_the_later_value() -> Res
 fn invalidated_field_assignment_does_not_fall_back_to_a_stale_struct_value() -> Result<(), String> {
     let mut facts = ValueEnvFacts::default();
     facts.local_binding_positions.insert(
-        "file".to_string(),
+        interned("file"),
         vec![SourcePosition { line: 1, column: 0 }],
     );
     facts.struct_field_bindings.insert(
-        "file".to_string(),
+        interned("file"),
         StructFieldBinding {
             position: SourcePosition { line: 1, column: 0 },
-            fields: BTreeMap::from([("body_model_version".to_string(), "0".to_string())]),
+            fields: interned_pairs([("body_model_version", "0")]),
         },
     );
     facts.field_assignments.insert(
         ("file".to_string(), "body_model_version".to_string()),
         vec![FieldAssignmentBinding {
             position: SourcePosition { line: 2, column: 0 },
-            values: vec!["SUPPORTED_VERSION".to_string()],
+            values: vec![interned("SUPPORTED_VERSION")],
         }],
     );
     facts.field_assignment_invalidations.insert(
-        "file".to_string(),
+        interned("file"),
         vec![SourcePosition { line: 3, column: 0 }],
     );
     let seam = predicate_seam();
@@ -1154,4 +1174,99 @@ fn offset_integer_values_add_only_to_plain_decimal_constants() {
         named_constant("const LIMIT: u32 = 10u32;\n", "LIMIT"),
         NamedConstant::Opaque
     ));
+}
+
+fn facts_test(name: &str, file: &str, body: &str) -> TestSummary {
+    TestSummary {
+        name: name.to_string(),
+        file: std::path::PathBuf::from(file),
+        start_line: 1,
+        end_line: 8,
+        body: body.into(),
+        calls: Vec::new(),
+        assertions: Vec::new(),
+        literals: Vec::new(),
+        attrs: Vec::new(),
+        nested_fn_names: Vec::new(),
+        let_bindings: Vec::new(),
+    }
+}
+
+#[test]
+fn same_file_tests_share_interned_let_binding_strings() {
+    let index = RustIndex::default();
+    let scan = FileValueScan::default();
+    let first = facts_test(
+        "below",
+        "src/lib.rs",
+        "fn below() { let expected = 100; discounted_total(expected, expected); }",
+    );
+    let second = facts_test(
+        "above",
+        "src/lib.rs",
+        "fn above() { let expected = 100; discounted_total(expected, expected); }",
+    );
+    let first_facts = ValueEnvFacts::build(&first, &scan, &index);
+    let second_facts = ValueEnvFacts::build(&second, &scan, &index);
+
+    assert!(
+        first_facts.shares_let_binding_value_with(&second_facts, "expected"),
+        "two tests in one file must share the interned literal for the same let binding"
+    );
+    assert_eq!(scan.interned_string_count(), 2, "one key and one value");
+
+    let seam = predicate_seam();
+    let env = ValueEnv::new(&seam, &first_facts);
+    assert_eq!(
+        env.resolve("expected"),
+        vec![("100".to_string(), ValueContext::FunctionArgument)]
+    );
+}
+
+#[test]
+fn different_files_do_not_share_interned_let_binding_strings() {
+    let index = RustIndex::default();
+    let first_scan = FileValueScan::default();
+    let second_scan = FileValueScan::default();
+    let first = facts_test(
+        "lib",
+        "src/lib.rs",
+        "fn lib() { let expected = 100; discounted_total(expected, expected); }",
+    );
+    let second = facts_test(
+        "other",
+        "src/other.rs",
+        "fn other() { let expected = 100; discounted_total(expected, expected); }",
+    );
+    let first_facts = ValueEnvFacts::build(&first, &first_scan, &index);
+    let second_facts = ValueEnvFacts::build(&second, &second_scan, &index);
+
+    assert!(
+        !first_facts.shares_let_binding_value_with(&second_facts, "expected"),
+        "file-scoped intern must not leak a process-global string table"
+    );
+}
+
+#[test]
+fn many_same_file_tests_pay_once_per_distinct_binding_string() {
+    let index = RustIndex::default();
+    let scan = FileValueScan::default();
+    let mut facts = Vec::new();
+    for index_in_file in 0..64 {
+        let test = facts_test(
+            &format!("case_{index_in_file}"),
+            "src/lib.rs",
+            "fn case() { let expected = 100; let threshold = 50; discounted_total(expected, threshold); }",
+        );
+        facts.push(ValueEnvFacts::build(&test, &scan, &index));
+    }
+    assert_eq!(
+        scan.interned_string_count(),
+        4,
+        "64 tests must intern expected/100/threshold/50 once, not once per test"
+    );
+    assert!(
+        facts[0].shares_let_binding_value_with(&facts[63], "threshold"),
+        "the last test must still share the first test's interned threshold literal"
+    );
 }
