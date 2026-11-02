@@ -8381,7 +8381,8 @@ language = "rust"
         let yaml = generated_gitlab_ci_yaml();
         assert!(yaml.contains("allow_failure: true"));
         assert!(yaml.contains(r#"$CI_PIPELINE_SOURCE == "merge_request_event""#));
-        assert!(yaml.contains("ripr check --root ."));
+        assert!(yaml.contains("ripr check --root . --base"));
+        assert!(!yaml.contains("ripr check --root . --head"));
         assert!(yaml.contains("ripr review-comments --root ."));
         assert!(yaml.contains("paths:\n      - target/ripr/"));
         assert!(!yaml.contains("RIPR_GATE_MODE"));
