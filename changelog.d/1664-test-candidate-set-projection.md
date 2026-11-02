@@ -1,1 +1,3 @@
-- Add `TestCandidateSet` projection for bounded seam-to-test candidate discovery (#1664): map `RelationReason` to `CandidateRelation`, split eligible vs context-only rows, and expose next-route plus optional truncated discovery totals.
+<!-- section: Added -->
+- Domain `TestCandidateSet` projects related-test rows into producer-backed
+  vs context-only candidate channels with bounded discovery totals (#1664).
