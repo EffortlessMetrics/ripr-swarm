@@ -20,7 +20,7 @@
         "replacement": "val <= 10",
         "outcome": "tests_passed",
         "failing_test": null,
-        "equivalence_review": "not equivalent: components equal to 10 need one digit, but no test formats a padded version with a component equal to 10; mutation spot-check #5295 recorded this as missed"
+        "equivalence_review": "not equivalent: with `val <= 10`, `digits(10)` returns 1 instead of 2; no test formats a padded version with a component equal to 10, so the spot-check mutant keeps tests green (mutation spot-check #5295 recorded this as missed)"
       }
     ]
   },
