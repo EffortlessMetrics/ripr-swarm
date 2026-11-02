@@ -2079,6 +2079,16 @@ fn generated_pattern_matches(pattern: &str, path: &Path) -> bool {
     }
 }
 
+/// Instant/Draft/Fast index nothing when the diff has no analyzable Rust
+/// file and no open index documents. Deep/Ready still select the whole
+/// workspace. Mirrors TypeScript's #10931 skip so a docs-only or
+/// generated-only diff does not pay the full discovery floor (#8547).
+fn diff_needs_rust_workspace(options: &AnalysisOptions, changed_rust_paths: &[PathBuf]) -> bool {
+    !changed_rust_paths.is_empty()
+        || !options.open_rust_index_paths.is_empty()
+        || matches!(options.mode, AnalysisMode::Deep | AnalysisMode::Ready)
+}
+
 impl RustAdapter {
     /// Diff analysis with the enabled-language set the pipeline will
     /// dispatch, so the partial-diff partition (RIPR-PROP-0019) never selects
@@ -2144,6 +2154,23 @@ impl RustAdapter {
             })
             .map(|file| file.path.clone())
             .collect::<Vec<_>>();
+        // Instant/Draft/Fast index nothing without a changed Rust file or an
+        // open index document. Walking the workspace is then a fixed cost
+        // with no findings (#8547 remaining discovery floor). Deep/Ready
+        // still select every file. TypeScript already skips this walk
+        // (#10931); generated skip counts stay on the changed paths.
+        if !diff_needs_rust_workspace(options, &changed_rust_paths) {
+            let skipped_files = changed_files
+                .iter()
+                .filter(|file| self.accepts_path(&file.path))
+                .filter(|file| generated_sources.contains(&file.path))
+                .count();
+            return Ok(LanguageDiffResult {
+                skipped_files,
+                partial_scope,
+                ..LanguageDiffResult::default()
+            });
+        }
         let rust_files = workspace::discover_rust_files(&options.root)?;
         let analyzable_rust_files = rust_files
             .into_iter()
@@ -10283,6 +10310,8 @@ fn absent_delimiter_boundary_returns_head() {
 
 #[cfg(test)]
 mod classify_panic_tests;
+#[cfg(test)]
+mod diff_workspace_skip_tests;
 #[cfg(test)]
 mod facade_reach_tests;
 #[cfg(test)]
