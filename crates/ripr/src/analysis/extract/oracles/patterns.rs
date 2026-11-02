@@ -159,7 +159,7 @@ fn err_constructor_feeds_value_adapter(line: &str) -> bool {
 }
 
 /// The last path segment of the call whose argument list contains the end of
-/// `prefix`, or `None` for a grouping parenthesis or top level.
+/// `prefix`, looking through grouping parentheses, or `None` at top level.
 fn enclosing_callee(prefix: &str) -> Option<&str> {
     let mut depth = 0usize;
     for (offset, ch) in prefix.char_indices().rev() {
@@ -169,10 +169,16 @@ fn enclosing_callee(prefix: &str) -> Option<&str> {
             '(' => {
                 let head = prefix[..offset].trim_end();
                 let start = head
-                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                    .map_or(0, |i| i + 1);
+                    .char_indices()
+                    .rev()
+                    .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_'))
+                    .map_or(0, |(i, c)| i + c.len_utf8());
                 let name = &head[start..];
-                return (!name.is_empty()).then_some(name);
+                // A grouping parenthesis has no callee: keep walking outward to
+                // the real call whose argument list holds it.
+                if !name.is_empty() {
+                    return Some(name);
+                }
             }
             _ => {}
         }
@@ -2767,6 +2773,8 @@ mod issue_12359_tests {
             r#"assert_eq!(parse("x"), Err(ParseError::Empty), "message");"#,
             r#"assert!(matches!(parse("x"), Err(ParseError::Empty)));"#,
             r#"assert_eq!(Some(r), Some(Err(E::Bad)));"#,
+            r#"assert_eq!(r, (Err(E::Bad)));"#,
+            r#"assert_eq!(café(r), Err(E::Bad));"#,
             r#"assert_eq!(Result::eq(&r, &Err(E::Bad)), true);"#,
         ] {
             assert!(is_exact_error_variant_assertion(line), "{line}");
@@ -2782,6 +2790,8 @@ mod issue_12359_tests {
             r#"assert_eq!(parse("x").or(Err(ParseError::Empty)), Err(ParseError::Empty));"#,
             r#"assert_eq!(Result::or::<u8, E>(parse("x"), Err(ParseError::Empty)), Err(ParseError::Empty));"#,
             r#"assert_eq!(find("x").ok_or(Err(ParseError::Empty)), Err(ParseError::Empty));"#,
+            r#"assert_eq!(parse("x").or((Err(ParseError::Empty))).unwrap_err(), ParseError::Empty);"#,
+            r#"assert_eq!(parse("x").or(((Err(ParseError::Empty)))).unwrap_err(), ParseError::Empty);"#,
             r#"assert_eq!(parse("x"), Err(_));"#,
         ] {
             assert!(!is_exact_error_variant_assertion(line), "{line}");
