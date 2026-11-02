@@ -76,7 +76,11 @@ fn split_labels(labels: &str) -> Vec<String> {
 }
 
 fn repo_root() -> Result<std::path::PathBuf, String> {
-    std::env::current_dir().map_err(|err| format!("failed to determine working directory: {err}"))
+    std::env::current_dir().map_err(|err| {
+        format!(
+            "failed to determine working directory: {err}; run ripr from an existing directory"
+        )
+    })
 }
 
 #[cfg(test)]

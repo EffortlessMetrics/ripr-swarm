@@ -733,7 +733,7 @@ pub(super) fn finding_guidance(item: &GapItem) -> Value {
     })
 }
 
-/// Budget items for the shared [`crate::app::diagnostic_budget`] authority.
+/// Budget items for the shared [`crate::diagnostic_budget`] authority.
 /// Eligibility is the producer's candidate-actionability predicate captured
 /// at projection time; MCP does not invent its own filter or ranking. The
 /// selection key uses the same unset (128) ranks the LSP delivery bridge
@@ -741,8 +741,8 @@ pub(super) fn finding_guidance(item: &GapItem) -> Value {
 /// id, then document) is the only ordering applied.
 pub(crate) fn budget_items(
     items: &[GapItem],
-) -> Vec<crate::app::diagnostic_budget::DiagnosticBudgetItem> {
-    use crate::app::diagnostic_budget::{
+) -> Vec<crate::diagnostic_budget::DiagnosticBudgetItem> {
+    use crate::diagnostic_budget::{
         DiagnosticBudgetEligibility, DiagnosticBudgetItem, DiagnosticSelectionKey,
     };
     items
@@ -1435,7 +1435,7 @@ mod tests {
 
     #[test]
     fn eligibility_follows_the_producer_actionability_predicate() -> Result<(), String> {
-        use crate::app::diagnostic_budget::DiagnosticBudgetEligibility;
+        use crate::diagnostic_budget::DiagnosticBudgetEligibility;
         let actionable = budget_items(&[GapItem::from_finding(&finding()?, Path::new("."))?]);
         let Some(actionable_item) = actionable.first() else {
             return Err("budget items must not be empty".to_string());

@@ -5,6 +5,8 @@ use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
 use std::path::PathBuf;
+#[cfg(windows)]
+use std::path::Path;
 
 pub(super) fn pr_summary(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {

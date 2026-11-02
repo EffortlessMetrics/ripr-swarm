@@ -108,7 +108,10 @@ mod agent;
 #[doc(hidden)]
 pub mod analysis;
 pub(crate) mod git;
-pub(crate) mod interrupt;
+pub mod diagnostic_budget;
+pub(crate) mod interrupt {
+    pub use crate::cli::interrupt::*;
+}
 // Shared owned-subprocess authority (#3803): one Job-Object-backed owner for
 // every shipped bounded Windows subprocess path. `xtask` consumes the same
 // adapter so there is no second process-owner implementation; keep the

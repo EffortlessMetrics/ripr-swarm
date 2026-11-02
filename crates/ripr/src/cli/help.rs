@@ -1456,7 +1456,7 @@ mod tests {
     const SWARM_QUEUE_PARSER_RS: &str = include_str!("commands/swarm/queue.rs");
     const SWARM_INGEST_PARSER_RS: &str = include_str!("commands/swarm/ingest.rs");
     const RERUN_PARSER_RS: &str = include_str!("rerun.rs");
-    const MCP_PARSER_RS: &str = include_str!("../mcp/mod.rs");
+    const MCP_PARSER_RS: &str = include_str!("commands/mcp_command.rs");
     const PR_SUMMARY_PARSER_RS: &str = include_str!("commands/pr_summary.rs");
     const ANNOTATIONS_PARSER_RS: &str = include_str!("commands/annotations.rs");
     const PR_EVIDENCE_PARSER_RS: &str = include_str!("commands/pr_evidence.rs");
@@ -1612,7 +1612,7 @@ mod tests {
         ),
         ("init", INIT_PARSER_RS, &["parse_init_options"]),
         ("lsp", CLI_COMMANDS_RS, &["lsp_with_serve"]),
-        ("mcp", MCP_PARSER_RS, &["run"]),
+        ("mcp", MCP_PARSER_RS, &["mcp"]),
         ("outcome", CLI_COMMANDS_RS, &["parse_outcome_options"]),
         ("pilot", PILOT_PARSER_RS, &["parse_pilot_options"]),
         ("plus", RIPR_PLUS_PARSER_RS, &["parse_options"]),

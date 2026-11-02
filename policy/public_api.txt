@@ -30,12 +30,12 @@
 # cargo xtask repair-card-usability-report, cargo xtask check-public-api.
 
 pub const ripr::app::repair_card_usability::REPAIR_CARD_USABILITY_SCHEMA_VERSION
-pub const ripr::app::diagnostic_budget::DEFAULT_MAX_INLINE_DETAIL_BYTES
-pub const ripr::app::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_DOCUMENT
-pub const ripr::app::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE
-pub const ripr::app::diagnostic_budget::DEFAULT_MAX_SERIALIZED_BYTES
-pub const ripr::app::diagnostic_budget::DIAGNOSTIC_BUDGET_SCHEMA_VERSION
-pub const ripr::app::diagnostic_budget::DIAGNOSTIC_BUDGET_SELECTION_VERSION
+pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_INLINE_DETAIL_BYTES
+pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_DOCUMENT
+pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE
+pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_SERIALIZED_BYTES
+pub const ripr::lsp::diagnostic_budget::DIAGNOSTIC_BUDGET_SCHEMA_VERSION
+pub const ripr::lsp::diagnostic_budget::DIAGNOSTIC_BUDGET_SELECTION_VERSION
 pub const ripr::output::receipt_lifecycle::RECEIPT_FOUND
 pub const ripr::output::receipt_lifecycle::RECEIPT_GAP_MISMATCH
 pub const ripr::output::receipt_lifecycle::RECEIPT_MISSING
@@ -67,10 +67,10 @@ pub enum ripr::domain::language_availability::AutoDetectionPolicy
 pub enum ripr::domain::language_availability::AvailabilityState
 pub enum ripr::domain::language_availability::ConfiguredIntent
 pub enum ripr::domain::language_availability::SupportTier
-pub enum ripr::app::diagnostic_budget::DiagnosticBudgetEligibility
-pub enum ripr::app::diagnostic_budget::DiagnosticBudgetError
-pub enum ripr::app::diagnostic_budget::DiagnosticOverflowReason
-pub enum ripr::app::diagnostic_budget::OmittedDiagnosticReason
+pub enum ripr::lsp::diagnostic_budget::DiagnosticBudgetEligibility
+pub enum ripr::lsp::diagnostic_budget::DiagnosticBudgetError
+pub enum ripr::lsp::diagnostic_budget::DiagnosticOverflowReason
+pub enum ripr::lsp::diagnostic_budget::OmittedDiagnosticReason
 
 # CLI exit-code contract (swarm/q3-exit-codes): owner cli; reason:
 # intentional public error type returned by `ripr::cli::run`; carries the
@@ -97,8 +97,8 @@ pub use ripr::cli::parse_impacted_evidence_options
 pub fn ripr::domain::language_availability::resolve_language_availability
 pub fn ripr::domain::language_availability::resolve_language_availability_all
 pub fn ripr::domain::language_availability::unavailable_recovery
-pub fn ripr::app::diagnostic_budget::build_budget_items_from_diagnostics
-pub fn ripr::app::diagnostic_budget::evaluate_diagnostic_budget
+pub fn ripr::lsp::diagnostic_budget::build_budget_items_from_diagnostics
+pub fn ripr::lsp::diagnostic_budget::evaluate_diagnostic_budget
 pub fn ripr::lsp::serve
 pub fn ripr::cli::run_mcp
 pub fn ripr::output::github::render
@@ -138,7 +138,8 @@ pub mod ripr::app
 pub mod ripr::app::pr_evidence
 pub mod ripr::app::pr_summary
 pub mod ripr::app::repair_card_usability
-pub mod ripr::app::diagnostic_budget
+pub mod ripr::diagnostic_budget
+pub use ripr::diagnostic_budget::*
 pub mod ripr::cli
 pub mod ripr::config
 pub mod ripr::domain
@@ -146,7 +147,6 @@ pub mod ripr::domain::context_packet
 pub mod ripr::domain::language_availability
 pub mod ripr::lsp
 pub mod ripr::lsp::diagnostic_budget
-pub use ripr::lsp::diagnostic_budget::*
 pub mod ripr::mcp
 # PR #3803 lane: owner process-ownership-3803; reason: intentional shared
 # owned-subprocess authority consumed by the `xtask` bounded runners so there
@@ -173,12 +173,12 @@ pub struct ripr::domain::context_packet::ContextPacketProbe
 pub struct ripr::domain::context_packet::ContextPacketRipr
 pub struct ripr::domain::language_availability::LanguageAvailabilityInput
 pub struct ripr::domain::language_availability::LanguageAvailabilityReport
-pub struct ripr::app::diagnostic_budget::DiagnosticBudget
-pub struct ripr::app::diagnostic_budget::DiagnosticBudgetItem
-pub struct ripr::app::diagnostic_budget::DiagnosticBudgetResult
-pub struct ripr::app::diagnostic_budget::DiagnosticSelectionKey
-pub struct ripr::app::diagnostic_budget::OmittedDiagnosticItem
-pub struct ripr::app::diagnostic_budget::SelectedDiagnosticItem
+pub struct ripr::lsp::diagnostic_budget::DiagnosticBudget
+pub struct ripr::lsp::diagnostic_budget::DiagnosticBudgetItem
+pub struct ripr::lsp::diagnostic_budget::DiagnosticBudgetResult
+pub struct ripr::lsp::diagnostic_budget::DiagnosticSelectionKey
+pub struct ripr::lsp::diagnostic_budget::OmittedDiagnosticItem
+pub struct ripr::lsp::diagnostic_budget::SelectedDiagnosticItem
 pub use ripr::AnalysisScope
 pub use ripr::CheckInput
 pub use ripr::CheckOutput

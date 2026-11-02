@@ -3,7 +3,7 @@
 //! The session is the MCP-side owner of "which snapshot is current". It does
 //! not analyze by itself: [`run_check`] delegates to the shared
 //! [`crate::app::check_workspace`] authority, and bounded selection delegates
-//! to the shared [`crate::app::diagnostic_budget`] evaluator. The session only
+//! to the shared [`crate::diagnostic_budget`] evaluator. The session only
 //! records attempt state, keeps the last completed (last-known-good) snapshot,
 //! and projects bounded, progressively disclosed documents for the tools and
 //! resources.
@@ -15,7 +15,7 @@
 
 use super::gaps::{self, GAP_LIST_SCHEMA_VERSION, GapItem};
 use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeKind};
-use crate::app::diagnostic_budget::{
+use crate::diagnostic_budget::{
     self, DiagnosticBudget, DiagnosticBudgetResult, DiagnosticOverflowReason,
     OmittedDiagnosticReason,
 };

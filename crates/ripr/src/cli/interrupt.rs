@@ -3,7 +3,6 @@
 //! subprocess owners. Publication and repeated signals retain native
 //! termination as an escape.
 
-use crate::cli::commands::check_with_interrupt_flags;
 use crate::cli::{CommandError, commands};
 
 #[cfg(unix)]

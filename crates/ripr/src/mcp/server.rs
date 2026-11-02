@@ -232,7 +232,7 @@ impl McpServer {
         let limit = optional_capped_page_limit(
             &arguments,
             "limit",
-            crate::app::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE,
+            crate::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE,
         )?;
         let file = optional_nonempty_string_argument(&arguments, "file")?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
