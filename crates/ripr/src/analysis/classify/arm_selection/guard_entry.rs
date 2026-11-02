@@ -89,9 +89,52 @@ impl GuardEntry {
         owner: &FunctionSummary,
         resolve_bound: impl FnOnce(&str) -> Option<i128>,
     ) -> Option<Self> {
-        if owner.name.is_empty() {
+        let condition = Self::enclosing_condition(probe, owner)?;
+        Self::read(probe, owner, condition.as_str(), resolve_bound)
+    }
+
+    /// The guard a pure insertion itself introduces: a predicate probe whose
+    /// changed line is the inserted `if` (#12414). The probe's expression is
+    /// the inserted condition, so the enclosing-`if` scan of
+    /// [`GuardEntry::establish`] — which refuses a changed line that itself
+    /// carries braces — does not apply. Every other reading still holds: the
+    /// condition must be one comparison between an immutable integer owner
+    /// parameter and an integer bound, the owner must not name itself past
+    /// its signature, and nothing before the inserted line may rebind the
+    /// parameter.
+    pub(in crate::analysis) fn establish_inserted_predicate(
+        probe: &Probe,
+        owner: &FunctionSummary,
+        resolve_bound: impl FnOnce(&str) -> Option<i128>,
+    ) -> Option<Self> {
+        if probe.before.is_some() {
             return None;
         }
+        // The inserted line itself must spell the guard: an `if` at the
+        // line's start. A pure insertion of a bare comparison (`amount > 10`
+        // as a new tail expression) is not a guard, so it keeps the
+        // boundary reading (#12414).
+        let relative = probe.location.line.checked_sub(owner.start_line)?;
+        let masked = mask_comments_and_strings(&owner.body);
+        let line_offset = masked
+            .split_inclusive('\n')
+            .take(relative)
+            .map(str::len)
+            .sum::<usize>();
+        let probe_line = masked
+            .get(line_offset..)?
+            .lines()
+            .next()
+            .unwrap_or_default();
+        if !probe_line.trim_start().starts_with("if ") {
+            return None;
+        }
+        Self::read(probe, owner, probe.expression.trim(), resolve_bound)
+    }
+
+    /// The condition of the innermost `if` enclosing the probe's line, when
+    /// that block is one this module reads.
+    fn enclosing_condition(probe: &Probe, owner: &FunctionSummary) -> Option<String> {
         let relative = probe.location.line.checked_sub(owner.start_line)?;
         let masked = mask_comments_and_strings(&owner.body);
         let line_offset = masked
@@ -113,12 +156,6 @@ impl GuardEntry {
         if probe_line.contains(['{', '}']) {
             return None;
         }
-        // An owner that names itself past its signature may call itself
-        // (`walk(v, depth + 1)`), and a recursive call can enter the guard
-        // with a value no test passes.
-        if whole_word_offsets(&masked, &owner.name).len() > 1 {
-            return None;
-        }
         let before = masked.get(..line_offset)?;
         let brace = innermost_open_brace(before)?;
         let head = before.get(..brace)?;
@@ -129,6 +166,31 @@ impl GuardEntry {
         if condition.is_empty() || condition.contains(['{', '}', ';']) || condition.contains("=>") {
             return None;
         }
+        Some(condition.to_string())
+    }
+
+    /// The guard whose condition is `condition`, for the changed line of
+    /// `probe` in `owner`: the shared reading of [`GuardEntry::establish`]
+    /// and [`GuardEntry::establish_inserted_predicate`].
+    fn read(
+        probe: &Probe,
+        owner: &FunctionSummary,
+        condition: &str,
+        resolve_bound: impl FnOnce(&str) -> Option<i128>,
+    ) -> Option<Self> {
+        if owner.name.is_empty() {
+            return None;
+        }
+        let masked = mask_comments_and_strings(&owner.body);
+        // An owner that names itself past its signature may call itself
+        // (`walk(v, depth + 1)`), and a recursive call can enter the guard
+        // with a value no test passes.
+        if whole_word_offsets(&masked, &owner.name).len() > 1 {
+            return None;
+        }
+        if condition.is_empty() || condition.contains(['{', '}', ';']) || condition.contains("=>") {
+            return None;
+        }
         let (parameter, comparison, bound) = parameter_comparison(condition)?;
         let parameters = function_parameters(owner);
         let index = parameters
@@ -136,7 +198,19 @@ impl GuardEntry {
             .position(|declared| parameter_name(declared) == parameter)?;
         let declared = parameter_declaration(owner, &parameter)?;
         let body_start = masked.find('\n')? + 1;
-        let prelude = masked.get(body_start..keyword)?;
+        let relative = probe.location.line.checked_sub(owner.start_line)?;
+        let line_offset = masked
+            .split_inclusive('\n')
+            .take(relative)
+            .map(str::len)
+            .sum::<usize>();
+        if line_offset == 0 || line_offset > masked.len() {
+            return None;
+        }
+        // Nothing before the guard's own line may rebind the parameter; for
+        // an inserted guard that line is the probe's, so the prelude is the
+        // owner text ahead of it.
+        let prelude = masked.get(body_start..line_offset)?;
         if declared.mutable || may_rebind_before(prelude, &parameter) {
             return None;
         }
@@ -208,10 +282,22 @@ impl GuardEntry {
     /// does not name the owner, some mention is not a readable direct call,
     /// some input is not an integer literal, or some input enters the guard.
     pub(in crate::analysis) fn unentered_inputs(&self, test: &TestSummary) -> Option<Vec<String>> {
+        match self.evidence_for(test) {
+            GuardEntryEvidence::Unentered(inputs) => Some(inputs),
+            GuardEntryEvidence::Enters | GuardEntryEvidence::Unreadable => None,
+        }
+    }
+
+    /// What the test's owner calls prove about entering the guard: the
+    /// three-way reading behind [`GuardEntry::unentered_inputs`] (#12414),
+    /// which keeps "a readable call enters" distinct from "the calls cannot
+    /// be read" so a caller can keep its previous path when the evidence is
+    /// merely unread.
+    pub(in crate::analysis) fn evidence_for(&self, test: &TestSummary) -> GuardEntryEvidence {
         let masked = mask_comments_and_strings(&test.body);
         let mentions = whole_word_offsets(&masked, &self.owner);
         if mentions.is_empty() {
-            return None;
+            return GuardEntryEvidence::Unreadable;
         }
         let mut inputs = Vec::new();
         let mut named_arguments = std::collections::BTreeMap::<&str, usize>::new();
@@ -226,20 +312,30 @@ impl GuardEntry {
                 .filter(|offset| (line_start..line_end).contains(*offset))
                 .count();
             if calls.len() != line_mentions {
-                return None;
+                return GuardEntryEvidence::Unreadable;
             }
             for call in calls {
-                let input = call.arguments.get(self.index)?.trim();
+                let input = match call.arguments.get(self.index) {
+                    Some(argument) => argument.trim(),
+                    None => return GuardEntryEvidence::Unreadable,
+                };
                 let (value, shown) = match integer_value(input) {
                     Some(value) => (value, input.to_string()),
-                    None => {
-                        let value = let_bound_integer(test, &masked, input)?;
-                        *named_arguments.entry(input).or_default() += 1;
-                        (value, format!("{input} = {value}"))
-                    }
+                    None => match let_bound_integer(test, &masked, input) {
+                        Some(value) => {
+                            *named_arguments.entry(input).or_default() += 1;
+                            (value, format!("{input} = {value}"))
+                        }
+                        None => return GuardEntryEvidence::Unreadable,
+                    },
                 };
-                if !fits(value, self.range) || self.comparison.holds(value, self.bound) {
-                    return None;
+                if !fits(value, self.range) {
+                    // A value outside the parameter's type wraps at runtime:
+                    // the comparison is unread, not provably false.
+                    return GuardEntryEvidence::Unreadable;
+                }
+                if self.comparison.holds(value, self.bound) {
+                    return GuardEntryEvidence::Enters;
                 }
                 inputs.push(shown);
             }
@@ -249,11 +345,24 @@ impl GuardEntry {
         // pattern, closure parameter or shadowing block.
         for (name, arguments) in named_arguments {
             if whole_word_offsets(&masked, name).len() != arguments + 1 {
-                return None;
+                return GuardEntryEvidence::Unreadable;
             }
         }
-        Some(inputs)
+        GuardEntryEvidence::Unentered(inputs)
     }
+}
+
+/// What one related test's owner calls prove about entering the guard.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::analysis) enum GuardEntryEvidence {
+    /// Every call passes an input that provably leaves the guard false; the
+    /// shown input values never run the guarded line.
+    Unentered(Vec<String>),
+    /// Some readable call input enters the guard: an activating input exists.
+    Enters,
+    /// Some mention is not a readable direct call with a literal (or
+    /// let-bound integer) input, or no owner call was read at all.
+    Unreadable,
 }
 
 /// The value of `name` when the test binds it exactly once, before any

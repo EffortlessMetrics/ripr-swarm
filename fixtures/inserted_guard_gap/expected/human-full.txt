@@ -1,0 +1,81 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/inserted_guard_gap/input
+
+Summary: 2 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 3 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach discounted_total: below_threshold_has_no_discount, far_above_threshold_discounts
+  E2 [findings 1, 2]: infection weak: No related test call enters guard `if amount < 0`; observed `amount` values: `10_000`, `50`
+  E3 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
+  E4 [findings 1, 2]: local flow reaches returned value: 0 (line 3)
+  E5 [findings 1, 2]: related test tests/pricing.rs:4 below_threshold_has_no_discount uses strong exact value oracle: assert_eq!(discounted_total(50, 100), 50); misses: no test input reaches `if amount < 0`
+  E6 [findings 1, 2]: related test tests/pricing.rs:9 far_above_threshold_discounts uses strong exact value oracle: assert_eq!(discounted_total(10_000, 100), 9_990); misses: no test input reaches `if amount < 0`
+  E7 [findings 1, 2]: source assertion argument value 50 at line 5
+  E8 [findings 1, 2]: source function argument value amount = 50 at line 5
+  E9 [findings 1, 2]: source function argument value discount_threshold = 100 at line 5
+  E10 [findings 1, 2]: source assertion argument value 9_990 at line 10
+  E11 [findings 1, 2]: source function argument value amount = 10_000 at line 10
+  E12 [findings 1, 2]: source function argument value discount_threshold = 100 at line 10
+  N1 [findings 1, 2]: Add a related test input that enters `if amount < 0`; no related test call runs the changed line, so no assertion can observe it yet
+
+Finding 1: WARNING ./src/lib.rs:2
+  id: probe:src_lib.rs:predicate:a2396351
+Changed
+  after:  amount < 0
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  src/lib.rs::discounted_total
+  gap id (for scripts): gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==0
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Changed behavior appears to influence returned value: 0
+  shared evidence: E3
+  - discriminator missing: `if amount < 0`; related oracle: Strong oracle found: exact value or pattern assertion
+  shared evidence: E4, E5, E6, E7, E8, E9, E10, E11, E12
+Weakness
+  - missing discriminator if amount < 0: No related test call enters guard `if amount < 0`; observed `amount` values: `10_000`, `50`
+Next step
+  shared guidance: N1
+Drill in:
+  ripr explain --root <cwd>/fixtures/inserted_guard_gap/input --diff <cwd>/fixtures/inserted_guard_gap/diff.patch --mode fast probe:src_lib.rs:predicate:a2396351
+  ripr context --root <cwd>/fixtures/inserted_guard_gap/input --diff <cwd>/fixtures/inserted_guard_gap/diff.patch --mode fast --at probe:src_lib.rs:predicate:a2396351
+
+Finding 2: WARNING ./src/lib.rs:3
+  id: probe:src_lib.rs:return_value:32a01728
+Changed
+  after:  return 0
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::discounted_total
+  gap id (for scripts): gap:rust:src/lib.rs:discounted_total:return_value:return_value:0
+Static exposure
+  weakly_exposed (warning, confidence 0.66)
+Evidence
+  shared evidence: E1, E2
+  - propagation weak: No complete owner-bound propagation witness found for returned value: 0
+  shared evidence: E3
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
+  shared evidence: E4, E5, E6, E7, E8, E9, E10, E11, E12
+Weakness
+  - No strong discriminator was detected
+  - missing discriminator if amount < 0: No related test call enters guard `if amount < 0`; observed `amount` values: `10_000`, `50`
+Next step
+  shared guidance: N1
+Drill in:
+  ripr explain --root <cwd>/fixtures/inserted_guard_gap/input --diff <cwd>/fixtures/inserted_guard_gap/diff.patch --mode fast probe:src_lib.rs:return_value:32a01728
+  ripr context --root <cwd>/fixtures/inserted_guard_gap/input --diff <cwd>/fixtures/inserted_guard_gap/diff.patch --mode fast --at probe:src_lib.rs:return_value:32a01728

@@ -17,7 +17,9 @@ use crate::analysis::rust_index::{FunctionSummary, RustIndex};
 use crate::analysis::seams::{RepoSeam, RequiredDiscriminator, SeamKind};
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::syntax::ra::LineIndex;
-use crate::domain::{MissingDiscriminatorFact, OracleKind, OracleStrength, StageState};
+use crate::domain::{
+    DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength, StageState,
+};
 use ra_ap_syntax::ast::{self, HasName};
 use ra_ap_syntax::{AstNode, AstPtr, Parse, SourceFile, SyntaxNode};
 use std::collections::BTreeMap;
@@ -81,6 +83,7 @@ pub(super) fn missing_field_value_facts(
             "owner-result field `{field_name}` is observed only by a weak oracle; an exact field-value discriminator is missing"
         ),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
     }]
 }
 

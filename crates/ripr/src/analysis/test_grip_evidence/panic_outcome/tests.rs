@@ -1,7 +1,9 @@
 use super::*;
 use crate::analysis::rust_index::RustIndex;
 use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamKind};
-use crate::domain::{Confidence, MissingDiscriminatorFact, StageEvidence, StageState};
+use crate::domain::{
+    Confidence, DiscriminatorShape, MissingDiscriminatorFact, StageEvidence, StageState,
+};
 
 fn seam() -> RepoSeam {
     RepoSeam::new(
@@ -36,6 +38,7 @@ fn evidence(states: [StageState; 5]) -> TestGripEvidence {
             value: "b == 1".to_string(),
             reason: "not observed".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }],
         statically_contradicted_related_tests: 0,
         new_test_target: None,

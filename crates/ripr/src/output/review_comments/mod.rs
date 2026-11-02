@@ -609,7 +609,8 @@ mod tests {
         AgentBriefWhyNowReason,
     };
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState,
     };
     use crate::repair_guidance::{
         AssertionBasis, AssertionGuidance, AssertionKind, GuidanceReason, GuidanceRecovery,
@@ -670,6 +671,7 @@ mod tests {
                     value: "amount == discount_threshold".to_string(),
                     reason: "producer identified the equality boundary as missing".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,

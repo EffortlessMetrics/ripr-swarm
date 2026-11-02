@@ -373,11 +373,11 @@ pub(crate) fn typescript_missing_discriminators(
         return Vec::new();
     };
 
-    vec![MissingDiscriminatorFact {
+    vec![MissingDiscriminatorFact::equality_spelled(
         value,
-        reason: typescript_missing_discriminator_reason(&probe_shape.family, line),
-        flow_sink: flow_sink.cloned(),
-    }]
+        typescript_missing_discriminator_reason(&probe_shape.family, line),
+        flow_sink.cloned(),
+    )]
 }
 
 pub(crate) fn typescript_missing_discriminator_reason(

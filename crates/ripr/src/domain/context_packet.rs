@@ -154,10 +154,10 @@ impl ContextPacket {
 mod tests {
     use super::*;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-        MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId,
-        RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
-        ValueContext, ValueFact,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        FindingCanonicalGap, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe,
+        ProbeFamily, ProbeId, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
+        StageState, SymbolId, ValueContext, ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -204,6 +204,7 @@ mod tests {
                 value: "x == 0".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
             });
         finding.missing.push("exact boundary assertion".to_string());
         finding.recommended_next_step = Some("add exact boundary assertion".to_string());

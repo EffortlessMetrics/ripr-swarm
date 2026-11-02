@@ -839,10 +839,10 @@ mod tests {
         typescript_preview_card_json_value,
     };
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId,
-        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe,
-        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState, StaticLimitKind,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, StaticLimitKind,
     };
     use std::path::PathBuf;
 
@@ -856,6 +856,7 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }];
         assert!(typescript_preview_card(&finding).is_some());
         for currentness in [
@@ -878,6 +879,7 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }];
 
         let card = typescript_preview_card(&finding)

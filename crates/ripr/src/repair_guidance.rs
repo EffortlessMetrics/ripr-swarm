@@ -1082,6 +1082,7 @@ fn bounded_guidance_text(field: &str, value: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::DiscriminatorShape;
     use std::fmt::{Debug, Display};
 
     fn expect_error<T: Debug, E: Display>(
@@ -1385,6 +1386,7 @@ mod tests {
             value: "boundary value 0".to_string(),
             reason: "no test observes the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         };
         let stale = DiscriminatorAvailability::from_missing_discriminator_fact(Some(&fact), true)?;
         assert_eq!(
@@ -1464,6 +1466,7 @@ mod tests {
             value: "boundary value 0".to_string(),
             reason: "no test observes the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         };
         let from_seam =
             DiscriminatorAvailability::from_missing_discriminator_fact(Some(&fact), false)?;

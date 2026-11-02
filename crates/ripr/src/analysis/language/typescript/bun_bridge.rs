@@ -1225,14 +1225,16 @@ pub(crate) fn bun_cross_language_finding_for_changed_rust_line_with_profile(
         .verdict
         .missing_discriminators()
         .iter()
-            .map(|missing| MissingDiscriminatorFact {
-                value: (*missing).to_string(),
-                reason: format!(
-                    "{} TypeScript preview evidence does not discriminate `{missing}` for Rust boundary `{}`.",
-                    profile.kind.display_name(),
-                    hint.rust_boundary
-                ),
-                flow_sink: None,
+            .map(|missing| {
+                MissingDiscriminatorFact::equality_spelled(
+                    (*missing).to_string(),
+                    format!(
+                        "{} TypeScript preview evidence does not discriminate `{missing}` for Rust boundary `{}`.",
+                        profile.kind.display_name(),
+                        hint.rust_boundary
+                    ),
+                    None,
+                )
             })
         .collect::<Vec<_>>();
     let related_tests = related_profile_bun_tests(all_tests, profile);

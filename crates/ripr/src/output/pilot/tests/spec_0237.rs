@@ -15,6 +15,7 @@ use crate::analysis::new_test_target::{
     NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
 };
 use crate::analysis::{SeamLimitSource, apply_pilot_seam_budget_inner};
+use crate::domain::DiscriminatorShape;
 use crate::output::agent_seam_packets::suggested_assertion_for_classified_seam;
 use crate::output::pilot::ranking::withheld_static_limitations;
 
@@ -26,6 +27,7 @@ fn exact_missing() -> MissingDiscriminatorFact {
         value: "discount_threshold (equality boundary)".to_string(),
         reason: "observed values do not include the equality-boundary case".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
     }
 }
 

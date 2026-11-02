@@ -928,7 +928,8 @@ mod tests {
     };
     use crate::config::{RiprConfig, tests_only_parse};
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState,
     };
 
     fn stage(state: StageState) -> StageEvidence {
@@ -987,6 +988,7 @@ mod tests {
                     value: "boundary value".to_string(),
                     reason: "missing equality boundary".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,

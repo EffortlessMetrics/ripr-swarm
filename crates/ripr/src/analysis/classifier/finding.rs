@@ -1067,11 +1067,14 @@ mod tests {
     /// miss itself is unchanged by the support (control 9).
     #[test]
     fn rust_attaches_the_universal_fact_only_to_rows_it_assigns_the_miss() {
-        use crate::domain::{MissingDiscriminatorFact, RelatedTestMiss, RelatedTestMissSupport};
+        use crate::domain::{
+            DiscriminatorShape, MissingDiscriminatorFact, RelatedTestMiss, RelatedTestMissSupport,
+        };
         let fact = |value: &str| MissingDiscriminatorFact {
             value: value.to_string(),
             reason: "no related test passes the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         };
         let rows = || {
             vec![

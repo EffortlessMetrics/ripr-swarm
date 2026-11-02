@@ -953,8 +953,8 @@ mod tests {
         RelatedTestGrip, RelationConfidence, TestGripEvidence, TestTargetEvidence,
     };
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, RelationReason,
-        StageEvidence, StageState,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        RelationReason, StageEvidence, StageState,
     };
     use std::path::{Path, PathBuf};
 
@@ -1034,6 +1034,7 @@ mod tests {
                     value: "discount_threshold (equality boundary)".to_string(),
                     reason: "observed values do not include the equality-boundary case".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,

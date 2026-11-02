@@ -2480,7 +2480,9 @@ mod direct {
     /// pass is handed the finding's boundary fact (with its sink).
     #[test]
     fn strong_on_boundary_row_gets_no_miss_and_no_support() -> Result<(), String> {
-        use crate::domain::{FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact};
+        use crate::domain::{
+            DiscriminatorShape, FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact,
+        };
         let case = reserve(
             "def test_off_boundary():\n    assert can_reserve(5, 3) == True\n\ndef test_on_boundary():\n    assert can_reserve(4, 4) == True\n",
         )?;
@@ -2493,6 +2495,7 @@ mod direct {
                 line: 3,
                 owner: None,
             }),
+            shape: DiscriminatorShape::Boundary,
         };
         let family = classify_probe_shape(&case.after).0;
         let focus = PythonAssertionFocus::for_change(family, &case.after, Some(&case.before));

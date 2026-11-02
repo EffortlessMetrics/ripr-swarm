@@ -228,6 +228,7 @@ fn one_line(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{
         MissingDiscriminatorFact, OracleKind, OracleStrength, RelatedTestMissSupport,
     };
@@ -565,6 +566,7 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "no related test passes the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }];
         let owner = row_named(
             "misses",
@@ -599,6 +601,7 @@ mod tests {
             value: "other == wrong".to_string(),
             reason: "another row's fact".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }];
         let row = row_named(
             "mine",
@@ -732,15 +735,17 @@ mod tests {
     #[test]
     fn support_carries_its_own_sink_per_row_and_round_trips() -> Result<(), String> {
         use crate::domain::{FlowSinkFact, FlowSinkKind};
-        let fact = |value: &str, text: &str, line: usize| MissingDiscriminatorFact {
-            value: value.to_string(),
-            reason: "r".to_string(),
-            flow_sink: Some(FlowSinkFact {
-                kind: FlowSinkKind::ReturnValue,
-                text: text.to_string(),
-                line,
-                owner: None,
-            }),
+        let fact = |value: &str, text: &str, line: usize| {
+            MissingDiscriminatorFact::equality_spelled(
+                value.to_string(),
+                "r".to_string(),
+                Some(FlowSinkFact {
+                    kind: FlowSinkKind::ReturnValue,
+                    text: text.to_string(),
+                    line,
+                    owner: None,
+                }),
+            )
         };
         let fact_a = fact("a == 1", "return a", 3);
         let fact_b = fact("b == 2", "return b", 9);

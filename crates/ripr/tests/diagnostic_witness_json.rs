@@ -19,6 +19,7 @@ fn witness() -> DiagnosticWitness {
             value: "amount == threshold".into(),
             reason: "the equality boundary is not distinguished".into(),
             flow_sink: None,
+            shape: ripr::domain::DiscriminatorShape::Boundary,
         }],
         fix_site: None,
         suggested_assertion: None,

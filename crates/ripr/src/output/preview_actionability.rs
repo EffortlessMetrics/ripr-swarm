@@ -407,10 +407,10 @@ mod tests {
         projected_preview_actionability_missing,
     };
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId,
-        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily,
-        ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
-        StageState, SymbolId,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe,
+        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
+        StageEvidence, StageState, SymbolId,
     };
     use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute};
     use std::path::PathBuf;
@@ -567,6 +567,7 @@ mod tests {
                 reason: "changed TypeScript equality-boundary lacks a concrete discriminator"
                     .to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
             });
         finding.related_tests.push(RelatedTest {
             name: "applies discount at threshold".to_string(),
@@ -708,7 +709,8 @@ mod tests {
                 value: "user.length == 3".to_string(),
                 reason: "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator".to_string(),
                 flow_sink: None,
-            },
+                            shape: DiscriminatorShape::Boundary,
+},
         );
         finding.related_tests.push(RelatedTest {
             name: "login returns session".to_string(),

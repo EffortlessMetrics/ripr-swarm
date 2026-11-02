@@ -131,9 +131,9 @@ pub(crate) use probe::{
     input_boundary_fact, is_unselected_input_reason,
 };
 pub use probe::{
-    ActivationEvidence, AnalysisScope, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact,
-    FlowSinkKind, MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily,
-    RelatedTest, RelatedTestMiss, RelatedTestMissSupport, RelatedTestRole,
+    ActivationEvidence, AnalysisScope, DeltaKind, DiscriminatorShape, Finding, FindingCanonicalGap,
+    FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe,
+    ProbeFamily, RelatedTest, RelatedTestMiss, RelatedTestMissSupport, RelatedTestRole,
     SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
 };
 pub(crate) use refusal_remedy::RefusalRemedy;

@@ -353,6 +353,7 @@ fn stop_reason_meaning(reason: &StopReason) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{MissingDiscriminatorFact, OracleKind};
     use crate::output::perl_preview_card::tests::sample_perl_finding;
     use std::path::PathBuf;
@@ -508,6 +509,7 @@ mod tests {
             value: "len == 0".to_string(),
             reason: "no related test passes an empty input".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }];
         finding.probe.family = crate::domain::ProbeFamily::Predicate;
         let mut strong = row(
@@ -555,7 +557,8 @@ mod tests {
             reason: "No related test call selects arm `Kind::Beta =>`; observed `k` values: `Kind::Alpha`"
                 .to_string(),
             flow_sink: None,
-        }];
+                    shape: DiscriminatorShape::Other,
+}];
         let text = render_verdict_explanation(&finding, None);
         assert!(
             text.contains("use an input that selects arm `Kind::Beta =>`"),

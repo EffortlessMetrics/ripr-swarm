@@ -377,10 +377,10 @@ fn limits() -> Vec<String> {
 pub(crate) mod tests {
     use super::{perl_preview_card, perl_preview_card_json, perl_preview_card_json_value};
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe,
-        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        FindingCanonicalGap, LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind,
+        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState,
     };
     use std::path::PathBuf;
 
@@ -658,7 +658,8 @@ pub(crate) mod tests {
                     reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                         .to_string(),
                     flow_sink: None,
-                }],
+                                    shape: DiscriminatorShape::Other,
+}],
             },
             stop_reasons: vec![],
             related_tests_matched_total: None,

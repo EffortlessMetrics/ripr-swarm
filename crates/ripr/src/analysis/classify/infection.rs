@@ -810,13 +810,22 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             } else if activation
                 .missing_discriminators
                 .iter()
-                .any(|fact| fact.value.contains("=="))
+                .any(|fact| fact.shape == DiscriminatorShape::Boundary)
             {
                 StageEvidence::new(
                     StageState::Weak,
                     Confidence::Medium,
                     "Related tests contain input values, but the equality-boundary discriminator is missing",
                 )
+            } else if let Some(guard) = activation
+                .missing_discriminators
+                .iter()
+                .find(|fact| fact.shape == DiscriminatorShape::GuardDomain)
+            {
+                // #12414: the inserted guard's domain is the missing input;
+                // the SPEC-0263 wording the guard-entry route already emits
+                // names the values that stay outside it.
+                StageEvidence::new(StageState::Weak, Confidence::Medium, guard.reason.clone())
             } else if !owner_has_other_callers
                 && owner.is_some_and(|owner| {
                     changed_operands_are_never_evaluated(probe, activation, related_tests, owner)

@@ -6,6 +6,7 @@ use super::{
     is_safe_for_repair_packet, repair_packet_eligibility, repair_packet_queue_visible,
     rust_related_test,
 };
+use crate::domain::DiscriminatorShape;
 
 #[test]
 fn boundary_matching_preserves_operand_case() {
@@ -97,6 +98,7 @@ fn case_mismatched_discriminator_cannot_authorize_a_repair_packet() {
         value: "DISCOUNT_THRESHOLD (equality boundary)".to_string(),
         reason: "case-distinct boundary identity".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
     }];
     let eligibility = repair_packet_eligibility(&entry);
     assert_eq!(

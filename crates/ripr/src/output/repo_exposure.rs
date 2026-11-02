@@ -2011,8 +2011,8 @@ pub(crate) mod tests {
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
-        StageState, ValueFact,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState, ValueFact,
     };
     use crate::output::markdown::{code_span, inline_prose_literal};
 
@@ -2202,6 +2202,7 @@ pub(crate) mod tests {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,

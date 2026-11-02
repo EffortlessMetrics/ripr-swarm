@@ -1414,12 +1414,12 @@ mod tests {
     use crate::app::{CheckOutput, Mode};
     use crate::config::RiprConfig;
     use crate::domain::{
-        ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, ExposureClass,
-        Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount, LanguageId,
-        LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact, OracleKind,
-        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
-        SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId, ValueContext,
-        ValueFact,
+        ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, DiscriminatorShape,
+        ExposureClass, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount,
+        LanguageId, LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact,
+        OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
+        RiprEvidence, SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId,
+        ValueContext, ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -4804,6 +4804,7 @@ mod tests {
             value: "end == start".to_string(),
             reason: "no related test call uses end equal to start".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }];
         finding.missing = vec!["No strong discriminator was detected".to_string()];
         let digest = super::sections::render_finding_digest_with_config(
@@ -5398,6 +5399,7 @@ mod tests {
                 value: "amount == 100".to_string(),
                 reason: "boundary".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
             }];
         assert!(crate::output::python_repair_card::python_repair_card(&diff).is_none());
         let scope_reason = "repo-mode findings have no repair routing (python/any/repo/repair_routing is not_proven)";
@@ -5420,6 +5422,7 @@ mod tests {
             value: "amount == 100".to_string(),
             reason: "boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }];
         assert!(render(&single_finding_output(placed)).contains(
             "has no repair card (its test placement or related-test evidence is incomplete)"
@@ -5581,6 +5584,7 @@ mod tests {
                     reason: "changed TypeScript equality-boundary lacks a concrete discriminator"
                         .to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
                 });
             finding.related_tests.push(RelatedTest {
                 name: "applies discount at threshold".to_string(),
@@ -7081,6 +7085,7 @@ mod tests {
             value: "amount >= threshold".to_string(),
             reason: "no related test call uses an amount at the threshold".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         }];
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -7968,6 +7973,7 @@ mod tests {
             value: "not (x > 0)".to_string(),
             reason: "every observed input takes the unchanged if arm".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         }];
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
@@ -8079,6 +8085,7 @@ mod tests {
             value: "amount == discount_threshold".to_string(),
             reason: "no related test call uses the boundary value".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }];
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -8113,6 +8120,7 @@ mod tests {
             value: "AuthError::RevokedToken".to_string(),
             reason: "No exact error variant assertion for AuthError::RevokedToken".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         }];
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
@@ -8285,6 +8293,7 @@ mod tests {
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         }];
         finding.related_tests = vec![RelatedTest {
             name: "discount_smoke".to_string(),
@@ -8555,6 +8564,7 @@ mod tests {
             value: "observation_unverified".to_string(),
             reason: "r".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         }];
         let rendered = super::evidence_lines::evidence_path_lines(
             &finding,
@@ -8649,6 +8659,7 @@ mod tests {
                     value: "enabled == false".to_string(),
                     reason: "related tests do not use the changed value".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
                 }],
             },
             stop_reasons: vec![],

@@ -54,8 +54,8 @@ mod tests {
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::{RelationConfidence, TestTargetEvidence};
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, RelationReason,
-        StageEvidence, StageState,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        RelationReason, StageEvidence, StageState,
     };
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -233,6 +233,7 @@ mod tests {
                 value: "amount == threshold".to_string(),
                 reason: "fixture".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
             }],
         )
         .test_evidence_summary();

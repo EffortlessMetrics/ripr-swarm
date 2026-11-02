@@ -236,9 +236,9 @@ mod tests {
     use crate::domain::context_packet::ContextPacket;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, DiagnosticConfidence, DiagnosticWitness,
-        ExposureClass, Finding, FindingCanonicalGap, MissingDiscriminatorFact, OracleKind,
-        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
-        SourceLocation, StageEvidence, StageState, SymbolId, ValueContext, ValueFact,
+        DiscriminatorShape, ExposureClass, Finding, FindingCanonicalGap, MissingDiscriminatorFact,
+        OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
+        RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId, ValueContext, ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -300,6 +300,7 @@ mod tests {
                 value: "v == \"boundary\"".to_string(),
                 reason: "No test checks \"boundary\"\ncase".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
             });
 
         let packet = render_context_packet(&finding, 5, &test_config(), Path::new("."));

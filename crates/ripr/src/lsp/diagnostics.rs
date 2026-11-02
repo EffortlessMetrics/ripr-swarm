@@ -5968,6 +5968,7 @@ mod diagnostic_policy_tests {
         AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
         AnalysisStage,
     };
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, LanguageStatus,
         MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId,
@@ -6205,6 +6206,7 @@ mod diagnostic_policy_tests {
                 crate::domain::GUARD_UNENTERED_REASON_PREFIX
             ),
             flow_sink: None,
+            shape: DiscriminatorShape::GuardDomain,
         }];
         let message = lsp_message(&finding);
         assert!(
@@ -6225,6 +6227,7 @@ mod diagnostic_policy_tests {
             value: "age == 18".to_string(),
             reason: "no test uses 18".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }];
         let message = lsp_message(&finding);
         assert_eq!(
@@ -6246,6 +6249,7 @@ mod diagnostic_policy_tests {
                 value,
                 reason: "no test uses it".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
             }];
             lsp_message(finding)
         };
@@ -6292,6 +6296,7 @@ mod diagnostic_policy_tests {
             value: "Price::Boundary".to_string(),
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         }];
         finding.related_tests.push(RelatedTest {
             name: "checks_boundary".to_string(),
@@ -6325,6 +6330,7 @@ mod diagnostic_policy_tests {
             value: "Price::Boundary".to_string(),
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         }];
         finding.related_tests.push(RelatedTest {
             name: "checks_boundary".to_string(),
@@ -6404,6 +6410,7 @@ mod diagnostic_policy_tests {
                         value: "amount == threshold".to_string(),
                         reason: "exact boundary is not observed".to_string(),
                         flow_sink: None,
+                        shape: DiscriminatorShape::Boundary,
                     }];
                     if with_fix_site {
                         finding.related_tests.push(weak_test());
@@ -6448,6 +6455,7 @@ mod diagnostic_policy_tests {
                 value: "amount == threshold".to_string(),
                 reason: "exact boundary is not observed".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
             }];
             finding.evidence = vec![
                 "suggested_test_file: tests/other_test".to_string(),
@@ -6490,6 +6498,7 @@ mod diagnostic_policy_tests {
                 value: "Price::Boundary".to_string(),
                 reason: "exact boundary is not observed".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
             }];
             finding.related_tests.push(RelatedTest {
                 name: "checks_boundary".to_string(),
@@ -6863,6 +6872,7 @@ mod diagnostic_policy_tests {
             value: "Price::Boundary".to_string(),
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         }];
         published.related_tests.push(RelatedTest {
             name: "checks_boundary".to_string(),
@@ -7732,10 +7742,10 @@ mod diagnostic_policy_tests {
 mod lsp_next_step_parity_tests {
     use super::lsp_message;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId,
-        LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe,
-        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState, SymbolId,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, SymbolId,
     };
     use std::path::PathBuf;
 
@@ -7811,7 +7821,8 @@ mod lsp_next_step_parity_tests {
                     value: "amount == threshold".to_string(),
                     reason: "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator".to_string(),
                     flow_sink: None,
-                }],
+                                    shape: DiscriminatorShape::Boundary,
+}],
             },
             stop_reasons: Vec::new(),
             related_tests_matched_total: None,
@@ -7969,6 +7980,7 @@ mod lsp_next_step_parity_tests {
 #[cfg(test)]
 mod canonical_group_member_tests {
     use super::*;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, FindingCanonicalGap,
         MissingDiscriminatorFact, Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence,
@@ -8043,11 +8055,12 @@ mod canonical_group_member_tests {
         finding.class = ExposureClass::WeaklyExposed;
         finding.recommended_next_step =
             Some("Add boundary tests for below, equal, and above the changed threshold with exact assertions.".to_string());
-        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
-            value: missing.to_string(),
-            reason: "no test uses the boundary".to_string(),
-            flow_sink: None,
-        }];
+        finding.activation.missing_discriminators =
+            vec![MissingDiscriminatorFact::equality_spelled(
+                missing.to_string(),
+                "no test uses the boundary".to_string(),
+                None,
+            )];
         finding.canonical_gap = Some(FindingCanonicalGap {
             id: gap_id.to_string(),
             language: "rust".to_string(),
@@ -8167,6 +8180,7 @@ mod canonical_group_member_tests {
             value: "age >= 18".to_string(),
             reason: "missing return pin".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         }];
 
         let findings = [first, second];

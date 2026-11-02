@@ -327,9 +327,10 @@ fn limitation(kind: &str, detail: &str) -> DiagnosticWitnessLimitation {
 mod tests {
     use super::*;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
-        OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence,
-        SourceLocation, StageEvidence, StageState, SymbolId, ValueContext, ValueFact,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, FindingCanonicalGap,
+        FlowSinkFact, FlowSinkKind, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId,
+        RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
+        ValueContext, ValueFact,
     };
     use std::path::PathBuf;
 
@@ -360,6 +361,7 @@ mod tests {
             value: "PricingError::Boundary".to_string(),
             reason: "the broad error oracle does not distinguish the variant".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         }];
         finding.activation.observed_values = vec![ValueFact {
             line: 12,
@@ -452,6 +454,7 @@ mod tests {
             value: "amount == DISCOUNT_THRESHOLD".to_string(),
             reason: "no related input at the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }];
         finding.related_tests = vec![
             related("test_no_discount_below_threshold", 4),
@@ -538,6 +541,7 @@ mod tests {
             value: "amount == DISCOUNT_THRESHOLD".to_string(),
             reason: "no related input at the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }];
         finding.related_tests = vec![related("tests/test_a.py", 4), related("tests/test_b.py", 8)];
         let fix_file = |finding: &Finding| {

@@ -34,7 +34,8 @@ use crate::cli::commands::agent_card::agent_card_plain_lines;
 use crate::domain::{
     Confidence, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticWitness, DiagnosticWitnessLimitation,
-    MissingDiscriminatorFact, RepairCardSnapshotCurrentness, StageEvidence, StageState,
+    DiscriminatorShape, MissingDiscriminatorFact, RepairCardSnapshotCurrentness, StageEvidence,
+    StageState,
 };
 use crate::output::json::render_pretty_with_newline;
 
@@ -116,6 +117,7 @@ pub(crate) fn measurement_witness() -> DiagnosticWitness {
                      boundary itself is not pinned"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         }],
         fix_site: Some(DiagnosticFixSite {
             file: "tests/pricing.rs".to_string(),

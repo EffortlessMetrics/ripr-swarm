@@ -136,12 +136,17 @@ pub(in crate::analysis) fn missing_evidence(
         ),
         ExposureClass::WeaklyExposed => {}
     }
+    // #12414: a Predicate finding that already names a missing input — the
+    // equality boundary or an inserted guard's domain — carries no extra
+    // generic line; the typed shape, not a `==` string match, decides.
     if matches!(probe.family, ProbeFamily::Predicate)
         && infect.state != StageState::Yes
-        && !activation
-            .missing_discriminators
-            .iter()
-            .any(|fact| fact.value.contains("=="))
+        && !activation.missing_discriminators.iter().any(|fact| {
+            matches!(
+                fact.shape,
+                DiscriminatorShape::Boundary | DiscriminatorShape::GuardDomain
+            )
+        })
     {
         missing.push("No detected boundary input for the changed predicate".to_string());
     }
@@ -1239,6 +1244,7 @@ mod tests {
             value: value.to_string(),
             reason: format!("no related test call uses {value}"),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }]
     }
 

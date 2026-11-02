@@ -1523,6 +1523,7 @@ mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
             },
         );
         // #8717: on a weakly exposed finding the named value is the repair
@@ -2226,6 +2227,7 @@ mod tests {
                 value: "total == 100".to_string(),
                 reason: "no test call pins the equality boundary".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
             });
         // Weak + named missing discriminator + populated gap: the repair
         // target, ready at the finding level (#8717).

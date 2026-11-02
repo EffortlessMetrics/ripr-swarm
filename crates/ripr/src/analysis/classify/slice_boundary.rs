@@ -13,8 +13,8 @@ use crate::analysis::syntax::{
 };
 use crate::{
     domain::{
-        FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, ProbeFamily, RelationReason,
-        ValueContext,
+        DiscriminatorShape, FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, ProbeFamily,
+        RelationReason, ValueContext,
     },
     value_origins::LocatedValueFact as ValueFact,
 };
@@ -67,6 +67,7 @@ pub(in crate::analysis) fn refine_slice_boundary(
                     value: equality,
                     reason: format!("No related test call uses {} equal to {}; observed {} values: {observed}; target {} value: {}", values.operand, values.boundary, values.operand, values.boundary, values.target),
                     flow_sink: flow_sinks.iter().find(|sink| sink.kind != FlowSinkKind::Unknown).cloned(),
+                    shape: DiscriminatorShape::Boundary,
                 });
             }
         }

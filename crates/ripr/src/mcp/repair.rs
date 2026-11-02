@@ -1212,6 +1212,7 @@ pub(super) mod tests {
     use super::super::workspace::CODE_STALE_SNAPSHOT;
     use super::*;
     use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind};
+    use crate::domain::DiscriminatorShape;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -1671,6 +1672,7 @@ pub(super) mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
             },
         );
         let mut session = session_with(&[named_missing], "root:sha256:a")?;

@@ -1661,6 +1661,7 @@ mod seam_hover_tests {
     };
     use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
     use crate::app::Mode;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{
         Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
         StageState, ValueContext, ValueFact,
@@ -1727,6 +1728,7 @@ mod seam_hover_tests {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
@@ -2207,6 +2209,7 @@ mod seam_hover_tests {
             value: "PricingError::Boundary".to_string(),
             reason: "no test asserts this error variant".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         }];
         let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);
         let md = extract_markup(&hover)?;
@@ -2241,12 +2244,14 @@ mod seam_hover_tests {
                 value: "a".to_string(),
                 reason: "input unexecuted (observation_unverified)".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
             },
             MissingDiscriminatorFact {
                 value: "b".to_string(),
                 reason: "missing proof: `raise ValueError(\"observation_unverified\")`."
                     .to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
             },
         ];
         let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);

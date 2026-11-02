@@ -1027,14 +1027,16 @@ fn packet_to_findings_with_currentness(
         } else {
             concrete_discriminator
                 .clone()
-                .map(|value| MissingDiscriminatorFact {
-                    value,
-                    reason: format!(
-                        "changed Perl {} at {} lacks a concrete discriminator",
-                        change.behavior_hint.as_str(),
-                        file.path
-                    ),
-                    flow_sink: None,
+                .map(|value| {
+                    MissingDiscriminatorFact::equality_spelled(
+                        value,
+                        format!(
+                            "changed Perl {} at {} lacks a concrete discriminator",
+                            change.behavior_hint.as_str(),
+                            file.path
+                        ),
+                        None,
+                    )
                 })
                 .into_iter()
                 .collect()

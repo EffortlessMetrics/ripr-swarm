@@ -235,7 +235,9 @@ mod tests {
     use super::*;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::TestGripEvidence;
-    use crate::domain::{Confidence, MissingDiscriminatorFact, StageEvidence, StageState};
+    use crate::domain::{
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, StageEvidence, StageState,
+    };
 
     fn sample_seam() -> RepoSeam {
         RepoSeam::new(
@@ -288,6 +290,7 @@ mod tests {
             value: "threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
         }]
     }
 
