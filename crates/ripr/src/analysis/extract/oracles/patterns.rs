@@ -1,7 +1,7 @@
 use super::arguments::{
     AssertionComparison, assertion_comparison, assertion_oracle_text,
-    boolean_assertion_macro_condition, comparable_expression, custom_assertion_arguments,
-    equality_assertion_arguments, is_complete_macro_invocation,
+    boolean_assertion_macro_condition, comparable_expression, complete_macro_arguments,
+    custom_assertion_arguments, equality_assertion_arguments, is_complete_macro_invocation,
 };
 use super::pattern_admission::{is_unpinned_pattern, some_matches_pins_a_value};
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
@@ -133,17 +133,24 @@ pub(super) fn is_exact_error_variant_assertion(line: &str) -> bool {
 /// assert!(matches!(err, MyError::Negative));   // ← or this line
 /// assert_eq!(err, MyError::new("negative"));   // ← or constructor equality
 /// ```
+/// and the inline spellings (RIPR-SPEC-0106 Part A) such as
+/// `assert_eq!(f(-1).unwrap_err(), MyError::Negative)` or
+/// `assert!(matches!(f(-1).unwrap_err(), MyError::Negative))`.
+///
 /// `bound_error_vars` is the set of variable names bound by `.unwrap_err()`
 /// or `.expect_err(...)` earlier in the same test body.
 pub(crate) fn is_unwrap_err_bound_error_assertion(
     line: &str,
     bound_error_vars: &std::collections::BTreeSet<String>,
 ) -> bool {
+    let oracle_text = assertion_oracle_text(line);
+    let line = oracle_text.as_deref().unwrap_or(line);
+    if is_inline_unwrap_err_variant_assertion(line) {
+        return true;
+    }
     if bound_error_vars.is_empty() {
         return false;
     }
-    let oracle_text = assertion_oracle_text(line);
-    let line = oracle_text.as_deref().unwrap_or(line);
     // The line must be an assertion macro invocation.
     let is_assert = line.contains("assert_eq!")
         || line.contains("assert_matches!")
@@ -163,6 +170,92 @@ pub(crate) fn is_unwrap_err_bound_error_assertion(
     bound_error_vars
         .iter()
         .any(|var| line_references_variable(line, var))
+}
+
+/// RIPR-SPEC-0106 Part A: inline equality or `matches!` on `<expr>.unwrap_err()`
+/// / `.expect_err(..)` against a pinned error, without a binding.
+fn is_inline_unwrap_err_variant_assertion(line: &str) -> bool {
+    if is_inequality_macro_assertion(line) {
+        return false;
+    }
+    if is_inline_unwrap_err_equality_assertion(line) {
+        return true;
+    }
+    is_inline_unwrap_err_matches_assertion(line)
+}
+
+fn is_inline_unwrap_err_equality_assertion(line: &str) -> bool {
+    let Some(AssertionComparison::Operands {
+        not_equal: false,
+        left,
+        right,
+    }) = assertion_comparison(line)
+    else {
+        return false;
+    };
+    let left = comparable_expression(&left);
+    let right = comparable_expression(&right);
+    (expression_ends_with_direct_error_unwrap(&left) && expression_pins_specific_error(&right))
+        || (expression_ends_with_direct_error_unwrap(&right)
+            && expression_pins_specific_error(&left))
+}
+
+fn is_inline_unwrap_err_matches_assertion(line: &str) -> bool {
+    for macro_name in ["assert_matches!", "debug_assert_matches!"] {
+        if let Some(args) = complete_macro_arguments(line.trim(), macro_name)
+            && inline_matches_unwrap_err_operands(&args)
+        {
+            return true;
+        }
+    }
+    let Some((_, condition)) = boolean_assertion_macro_condition(line) else {
+        return false;
+    };
+    let condition = unwrap_parentheses(condition.trim());
+    complete_macro_arguments(condition, "matches!")
+        .is_some_and(|args| inline_matches_unwrap_err_operands(&args))
+}
+
+fn inline_matches_unwrap_err_operands(arguments: &[String]) -> bool {
+    let Some(scrutinee) = arguments.first() else {
+        return false;
+    };
+    let Some(pattern) = arguments.get(1) else {
+        return false;
+    };
+    expression_ends_with_direct_error_unwrap(&comparable_expression(scrutinee))
+        && expression_pins_specific_error(&comparable_expression(pattern))
+}
+
+fn expression_ends_with_direct_error_unwrap(expression: &str) -> bool {
+    let expression = expression.trim();
+    if expression.is_empty() {
+        return false;
+    }
+    if expression.trim_end().ends_with(".unwrap_err()") {
+        let receiver = expression
+            .trim_end()
+            .strip_suffix(".unwrap_err()")
+            .unwrap_or("")
+            .trim_end();
+        return !receiver.is_empty();
+    }
+    expression_ends_with_expect_err(expression)
+}
+
+fn expression_ends_with_expect_err(expr: &str) -> bool {
+    let expr = expr.trim_end();
+    let masked = mask_comments_and_strings(expr);
+    let masked = masked.trim_end();
+    let close = masked.len().saturating_sub(1);
+    let mut search = 0;
+    while let Some(found) = next_expect_err_open(masked, search) {
+        if group_end(masked, found.open) == Some(close) {
+            return has_argument_tokens(&expr[found.open + 1..close]);
+        }
+        search = found.open + 1;
+    }
+    false
 }
 
 fn is_bound_error_equality_assertion(
@@ -2239,6 +2332,67 @@ mod spec_0106_tests {
             ),
             "matches! variant assertion on bound var must be recognized"
         );
+    }
+
+    #[test]
+    fn is_unwrap_err_bound_error_assertion_upgrades_inline_unwrap_err_variant() -> Result<(), String>
+    {
+        let empty = vars(&[]);
+        let positives = [
+            (
+                "assert_eq!(compute(-1).unwrap_err(), CalcError::Negative);",
+                "inline assert_eq variant order 1",
+            ),
+            (
+                "assert_eq!(CalcError::Negative, compute(-1).unwrap_err());",
+                "inline assert_eq variant order 2",
+            ),
+            (
+                r#"assert_eq!(compute(-1).expect_err("bad"), CalcError::Negative);"#,
+                "inline expect_err",
+            ),
+            (
+                "assert!(matches!(compute(-1).unwrap_err(), CalcError::Negative));",
+                "inline matches!",
+            ),
+            (
+                r#"assert_eq!(compute(-1).unwrap_err(), MyError::new("x"));"#,
+                "inline constructor payload",
+            ),
+        ];
+        for (line, label) in positives {
+            if !is_unwrap_err_bound_error_assertion(line, &empty) {
+                return Err(format!("{label}: expected upgrade for {line}"));
+            }
+        }
+        let negatives = [
+            (
+                "assert_eq!(compute(-1).unwrap_err(), err);",
+                "non-variant rhs",
+            ),
+            (
+                "assert_ne!(compute(-1).unwrap_err(), CalcError::Negative);",
+                "assert_ne!",
+            ),
+            (
+                r#"assert_eq!(compute(-1).unwrap_err().to_string(), "x");"#,
+                "unwrap_err then method",
+            ),
+            (
+                "assert_eq!(.unwrap_err(), CalcError::Negative);",
+                "bare unwrap_err receiver",
+            ),
+            (
+                "assert_eq!(compute(-1).unwrap(), CalcError::Negative);",
+                "unwrap not unwrap_err",
+            ),
+        ];
+        for (line, label) in negatives {
+            if is_unwrap_err_bound_error_assertion(line, &empty) {
+                return Err(format!("{label}: must not upgrade for {line}"));
+            }
+        }
+        Ok(())
     }
 
     #[test]
