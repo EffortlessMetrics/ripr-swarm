@@ -734,10 +734,10 @@ fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
             "ripr does not start an automatic repair for this kind of finding"
         }
         RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved => {
-            "ripr cannot resolve which external-language observer would notice this seam"
+            "ripr cannot resolve which external-language observer would notice this gap"
         }
         RepairPacketIneligibility::CrossLanguageTestTargetUnresolved => {
-            "ripr cannot resolve a safe external-language test target for this seam"
+            "ripr cannot resolve a safe external-language test target for this gap"
         }
         RepairPacketIneligibility::RouteNotReady => "repair route not ready",
         // #10703: the same limitation `ripr check` names for this seam.
@@ -776,7 +776,7 @@ fn collect_no_eligible_reasons<'a>(
 
 /// How to widen the seam budget, named once so every truncation refusal gives
 /// the same actionable recovery. The cap is an environment variable, not a flag.
-pub(crate) const WIDEN_SEAM_BUDGET: &str = "rerun with a wider seam budget (set RIPR_REPO_EXPOSURE_SEAM_LIMIT to a larger count, or 0 to remove the cap)";
+pub(crate) const WIDEN_SEAM_BUDGET: &str = "rerun with a wider gap budget (set RIPR_REPO_EXPOSURE_SEAM_LIMIT to a larger count, or 0 to remove the cap)";
 
 /// Largest repository a repair start widens the built-in seam cap to cover.
 /// Past it the refusal stands, so the cap still bounds pathological monorepos.
@@ -987,7 +987,7 @@ pub(crate) fn resolve_repair_start(
             let mut text = format!("{label}: {reason}");
             if count > 1 {
                 text.push_str(&format!(
-                    " (and {} other seams in the same state)",
+                    " (and {} other gaps in the same state)",
                     count - 1
                 ));
             }
@@ -1258,7 +1258,7 @@ pub(crate) fn no_test_route_refusal(
     let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
     let Some(entry) = seam else {
         return format!(
-            "ripr did not start a repair for `{seam_id}`: it found no test file it can safely edit, and no seam with that id exists in the current code. Run `ripr check` to list the current findings, then write the test by hand or run `ripr agent stub --root {root_arg} --at FILE:LINE --kind KIND` with the location and kind it prints."
+            "ripr did not start a repair for `{seam_id}`: it found no test file it can safely edit, and no gap with that id exists in the current code. Run `ripr check` to list the current findings, then write the test by hand or run `ripr agent stub --root {root_arg} --at FILE:LINE --kind KIND` with the location and kind it prints."
         );
     };
     let file = crate::analysis::stable_path_text(entry.seam.file());
@@ -1783,7 +1783,7 @@ impl RepairStartGate {
                     return None;
                 }
                 Some(RepairStartRefusal::unverified(
-                    "the recorded start names no seam".to_string(),
+                    "the recorded start names no gap".to_string(),
                 ))
             }
         }
@@ -1806,7 +1806,7 @@ fn load_gate_state(root: &Path) -> GateState {
             classified,
         },
         Err(error) => {
-            GateState::Unavailable(format!("the seam inventory could not be built ({error})"))
+            GateState::Unavailable(format!("the gap inventory could not be built ({error})"))
         }
     }
 }
@@ -1826,7 +1826,7 @@ fn check_state(root: &Path, state: &GateState, seam_id: &str) -> Option<RepairSt
     // inventory, so no seam in one can be verified as startable.
     if truncated {
         return Some(RepairStartRefusal::unverified(format!(
-            "the seam inventory was truncated by the seam limit, and a start from a truncated inventory is refused; {WIDEN_SEAM_BUDGET}"
+            "the gap inventory was truncated by the gap limit, and a start from a truncated inventory is refused; {WIDEN_SEAM_BUDGET}"
         )));
     }
     let Some(entry) = classified
@@ -1834,7 +1834,7 @@ fn check_state(root: &Path, state: &GateState, seam_id: &str) -> Option<RepairSt
         .find(|entry| entry.seam.id().as_str() == seam_id)
     else {
         return Some(RepairStartRefusal::unverified(
-            "the current inventory no longer names this seam (seam ids change when the code shifts)"
+            "the current inventory no longer names this gap (gap ids change when the code shifts)"
                 .to_string(),
         ));
     };
@@ -1936,7 +1936,7 @@ pub(crate) fn repair_start_refusal_for_entry(
                 .then(|| {
                     (
                         RefusalKind::Other,
-                        "no test file ripr may edit: the recommended test target is neither a test surface nor the seam's governed inline test module".to_string(),
+                        "no test file ripr may edit: the recommended test target is neither a test surface nor the gap's governed inline test module".to_string(),
                     )
                 })
         })
@@ -1980,17 +1980,17 @@ pub(crate) fn repair_start_withheld_note(
     let subject = if seam_id.is_empty() {
         "the recorded start".to_string()
     } else {
-        format!("seam `{seam_id}`")
+        format!("gap `{seam_id}`")
     };
     match refusal.kind {
         RefusalKind::Unverified => format!(
-            "no new repair attempt is offered for {subject}: could not verify that the repair gate admits it ({}); {recheck} to re-read the current seams",
+            "no new repair attempt is offered for {subject}: could not verify that the repair gate admits it ({}); {recheck} to re-read the current gaps",
             refusal.reason
         ),
         // A static reading of current evidence, not a runtime result, and
         // not a receipt: no completion is claimed for any attempt.
         RefusalKind::AlreadyGripped => format!(
-            "no new repair attempt is offered for {subject}: {}. This is a static reading of the current evidence, not a runtime-verified result, and no completion is claimed for any attempt; {recheck} to re-read the seam",
+            "no new repair attempt is offered for {subject}: {}. This is a static reading of the current evidence, not a runtime-verified result, and no completion is claimed for any attempt; {recheck} to re-read the gap",
             refusal.reason
         ),
         RefusalKind::RouteNotReady => {
@@ -1998,15 +1998,15 @@ pub(crate) fn repair_start_withheld_note(
                 Some(test) => {
                     format!("strengthening the oracle of the related test {test} by hand")
                 }
-                None => "adding or strengthening a test for that seam by hand".to_string(),
+                None => "adding or strengthening a test for that gap by hand".to_string(),
             };
             format!(
-                "no new repair attempt is offered for {subject}: {} (the repair eligibility gate behind `ripr repair` and the before phase refuses it). The remaining work is {work}; then {recheck} to re-read the seam",
+                "no new repair attempt is offered for {subject}: {} (the repair eligibility gate behind `ripr repair` and the before phase refuses it). The remaining work is {work}; then {recheck} to re-read the gap",
                 refusal.reason
             )
         }
         RefusalKind::Other => format!(
-            "no new repair attempt is offered for {subject}: {} (the repair eligibility gate behind `ripr repair` and the before phase refuses it); {recheck} to re-read the seam",
+            "no new repair attempt is offered for {subject}: {} (the repair eligibility gate behind `ripr repair` and the before phase refuses it); {recheck} to re-read the gap",
             refusal.reason
         ),
     }
@@ -2426,7 +2426,7 @@ fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) 
         shell_arg(&bound_root(&root.to_string_lossy()))
     );
     format!(
-        "repair item `{item}` names seam `{seam_id}`, which is not ready for an automatic repair: {reason}; no repair attempt was started. Run {list} to list current seam IDs"
+        "repair item `{item}` names gap `{seam_id}`, which is not ready for an automatic repair: {reason}; no repair attempt was started. Run {list} to list current repair IDs"
     )
 }
 
@@ -2576,7 +2576,7 @@ pub(crate) fn non_rust_repair_guidance(root_display: &str, changed: &[ChangedNon
         .collect::<Vec<_>>()
         .join(" and ");
     let head = format!(
-        "the changed code under {root_display} is {languages}, and `ripr repair` works from Rust seams only"
+        "the changed code under {root_display} is {languages}, and `ripr repair` works from Rust gaps only"
     );
     if !changed.iter().any(|entry| entry.adds_code) {
         return format!(
@@ -2661,7 +2661,7 @@ fn render_no_seam_inventory_reason(language: &str, file: &str, plain: bool) -> S
 /// the other non-Rust languages.
 pub(crate) fn gap_bound_start_pointer(language: &str) -> &'static str {
     if matches!(language, "TypeScript" | "Python") {
-        ". When the finding's repair packet is complete and the check analysis is complete, `ripr check --base <base>` prints a gap-bound start (`ripr agent repair --gap-id <gap> --base <base> --phase before`) that runs the delegated loop by gap instead of by seam"
+        ". When the finding's repair packet is complete and the check analysis is complete, `ripr check --base <base>` prints a gap-bound start (`ripr agent repair --gap-id <gap> --base <base> --phase before`) that runs the delegated loop from the gap itself"
     } else {
         ""
     }
@@ -2678,24 +2678,24 @@ fn unknown_repair_item(root: &Path, item: &str) -> String {
 pub(crate) fn unknown_repair_item_reason(root: Option<&Path>, item: &str) -> String {
     if let Some(language) = non_rust_item_language(item) {
         return format!(
-            "repair item `{item}` names no seam in the selected root: {}{}",
+            "repair item `{item}` names no gap in the selected root: {}{}",
             no_seam_inventory_reason(language, ""),
             gap_bound_start_pointer(language)
         );
     }
     let list = match root {
         Some(root) => format!(
-            "`ripr pilot --root {}` to list current seam IDs",
+            "`ripr pilot --root {}` to list current repair IDs",
             shell_arg(&bound_root(&root.to_string_lossy()))
         ),
-        None => "`ripr pilot` to list current seam IDs".to_string(),
+        None => "`ripr pilot` to list current repair IDs".to_string(),
     };
     if item.starts_with("probe:") || item.starts_with("repo-probe:") {
         return format!(
-            "repair item `{item}` names no seam in the selected root; the `ripr check` finding ID is stale or maps to no current seam; run {list}"
+            "repair item `{item}` names no gap in the selected root; the `ripr check` finding ID is stale or maps to no current gap; run {list}"
         );
     }
-    format!("repair item `{item}` names no seam in the selected root; run {list}")
+    format!("repair item `{item}` names no gap in the selected root; run {list}")
 }
 
 /// One candidate in an ambiguous-item listing: the seam ID (what the retry
@@ -2728,7 +2728,7 @@ fn ambiguous_gap_item(root: &Path, item: &str, matches: &[&str]) -> String {
     let mut listed: Vec<&str> = matches.iter().take(MAX_LISTED).copied().collect();
     listed.sort_unstable();
     let mut message = format!(
-        "repair item `{item}` names {} seams; select one explicitly: {}",
+        "repair item `{item}` names {} gaps; select one explicitly: {}",
         matches.len(),
         listed.join(", ")
     );
@@ -2754,7 +2754,7 @@ pub(crate) fn card_after_publish_message(
     card_error: &str,
 ) -> String {
     format!(
-        "repair started attempt `{attempt_id}` for seam `{seam_id}`, but the handoff card is unavailable: {card_error}. The attempt awaits its edit; inspect it with `ripr status --attempt {attempt_id} --root {root_display}`, or continue after editing with `ripr continue --attempt {attempt_id} --root {root_display}`"
+        "repair started attempt `{attempt_id}` for gap `{seam_id}`, but the handoff card is unavailable: {card_error}. The attempt awaits its edit; inspect it with `ripr status --attempt {attempt_id} --root {root_display}`, or continue after editing with `ripr continue --attempt {attempt_id} --root {root_display}`"
     )
 }
 
@@ -4019,7 +4019,7 @@ pub(crate) mod tests {
         assert!(
             unverified(&loaded, "stale-seam-id")?
                 .reason
-                .contains("no longer names this seam")
+                .contains("no longer names this gap")
         );
         // A seam the inventory does name gets the gate's own verdict, not
         // the unverified one.
@@ -5006,7 +5006,7 @@ pub(crate) mod tests {
         );
         let rust = unknown_repair_item(root, "probe:src_lib.rs:12:predicate");
         assert!(
-            rust.contains("stale or maps to no current seam")
+            rust.contains("stale or maps to no current gap")
                 && !rust.contains("covers Rust files only"),
             "{rust}"
         );
@@ -5211,11 +5211,11 @@ pub(crate) mod tests {
             ),
             (
                 RepairPacketIneligibility::CrossLanguageOracleVisibilityUnresolved,
-                "ripr cannot resolve which external-language observer would notice this seam",
+                "ripr cannot resolve which external-language observer would notice this gap",
             ),
             (
                 RepairPacketIneligibility::CrossLanguageTestTargetUnresolved,
-                "ripr cannot resolve a safe external-language test target for this seam",
+                "ripr cannot resolve a safe external-language test target for this gap",
             ),
             (
                 RepairPacketIneligibility::RouteNotReady,
@@ -5236,7 +5236,7 @@ pub(crate) mod tests {
     fn ambiguous_gap_item_sorts_and_bounds_the_listing() -> Result<(), String> {
         let root = Path::new("/ripr-task-first-root");
         let few = ambiguous_gap_item(root, "gap:x", &["seam:b", "seam:a"]);
-        if !few.contains("names 2 seams; select one explicitly: seam:a, seam:b.")
+        if !few.contains("names 2 gaps; select one explicitly: seam:a, seam:b.")
             || few.contains("more)")
         {
             return Err(format!(
@@ -5247,7 +5247,7 @@ pub(crate) mod tests {
         let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
         let many = ambiguous_gap_item(root, "gap:x", &refs);
         for expected in [
-            "names 10 seams",
+            "names 10 gaps",
             "seam:0, seam:1, seam:2, seam:3, seam:4, seam:5, seam:6, seam:7 (and 2 more).",
             "ripr repair <seam-id> --root",
         ] {
@@ -5324,7 +5324,7 @@ pub(crate) mod tests {
         let root = Path::new("/ripr-task-first-root");
         for item in ["probe:abc", "repo-probe:abc"] {
             let message = unknown_repair_item(root, item);
-            if !message.contains("finding ID is stale or maps to no current seam")
+            if !message.contains("finding ID is stale or maps to no current gap")
                 || !message.contains("ripr pilot --root")
             {
                 return Err(format!("{item} must be named stale:\n{message}"));
@@ -5332,7 +5332,7 @@ pub(crate) mod tests {
         }
         let plain = unknown_repair_item(root, "seam:ghost");
         if plain.contains("stale")
-            || !plain.contains("repair item `seam:ghost` names no seam in the selected root")
+            || !plain.contains("repair item `seam:ghost` names no gap in the selected root")
             || !plain.contains("ripr pilot --root")
         {
             return Err(format!("plain unknown item message drifted:\n{plain}"));
@@ -5351,7 +5351,7 @@ pub(crate) mod tests {
             "configured off",
         );
         for expected in [
-            "repair item `gap:x` names seam `seam:y`",
+            "repair item `gap:x` names gap `seam:y`",
             "not ready for an automatic repair: configured off",
             "no repair attempt was started",
             "ripr pilot --root",
@@ -5382,7 +5382,7 @@ pub(crate) mod tests {
         let message = card_after_publish_message("attempt-1", "seam:demo", "ROOT", "card refused");
         for expected in [
             "repair started attempt `attempt-1`",
-            "seam `seam:demo`",
+            "gap `seam:demo`",
             "card refused",
             "ripr status --attempt attempt-1 --root ROOT",
             "ripr continue --attempt attempt-1 --root ROOT",

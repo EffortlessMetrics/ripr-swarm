@@ -2,8 +2,8 @@ use crate::domain::{OracleKind, OracleStrength, SymbolId};
 #[cfg(test)]
 use ra_ap_syntax::Edition;
 use ra_ap_syntax::{
-    AstNode, SourceFile, SyntaxKind, TextSize,
-    ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
+    AstNode, SourceFile, SyntaxKind, SyntaxNode, TextSize,
+    ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
 };
 mod closure_callbacks;
 #[cfg(test)]
@@ -37,8 +37,8 @@ use super::super::facts::ModulePathTarget;
 use super::super::facts::SourceRoleProvenance;
 use super::super::facts::cfg_predicates;
 use super::{
-    RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange, parse_clean_source_file,
-    rust_nesting_refusal,
+    NameScope, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange, UseBinding,
+    name_scope::path_segments, name_scope_for_items, parse_clean_source_file, rust_nesting_refusal,
 };
 use crate::analysis::rust_index::{
     FunctionFact, LazyDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
@@ -1577,13 +1577,17 @@ fn enclosed_by_nested_fn_like(node: &ra_ap_syntax::SyntaxNode, body: &ast::Block
 /// Label of an `unsafe` block that contains an unchecked-assumption call.
 pub(crate) const UNCHECKED_ASSUMPTION_LABEL: &str = "unsafe block (unchecked assumption)";
 
-/// Whether the block itself calls `unreachable_unchecked` or
-/// `assert_unchecked`: bare (an imported name) or qualified through `hint`
-/// (`hint::`, `std::hint::`, `core::hint::`). A call under a different module
-/// (`local::assert_unchecked`) is a project function, and a call inside a
-/// nested `fn`, closure or `async` block does not run with the block. Parsed
-/// calls only: a string, comment or identifier that merely contains the name
-/// does not match. A bare name is taken as the imported intrinsic.
+/// Whether the block itself calls the `core::hint` intrinsics
+/// `unreachable_unchecked` or `assert_unchecked` (or the `intrinsics` module's
+/// spelling). The call path is resolved through the `use` bindings visible at
+/// the block (#12196): `std::hint::..` / `core::hint::..` spelled out, a
+/// `hint` module or a leaf imported by `use` (renamed or not), or a
+/// `use std::hint::*` glob. A bare name that nothing imports, a name a local
+/// item defines, or a path under another module (`local::assert_unchecked`)
+/// is not established as the intrinsic and keeps the plain `unsafe block`
+/// label. A call inside a nested `fn`, closure or `async` block does not run
+/// with the block. Parsed calls only: a string, comment or identifier that
+/// merely contains the name does not match.
 fn block_calls_unchecked_assumption(block: &ast::BlockExpr) -> bool {
     block
         .syntax()
@@ -1594,13 +1598,135 @@ fn block_calls_unchecked_assumption(block: &ast::BlockExpr) -> bool {
             ast::Expr::PathExpr(path) => path.path(),
             _ => None,
         })
-        .filter(|path| {
-            path.qualifier()
-                .and_then(|qualifier| qualifier.segment()?.name_ref())
-                .is_none_or(|module| module.text() == "hint")
-        })
-        .filter_map(|path| path.segment()?.name_ref())
-        .any(|name| matches!(name.text(), "unreachable_unchecked" | "assert_unchecked"))
+        .any(|path| call_path_is_unchecked_intrinsic(&path, block))
+}
+
+fn call_path_is_unchecked_intrinsic(path: &ast::Path, block: &ast::BlockExpr) -> bool {
+    // `::std::hint::..` names the crate root directly: no scope can rebind it.
+    if path
+        .segments()
+        .next()
+        .is_some_and(|segment| segment.coloncolon_token().is_some())
+    {
+        let segments: Option<Vec<String>> = path
+            .segments()
+            .map(|segment| segment.name_ref().map(|name| name.text().to_string()))
+            .collect();
+        return segments.is_some_and(|segments| resolves_to_unchecked_intrinsic(&segments, &[]));
+    }
+    let Some(segments) = path_segments(path) else {
+        return false;
+    };
+    // A parameter, `let` or closure parameter of that name is called instead
+    // of an imported function. Fail closed on any such pattern in the function.
+    if let [name] = segments.as_slice()
+        && binds_local_pattern(block, name)
+    {
+        return false;
+    }
+    // Scopes start at the call so a `use` or item in the block itself or in a
+    // nested block is seen, innermost first.
+    let scopes = scopes_visible_at(path.syntax());
+    resolves_to_unchecked_intrinsic(&segments, &scopes)
+}
+
+/// Whether any pattern in the function around `block` (or in the block's file
+/// when it sits outside a function) binds `name`.
+fn binds_local_pattern(block: &ast::BlockExpr, name: &str) -> bool {
+    let scope = block
+        .syntax()
+        .ancestors()
+        .find(|ancestor| ast::Fn::can_cast(ancestor.kind()))
+        .unwrap_or_else(|| block.syntax().clone());
+    scope
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
+}
+
+/// The item scopes around `node`, innermost first: enclosing statement lists
+/// up to the nearest module (inline `mod` or the file). A parent module's
+/// imports are not inherited by a child module, so the walk stops there.
+fn scopes_visible_at(node: &SyntaxNode) -> Vec<NameScope> {
+    let mut scopes = Vec::new();
+    for ancestor in node.ancestors() {
+        let (items, module_level): (Vec<ast::Item>, bool) =
+            if let Some(file) = ast::SourceFile::cast(ancestor.clone()) {
+                (file.items().collect(), true)
+            } else if let Some(list) = ast::ItemList::cast(ancestor.clone()) {
+                (list.items().collect(), true)
+            } else if let Some(list) = ast::StmtList::cast(ancestor) {
+                let items = list
+                    .statements()
+                    .filter_map(|stmt| match stmt {
+                        ast::Stmt::Item(item) => Some(item),
+                        _ => None,
+                    })
+                    .collect();
+                (items, false)
+            } else {
+                continue;
+            };
+        scopes.push(name_scope_for_items(&items));
+        if module_level {
+            break;
+        }
+    }
+    scopes
+}
+
+fn resolves_to_unchecked_intrinsic(segments: &[String], scopes: &[NameScope]) -> bool {
+    let Some(first) = segments.first() else {
+        return false;
+    };
+    let mut full: Vec<String> = Vec::new();
+    let mut settled = false;
+    for scope in scopes {
+        if let Some(binding) = scope.imports_of(first).next() {
+            match binding {
+                UseBinding::Path(path) | UseBinding::Renamed(path) => full.extend(path.clone()),
+                UseBinding::Opaque => return false,
+            }
+            full.extend(segments[1..].iter().cloned());
+            settled = true;
+            break;
+        }
+        // A local item of that name shadows the standard-library one.
+        if scope.defines.contains(first) || scope.child_modules.contains(first) {
+            return false;
+        }
+        // `use std::hint::*;` brings the bare intrinsic names into scope.
+        if segments.len() == 1
+            && scope
+                .globs
+                .iter()
+                .flatten()
+                .any(|prefix| is_std_hint_module(prefix))
+        {
+            full = ["core", "hint"]
+                .iter()
+                .map(|segment| segment.to_string())
+                .chain(segments.iter().cloned())
+                .collect();
+            settled = true;
+            break;
+        }
+    }
+    if !settled {
+        // `std` / `core` are always in scope as crate roots.
+        full = segments.to_vec();
+    }
+    matches!(
+        full.as_slice(),
+        [root, module, name]
+            if matches!(root.as_str(), "std" | "core")
+                && matches!(module.as_str(), "hint" | "intrinsics")
+                && matches!(name.as_str(), "unreachable_unchecked" | "assert_unchecked")
+    )
+}
+
+fn is_std_hint_module(prefix: &[String]) -> bool {
+    matches!(prefix, [root, module] if matches!(root.as_str(), "std" | "core") && module == "hint")
 }
 
 fn push_unsafe_boundary_probe_shapes(

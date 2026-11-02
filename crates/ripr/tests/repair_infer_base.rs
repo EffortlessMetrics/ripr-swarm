@@ -458,7 +458,7 @@ fn an_explicit_base_narrows_a_selection_to_the_changed_spot() -> Result<(), Stri
         .ok_or_else(|| format!("the unscoped list must offer the other spot:\n{wide}"))?;
     let narrow = repo.ripr(&["repair", "--root", ".", "--base", "HEAD~1"])?;
     assert!(
-        narrow.contains(&format!("for seam `{changed_spot}`")),
+        narrow.contains(&format!("for gap `{changed_spot}`")),
         "the one start must be the changed spot's seam:\n{narrow}"
     );
     assert!(!narrow.contains(&other_spot), "{narrow}");
@@ -504,11 +504,11 @@ fn zero_seam_refusal_leads_with_the_unscoped_note() -> Result<(), String> {
     repo.assert_changed_paths(Form::NoResolvableBase, "tools/x.py")?;
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
-        repair.contains("no seams visible under ")
+        repair.contains("no gaps visible under ")
             && repair.contains("could not tell which lines you changed"),
         "{repair}"
     );
-    assert!(!repair.contains("works from Rust seams only"), "{repair}");
+    assert!(!repair.contains("works from Rust gaps only"), "{repair}");
     Ok(())
 }
 
@@ -517,7 +517,7 @@ fn an_explicit_base_reaches_the_non_rust_guidance() -> Result<(), String> {
     let repo = Repo::python_only(Form::NoResolvableBase)?;
     let explicit = repo.ripr(&["repair", "--root", ".", "--base", "HEAD~1"])?;
     assert!(
-        explicit.contains("is Python") && explicit.contains("works from Rust seams only"),
+        explicit.contains("is Python") && explicit.contains("works from Rust gaps only"),
         "the named base finds the Python change:\n{explicit}"
     );
     Ok(())

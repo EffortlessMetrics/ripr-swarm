@@ -23,3 +23,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_copy_builder_field_write (3)
+
+Reason:
+RIPR-SPEC-0122: plain wording for the Evidence stage name and the stage and state legend in the check digest (#10692)
+
+Command:
+`cargo xtask goldens bless rust_copy_builder_field_write --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -286,6 +286,29 @@ fn is_kani_contract_cfg_attr(attribute: &str) -> bool {
         })
 }
 
+/// Rebuild the removed side for a whole-file deletion when the changed path has
+/// no new-side index entry. The diff parser records that shape as deletion-only
+/// hunks whose removed lines are exactly `1..=N` contiguous old-side numbers.
+pub(super) fn whole_file_old_source_from_removed_lines(changed: &ChangedFile) -> Option<String> {
+    if !changed.added_lines.is_empty() || changed.removed_lines.is_empty() {
+        return None;
+    }
+    let mut lines: Vec<_> = changed.removed_lines.iter().collect();
+    lines.sort_by_key(|line| line.line);
+    for (expected, line) in (1..=lines.len()).zip(lines.iter()) {
+        if line.line != expected {
+            return None;
+        }
+    }
+    Some(
+        lines
+            .into_iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
 /// Count of `changed` lines (added, on the new side; removed, on the old side)
 /// that are verification-erased text.
 pub(crate) fn changed_verification_only_lines(index: &RustIndex, changed: &ChangedFile) -> usize {
@@ -293,6 +316,7 @@ pub(crate) fn changed_verification_only_lines(index: &RustIndex, changed: &Chang
         .map(|facts| verification_only_lines(&facts.source))
         .unwrap_or_default();
     let removed = super::classify::old_source(index, changed)
+        .or_else(|| whole_file_old_source_from_removed_lines(changed))
         .map(|old| verification_only_lines(&old))
         .unwrap_or_default();
     changed
@@ -399,6 +423,17 @@ fn item_end(bytes: &[u8], from: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::diff::{ChangedFile, ChangedLine};
+    use crate::analysis::facts::OwnedRustIndex;
+    use std::path::PathBuf;
+
+    fn changed_line(line: usize, text: &str) -> ChangedLine {
+        ChangedLine {
+            line,
+            text: text.to_string(),
+            new_side_line: 1,
+        }
+    }
 
     fn lines(source: &str) -> Vec<usize> {
         verification_only_lines(source).into_iter().collect()
@@ -509,5 +544,56 @@ mod tests {
         ] {
             assert!(lines(source).is_empty(), "{source}");
         }
+    }
+
+    #[test]
+    fn whole_file_old_source_from_removed_lines_accepts_contiguous_deletion_only() {
+        let changed = ChangedFile {
+            path: PathBuf::from("src/proofs.rs"),
+            added_lines: Vec::new(),
+            removed_lines: vec![
+                changed_line(1, "#[cfg(kani)]"),
+                changed_line(2, "mod proofs {"),
+                changed_line(3, "}"),
+            ],
+        };
+        assert_eq!(
+            whole_file_old_source_from_removed_lines(&changed),
+            Some("#[cfg(kani)]\nmod proofs {\n}".to_string())
+        );
+    }
+
+    #[test]
+    fn whole_file_old_source_from_removed_lines_rejects_non_contiguous_or_mixed() {
+        let with_gap = ChangedFile {
+            path: PathBuf::from("src/a.rs"),
+            added_lines: Vec::new(),
+            removed_lines: vec![changed_line(1, "a"), changed_line(3, "c")],
+        };
+        assert!(whole_file_old_source_from_removed_lines(&with_gap).is_none());
+
+        let with_add = ChangedFile {
+            path: PathBuf::from("src/a.rs"),
+            added_lines: vec![changed_line(1, "new")],
+            removed_lines: vec![changed_line(1, "old")],
+        };
+        assert!(whole_file_old_source_from_removed_lines(&with_add).is_none());
+    }
+
+    #[test]
+    fn changed_verification_only_lines_reconstructs_removed_side_without_index_entry() {
+        let index = RustIndex::from_owned(OwnedRustIndex::default());
+        let changed = ChangedFile {
+            path: PathBuf::from("src/proofs.rs"),
+            added_lines: Vec::new(),
+            removed_lines: vec![
+                changed_line(1, "#[cfg(kani)]"),
+                changed_line(2, "mod proofs {"),
+                changed_line(3, "    #[kani::proof]"),
+                changed_line(4, "    fn p() { k(); }"),
+                changed_line(5, "}"),
+            ],
+        };
+        assert_eq!(changed_verification_only_lines(&index, &changed), 5);
     }
 }
