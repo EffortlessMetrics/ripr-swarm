@@ -11,7 +11,7 @@ this repository's license, one per test library or library feature:
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
   `capsys`, `isinstance`, `!=`, a package re-export and an owner no test references.
 - `authored-py-pytest-spec0233`: at least one case per runnable
-  RIPR-SPEC-0238 acceptance example, one owner per case; examples 9, 22, 24
+  RIPR-SPEC-0238 acceptance example, one owner per case; examples 9, 14, 22, 24
   and 34 have two, and example 9's two share one owner and anchor. Example
   9's owner returns the handler it was given, as a registration helper
   does, so the mock the test asserts on is the owner's result
