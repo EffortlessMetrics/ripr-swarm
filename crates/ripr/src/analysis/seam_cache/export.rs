@@ -252,7 +252,11 @@ fn changed_inputs(
         .filter(|(_, differs)| *differs)
         .map(|(name, _)| (*name).to_owned())
         .collect();
-    if before_files != after_files {
+    // Membership only: a content edit to the same paths shows up as "Rust
+    // file contents", never as a changed list.
+    let before_paths: Vec<&Path> = before_files.iter().map(|key| key.file_path()).collect();
+    let after_paths: Vec<&Path> = after_files.iter().map(|key| key.file_path()).collect();
+    if before_paths != after_paths {
         changed.push(format!(
             "analyzed file list ({} files, then {})",
             before_files.len(),
@@ -704,6 +708,13 @@ mod tests {
         moved.seam_limit_key = format!("{}-moved", key.seam_limit_key);
         let message = changed_inputs(&key, &files, &moved, &files);
         assert_eq!(message, "changed: seam limit");
+        // Same paths, different bytes: the file list did not change.
+        fs::write(root.join("src/lib.rs"), "pub fn g() {}\n").map_err(|error| error.to_string())?;
+        let (edited_key, edited_files) = current_cache_keys_at(&root, &config)?;
+        assert_eq!(
+            changed_inputs(&key, &files, &edited_key, &edited_files),
+            "changed: Rust file contents"
+        );
         let message = changed_inputs(&key, &files, &key, &[]);
         assert!(
             message.starts_with("changed: analyzed file list (1 files, then 0)"),
