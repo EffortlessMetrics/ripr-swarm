@@ -1113,44 +1113,59 @@ pub enum FunctionContainer {
 /// occurrence and its executable test view (#5127). Equality compares the
 /// resolved slice, not allocation identity.
 #[derive(Clone, Debug)]
-pub struct SharedFactSlice<T>(Arc<Vec<T>>);
+pub struct SharedFactSlice<T>(Option<Arc<Vec<T>>>);
 
 impl<T> SharedFactSlice<T> {
     pub fn from_vec(values: Vec<T>) -> Self {
-        Self(Arc::new(values))
+        if values.is_empty() {
+            Self(None)
+        } else {
+            Self(Some(Arc::new(values)))
+        }
     }
 
     pub fn empty() -> Self {
-        Self(Arc::new(Vec::new()))
+        Self(None)
     }
 
     #[cfg(test)]
     pub(crate) fn shared_storage_with(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        match (&self.0, &other.0) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            (None, None) => true,
+            _ => false,
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn spare_capacity(&self) -> usize {
-        self.0.capacity().saturating_sub(self.0.len())
+        self.0
+            .as_ref()
+            .map_or(0, |values| values.capacity().saturating_sub(values.len()))
     }
 
     pub(crate) fn make_mut(&mut self) -> &mut Vec<T>
     where
         T: Clone,
     {
-        Arc::make_mut(&mut self.0)
+        let arc = self.0.get_or_insert_with(|| Arc::new(Vec::new()));
+        Arc::make_mut(arc)
     }
 
     pub(crate) fn is_uniquely_owned(&self) -> bool {
-        Arc::strong_count(&self.0) == 1
+        self.0
+            .as_ref()
+            .is_none_or(|arc| Arc::strong_count(arc) == 1)
     }
 
     pub(crate) fn shrink_capacity_if_unique(&mut self)
     where
         T: Clone,
     {
-        if self.is_uniquely_owned() {
-            self.make_mut().shrink_to_fit();
+        if self.is_uniquely_owned()
+            && let Some(arc) = &mut self.0
+        {
+            Arc::make_mut(arc).shrink_to_fit();
         }
     }
 }
@@ -1165,7 +1180,7 @@ impl<T> std::ops::Deref for SharedFactSlice<T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
-        self.0.as_slice()
+        self.0.as_ref().map_or(&[], |values| values.as_slice())
     }
 }
 
@@ -1183,7 +1198,7 @@ impl<'a, T: Clone> IntoIterator for &'a mut SharedFactSlice<T> {
     type IntoIter = std::slice::IterMut<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        Arc::make_mut(&mut self.0).iter_mut()
+        self.make_mut().iter_mut()
     }
 }
 
@@ -1192,49 +1207,55 @@ impl<T> SharedFactSlice<T> {
     where
         T: Clone,
     {
-        Arc::make_mut(&mut self.0).push(item);
+        self.make_mut().push(item);
     }
 
     pub fn extend(&mut self, items: impl IntoIterator<Item = T>)
     where
         T: Clone,
     {
-        Arc::make_mut(&mut self.0).extend(items);
+        self.make_mut().extend(items);
     }
 
     pub fn retain(&mut self, keep: impl FnMut(&T) -> bool)
     where
         T: Clone,
     {
-        Arc::make_mut(&mut self.0).retain(keep);
+        if let Some(arc) = &mut self.0 {
+            Arc::make_mut(arc).retain(keep);
+        }
     }
 
     pub fn dedup_by(&mut self, same_bucket: impl FnMut(&mut T, &mut T) -> bool)
     where
         T: Clone,
     {
-        Arc::make_mut(&mut self.0).dedup_by(same_bucket);
+        if let Some(arc) = &mut self.0 {
+            Arc::make_mut(arc).dedup_by(same_bucket);
+        }
     }
 
     pub fn insert(&mut self, index: usize, item: T)
     where
         T: Clone,
     {
-        Arc::make_mut(&mut self.0).insert(index, item);
+        self.make_mut().insert(index, item);
     }
 
     pub fn truncate(&mut self, len: usize)
     where
         T: Clone,
     {
-        Arc::make_mut(&mut self.0).truncate(len);
+        if let Some(arc) = &mut self.0 {
+            Arc::make_mut(arc).truncate(len);
+        }
     }
 
     pub fn clear(&mut self)
     where
         T: Clone,
     {
-        Arc::make_mut(&mut self.0).clear();
+        self.0 = None;
     }
 }
 
@@ -1242,7 +1263,8 @@ impl<T> std::ops::Index<usize> for SharedFactSlice<T> {
     type Output = T;
 
     fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index]
+        let slice: &[T] = self;
+        &slice[index]
     }
 }
 
@@ -1260,7 +1282,7 @@ impl<T: Clone> FromIterator<T> for SharedFactSlice<T> {
 
 impl<T: PartialEq> PartialEq for SharedFactSlice<T> {
     fn eq(&self, other: &Self) -> bool {
-        *self.0 == *other.0
+        **self == **other
     }
 }
 
@@ -1274,7 +1296,7 @@ impl<T: Clone> From<Vec<T>> for SharedFactSlice<T> {
 
 impl<T: Clone + serde::Serialize> serde::Serialize for SharedFactSlice<T> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.as_slice().serialize(serializer)
+        (**self).serialize(serializer)
     }
 }
 

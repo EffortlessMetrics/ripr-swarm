@@ -365,7 +365,7 @@ fn observes_with(
     };
     // Exactly `#[test]`: the lexical fallback and harness-registered tests
     // carry no attributes, so an empty list cannot vouch for the test.
-    if !matches!(test.attrs.first().map(String::as_str), Some("#[test]")) {
+    if !matches!(&*test.attrs, [only] if only.trim() == "#[test]") {
         return false;
     }
     // An integer field compares by value; a workspace `PartialEq` may not.
