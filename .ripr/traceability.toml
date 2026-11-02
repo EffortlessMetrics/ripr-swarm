@@ -18527,6 +18527,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::snapshot_of_an_unrelated_function_subject_reads_weak",
   "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::a_bound_local_that_is_rewritten_or_shadowed_reads_weak",
   "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::snapshot_of_an_unrelated_method_subject_reads_weak",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::typed_locals_and_wrapped_subjects_are_deliberately_uncredited",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
@@ -18535,6 +18536,7 @@ fixtures = [
   "fixtures/typescript_snapshot_effect_unrelated_subject",
   "fixtures/typescript_snapshot_effect_unrelated_committed",
   "fixtures/typescript_snapshot_effect_rebound_local",
+  "fixtures/typescript_snapshot_effect_receiver_redeclared",
   "fixtures/typescript_snapshot_effect_spy_calls_weak",
 ]
 code = [

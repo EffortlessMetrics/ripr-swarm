@@ -20,12 +20,7 @@ const CLASS_IMPORT: &str = "import { Outbox } from '../src/lib';\n";
 
 const SNAPSHOT: &str = "toMatchInlineSnapshot(`[\"shipped 7\"]`)";
 
-fn class_for(
-    lib: &str,
-    changed: &str,
-    import: &str,
-    body: &str,
-) -> Result<ExposureClass, String> {
+fn class_for(lib: &str, changed: &str, import: &str, body: &str) -> Result<ExposureClass, String> {
     let test_source = format!("{import}test('n', () => {{\n{body}}});\n");
     let owners = extract_owners(Path::new(LIB_FILE), lib);
     let tests = extract_tests(Path::new(TEST_FILE), &test_source);
@@ -173,6 +168,41 @@ fn snapshot_of_an_unrelated_method_subject_reads_weak() -> Result<(), String> {
             format!(
                 "  const box = new Outbox();\n  box.send = (n) => ['shipped 7'];\n  expect(box.send(7)).{SNAPSHOT};\n"
             ),
+            // An inner block redeclares the receiver name (#12487 review).
+            format!(
+                "  const box = new Outbox();\n  box.send(1);\n  {{\n    const box = {{ send: () => ['shipped 7'] }};\n    expect(box.send(7)).{SNAPSHOT};\n  }}\n"
+            ),
+            format!(
+                "  const box = new Outbox();\n  {{\n    const box = {{ send: () => ['shipped 7'] }};\n    expect(box.send(7)).{SNAPSHOT};\n  }}\n"
+            ),
+            format!(
+                "  const box = new Outbox();\n  function g() {{\n    const box = {{ send: () => ['shipped 7'] }};\n    return box.send(7);\n  }}\n  expect(g()).{SNAPSHOT};\n"
+            ),
+            // The owner class's method is patched or spied through its prototype.
+            format!(
+                "  Outbox.prototype.send = () => ['shipped 7'];\n  const box = new Outbox();\n  expect(box.send(7)).{SNAPSHOT};\n"
+            ),
+            format!(
+                "  jest.spyOn(Outbox.prototype, 'send').mockReturnValue(['shipped 7']);\n  const box = new Outbox();\n  expect(box.send(7)).{SNAPSHOT};\n"
+            ),
+        ],
+        false,
+    )
+}
+
+/// Deliberately uncredited (RIPR-SPEC-0258 rule 3): a typed local and a
+/// cast, parenthesized or non-null subject are not on the allowlist.
+#[test]
+fn typed_locals_and_wrapped_subjects_are_deliberately_uncredited() -> Result<(), String> {
+    expect_class(
+        FN_LIB,
+        FN_CHANGED,
+        FN_IMPORT,
+        &[
+            format!("  const r: string[] = enqueue([], 7);\n  expect(r).{SNAPSHOT};\n"),
+            format!("  expect(enqueue([], 7)!).{SNAPSHOT};\n"),
+            format!("  expect((enqueue([], 7) as string[])).{SNAPSHOT};\n"),
+            format!("  expect((enqueue([], 7))).{SNAPSHOT};\n"),
         ],
         false,
     )

@@ -25,8 +25,8 @@ cargo xtask fixtures typescript_snapshot_effect_spy_calls_weak
 A spy's recorded calls are not on the RIPR-SPEC-0258 rule 3 allowlist, so the
 seam reads `weakly_exposed`. This is weak by design: rule 3 binds a snapshot to
 the owner result only, and resolving a spy to the owner's effect is not
-attempted. A spy snapshot that truly pins the change costs a missed credit,
-never a false one. Only `expected/check.json` is retained, for the reason given
+attempted. A spy snapshot that truly pins the change costs a missed credit;
+the allowlist does not turn it into credit. Only `expected/check.json` is retained, for the reason given
 in `typescript_snapshot_effect_unrelated_subject`.
 
 ## Must Not

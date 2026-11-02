@@ -8971,14 +8971,28 @@ fn ts_snapshot_subject_is_owner_result(
         let constructors =
             constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
         let constructed = receiver_names_for_constructor_calls(&test.body_text, &constructors);
-        // Each receiver is read only as `<receiver>.<member>(..)` after its
-        // declaration, so nothing rebinds it or replaces the method.
+        // The class is only constructed (`new Class(..)`), never patched
+        // through its prototype or passed on, so the method is the owner's.
+        let class_untouched = ts_identifier_is_absent(&test.body_text, "prototype")
+            && constructors
+                .iter()
+                .filter(|name| !name.contains('.'))
+                .all(|name| {
+                    ts_identifier_is_absent(&test.body_text, name)
+                        || ts_identifier_uses_all(&test.body_text, name, |before, after| {
+                            before.trim_end().ends_with("new")
+                                && after.trim_start().starts_with('(')
+                        })
+                });
+        // Each receiver has exactly one declaration (no inner redeclaration,
+        // parameter, catch or loop binding of the name) and is read only as
+        // `<receiver>.<member>(..)`, so nothing rebinds it or replaces the
+        // method.
         owned_names = constructed
             .iter()
             .filter(|receiver| {
-                ts_identifier_uses_all(&test.body_text, receiver, |before, after| {
-                    ts_use_is_declaration(before, after) || ts_use_is_member_call(after)
-                })
+                class_untouched
+                    && ts_single_declaration_only_member_calls(&test.body_text, receiver)
             })
             .map(|receiver| format!("{receiver}.{}", owner.name))
             .collect();
@@ -8997,8 +9011,8 @@ fn ts_snapshot_subject_is_owner_result(
     if ts_whole_owner_call_arguments(observed, &names, owner, &receivers).is_some() {
         return true;
     }
-    ts_identifier_uses_all(&test.body_text, observed, |before, after| {
-        ts_use_is_declaration(before, after) || ts_use_is_expect_argument(before, after)
+    ts_single_declaration_uses(&test.body_text, observed, |before, after| {
+        ts_use_is_expect_argument(before, after)
     }) && names.iter().any(|name| {
         ts_observed_local_owner_call_arguments(test, assertion, name, &receivers).is_some()
     })
@@ -9037,6 +9051,49 @@ fn ts_identifier_uses_all(body: &str, ident: &str, allowed: impl Fn(&str, &str) 
         seen = true;
     }
     seen
+}
+
+/// `true` when `ident` has exactly one declaration (`const|let|var ident =`) in
+/// the body's code and every other use satisfies `other_use`. A second
+/// declaration of the name in any scope, a parameter, a `catch` or loop binding,
+/// a destructuring or any assignment makes it refuse.
+fn ts_single_declaration_uses(
+    body: &str,
+    ident: &str,
+    other_use: impl Fn(&str, &str) -> bool,
+) -> bool {
+    let declarations = std::cell::Cell::new(0usize);
+    ts_identifier_uses_all(body, ident, |before, after| {
+        if ts_use_is_declaration(before, after) {
+            declarations.set(declarations.get() + 1);
+            true
+        } else {
+            other_use(before, after)
+        }
+    }) && declarations.get() == 1
+}
+
+/// [`ts_single_declaration_uses`] where every other use is `ident.member(..)`.
+fn ts_single_declaration_only_member_calls(body: &str, ident: &str) -> bool {
+    ts_single_declaration_uses(body, ident, |_, after| ts_use_is_member_call(after))
+}
+
+/// `true` when `ident` occurs nowhere in the body's code as a whole word,
+/// member segments (`x.ident`) included.
+fn ts_identifier_is_absent(body: &str, ident: &str) -> bool {
+    let is_ident_char = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let masked = ts_mask_literals_and_comments(body);
+    !masked.match_indices(ident).any(|(at, _)| {
+        let before_ok = masked
+            .get(..at)
+            .and_then(|before| before.chars().next_back())
+            .is_none_or(|c| !is_ident_char(c));
+        let after_ok = masked
+            .get(at + ident.len()..)
+            .and_then(|after| after.chars().next())
+            .is_none_or(|c| !is_ident_char(c));
+        before_ok && after_ok
+    })
 }
 
 /// `const|let|var <ident> = ` (a single `=`).
