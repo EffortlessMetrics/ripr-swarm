@@ -386,12 +386,12 @@ mod stub {
     #[test]
     fn a_control_that_cannot_test_the_gate_is_refused() {
         let limits = Limits::default();
-        let short = control_refusal(1900, 1.6, &limits);
+        let short = control_refusal(1900, 0, 1.6, &limits);
         assert!(
             short.is_some_and(|reason| reason.contains("inconclusive")),
             "a baseline whose control stays inside the noise floor must be refused"
         );
-        let long = control_refusal(100_000, 10.0, &limits);
+        let long = control_refusal(100_000, 0, 10.0, &limits);
         assert!(
             long.is_some_and(|reason| reason.contains("ceiling")),
             "a control past the ceiling must be refused"
@@ -402,12 +402,19 @@ mod stub {
             ceiling_ms: 1_200_000,
             ..Limits::default()
         };
-        let beyond_deadline = control_refusal(100_000, 10.0, &raised);
+        let beyond_deadline = control_refusal(100_000, 0, 10.0, &raised);
         assert!(
             beyond_deadline.is_some_and(|reason| reason.contains("600000 ms bound")),
             "a raised ceiling must still be bounded by the per-check deadline"
         );
-        assert!(control_refusal(4000, 1.6, &limits).is_none());
+        assert!(control_refusal(4000, 1000, 1.6, &limits).is_none());
+        // A candidate already at or past the target injects nothing, so no
+        // control may be claimed for the run.
+        let past = control_refusal(4000, 7000, 1.6, &limits);
+        assert!(
+            past.is_some_and(|reason| reason.contains("nothing would be injected")),
+            "a candidate already past the target must be refused"
+        );
     }
 
     #[test]

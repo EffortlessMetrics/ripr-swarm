@@ -74,8 +74,10 @@ struct Packet {
     baseline_median_ms: Option<u128>,
     candidate_median_ms: Option<u128>,
     ratio: Option<f64>,
-    /// Set only for a negative control: the packet then proves the gate can
-    /// fail on this pin, and says nothing about the candidate's real speed.
+    /// Set only for a negative control: the candidate times were injected at
+    /// this ratio and say nothing about the candidate's real speed. Only a
+    /// failing verdict shows the gate can fail on this pin; a ratio inside the
+    /// judge's limits can still pass.
     control_slowdown: Option<f64>,
     findings_identical: bool,
     verdict: String,
@@ -388,8 +390,18 @@ fn control_delay_ms(baseline_ms: u128, candidate_ms: u128, ratio: f64) -> u128 {
 /// Why a control cannot be applied to this run, if it cannot: the control must
 /// stay inside the ceiling and per-check deadline and must exceed the judge's noise floor, otherwise a
 /// pass would say nothing about the gate (#12244).
-fn control_refusal(baseline_ms: u128, ratio: f64, limits: &Limits) -> Option<String> {
+fn control_refusal(
+    baseline_ms: u128,
+    candidate_ms: u128,
+    ratio: f64,
+    limits: &Limits,
+) -> Option<String> {
     let target = control_delay_ms(baseline_ms, 0, ratio);
+    if candidate_ms >= target {
+        return Some(format!(
+            "the candidate already took {candidate_ms} ms, at or past the {target} ms target for a {baseline_ms} ms baseline, so nothing would be injected and the packet must not claim a control"
+        ));
+    }
     // The injected wait sits outside `check_once`'s own deadline, so the control
     // honours the tighter of that deadline and the configured ceiling.
     let bound = limits.ceiling_ms.min(DEADLINE.as_millis());
@@ -433,7 +445,8 @@ fn measure_pair(
         let base = check_once(&baseline, tree, diff, &home, "baseline warm check")?;
         let mut cand = check_once(&candidate, tree, diff, &home, "candidate warm check")?;
         if let Some(ratio) = options.control_slowdown {
-            if let Some(reason) = control_refusal(base.millis, ratio, &options.limits) {
+            if let Some(reason) = control_refusal(base.millis, cand.millis, ratio, &options.limits)
+            {
                 return Err(format!(
                     "warm-ab {}: control refused: {reason}",
                     options.pin
