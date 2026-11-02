@@ -235,18 +235,21 @@ mod tests {
         std::env::temp_dir().join(format!("ripr-{label}-{}-{nonce}", std::process::id()))
     }
 
+    fn per_run_nonce() -> Result<u128, String> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Ok(std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+            .saturating_add(NEXT.fetch_add(1, Ordering::Relaxed) as u128))
+    }
+
     #[test]
     fn historical_pid_and_clock_name_collides_with_eexist() -> Result<(), String> {
         // Nonce is unique per run so an interrupted prior process that reused this
         // PID cannot fail the first exclusive create. The collision oracle is the
         // second create_root on that same pid+nonce path, not a globally fixed name.
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_nanos()
-            .saturating_add(NEXT.fetch_add(1, Ordering::Relaxed) as u128);
-        let path = historical_pid_nonce_path("help-command", nonce);
+        let path = historical_pid_nonce_path("help-command", per_run_nonce()?);
         ensure_parent(path.parent().ok_or("historical parent missing")?)?;
         if path.exists() {
             std::fs::remove_dir_all(&path)
@@ -282,10 +285,10 @@ mod tests {
 
     #[test]
     fn same_nonce_allocations_create_distinct_exclusive_roots() -> Result<(), String> {
-        const NONCE: u128 = 11;
-        let first = exclusive_scratch_root("help-command", NONCE)?;
+        let nonce = per_run_nonce()?;
+        let first = exclusive_scratch_root("help-command", nonce)?;
         let _first = Fixture(first.clone());
-        let second = exclusive_scratch_root("help-command", NONCE)?;
+        let second = exclusive_scratch_root("help-command", nonce)?;
         let _second = Fixture(second.clone());
         if first == second {
             return Err(format!(
@@ -303,14 +306,14 @@ mod tests {
     #[test]
     fn concurrent_same_nonce_allocations_all_succeed() -> Result<(), String> {
         const THREADS: usize = 8;
-        const NONCE: u128 = 0;
+        let nonce = per_run_nonce()?;
         let barrier = Barrier::new(THREADS);
         let results = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..THREADS)
                 .map(|_| {
                     scope.spawn(|| {
                         barrier.wait();
-                        exclusive_scratch_root("help-command", NONCE)
+                        exclusive_scratch_root("help-command", nonce)
                     })
                 })
                 .collect();
