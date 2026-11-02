@@ -334,15 +334,67 @@ struct FieldUse {
 /// receiver (`format!("{self:?}")`) sits in a masked string, so it is read
 /// from the raw text and counts as a bare `self` (#7046 review).
 fn function_field_use(function: &FunctionSummary) -> Option<FieldUse> {
-    let (_, body) = split_signature(function)?;
-    let mut uses = scan_field_use(&body);
-    if inline_format_captures(&function.body)
-        .iter()
-        .any(|capture| capture == "self")
-    {
-        uses.whole_self = true;
+    let (signature, body) = split_signature(function)?;
+    if function.item.has_self_param {
+        let mut uses = scan_field_use(&body, "self");
+        if inline_format_captures(&function.body)
+            .iter()
+            .any(|capture| capture == "self")
+        {
+            uses.whole_self = true;
+        }
+        return Some(uses);
     }
-    Some(uses)
+    let param = free_fn_mut_self_param_name(&signature)?;
+    Some(free_fn_field_use(&body, &param))
+}
+
+/// Field reads/writes through the free helper's `&mut Self` parameter, treated
+/// like `self.<field>` on a method body (#6579).
+fn free_fn_field_use(body: &[Tok], param: &str) -> FieldUse {
+    let mut aliased = body.to_vec();
+    for token in &mut aliased {
+        if let Tok::Ident(name) = token && name == param {
+            *token = Tok::Ident("self".to_string());
+        }
+    }
+    scan_field_use(&aliased, "self")
+}
+
+/// The identifier of the first `&mut` parameter whose type names the self type.
+fn free_fn_mut_self_param_name(signature: &[Tok]) -> Option<String> {
+    let open = signature.iter().position(|token| *token == Tok::Punct('('))?;
+    let mut index = open + 1;
+    while index < signature.len() && !punct(signature, index, ')') {
+        let start = index;
+        let mut depth = 0isize;
+        let mut end = index;
+        while let Some(token) = signature.get(end) {
+            match token {
+                Tok::Punct('(' | '[' | '<') => depth += 1,
+                Tok::Punct(')' | ']' | '>') if depth == 0 => break,
+                Tok::Punct(')' | ']' | '>') => depth -= 1,
+                Tok::Punct(',') if depth == 0 => break,
+                _ => {}
+            }
+            end += 1;
+        }
+        let param = &signature[start..end];
+        let mut_borrow = param
+            .windows(2)
+            .any(|pair| pair[0] == Tok::Punct('&') && pair[1] == Tok::Ident("mut".to_string()));
+        if mut_borrow {
+            let name = param.iter().find_map(|token| {
+                let Tok::Ident(name) = token else {
+                    return None;
+                };
+                (!KEYWORDS.contains(&name.as_str())).then(|| name.clone())
+            })?;
+            return Some(name);
+        }
+        index = end + 1;
+    }
+    None
 }
 
 fn statement_start(tokens: &[Tok], index: usize) -> bool {
@@ -361,7 +413,7 @@ fn assignment_at(tokens: &[Tok], index: usize) -> bool {
     }
 }
 
-fn scan_field_use(body: &[Tok]) -> FieldUse {
+fn scan_field_use(body: &[Tok], receiver: &str) -> FieldUse {
     let mut uses = FieldUse::default();
     for (index, token) in body.iter().enumerate() {
         let Tok::Ident(name) = token else { continue };
@@ -375,7 +427,7 @@ fn scan_field_use(body: &[Tok]) -> FieldUse {
         }
         let previous_is_path =
             index > 0 && (punct(body, index - 1, '.') || punct(body, index - 1, ':'));
-        if name == "self" {
+        if name == receiver {
             scan_self_access(body, index, &mut uses);
             continue;
         }
@@ -728,7 +780,13 @@ impl EffectStateCarrier {
         let (callee, callee_name) =
             resolve_effect_callee(&probe.expression, &self_ty, index, &methods)?;
         let (signature, _) = split_signature(callee)?;
-        if !mut_self_without_return(&signature) {
+        if callee.item.has_self_param {
+            if !mut_self_without_return(&signature) {
+                return None;
+            }
+        } else if !free_fn_takes_mut_self(&signature, &self_ty)
+            || !fn_signature_has_no_return(&signature)
+        {
             return None;
         }
         // A user `Drop` impl runs on values a collection mutator removes or
@@ -891,11 +949,31 @@ impl EffectStateCarrier {
         test: &TestSummary,
         assertion: &OracleFact,
     ) -> bool {
+        let compared = compared_bindings_in_whole_object_assertion(&assertion.text);
+        for binding in &compared {
+            if super::reveal::owner_call_preceded_but_rebound_before_read(
+                &test.body,
+                test.start_line,
+                binding,
+                &self.owner_name,
+                assertion.line,
+            ) {
+                return false;
+            }
+        }
         let bindings = self.bindings_calling_owner_before_assertion(test, assertion.line);
-        if bindings.is_empty() {
+        let relevant: BTreeSet<String> = if compared.is_empty() {
+            bindings
+        } else {
+            bindings
+                .into_iter()
+                .filter(|binding| compared.contains(binding))
+                .collect()
+        };
+        if relevant.is_empty() {
             return true;
         }
-        bindings.iter().all(|binding| {
+        relevant.iter().all(|binding| {
             super::reveal::binding_untouched_after_owner_call(
                 &test.body,
                 test.start_line,
@@ -904,6 +982,34 @@ impl EffectStateCarrier {
                 assertion.line,
             )
         })
+    }
+
+    /// The compared receiver binding(s) in a whole-object `assert_eq!` /
+    /// `assert_ne!` macro (`assert_eq!(inv, expected)` → `inv`).
+    fn compared_bindings_in_whole_object_assertion(assertion: &str) -> BTreeSet<String> {
+        let tokens = tokenize(assertion.trim());
+        let macro_at = tokens.iter().position(|token| {
+            matches!(
+                token,
+                Tok::Ident(name)
+                    if name == "assert_eq" || name == "assert_ne" || name == "assert"
+            )
+        });
+        let Some(macro_at) = macro_at else {
+            return BTreeSet::new();
+        };
+        let open = (macro_at + 1..tokens.len()).find(|index| punct(&tokens, *index, '('));
+        let Some(open) = open else {
+            return BTreeSet::new();
+        };
+        let mut bindings = BTreeSet::new();
+        let first = open + 1;
+        if let Some(name) = ident(&tokens, first) {
+            if !KEYWORDS.contains(&name) && name != "Self" {
+                bindings.insert(name.to_string());
+            }
+        }
+        bindings
     }
 
     fn bindings_calling_owner_before_assertion(
@@ -1182,7 +1288,8 @@ fn resolve_effect_callee<'a>(
     Some((callee, name))
 }
 
-/// `callee` for an expression that is exactly `callee(self)`.
+/// `callee` for an expression that is exactly `callee(self)` or
+/// `callee(self, ..)`.
 fn free_self_argument_call_name(expression: &str) -> Option<String> {
     let trimmed = expression.trim().trim_end_matches(';').trim_end();
     let tokens = tokenize(trimmed);
@@ -1195,7 +1302,7 @@ fn free_self_argument_call_name(expression: &str) -> Option<String> {
         return None;
     }
     let args = &tokens[2..close];
-    (args == [Tok::Ident("self".to_string())]).then(|| name.to_string())
+    (args.first() == Some(&Tok::Ident("self".to_string()))).then(|| name.to_string())
 }
 
 fn resolve_free_mut_self_callee<'a>(

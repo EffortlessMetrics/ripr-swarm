@@ -870,14 +870,87 @@ mod tests {
 "#;
     let index = index(&[(LIB, LEDGER), ("tests/rewrite.rs", REWRITE)]);
     let test = the_test(&index);
-    let carrier = establish(&index, "self.refresh_low_stock(sku);").expect("ledger carrier");
-    let assertion = test
+    let Some(carrier) = establish(&index, "self.refresh_low_stock(sku);") else {
+        panic!("ledger carrier must establish for rewrite fixture");
+    };
+    let Some(assertion) = test
         .assertions
         .iter()
         .find(|fact| fact.text.contains("assert_eq!(inv, fresh)"))
-        .expect("rewrite fixture assertion");
+    else {
+        panic!("rewrite fixture must hold the whole-object assertion");
+    };
     assert!(
         !carrier.admits(test, assertion),
         "a statement that names the binding between the owner call and the assertion must refuse"
+    );
+}
+
+#[test]
+fn whole_object_refused_when_compared_binding_reassigned_after_owner_call() {
+    const REPLACE: &str = r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn replace_check() {
+        let mut inv = Inventory::new(5);
+        inv.receive("BOLT-M8", 10);
+        inv = Inventory::new(5);
+        assert_eq!(inv, Inventory::new(5));
+    }
+}
+"#;
+    let index = index(&[(LIB, LEDGER), ("tests/replace.rs", REPLACE)]);
+    let test = the_test(&index);
+    let Some(carrier) = establish(&index, "self.refresh_low_stock(sku);") else {
+        panic!("ledger carrier must establish for replace fixture");
+    };
+    let Some(assertion) = test
+        .assertions
+        .iter()
+        .find(|fact| fact.text.contains("assert_eq!(inv, Inventory::new(5))"))
+    else {
+        panic!("replace fixture must hold the whole-object assertion");
+    };
+    assert!(
+        !carrier.admits(test, assertion),
+        "a reassigned compared binding must not confirm the deleted effect"
+    );
+}
+
+#[test]
+fn unrelated_binding_rewrite_does_not_veto_compared_receiver_equality() {
+    const SIBLING: &str = r#"
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn sibling_rewrite() {
+        let mut other = Inventory::new(5);
+        let mut inv = Inventory::new(5);
+        let fresh = Inventory::new(5);
+        other.receive("A", 1);
+        other.stock.insert("B".to_string(), 2);
+        inv.receive("BOLT-M8", 10);
+        assert_eq!(inv, fresh);
+    }
+}
+"#;
+    let index = index(&[(LIB, LEDGER), ("tests/sibling.rs", SIBLING)]);
+    let test = the_test(&index);
+    let Some(carrier) = establish(&index, "self.refresh_low_stock(sku);") else {
+        panic!("ledger carrier must establish for sibling rewrite fixture");
+    };
+    let Some(assertion) = test
+        .assertions
+        .iter()
+        .find(|fact| fact.text.contains("assert_eq!(inv, fresh)"))
+    else {
+        panic!("sibling fixture must hold the whole-object assertion");
+    };
+    assert!(
+        carrier.admits(test, assertion),
+        "rewriting an unrelated owner-fed binding must not refuse the compared receiver"
     );
 }

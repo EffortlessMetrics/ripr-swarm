@@ -8601,6 +8601,10 @@ tests = [
   "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::primitive_and_std_path_calls_do_not_count_as_fixture_helpers",
   "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::escapes_found_in_review_keep_the_part_c_reading",
   "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::partial_indexes_user_field_types_and_handed_receivers_keep_the_part_c_reading",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::free_self_argument_call_establishes_carrier_and_refuses_unrelated_projection",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::whole_object_refused_when_owner_fed_binding_is_rewritten_before_assertion",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::whole_object_refused_when_compared_binding_reassigned_after_owner_call",
+  "crates/ripr/src/analysis/classify/effect_carrier/tests.rs::unrelated_binding_rewrite_does_not_veto_compared_receiver_equality",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::a_refused_effect_carrier_withholds_only_the_whole_object_observer"
 ]
 fixtures = [
