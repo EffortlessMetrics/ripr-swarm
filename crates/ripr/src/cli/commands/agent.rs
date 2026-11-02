@@ -694,6 +694,57 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
     root: &Path,
     seam_id: &str,
 ) -> Result<String, crate::cli::CommandError> {
+    translate_seam_id_for(SeamIdSurface::Repair, root, seam_id)
+}
+
+/// The command that is asking the shared repair resolver to translate a
+/// `--seam-id`. Only the refusal wording differs by surface (its own name and
+/// its own equivalent retry); the resolver and its outcomes are shared, so
+/// `agent card` and `agent packet` accept exactly the ids `agent repair` does.
+#[derive(Clone, Copy)]
+pub(in crate::cli) enum SeamIdSurface {
+    Repair,
+    Card,
+    Packet,
+}
+
+impl SeamIdSurface {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Repair => "agent repair",
+            Self::Card => "agent card",
+            Self::Packet => "agent packet",
+        }
+    }
+
+    /// The retry that names one explicit seam on this surface.
+    fn retry(self, root_arg: &str) -> String {
+        match self {
+            Self::Repair => {
+                format!("ripr agent repair --seam-id <seam-id> --root {root_arg} --phase before")
+            }
+            Self::Card => format!("ripr agent card --seam-id <seam-id> --root {root_arg}"),
+            Self::Packet => format!("ripr agent packet --seam-id <seam-id> --root {root_arg}"),
+        }
+    }
+
+    /// Only a repair starts an attempt, so only it can say none was started.
+    fn no_attempt_note(self) -> &'static str {
+        match self {
+            Self::Repair => "; no repair attempt was started",
+            Self::Card | Self::Packet => "",
+        }
+    }
+}
+
+/// [`translate_agent_repair_seam_id`] for any surface that accepts the same id
+/// shapes. An exact seam id (and any other shape) passes through untouched.
+pub(in crate::cli) fn translate_seam_id_for(
+    surface: SeamIdSurface,
+    root: &Path,
+    seam_id: &str,
+) -> Result<String, crate::cli::CommandError> {
+    let label = surface.label();
     let cross_namespace = seam_id.starts_with("probe:")
         || seam_id.starts_with("repo-probe:")
         || seam_id.starts_with("gap:")
@@ -712,8 +763,9 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
             let root_arg = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
+            let note = surface.no_attempt_note();
             Err(crate::cli::CommandError::Decision(format!(
-                "agent repair: repair ID `{seam_id}` resolves to gap `{resolved}`, which is not repair-eligible: {reason}; no repair attempt was started. Run `ripr pilot --root {root_arg}` to list current repair IDs"
+                "{label}: repair ID `{seam_id}` resolves to gap `{resolved}`, which is not repair-eligible: {reason}{note}. Run `ripr pilot --root {root_arg}` to list current repair IDs"
             )))
         }
         Ok(RepairSubjectOutcome::Ambiguous {
@@ -728,7 +780,7 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                 .collect();
             listed.sort_unstable();
             let mut message = format!(
-                "agent repair seam_id `{seam_id}` names {} gaps; select one explicitly: {}",
+                "{label} seam_id `{seam_id}` names {} gaps; select one explicitly: {}",
                 seam_ids.len(),
                 listed.join(", ")
             );
@@ -738,9 +790,7 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
             let root_arg = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
-            message.push_str(&format!(
-                ". Retry: `ripr agent repair --seam-id <seam-id> --root {root_arg} --phase before`"
-            ));
+            message.push_str(&format!(". Retry: `{}`", surface.retry(&root_arg)));
             Err(crate::cli::CommandError::Decision(message))
         }
         Ok(RepairSubjectOutcome::Unknown) => {
@@ -756,17 +806,17 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                 crate::app::task_first::non_rust_item_language(seam_id)
             {
                 format!(
-                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root: {}{}",
+                    "{label} --seam-id `{seam_id}` names no current seam in the selected root: {}{}",
                     crate::app::task_first::no_seam_inventory_reason(language, ""),
                     crate::app::task_first::gap_bound_start_pointer(language)
                 )
             } else if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
                 format!(
-                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root; the `ripr check` finding ID is stale or maps to no current seam; run {list}"
+                    "{label} --seam-id `{seam_id}` names no current seam in the selected root; the `ripr check` finding ID is stale or maps to no current seam; run {list}"
                 )
             } else {
                 format!(
-                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root; run {list}"
+                    "{label} --seam-id `{seam_id}` names no current seam in the selected root; run {list}"
                 )
             };
             Err(crate::cli::CommandError::Failure(message))
@@ -814,6 +864,12 @@ fn render_agent_packet_with_context(
     let seam_id = options.seam_id.as_deref().ok_or_else(|| {
         CoreError::from(format!("agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. {SEAM_ID_SOURCE_HINT}"))
     })?;
+    // Any id `ripr check` or `ripr pilot` prints works: the shared repair
+    // resolver maps a finding id, gap id or `file:line` to its seam, and an
+    // exact seam id passes through. A refused mapping is a typed refusal.
+    let seam_id = translate_seam_id_for(SeamIdSurface::Packet, &options.root, seam_id)
+        .map_err(|error| CoreError::seam_id_unknown(error.message().to_string()))?;
+    let seam_id = seam_id.as_str();
     let config =
         load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
     let report = analysis::inventory_classified_seams_report_at_with_config(&options.root, &config)

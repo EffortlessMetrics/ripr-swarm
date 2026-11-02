@@ -1816,6 +1816,145 @@ fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(
     Ok(())
 }
 
+fn run_agent_card_or_packet(
+    root: &Path,
+    surface: &str,
+    id: &str,
+    json: bool,
+) -> Result<Output, String> {
+    let root_arg = root.to_string_lossy().into_owned();
+    let mut args = vec!["agent", surface, "--root", &root_arg, "--seam-id", id];
+    if json || surface == "packet" {
+        args.push("--json");
+    }
+    run_ripr(root, &args)
+}
+
+/// #12420: any id `ripr check` or `ripr pilot` prints works in `agent card`
+/// and `agent packet`. A real `probe:` finding id, a real hash-form `gap:` id
+/// and a `file:line` each produce exactly the bytes the exact seam id does;
+/// the exact seam id keeps working; a stale id refuses as a typed
+/// `seam_not_found` in the surface's own terms and an unknown exact-shaped id
+/// keeps today's wording.
+#[test]
+fn agent_card_and_packet_accept_any_id_check_prints() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-any-id-card-packet")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let stdout = stdout_text(&check);
+    let seam_id = printed_repair_identity(&stdout)
+        .ok_or_else(|| format!("check must print a repair line:\n{stdout}"))?;
+    let probe_id = printed_probe_identity(&stdout)
+        .ok_or_else(|| format!("check must print a probe finding ID:\n{stdout}"))?;
+    let rerun = run_ripr(
+        root,
+        &[
+            "rerun",
+            "--root",
+            &root_arg,
+            "--changed-test",
+            "tests/pricing.rs",
+            "--json",
+        ],
+    )?;
+    let rerun_json: serde_json::Value =
+        serde_json::from_slice(&rerun.stdout).map_err(|err| format!("parse rerun JSON: {err}"))?;
+    let gap_id = rerun_json["seams"]
+        .as_array()
+        .and_then(|seams| {
+            seams
+                .iter()
+                .find_map(|seam| seam["canonical_gap_id"].as_str().map(str::to_string))
+        })
+        .ok_or_else(|| "rerun must carry a canonical_gap_id".to_string())?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+
+    for surface in ["card", "packet"] {
+        let exact = run_agent_card_or_packet(root, surface, &seam_id, true)?;
+        assert_exit(&exact, 0, "exact seam id keeps working");
+        for (label, id) in [
+            ("probe finding id", probe_id.as_str()),
+            ("gap id", gap_id.as_str()),
+            ("file:line", "src/lib.rs:2"),
+        ] {
+            let translated = run_agent_card_or_packet(root, surface, id, true)?;
+            assert_exit(&translated, 0, &format!("agent {surface} with a {label}"));
+            assert_eq!(
+                stdout_text(&translated),
+                stdout_text(&exact),
+                "agent {surface} with a {label} must print the exact-id bytes"
+            );
+        }
+        // Stale: a finding id no current seam carries.
+        let stale =
+            run_agent_card_or_packet(root, surface, "probe:src_lib.rs:predicate:00000000", true)?;
+        assert_exit(&stale, 3, &format!("agent {surface} with a stale id"));
+        let stale_stderr = stderr_text(&stale);
+        assert!(
+            stale_stderr.contains(&format!("agent {surface} --seam-id"))
+                && stale_stderr.contains("stale"),
+            "stale refusal must name this command and the stale id:\n{stale_stderr}"
+        );
+        assert!(
+            !stale_stderr.contains("agent repair"),
+            "stale refusal must not name a command the user did not run:\n{stale_stderr}"
+        );
+        // Unknown exact-shaped id: today's flow, today's wording.
+        let unknown = run_agent_card_or_packet(root, surface, "0000000000000000", true)?;
+        assert_exit(&unknown, 3, &format!("agent {surface} with an unknown id"));
+        assert!(
+            stderr_text(&unknown).contains(&format!(
+                "agent {surface} seam_id 0000000000000000 was not found"
+            )),
+            "{}",
+            stderr_text(&unknown)
+        );
+    }
+    let stale_card =
+        run_agent_card_or_packet(root, "card", "probe:src_lib.rs:predicate:00000000", true)?;
+    let envelope: serde_json::Value = serde_json::from_slice(&stale_card.stdout)
+        .map_err(|err| format!("stale card must print the typed envelope: {err}"))?;
+    assert_eq!(envelope["error"]["kind"], "seam_not_found");
+    assert_eq!(
+        envelope["error"]["seam_id"],
+        "probe:src_lib.rs:predicate:00000000"
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "card and packet never start an attempt"
+    );
+    Ok(())
+}
+
+/// #12420: an id naming several gaps is refused by `agent card` and
+/// `agent packet` exactly as `ripr repair` refuses it: no pick, a bounded
+/// list, and the equivalent retry for the surface that was run.
+#[test]
+fn agent_card_and_packet_refuse_an_ambiguous_gap_id() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-any-id-ambiguous")?;
+    let root = &fixture.root;
+    populate_duplicate_expression_fixture(root)?;
+    let gap = "gap:rust:src/lib.rs:tiered:predicate_boundary:predicate:amount==threshold";
+    for surface in ["card", "packet"] {
+        let output = run_agent_card_or_packet(root, surface, gap, false)?;
+        assert_exit(
+            &output,
+            3,
+            &format!("agent {surface} with an ambiguous gap id"),
+        );
+        let stderr = stderr_text(&output);
+        assert!(
+            stderr.contains("names 2 gaps; select one explicitly")
+                && stderr.contains(&format!("Retry: `ripr agent {surface} --seam-id <seam-id>")),
+            "ambiguous refusal must list the gaps and name this command's retry:\n{stderr}"
+        );
+    }
+    Ok(())
+}
+
 /// #8166 review: an invented probe ordinal (`.999` on the valid fingerprint
 /// of the sole seam) and a `.2` whose second occurrence is not among the
 /// remaining seams are both stale: they refuse with no attempt instead of
