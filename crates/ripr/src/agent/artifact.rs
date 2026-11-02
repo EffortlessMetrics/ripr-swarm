@@ -826,10 +826,8 @@ fn parse_check_findings_document(
     raw: &str,
     label: &str,
 ) -> Result<CheckFindingsDocument, String> {
-    let subject = format!("agent verify {label} artifact");
     let parsed_value = serde_json::from_str::<Value>(raw)
         .map_err(|err| check_findings_parse_refusal(label, err))?;
-    refuse_check_findings_producer_stamp_before_shape(root, &subject, &parsed_value)?;
     let document: CheckFindingsDocument = serde_json::from_value(parsed_value)
         .map_err(|err| check_findings_parse_refusal(label, err))?;
     if document.schema_version.trim().is_empty() {
@@ -837,6 +835,7 @@ fn parse_check_findings_document(
             "agent verify {label} artifact has an empty check schema version"
         ));
     }
+    let _ = root;
     Ok(document)
 }
 
