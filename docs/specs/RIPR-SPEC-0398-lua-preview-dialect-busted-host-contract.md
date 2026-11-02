@@ -105,28 +105,33 @@ Passive analysis must not execute `lua`, `luajit`, `luarocks`, `busted`, or load
 Project detection without `ripr.toml` must **not** silently enable Lua. An explicit
 `ripr.toml` remains authoritative.
 
-### Independent capability cells
+### Independent capability disposition (registry-aligned)
 
-Lua evidence is reported through **separate capability cells**. One cell changing state
-must not imply another cell is `proven`, `available`, or gate-eligible. At minimum the
-registry must be able to distinguish:
+Shared capability reporting (#5531, RIPR-SPEC-0365) admits only
+`language/framework/mode/family` registry cells. Today the closed family set is exactly
+`static_facts` and `repair_routing`; finer families are added only when a distinct
+producer or consumer makes an admission decision from its own cell. This spec does not
+extend that enum.
 
-| Axis | Example cell id pattern | Reports |
-| --- | --- | --- |
-| Dialect / runtime | `lua/5.1/diff/static_facts`, `lua/5.4/diff/static_facts`, `lua/luajit/diff/static_facts` | Which Lua dialect or LuaJIT profile was selected for the run |
-| Package / rockspec | `lua/rockspec/repo/package_discovery` | Standalone luarocks package layout vs unknown |
-| Repo mode | `lua/standalone/repo/static_facts`, `lua/embedded/host/static_facts` | Ordinary package tree vs embedded-host/vendor disposition |
-| Test framework | `lua/busted/diff/test_framework` | Busted registration and selector coverage |
-| Table / metatable owners | `lua/table/diff/owner_facts` | Table member and metamethod owner extraction |
-| Interaction / test doubles | `lua/busted/diff/interaction_facts` | Spy/stub/mock call observations (caller-side only) |
-| Relations | `lua/diff/related_tests` | Exact helper/table/global relations where bounded |
-| Host / native | `lua/host/diff/native_edges` | Registered cross-language edges only |
-| Actionability | `lua/diff/repair_routing` | Preview repair routing when explicitly implemented |
-| Verification | `lua/verification/external` | External receipt hooks; not passive analysis |
+**Registered Lua cells (future implementation)** therefore begin as:
 
-Cells are **not** merged into one “Lua works” claim. Partial, capped, dialect-limited,
-or embedded-host incomplete runs must surface `limited` or `unavailable` disposition on
-the affected cells (#5597 acceptance).
+| Cell id | Role |
+| --- | --- |
+| `lua/busted/diff/static_facts` | Owners, Busted tests, assertions, interactions, probes, relations |
+| `lua/busted/repo/static_facts` | Bounded repo-mode working-set facts for Busted-shaped trees |
+| `lua/busted/diff/repair_routing` | Preview repair routing when explicitly implemented (blocked until a later slice) |
+
+Dialect/runtime (`lua51`, `luajit`, …), rockspec/package discovery completeness,
+standalone vs embedded-host repo mode, table/metatable owner coverage, interaction vs
+oracle completeness, host/native edge completeness, and external verification receipts
+are **separate disposition axes** carried on `language_runs[]`, limitation records, and
+human/JSON disclosure. They must be reported independently and must not collapse into one
+“Lua works” boolean, but they are not separate registry families until #5531 adds a
+consumer that gates on a finer cell.
+
+Partial, capped, dialect-limited, or embedded-host incomplete runs must surface explicit
+`limited` / `unavailable` disposition on the relevant axes (#5597 acceptance) without
+presenting a clean complete outcome.
 
 ### Dialect and runtime context
 
@@ -232,7 +237,8 @@ facts and from interaction facts.
 rules pass for Busted (not pending, not excluded by a visible skip/filter the static contract
 evaluates, not outside a selected tag filter when filter context is known). Pending,
 excluded, or tag-filtered blocks retain related-test pointers where appropriate but carry
-`test_activation_unestablished` and emit no oracle credit.
+the shared activation reason `test_activation_unestablished` (related-test metadata, as in
+RIPR-SPEC-0028) and emit no oracle credit. That reason is not a `static_limit_kind`.
 
 **Selector limits:** tag filters, random seeds, custom Busted options, and runtime-only
 registration hooks are not evaluated. When selection is unknown, the run fails closed on
@@ -279,6 +285,12 @@ Rules:
 
 - Verifying a stub/spy records **caller dispatch** and argument shapes visible at the call
   site; it does not grip unrelated production behavior behind the double.
+- A **stub** replaces the callee; production implementation behind the stub is not observed
+  on that path and caps at `reachable_unrevealed` unless an independent non-double oracle
+  exists.
+- A **call-through spy** (`spy.on`) still executes the original function; interaction facts
+  cover the wrapper, and any production oracle credit still requires a separate value/state
+  assertion that pins the changed sink (the spy alone is not an exact-value oracle).
 - Replacing a table member or global with a stub means production code under the real
   implementation is **not** observed by that test path; relation kind reflects test-double
   indirection and caps classification at `reachable_unrevealed` unless an independent
@@ -335,6 +347,10 @@ values (additive to RIPR-SPEC-0026 where shared kinds apply):
 | `opaque_custom_assertion_helper` | Unmodeled assertion helper |
 | `unsupported_syntax` | Parse failure |
 | `mocked_module` | Production path replaced by test double for that relation |
+| `generated_test_registration_unresolved` | Helper/parametric Busted registration not syntactically bounded |
+
+Inactive Busted blocks use activation reason `test_activation_unestablished`, not a row in
+this table.
 
 Limitations map to exposure classes per shared rules: they are not silent `no_static_path`
 coercions unless the shared classifier says so, and they never emit actionable repair packets
@@ -400,16 +416,18 @@ The adapter does not consume runtime Busted results, Lua VM state, or live host 
 
 ## Acceptance Examples
 
-1. **Dialect cells explicit:** A run on a rockspec-declared 5.1 package reports
-   `lua/5.1/diff/static_facts` separately from `lua/busted/diff/test_framework`; neither
-   cell implies the other is complete.
+1. **Disposition axes explicit:** A rockspec-declared 5.1 package run reports
+   `dialect=lua51` on the `lua/busted/diff/static_facts` cell disposition while a separate
+   `repo_mode=embedded_host` limitation can remain `limited`; neither axis implies the
+   other is complete.
 2. **Colon vs dot:** `obj:send()` and `obj.send()` yield distinct receiver/self facts for the
    same table symbol; swapping forms does not reuse the wrong probe id.
 3. **Table member assignment:** `T.helper = function() ... end` receives a stable anonymous-member
    probe id; the string `helper` alone does not establish reach to unrelated tables.
-4. **Spy vs assert:** A test with `assert.spy(fn)` call-count expectations credits interaction
-   on the spy wrapper only; a literal return-value `assert.are.equal` on a non-doubled call
-   remains a separate oracle fact.
+4. **Spy vs stub vs assert:** A stubbed function gives interaction credit only and withholds
+   production reach; a call-through spy with `assert.spy(...).was.called` credits interaction
+   on the wrapper and still needs a separate value assertion to credit the changed sink; a
+   literal `assert.are.equal` on a non-doubled call remains a separate oracle fact.
 5. **Stubbed module:** When `package.loaded` or a stub replaces a module, production
    implementation behind the stub is not `exposed` through stub invocation credit.
 6. **Metatable stop:** A call routed only through unresolved `__index` metatable chain receives
