@@ -47,17 +47,23 @@ The aggregate is `complete` only when every required row has terminal result
 `missing_evidence` keep the aggregate `incomplete`; skipped or zero-subject
 runs cannot aggregate to pass.
 
-Slice `r3-slice-1-normal-use-linux` exercises the five normal/repeat-use
-scenarios on Linux through production APIs; the remaining twenty rows stay
-explicitly unexercised until later slices.
+Slice `r3-slice-1-normal-use-linux` exercises four of the five
+normal/repeat-use scenarios (1, 3, 4, and 5) on Linux through production APIs.
+Scenario 2 is emitted as a placeholder and is explicitly unexecuted; it and the
+remaining twenty catalog rows stay explicitly unexercised until later slices.
+
+Aggregate `complete` requires every catalog identity exactly once with terminal
+`pass` or `incomparable`; empty or partial caller-supplied row sets stay
+`incomplete`.
 
 ## Required Evidence
 
 - `cargo test -p ripr --lib repair_attempt_closeout_matrix -- --nocapture`
   runs with nonzero subjects.
 - The catalog pins exactly twenty-five scenario identities.
-- Slice 1 leaves aggregate `incomplete` while twenty rows remain
-  `missing_evidence`.
+- Slice 1 exercises four passing rows and leaves aggregate `incomplete` while
+  21 rows remain `missing_evidence`, including the explicitly unexecuted
+  scenario 2.
 - JSON and Markdown renderings derive from one DTO and agree on aggregate
   state.
 
