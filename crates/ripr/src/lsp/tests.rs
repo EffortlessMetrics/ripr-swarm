@@ -6407,6 +6407,157 @@ fn code_action_response_every_advertised_kind_is_emitted() -> Result<(), String>
     Ok(())
 }
 
+#[test]
+fn code_action_response_unknown_only_kind_returns_empty() -> Result<(), String> {
+    // #1891 / RIPR-SPEC-0129: an unsupported or unknown `only` kind must not
+    // leak unrelated actions. `refactor.extract` is a standard LSP kind the
+    // server never emits; `source.ripr.does-not-exist` is a RIPR-looking
+    // kind with no advertised subtree.
+    let vscode = vscode_client_features()?;
+    let (mut params, snapshot) = seam_code_action_request()?;
+    let unfiltered = code_action_response(&params, Some(&snapshot), &vscode);
+    if unfiltered.is_empty() {
+        return Err("seam scenario must emit actions before the unknown-kind filter".to_string());
+    }
+
+    params.context.only = Some(vec![CodeActionKind::new("refactor.extract")]);
+    let refactor_only = code_action_response(&params, Some(&snapshot), &vscode);
+    assert_eq!(
+        refactor_only.len(),
+        0,
+        "only: [refactor.extract] must return an empty list, got {:?}",
+        code_action_kinds(&refactor_only)?
+    );
+
+    params.context.only = Some(vec![CodeActionKind::new("source.ripr.does-not-exist")]);
+    let unknown_ripr = code_action_response(&params, Some(&snapshot), &vscode);
+    assert_eq!(
+        unknown_ripr.len(),
+        0,
+        "only: [source.ripr.does-not-exist] must return an empty list, got {:?}",
+        code_action_kinds(&unknown_ripr)?
+    );
+    Ok(())
+}
+
+#[test]
+fn code_action_response_reserved_verify_only_kinds_return_empty() -> Result<(), String> {
+    // #1891 original proof asked `only: [source.ripr.verify]` to keep verify
+    // actions. #4419/#7773 reserved verify (`quickfix.ripr.verify`) until an
+    // emitter lands, and no action emits `source.ripr.verify`. Both requests
+    // must fail closed to empty rather than returning inspect/navigate/refresh.
+    let vscode = vscode_client_features()?;
+    let (mut params, snapshot) = seam_code_action_request()?;
+    let unfiltered = code_action_response(&params, Some(&snapshot), &vscode);
+    if unfiltered.len() < 2 {
+        return Err(format!(
+            "seam scenario must emit actions beyond refresh, got {}",
+            unfiltered.len()
+        ));
+    }
+
+    for kind in ["source.ripr.verify", "quickfix.ripr.verify"] {
+        params.context.only = Some(vec![CodeActionKind::new(kind)]);
+        let filtered = code_action_response(&params, Some(&snapshot), &vscode);
+        assert_eq!(
+            filtered.len(),
+            0,
+            "only: [{kind}] must return empty while verify stays unemitted, got {:?}",
+            code_action_kinds(&filtered)?
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn code_action_response_only_source_ripr_keeps_only_refresh() -> Result<(), String> {
+    // #1891 / LSP 3.17 parent-kind semantics: `source.ripr` matches the
+    // advertised RIPR source subtree. After #4419 that subtree is only
+    // `source.ripr.refresh`; inspect/navigate live under `quickfix.ripr.*`.
+    let vscode = vscode_client_features()?;
+    let (mut params, snapshot) = seam_code_action_request()?;
+    params.context.only = Some(vec![CodeActionKind::new("source.ripr")]);
+    let filtered = code_action_response(&params, Some(&snapshot), &vscode);
+    assert_eq!(
+        code_action_kinds(&filtered)?,
+        vec!["source.ripr.refresh".to_string()],
+        "only: [source.ripr] must keep only the workspace refresh action"
+    );
+    Ok(())
+}
+
+#[test]
+fn code_action_response_unknown_only_kind_does_not_poison_a_matching_kind() -> Result<(), String> {
+    // `only` is a disjunction: an unknown kind beside a matching kind must
+    // keep the matching actions, not empty the list.
+    let vscode = vscode_client_features()?;
+    let (mut params, snapshot) = seam_code_action_request()?;
+    params.context.only = Some(vec![
+        CodeActionKind::new("refactor.extract"),
+        CodeActionKind::new("source.ripr.refresh"),
+    ]);
+    let filtered = code_action_response(&params, Some(&snapshot), &vscode);
+    assert_eq!(
+        code_action_kinds(&filtered)?,
+        vec!["source.ripr.refresh".to_string()],
+        "only: [refactor.extract, source.ripr.refresh] must keep refresh"
+    );
+    Ok(())
+}
+
+#[test]
+fn code_action_response_identical_requests_keep_stable_serialized_order() -> Result<(), String> {
+    // #1891: identical snapshot/request inputs must keep byte-stable action
+    // order. Two independent calls through the retained producer are compared
+    // on title, kind, command, and arguments so a later reorder cannot hide
+    // behind equal lengths.
+    let vscode = vscode_client_features()?;
+    let (params, snapshot) = seam_code_action_request()?;
+    let first = code_action_response(&params, Some(&snapshot), &vscode);
+    let second = code_action_response(&params, Some(&snapshot), &vscode);
+    if first.len() < 2 {
+        return Err(format!(
+            "seam scenario must emit several actions, got {}",
+            first.len()
+        ));
+    }
+    assert_eq!(
+        serialize_code_action_list(&first)?,
+        serialize_code_action_list(&second)?,
+        "identical code-action requests must serialize in the same order"
+    );
+    Ok(())
+}
+
+fn serialize_code_action_list(actions: &[CodeActionOrCommand]) -> Result<String, String> {
+    let mut rows = Vec::new();
+    for action in code_action_literals(actions)? {
+        let kind = action
+            .kind
+            .as_ref()
+            .map(CodeActionKind::as_str)
+            .unwrap_or("");
+        let command = action
+            .command
+            .as_ref()
+            .map(|command| command.command.as_str())
+            .unwrap_or("");
+        let arguments = action
+            .command
+            .as_ref()
+            .and_then(|command| command.arguments.as_ref())
+            .cloned()
+            .unwrap_or_default();
+        let arguments = serde_json::to_string(&arguments)
+            .map_err(|err| format!("serialize arguments for {}: {err}", action.title))?;
+        rows.push(format!(
+            "{}\t{}\t{}\t{}",
+            action.title, kind, command, arguments
+        ));
+    }
+    Ok(rows.join("\n"))
+}
+
 /// Collect the kind string of every action, failing when an action carries
 /// no kind (a kind-less action would fail closed under `context.only`).
 fn code_action_kinds(actions: &[CodeActionOrCommand]) -> Result<Vec<String>, String> {
