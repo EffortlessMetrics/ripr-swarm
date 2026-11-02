@@ -1,0 +1,11 @@
+{
+  "issue": 4149,
+  "acceptance": 2,
+  "experiment": "Mutated crates/ripr/src/lsp/capabilities.rs TextDocumentSyncSaveOptions.include_text from false to true, rebuilt ripr, probed with probeStandardLspCompatibility (same gate as lsp_compatibility suiteSetup).",
+  "observed": {
+    "status": "incompatible",
+    "kind": "missing_required_capability",
+    "detail": "Initialize result omitted required capabilities: textDocumentSync (save.includeText is unsupported)."
+  },
+  "note": "suiteSetup asserts compatible on the same probe; this incompatible result is the red witness that would fail the VS Code compatibility suite before fake-server tests run."
+}

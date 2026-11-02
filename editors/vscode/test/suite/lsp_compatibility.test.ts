@@ -3,7 +3,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { probeStandardLspCompatibility, REQUIRED_SERVER_COMMANDS } from '../../src/lspCompatibility';
+import { probeStandardLspCompatibility, REQUIRED_SERVER_COMMANDS, textDocumentSyncAdmissionFailureReason } from '../../src/lspCompatibility';
 import { probeServerVersion } from '../../src/serverResolver';
 
 // A terminated descendant is reparented to PID 1. Where PID 1 does not reap
@@ -47,6 +47,33 @@ suite('Standard LSP compatibility probe', () => {
     assert.strictEqual(result.status, 'compatible', JSON.stringify(result));
     assert.ok(observed, 'the real server did not provide an initialize capability result');
     advertisedCapabilities = observed;
+  });
+
+  test('#4149: probed initialize textDocumentSync passes the extension admission gate used by fake positives', () => {
+    const reason = textDocumentSyncAdmissionFailureReason(advertisedCapabilities.textDocumentSync);
+    assert.strictEqual(
+      reason,
+      undefined,
+      reason ?? 'the real server advertisement must stay serviceable for fake-server seeding'
+    );
+  });
+
+  test('#4149 acceptance 2: unserviceable server textDocumentSync fails admission before fake-server seeding', () => {
+    const drifted = JSON.parse(JSON.stringify(advertisedCapabilities)) as Record<string, unknown>;
+    const sync = drifted.textDocumentSync;
+    assert.ok(sync && typeof sync === 'object' && !Array.isArray(sync));
+    (sync as Record<string, unknown>).save = { includeText: true };
+    const reason = textDocumentSyncAdmissionFailureReason(sync);
+    assert.ok(reason && reason.includes('includeText'), reason ?? 'expected includeText drift to fail admission');
+  });
+
+  test('#4149 acceptance 2: recorded server-side sync drift witness rejects the compatibility probe', () => {
+    const witnessPath = path.join(__dirname, '../../../test/fixtures/4149-server-sync-drift-probe.json');
+    const witness = JSON.parse(fs.readFileSync(witnessPath, 'utf8')) as {
+      observed: { status: string; detail: string };
+    };
+    assert.strictEqual(witness.observed.status, 'incompatible');
+    assert.match(witness.observed.detail, /textDocumentSync.*includeText/);
   });
 
   teardown(() => {
