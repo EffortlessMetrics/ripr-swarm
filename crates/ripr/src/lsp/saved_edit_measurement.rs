@@ -37,6 +37,7 @@ impl SubjectTier {
 enum RunState {
     Executed,
     NotAuthorized,
+    #[expect(dead_code, reason = "policy:4863: reserved for authorized external subjects with no scheduled run")]
     NotRun,
 }
 
