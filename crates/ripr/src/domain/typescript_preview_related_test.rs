@@ -46,14 +46,17 @@ fn related_test_for_typescript_oracle_evidence_ref(finding: &Finding) -> Option<
     let (file, line_text) = reference.rsplit_once(':')?;
     let evidence_line = line_text.parse::<usize>().ok()?;
     let file_norm = file.replace('\\', "/");
-    finding
-        .related_tests
-        .iter()
-        .filter(|test| {
-            test.file.to_string_lossy().replace('\\', "/") == file_norm
-                && test.line <= evidence_line
-        })
-        .max_by_key(|test| test.line)
+    let mut best: Option<&RelatedTest> = None;
+    for test in finding.related_tests.iter() {
+        if test.file.to_string_lossy().replace('\\', "/") != file_norm || test.line > evidence_line
+        {
+            continue;
+        }
+        if best.is_none_or(|current| test.line > current.line) {
+            best = Some(test);
+        }
+    }
+    best
 }
 
 fn typescript_row_carries_family_oracle(test: &RelatedTest, family: &ProbeFamily) -> bool {
