@@ -42,8 +42,12 @@ fn parent_process_id() -> Option<u32> {
     None
 }
 
-pub(super) fn spawn_parent_death_watchdog(session_end: SessionEnd) {
-    let Some(initial) = parent_process_id() else {
+pub(super) fn initial_parent_process_id() -> Option<u32> {
+    parent_process_id()
+}
+
+pub(super) fn spawn_parent_death_watchdog(session_end: SessionEnd, watched_parent: Option<u32>) {
+    let Some(initial) = watched_parent else {
         return;
     };
     tokio::spawn(async move {
