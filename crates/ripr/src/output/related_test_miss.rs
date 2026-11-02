@@ -5,8 +5,7 @@
 //! say the same thing about the same test.
 
 use crate::domain::{
-    Finding, LanguageId, OracleKind, OracleStrength, ProbeFamily, RelatedTest, RelatedTestMiss,
-    RelationReason,
+    Finding, LanguageId, ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason,
 };
 
 /// Why a TypeScript or JavaScript assertion's observation stays unconfirmed.
@@ -351,8 +350,9 @@ mod tests {
         assert!(headline_related_test(Some(LanguageId::TypeScript), &[]).is_none());
     }
 
-    /// #5505: preview surfaces prefer the producer oracle ref, then the
-    /// strongest family-relevant row, never a wrong-family strength-only pick.
+    /// #5505: preview surfaces prefer a family-relevant producer oracle ref
+    /// only when it matches the missing-check family; equal-strength later
+    /// same-file refs cannot displace the first family-relevant row.
     #[test]
     fn typescript_script_preview_related_test_controls() {
         use crate::domain::{
@@ -454,6 +454,15 @@ mod tests {
         stronger.name = "stronger".to_string();
         stronger.oracle_strength = OracleStrength::Strong;
         let mut with_ref = ts_finding(ProbeFamily::Predicate, vec![stronger, evidence_row.clone()]);
+        with_ref.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount == threshold".to_string(),
+            reason: "changed TypeScript equality-boundary lacks a concrete preview discriminator"
+                .to_string(),
+            flow_sink: None,
+        }];
+        with_ref
+            .evidence
+            .push("typescript_oracle_observed: applyDiscount(100, 100)".to_string());
         with_ref
             .evidence
             .push("typescript_oracle_evidence_ref: tests/discount.test.ts:5".to_string());
@@ -466,6 +475,111 @@ mod tests {
         assert_eq!(
             typescript_script_preview_related_test(&only_unknown).map(|row| row.name.as_str()),
             Some("throw-only")
+        );
+    }
+
+    /// `fixtures/typescript_strong_oracle`: missing check is `amount == threshold`.
+    /// Producer oracle-ref points at the later far-from-boundary `toBe` row;
+    /// preview must keep the first family/boundary-matching test.
+    #[test]
+    fn typescript_strong_oracle_preview_keeps_at_threshold_related_test() {
+        use crate::domain::{
+            ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageStatus,
+            Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence, SourceLocation,
+            StageEvidence, StageState,
+        };
+
+        fn stage(state: StageState) -> StageEvidence {
+            StageEvidence {
+                state,
+                confidence: Confidence::Low,
+                summary: String::new(),
+            }
+        }
+
+        let mut at_threshold = test_with(None, None);
+        at_threshold.name = "at threshold discounts".to_string();
+        at_threshold.file = PathBuf::from("tests/discount.test.ts");
+        at_threshold.line = 5;
+        at_threshold.oracle_strength = OracleStrength::Strong;
+        at_threshold.oracle_kind = OracleKind::ExactValue;
+        let mut above_threshold = at_threshold.clone();
+        above_threshold.name = "above threshold discounts".to_string();
+        above_threshold.line = 9;
+        let mut finding = Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
+            id: "probe:src/discount.ts:typescript_preview:2396aec1".to_string(),
+            canonical_gap: None,
+            probe: Probe {
+                id: ProbeId(
+                    "probe:src/discount.ts:typescript_preview:2396aec1".to_string(),
+                ),
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                location: SourceLocation::new("src/discount.ts", 2, 1),
+                expression: "if (amount >= threshold)".to_string(),
+                before: None,
+                after: Some("if (amount >= threshold)".to_string()),
+                owner: None,
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
+            class: ExposureClass::WeaklyExposed,
+            ripr: RiprEvidence {
+                reach: stage(StageState::Yes),
+                infect: stage(StageState::Unknown),
+                propagate: stage(StageState::Unknown),
+                reveal: RevealEvidence {
+                    observe: stage(StageState::Weak),
+                    discriminate: stage(StageState::Weak),
+                },
+            },
+            evidence: vec![
+                "typescript_oracle_observed: applyDiscount(10000, 100)".to_string(),
+                "typescript_oracle_evidence_ref: tests/discount.test.ts:10".to_string(),
+            ],
+            missing: Vec::new(),
+            activation: ActivationEvidence {
+                observed_values: Vec::new(),
+                missing_discriminators: vec![MissingDiscriminatorFact {
+                    value: "amount == threshold".to_string(),
+                    reason:
+                        "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"
+                            .to_string(),
+                    flow_sink: None,
+                }],
+            },
+            stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
+            related_tests: vec![at_threshold, above_threshold],
+            recommended_next_step: None,
+            language: Some(LanguageId::TypeScript),
+            language_status: Some(LanguageStatus::Preview),
+            confidence: 0.4,
+            flow_sinks: Vec::new(),
+            owner_kind: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+        };
+
+        let selected = typescript_script_preview_related_test(&finding);
+        assert_eq!(selected.map(|row| row.line), Some(5));
+        assert_eq!(
+            selected.map(|row| row.name.as_str()),
+            Some("at threshold discounts")
+        );
+
+        finding.language = Some(LanguageId::JavaScript);
+        let selected = typescript_script_preview_related_test(&finding);
+        assert_eq!(selected.map(|row| row.line), Some(5));
+        assert_eq!(
+            selected.map(|row| row.name.as_str()),
+            Some("at threshold discounts")
         );
     }
 
