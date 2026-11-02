@@ -644,6 +644,31 @@ impl WithheldMacroBindings {
         }
         self.any_name
     }
+
+    /// A withheld unparsable file disables crate-root routing the way
+    /// `used_lexical_fallback` does in the full index (#6919).
+    pub(in crate::analysis) fn disable_crate_root_routing(&mut self) {
+        if self.any_name {
+            self.by_root.clear();
+            self.root_sites.clear();
+            self.root_any_name = false;
+            self.confined_binaries.clear();
+            return;
+        }
+        for (root, names) in std::mem::take(&mut self.by_root) {
+            for name in names {
+                let Some((path, site)) = self.root_sites.remove(&(name.clone(), root.clone()))
+                else {
+                    continue;
+                };
+                self.any_name |= site.kind.binds_any_name();
+                self.trusted.insert(name.clone());
+                self.sites.entry(name).or_insert((path, site));
+            }
+        }
+        self.root_any_name = false;
+        self.confined_binaries.clear();
+    }
 }
 
 impl WithheldMacroBindings {

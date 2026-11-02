@@ -807,6 +807,7 @@ fn perl_strict_actionability_uses_selected_strict_evidence_for_gap_identity() ->
             owner_id: "perl:lib/My/App.pm::My::App::discount".to_string(),
             test_id: "test:t/app.t:discount_smoke".to_string(),
             oracle_id: Some("oracle:t/app.t:6:ok".to_string()),
+            callsite_id: None,
             relation_kind: RelationKind::DirectOwnerCall,
             reachability_hint: ReachabilityHint::Reachable,
             confidence: Confidence::High,
@@ -2736,7 +2737,7 @@ fn consumer_still_parses_legacy_packets_without_frozen_fields() -> Result<(), St
 // ──────────────────────────────────────────────────────────────────────
 
 /// Drive the production mapper: consume a packet, then map to Findings.
-fn findings_from_packet(text: &str) -> Result<Vec<crate::domain::Finding>, String> {
+pub(crate) fn findings_from_packet(text: &str) -> Result<Vec<crate::domain::Finding>, String> {
     let packet = consume(&bless_fingerprint(text))?;
     Ok(packet_to_findings(&packet))
 }
@@ -4878,7 +4879,7 @@ fn perl_declared_one_based_basis_governs_diff_settlement() -> Result<(), String>
 // ──────────────────────────────────────────────────────────────────────
 
 /// The class and per-row misses of the first finding a packet projects.
-fn first_finding_misses(
+pub(crate) fn first_finding_misses(
     text: &str,
 ) -> Result<(crate::domain::ExposureClass, Vec<Option<RelatedTestMiss>>), String> {
     let findings = findings_from_packet(text)?;
@@ -4891,7 +4892,7 @@ fn first_finding_misses(
     ))
 }
 
-fn with_sinks(changed_observable: &str, observed_sink: Option<&str>) -> String {
+pub(crate) fn with_sinks(changed_observable: &str, observed_sink: Option<&str>) -> String {
     let packet = EXACT_RETURN_PACKET.replace(
         "\"changed_text_digest\": \"sha256:return\",",
         &format!(
@@ -5658,12 +5659,12 @@ fn partial_packet_outcome(
 // the findings exported below.
 // ──────────────────────────────────────────────────────────────────────
 
-const THRESHOLD_TEST: &str = "test_discount_threshold";
-const SECOND_TEST: &str = "test_discount_wrapper";
+pub(crate) const THRESHOLD_TEST: &str = "test_discount_threshold";
+pub(crate) const SECOND_TEST: &str = "test_discount_wrapper";
 
 /// Parse a packet, apply `edit`, and serialize it again. The fingerprint is
 /// re-blessed by `findings_from_packet`.
-fn edited_packet(
+pub(crate) fn edited_packet(
     text: &str,
     edit: impl FnOnce(&mut serde_json::Value) -> Result<(), String>,
 ) -> Result<String, String> {
@@ -5673,7 +5674,7 @@ fn edited_packet(
     serde_json::to_string_pretty(&packet).map_err(|error| format!("render packet: {error}"))
 }
 
-fn packet_array<'a>(
+pub(crate) fn packet_array<'a>(
     packet: &'a mut serde_json::Value,
     key: &str,
 ) -> Result<&'a mut Vec<serde_json::Value>, String> {
@@ -5685,7 +5686,7 @@ fn packet_array<'a>(
 
 /// Set one field of the first fact in `key` (the threshold test's fact in
 /// `EXACT_RETURN_PACKET`).
-fn set_first(
+pub(crate) fn set_first(
     packet: &mut serde_json::Value,
     key: &str,
     field: &str,
@@ -5702,7 +5703,7 @@ fn set_first(
 /// the same change by `relation_kind`. `own_oracle` adds the test's own
 /// `(kind, strength)` oracle; `linked_oracle_id` is the oracle its relation
 /// links, which may be its own, the threshold test's, or none.
-fn with_second_row(
+pub(crate) fn with_second_row(
     text: &str,
     relation_kind: &str,
     own_oracle: Option<(&str, &str)>,
@@ -5826,7 +5827,9 @@ pub(crate) fn perl_direct_and_advisory_finding() -> Result<crate::domain::Findin
 
 /// `(name, miss)` per row, sorted by test name so a row is found by identity
 /// rather than by position.
-fn rows_by_name(finding: &crate::domain::Finding) -> Vec<(String, Option<RelatedTestMiss>)> {
+pub(crate) fn rows_by_name(
+    finding: &crate::domain::Finding,
+) -> Vec<(String, Option<RelatedTestMiss>)> {
     let mut rows = finding
         .related_tests
         .iter()

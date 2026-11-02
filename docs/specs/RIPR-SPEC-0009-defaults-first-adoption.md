@@ -723,16 +723,22 @@ repository as pilot's scope, and pilot-summary.json records current_change
 state no_change or unavailable.
 ```
 
-### Pilot labels an assertion with placeholders as a shape
+### Human handoff labels an assertion with placeholders as a shape
 
 A suggested assertion that carries `/* ... */` placeholders for values only the
 developer knows (for example `assert_eq!(total(/* boundary input where a >= b
-*/), /* expected */)`) is printed in the pilot human output as
+*/), /* expected */)`) is printed in human handoff output as
 `assertion shape: ...`, followed by a note to replace each `/* ... */` comment
 with a real value from the developer's test before using it. Any other
-assertion text keeps its `assertion:` label and gets no note. The structured
-pilot packets keep their existing fields; the only value that changes is the
-boundary placeholder text below (#9244, #11023).
+assertion text keeps its existing label and gets no note. The same fill-in note
+follows other human handoff lines that print the placeholder string under a
+different field name (`Focused proof intent`, Markdown `Assertion shape`,
+repair-summary `assertion shape`). Human output never labels that string an
+`assertion template`. Structured packet fields and keys stay unchanged; this
+slice does not rewrite the placeholder string itself (#9244). The
+equality-boundary placeholder wording is #11023 and is not this slice. The
+editor code-action brief's `Assertion guidance:` line is owned by the
+agent-seam-packet renderer and is not part of this handoff-note slice.
 
 The boundary placeholder describes the equality value the missing discriminator
 asks for (#11023): when the changed predicate is a simple strict comparison
@@ -831,8 +837,12 @@ baseline failure policy.
 
 Current tests and reports that support the contract:
 
-- `crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::placeholder_shape_is_labelled_a_shape_with_a_fill_in_note`
-- `crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::concrete_assertion_keeps_its_label_and_gets_no_note`
+- `crates/ripr/src/output/placeholder_assertion.rs::tests::placeholder_shape_is_labelled_a_shape_with_a_fill_in_note`
+- `crates/ripr/src/output/placeholder_assertion.rs::tests::concrete_assertion_keeps_its_label_and_gets_no_note`
+- `crates/ripr/src/output/placeholder_assertion.rs::tests::empty_and_not_applicable_text_are_not_placeholders`
+- `crates/ripr/src/output/placeholder_assertion.rs::tests::a_lone_block_comment_opener_is_enough_to_warn`
+- `crates/ripr/src/lsp/hover.rs::seam_hover_tests::given_seam_hover_when_rendered_then_suggested_test_shape_is_visible`
+- `crates/ripr/src/cli/commands/agent.rs::before_phase_stdout_tests::placeholder_assertion_in_summary_gets_a_fill_in_note`
 - `crates/ripr/src/cli/parse.rs::tests::given_format_strings_when_parse_format_then_returns_expected_result` (unknown format error names common formats and the exhaustive pointer; near miss still suggests one correction)
 - `crates/ripr/src/cli/mod.rs::tests::run_dispatches_check_parse_errors`
 - `crates/ripr/src/cli/mod.rs::tests::run_treats_a_repeated_global_verbose_as_one_enable`
