@@ -3,6 +3,7 @@ use super::action_contract::{
     disabled_reason_emittable, parse_validated_action_data,
 };
 use super::client_features::ClientFeatureProfile;
+use super::fix_instruction_authority;
 use super::gap_artifacts::{
     ValidatedGapArtifact, bind_portable_command, editor_command_is_safe, workspace_path_is_safe,
 };
@@ -675,13 +676,37 @@ fn push_seam_actions(
         }
         return;
     }
+    let instruction_summary = fix_instruction_authority::summary_for_seam_action(
+        context.snapshot,
+        context.diagnostic,
+        context.seam,
+    );
+    let instruction_blocks_repair =
+        fix_instruction_authority::blocks_repair_ready_actions(&instruction_summary);
     // The targeted-test brief is the editor's repair-packet surface, so the
     // flip routes through the single producer-owned authority
     // (`repair_packet_eligibility`, RIPR-SPEC-0087 §8) instead of hand-conjoining
     // readiness and cross-language predicates. The remaining guard is content
     // availability (a concrete assertion template or related test), not a
     // readiness predicate.
-    if repair_packet_eligibility(context.seam).eligible()
+    if instruction_blocks_repair {
+        if client_features.code_action_disabled
+            && let Some(reason) = fix_instruction_authority::disabled_reason_for_instruction_state(
+                instruction_summary.state,
+            )
+            && let Some(action) = disabled_action(
+                TARGETED_TEST_BRIEF_TITLE,
+                "quickfix.ripr.inspect",
+                "copy_targeted_test_brief",
+                COPY_TARGETED_TEST_BRIEF_COMMAND,
+                context.diagnostic,
+                Some(context.snapshot),
+                reason,
+            )
+        {
+            actions.push(action);
+        }
+    } else if repair_packet_eligibility(context.seam).eligible()
         && (suggested_assertion.is_some() || related_test.is_some())
     {
         actions.push(copy_targeted_test_brief_action(
@@ -700,7 +725,9 @@ fn push_seam_actions(
     // root, never the language-server process working directory. The
     // payload's `root` field stays the portable role (`COMMAND_ROOT`).
     let root = loop_commands::bound_root(&context.snapshot.root.to_string_lossy());
-    if let Some(command) = repair_start_command_for(context.seam, &root) {
+    if !instruction_blocks_repair
+        && let Some(command) = repair_start_command_for(context.seam, &root)
+    {
         actions.push(copy_agent_loop_command_action(
             AGENT_REPAIR_COMMAND_TITLE,
             COPY_AGENT_REPAIR_COMMAND,
@@ -853,154 +880,185 @@ fn push_seam_actions(
     }
 }
 
-fn push_gap_actions(
+fn push_gap_repair_ready_actions(
     actions: &mut CodeActionResponse,
     params: &CodeActionParams,
-    context: GapActionContext<'_>,
+    context: &GapActionContext<'_>,
     client_features: &ClientFeatureProfile,
 ) {
-    if !gap_cross_language_target_unresolved(context.data) {
-        if let Some(target) =
-            first_repair_packet_target(context.snapshot, context.diagnostic, context.artifact)
-        {
-            actions.push(copy_context_action(
-                COPY_FIRST_REPAIR_PACKET_TITLE,
-                COPY_FIRST_REPAIR_PACKET_TITLE,
-                "copy_first_repair_packet",
-                target,
-                context.diagnostic,
-                Some(context.snapshot),
-            ));
-        }
-        if let Some(target) = python_agent_packet_target(
-            params,
-            context.snapshot,
+    if let Some(target) =
+        first_repair_packet_target(context.snapshot, context.diagnostic, context.artifact)
+    {
+        actions.push(copy_context_action(
+            COPY_FIRST_REPAIR_PACKET_TITLE,
+            COPY_FIRST_REPAIR_PACKET_TITLE,
+            "copy_first_repair_packet",
+            target,
             context.diagnostic,
-            context.artifact,
-        ) {
-            actions.push(copy_context_action(
-                COPY_PYTHON_AGENT_PACKET_TITLE,
-                COPY_PYTHON_AGENT_PACKET_TITLE,
-                "copy_python_agent_packet",
-                target,
-                context.diagnostic,
-                Some(context.snapshot),
-            ));
-        }
-        if let Some(target) = gap_repair_packet_target(
-            params,
-            context.snapshot,
+            Some(context.snapshot),
+        ));
+    }
+    if let Some(target) = python_agent_packet_target(
+        params,
+        context.snapshot,
+        context.diagnostic,
+        context.artifact,
+    ) {
+        actions.push(copy_context_action(
+            COPY_PYTHON_AGENT_PACKET_TITLE,
+            COPY_PYTHON_AGENT_PACKET_TITLE,
+            "copy_python_agent_packet",
+            target,
             context.diagnostic,
-            context.artifact,
-        ) {
-            actions.push(copy_context_action(
-                INSPECT_GAP_PACKET_TITLE,
-                INSPECT_GAP_PACKET_COMMAND_TITLE,
-                "copy_gap_repair_packet",
-                target,
-                context.diagnostic,
-                Some(context.snapshot),
-            ));
+            Some(context.snapshot),
+        ));
+    }
+    if let Some(target) = gap_repair_packet_target(
+        params,
+        context.snapshot,
+        context.diagnostic,
+        context.artifact,
+    ) {
+        actions.push(copy_context_action(
+            INSPECT_GAP_PACKET_TITLE,
+            INSPECT_GAP_PACKET_COMMAND_TITLE,
+            "copy_gap_repair_packet",
+            target,
+            context.diagnostic,
+            Some(context.snapshot),
+        ));
+    }
+    if let Some(target) = python_repair_card_target(context.snapshot, context.data) {
+        actions.push(copy_python_repair_card_action(
+            target,
+            context.diagnostic,
+            Some(context.snapshot),
+        ));
+    }
+    if let Some(target) = python_pytest_skeleton_target(context.snapshot, context.data) {
+        actions.push(copy_python_pytest_skeleton_action(
+            target,
+            context.diagnostic,
+            Some(context.snapshot),
+        ));
+    }
+    // §PR8 (RIPR-SPEC-0088): Copy TypeScript repair packet action when
+    // the TS finding is actionable (repair_packet_ready: true in the
+    // diagnostic's preview_actionability data).
+    if let Some(target) = typescript_repair_packet_target(params, context.diagnostic, context.data)
+    {
+        actions.push(copy_context_action(
+            COPY_TYPESCRIPT_REPAIR_PACKET_TITLE,
+            COPY_TYPESCRIPT_REPAIR_PACKET_TITLE,
+            "copy_typescript_repair_packet",
+            target,
+            context.diagnostic,
+            Some(context.snapshot),
+        ));
+    }
+    if let Some(target) = gap_related_test_target(context.snapshot, context.data) {
+        actions.extend(open_related_test_action(
+            target,
+            context.diagnostic,
+            Some(context.snapshot),
+            client_features,
+        ));
+    }
+    let verify_command = first_safe_command_at(
+        context.snapshot.root.as_path(),
+        context.data,
+        &["verification_commands"],
+    );
+    match &verify_command {
+        Some(command) => actions.push(copy_agent_loop_command_action(
+            AGENT_VERIFY_COMMAND_TITLE,
+            COPY_AGENT_VERIFY_COMMAND,
+            "copy_agent_verify_command",
+            gap_command_target(params, context.diagnostic, "gap_verify", command),
+            context.diagnostic,
+            Some(context.snapshot),
+        )),
+        None => {
+            // #1892: the gap record carries no safe verification route —
+            // a disabled-capable client sees the verify handoff inert
+            // instead of absent.
+            if client_features.code_action_disabled
+                && let Some(action) = disabled_action(
+                    AGENT_VERIFY_COMMAND_TITLE,
+                    "quickfix.ripr.inspect",
+                    "copy_agent_verify_command",
+                    COPY_AGENT_VERIFY_COMMAND,
+                    context.diagnostic,
+                    Some(context.snapshot),
+                    ActionDisabledReason::VerificationRouteUnavailable,
+                )
+            {
+                actions.push(action);
+            }
         }
-        if let Some(target) = python_repair_card_target(context.snapshot, context.data) {
-            actions.push(copy_python_repair_card_action(
-                target,
-                context.diagnostic,
-                Some(context.snapshot),
-            ));
-        }
-        if let Some(target) = python_pytest_skeleton_target(context.snapshot, context.data) {
-            actions.push(copy_python_pytest_skeleton_action(
-                target,
-                context.diagnostic,
-                Some(context.snapshot),
-            ));
-        }
-        // §PR8 (RIPR-SPEC-0088): Copy TypeScript repair packet action when
-        // the TS finding is actionable (repair_packet_ready: true in the
-        // diagnostic's preview_actionability data).
-        if let Some(target) =
-            typescript_repair_packet_target(params, context.diagnostic, context.data)
-        {
-            actions.push(copy_context_action(
-                COPY_TYPESCRIPT_REPAIR_PACKET_TITLE,
-                COPY_TYPESCRIPT_REPAIR_PACKET_TITLE,
-                "copy_typescript_repair_packet",
-                target,
-                context.diagnostic,
-                Some(context.snapshot),
-            ));
-        }
-        if let Some(target) = gap_related_test_target(context.snapshot, context.data) {
-            actions.extend(open_related_test_action(
-                target,
-                context.diagnostic,
-                Some(context.snapshot),
-                client_features,
-            ));
-        }
-        let verify_command = first_safe_command_at(
-            context.snapshot.root.as_path(),
-            context.data,
-            &["verification_commands"],
-        );
-        match &verify_command {
+    }
+    if verify_command.is_some() {
+        match first_safe_receipt_command(context.snapshot.root.as_path(), context.data) {
             Some(command) => actions.push(copy_agent_loop_command_action(
-                AGENT_VERIFY_COMMAND_TITLE,
-                COPY_AGENT_VERIFY_COMMAND,
-                "copy_agent_verify_command",
-                gap_command_target(params, context.diagnostic, "gap_verify", command),
+                AGENT_RECEIPT_COMMAND_TITLE,
+                COPY_AGENT_RECEIPT_COMMAND,
+                "copy_agent_receipt_command",
+                gap_command_target(params, context.diagnostic, "gap_receipt", &command),
                 context.diagnostic,
                 Some(context.snapshot),
             )),
             None => {
-                // #1892: the gap record carries no safe verification route —
-                // a disabled-capable client sees the verify handoff inert
-                // instead of absent.
+                // #1892: the gap record carries a verify route but no
+                // safe receipt route — a disabled-capable client sees
+                // the receipt handoff inert instead of absent.
                 if client_features.code_action_disabled
                     && let Some(action) = disabled_action(
-                        AGENT_VERIFY_COMMAND_TITLE,
+                        AGENT_RECEIPT_COMMAND_TITLE,
                         "quickfix.ripr.inspect",
-                        "copy_agent_verify_command",
-                        COPY_AGENT_VERIFY_COMMAND,
+                        "copy_agent_receipt_command",
+                        COPY_AGENT_RECEIPT_COMMAND,
                         context.diagnostic,
                         Some(context.snapshot),
-                        ActionDisabledReason::VerificationRouteUnavailable,
+                        ActionDisabledReason::ReceiptRouteUnavailable,
                     )
                 {
                     actions.push(action);
                 }
             }
         }
-        if verify_command.is_some() {
-            match first_safe_receipt_command(context.snapshot.root.as_path(), context.data) {
-                Some(command) => actions.push(copy_agent_loop_command_action(
-                    AGENT_RECEIPT_COMMAND_TITLE,
-                    COPY_AGENT_RECEIPT_COMMAND,
-                    "copy_agent_receipt_command",
-                    gap_command_target(params, context.diagnostic, "gap_receipt", &command),
+    }
+}
+
+fn push_gap_actions(
+    actions: &mut CodeActionResponse,
+    params: &CodeActionParams,
+    context: GapActionContext<'_>,
+    client_features: &ClientFeatureProfile,
+) {
+    let instruction_summary = fix_instruction_authority::summary_for_gap_action(context.diagnostic);
+    let instruction_blocks_repair =
+        fix_instruction_authority::blocks_repair_ready_actions(&instruction_summary);
+    if !gap_cross_language_target_unresolved(context.data) {
+        if instruction_blocks_repair {
+            if client_features.code_action_disabled
+                && let Some(reason) =
+                    fix_instruction_authority::disabled_reason_for_instruction_state(
+                        instruction_summary.state,
+                    )
+                && let Some(action) = disabled_action(
+                    INSPECT_GAP_PACKET_TITLE,
+                    "quickfix.ripr.inspect",
+                    "copy_gap_repair_packet",
+                    COPY_CONTEXT_COMMAND,
                     context.diagnostic,
                     Some(context.snapshot),
-                )),
-                None => {
-                    // #1892: the gap record carries a verify route but no
-                    // safe receipt route — a disabled-capable client sees
-                    // the receipt handoff inert instead of absent.
-                    if client_features.code_action_disabled
-                        && let Some(action) = disabled_action(
-                            AGENT_RECEIPT_COMMAND_TITLE,
-                            "quickfix.ripr.inspect",
-                            "copy_agent_receipt_command",
-                            COPY_AGENT_RECEIPT_COMMAND,
-                            context.diagnostic,
-                            Some(context.snapshot),
-                            ActionDisabledReason::ReceiptRouteUnavailable,
-                        )
-                    {
-                        actions.push(action);
-                    }
-                }
+                    reason,
+                )
+            {
+                actions.push(action);
             }
+        } else {
+            push_gap_repair_ready_actions(actions, params, &context, client_features);
         }
     } else if client_features.code_action_disabled
         && let Some(action) = disabled_action(
