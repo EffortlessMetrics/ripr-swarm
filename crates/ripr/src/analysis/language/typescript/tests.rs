@@ -14671,6 +14671,20 @@ fn spec_0027_ambiguous_fallback_is_never_exposed_and_punctuation_is_ignored() ->
         !discriminate.contains("predicate boundary"),
         "the discrimination summary must not claim a predicate boundary: {discriminate}"
     );
+    // RIPR-SPEC-0027: a strong check already exists, so the next step must not
+    // ask for another exact-value assertion.
+    let next_step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "expected recommended next step".to_string())?;
+    assert!(
+        next_step.contains("already strong") && next_step.contains("input that flips it"),
+        "strong oracle next step must say the check is strong: {next_step}"
+    );
+    assert!(
+        !next_step.contains("exact-value assertion") && !next_step.contains("discriminator"),
+        "strong oracle next step must not ask for another assertion: {next_step}"
+    );
     let limitation = ts_predicate_boundary_limitation(
         &classify_probe_shape_detail("  n.value"),
         "  n.value",

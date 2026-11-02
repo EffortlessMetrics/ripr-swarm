@@ -2773,3 +2773,50 @@ fn every_relation_label_reads_back_through_ripr_rule() {
         );
     }
 }
+
+#[test]
+fn issue_5332_upstream_not_discriminated_and_partially_discriminated_floors() -> Result<(), String>
+{
+    let dir = repo_corpus_dir();
+    let corpus = load_corpus(&dir)?;
+    let upstream: BTreeSet<String> = corpus
+        .subjects
+        .iter()
+        .filter(|s| s.origin == SubjectOrigin::Upstream)
+        .map(|s| s.subject_id.clone())
+        .collect();
+    let mut not_discriminated = 0usize;
+    let mut partially_discriminated = 0usize;
+    for case in &corpus.cases {
+        if !upstream.contains(&case.subject_id) {
+            continue;
+        }
+        match case.truth.state {
+            TruthState::NotDiscriminated => not_discriminated += 1,
+            TruthState::PartiallyDiscriminated => partially_discriminated += 1,
+            _ => {}
+        }
+    }
+    assert!(
+        not_discriminated >= 8,
+        "issue #5332 needs at least 8 upstream not_discriminated cases for a measurable false_exposed denominator; got {not_discriminated}"
+    );
+    assert!(
+        partially_discriminated >= 8,
+        "issue #5332 needs at least 8 upstream partially_discriminated cases; got {partially_discriminated}"
+    );
+    let spot_check = [
+        "semver-display-val-le",
+        "bytesize-as-gib-div",
+        "bytesize-as-tb-div",
+        "bytesize-as-pb-div",
+        "bytesize-as-eb-div",
+    ];
+    for id in spot_check {
+        assert!(
+            corpus.cases.iter().any(|c| c.case_id == id),
+            "missing #5295 spot-check corpus case `{id}`"
+        );
+    }
+    Ok(())
+}
