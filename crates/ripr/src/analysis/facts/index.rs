@@ -494,11 +494,6 @@ impl RustIndex {
         ))
     }
 
-    pub(crate) fn is_registered_bolero(&self, test: &TestFact) -> bool {
-        self.bolero_receipts
-            .contains_key(&(test.file.clone(), test.start_line, test.name.clone()))
-    }
-
     /// A generation-owned interpretation of an exact provider-bound property.
     /// Raw/cached/deserialized TestFacts cannot manufacture this authority.
     pub(crate) fn proptest_source(&self, test: &TestFact) -> Option<(&str, usize)> {

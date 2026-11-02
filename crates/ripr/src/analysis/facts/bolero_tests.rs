@@ -84,9 +84,11 @@ fn register_bolero_tests_retains_receipt_for_audited_property() -> Result<(), St
         ],
     )?;
     assert_eq!(index.bolero_receipts.len(), 1);
-    let Some(receipt) = index.bolero_receipts.values().next() else {
-        return Err("missing bolero receipt".into());
-    };
+    let receipt = index
+        .bolero_receipts
+        .values()
+        .next()
+        .ok_or("missing bolero receipt")?;
     assert_eq!(receipt.input_type, "u8");
     assert_eq!(receipt.test.name, "increment_matches_model");
     Ok(())

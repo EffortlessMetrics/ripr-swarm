@@ -2733,7 +2733,15 @@ fn owner_pin_assertions_with_matches(
             &json_uses,
             matches_context,
         ) {
-            Some(refusal)
+            if let AssertionContextRefusal::OpaqueMacro(ref path) = refusal {
+                if super::bolero::bolero_macro_escape_allowed(&function, source, path) {
+                    None
+                } else {
+                    Some(refusal)
+                }
+            } else {
+                Some(refusal)
+            }
         } else if let Some(attr) = function.attrs().find(|attr| {
             !(runs_body_unchanged(attr, function.syntax())
                 || matches_context && matches_preserves_assertion_execution(attr, &function))

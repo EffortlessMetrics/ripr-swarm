@@ -215,10 +215,62 @@ fn file_binds_bolero_check(source: &str) -> bool {
         return false;
     }
     source.lines().any(|line| {
-        let line = line.split("//").next().unwrap_or(line).trim();
-        line.starts_with("use bolero")
-            || line.starts_with("use ::bolero")
-            || line.contains("use bolero::")
+        let line = line.split("//").next().unwrap_or(line);
+        use_imports_bolero_check(line)
+    })
+}
+
+fn use_imports_bolero_check(line: &str) -> bool {
+    let mut line = line.trim();
+    if let Some(rest) = line.strip_prefix("pub(") {
+        if let Some(idx) = rest.find(')') {
+            line = rest[idx + 1..].trim_start();
+        }
+    } else if let Some(rest) = line.strip_prefix("pub ") {
+        line = rest.trim_start();
+    }
+    let Some(rest) = line.strip_prefix("use ") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix("::").unwrap_or(rest);
+    let Some(rest) = rest.strip_prefix("bolero::") else {
+        return false;
+    };
+    let rest = rest.trim();
+    if let Some(group) = rest.strip_prefix('{') {
+        let group = group.split('}').next().unwrap_or(group);
+        return group
+            .split(',')
+            .any(|item| matches!(item.trim(), "check" | "*"));
+    }
+    let item = rest.split(';').next().unwrap_or(rest).trim();
+    matches!(item, "check" | "*")
+}
+
+/// A qualified terminal Bolero chain may keep `check!` opaque at function scope
+/// while callback assertions are admitted through [`bolero_for_each_consumer`].
+pub(crate) fn bolero_macro_escape_allowed(
+    function: &ast::Fn,
+    module_source: &str,
+    macro_path: &str,
+) -> bool {
+    let path = compact(macro_path);
+    let bolero_bound = file_binds_bolero_check(module_source);
+    let qualified_path = matches!(
+        path.as_str(),
+        "bolero::check" | "::bolero::check" | "bolero::check!" | "::bolero::check!"
+    ) || (bolero_bound && matches!(path.as_str(), "check" | "check!"));
+    if !qualified_path {
+        return false;
+    }
+    let Some(name) = function.name().map(|name| name.text().to_string()) else {
+        return false;
+    };
+    let lines = super::ra::LineIndex::new(module_source);
+    let function_line = lines.line(function.syntax().text_range().start());
+    bolero_profiles(module_source).into_iter().any(|profile| {
+        profile.complete && profile.function_name == name && profile.function_line == function_line
     })
 }
 
@@ -255,6 +307,18 @@ fn increment_matches_model() {
         });
 }
 "#;
+
+    #[test]
+    fn prefixed_crate_import_does_not_bind_check() {
+        let source = r#"
+use bolero_engine::check;
+#[test]
+fn fake() {
+    check!().with_type::<u8>().for_each(|n| { assert_eq!(*n, 1); });
+}
+"#;
+        assert!(bolero_profiles(source).is_empty());
+    }
 
     #[test]
     fn qualified_chain_is_admitted() {

@@ -1171,13 +1171,6 @@ fn find_related_tests_with_candidates<'a>(
         {
             continue;
         }
-        if index.is_registered_bolero(test)
-            && owner_fn.is_none_or(|owner| {
-                !super::bound_free_owner_calls(index, owner, test, &test.body, pin_syntax)
-            })
-        {
-            continue;
-        }
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
         // test that genuinely calls a uniquely-named owner is not filtered out
         // before the strong signal can save it.
