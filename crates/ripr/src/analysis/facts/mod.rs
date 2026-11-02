@@ -51,6 +51,9 @@ pub(crate) fn register_macro_generated_tests_for_test(index: &mut model::RustInd
     // abort here.
     let _ = macro_generated_tests::register_macro_generated_tests(index);
 }
+mod bolero;
+#[cfg(test)]
+mod bolero_tests;
 pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
@@ -85,6 +88,8 @@ pub(crate) fn normalize_reconstructed_source_roles(
     test_styles::normalize_index_test_styles(index)?;
     index.refresh_memberships()?;
     proptest::register_proptest_tests(index, root)?;
+    index.refresh_memberships()?;
+    bolero::register_bolero_tests(index, root)?;
     index.refresh_memberships()?;
     harness_registry::apply_registrations(index, root, registrations);
     index.finalize()
@@ -121,6 +126,10 @@ pub fn build_index_with_test_harnesses(
     })?;
     index_phase("index_proptest_tests", || {
         proptest::register_proptest_tests(&mut index, root)?;
+        index.refresh_memberships()
+    })?;
+    index_phase("index_bolero_tests", || {
+        bolero::register_bolero_tests(&mut index, root)?;
         index.refresh_memberships()
     })?;
     // Composition runs strictly after the normalizer: the normalizer
@@ -212,13 +221,17 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
     // Rust bytes. Rebuild the post-parse authority from cached raw facts; do
     // not reuse a formerly admitted or formerly refused property generation.
     if !cached.index.proptest_receipts.is_empty()
+        || !cached.index.bolero_receipts.is_empty()
         || cached.index.files().iter().any(|(_, file)| {
-            file.unresolved_property_macros.iter().any(|property| {
-                matches!(
-                    property.name.as_str(),
-                    "proptest" | "proptest::proptest" | "::proptest::proptest"
-                )
-            })
+            (!file.used_lexical_fallback
+                && file.source.contains("bolero")
+                && !crate::analysis::syntax::bolero_profiles(&file.source).is_empty())
+                || file.unresolved_property_macros.iter().any(|property| {
+                    matches!(
+                        property.name.as_str(),
+                        "proptest" | "proptest::proptest" | "::proptest::proptest"
+                    )
+                })
         })
     {
         return build_cached_index_with_test_harnesses(
@@ -371,6 +384,10 @@ fn post_process_cached_index(
     })?;
     index_phase("index_proptest_tests", || {
         proptest::register_proptest_tests(&mut cached.index, root)?;
+        cached.index.refresh_memberships()
+    })?;
+    index_phase("index_bolero_tests", || {
+        bolero::register_bolero_tests(&mut cached.index, root)?;
         cached.index.refresh_memberships()
     })?;
     index_phase("index_role_composition", || {
