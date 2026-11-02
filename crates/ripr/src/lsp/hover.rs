@@ -2997,12 +2997,15 @@ mod plain_hover_summary_tests {
     fn every_source_text_prefix_still_appears_in_a_producer() {
         // The prefix list is a reviewed allowlist; if a producer rewords its
         // summary the entry stops protecting anything, so fail loudly (#12284).
+        // Production code only: test fixtures in the same files repeat the
+        // wording and would mask a production reword.
         let producers = [
             include_str!("../analysis/classify/flow.rs"),
             include_str!("../analysis/classify/reach.rs"),
             include_str!("../analysis/classify/infection.rs"),
             include_str!("../domain/classification.rs"),
         ]
+        .map(|source| source.split("#[cfg(test)]").next().unwrap_or(source))
         .join("\n");
         for prefix in super::SOURCE_TEXT_AFTER_COLON_PREFIXES {
             assert!(
