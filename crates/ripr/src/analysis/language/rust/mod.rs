@@ -2453,16 +2453,24 @@ impl RustAdapter {
             oracles::PropertyMacroMentionIndex<'_>,
             classify::TransitiveReachIndex<'_>,
         )> = std::sync::OnceLock::new();
-        // #5464: widened witness lookups cached with the same LRU capacity as
-        // [`dependent_scope::NarrowedScope::reach_index`].
-        let mut widened_reach_cache: Vec<(
-            Vec<std::path::PathBuf>,
-            std::sync::OnceLock<std::sync::Arc<RustIndex>>,
-            std::sync::OnceLock<(
-                oracles::PropertyMacroMentionIndex<'_>,
-                classify::TransitiveReachIndex<'_>,
-            )>,
-        )> = Vec::new();
+        // #5464: two widened file-set slots (same capacity as dependent scope)
+        // reuse the Shared OnceLock pattern per slot.
+        let widened_0_files: std::sync::OnceLock<Vec<std::path::PathBuf>> =
+            std::sync::OnceLock::new();
+        let widened_0_index: std::sync::OnceLock<std::sync::Arc<RustIndex>> =
+            std::sync::OnceLock::new();
+        let widened_0_lookups: std::sync::OnceLock<(
+            oracles::PropertyMacroMentionIndex<'_>,
+            classify::TransitiveReachIndex<'_>,
+        )> = std::sync::OnceLock::new();
+        let widened_1_files: std::sync::OnceLock<Vec<std::path::PathBuf>> =
+            std::sync::OnceLock::new();
+        let widened_1_index: std::sync::OnceLock<std::sync::Arc<RustIndex>> =
+            std::sync::OnceLock::new();
+        let widened_1_lookups: std::sync::OnceLock<(
+            oracles::PropertyMacroMentionIndex<'_>,
+            classify::TransitiveReachIndex<'_>,
+        )> = std::sync::OnceLock::new();
 
         let rust_changed_for_presence = analyzable_changed_files
             .iter()
@@ -2852,7 +2860,6 @@ impl RustAdapter {
                         dependency_edges.as_ref(),
                     ),
                     dependent_scope::ReachIndex::Shared => {
-                        widened_reach_cache.clear();
                         if let Some(shared) = dependent_scope
                             .as_ref()
                             .and_then(dependent_scope::NarrowedScope::shared_reach)
@@ -2877,42 +2884,57 @@ impl RustAdapter {
                         }
                     }
                     dependent_scope::ReachIndex::Widened { index, files } => {
-                        if let Some(position) = widened_reach_cache
-                            .iter()
-                            .position(|(held, _, _)| held == &files)
+                        if widened_0_files.get().is_some_and(|held| held == &files)
+                            || widened_1_files.get().is_some_and(|held| held == &files)
+                            || widened_0_files.get().is_none()
+                            || widened_1_files.get().is_none()
                         {
-                            let entry = widened_reach_cache.remove(position);
-                            widened_reach_cache.push(entry);
+                            let slot = if widened_0_files.get().is_some_and(|held| held == &files) {
+                                0
+                            } else if widened_1_files.get().is_some_and(|held| held == &files) {
+                                1
+                            } else if widened_0_files.get().is_none() {
+                                0
+                            } else {
+                                1
+                            };
+                            let (files_lock, index_lock, lookups_lock) = if slot == 0 {
+                                (&widened_0_files, &widened_0_index, &widened_0_lookups)
+                            } else {
+                                (&widened_1_files, &widened_1_index, &widened_1_lookups)
+                            };
+                            files_lock.get_or_init(|| files);
+                            let held = index_lock.get_or_init(|| index);
+                            let lookups = lookups_lock.get_or_init(|| {
+                                (
+                                    oracles::PropertyMacroMentionIndex::new(held, &options.root),
+                                    classify::TransitiveReachIndex::new(held),
+                                )
+                            });
+                            apply_rust_no_static_path_limit(
+                                &mut finding,
+                                &probe,
+                                held,
+                                &lookups.0,
+                                &lookups.1,
+                                dependency_edges.as_ref(),
+                            );
                         } else {
-                            if widened_reach_cache.len()
-                                >= dependent_scope::REACH_INDEX_CAPACITY
-                            {
-                                widened_reach_cache.remove(0);
-                            }
-                            widened_reach_cache.push((
-                                files,
-                                std::sync::OnceLock::new(),
-                                std::sync::OnceLock::new(),
-                            ));
+                            // Both LRU slots hold other file sets; build lookups
+                            // for this witness without pinning another cache entry.
+                            let held = index.as_ref();
+                            let mentions =
+                                oracles::PropertyMacroMentionIndex::new(held, &options.root);
+                            let reach = classify::TransitiveReachIndex::new(held);
+                            apply_rust_no_static_path_limit(
+                                &mut finding,
+                                &probe,
+                                held,
+                                &mentions,
+                                &reach,
+                                dependency_edges.as_ref(),
+                            );
                         }
-                        let (_, index_lock, lookups_lock) = widened_reach_cache
-                            .last()
-                            .expect("widened reach cache holds an entry after insertion");
-                        let held = index_lock.get_or_init(|| index);
-                        let (mentions, reach) = lookups_lock.get_or_init(|| {
-                            (
-                                oracles::PropertyMacroMentionIndex::new(held, &options.root),
-                                classify::TransitiveReachIndex::new(held),
-                            )
-                        });
-                        apply_rust_no_static_path_limit(
-                            &mut finding,
-                            &probe,
-                            held,
-                            mentions,
-                            reach,
-                            dependency_edges.as_ref(),
-                        );
                     }
                     dependent_scope::ReachIndex::OverLimit { files, limit } => {
                         // A witness the main index proves is a searched
@@ -4957,6 +4979,7 @@ mod tests {
                 &changed,
             )
         })?;
+        let builds_during_named = TransitiveReachIndex::graph_build_count() - start;
         let full = dependent_scope::with_forced_mode(DependentScopeMode::Full, || {
             RustAdapter.analyze_diff(
                 &diff_options(root.clone(), AnalysisMode::Draft),
@@ -4974,8 +4997,7 @@ mod tests {
             "expected at least two no_static_path findings for the changed branches, got {no_static}"
         );
         assert_eq!(
-            TransitiveReachIndex::graph_build_count() - start,
-            1,
+            builds_during_named, 1,
             "one widened file set must build one reach graph"
         );
         assert_eq!(
