@@ -934,6 +934,32 @@ reason = "every mutant is equivalent"
     Ok(())
 }
 
+fn spec_in_scope_example_count_pin_lines(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let code = line.split("//").next().unwrap_or(line);
+            if code.contains("spec.in_scope_examples") {
+                Some(line.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn spec_example_count_pin_scan_catches_multiline_and_other_comparisons() {
+    let pin = |snippet: &str| !spec_in_scope_example_count_pin_lines(snippet).is_empty();
+    assert!(pin("assert!(spec.in_scope_examples >= 42);"));
+    assert!(pin("assert_eq!(spec.in_scope_examples, 43);"));
+    assert!(pin("assert_ne!(spec.in_scope_examples, 0);"));
+    assert!(pin("assert!(spec.in_scope_examples == 1);"));
+    assert!(pin("assert_eq!(\n    spec.in_scope_examples,\n    43,\n);"));
+    assert!(!pin("// gate on spec.in_scope_examples, not counts"));
+    assert!(!pin("assert_eq!(spec.uncovered, Vec::new());"));
+}
+
 #[test]
 fn committed_corpus_tests_do_not_pin_spec_example_counts() -> Result<(), String> {
     // Parallel corpus PRs used to conflict on shared `in_scope_examples` literals
@@ -942,16 +968,11 @@ fn committed_corpus_tests_do_not_pin_spec_example_counts() -> Result<(), String>
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src/reports/verdict_corpus_tests.rs");
     let text = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if !trimmed.contains("spec.in_scope_examples") {
-            continue;
-        }
-        if trimmed.starts_with("assert_eq!") || trimmed.contains(">=") {
-            return Err(format!(
-                "gate on spec.uncovered, not example count (#9859): {trimmed}"
-            ));
-        }
+    let pins = spec_in_scope_example_count_pin_lines(&text);
+    if let Some(line) = pins.first() {
+        return Err(format!(
+            "gate on spec.uncovered, not example count (#9859): {line}"
+        ));
     }
     Ok(())
 }
