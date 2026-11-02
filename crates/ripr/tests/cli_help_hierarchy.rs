@@ -30,6 +30,19 @@ fn run_ripr_in(
 }
 
 #[test]
+fn pilot_help_describes_limit_summary_without_inventing_a_quote() -> Result<(), String> {
+    let output = run_ripr(&["help", "pilot"])?;
+    assert!(output.status.success(), "{output:?}");
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        help.contains("the summary reports how many spots were ranked"),
+        "{help}"
+    );
+    assert!(!help.contains("ranked N of M gaps"), "{help}");
+    Ok(())
+}
+
+#[test]
 fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
     for (value, suggestion) in [
         ("githb", " Did you mean `github`?"),
@@ -1421,7 +1434,7 @@ fn agent_help_makes_repair_primary_without_removing_control_surfaces() -> Result
         assert_contains(
             "agent help",
             &collapsed,
-            "repair Run the before/edit/after repair transaction and its verification phase for one seam.",
+            "repair Run the before/edit/after repair transaction and its verification phase for one gap.",
         )?;
         assert_contains(
             "agent help",
@@ -1784,13 +1797,13 @@ fn check_help_is_one_screen_and_all_is_the_full_reference() -> Result<(), String
         // first run reaches it. Repo seam walks bypass that budget.
         "--timeout SECS",
         "Wall-clock analysis budget (600s default; 0 disables;",
-        "excludes repo seam-inventory formats)",
+        "excludes the repo-wide formats)",
         "On analysis_timeout, raise/disable it or narrow the diff; re-run.",
         "--quiet",
         "Unknown totals show no percentage or ETA",
         "progress makes no speed claim",
         // The completed-run and gate-blocked exit contract, sentence by sentence.
-        "Exit status: 0 for a completed run, including `exposed` and `weakly_exposed` findings.",
+        "Exit status: 0 for a completed run, including findings that are `exposed` or weak.",
         "`unsupported_input` reports exit 2, as do usage errors.",
         "run `ripr gate evaluate` (exit 3 on `blocked`)",
         "ripr check --help --all",

@@ -791,48 +791,81 @@ mod tests {
         Ok(())
     }
 
+    /// Wildcard-free match: a new `AnalysisLimitationKind` is a compile error
+    /// until this test lists its wire token.
+    fn exhaustive_limitation_wire_token(kind: AnalysisLimitationKind) -> &'static str {
+        match kind {
+            AnalysisLimitationKind::CombinedHunkUnsupported => "combined_hunk_unsupported",
+            AnalysisLimitationKind::UnresolvedConflictMarkers => "unresolved_conflict_markers",
+            AnalysisLimitationKind::MalformedDiff => "malformed_diff",
+            AnalysisLimitationKind::DiffScopeOversized => "diff_scope_oversized",
+            AnalysisLimitationKind::LanguageAdapterUnavailable => "language_adapter_unavailable",
+            AnalysisLimitationKind::LanguageScopeUnsupported => "language_scope_unsupported",
+            AnalysisLimitationKind::ChangedFileAbsentFromWorktree => {
+                "changed_file_absent_from_worktree"
+            }
+            AnalysisLimitationKind::ProducerTimeout => "producer_timeout",
+            AnalysisLimitationKind::ProducerFailure => "producer_failure",
+            AnalysisLimitationKind::EolOnlyChurn => "eol_only_churn",
+            AnalysisLimitationKind::VerificationOnlyChange => "verification_only_change",
+            AnalysisLimitationKind::UnevaluatedCondition => "unevaluated_condition",
+        }
+    }
+
+    const ALL_ANALYSIS_LIMITATION_KINDS: [AnalysisLimitationKind; 12] = [
+        AnalysisLimitationKind::CombinedHunkUnsupported,
+        AnalysisLimitationKind::UnresolvedConflictMarkers,
+        AnalysisLimitationKind::MalformedDiff,
+        AnalysisLimitationKind::DiffScopeOversized,
+        AnalysisLimitationKind::LanguageAdapterUnavailable,
+        AnalysisLimitationKind::LanguageScopeUnsupported,
+        AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
+        AnalysisLimitationKind::ProducerTimeout,
+        AnalysisLimitationKind::ProducerFailure,
+        AnalysisLimitationKind::EolOnlyChurn,
+        AnalysisLimitationKind::VerificationOnlyChange,
+        AnalysisLimitationKind::UnevaluatedCondition,
+    ];
+
+    fn analysis_limitation_kind_ordinal(kind: AnalysisLimitationKind) -> usize {
+        match kind {
+            AnalysisLimitationKind::CombinedHunkUnsupported => 0,
+            AnalysisLimitationKind::UnresolvedConflictMarkers => 1,
+            AnalysisLimitationKind::MalformedDiff => 2,
+            AnalysisLimitationKind::DiffScopeOversized => 3,
+            AnalysisLimitationKind::LanguageAdapterUnavailable => 4,
+            AnalysisLimitationKind::LanguageScopeUnsupported => 5,
+            AnalysisLimitationKind::ChangedFileAbsentFromWorktree => 6,
+            AnalysisLimitationKind::ProducerTimeout => 7,
+            AnalysisLimitationKind::ProducerFailure => 8,
+            AnalysisLimitationKind::EolOnlyChurn => 9,
+            AnalysisLimitationKind::VerificationOnlyChange => 10,
+            AnalysisLimitationKind::UnevaluatedCondition => 11,
+        }
+    }
+
     #[test]
     fn typed_limitation_tokens_match_the_wire_contract() -> Result<(), String> {
-        let limitation_kinds = [
-            (
-                AnalysisLimitationKind::CombinedHunkUnsupported,
-                "combined_hunk_unsupported",
-            ),
-            (
-                AnalysisLimitationKind::UnresolvedConflictMarkers,
-                "unresolved_conflict_markers",
-            ),
-            (AnalysisLimitationKind::MalformedDiff, "malformed_diff"),
-            (
-                AnalysisLimitationKind::DiffScopeOversized,
-                "diff_scope_oversized",
-            ),
-            (
-                AnalysisLimitationKind::LanguageAdapterUnavailable,
-                "language_adapter_unavailable",
-            ),
-            (
-                AnalysisLimitationKind::LanguageScopeUnsupported,
-                "language_scope_unsupported",
-            ),
-            (
-                AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
-                "changed_file_absent_from_worktree",
-            ),
-            (AnalysisLimitationKind::ProducerTimeout, "producer_timeout"),
-            (AnalysisLimitationKind::ProducerFailure, "producer_failure"),
-            (AnalysisLimitationKind::EolOnlyChurn, "eol_only_churn"),
-            (
-                AnalysisLimitationKind::VerificationOnlyChange,
-                "verification_only_change",
-            ),
-            (
-                AnalysisLimitationKind::UnevaluatedCondition,
-                "unevaluated_condition",
-            ),
-        ];
-        for (kind, expected) in limitation_kinds {
-            assert_eq!(kind.as_str(), expected);
+        use std::collections::BTreeSet;
+
+        const LIMITATION_KIND_COUNT: usize = 12;
+        assert_eq!(ALL_ANALYSIS_LIMITATION_KINDS.len(), LIMITATION_KIND_COUNT);
+        let ordinals: Vec<usize> = ALL_ANALYSIS_LIMITATION_KINDS
+            .iter()
+            .copied()
+            .map(analysis_limitation_kind_ordinal)
+            .collect();
+        assert_eq!(
+            ordinals,
+            (0..ALL_ANALYSIS_LIMITATION_KINDS.len()).collect::<Vec<_>>(),
+            "ALL_ANALYSIS_LIMITATION_KINDS must list every variant once"
+        );
+
+        let mut producer_tokens = BTreeSet::new();
+        for kind in ALL_ANALYSIS_LIMITATION_KINDS {
+            let expected = exhaustive_limitation_wire_token(kind);
+            assert_eq!(kind.as_str(), expected, "{kind:?}");
+            producer_tokens.insert(expected);
         }
 
         // Every wire token the producer can emit must be accepted by the
@@ -844,21 +877,41 @@ mod tests {
             .map_err(|error| format!("read {} failed: {error}", schema_path.display()))?;
         let schema: serde_json::Value = serde_json::from_str(&schema_text)
             .map_err(|error| format!("parse review-comments schema failed: {error}"))?;
-        let schema_kinds: Vec<&str> = schema["$defs"]["analysis_limitation"]["properties"]["kind"]
-            ["enum"]
+        let schema_kind_enum = schema["$defs"]["analysis_limitation"]["properties"]["kind"]["enum"]
             .as_array()
-            .ok_or_else(|| "analysis_limitation.kind enum missing".to_string())?
+            .ok_or_else(|| "analysis_limitation.kind enum missing".to_string())?;
+        let mut schema_kind_strings = Vec::with_capacity(schema_kind_enum.len());
+        for (index, value) in schema_kind_enum.iter().enumerate() {
+            let token = value.as_str().ok_or_else(|| {
+                format!("analysis_limitation.kind enum entry {index} is not a string")
+            })?;
+            schema_kind_strings.push(token);
+        }
+        let schema_tokens: BTreeSet<&str> = schema_kind_strings.iter().copied().collect();
+        if schema_tokens.len() != schema_kind_strings.len() {
+            return Err(format!(
+                "analysis_limitation.kind enum contains duplicate tokens: {schema_kind_strings:?}"
+            ));
+        }
+        let missing_from_schema: Vec<&str> = producer_tokens
             .iter()
-            .filter_map(serde_json::Value::as_str)
+            .copied()
+            .filter(|token| !schema_tokens.contains(token))
             .collect();
-        assert_eq!(schema_kinds.len(), limitation_kinds.len());
-        for (_, token) in limitation_kinds {
-            assert!(schema_kinds.contains(&token), "schema lacks {token}");
+        let extra_in_schema: Vec<&str> = schema_tokens
+            .iter()
+            .copied()
+            .filter(|token| !producer_tokens.contains(token))
+            .collect();
+        if !missing_from_schema.is_empty() || !extra_in_schema.is_empty() {
+            return Err(format!(
+                "analysis_limitation.kind enum mismatch: missing from schema: {missing_from_schema:?}; extra in schema: {extra_in_schema:?}"
+            ));
         }
 
         // The single owner of advisory-disclosure membership: only the two
         // change-shape disclosures leave an outcome complete.
-        for (kind, _) in limitation_kinds {
+        for kind in ALL_ANALYSIS_LIMITATION_KINDS {
             let advisory = matches!(
                 kind,
                 AnalysisLimitationKind::EolOnlyChurn

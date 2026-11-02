@@ -663,6 +663,31 @@ fn is_python_identifier(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn editor_plain_stop_condition_rewrites_exactly_one_producer_entry() {
+        // The LSP renders the producer's stop conditions through
+        // `plain_stop_condition` (#12214). If the producer wording drifts, the
+        // rewrite silently stops applying; this pins the pair.
+        let produced = stop_conditions(
+            &ProbeFamily::Predicate,
+            "amount == threshold",
+            "python -m pytest tests/test_pricing.py::test_boundary",
+        );
+        let rendered: Vec<String> = produced
+            .iter()
+            .map(|text| crate::output::human::plain_stop_condition(text))
+            .collect();
+        let changed: Vec<&String> = produced
+            .iter()
+            .zip(&rendered)
+            .filter(|(before, after)| before != after)
+            .map(|(before, _)| before)
+            .collect();
+        assert_eq!(changed.len(), 1, "changed entries: {changed:?}");
+        assert!(changed[0].contains("discriminator"));
+        assert!(rendered.iter().all(|text| !text.contains("discriminator")));
+    }
+
     use super::{
         parse_exception_discriminator, pytest_boundary_parametrization, pytest_exception_assertion,
         recommended_test_shape, stop_conditions, suggested_assertion,

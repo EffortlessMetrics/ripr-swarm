@@ -3599,13 +3599,23 @@ fn lsp_seam_message(entry: &ClassifiedSeam) -> String {
     // internal kind. The seam kind and grip class stay machine-side in the
     // diagnostic code and `data`.
     let head = seam_class_phrase(entry.class);
-    format!(
+    let mut message = format!(
         "{head}: {}",
         seam.expression()
             .lines()
             .next()
             .unwrap_or(seam.expression())
-    )
+    );
+    // #6621: name the unresolved-reach witness in the Problems row, not only
+    // in hover evidence.
+    if entry.class == SeamGripClass::Opaque
+        && entry.evidence.reach.state == crate::domain::StageState::Opaque
+        && !entry.evidence.reach.summary.is_empty()
+    {
+        message.push(' ');
+        message.push_str(entry.evidence.reach.summary.as_str());
+    }
+    message
 }
 
 fn absolute_seam_path(root: &Path, seam: &crate::analysis::seams::RepoSeam) -> PathBuf {
@@ -4459,6 +4469,23 @@ mod seam_diagnostic_tests {
             .ok_or_else(|| "expected diagnostic for opaque".to_string())?;
         if diag.severity != Some(DiagnosticSeverity::INFORMATION) {
             return Err(format!("expected INFORMATION, got {:?}", diag.severity));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn opaque_seam_message_includes_reach_witness_summary() -> Result<(), String> {
+        let mut entry = classified(SeamGripClass::Opaque);
+        entry.evidence.reach = StageEvidence::new(
+            StageState::Opaque,
+            Confidence::Low,
+            "Reach unresolved (rust_integration_public_api_path_unresolved): `checks_out` (tests/checkout.rs:1) calls `checkout`".to_string(),
+        );
+        let message = lsp_seam_message(&entry);
+        if !message.contains("`checks_out`") || !message.contains("calls `checkout`") {
+            return Err(format!(
+                "expected reach witness in Problems message: {message}"
+            ));
         }
         Ok(())
     }
@@ -7500,6 +7527,53 @@ mod diagnostic_policy_tests {
                 "deferred seam inventory without degradation must stay seams_deferred, got {run_status}"
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn seam_inventory_status_prose_uses_plain_words() -> Result<(), String> {
+        let features = crate::lsp::client_features::ClientFeatureProfile::unsupported();
+        let mut rust_off = LspAnalysisConfig {
+            diagnostic_profile: LspDiagnosticProfile::Full,
+            ..LspAnalysisConfig::default()
+        };
+        rust_off.repo_config.languages.enabled = vec![LanguageId::TypeScript];
+        let configs = [
+            LspAnalysisConfig::default(),
+            LspAnalysisConfig {
+                diagnostic_profile: LspDiagnosticProfile::Full,
+                enable_seam_diagnostics: false,
+                ..LspAnalysisConfig::default()
+            },
+            rust_off,
+            LspAnalysisConfig {
+                session_options: Some(serde_json::json!({ "diagnosticProfile": "actionable" })),
+                ..LspAnalysisConfig::default()
+            },
+        ];
+        let mut checked = 0;
+        for config in &configs {
+            let payload =
+                seam_inventory_not_enabled_outcome(config).status_payload(Some("s:g"), &features);
+            for field in ["message", "recovery"] {
+                let text = payload[field].as_str().unwrap_or_default();
+                if text.is_empty() {
+                    return Err(format!("status payload lost its {field}: {payload}"));
+                }
+                let hits = crate::lsp::tests::jargon_words(text);
+                if !hits.is_empty() {
+                    return Err(format!("jargon {hits:?} in status {field}: {text}"));
+                }
+                checked += 1;
+            }
+        }
+        // Positive control: the scanner flags prose but not the config key.
+        assert_eq!(
+            crate::lsp::tests::jargon_words("the seam is a Discriminator"),
+            ["seam", "Discriminator"]
+        );
+        assert!(crate::lsp::tests::jargon_words("set seam_diagnostics = true").is_empty());
+        assert_eq!(checked, 8);
         Ok(())
     }
 

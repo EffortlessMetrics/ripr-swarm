@@ -11,7 +11,7 @@
 
 use crate::analysis::facts::RustIndex;
 use crate::analysis::probes::{
-    BindingValueResolution, ChangedBindingPredicateUse, ChangedBindingReturnFlow,
+    BindingValueResolution, ChangedBindingPredicateUse, ChangedBindingReturnFlow, ReturnFlowKind,
 };
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
 
@@ -351,6 +351,13 @@ pub(super) fn attach_changed_binding_return_evidence(
         flow.return_line,
         flow.kind.label()
     ));
+    if matches!(
+        finding.class,
+        ExposureClass::Exposed | ExposureClass::WeaklyExposed
+    ) && flow.kind == ReturnFlowKind::Whole
+    {
+        return;
+    }
     finding.evidence.push(
         "binding_return_non_claim: named analyzer limitation only; the binding value is not evaluated and no test is credited for the changed binding"
             .to_string(),
@@ -1298,6 +1305,37 @@ mod tests {
                 .evidence
                 .iter()
                 .any(|line| line.starts_with("binding_return_non_claim:"))
+        );
+    }
+
+    #[test]
+    fn credited_whole_binding_return_does_not_claim_unread_value() {
+        use crate::analysis::probes::ChangedBindingReturnFlow;
+        let mut finding =
+            static_unknown_finding("let result = helper(amount * 8);", "src/lib.rs::score");
+        finding.class = ExposureClass::Exposed;
+        finding.probe.before = Some("let result = helper(amount * 9);".to_string());
+        let flow = ChangedBindingReturnFlow {
+            binding: "result".to_string(),
+            initializer: "helper(amount * 8)".to_string(),
+            return_expression: "result".to_string(),
+            return_line: 9,
+            kind: crate::analysis::probes::ReturnFlowKind::Whole,
+        };
+        attach_changed_binding_return_evidence(&mut finding, Some(&flow));
+        assert_eq!(finding.class, ExposureClass::Exposed);
+        assert!(finding.evidence.iter().any(|line| {
+            line.starts_with(
+                "binding_return_relation: changed binding `result` initializer `helper(amount * 9)` -> `helper(amount * 8)` reaches the returned expression `result` at line 9 as a whole binding",
+            )
+        }));
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .all(|line| !line.starts_with("binding_return_non_claim:")),
+            "{:?}",
+            finding.evidence
         );
     }
 }

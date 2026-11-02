@@ -130,6 +130,8 @@ map is:
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v4`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
+| `ripr reports kani` | `schema_version` | `ripr_kani_report.v1` |
+| `ripr reports kani --binding` input | `schema_version` | `ripr_kani_binding.v1` |
 | `ripr help --json` | `schema_version` | `4` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
@@ -174,6 +176,34 @@ records that distinction.
 
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
+
+## Imported Kani observation (`ripr_kani_report.v1`)
+
+`ripr reports kani --input PATH --binding PATH [--root PATH] [--out PATH] [--out-md PATH]` reads a Kani schema `0.1.0` export and an explicit source binding. It executes no Kani command. `--out` writes JSON and `--out-md` writes Markdown from the same validated report. Full qualification of this development adapter profile remains outstanding. Its checked-in Kani examples are upstream contract fixtures. Each report replacement is atomic; the pair is not transactional. An output failure can leave the JSON report present without a Markdown report.
+
+| Report field | Contract |
+| --- | --- |
+| `schema_version` | `ripr_kani_report.v1`; independent of the native Kani version. |
+| `adapter_version`, `adapter_profile` | RIPR package version and pinned native-export adapter profile. |
+| `provenance` | Always `external_unattested`. Hashes do not authenticate a producer. |
+| `source_binding_state` | Always `listed_files_match`; no whole-repository or atomic-snapshot claim. |
+| `checked_root` | Canonical local directory whose listed files were checked. |
+| `artifact_sha256`, `binding_sha256` | SHA-256 commitments to the exact native-input and binding bytes. |
+| `binding` | Validated binding values; invocation tokens remain descriptive data. |
+| `native` | Typed native run/harness outcomes and original JSON value at `native.document`. |
+| `limitations` | Required disclosures of provenance, source, execution and assurance limits. |
+
+The binding uses `schema_version: "ripr_kani_binding.v1"` and these required fields:
+
+- `repository`: existing `RiprRepositorySnapshotV1` with `repository_id`, `snapshot_id`, `source_view: "captured_source_set"` and `source_digest`.
+- `run_id` and `artifact_sha256`: a caller-supplied run label and exact native-byte commitment. The label does not prove freshness or process identity.
+- `source_files[]`: unique portable relative `path`, `sha256` and nonempty unique `roles` from `configuration|dependency|harness|implementation|lockfile|specification|toolchain`. At least one implementation role and one harness role must be listed.
+- `context`: `target`, `cargo_features[]`, `default_features`, `toolchain`, `environment_sha256` and ordered `invocation[]` tokens.
+- `selected_harnesses[]`: unique `{crate_name, name}` identities. Its size must match the native selected count; every returned harness must belong to it.
+
+Digests use `sha256:<64 lowercase hex>`. To derive `repository.source_digest`, sort source files by path and hash the UTF-8 concatenation of each `path\tsha256:<filehex>\n` record. The snapshot identity is `captured:<source_digest>`. Each returned harness file must be listed with the harness role. Files are checked individually inside the selected root; symlinks, traversal, duplicate paths, malformed bindings and mismatched hashes are refused. Native input is bounded to 16 MiB, binding input to 2 MiB, source inventory to 4096 files, each source file to 16 MiB and total source bytes to 256 MiB.
+
+Target and selected identities are checked against native results. Other context fields are retained declarations, not evidence that the verifier used them. Partial runs retain missing selected scope. Native success, safety checks, unreachable checks and expected-panic results keep their native meaning; successful-property identities and functional coverage are not synthesized from counts. This report establishes no source-inventory completeness, authentic or fresh execution, non-vacuity, specification adequacy, discharged stub contracts, static exposure improvement, repair receipt or merge approval. See [the assurance contract](specs/RIPR-SPEC-0135-assurance-state-vocabulary.md#external-kani-observation-import).
 
 ## Repair card (`RepairCardV1`, schema `repair_card.v1`)
 
@@ -1634,6 +1664,125 @@ Field contract:
   fixture-backed states include internal-only policy metadata, visible
   unobserved report/config labels, observed schema labels, cross-file flow
   unknown limitations, and opaque lookup limitations.
+
+## Diff Report
+
+`ripr diff --json` emits one `ripr_diff` object (schema `0.1`) from
+`crates/ripr/src/output/diff_report.rs`. It is the check-family diff envelope:
+changed-surface findings plus explicit completion and full-repo-context
+limitation signals. Human and JSON `ripr diff` reports both go to stdout (see
+[Output streams by command family](#output-streams-by-command-family)); stderr
+carries warnings and diagnostics only. This section documents the JSON object.
+Exit mapping matches check JSON for `analysis_outcome` (see the `ripr diff` note
+under [Check Output](#check-output)).
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "ripr_diff",
+  "tool": "ripr",
+  "run_status": "diff_complete_full_repo_limited",
+  "root": ".",
+  "base": "origin/main",
+  "head": "HEAD",
+  "mode": "draft",
+  "runtime_status": {
+    "state": "diff_complete_full_repo_limited",
+    "diff": {
+      "state": "diff_complete",
+      "phase": "changed_surface_diff",
+      "changed_files": 1,
+      "changed_seams": 1,
+      "downstream_consumable": true
+    },
+    "full_repo_context": {
+      "state": "full_repo_limited",
+      "phase": "full_repo_context",
+      "limitation_category": "full_repo_context_not_run",
+      "downstream_consumable": false,
+      "repair_route": "ripr check --format repo-exposure-summary-json"
+    }
+  },
+  "receipt": {
+    "state": "not_written",
+    "path": "target/ripr/receipts/diff-first-origin-main-HEAD.json",
+    "outcome_hint": "diff_complete/full_repo_limited"
+  },
+  "summary": {
+    "changed_files": 1,
+    "changed_seams": 1,
+    "probes": 1,
+    "exposed": 0,
+    "weakly_exposed": 1,
+    "reachable_unrevealed": 0,
+    "no_static_path": 0,
+    "unknown": 0
+  },
+  "changed_files": [
+    {
+      "path": "src/lib.rs",
+      "added_lines": [2],
+      "removed_lines": [2],
+      "added_count": 1,
+      "removed_count": 1
+    }
+  ],
+  "changed_seams": [
+    {
+      "seam_id": "probe:src/lib.rs:2:predicate",
+      "file": "src/lib.rs",
+      "line": 2,
+      "classification": "weakly_exposed",
+      "evidence": ["related test reaches owner"],
+      "missing_discriminators": ["missing discriminator amount == threshold"],
+      "recommended_next_step": "Add equality-boundary assertion."
+    }
+  ]
+}
+```
+
+Field contract:
+
+- `schema_version` — currently `"0.1"`.
+- `kind` — `"ripr_diff"`.
+- `tool` — `"ripr"`.
+- `run_status` — top-level completion for the diff envelope. Emitted values are
+  `diff_complete_full_repo_limited` when analysis is complete enough for the
+  changed-surface diff, and `diff_incomplete_full_repo_limited` when
+  `analysis_outcome` is present and incomplete (for example
+  `unsupported_input` or `partial_with_limitations`). Mirrors
+  `runtime_status.state`.
+- `root`, `base`, `head`, `mode` — workspace root (slash-stable display path),
+  resolved base revision, head revision, and analysis mode (`draft` or `strict`).
+- `analysis_outcome` — optional typed outcome block (same shape as check JSON).
+  Omitted when absent, not `null`. When present and incomplete, zero
+  `changed_seams` is explicitly not a clean result.
+- `runtime_status` — structured completion view:
+  - `state` — same string as top-level `run_status`.
+  - `diff` — changed-surface phase: `state` is `diff_complete` or
+    `diff_incomplete`; `phase` is `changed_surface_diff`; counts mirror
+    `changed_files` / `changed_seams`; `downstream_consumable` is `true` only
+    for a complete changed-surface diff.
+  - `full_repo_context` — always records the large-repo limitation:
+    `state` `full_repo_limited`, `phase` `full_repo_context`,
+    `limitation_category` `full_repo_context_not_run`,
+    `downstream_consumable` `false`, and `repair_route` naming the repo-scope
+    follow-up command.
+- `receipt` — receipt binding for diff-first workflows: `state` (currently
+  `not_written` when no receipt file was written), `path` (intended or actual
+  receipt location), and `outcome_hint` (`diff_complete/full_repo_limited` or
+  `diff_incomplete/full_repo_limited`).
+- `summary` — roll-up counts for changed files/seams, probes, exposure classes,
+  and `unknown` (sum of infection, propagation, and static unknown findings).
+- `changed_files[]` — git-scoped file deltas: portable `path`, line lists, and
+  `added_count` / `removed_count`.
+- `changed_seams[]` — finding projection for the diff: `seam_id`, optional
+  `canonical_gap_id`, workspace-relative `file` and `line`, `classification`,
+  `evidence`, `missing_discriminators`, optional `recommended_next_step`.
+- `preview_languages[]` — optional preview-language advisories (RIPR-SPEC-0082).
+  Omitted when empty, not `null`. Non-empty entries mean preview-language files
+  were in scope; empty `changed_seams` with non-empty `preview_languages` is
+  not a Rust-grade clean result.
 
 ## Check Artifact
 
@@ -19413,7 +19562,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.134",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.137",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20185,7 +20334,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.51",
+    "schema_version": "1.52",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -20198,7 +20347,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.134",
+      "schema_version": "1.137",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

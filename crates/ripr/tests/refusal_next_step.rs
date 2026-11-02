@@ -534,7 +534,7 @@ const LIVE_CASES: &[Case] = &[
     Case {
         args: &["repair", "nope"],
         exit: 3,
-        reason: "names no seam",
+        reason: "names no gap",
     },
     Case {
         args: &["agent", "card", "--seam-id", "nope"],

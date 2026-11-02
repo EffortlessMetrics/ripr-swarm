@@ -1,0 +1,24 @@
+{
+  "id": "kani_import_external_unattested",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/kani-import-unattested.json",
+  "vector": "authored_expectation_compared_with_real_import_not_a_captured_native_run",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_not_emit_repair_packet"
+    },
+    {
+      "type": "must_not_have_verify_command"
+    },
+    {
+      "type": "must_not_have_receipt_command"
+    }
+  ]
+}

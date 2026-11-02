@@ -891,11 +891,17 @@ pub(crate) struct RegistrationScope {
     context: TypeScriptAdmissionContext,
     names: RegistrationNames,
     unshadowed_undefined: bool,
+    /// The object-row table loop this list is the body of (#11196).
+    row_loop: Option<RowLoop>,
 }
 
 impl RegistrationScope {
     fn of(scope: &TestScope, unshadowed_undefined: bool) -> Self {
         Self {
+            row_loop: scope
+                .row_loop
+                .clone()
+                .filter(|row_loop| row_loop.applies_at(scope.levels.len())),
             context: scope.admission.registration_context(),
             names: RegistrationNames::new(
                 scope
@@ -1205,7 +1211,12 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             scope.iterables.push(Vec::new());
             let inherited_strict = scope.admission.block_functions_are_lexical;
             scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
+            // #11196: a `for (const t of <object-row table>)` loop over one
+            // registration reads the registration once per row.
+            let inherited_row_loop = scope.row_loop.take();
+            scope.row_loop = row_loop_of(stmt, statements, body, source, scope.levels.len());
             collect_tests_from_statements(body, file, source, imports, scope, tests);
+            scope.row_loop = inherited_row_loop;
             scope.admission.block_functions_are_lexical = inherited_strict;
             scope.iterables.pop();
             scope.levels.pop();
@@ -1455,6 +1466,8 @@ pub(crate) struct TestScope {
     guards: Vec<String>,
     /// The fixtures a Playwright `base.extend` constructs (SPEC-0243 rule 23).
     fixtures: Option<super::fixture_receivers::PlaywrightFixtures>,
+    /// The object-row table loop whose body is being walked (#11196).
+    row_loop: Option<RowLoop>,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -3843,6 +3856,14 @@ fn test_name_and_assertions_from_registration(
         bindings
     };
     let bindings = &bindings;
+    // #11196: a registration that is the whole body of a `for (const t of
+    // <object-row table>)` loop reads as one case per row.
+    if call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
+        && let Some(row_loop) = registration.and_then(|registration| registration.row_loop.as_ref())
+        && let Some(assertions) = row_loop_assertions(callback, row_loop, source, bindings)
+    {
+        return Some((name, assertions));
+    }
     // An inline literal `test.each` table reads as one concrete case per
     // row; any other table keeps the row-parameter assertions.
     if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)

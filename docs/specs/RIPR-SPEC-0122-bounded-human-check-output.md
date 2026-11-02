@@ -193,12 +193,12 @@ observation, discriminator) and a purely positional detail window hides the
 decisive stages behind a remainder count (#4324):
 
 ```text
-  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
+  Evidence: reach yes · infection weak · propagation yes · observation yes · assertion missing
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -238,7 +238,10 @@ five stages for every finding and never silently drops one. The `missing` state
 covers absent inputs and absent assertions, such as an exact error
 variant assertion when the test already supplies the relevant input.
 
-The discriminator token keeps the full evidence line's semantic: the
+The fifth stage is labelled `assertion` in the default digest and its legend
+(#10692; the internal stage name `discriminate` and the word "discriminator"
+stay in JSON, SARIF, the editor and `--format human-full`). The assertion token
+keeps the full evidence line's semantic: the
 `discriminate` stage grades the strongest related oracle, so on a non-`exposed`
 finding a `yes` grade
 renders as `missing` (a named missing discriminator exists) or
@@ -257,7 +260,12 @@ repair-card authority. A card-less Python finding therefore never hides a
 carded one, so `check` does not report "no repair card" while `ripr pilot` and
 `ripr first-pr` route a card for the same diff. Classification is unchanged.
 
-The digest's discriminator line label reflects the discriminator state:
+The digest's assertion line label reflects the assertion state. Boundary
+(#10692): stage and producer prose that is shared with JSON (for example "No
+strong discriminator was detected", "equality-boundary discriminator is
+missing", and the Python preview next-step text) still says "discriminator" in the
+default digest; changing it needs the shared producer strings and the JSON
+contracts to move together.
 
 - `Missing check` — the finding is not `exposed`; the named
   discriminator is absent from the related tests (#10691: the digest says
@@ -362,7 +370,10 @@ compiling test stub, or a named refusal. When the finding line holds no seam
 of its own, `--at` stubs the nearest gap, so the printed `<line>` is that
 seam's own line rather than the finding line, and only when asking for that
 line resolves to the same seam with no substitution note; otherwise no route
-is printed. A changed constant routed through a consuming function follows the
+is printed. For `--kind return_value` only, a finding line with no
+return-value gap gets a direct stub for that line's return probe or a named
+refusal instead of substituting the nearest return-value gap (#8444 item 2).
+A changed constant routed through a consuming function follows the
 same rule for the consumer's seam line (#8444). Side-effect, call-deletion,
 field-construction, and static-unknown families never get the block, because
 the stub producer refuses them.

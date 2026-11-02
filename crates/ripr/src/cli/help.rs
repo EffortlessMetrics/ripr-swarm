@@ -103,6 +103,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "reports ci-summary",
     "reports gap-ledger",
     "reports index",
+    "reports kani",
     "reports ts-false-actionable",
     "reports ts-limitations",
     "rerun",
@@ -183,6 +184,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         | "reports ci-summary"
         | "reports gap-ledger"
         | "reports index"
+        | "reports kani"
         | "reports ts-false-actionable"
         | "reports ts-limitations" => REPORTS_HELP,
         "rerun" => RERUN_HELP,
@@ -941,7 +943,7 @@ mod tests {
         // #5065: CI authors who only read `--help` must not treat findings as
         // a nonzero lint. The typed contract is docs/EXIT_CODES.md.
         assert!(CHECK_HELP.contains("`exposed`"));
-        assert!(CHECK_HELP.contains("`weakly_exposed`"));
+        assert!(CHECK_HELP.contains("or weak"));
         assert!(CHECK_HELP.contains("A non-zero exit means the analysis did not"));
         assert!(CHECK_HELP.contains("`ripr gate evaluate`"));
         assert!(CHECK_HELP.contains("exit 3 on `blocked`"));
@@ -1443,6 +1445,8 @@ mod tests {
     const DOCTOR_PARSER_RS: &str = include_str!("commands/doctor.rs");
     const GATE_PARSER_RS: &str = include_str!("commands/gate.rs");
     const INIT_PARSER_RS: &str = include_str!("commands/init.rs");
+    const KANI_REPORT_PARSER_RS: &str = include_str!("commands/kani_report.rs");
+    const LSP_PARSER_RS: &str = include_str!("commands/lsp.rs");
     const PILOT_PARSER_RS: &str = include_str!("commands/pilot.rs");
     const BASELINE_PARSER_RS: &str = include_str!("commands/baseline.rs");
     const CACHE_PARSER_RS: &str = include_str!("commands/cache.rs");
@@ -1612,7 +1616,7 @@ mod tests {
             &["run_impacted_evidence", "parse_options"],
         ),
         ("init", INIT_PARSER_RS, &["parse_init_options"]),
-        ("lsp", CLI_COMMANDS_RS, &["lsp_with_serve"]),
+        ("lsp", LSP_PARSER_RS, &["lsp_with_serve"]),
         ("mcp", MCP_PARSER_RS, &["run"]),
         ("outcome", CLI_COMMANDS_RS, &["parse_outcome_options"]),
         ("pilot", PILOT_PARSER_RS, &["parse_pilot_options"]),
@@ -1727,6 +1731,7 @@ mod tests {
             CLI_COMMANDS_RS,
             &["parse_report_packet_index_options"],
         ),
+        ("reports kani", KANI_REPORT_PARSER_RS, &["parse_options"]),
         (
             "reports ts-false-actionable",
             CLI_COMMANDS_RS,
@@ -2148,7 +2153,7 @@ fn parse_demo<'a>(xs: &'a str) {
     /// `*_suggests_the_nearest_flag_for_a_typo` in `commands/context.rs`,
     /// `commands/check.rs`, `commands/doctor.rs`, `commands/pilot.rs`,
     /// `commands/config.rs`, `commands/receipt.rs`, `commands/review_comments.rs`,
-    /// `commands.rs`, and
+    /// `commands/lsp.rs`, `commands.rs`, and
     /// `agent.rs`. The suggestion scoping tests in `suggest.rs` pin which of
     /// those flags belong to which sibling of a shared help body. Tightening
     /// this scanner to scrutinee position without a real Rust parser would

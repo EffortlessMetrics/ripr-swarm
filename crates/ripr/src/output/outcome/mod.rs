@@ -3543,6 +3543,31 @@ mod tests {
         Ok(())
     }
 
+    /// #12247: a snapshot cut by the pilot byte budget, both seam limits, and
+    /// the byte bound is refused once with every control named.
+    #[test]
+    fn outcome_three_cuts_refusal_names_every_control() -> Result<(), String> {
+        let json = crate::output::repo_exposure::tests::three_cuts_document_from_writer()?;
+        let Err(refusal) = targeted_test_outcome_report_from_json(
+            &json,
+            &json,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        ) else {
+            return Err("a three-cut snapshot must not be compared".to_string());
+        };
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        assert!(refusal.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{refusal}");
+        assert!(
+            refusal.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT=0"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn outcome_refuses_a_byte_bounded_repo_exposure_snapshot() -> Result<(), String> {
         // #12108: the cut file lists only some seams; comparing it would read

@@ -6987,7 +6987,7 @@ or {\"gap_id\": \"...\", \"gap_ledger\": \"target/ripr/reports/gap-decision-ledg
 
 /// Accepted argument shape for `ripr.collectEvidenceContext`.
 pub(crate) const COLLECT_EVIDENCE_CONTEXT_ARGUMENT_SHAPES: &str = "one object: \
-{\"seam_id\": \"...\", \"evidence_identity\": {...}}; copy both from a ripr seam \
+{\"seam_id\": \"...\", \"evidence_identity\": {...}}; copy both from a ripr spot \
 diagnostic's data";
 
 /// Accepted argument shapes for `ripr.collectRepairPacket`, quoted in its errors.
@@ -7615,7 +7615,7 @@ impl Backend {
         }
         if snapshot.seams_deferred {
             return Some(
-                "the current deferred refresh does not retain the cited full-seam evidence",
+                "the current deferred refresh does not retain the cited full spot evidence",
             );
         }
         let cited_identity = args
@@ -7626,14 +7626,14 @@ impl Backend {
                 Some(cited_identity),
                 Some(&snapshot.evidence_identity()),
             ) {
-                return Some("the cited seam evidence belongs to an older snapshot");
+                return Some("the cited spot evidence belongs to an older snapshot");
             }
         } else if !legacy_test_snapshot {
-            return Some("the cited seam action has no evidence identity");
+            return Some("the cited spot action has no evidence identity");
         }
         let seam_id = args.get("seam_id").and_then(|v| v.as_str());
         if seam_id.is_some_and(|id| snapshot.classified_seam_by_id(id).is_none()) {
-            return Some("the cited seam is absent from the current full-seam evidence");
+            return Some("the cited spot is absent from the current full spot evidence");
         }
         None
     }

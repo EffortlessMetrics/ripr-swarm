@@ -417,6 +417,65 @@ pattern, a non-block body, `for await`, a non-ASCII parameter or body, a
 loop variable re-declared in the body, and every condition that already
 refuses an `.each` row).
 
+Amended (#11196): an object-row table reads the same way when its rows
+are plain object literals and the callback reads them as `row.key`.
+Two forms qualify. (1) `test.each([{ input: ..., out: ... }, ...])(title,
+(row) => ...)` with one plain identifier parameter, or one object pattern
+of plain `key` / `key: local` bindings (no default, rest, nested pattern or
+computed key). (2) `const tests = [{ ... }, ...]; for (const t of tests) {
+test(title, () => ... t.key ...); }` where the table is a `const` array
+literal in the same statement list as the loop, named exactly twice in that
+list (its declaration and the loop header, so no reassignment, `push`,
+index write, spread, alias, `concat`, `.map` derivation or export can
+reach it), the list holds no `eval`, `with` or `\u` escape, the loop body
+is exactly one test registration, and the callback takes no parameter.
+Each row is an object literal with no spread, computed key, method,
+accessor, duplicate key or `__proto__`. Every key the callback reads must
+hold a one-line literal in EVERY row: a scalar, `undefined`, or an
+all-literal nested array or object under the #11255 vocabulary. One row
+that misses the key, or holds an identifier, call, template, spread cell
+or `Number.POSITIVE_INFINITY`/`NaN` (outside the literal vocabulary),
+leaves the whole table unresolved. The row parameter may appear only as a
+plain `row.key` read (a spread of an array cell is a plain read); a bare
+row, `row[key]`, `row?.key`, an assignment, a declaration or shadowing
+parameter is refused. Every `row.key` read, scalar or container, resolves only when the
+callback is exactly one `expect(..).matcher(..)` statement and the read is
+a direct argument of the call that is the whole argument of `expect(` or of
+the matcher call. A second statement, or a read wrapped in parentheses, a
+comma list, `void`, `delete`, an array, an operator, a further member
+(`t.out.toString()`, `(t.input).pop()`) or an argument of any other call
+(`Object.assign(t.input, ..)`, `fix(t.input)`) refuses the table. A
+container (array or object) cell is shared by every read of the row, so it
+is additionally read at most once. The `expect` it names must be a whole
+word (not `myexpect(` or `x.expect(`).
+One guard, applied to the whole call text (registration plus callback) of
+every row-table entry path (`for...of`, `test.each` over arrays or object
+rows, destructured and array-row parameters), refuses the table when code
+(outside quoted text and comments) contains `eval`, `Function`, `with`,
+`arguments`, `this`, `new.target`, any backslash (identifier `\u` escapes),
+or any `/` outside a comment (a division or a regex literal is refused outright; the same words are also refused by a plain text count even inside strings); the object-row `for...of` form and the
+array-table `for...of` form (#9533) also ban `eval`, `with` and `\u` anywhere
+in their statement list (one shared helper). A destructured
+scalar local is a copy of the cell, so it is exempt from the lone-`expect`
+rule that every `row.key` read obeys. A destructured container local is not a
+copy: it references the row's array or object. It is safe only because the
+callback is a single `expect(..).matcher(..)` statement, the local is read at
+most once as one direct argument with no trailing member, and the local is not
+reassigned. A pattern that repeats a row key
+(`({ input: a, input: b })`) refuses the table, and in the `for...of` form
+the loop parameter may not appear in the registration's callee or in any
+registration argument other than the callback, except a title that is
+exactly `t.key` or `t.key.toString()` over a scalar cell in every row.
+The assertions of a
+resolved table are the concatenation over its rows, each with that
+row's literals, so the credit is an aggregate over the row set and the
+existing classifier decides whether any row's input reaches the changed
+boundary with a discriminating expected value; nothing here grants
+credit by itself. A `for...of` table written `[..] as const` or `[..] as
+T[]` resolves like the plain array (the cast changes no runtime value).
+Tuple rows with array or object cells, rows whose cells span lines and
+ragged rows keep `typescript_table_case_unresolved`.
+
 ### Recogniser order
 
 Each assertion expression is tried in this order; the first match wins:
@@ -2113,6 +2172,15 @@ keys); do not take the next number.
   `default_exported_class_credits_the_return_edit_under_any_local_name` (an
   `export default class` imported under any local name), beside the existing
   shadowed-or-replaced-receiver control that keeps a rebound name uncredited.
+
+- #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
+  literal assertions for the `for...of` and `test.each` object-row forms and
+  their refusals (a row missing the key, an identifier, call, spread, template
+  or computed cell, a touched, aliased, exported, derived, `let` or late table,
+  a bare, computed or optional row read, a shadowing parameter, a sibling
+  statement in the loop). `app/tests/typescript_table_row_packets.rs` runs the
+  production `check` path; fixtures `ts_table_row_expected_credit` and
+  `ts_table_row_expected_refused` pin the credited and refused sets.
 
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row

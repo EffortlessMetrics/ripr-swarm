@@ -18205,11 +18205,11 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
         for (cited_identity, expected_reason) in [
             (
                 serde_json::json!({"snapshot_id": "snapshot:older"}),
-                "the cited seam evidence belongs to an older snapshot",
+                "the cited spot evidence belongs to an older snapshot",
             ),
             (
                 serde_json::Value::Null,
-                "the cited seam action has no evidence identity",
+                "the cited spot action has no evidence identity",
             ),
         ] {
             let stale = backend
@@ -18246,7 +18246,7 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
         assert_eq!(stale_without_identity["status"], "stale");
         assert_eq!(
             stale_without_identity["invalidation_reason"],
-            "the cited seam action has no evidence identity"
+            "the cited spot action has no evidence identity"
         );
 
         let mut deferred = sample_workspace_diagnostics(
@@ -18415,7 +18415,7 @@ fn execute_command_collect_evidence_context_returns_typed_stale_for_unknown_seam
         assert_eq!(packet["seam_id"], "unknown-seam");
         assert_eq!(
             packet["invalidation_reason"],
-            "the cited seam is absent from the current full-seam evidence"
+            "the cited spot is absent from the current full spot evidence"
         );
         assert_eq!(packet["recovery_command"], REFRESH_COMMAND);
         // #5274: the emitted recovery command must execute through the
@@ -29081,6 +29081,83 @@ fn finding_hover_markdown_for(finding: &Finding) -> Result<String, String> {
     }
 }
 
+/// Plain-language guard for editor text (#12213): the words the default
+/// `ripr check` screen retired ("seam", "discriminator") must not come
+/// back in LSP status prose. Tokens are split on anything that is not a
+/// letter, digit or underscore, so machine identifiers such as
+/// `seam_diagnostics_not_enabled` or `seam_diagnostics = true` (config
+/// keys users must type verbatim) are not prose and are not flagged.
+pub(crate) fn jargon_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| {
+            matches!(
+                word.to_ascii_lowercase().as_str(),
+                "seam" | "seams" | "discriminator" | "discriminators"
+            )
+        })
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+#[test]
+fn hover_and_lens_prose_uses_plain_words() -> Result<(), String> {
+    // #12213: editor hover and code lens must not bring back the words the
+    // default `ripr check` screen retired. The hover's stage rows keep the
+    // exempt stage vocabulary (`* discriminator yes/no/weak ...`), the same
+    // exemption the CLI's Evidence line has, so rows that open with the stage
+    // name are skipped; everything else is scanned.
+    let finding = fix_route_rust_finding();
+    let markdown = finding_hover_markdown_for(&finding)?;
+    let lens = super::lens::related_test_lens_title(&finding, None);
+    let mut scanned = 0;
+    for line in markdown.lines().chain(std::iter::once(lens.as_str())) {
+        // A stage row keeps its exempt stage label (`* discriminator yes:`);
+        // its summary after the first colon is scanned like any other prose,
+        // outside backticks (the user's own source text).
+        let trimmed = line.trim_start_matches(['*', '-', ' ']);
+        let scanned_text = if trimmed.starts_with("discriminator ") {
+            trimmed.split_once(": ").map_or("", |(_, summary)| summary)
+        } else {
+            line
+        };
+        let prose: String = scanned_text
+            .split('`')
+            .step_by(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let hits = jargon_words(&prose);
+        if !hits.is_empty() {
+            return Err(format!("jargon {hits:?} in editor text: {line}"));
+        }
+        scanned += 1;
+    }
+    if scanned < 5 {
+        return Err(format!(
+            "guard scanned too little text ({scanned} lines):\n{markdown}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn hover_stage_summary_label_colon_prose_uses_plain_words() -> Result<(), String> {
+    // The pairing-missing summary puts producer prose after a label colon.
+    // A colon rule that leaves the tail verbatim would show "discriminator"
+    // in the hover again (delta review of #12258).
+    let mut finding = fix_route_rust_finding();
+    finding.ripr.reveal.discriminate.summary = "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator".to_string();
+    let markdown = finding_hover_markdown_for(&finding)?;
+    let row = markdown
+        .lines()
+        .find(|line| line.contains("unconfirmed"))
+        .ok_or_else(|| format!("no discriminate row in hover:\n{markdown}"))?;
+    let summary = row.split_once(": ").map_or("", |(_, summary)| summary);
+    if !jargon_words(summary).is_empty() {
+        return Err(format!("jargon in hover stage summary: {row}"));
+    }
+    Ok(())
+}
+
 #[test]
 fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), String> {
     let finding = fix_route_rust_finding();
@@ -30222,6 +30299,95 @@ fn perl_packet_backed_rows_agree_in_hover_related_information_and_data() -> Resu
         assert_eq!(direct_row["why"], why.as_str());
         let advisory_row = row(&advisory.name)?;
         assert!(advisory_row["miss"].is_null() && advisory_row["why"].is_null());
+    }
+    Ok(())
+}
+
+/// #5496: the production-classified Python finding's rows reach hover,
+/// related information and the diagnostic data with the shared sentence on
+/// the explained row only.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_production_rows_agree_in_hover_related_information_and_data() -> Result<(), String> {
+    use crate::output::related_test_miss::{related_test_miss_label, related_test_miss_reason};
+    let finding = crate::analysis::python_direct_and_advisory_finding()?;
+    let explained = finding
+        .related_tests
+        .iter()
+        .find(|row| row.miss.is_some())
+        .ok_or("expected one explained row")?;
+    let withheld = finding
+        .related_tests
+        .iter()
+        .find(|row| row.miss.is_none())
+        .ok_or("expected one withheld row")?;
+    let why = related_test_miss_reason(explained, &finding.probe.family)
+        .ok_or("the explained row should have a reason")?;
+    let label = related_test_miss_label(explained);
+    let explained_text = format!("{label}: {why}");
+
+    let hover = finding_hover_markdown_for(&finding)?;
+    let hover_row = |name: &str| {
+        hover
+            .lines()
+            .find(|line| line.starts_with("- `") && line.contains(&format!("`{name}`")))
+            .ok_or_else(|| format!("no hover row for `{name}`:\n{hover}"))
+    };
+    assert!(
+        hover_row(&explained.name)?.contains(&explained_text),
+        "{hover}"
+    );
+    let withheld_row = hover_row(&withheld.name)?;
+    assert!(
+        !withheld_row.contains(&why) && !withheld_row.contains(&format!("{label}:")),
+        "{withheld_row}"
+    );
+
+    let mut diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let examined = diagnostic
+        .related_information
+        .iter()
+        .flatten()
+        .filter(|row| row.message.contains(&why))
+        .collect::<Vec<_>>();
+    let [examined_row] = examined.as_slice() else {
+        return Err(format!("expected one explained row: {examined:?}"));
+    };
+    assert!(
+        examined_row
+            .message
+            .contains(&format!("`{}`", explained.name))
+            && examined_row.message.ends_with(&explained_text),
+        "{}",
+        examined_row.message
+    );
+
+    add_canonical_group_data(
+        Path::new("/workspace"),
+        &mut diagnostic,
+        &finding,
+        std::slice::from_ref(&finding),
+    );
+    let data = diagnostic.data.as_ref().ok_or("expected diagnostic data")?;
+    for rows in [
+        &data["related_tests"],
+        &data["raw_findings"][0]["related_tests"],
+    ] {
+        let row = |name: &str| {
+            rows.as_array()
+                .into_iter()
+                .flatten()
+                .find(|row| row["name"] == name)
+                .ok_or_else(|| format!("no data row for `{name}`: {rows}"))
+        };
+        let explained_row = row(&explained.name)?;
+        assert_eq!(
+            explained_row["miss"].as_str(),
+            explained.miss.map(|miss| miss.as_str())
+        );
+        assert_eq!(explained_row["why"], why.as_str());
+        let withheld_row = row(&withheld.name)?;
+        assert!(withheld_row["miss"].is_null() && withheld_row["why"].is_null());
     }
     Ok(())
 }

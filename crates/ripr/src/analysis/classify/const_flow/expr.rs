@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Value {
+pub(in crate::analysis::classify) enum Value {
     Int(i64),
     Bool(bool),
     Str(String),
@@ -16,7 +16,7 @@ pub(super) enum Value {
 
 impl Value {
     /// The value as the test author would write it.
-    pub(super) fn render(&self) -> String {
+    pub(in crate::analysis::classify) fn render(&self) -> String {
         match self {
             Self::Int(value) => value.to_string(),
             Self::Bool(value) => value.to_string(),
@@ -35,7 +35,7 @@ impl Value {
 /// A declared type this evaluator understands. Integer ranges are clipped to
 /// `i64`: a value outside it is unreadable rather than wrapped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Ty {
+pub(in crate::analysis::classify) enum Ty {
     Int { min: i64, max: i64 },
     Bool,
     Str,
@@ -155,7 +155,7 @@ fn string_literal(text: &str) -> Option<(String, &str)> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum BinOp {
+pub(in crate::analysis::classify) enum BinOp {
     Or,
     And,
     Eq,
@@ -203,7 +203,7 @@ impl BinOp {
 }
 
 #[derive(Clone, Debug)]
-pub(super) enum Expr {
+pub(in crate::analysis::classify) enum Expr {
     Literal(Value),
     Var(String),
     Not(Box<Expr>),
@@ -438,8 +438,87 @@ impl Expr {
         }
     }
 
+    /// A helper or inlined initializer that `eval` can compute without a
+    /// nested call, `format!`, or `if`. Format templates look up names in
+    /// the caller's scope, which is not the helper's after inlining.
+    fn is_value_closed(&self) -> bool {
+        match self {
+            Self::Literal(_) | Self::Var(_) => true,
+            Self::Not(inner) | Self::Neg(inner) => inner.is_value_closed(),
+            Self::Bin(_, left, right) => left.is_value_closed() && right.is_value_closed(),
+            Self::Method(receiver, method, args) => {
+                matches!(method.as_str(), "min" | "max" | "is_empty" | "len")
+                    && receiver.is_value_closed()
+                    && args.iter().all(Self::is_value_closed)
+            }
+            Self::Call(..) | Self::Format(..) | Self::If(..) => false,
+        }
+    }
+
+    fn subst(&self, vars: &BTreeMap<&str, &Expr>) -> Expr {
+        match self {
+            Self::Literal(value) => Self::Literal(value.clone()),
+            Self::Var(name) => vars
+                .get(name.as_str())
+                .map(|expr| (*expr).clone())
+                .unwrap_or_else(|| self.clone()),
+            Self::Not(inner) => Self::Not(Box::new(inner.subst(vars))),
+            Self::Neg(inner) => Self::Neg(Box::new(inner.subst(vars))),
+            Self::Bin(op, left, right) => {
+                Self::Bin(*op, Box::new(left.subst(vars)), Box::new(right.subst(vars)))
+            }
+            Self::Method(receiver, method, args) => Self::Method(
+                Box::new(receiver.subst(vars)),
+                method.clone(),
+                args.iter().map(|arg| arg.subst(vars)).collect(),
+            ),
+            Self::Call(name, args) => Self::Call(
+                name.clone(),
+                args.iter().map(|arg| arg.subst(vars)).collect(),
+            ),
+            Self::Format(template, args) => Self::Format(
+                template.clone(),
+                args.iter().map(|arg| arg.subst(vars)).collect(),
+            ),
+            Self::If(condition, then, otherwise) => Self::If(
+                Box::new(condition.subst(vars)),
+                Box::new(then.subst(vars)),
+                Box::new(otherwise.subst(vars)),
+            ),
+        }
+    }
+
+    fn inline_helpers(&self, helpers: &BTreeMap<String, Reader>) -> Option<Expr> {
+        match self {
+            Self::Literal(_) | Self::Var(_) => Some(self.clone()),
+            Self::Not(inner) => Some(Self::Not(Box::new(inner.inline_helpers(helpers)?))),
+            Self::Neg(inner) => Some(Self::Neg(Box::new(inner.inline_helpers(helpers)?))),
+            Self::Bin(op, left, right) => Some(Self::Bin(
+                *op,
+                Box::new(left.inline_helpers(helpers)?),
+                Box::new(right.inline_helpers(helpers)?),
+            )),
+            Self::Method(receiver, method, args) => {
+                let args: Option<Vec<Expr>> =
+                    args.iter().map(|arg| arg.inline_helpers(helpers)).collect();
+                Some(Self::Method(
+                    Box::new(receiver.inline_helpers(helpers)?),
+                    method.clone(),
+                    args?,
+                ))
+            }
+            Self::Call(name, args) => {
+                let helper = helpers.get(name)?;
+                let args: Option<Vec<Expr>> =
+                    args.iter().map(|arg| arg.inline_helpers(helpers)).collect();
+                helper.bind(&args?)
+            }
+            Self::Format(..) | Self::If(..) => None,
+        }
+    }
+
     /// The first call in source order, as its own expression.
-    pub(super) fn first_call(&self) -> Option<&Self> {
+    pub(in crate::analysis::classify) fn first_call(&self) -> Option<&Self> {
         match self {
             Self::Literal(_) | Self::Var(_) => None,
             Self::Not(inner) | Self::Neg(inner) => inner.first_call(),
@@ -490,7 +569,7 @@ impl Expr {
     }
 
     /// Every called name, in source order.
-    pub(super) fn call_names(&self, names: &mut Vec<String>) {
+    pub(in crate::analysis::classify) fn call_names(&self, names: &mut Vec<String>) {
         match self {
             Self::Literal(_) | Self::Var(_) => {}
             Self::Not(inner) | Self::Neg(inner) => inner.call_names(names),
@@ -543,28 +622,48 @@ fn parse_type(tokens: &[Token]) -> Option<Ty> {
 
 /// A free function of one parameter list and one tail expression.
 #[derive(Clone, Debug)]
-pub(super) struct Reader {
-    pub(super) name: String,
+pub(in crate::analysis::classify) struct Reader {
+    pub(in crate::analysis::classify) name: String,
     params: Vec<(String, Ty)>,
     body: Expr,
 }
 
-/// Parse `fn name(a: T, ...) -> R { expr }` (attributes and a `pub` prefix
-/// allowed). Control flow, statements, generics, `self` and any other shape
-/// are unreadable.
-pub(super) fn parse_reader(text: &str) -> Option<Reader> {
-    parse_reader_in(text, false)
+impl Reader {
+    pub(in crate::analysis::classify) fn from_parts(
+        name: String,
+        params: Vec<(String, Ty)>,
+        body: Expr,
+    ) -> Option<Self> {
+        body.is_value_closed()
+            .then_some(Self { name, params, body })
+    }
+
+    pub(in crate::analysis::classify) fn is_value_closed(&self) -> bool {
+        self.body.is_value_closed()
+    }
+
+    fn bind(&self, args: &[Expr]) -> Option<Expr> {
+        if self.params.len() != args.len() || !self.body.is_value_closed() {
+            return None;
+        }
+        let vars: BTreeMap<&str, &Expr> = self
+            .params
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .zip(args.iter())
+            .collect();
+        let bound = self.body.subst(&vars);
+        bound.is_value_closed().then_some(bound)
+    }
 }
 
-/// A trait default method with no receiver: `Self::NAME` is the constant and
-/// its body may be an `if`/`else` chain (RIPR-SPEC-0048, associated-constant
-/// extension).
-pub(super) fn parse_trait_reader(text: &str) -> Option<Reader> {
-    parse_reader_in(text, true)
+struct FnSig {
+    name: String,
+    params: Vec<(String, Ty)>,
+    body_open: usize,
 }
 
-fn parse_reader_in(text: &str, trait_body: bool) -> Option<Reader> {
-    let tokens = tokenize(text)?;
+fn parse_fn_sig(tokens: &[Token]) -> Option<FnSig> {
     let mut at = 0;
     if matches!(tokens.get(at), Some(Token::Ident(word)) if word == "pub") {
         at += 1;
@@ -609,26 +708,60 @@ fn parse_reader_in(text: &str, trait_body: bool) -> Option<Reader> {
     if open - close > 5 {
         return None;
     }
-    let body = tokens.get(open + 1..tokens.len().checked_sub(1)?)?;
+    Some(FnSig {
+        name: name.clone(),
+        params,
+        body_open: open,
+    })
+}
+
+/// `fn name(a: T, ...) -> R {` including a `pub` prefix. The body may contain
+/// statements; only the signature is read.
+pub(in crate::analysis::classify) fn parse_fn_header(
+    text: &str,
+) -> Option<(String, Vec<(String, Ty)>)> {
+    let tokens = tokenize(text)?;
+    let sig = parse_fn_sig(&tokens)?;
+    Some((sig.name, sig.params))
+}
+
+/// Parse `fn name(a: T, ...) -> R { expr }` (attributes and a `pub` prefix
+/// allowed). Control flow, statements, generics, `self` and any other shape
+/// are unreadable.
+pub(in crate::analysis::classify) fn parse_reader(text: &str) -> Option<Reader> {
+    parse_reader_in(text, false)
+}
+
+/// A trait default method with no receiver: `Self::NAME` is the constant and
+/// its body may be an `if`/`else` chain (RIPR-SPEC-0048, associated-constant
+/// extension).
+pub(in crate::analysis::classify) fn parse_trait_reader(text: &str) -> Option<Reader> {
+    parse_reader_in(text, true)
+}
+
+fn parse_reader_in(text: &str, trait_body: bool) -> Option<Reader> {
+    let tokens = tokenize(text)?;
+    let sig = parse_fn_sig(&tokens)?;
+    let body = tokens.get(sig.body_open + 1..tokens.len().checked_sub(1)?)?;
     if tokens.last() != Some(&Token::Punct("}")) {
         return None;
     }
     let body = parse_tokens_in(body, trait_body)?;
-    body.is_closed().then(|| Reader {
-        name: name.clone(),
-        params,
+    body.is_closed().then_some(Reader {
+        name: sig.name,
+        params: sig.params,
         body,
     })
 }
 
 /// `[pub] const|static NAME: T = INIT;` on one line.
-pub(super) struct ConstDecl {
-    pub(super) name: String,
-    pub(super) ty: Ty,
-    pub(super) init: Expr,
+pub(in crate::analysis::classify) struct ConstDecl {
+    pub(in crate::analysis::classify) name: String,
+    pub(in crate::analysis::classify) ty: Ty,
+    pub(in crate::analysis::classify) init: Expr,
 }
 
-pub(super) fn parse_const_decl(text: &str) -> Option<ConstDecl> {
+pub(in crate::analysis::classify) fn parse_const_decl(text: &str) -> Option<ConstDecl> {
     let tokens = tokenize(text)?;
     let mut at = 0;
     if matches!(tokens.get(at), Some(Token::Ident(word)) if word == "pub") {
@@ -660,7 +793,7 @@ pub(super) fn parse_const_decl(text: &str) -> Option<ConstDecl> {
 }
 
 /// A parsed test assertion.
-pub(super) enum Assertion {
+pub(in crate::analysis::classify) enum Assertion {
     True(Expr),
     Eq(Expr, Expr),
     Ne(Expr, Expr),
@@ -671,14 +804,14 @@ impl Assertion {
     /// written out in the test: a literal-only expression, with no call and
     /// no constant. `assert_eq!(read(), read())` and `assert_eq!(read(), LIMIT)`
     /// move with the edit and pin nothing.
-    pub(super) fn has_literal_expectation(&self) -> bool {
+    pub(in crate::analysis::classify) fn has_literal_expectation(&self) -> bool {
         match self {
             Self::True(expr) => expr.is_pinned(),
             Self::Eq(left, right) | Self::Ne(left, right) => compares_to_literal(left, right),
         }
     }
 
-    pub(super) fn call_names(&self) -> Vec<String> {
+    pub(in crate::analysis::classify) fn call_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         match self {
             Self::True(expr) => expr.call_names(&mut names),
@@ -697,7 +830,7 @@ fn compares_to_literal(left: &Expr, right: &Expr) -> bool {
 }
 
 /// `assert!(e)`, `assert_eq!(a, b)` or `assert_ne!(a, b)`, with no message.
-pub(super) fn parse_assertion(text: &str) -> Option<Assertion> {
+pub(in crate::analysis::classify) fn parse_assertion(text: &str) -> Option<Assertion> {
     let tokens = tokenize(text)?;
     let Some(Token::Ident(macro_name)) = tokens.first() else {
         return None;
@@ -752,11 +885,11 @@ pub(super) fn parse_assertion(text: &str) -> Option<Assertion> {
 }
 
 /// One constant bound to a value, and the readers a test may call.
-pub(super) struct Machine<'a> {
-    pub(super) readers: &'a [Reader],
-    pub(super) constant: &'a str,
-    pub(super) constant_ty: Ty,
-    pub(super) constant_value: &'a Value,
+pub(in crate::analysis::classify) struct Machine<'a> {
+    pub(in crate::analysis::classify) readers: &'a [Reader],
+    pub(in crate::analysis::classify) constant: &'a str,
+    pub(in crate::analysis::classify) constant_ty: Ty,
+    pub(in crate::analysis::classify) constant_value: &'a Value,
 }
 
 /// Names bound while evaluating, and the integer range every intermediate
@@ -768,7 +901,7 @@ struct Scope<'a> {
     calls: bool,
 }
 
-pub(super) fn evaluate_initializer(expr: &Expr, ty: Ty) -> Option<Value> {
+pub(in crate::analysis::classify) fn evaluate_initializer(expr: &Expr, ty: Ty) -> Option<Value> {
     let scope = Scope {
         vars: BTreeMap::new(),
         lo: i64::MIN,
@@ -782,7 +915,7 @@ pub(super) fn evaluate_initializer(expr: &Expr, ty: Ty) -> Option<Value> {
 impl Machine<'_> {
     /// Whether the assertion holds when the constant has this machine's value,
     /// or `None` when any part of it is unreadable.
-    pub(super) fn holds(&self, assertion: &Assertion) -> Option<bool> {
+    pub(in crate::analysis::classify) fn holds(&self, assertion: &Assertion) -> Option<bool> {
         let scope = Scope {
             vars: BTreeMap::new(),
             lo: i64::MIN,
@@ -808,7 +941,10 @@ impl Machine<'_> {
     /// The value the assertion's first reader call returns, for the
     /// explanation (not the value of the whole comparison). `None` when
     /// there is no call or it does not evaluate.
-    pub(super) fn call_result(&self, assertion: &Assertion) -> Option<Value> {
+    pub(in crate::analysis::classify) fn call_result(
+        &self,
+        assertion: &Assertion,
+    ) -> Option<Value> {
         let scope = Scope {
             vars: BTreeMap::new(),
             lo: i64::MIN,
@@ -978,7 +1114,13 @@ fn binary(op: BinOp, left: Value, right: Value) -> Option<Value> {
     }
 }
 
-#[cfg(test)]
-pub(super) fn parse_expression(text: &str) -> Option<Expr> {
+pub(in crate::analysis::classify) fn parse_expression(text: &str) -> Option<Expr> {
     parse_tokens(&tokenize(text)?)
+}
+
+pub(in crate::analysis::classify) fn inline_helpers(
+    expr: &Expr,
+    helpers: &BTreeMap<String, Reader>,
+) -> Option<Expr> {
+    expr.inline_helpers(helpers)
 }

@@ -221,7 +221,8 @@ fn a_stalled_remote_times_out_at_its_deadline() {
 
 #[cfg(unix)]
 mod stub {
-    use super::super::{build_packet, parse_args};
+    use super::super::judge::Limits;
+    use super::super::{build_packet, control_delay_ms, control_refusal, parse_args};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
@@ -245,6 +246,15 @@ mod stub {
         name: &str,
         base_script: &str,
         cand_script: &str,
+    ) -> Result<super::super::Packet, String> {
+        packet_with(name, base_script, cand_script, &[])
+    }
+
+    fn packet_with(
+        name: &str,
+        base_script: &str,
+        cand_script: &str,
+        extra: &[&str],
     ) -> Result<super::super::Packet, String> {
         let dir = std::env::temp_dir().join(format!("ripr-warm-ab-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -274,6 +284,7 @@ mod stub {
             &dir.join("out").to_string_lossy(),
         ]
         .iter()
+        .chain(extra.iter())
         .map(|s| (*s).to_string())
         .collect();
         let options = parse_args(&args)?;
@@ -314,5 +325,108 @@ mod stub {
             error.contains("findings"),
             "missing candidate findings must be rejected naming findings: {error:?}"
         );
+    }
+
+    /// #12244: a synthetic pin whose baseline takes ~4 s (a 1.6x delta of 2.4 s clears the 2 s noise
+    /// floor). The control scales with that baseline, so it can fail a pin that
+    /// a fixed sleep would not, and the same pin passes with no control.
+    const SLOW: &str = "sleep 4\nprintf '%s' '{\"findings\":[{\"id\":1}]}'\nexit 0";
+
+    #[test]
+    fn control_slowdown_fails_a_pin_at_1_6x_and_a_clean_run_passes_at_1_0x() -> TestResult {
+        let clean = packet_for("control-clean", SLOW, SLOW)?;
+        assert!(clean.passed, "no control must pass: {}", clean.detail);
+        assert!(clean.control_slowdown.is_none());
+        let control = packet_with("control-1-6", SLOW, SLOW, &["--control-slowdown", "1.6"])?;
+        assert!(
+            !control.passed,
+            "1.6x control passed (ratio {:?}): {}",
+            control.ratio, control.detail
+        );
+        assert_eq!(control.control_slowdown, Some(1.6));
+        assert!(
+            control.ratio.is_some_and(|ratio| ratio >= 1.55),
+            "the injected ratio did not reach the judge: {:?}",
+            control.ratio
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn control_slowdown_accepts_only_a_finite_ratio_above_one_and_at_most_ten() {
+        for bad in ["1.0", "0.9", "11", "nan", "inf", "x"] {
+            let args: Vec<String> = [
+                "--baseline",
+                "b",
+                "--candidate",
+                "c",
+                "--tree",
+                "t",
+                "--diff",
+                "d",
+                "--control-slowdown",
+                bad,
+            ]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+            assert!(parse_args(&args).is_err(), "{bad} must be refused");
+        }
+    }
+
+    #[test]
+    fn the_control_targets_the_ratio_whatever_the_candidate_already_took() {
+        // 4 s baseline at 1.6x targets 6.4 s: a 1 s candidate waits 5.4 s, one at
+        // the baseline's speed waits 2.4 s, and one already past it waits nothing.
+        assert_eq!(control_delay_ms(4000, 1000, 1.6), 5400);
+        assert_eq!(control_delay_ms(4000, 4000, 1.6), 2400);
+        assert_eq!(control_delay_ms(4000, 9000, 1.6), 0);
+    }
+
+    #[test]
+    fn a_control_that_cannot_test_the_gate_is_refused() {
+        let limits = Limits::default();
+        let short = control_refusal(1900, 0, 1.6, &limits);
+        assert!(
+            short.is_some_and(|reason| reason.contains("inconclusive")),
+            "a baseline whose control stays inside the noise floor must be refused"
+        );
+        let long = control_refusal(100_000, 0, 10.0, &limits);
+        assert!(
+            long.is_some_and(|reason| reason.contains("ceiling")),
+            "a control past the ceiling must be refused"
+        );
+        // A raised ceiling must not lift the per-check deadline: 100 s at 10x
+        // would otherwise sleep ~15 minutes outside check_once's 10-minute bound.
+        let raised = Limits {
+            ceiling_ms: 1_200_000,
+            ..Limits::default()
+        };
+        let beyond_deadline = control_refusal(100_000, 0, 10.0, &raised);
+        assert!(
+            beyond_deadline.is_some_and(|reason| reason.contains("600000 ms bound")),
+            "a raised ceiling must still be bounded by the per-check deadline"
+        );
+        assert!(control_refusal(4000, 1000, 1.6, &limits).is_none());
+        // A candidate already at or past the target injects nothing, so no
+        // control may be claimed for the run.
+        let past = control_refusal(4000, 7000, 1.6, &limits);
+        assert!(
+            past.is_some_and(|reason| reason.contains("nothing would be injected")),
+            "a candidate already past the target must be refused"
+        );
+    }
+
+    #[test]
+    fn a_fast_candidate_still_fails_the_control() -> TestResult {
+        const FAST: &str = "sleep 1\nprintf '%s' '{\"findings\":[{\"id\":1}]}'\nexit 0";
+        let control = packet_with("control-fast", SLOW, FAST, &["--control-slowdown", "1.6"])?;
+        assert!(!control.passed, "{}", control.detail);
+        assert!(
+            control.ratio.is_some_and(|ratio| ratio >= 1.55),
+            "{:?}",
+            control.ratio
+        );
+        Ok(())
     }
 }

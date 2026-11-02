@@ -1760,7 +1760,7 @@ pub(crate) fn ava_assertion_from_expression(
             source,
         ),
         oracle_confidence,
-        rendered_call: None,
+        rendered_call: Some(format!("{receiver}.{method}(...)")),
         loose_number_expected: false,
         expected_object_const: None,
         compares_reference_identity: TypeScriptAssertion::ava_compares_reference_identity(method),
@@ -3821,6 +3821,15 @@ pub(crate) fn is_literal_container_argument(arg: &Argument<'_>) -> bool {
         Argument::ObjectExpression(object) => literal_container_object(object),
         _ => false,
     }
+}
+
+/// An array or object literal built only from [`is_literal_container_argument`]'s
+/// literal vocabulary, as an expression (a table-row cell).
+pub(crate) fn is_literal_container_expression(value: &Expression<'_>) -> bool {
+    matches!(
+        value,
+        Expression::ArrayExpression(_) | Expression::ObjectExpression(_)
+    ) && literal_container_value(value)
 }
 
 fn literal_container_array(array: &oxc_ast::ast::ArrayExpression<'_>) -> bool {

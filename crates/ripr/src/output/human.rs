@@ -417,6 +417,7 @@ pub(crate) fn render_full_with_config_and_navigation(
             JsonPointerWording::CheckFlag,
             shared_sections,
             output.source_value_files(finding),
+            false,
         ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
@@ -1319,6 +1320,7 @@ pub(crate) fn render_finding_with_context_command_and_files(
         JsonPointerWording::ExplainNamesCheck,
         None,
         files,
+        true,
     );
     // #7796: project the owner's observed call shape (the same producer
     // `ripr agent stub` reads) into the verdict-change recipe. Only when the
@@ -1396,7 +1398,10 @@ pub(crate) fn render_finding_agent(
     ))
 }
 
-pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
+pub(crate) use evidence_lines::{
+    JsonPointerWording, plain_observation_wording, plain_repair_card_user_wording,
+    plain_stop_condition,
+};
 pub(crate) use sections::HUMAN_EVIDENCE_LEGEND;
 pub(crate) use sections::render_finding_with_config;
 pub(crate) use triage::unresolved_boundary_operand;
@@ -7776,7 +7781,7 @@ mod tests {
 
         assert!(
             digest.contains(
-                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · discriminator no\n"
+                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · assertion no\n"
             ),
             "digest must name all five stage states; got:\n{digest}"
         );
@@ -7857,19 +7862,19 @@ mod tests {
 
         assert_eq!(rendered.matches("  Evidence: reach ").count(), 1);
         assert_eq!(rendered.matches("    Stages (static evidence):").count(), 1);
-        assert!(rendered.contains("· discriminator no\n    Stages (static evidence):"));
+        assert!(rendered.contains("· assertion no\n    Stages (static evidence):"));
         for meaning in [
             "reach = test path to changed owner",
             "infection = inputs can activate change",
             "propagation = changed effect reaches output",
             "observation = related test/assertion evidence",
-            "discriminator = assertion distinguishes intended from wrong behavior",
+            "assertion = a test assertion tells intended from wrong behavior",
             "yes = evidence found",
             "weak = partial evidence",
             "no = evidence not found",
             "unknown/opaque = analysis limited",
-            "missing = named discriminator absent from tests",
-            "not established = discriminator unconfirmed",
+            "missing = a needed test input or assertion is absent",
+            "not established = assertion unconfirmed",
             "not applicable = stage unused",
             // #9244 item 4: the words the Summary count line prints.
             "changed behavior = one change point ripr checked",
@@ -7970,7 +7975,7 @@ mod tests {
             Path::new("."),
         );
         assert!(digest.contains(
-            "  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak\n"
+            "  Evidence: reach yes · infection weak · propagation yes · observation yes · assertion weak\n"
         ));
         assert!(digest.contains("observation = related test/assertion evidence"));
         assert!(!digest.contains("observation = assertion observes changed effect"));
@@ -8084,13 +8089,22 @@ mod tests {
 
         assert!(
             digest.contains(
-                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · discriminator missing\n"
+                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · assertion missing\n"
             ),
             "a yes oracle grade on a non-exposed finding must not read as a present discriminator; got:\n{digest}"
         );
         assert!(
             !digest.contains("discriminator yes"),
             "the compact line must not contradict the missing-discriminator wording; got:\n{digest}"
+        );
+
+        assert!(
+            digest.contains("missing = a needed test input or assertion is absent"),
+            "{digest}"
+        );
+        assert!(
+            !digest.contains("missing = no matching assertion in tests"),
+            "{digest}"
         );
 
         // Missing facts also come from assertion gaps, even when the test
@@ -8105,12 +8119,12 @@ mod tests {
             &RiprConfig::default(),
             Path::new("."),
         );
-        assert!(digest.contains("· discriminator missing\n"), "{digest}");
+        assert!(digest.contains("· assertion missing\n"), "{digest}");
         assert!(
-            digest.contains("missing = named discriminator absent from tests"),
+            digest.contains("missing = a needed test input or assertion is absent"),
             "{digest}"
         );
-        assert!(!digest.contains("missing = named input absent from tests"));
+        assert!(!digest.contains("missing = no matching assertion in tests"));
 
         let missing = finding.activation.missing_discriminators.clone();
         finding.activation.missing_discriminators = Vec::new();
@@ -8120,7 +8134,7 @@ mod tests {
             Path::new("."),
         );
         assert!(
-            digest.contains("· discriminator not established\n"),
+            digest.contains("· assertion not established\n"),
             "without a named missing discriminator the token keeps the full line's wording; got:\n{digest}"
         );
 
@@ -8130,7 +8144,7 @@ mod tests {
             &RiprConfig::default(),
             Path::new("."),
         );
-        assert!(digest.contains("· discriminator yes\n"), "{digest}");
+        assert!(digest.contains("· assertion yes\n"), "{digest}");
 
         finding.class = ExposureClass::WeaklyExposed;
         finding.ripr.reveal.discriminate.state = StageState::Weak;
@@ -8140,7 +8154,7 @@ mod tests {
             &RiprConfig::default(),
             Path::new("."),
         );
-        assert!(digest.contains("· discriminator weak\n"), "{digest}");
+        assert!(digest.contains("· assertion weak\n"), "{digest}");
     }
 
     // RIPR-SPEC-0115: a transitive-reach witness line in `evidence` (recognized
@@ -8399,6 +8413,47 @@ mod tests {
         assert!(
             rendered.contains("observation yes: Observed; the changed value is never named"),
             "{rendered}"
+        );
+    }
+
+    #[test]
+    fn plain_stop_condition_rewrites_only_the_known_producer_form() {
+        use super::evidence_lines::plain_stop_condition;
+        // #12214: editor text says "missing check"; the producer string itself
+        // stays the JSON/agent contract, so only the exact form is rewritten.
+        assert_eq!(
+            plain_stop_condition(
+                "Stop if the expected value for the missing discriminator is ambiguous."
+            ),
+            "Stop if the expected value for the missing check is ambiguous."
+        );
+        for unchanged in [
+            "Stop if imports, fixtures, or test setup cannot call the changed owner.",
+            "Stop if the related test belongs to another package.",
+            "Stop if the expected value for the missing discriminator `x` is ambiguous.",
+        ] {
+            assert_eq!(plain_stop_condition(unchanged), unchanged);
+        }
+    }
+
+    #[test]
+    fn plain_repair_card_user_wording_rewrites_known_producer_phrases_only() {
+        use super::evidence_lines::plain_repair_card_user_wording;
+        assert_eq!(
+            plain_repair_card_user_wording("repair readiness for this seam"),
+            "repair readiness for this spot"
+        );
+        assert!(
+            plain_repair_card_user_wording(
+                "instruction unavailable exposes no witness-derived assertion on this card (the card's witness pass is diff-scoped and no finding names this seam in the current analysis), but the seam is repair-ready and the bounded repair route still exists: rerun `agent repair --seam-id seam:demo --phase before`, the command the pilot step printed for this seam"
+            )
+            .contains("names this spot")
+        );
+        assert!(
+            plain_repair_card_user_wording(
+                "instruction unavailable exposes no witness-derived assertion on this card (the card's witness pass is diff-scoped and no finding names this seam in the current analysis), but the seam is repair-ready and the bounded repair route still exists: rerun `agent repair --seam-id seam:demo --phase before`, the command the pilot step printed for this seam"
+            )
+            .contains("--seam-id seam:demo")
         );
     }
 
@@ -10260,6 +10315,55 @@ mod tests {
             "{digest}"
         );
         assert!(!digest.contains(&why), "{digest}");
+        Ok(())
+    }
+
+    /// #5496: the human digest names a related test with the shared sentence
+    /// when that row owns a miss, and with no reason when the first row is the
+    /// withheld mock-oracle row.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn python_production_digest_reason_follows_the_named_row() -> Result<(), String> {
+        use crate::output::related_test_miss::related_test_miss_reason;
+        let finding = crate::analysis::python_direct_and_advisory_finding()?;
+        let explained = finding
+            .related_tests
+            .iter()
+            .find(|row| row.miss.is_some())
+            .ok_or("expected one explained row")?;
+        let withheld = finding
+            .related_tests
+            .iter()
+            .find(|row| row.miss.is_none())
+            .ok_or("expected one withheld row")?;
+        let why = related_test_miss_reason(explained, &finding.probe.family)
+            .ok_or("the explained row should have a reason")?;
+        assert_eq!(
+            related_test_miss_reason(withheld, &finding.probe.family),
+            None
+        );
+        let config = crate::config::RiprConfig::default();
+        let digest =
+            super::sections::render_finding_digest_with_config(&finding, &config, Path::new("."));
+        assert!(
+            digest.contains(&format!(" {}\n", withheld.name)),
+            "{digest}"
+        );
+        assert!(!digest.contains(&why), "{digest}");
+        let mut explained_first = finding.clone();
+        explained_first
+            .related_tests
+            .retain(|row| row.name != explained.name);
+        explained_first.related_tests.insert(0, explained.clone());
+        let digest = super::sections::render_finding_digest_with_config(
+            &explained_first,
+            &config,
+            Path::new("."),
+        );
+        assert!(
+            digest.contains(&format!(" {} ({why})\n", explained.name)),
+            "{digest}"
+        );
         Ok(())
     }
 }
