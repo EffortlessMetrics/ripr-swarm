@@ -27,9 +27,11 @@
 //! literal integer arguments. Only a completed, consistent boolean fold may
 //! pass that new pin's consistency gate; unknown is never promotion evidence.
 
+use crate::analysis::classify::oracle_owner_call_is_shadowed;
 use crate::analysis::extract::{equality_assertion_arguments, outer_assertion_condition};
 use crate::analysis::facts::TestFact as TestSummary;
 use crate::analysis::facts::{FunctionSummary, SourceText};
+use crate::analysis::rust_index::RustIndex;
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
 use std::collections::BTreeMap;
@@ -87,8 +89,10 @@ pub(super) fn exact_value_assertion_verdict_for_test(
     owner: Option<&FunctionSummary>,
     oracle_text: &str,
     test: &TestSummary,
+    index: &RustIndex,
 ) -> ExactValueVerdict {
-    let shadowed = owner.is_some_and(|owner| bare_owner_call_is_shadowed(test, &owner.name));
+    let shadowed =
+        owner.is_some_and(|owner| bare_owner_call_is_shadowed(test, owner, oracle_text, index));
     let Some(rows) = case_row_bindings(test) else {
         return exact_value_assertion_verdict(owner, oracle_text, shadowed);
     };
@@ -114,8 +118,9 @@ pub(super) fn boolean_assertion_verdict_for_test(
     owner: &FunctionSummary,
     oracle_text: &str,
     test: &TestSummary,
+    index: &RustIndex,
 ) -> ExactValueVerdict {
-    if bare_owner_call_is_shadowed(test, &owner.name) {
+    if bare_owner_call_is_shadowed(test, owner, oracle_text, index) {
         return ExactValueVerdict::NotEvaluable;
     }
     let Some(condition) = outer_assertion_condition(oracle_text) else {
@@ -476,7 +481,11 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     let mut relational_seen = false;
     for test in naming_tests {
         if case_row_bindings(test).is_some()
-            || bare_owner_call_is_shadowed(test, &owner.name)
+            || test
+                .let_bindings
+                .iter()
+                .any(|binding| binding.name == owner.name)
+            || body_declares_same_name_fn(test, &owner.name)
             || test.assertions.is_empty()
         {
             return None;
@@ -859,17 +868,47 @@ pub(super) fn contradiction_summary(expected: &str, evaluated: i128) -> String {
     format!("{CONTRADICTION_DISCLOSURE} (asserts {expected}, owner folds to {evaluated})")
 }
 
-/// Whether the test's own body binds `owner_name` with a `let` (a local
-/// shadow the bare-name fold cannot see through, #6701 review).
+/// Whether the owner's name in `test`'s body is not the owner as a value for
+/// `oracle_text`: a `let` binding of the name (a local shadow the bare-name
+/// fold cannot see through, #6701 review), or — scoped to the assertion's own
+/// position — a same-name `fn` block or an import the shared call-identity
+/// resolver reads as another definition (RIPR-SPEC-0240, #10162 review). The
+/// per-assertion item reading lives in
+/// [`crate::analysis::classify::indirect_owner::oracle_owner_call_is_shadowed`];
+/// a body the shared parser refuses proves no item there, so only the `let`
+/// answer stands.
 pub(super) fn bare_owner_call_is_shadowed(
     test: &crate::analysis::facts::TestFact,
-    owner_name: &str,
+    owner: &FunctionSummary,
+    oracle_text: &str,
+    index: &RustIndex,
 ) -> bool {
-    !owner_name.is_empty()
-        && test
-            .let_bindings
-            .iter()
-            .any(|binding| binding.name == owner_name)
+    if owner.name.is_empty() {
+        return false;
+    }
+    if test
+        .let_bindings
+        .iter()
+        .any(|binding| binding.name == owner.name)
+    {
+        return true;
+    }
+    oracle_owner_call_is_shadowed(test.body.as_str(), oracle_text, owner, test, index) == Some(true)
+}
+
+/// Whether the test body itself declares a same-name `fn` item: by definition
+/// another item, wherever its block sits. Read through the shared parser this
+/// crate already trusts for item scope (#10162).
+fn body_declares_same_name_fn(test: &TestSummary, owner_name: &str) -> bool {
+    use ra_ap_syntax::{ast, ast::HasName};
+    let Some(parse) = parse_clean_source_file(test.body.as_str()) else {
+        return false;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        ast::Fn::cast(node)
+            .and_then(|function| function.name())
+            .is_some_and(|declared| declared.text() == owner_name)
+    })
 }
 
 /// Which equality macro family the assertion uses and its first operands.
@@ -2286,14 +2325,103 @@ mod tests {
             .iter()
             .find(|test| test.name == "boundary_uses_a_shadow")
             .ok_or("shadowing test is indexed")?;
-        assert!(bare_owner_call_is_shadowed(test, "discounted_total"));
+        let index = RustIndex::default();
         let assertion = test
             .assertions
             .iter()
             .find(|oracle| oracle.text.contains("assert_eq!"))
             .ok_or("the shadow test carries an equality assertion")?;
+        assert!(bare_owner_call_is_shadowed(
+            test,
+            owner,
+            &assertion.text,
+            &index
+        ));
         let verdict = exact_value_assertion_verdict(Some(owner), &assertion.text, true);
         assert_eq!(verdict, ExactValueVerdict::NotEvaluable);
+        Ok(())
+    }
+
+    #[test]
+    fn a_same_name_item_in_the_body_shadows_the_bare_name_fold() -> Result<(), String> {
+        // A nested `fn` with the owner's name and an explicit same-name
+        // import are other items (#10162): the bare-name fold must stay
+        // silent instead of folding a rival's call against the owner's body.
+        // A glob import binds nothing the fold names, so it stays readable.
+        let source = r#"
+pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64 {
+    if amount_cents >= discount_threshold_cents {
+        amount_cents * 70 / 100
+    } else {
+        amount_cents
+    }
+}
+pub mod other {
+    pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64 {
+        amount_cents
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_fn_shadow() {
+        {
+            fn discounted_total(a: u64, b: u64) -> u64 {
+                b
+            }
+            assert_eq!(discounted_total(5_000, 5_000), 5_000);
+        }
+    }
+
+    #[test]
+    fn rival_import_shadow() {
+        use super::other::discounted_total;
+        assert_eq!(discounted_total(5_000, 5_000), 5_000);
+    }
+
+    #[test]
+    fn glob_import_keeps_the_owner_readable() {
+        assert_eq!(discounted_total(5_000, 5_000), 5_000);
+    }
+}
+"#;
+        let adapter = RaRustSyntaxAdapter;
+        let facts = adapter
+            .summarize_file(std::path::Path::new("src/lib.rs"), source)
+            .map_err(|error| format!("source summarizes: {error}"))?;
+        let index = RustIndex::default();
+        let owner = facts
+            .functions
+            .iter()
+            .find(|function| {
+                function.name == "discounted_total"
+                    && function.file == std::path::Path::new("src/lib.rs")
+            })
+            .ok_or("owner function is indexed")?
+            .clone();
+        let shadowed = |name: &str, oracle: &str| {
+            let test = facts
+                .tests
+                .iter()
+                .find(|test| test.name == name)
+                .ok_or_else(|| format!("{name} is indexed"))?;
+            Ok::<bool, String>(bare_owner_call_is_shadowed(test, &owner, oracle, &index))
+        };
+        let oracle = "assert_eq!(discounted_total(5_000, 5_000), 5_000);";
+        assert!(
+            shadowed("nested_fn_shadow", oracle)?,
+            "nested fn must shadow"
+        );
+        assert!(
+            !shadowed("glob_import_keeps_the_owner_readable", oracle)?,
+            "a glob import must not shadow"
+        );
+        // A rival import's other-definition reading runs through the shared
+        // call-identity resolver; that pairing is pinned end-to-end by
+        // `a_nested_scope_shadow_does_not_hide_an_outer_owner_value` in the
+        // indirect_owner_limit public-API controls.
         Ok(())
     }
 
@@ -2342,6 +2470,7 @@ mod tests {
                 Some(owner),
                 &assertion.text,
                 test,
+                &RustIndex::default(),
             ))
         };
         assert_eq!(

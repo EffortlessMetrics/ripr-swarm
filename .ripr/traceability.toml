@@ -3544,6 +3544,16 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::typeof_guard_never_names_the_bare_operand_as_the_literal",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::non_typeof_comparisons_keep_their_discriminator",
   "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::literal_argument_kind_reads_only_what_the_text_fixes",
+  "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::equality_negation_is_only_a_single_operator_flip",
+  "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::equality_negation_requires_the_whole_condition",
+  "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::equality_negation_refuses_lines_of_a_multi_line_condition",
+  "crates/ripr/src/analysis/language/typescript/typeof_kind_tests.rs::negation_guard_must_be_the_first_body_statement",
+  "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::negated_typeof_guard_credits_a_written_input_of_another_kind",
+  "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::negated_typeof_guard_credits_no_unreadable_argument",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::negated_typeof_guard_with_citty_local_bindings_offers_no_start",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::changed_typeof_kind_with_no_kind_input_still_starts",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::negated_typeof_clause_of_a_multi_line_condition_is_not_exposed",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::negated_typeof_guard_credits_only_as_the_first_body_statement",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::typeof_kind_discriminator_never_reuses_the_observed_input_or_the_kind_name",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::typeof_kind_shape_keeps_the_packet_delegatable_and_forbids_the_name_string",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::a_non_typeof_discriminator_is_not_read_as_a_kind_test",
@@ -3737,6 +3747,8 @@ tests = [
 fixtures = [
   "fixtures/typescript_typeof_kind_gap",
   "fixtures/typescript_typeof_kind_exposed",
+  "fixtures/typescript_typeof_negation_other_kind_exposed",
+  "fixtures/typescript_typeof_negation_compound_gap",
   "fixtures/typescript_empty_each",
   "fixtures/benches_harness_evidence",
   "fixtures/typescript_boundary_gap",
@@ -5920,6 +5932,7 @@ tests = [
   "crates/ripr/src/output/json/mod.rs::tests::given_source_controls_when_rendered_then_json_round_trips_and_text_spells_controls",
   "crates/ripr/src/output/first_pr.rs::tests::preflight_recovery_commands_pair_shell_forms_for_apostrophe_root_and_refs",
   "crates/ripr/src/output/first_pr.rs::tests::preflight_diff_failure_carries_the_same_shell_recovery_steps",
+  "crates/ripr/tests/generated_review_workflow.rs::generated_first_pr_preflight_recovery_commands_quote_root_and_refs",
   "crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults",
   "crates/ripr/src/output/first_pr/preflight.rs::tests::unreadable_regular_ripr_toml_is_present_not_ok",
   "crates/ripr/src/output/first_pr/preflight.rs::tests::fifo_ripr_toml_is_present_not_ok_and_does_not_block",
@@ -9281,6 +9294,7 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_trait_path_call_then_argument_type_decides",
   "fixtures/python_effect_order_guarded_before_call",
   "fixtures/python_effect_order_module_before_call",
+  "crates/ripr/src/analysis/language/perl/tests.rs::empty_diff_with_supplied_perl_packet_reports_findings",
 ]
 fixtures = [
   "fixtures/typescript_reassigned_setup_hook",
@@ -9373,6 +9387,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/analysis/probes/path_only_argument.rs",
   "xtask/src/main.rs",
@@ -11105,6 +11120,7 @@ tests = [
   "crates/ripr/src/analysis/seam_cache.rs::tests::integrity_nonempty_cold_warm_work_counts_and_timings_are_bounded",
   "crates/ripr/src/analysis/seam_cache.rs::tests::integrity_large_full_and_compact_envelopes_preserve_complete_warm_evidence",
   "crates/ripr/src/analysis/facts/build.rs::tests::same_key_valid_json_payload_edit_recomputes_actual_index",
+  "crates/ripr/src/analysis/facts/build.rs::tests::cache_inventory_skips_corrupt_only_build",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::integrity_invalid_classified_payload_recomputes_full_and_compact_consumers",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::same_key_fingerprint_payload_edit_declines_and_rehashes_source_truth",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_recomputes_only_directly_called_owner_seams",
@@ -11151,6 +11167,7 @@ tests = [
   "crates/ripr/src/cli/rerun.rs::tests::human_rerun_report_names_current_state_only_boundary",
   "crates/ripr/src/cli/rerun.rs::tests::human_rerun_report_names_explicit_static_movement",
   "crates/ripr/src/cli/rerun.rs::tests::canonical_gap_records_preserve_multiple_anchored_scopes",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::diff_scoped_shared_preparation_serves_two_rust_scopes_once",
   "crates/ripr/src/cli/rerun.rs::tests::canonical_gap_duplicate_projection_deduplicates_scope_and_commands",
   "crates/ripr/src/cli/rerun.rs::tests::canonical_gap_conflicting_receipt_commands_remain_explicit",
   "crates/ripr/src/cli/rerun.rs::tests::failed_root_canonicalizations_do_not_compare_equal",
@@ -11166,11 +11183,14 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::rerun_gap_groups_multiple_current_seams",
   "xtask/src/reports/targeted_rerun.rs::tests::parse_options_requires_root_and_changed_test",
   "xtask/src/reports/targeted_rerun.rs::tests::percentile_uses_sorted_nearest_rank",
+  "xtask/src/cache_payload_tamper_recovery/tests.rs::committed_corpus_passes_offline_validation",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/input",
   "benchmarks/targeted_rerun_benchmark/input",
+  "fixtures/cache-payload-tamper-recovery",
+  "fixtures/cache-payload-tamper-recovery/corpus.json",
 ]
 code = [
   "crates/ripr/src/analysis/classify/targeted_calls.rs",
@@ -11181,6 +11201,8 @@ code = [
   "crates/ripr/src/output/gap_decision_ledger.rs",
   "crates/ripr/src/output/outcome/mod.rs",
   "xtask/src/reports/targeted_rerun.rs",
+  "xtask/src/cache_payload_tamper_recovery/mod.rs",
+  "xtask/src/cache_payload_tamper_recovery/tests.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0123-targeted-rerun.md",

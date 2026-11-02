@@ -4453,6 +4453,7 @@ suite('Extension Smoke', () => {
       resolvingServer: true,
       serverUnavailable: false,
       serverFailed: true,
+      circuitOpen: true,
       starting: true,
       analysisQueued: true,
       ready: true,

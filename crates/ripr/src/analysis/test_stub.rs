@@ -28,7 +28,8 @@ use super::syntax::fn_signature::{
     identifier_offsets, owner_signature_at, single_comparison,
 };
 use super::syntax::{
-    GovernedCfgTestModule, governed_cfg_test_modules, has_test_attribute, parse_clean_source_file,
+    GovernedCfgTestModule, governed_cfg_test_modules, has_test_attribute,
+    owner_gated_by_parent_mod_declarations, parse_clean_source_file,
 };
 use super::test_grip_evidence::TestKind;
 use ra_ap_syntax::AstNode;
@@ -260,7 +261,7 @@ pub(crate) fn rust_test_stub_for_classified_seam(
         }
         _ => None,
     };
-    rust_test_stub_for_target(&entry.seam, target, source)
+    rust_test_stub_for_target(&entry.seam, target, source, Some(root))
 }
 
 /// An integration test file a stub is routed to instead of the owner file.
@@ -283,14 +284,21 @@ pub(crate) fn rust_test_stub(
     seam: &RepoSeam,
     integration: Option<&NewTestTargetProposal>,
     source: &str,
+    package_root: Option<&Path>,
 ) -> Result<RustTestStub, TestStubRefusal> {
-    rust_test_stub_for_target(seam, integration.map(IntegrationTarget::New), source)
+    rust_test_stub_for_target(
+        seam,
+        integration.map(IntegrationTarget::New),
+        source,
+        package_root,
+    )
 }
 
 fn rust_test_stub_for_target(
     seam: &RepoSeam,
     integration: Option<IntegrationTarget<'_>>,
     source: &str,
+    package_root: Option<&Path>,
 ) -> Result<RustTestStub, TestStubRefusal> {
     if seam.file().extension().and_then(|ext| ext.to_str()) != Some("rs") {
         return Err(TestStubRefusal::NotRustSource);
@@ -307,6 +315,9 @@ fn rust_test_stub_for_target(
     }
     let signature =
         owner_signature_at(source, seam.byte_offset()).ok_or(TestStubRefusal::SourceUnparsed)?;
+    if package_root.is_some_and(|root| owner_gated_by_parent_mod_declarations(root, seam.file())) {
+        return Err(TestStubRefusal::OwnerUnsupported);
+    }
     check_signature(&signature)?;
     // #11398: a field write in a method (`self.timeout = t * 2`) builds no
     // returned literal; the value to assert on is the receiver after the

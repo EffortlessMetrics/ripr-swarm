@@ -53,6 +53,8 @@ pub(crate) use perl::{PERL_PRODUCER_FAILURE_REASON_PREFIX, PerlAdapter};
 pub(crate) use python::{
     PythonAdapter, PythonFileFactStore, detect_python_test_framework, detect_python_test_frameworks,
 };
+#[cfg(all(test, feature = "lang-python"))]
+pub(crate) use python::{python_direct_and_advisory_finding, python_miss_matrix_findings};
 #[cfg(test)]
 pub(crate) use router::UNANALYZED_SOURCE_LANGUAGES_FOR_TESTS;
 pub(crate) use router::{
