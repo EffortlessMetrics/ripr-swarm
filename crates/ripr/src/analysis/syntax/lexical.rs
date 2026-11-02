@@ -80,9 +80,9 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
             i += 1;
             continue;
         }
-        if trimmed.starts_with("#[test]")
-            || trimmed.starts_with("#[tokio::test")
-            || trimmed.starts_with("#[async_std::test")
+        if trimmed_declares_test_attribute(trimmed, "test")
+            || trimmed_declares_test_attribute(trimmed, "tokio::test")
+            || trimmed_declares_test_attribute(trimmed, "async_std::test")
             || trimmed.starts_with("#[rstest")
         {
             pending_test = true;
@@ -308,6 +308,42 @@ fn ranges_overlap(
     left_start <= right_end && right_start <= left_end
 }
 
+fn trimmed_declares_test_attribute(trimmed: &str, path: &str) -> bool {
+    let compact = attribute_source_compact(trimmed.trim());
+    ["#[", "#[::"].into_iter().any(|prefix| {
+        let head = format!("{prefix}{path}]");
+        compact == head || compact.starts_with(&format!("{prefix}{path}("))
+    })
+}
+
+fn attribute_source_compact(source: &str) -> String {
+    let mut compact = String::new();
+    let mut chars = source.chars().peekable();
+    let mut in_block = false;
+    while let Some(ch) = chars.next() {
+        if in_block {
+            if ch == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                in_block = false;
+            }
+            continue;
+        }
+        if ch.is_whitespace() {
+            continue;
+        }
+        if ch == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            in_block = true;
+            continue;
+        }
+        if ch == '/' && chars.peek() == Some(&'/') {
+            break;
+        }
+        compact.push(ch);
+    }
+    compact
+}
+
 fn function_name(trimmed: &str) -> Option<String> {
     let mut cleaned = trimmed;
     if let Some(rest) = cleaned.strip_prefix("pub(crate) ") {
@@ -531,6 +567,26 @@ fn checks_value() {
             Some("src/lib.rs::checks_value")
         );
         Ok(())
+    }
+
+    #[test]
+    fn lexical_test_attributes_tolerate_whitespace_and_trailing_comments() {
+        assert!(trimmed_declares_test_attribute(
+            "#[tokio::test ]",
+            "tokio::test"
+        ));
+        assert!(trimmed_declares_test_attribute(
+            "#[async_std::test /* note */]",
+            "async_std::test"
+        ));
+        assert!(trimmed_declares_test_attribute(
+            "#[tokio::test (flavor = \"multi_thread\")]",
+            "tokio::test"
+        ));
+        assert!(!trimmed_declares_test_attribute(
+            "#[async_std::test_support]",
+            "async_std::test"
+        ));
     }
 
     #[test]

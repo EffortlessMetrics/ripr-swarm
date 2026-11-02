@@ -2734,9 +2734,10 @@ fn owner_pin_assertions_with_matches(
                 attr.syntax().text().to_string(),
             ))
         } else if function.async_token().is_some()
-            && !function
-                .attrs()
-                .any(|attr| tokio_test_runs_body(&attr, function.syntax()))
+            && !function.attrs().any(|attr| {
+                let test = function.syntax();
+                tokio_test_runs_body(&attr, test) || async_std_test_runs_body(&attr, test)
+            })
         {
             Some(AssertionContextRefusal::AsyncTest)
         } else if let Some(refusal) = has_escape(
@@ -3808,6 +3809,9 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if is_tokio_test_path(&path) {
         return tokio_test_runs_body(attr, test);
     }
+    if is_async_std_test_path(&path) {
+        return async_std_test_runs_body(attr, test);
+    }
     if let Some(kind) = rstest_attribute(&path, &module) {
         return rstest_runs_body(attr, kind, test, &module);
     }
@@ -4004,6 +4008,53 @@ fn tokio_test_arguments_pick_runtime(attr: &ast::Attr) -> bool {
             }
             _ => false,
         })
+}
+
+/// `async_std::test`, rooted or not. Same shadowing rule as `tokio::test`.
+fn is_async_std_test_path(path: &str) -> bool {
+    path.strip_prefix("::").unwrap_or(path) == "async_std::test"
+}
+
+/// Whether `attr` is `#[async_std::test]` on an `async fn` and runs the body to
+/// completion on the async_std runtime. `async_std` must be the crate in the
+/// test's module under the same rule as `tokio`. Only a bare attribute or empty
+/// `()` is admitted; any other argument refuses.
+fn async_std_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
+    if attr.excl_token().is_some() {
+        return false;
+    }
+    if ast::Fn::cast(test.clone()).is_none_or(|function| function.async_token().is_none()) {
+        return false;
+    }
+    let Some(path) = attr.path() else {
+        return false;
+    };
+    if !is_async_std_test_path(&path.syntax().text().to_string().replace(' ', "")) {
+        return false;
+    }
+    let Some(module) = test.parent() else {
+        return false;
+    };
+    extern_crate_path_holds(&module, "async_std") && async_std_test_has_no_arguments(attr)
+}
+
+fn async_std_test_has_no_arguments(attr: &ast::Attr) -> bool {
+    match attr.meta() {
+        Some(ast::Meta::PathMeta(_)) => true,
+        Some(ast::Meta::TokenTreeMeta(meta)) => match meta.token_tree() {
+            Some(tree) => {
+                let tokens: Vec<_> = tree
+                    .syntax()
+                    .descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .filter(|token| !token.kind().is_trivia())
+                    .collect();
+                matches!(tokens.as_slice(), [open, close] if open.text() == "(" && close.text() == ")")
+            }
+            None => false,
+        },
+        _ => false,
+    }
 }
 
 /// An rstest attribute on a test function.
@@ -4450,7 +4501,8 @@ fn extern_crate_path_holds(module: &SyntaxNode, krate: &str) -> bool {
 
 /// Crates whose own attributes a module check may trust (see
 /// [`extern_crate_path_holds`]).
-const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &["serial_test", "tokio", "rstest", "test_case"];
+const TRUSTED_ATTRIBUTE_CRATES: &[&str] =
+    &["serial_test", "tokio", "async_std", "rstest", "test_case"];
 
 /// Whether a direct item of `module` carries an attribute of `krate`: a
 /// `krate::..` path, or for `serial_test` a bare name bound to a lock.
@@ -4600,6 +4652,9 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&s
     }
     if unrooted.starts_with("tokio::") {
         return trusted.contains(&"tokio") && is_tokio_test_path(&path);
+    }
+    if unrooted.starts_with("async_std::") {
+        return trusted.contains(&"async_std") && is_async_std_test_path(&path);
     }
     if rstest_attribute_trusted(attr, module) {
         return trusted.contains(&"rstest");
