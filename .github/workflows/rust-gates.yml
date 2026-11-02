@@ -248,6 +248,13 @@ jobs:
             exit 0
           fi
           cd "$base_tree"
+          # Fail OPEN only if the base tree itself does not compile (#12466):
+          # a red base records inherited-unknown; a built base that rejects
+          # the goldens still fails below (fail closed, #11385).
+          if ! cargo build -q -p ripr --bin ripr; then
+            echo "::notice::merge-base $base_sha does not compile; base-matcher judgment inherited-unknown, skipping fail-open (#12466)"
+            exit 0
+          fi
           cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
 
       - name: Repository policy preflight
