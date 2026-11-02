@@ -404,7 +404,8 @@ mod tests {
             .get("subjects")
             .and_then(Value::as_array)
             .ok_or_else(|| {
-                "missing subjects; rebuild build_measurement_packet and re-run this test".to_string()
+                "missing subjects; rebuild build_measurement_packet and re-run this test"
+                    .to_string()
             })?;
         if subjects.len() != 3 {
             return Err(format!(
