@@ -30,6 +30,10 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use super::review_guidance_index_handoff::{
+    ReviewGuidancePreparedWorkspace, resolve_review_guidance_prepared_workspace,
+    took_index_recompute_compatibility_route,
+};
 use super::write_text_file;
 
 const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 120_000;
@@ -803,14 +807,44 @@ fn review_comments_with_admission(
     .map_err(|error| {
         record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
     })?;
+    let prepared_workspace_decision = resolve_review_guidance_prepared_workspace(
+        options.check_output.as_deref(),
+        &input.root,
+        &options.base,
+        &options.head,
+        &config,
+        None,
+    )
+    .map_err(|error| {
+        record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
+    })?;
+    let index_recompute_compatibility = took_index_recompute_compatibility_route(
+        &prepared_workspace_decision,
+        options.check_output.as_deref(),
+    );
+    let optional_prepared = match &prepared_workspace_decision {
+        ReviewGuidancePreparedWorkspace::Reuse { prepared } => Some(*prepared),
+        ReviewGuidancePreparedWorkspace::Recompute { .. } => None,
+    };
     let scoped_inventory = analysis::cancellation::with_token(&cancellation, || {
-        analysis::inventory_diff_scoped_streamed_seams_at_with_config(
-            &input.root,
-            &config,
-            &working_set.files,
-            &changed_owner_names,
-            &mut selection_builder,
-        )
+        if let Some(prepared) = optional_prepared {
+            analysis::inventory_diff_scoped_streamed_seams_with_optional_prepared(
+                &input.root,
+                &config,
+                &working_set.files,
+                &changed_owner_names,
+                &mut selection_builder,
+                Some(prepared),
+            )
+        } else {
+            analysis::inventory_diff_scoped_streamed_seams_at_with_config(
+                &input.root,
+                &config,
+                &working_set.files,
+                &changed_owner_names,
+                &mut selection_builder,
+            )
+        }
     })
     .map_err(|error| {
         if cancellation.observed_abort()
@@ -964,6 +998,11 @@ fn review_comments_with_admission(
         options.timeout_ms,
         "artifact_io",
     )?;
+    if index_recompute_compatibility
+        && let ReviewGuidancePreparedWorkspace::Recompute { reason } = &prepared_workspace_decision
+    {
+        receipt.index_recompute_compatibility(reason);
+    }
     receipt.complete(&artifacts);
     let rendered_json = attach_to_json(&rendered_json, &receipt)?;
     write_text_file(&options.out, &rendered_json)?;
