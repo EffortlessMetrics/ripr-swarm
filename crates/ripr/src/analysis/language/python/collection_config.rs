@@ -21,8 +21,15 @@
 //! `unevaluated`, which withholds credit. Credit is never kept by default when
 //! configuration exists in a shape that is not understood.
 //!
-//! Every config found on a test file's directory chain counts (pytest picks
-//! one by invocation, which a static read cannot know), and a test is excluded
+//! Within one directory, pytest selects a single inifile by precedence
+//! (`pytest.toml` / `.pytest.toml` / `pytest.ini` / `.pytest.ini` even if
+//! empty, then `pyproject.toml` with a pytest table, `tox.ini` `[pytest]`,
+//! `setup.cfg` `[tool:pytest]`). Later files in that directory are ignored.
+//! An unreadable or unparsable candidate, or `addopts` that rewrite the
+//! config file (`-c`, `--rootdir`, `--config-file`), falls back to unioning
+//! every present file so this pass only over-withholds. Every selected (or
+//! unioned) config on a test file's directory chain still counts, because a
+//! static read cannot know the invocation `rootdir`, and a test is excluded
 //! when any of them excludes it.
 //!
 //! Not modelled (credit is unchanged): the default `norecursedirs`, `-k` /
@@ -150,15 +157,10 @@ impl DirRules {
             Source::Unreadable => Some(ConftestRules::unevaluated()),
             Source::Text(text) => Some(ConftestRules::parse(&text)),
         };
-        let mut configs = Vec::new();
-        for (name, format) in CONFIG_FILES {
-            match read_source(root, &dir.join(name)) {
-                Source::Missing => {}
-                Source::Unreadable => configs.push(IniRules::unevaluated()),
-                Source::Text(text) => configs.extend(format.rules(&text)),
-            }
+        Self {
+            conftest,
+            configs: read_directory_configs(root, dir),
         }
-        Self { conftest, configs }
     }
 
     fn is_empty(&self) -> bool {
@@ -374,8 +376,21 @@ enum ConfigFormat {
     Toml(&'static [&'static [&'static str]]),
 }
 
-/// Every file that can carry pytest configuration. All present files count
-/// (pytest picks one by precedence, which the union only over-withholds).
+/// Outcome of asking whether one present file is pytest's inifile.
+enum ConfigCandidate {
+    /// Present but not a pytest config (no required section or table).
+    Absent,
+    /// Unparsable: which file pytest would pick is not established.
+    Unsure,
+    /// This file is the inifile; `Vec` is empty when it matches by presence
+    /// with no pytest section (for example an empty `pytest.ini`).
+    Selected(Vec<IniRules>),
+}
+
+/// Files pytest may use as the inifile, in pytest's precedence order.
+/// The first match in a directory wins; an unreadable or unparsable
+/// candidate, or `addopts` that rewrite the config file, falls back to
+/// unioning every present file so this pass only over-withholds.
 const CONFIG_FILES: [(&str, ConfigFormat); 7] = [
     ("pytest.toml", ConfigFormat::Toml(&[&["pytest"]])),
     (".pytest.toml", ConfigFormat::Toml(&[&["pytest"]])),
@@ -389,7 +404,97 @@ const CONFIG_FILES: [(&str, ConfigFormat); 7] = [
     ("setup.cfg", ConfigFormat::Ini("tool:pytest")),
 ];
 
+/// `pytest.toml` / `.pytest.toml` / `pytest.ini` / `.pytest.ini` match by
+/// presence, including when empty.
+fn inifile_matches_by_presence(name: &str) -> bool {
+    matches!(
+        name,
+        "pytest.toml" | ".pytest.toml" | "pytest.ini" | ".pytest.ini"
+    )
+}
+
+fn read_directory_configs(root: &Path, dir: &Path) -> Vec<IniRules> {
+    match select_directory_inifile(root, dir) {
+        Some(configs) => configs,
+        None => union_directory_configs(root, dir),
+    }
+}
+
+/// The inifile pytest would pick in `dir`, or `None` when that choice is not
+/// established and the caller should union every present file.
+fn select_directory_inifile(root: &Path, dir: &Path) -> Option<Vec<IniRules>> {
+    for (name, format) in CONFIG_FILES {
+        match read_source(root, &dir.join(name)) {
+            Source::Missing => {}
+            Source::Unreadable => return None,
+            Source::Text(text) => match format.consider(name, &text) {
+                ConfigCandidate::Absent => {}
+                ConfigCandidate::Unsure => return None,
+                ConfigCandidate::Selected(rules) => {
+                    if rules.iter().any(IniRules::rewrites_config_file) {
+                        return None;
+                    }
+                    return Some(rules);
+                }
+            },
+        }
+    }
+    Some(Vec::new())
+}
+
+fn union_directory_configs(root: &Path, dir: &Path) -> Vec<IniRules> {
+    let mut configs = Vec::new();
+    for (name, format) in CONFIG_FILES {
+        match read_source(root, &dir.join(name)) {
+            Source::Missing => {}
+            Source::Unreadable => configs.push(IniRules::unevaluated()),
+            Source::Text(text) => configs.extend(format.rules(&text)),
+        }
+    }
+    configs
+}
+
 impl ConfigFormat {
+    fn consider(self, name: &str, text: &str) -> ConfigCandidate {
+        match self {
+            Self::Ini(section) => match ini_section(text, section) {
+                Err(()) => ConfigCandidate::Unsure,
+                Ok(None) if inifile_matches_by_presence(name) => {
+                    ConfigCandidate::Selected(Vec::new())
+                }
+                Ok(None) => ConfigCandidate::Absent,
+                Ok(Some(options)) => ConfigCandidate::Selected(vec![IniRules::from_options(
+                    options
+                        .into_iter()
+                        .map(|(key, value)| (key, split_args(&value)))
+                        .collect(),
+                )]),
+            },
+            Self::Toml(tables) => {
+                let Ok(document) = toml::from_str::<toml::Table>(text) else {
+                    return ConfigCandidate::Unsure;
+                };
+                let rules: Vec<IniRules> = tables
+                    .iter()
+                    .filter_map(|path| toml_table(&document, path))
+                    .map(|table| {
+                        IniRules::from_options(
+                            table
+                                .iter()
+                                .map(|(key, value)| (key.clone(), toml_words(value)))
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                if rules.is_empty() && !inifile_matches_by_presence(name) {
+                    ConfigCandidate::Absent
+                } else {
+                    ConfigCandidate::Selected(rules)
+                }
+            }
+        }
+    }
+
     fn rules(self, text: &str) -> Vec<IniRules> {
         match self {
             Self::Ini(section) => match ini_section(text, section) {
@@ -545,6 +650,9 @@ struct IniRules {
     ignore: Vec<String>,
     ignore_glob: Vec<String>,
     unevaluated: bool,
+    /// `addopts` contains `-c` / `--rootdir` / `--config-file`, so pytest may
+    /// not be using this file as the inifile.
+    config_file_override: bool,
 }
 
 impl IniRules {
@@ -553,6 +661,10 @@ impl IniRules {
             unevaluated: true,
             ..Self::default()
         }
+    }
+
+    fn rewrites_config_file(&self) -> bool {
+        self.config_file_override
     }
 
     fn from_options(options: BTreeMap<String, Option<Vec<String>>>) -> Self {
@@ -630,11 +742,17 @@ impl IniRules {
                     // `--override-ini`, `--rootdir`, `--confcutdir`,
                     // `--config-file` change which rules apply.
                     self.unevaluated = true;
+                    // `-c` / `--rootdir` / `--config-file` pick a different
+                    // inifile; `--override-ini` and `--confcutdir` do not.
+                    self.config_file_override |= ["--ro", "--config"]
+                        .iter()
+                        .any(|prefix| name.starts_with(prefix));
                 }
             } else if word.starts_with('-') {
                 // `-o name=value` and `-c file` rewrite configuration.
                 if word.starts_with("-o") || word.starts_with("-c") {
                     self.unevaluated = true;
+                    self.config_file_override |= word.starts_with("-c");
                 }
             } else if word.contains('/') || word.ends_with(".py") || word.contains(".py::") {
                 // A positional path restricts collection like a command-line

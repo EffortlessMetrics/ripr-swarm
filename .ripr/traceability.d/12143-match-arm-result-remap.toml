@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0229"
+tests = [
+  "crates/ripr/src/analysis/classify/arm_selection.rs::a_consumed_match_value_marks_the_arm_result_remapped",
+]
+fixtures = [
+  "fixtures/match_arm_result_method_tail_not_credited",
+  "fixtures/match_arm_let_bound_returned_bare_credited",
+  "fixtures/error_path_removed_variant_remapped_not_credited",
+]
+code = ["crates/ripr/src/analysis/classify/arm_selection.rs", "crates/ripr/src/analysis/classify/reveal.rs"]

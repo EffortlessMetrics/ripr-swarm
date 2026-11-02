@@ -33,6 +33,8 @@ mod config_command;
 mod context;
 #[path = "commands/feedback.rs"]
 mod feedback_command;
+#[path = "commands/kani_report.rs"]
+mod kani_report;
 #[path = "commands/policy.rs"]
 mod policy_commands;
 #[path = "commands/receipt.rs"]
@@ -540,6 +542,7 @@ pub(super) fn reports(args: &[String]) -> Result<(), String> {
         "ci-packet" => ci_packet::ci_packet(rest),
         "ci-summary" => ci_summary::ci_summary(rest),
         "gap-ledger" => gap_decision_ledger(rest),
+        "kani" => kani_report::run(rest),
         "ts-limitations" => typescript_limitations(rest),
         "ts-false-actionable" => typescript_false_actionable(rest),
         _ => Err(unknown_value(
@@ -550,6 +553,7 @@ pub(super) fn reports(args: &[String]) -> Result<(), String> {
                 "ci-packet",
                 "ci-summary",
                 "gap-ledger",
+                "kani",
                 "ts-limitations",
                 "ts-false-actionable",
             ],
@@ -3901,7 +3905,7 @@ mod tests {
         assert_eq!(
             reports(&args(&["unknown"])),
             Err(
-                "unknown reports subcommand \"unknown\". Accepted: index, ci-packet, ci-summary, gap-ledger, ts-limitations, ts-false-actionable."
+                "unknown reports subcommand \"unknown\". Accepted: index, ci-packet, ci-summary, gap-ledger, kani, ts-limitations, ts-false-actionable."
                     .to_string()
             )
         );

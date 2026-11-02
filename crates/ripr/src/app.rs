@@ -15,6 +15,7 @@ pub(crate) mod diff_source;
 mod explain;
 pub(crate) mod gap_bound_repair;
 pub(crate) mod impacted_evidence;
+pub(crate) mod kani_import;
 mod navigation;
 pub mod pr_evidence;
 mod progress;

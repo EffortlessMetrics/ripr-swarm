@@ -379,7 +379,7 @@ fn seam_id_translation_passes_plain_ids_through_without_resolving() -> Result<()
 fn unknown_seam_hint_falls_back_to_the_pilot_listing_for_other_shapes() {
     let hint = unknown_seam_id_hint(Path::new("some-checkout"), "f3c9e4d21a0b7c88");
     assert!(hint.starts_with("Run `ripr pilot --root "), "{hint}");
-    assert!(hint.contains("current seam IDs"), "{hint}");
+    assert!(hint.contains("current repair IDs"), "{hint}");
     assert!(!hint.contains("finding ID"), "{hint}");
 }
 

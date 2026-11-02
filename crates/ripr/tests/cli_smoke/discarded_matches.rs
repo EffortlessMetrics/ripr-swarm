@@ -47,9 +47,9 @@ fn strip_language_completeness_member(value: &str) -> String {
 const BOUNDED_EVIDENCE_LEGEND: &str = concat!(
     "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
     "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
-    "      discriminator = assertion distinguishes intended from wrong behavior\n",
+    "      assertion = a test assertion tells intended from wrong behavior\n",
     "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
-    "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+    "      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused\n",
     "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
     "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
     "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
@@ -91,7 +91,7 @@ fn strip_bounded_evidence_legend(bytes: &[u8]) -> Result<Vec<u8>, String> {
 fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result<(), String> {
     let before = concat!(
         "  Static exposure: unrevealed (severity: warning, confidence: 0.79)\n",
-        "  Evidence: reach yes · infection weak · propagation no · observation no · discriminator missing\n",
+        "  Evidence: reach yes · infection weak · propagation no · observation no · assertion missing\n",
     );
     let after = "    - reach detail\n    - infection detail\n    - 3 more detail line(s) in --format human-full\n";
     let retained = format!("{before}{after}");
@@ -105,7 +105,7 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
     // fail the unchanged byte comparison against the canonical report.
     for (old, wrong) in [
         ("observation no", "observation yes"),
-        ("discriminator missing", "discriminator yes"),
+        ("assertion missing", "assertion yes"),
         ("Static exposure: unrevealed", "Static exposure: exposed"),
     ] {
         let changed = current.replace(old, wrong);
@@ -120,7 +120,7 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
     for malformed in [
         retained.clone(),
         current.replace(
-            "      discriminator = assertion distinguishes intended from wrong behavior\n",
+            "      assertion = a test assertion tells intended from wrong behavior\n",
             "",
         ),
         current.replace("weak = partial evidence", "weak = proof"),
@@ -227,7 +227,12 @@ fn neutralize_plain_language_wording(bytes: &[u8]) -> Vec<u8> {
                 continue;
             }
         }
-        if line.starts_with("Summary: ") {
+        if line.starts_with("  Evidence: reach ") {
+            // #10692: the fifth stage was labelled `discriminator` in the
+            // historical capture and reads `assertion` now; every stage state
+            // stays compared.
+            out.push_str(&line.replace(" · discriminator ", " · assertion "));
+        } else if line.starts_with("Summary: ") {
             out.push_str(&canonical_summary(line));
         } else if line.starts_with("  Counts: ") {
             out.push_str(
@@ -334,9 +339,13 @@ fn bind_advisory_transition(expected: &[u8], actual: &[u8]) -> Vec<u8> {
 }
 
 fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
-    const NO_BINDING: [&str; 2] = [
+    // The hash-bound captures keep the earlier spellings; the live producer
+    // prints the plain-language one (#10692).
+    const NO_BINDING: [&str; 4] = [
         "  no repair start offered: no seam in the finding's file binds this finding;",
         "  no repair start offered: ripr found no seam in this finding's file to bind it to,",
+        "  no repair start offered: ripr found no repairable spot in this finding's file to bind it to,",
+        "  no repair start offered: ripr found no spot in this finding's file to bind it to,",
     ];
     const EXPOSED_ADVISORY: &str = "  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)";
     const COUNTED_START: &str = "  no repair start offered: ripr found ";

@@ -3912,6 +3912,17 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::truthiness_swap_fails_open_on_assert_named_helpers_and_result_callees",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::truthiness_swap_fails_open_on_fstring_alias_and_doctest_reach",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::truthiness_swap_fails_open_on_a_separating_default_or_a_branch_value_edit",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_block_no_observed_input_enters_is_weakly_exposed",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_block_an_observed_input_enters_stays_exposed",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_block_fails_open_on_unreadable_or_changed_structure",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_block_reads_a_conjunction_past_an_unreadable_conjunct",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_block_naming_a_changed_module_constant_fails_open",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_header_with_a_dedented_body_line_fails_open",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::guard_names_only_parameters_is_a_closed_reading",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_header_view_requires_an_unpaired_removed_body",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_header_view_covers_elif_else_while_nested_methods_and_decorators",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::condition_holds_reads_a_false_conjunct_past_an_unreadable_one",
+  "crates/ripr/src/analysis/language/python/tests.rs::caplog_text_reads_a_conjunction_guard_past_an_unreadable_conjunct",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::a_class_header_lookalike_inside_a_multiline_string_keeps_its_probe",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::object_base_class_change_pins_type_params_keywords_and_header_shapes",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_stays_uncredited_without_a_bound_owner_receiver",
@@ -5764,6 +5775,10 @@ tests = [
   "crates/ripr/src/output/json/finding_alignment.rs::tests::opaque_report_helper_names_without_supported_lookup_signal_stay_limited",
   "crates/ripr/src/output/json/finding_alignment.rs::tests::rendered_policy_label_without_observer_is_actionable",
   "xtask/src/main.rs::tests::dogfood_finding_alignment_scenarios_have_checked_receipts",
+  "crates/ripr/tests/const_reader_repair_start.rs::weakly_checked_reader_of_a_changed_constant_starts_in_both_commands",
+  "crates/ripr/tests/const_reader_repair_start.rs::constant_the_value_evaluation_reads_keeps_its_evaluated_answer",
+  "crates/ripr/tests/const_reader_repair_start.rs::a_second_reader_without_a_returned_read_keeps_the_constant_unknown",
+  "crates/ripr/tests/const_reader_repair_start.rs",
   "crates/ripr/src/output/json/finding_alignment.rs",
   "crates/ripr/src/output/json/mod.rs",
   "xtask/src/main.rs",
@@ -5776,6 +5791,9 @@ fixtures = [
 code = [
   "crates/ripr/src/output/json/finding_alignment.rs",
   "crates/ripr/src/output/json/mod.rs",
+  "crates/ripr/src/analysis/classify/const_readers.rs",
+  "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/app/task_first.rs",
   "xtask/src/main.rs",
 ]
 outputs = [
@@ -12929,6 +12947,7 @@ name = "Unsafe execution boundary probes"
 spec = "docs/specs/RIPR-SPEC-0168-unsafe-boundary-probes.md"
 tests = [
   "crates/ripr/src/analysis/syntax/ra.rs::tests",
+  "crates/ripr/src/analysis/syntax/ra/probe_shape_walk_tests.rs::probe_walk_resolves_unchecked_assumption_through_use_bindings",
   "crates/ripr/src/analysis/probes/classify.rs::tests",
 ]
 fixtures = [

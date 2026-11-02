@@ -548,3 +548,137 @@ fn nested_package_configuration_applies_below_its_directory() -> Result<(), Stri
     assert_eq!(got, ["pytest.collection(python_files)"]);
     Ok(())
 }
+
+/// pytest selects one inifile per directory; a lower-precedence file must not
+/// withhold credit for a test the selected file would collect (#12138).
+#[test]
+fn empty_pytest_ini_beats_setup_cfg_python_files() -> Result<(), String> {
+    assert_credited(
+        "empty-ini-over-setup-cfg",
+        &[
+            ("pytest.ini", ""),
+            ("setup.cfg", "[tool:pytest]\npython_files = x_*.py\n"),
+            ("tests/test_calc.py", TEST_BODY),
+        ],
+    )
+}
+
+#[test]
+fn pyproject_without_pytest_table_defers_to_tox_ini() -> Result<(), String> {
+    assert_withheld(
+        "pyproject-no-table-tox-wins",
+        &[
+            ("pyproject.toml", "[tool.black]\nline-length = 88\n"),
+            (
+                "tox.ini",
+                "[tox]\nenvlist = py\n\n[pytest]\npython_files = check_*.py\n",
+            ),
+            ("tests/test_calc.py", TEST_BODY),
+        ],
+        "pytest.collection(python_files)",
+    )
+}
+
+#[test]
+fn pyproject_with_pytest_table_beats_tox_ini() -> Result<(), String> {
+    assert_credited(
+        "pyproject-table-over-tox",
+        &[
+            (
+                "pyproject.toml",
+                "[tool.pytest.ini_options]\npython_files = [\"test_*.py\"]\n",
+            ),
+            (
+                "tox.ini",
+                "[tox]\nenvlist = py\n\n[pytest]\npython_files = x_*.py\n",
+            ),
+            ("tests/test_calc.py", TEST_BODY),
+        ],
+    )?;
+    assert_credited(
+        "native-toml-table-over-tox",
+        &[
+            (
+                "pyproject.toml",
+                "[tool.pytest]\npython_files = [\"test_*.py\"]\n",
+            ),
+            ("tox.ini", "[pytest]\npython_files = x_*.py\n"),
+            ("tests/test_calc.py", TEST_BODY),
+        ],
+    )
+}
+
+#[test]
+fn unreadable_higher_precedence_inifile_fails_closed() -> Result<(), String> {
+    let root = scratch("unreadable-ini")?;
+    write(
+        &root,
+        "setup.cfg",
+        "[tool:pytest]\npython_files = test_*.py\n",
+    )?;
+    write(&root, "tests/test_calc.py", TEST_BODY)?;
+    // Larger than `MAX_CONFIG_BYTES` (1 MiB): the reader treats it as
+    // unreadable without parsing, so a matching `setup.cfg` must not credit.
+    let oversized = root.join("pytest.ini");
+    let file = std::fs::File::create(&oversized)
+        .map_err(|err| format!("create oversized pytest.ini: {err}"))?;
+    file.set_len((1 << 20) + 1)
+        .map_err(|err| format!("truncate oversized pytest.ini: {err}"))?;
+    drop(file);
+    let mut tests = extract_source_facts(Path::new("tests/test_calc.py"), TEST_BODY).tests;
+    apply_collection_config(&mut tests, &root);
+    let _ = std::fs::remove_dir_all(&root);
+    let got: Vec<String> = tests
+        .iter()
+        .filter_map(|test| activation_control(test).map(str::to_string))
+        .collect();
+    if got
+        .iter()
+        .any(|name| name == "pytest.collection(unevaluated config)")
+    {
+        Ok(())
+    } else {
+        Err(format!("unreadable pytest.ini must withhold, got {got:?}"))
+    }
+}
+
+#[test]
+fn setup_cfg_without_tool_pytest_section_is_not_a_match() -> Result<(), String> {
+    assert_credited(
+        "setup-cfg-metadata-only",
+        &[
+            (
+                "setup.cfg",
+                "[metadata]\nname = demo\npython_files = x_*.py\n",
+            ),
+            ("tests/test_calc.py", TEST_BODY),
+        ],
+    )
+}
+
+#[test]
+fn single_inifile_collection_rules_are_unchanged() -> Result<(), String> {
+    assert_withheld(
+        "solo-pytest-ini",
+        &[
+            ("pytest.ini", "[pytest]\npython_files = check_*.py\n"),
+            ("tests/test_calc.py", TEST_BODY),
+        ],
+        "pytest.collection(python_files)",
+    )?;
+    assert_withheld(
+        "solo-setup-cfg",
+        &[
+            ("setup.cfg", "[tool:pytest]\npython_files = check_*.py\n"),
+            ("tests/test_calc.py", TEST_BODY),
+        ],
+        "pytest.collection(python_files)",
+    )?;
+    assert_credited(
+        "solo-matching-ini",
+        &[
+            ("pytest.ini", "[pytest]\npython_files = test_*.py\n"),
+            ("tests/test_calc.py", TEST_BODY),
+        ],
+    )
+}

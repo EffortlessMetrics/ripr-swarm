@@ -54,6 +54,14 @@ caller or assumption site by hand. The class stays `static_unknown`, nothing
 is credited, and no test-stub repair is offered. Detection is by parsed call
 path, so a string, comment or similarly named item does not match.
 
+The call must resolve to the `std`/`core` `hint` (or `intrinsics`) function
+through the `use` bindings visible at the call (#12196): a spelled-out or
+absolute `std::hint::..` path, an imported or aliased `hint` module, an imported
+(possibly renamed) leaf, or a `std::hint::*` glob. A bare name nothing imports,
+a function the block defines, a local pattern binding of that name, another
+module's import, or a parent module's import (not inherited by a child module)
+keeps the plain `unsafe block` label.
+
 ## Non-Goals
 
 - Proving unsafe preconditions or replacing unsafe-review processes.
@@ -96,7 +104,8 @@ path, so a string, comment or similarly named item does not match.
 - `fixtures/unsafe_boundary_probe` (golden corpus).
 - `fixtures/unsafe_assumption_stop_reason` (golden corpus).
 - `crates/ripr/src/analysis/syntax/ra/probe_shape_walk_tests.rs` —
-  `probe_walk_labels_unchecked_assumption_blocks_by_parsed_call_only`.
+  `probe_walk_labels_unchecked_assumption_blocks_by_parsed_call_only` and
+  `probe_walk_resolves_unchecked_assumption_through_use_bindings`.
 - `crates/ripr/src/analysis/classify/decision.rs` —
   `unsafe_obligation_is_recognised_by_probe_label_only`.
 - `crates/ripr/src/analysis/syntax/ra.rs` — parser extraction tests

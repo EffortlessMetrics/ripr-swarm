@@ -110,6 +110,36 @@ fn delete_only_diff(module_attr: &str, harness_attr: &str) -> String {
     )
 }
 
+fn delete_whole_file_hunk_diff(path: &str, removed_body: &str) -> String {
+    let lines: Vec<&str> = removed_body.trim_end_matches('\n').lines().collect();
+    let count = lines.len();
+    let removed = lines
+        .iter()
+        .map(|line| format!("-{line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,{count} +0,0 @@\n{removed}\n"
+    )
+}
+
+const KANI_ONLY_MODULE: &str = "#[cfg(kani)]
+mod proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn prove_round_down() {
+        let n: usize = kani::any();
+        assert_eq!(round_down(n, 1), n);
+    }
+}
+";
+
+const PRODUCTION_ONLY_FILE: &str = "pub fn charge(total: u32) -> u32 {
+    total.saturating_add(1)
+}
+";
+
 struct Run {
     json: Value,
 }
@@ -142,6 +172,14 @@ impl Run {
 }
 
 fn check(source: &str, diff: &str) -> Result<Run, String> {
+    check_project(source, diff, &[])
+}
+
+fn check_project(
+    lib_source: &str,
+    diff: &str,
+    extra_files: &[(&str, &str)],
+) -> Result<Run, String> {
     let base: PathBuf = std::env::temp_dir().join(format!(
         "ripr-kani-proof-only-{}-{}",
         std::process::id(),
@@ -157,7 +195,14 @@ fn check(source: &str, diff: &str) -> Result<Run, String> {
         root.join("Cargo.toml"),
         "[package]\nname = \"fx\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
     )?;
-    write(root.join("src/lib.rs"), source)?;
+    write(root.join("src/lib.rs"), lib_source)?;
+    for (relative, contents) in extra_files {
+        let path = root.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        write(path, contents)?;
+    }
     write(base.join("change.diff"), diff)?;
     let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
         .args(["check", "--mode", "draft", "--root"])
@@ -240,6 +285,35 @@ fn a_gated_module_that_is_not_kani_stays_probed() -> Result<(), String> {
         DELETE_ONLY_SOURCE,
         &delete_only_diff("#[cfg(not(kani))]", "#[test]"),
     )?;
+    assert!(
+        run.limitation_kinds()
+            .iter()
+            .all(|kind| *kind != "verification_only_change"),
+        "{:?}",
+        run.json["analysis_outcome"]
+    );
+    Ok(())
+}
+
+#[test]
+fn deleted_whole_kani_only_file_is_verification_only() -> Result<(), String> {
+    let lib = "pub fn round_down(n: usize, align: usize) -> usize {
+    n / align * align
+}
+mod kani_proofs;
+";
+    let diff = delete_whole_file_hunk_diff("src/kani_proofs.rs", KANI_ONLY_MODULE);
+    let run = check_project(lib, &diff, &[("src/kani_proofs.rs", "")])?;
+    assert!(run.finding_lines().is_empty(), "{:?}", run.json["findings"]);
+    assert_eq!(run.limitation_kinds(), ["verification_only_change"]);
+    Ok(())
+}
+
+#[test]
+fn deleted_whole_production_file_is_not_verification_only() -> Result<(), String> {
+    let lib = "mod util;\n";
+    let diff = delete_whole_file_hunk_diff("src/util.rs", PRODUCTION_ONLY_FILE);
+    let run = check_project(lib, &diff, &[("src/util.rs", "")])?;
     assert!(
         run.limitation_kinds()
             .iter()

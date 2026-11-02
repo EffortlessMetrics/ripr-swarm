@@ -316,7 +316,12 @@ fn classify_change_full<'a>(
     }
     let owner = owner_for_changed_line(file, line, owners)?;
     classify_change_for_owner_with_value_origins(
-        ChangeSite { file, line, owner },
+        ChangeSite {
+            file,
+            line,
+            owner,
+            old_guard: None,
+        },
         line_text,
         old_line_text,
         owners,
@@ -335,6 +340,21 @@ pub(super) struct ChangeSite<'a> {
     pub(super) file: &'a Path,
     pub(super) line: usize,
     pub(super) owner: &'a PythonOwner,
+    /// A deleted line's old-side view (#11889), `None` for a live line.
+    pub(super) old_guard: Option<OldGuardView<'a>>,
+}
+
+/// Where a deleted line sat in the old file: the old text, the owner re-spanned
+/// to old-side coordinates and the old line number. The guarded-arm reader
+/// walks the guards around that line exactly as it does for a live one, so a
+/// deleted line that no observed input could enter is not credited.
+pub(super) struct OldGuardView<'a> {
+    pub(super) owner: PythonOwner,
+    pub(super) source: &'a str,
+    pub(super) line: usize,
+    /// The owner's parameter names, the only identifiers an old-side guard may
+    /// name (constants resolve on the new side).
+    pub(super) parameters: Vec<String>,
 }
 
 /// Classify a change at a resolved owner.
@@ -353,7 +373,12 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     value_origins: Option<&mut crate::value_origins::ValueOrigins>,
     mut related: Option<&mut RelatedCandidateMemo<'a>>,
 ) -> Option<Finding> {
-    let ChangeSite { file, line, owner } = site;
+    let ChangeSite {
+        file,
+        line,
+        owner,
+        old_guard,
+    } = site;
     // Bare-variable annotation-only suppression at MODULE SCOPE only (#1289):
     // Python does not enforce type annotations at runtime at module scope, so a
     // module-scope annotated-variable change that touches ONLY the annotation
@@ -864,6 +889,32 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             })
         })
         .flatten();
+    // #11889: a deleted line is read on the old side. When every strong related
+    // call provably fails the guards that enclosed it there, the line never ran
+    // under an observed input, so no strong oracle could notice its removal.
+    let guarded_arm_gap = guarded_arm_gap.or_else(|| {
+        let view = old_guard.as_ref()?;
+        (static_limit.is_none()
+            && boundary_gap.is_none()
+            && inactive_term.is_none()
+            && !no_behavior.multi_line_def_header_line)
+            .then(|| {
+                guard_activation::python_guarded_arm_gap(
+                    &view.owner,
+                    view.source,
+                    view.line,
+                    &related_candidates,
+                    &focus,
+                )
+                .filter(|gap| {
+                    super::deleted_lines::guard_names_only_parameters(
+                        &gap.discriminator,
+                        &view.parameters,
+                    )
+                })
+            })
+            .flatten()
+    });
     let mut guarded_arm_downgraded = false;
     // Message-pin gate (#9185): a message-only change to a `raise` is
     // discriminated by a `match=` pattern only when the pattern accepts one

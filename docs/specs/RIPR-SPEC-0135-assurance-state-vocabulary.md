@@ -23,6 +23,9 @@ Linked issues:
 - [#1941](https://github.com/EffortlessMetrics/ripr-swarm/issues/1941) - repair
   verification and receipt trust boundary.
 
+- [#10689](https://github.com/EffortlessMetrics/ripr-swarm/issues/10689) - bounded
+  import of externally supplied Kani observations.
+
 Support-tier impact:
 
 - See: [support tiers](../status/SUPPORT_TIERS.md).
@@ -183,6 +186,16 @@ provided runtime mutation evidence. RIPR may record that boundary in a future
 consumer contract, but does not produce `killed` or `survived` from this
 vocabulary and does not import those terms into normal static output.
 
+### External Kani observation import
+
+`ripr reports kani --input PATH --binding PATH [--root PATH]` imports Kani schema `0.1.0` without execution. Its `ripr_kani_report.v1` always records
+`external_unattested` provenance and `listed_files_match` source binding. Matching bytes establish neither producer authenticity, complete dependencies, fresh execution nor consumption of the supplied context.
+
+The `ripr_kani_binding.v1` reuses `RiprRepositorySnapshotV1` with
+`captured_source_set`, binding native bytes, implementation/harness files, selected identities and descriptive context. Regular files must be inside the root without symlinks or traversal; source, artifact, inventory, target or selection disagreement refuses import. Undeclared dependencies remain unknown.
+
+Native JSON, outcomes, counts, bounds, stubs and expected-panic polarity are preserved. Successful counts cannot invent property identities or functional coverage. Empty, partial, unreachable or expected-panic results grant no functional assurance, static promotion, receipt issuance or gate authority. See [the input/output contract](../OUTPUT_SCHEMA.md#imported-kani-observation-ripr_kani_reportv1) for fields and the explicit adapter-qualification limit.
+
 ## Compatibility and migration
 
 The current `ripr agent verify` command remains a compatibility surface for
@@ -278,6 +291,9 @@ available.
 - `crates/ripr/src/agent/command_specs.rs::tests::backslash_root_display_recovers_its_typed_route`
   proves a Unix root with a literal backslash keeps its typed route.
 
+- `.ripr/traceability.d/10689-kani-native-import.toml` maps native parsing, source
+  binding, CLI dispatch and the real-import comparison with the honesty corpus.
+
 ## Implementation Mapping
 
 - `schemas/ripr/repair-assurance.schema.json` owns the design-only machine
@@ -306,6 +322,10 @@ available.
 - `.allow/spec-system/slices/verification-command-execution.v1.toml` records
   the PR-local claim boundary and return conditions for #2332.
 
+- `crates/ripr/src/app/kani_import.rs` owns native documents and source bindings
+  alongside typed domain observations; CLI and output project its single result.
+- `.allow/spec-system/slices/kani-native-import.v1.toml` bounds the #10689 slice.
+
 ## Metrics
 
 - `repair_assurance_vocabulary_closed`;
@@ -323,6 +343,9 @@ cargo xtask check-fixture-contracts
 cargo xtask check-output-contracts
 cargo test -p ripr domain::verification_result --lib
 cargo test -p ripr verification_execution -- --test-threads=1
+cargo test -p ripr kani_import --lib
+cargo test -p ripr kani_report --lib
+cargo xtask check-evidence-promotion-honesty
 cargo xtask check-command-catalog
 cargo xtask check-process-policy
 cargo xtask check-network-policy

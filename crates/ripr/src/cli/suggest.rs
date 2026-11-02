@@ -282,6 +282,7 @@ fn option_section(command: &str) -> Option<&'static str> {
         "reports ci-packet" => Some("CI packet options:"),
         "reports ci-summary" => Some("CI summary options:"),
         "reports gap-ledger" => Some("Gap ledger options:"),
+        "reports kani" => Some("Kani result options:"),
         "reports ts-limitations" => Some("TypeScript limitation options:"),
         "reports ts-false-actionable" => Some("TypeScript false-actionable audit options:"),
         _ => None,

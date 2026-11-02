@@ -25,12 +25,12 @@ Start here:
     existing test calls and their import/export paths; if no suitable test exists, add a test that
     calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the
     project's native test command and rerun `ripr check` to refresh the finding
-  Evidence: reach no · infection unknown · propagation unknown · observation no · discriminator no
+  Evidence: reach no · infection unknown · propagation unknown · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;

@@ -451,7 +451,7 @@ pub(crate) fn receipt_binding_from(
                 .collect::<Vec<_>>()
                 .join(", ");
             let detail = if matches.is_empty() {
-                format!("no repair attempt exists for seam `{seam_id}`; start one with `{restart}`")
+                format!("no repair attempt exists for gap `{seam_id}`; start one with `{restart}`")
             } else {
                 format!(
                     "found {}: {ids}; pass --attempt <id> to select the attempt the receipt binds to exactly",
@@ -1127,7 +1127,7 @@ pub(crate) fn validate_issued_receipt_evidence(
         crate::output::agent_receipt::expected_receipt_verdict(&verify, &manifest.seam_id)
             .map_err(|error| {
                 format!(
-                    "repair attempt verify document names no verdict for seam `{}`: {error}",
+                    "repair attempt verify document names no verdict for gap `{}`: {error}",
                     manifest.seam_id
                 )
             })?;
@@ -2780,7 +2780,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         .map(|matches| {
             if matches.len() != 1 {
                 return Err(format!(
-                    "repair packet must contain exactly one packet for seam `{seam_id}`, found {}",
+                    "repair packet must contain exactly one packet for gap `{seam_id}`, found {}",
                     matches.len()
                 ));
             }
