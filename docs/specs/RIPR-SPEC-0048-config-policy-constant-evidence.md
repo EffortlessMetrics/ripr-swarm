@@ -332,12 +332,14 @@ only when all of these hold:
   tracks the edit), which only the value-flow evaluation on the declaration
   judges. The rule does not depend on where tests live, so an alias cannot
   dodge it;
-- the same scan refuses when any file can bring in text it does not read or
-  build a name it cannot see: an `include`-prefixed macro (`include!`,
-  `include_str!` including `#![doc = include_str!(..)]` doc tests,
-  `include_bytes!`, with or without spaces before `!`), a `path` attribute in
-  any spacing (`#[path`, `# [ path`), a `cfg_attr` that names `path`, or
-  `paste!`. It also refuses when any file defines `macro_rules! format`;
+- the same scan refuses, structurally and on the raw text, when any file
+  could bring in text it does not read or build a name it cannot see: the
+  whole words `include`, `include_str`, `include_bytes` or `paste` anywhere
+  (no `!` needed, so a renaming `use std::include as inc;` or
+  `use paste::paste as p;` refuses), any other `include`-prefixed macro, a
+  `path` attribute in any spacing (`#[path`, `# [ path`), or any `cfg_attr`
+  in a file that also says `mod`. It also refuses when any file defines
+  `macro_rules! format`;
 - the same scan refuses when any directory entry is neither a directory nor
   a regular file (the walk does not follow links, so any symlink refuses,
   even one to a harmless file), when a Rust file is unreadable or not UTF-8,
@@ -345,17 +347,25 @@ only when all of these hold:
   It runs only after every cheaper guard has passed, once per surviving
   changed constant;
 - there is exactly one reader in the file, defined once in the workspace
-  text, and every other mention of its name anywhere is a call inside a
-  `#[test]` function or a line that is exactly one plain `use ..;` with no
-  `as`. A call from production code or from a test helper that is not a
-  `#[test]` function (`fn expected() -> String { fx::banner_line() }`), a
-  mention as a value (`const X: fn() -> String = banner_line;`), or a mention
-  in a comment or string refuses, so a test cannot build its expected side
-  from the reader's own output by another route. This rule reads the same
-  raw scan as the name rule, never check's index, so `ripr check` in any
-  mode (including `--mode instant` and `--no-unchanged-tests`, whose index
-  holds only changed files and their parent modules) and `ripr repair`
-  reach the same decision;
+  text. Across the whole scanned workspace its name may otherwise appear in
+  at most one call and at most one line that is exactly one plain `use ..;`
+  with no `as`. That one call must sit inside a `#[test]` function and
+  inside no macro invocation except `assert!`, `assert_eq!`, `assert_ne!`
+  and their `debug_` forms. A second call anywhere refuses, so a test
+  cannot keep the reader's own output as its expected side
+  (`let expected = banner_line(); assert_eq!(banner_line(), expected);`).
+  A call from production code or from a test helper that is not a `#[test]`
+  function (`fn expected() -> String { fx::banner_line() }`), a call inside
+  another macro (`wrap! { #[test] fn .. }`, whose expansion is unknown), a
+  mention as a value (`const X: fn() -> String = banner_line;`), a mention
+  in a comment or string, and any mention in a file that defines a
+  `macro_rules!` (which can turn `#[test]`-spelled text into an ordinary
+  function) refuse. This rule reads the same raw scan as the name rule,
+  never an index, so `ripr check` in any mode (including `--mode instant`
+  and `--no-unchanged-tests`, whose index holds only changed files and
+  their parent modules) and `ripr repair` reach the same decision. Repair
+  indexes only the declaring files, since every guard that reads an index
+  reads only the declaring file's facts;
 - shadowing and other-path reads are not reads. The reader sits in the
   declaration's own module, no module line leaves its `{` to a later line, and
   no code outside a function reads the name (another constant's initializer,
@@ -377,7 +387,12 @@ same start or neither does.
 
 Known missed advisory: the scan over-refuses on purpose. A constant that a
 test, a doc comment or any other file mentions, even harmlessly, keeps the
-declaration's unknown answer with no start. A returned value that a
+declaration's unknown answer with no start. So does a reader called twice
+(even by two loose tests), called inside a non-`assert!` macro or a
+`#[tokio::test]`-style test, named in a doc comment, or mentioned in a file
+with any `macro_rules!`; any symlink in the tree; any `cfg_attr` in a file
+that declares a module; and any file that says `include` or `paste`. A
+returned value that a
 test checks exactly is reported as checked; a weak check gets the ordinary
 return-value repair.
 

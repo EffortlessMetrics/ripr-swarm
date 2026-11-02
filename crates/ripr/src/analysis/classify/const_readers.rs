@@ -227,10 +227,13 @@ fn read_workspace_rust(root: &Path) -> Option<Vec<(PathBuf, String)>> {
 ///   ([`pulls_in_unscanned_text`]);
 /// - no file defines `macro_rules! format`;
 /// - the reader `reader` is defined once, in `file`, and is otherwise named
-///   only by calls inside `#[test]` functions and by lines that are exactly
-///   one plain `use ..;` ([`reader_mentions`]). A call from any other
-///   function (production code or a test helper) or any other mention, such
-///   as `const X: fn() -> String = reader;`, can carry its value elsewhere.
+///   by at most one call in the whole workspace, inside a `#[test]` function
+///   and outside every macro but the `assert!` family, and by at most one
+///   line that is exactly one plain `use ..;` ([`reader_mentions`]). A
+///   second call (`let expected = reader(); assert_eq!(reader(), expected);`),
+///   a call from any other function (production code or a test helper), a
+///   call inside another macro, or any other mention, such as
+///   `const X: fn() -> String = reader;`, can carry its value elsewhere.
 ///
 /// It fails closed when the scan refuses or does not list `file`. `ripr
 /// check` and `ripr repair` both read this same scan, never an index, so the
@@ -248,13 +251,21 @@ pub(in crate::analysis) fn name_confined(
     };
     let target = super::related_tests::normalize_path(file);
     let mut saw_file = false;
+    let mut calls = 0;
+    let mut imports = 0;
     for (path, text) in &files {
         if pulls_in_unscanned_text(text) || text_defines_format_macro(text) {
             return false;
         }
-        let Some(definitions) = reader_mentions(text, reader) else {
+        let Some(mentions) = reader_mentions(text, reader) else {
             return false;
         };
+        let definitions = mentions.definitions;
+        calls += mentions.calls;
+        imports += mentions.imports;
+        if calls > 1 || imports > 1 {
+            return false;
+        }
         let lines = word_lines(text, name);
         if super::related_tests::normalize_path(path) == target {
             saw_file = true;
@@ -269,10 +280,11 @@ pub(in crate::analysis) fn name_confined(
 }
 
 /// Whether `text` can bring in source the scan does not read, or build an
-/// identifier no whole-word scan sees: any `include`-prefixed macro
-/// (`include!`, `include_str!`, `include_bytes!`, spaces before `!`
-/// allowed), a `path` attribute in any spacing (`# [ path = ..]`), a
-/// `cfg_attr` naming `path`, or `paste!`.
+/// identifier no whole-word scan sees. Structural and fail closed, on the
+/// raw text: the whole words `include`, `include_str`, `include_bytes` or
+/// `paste` anywhere (so a renaming `use std::include as inc;` refuses too),
+/// any other `include`-prefixed macro, a `path` attribute in any spacing
+/// (`# [ path = ..]`), or any `cfg_attr` in a file that also says `mod`.
 fn pulls_in_unscanned_text(text: &str) -> bool {
     let bytes = text.as_bytes();
     let mut at = 0;
@@ -294,13 +306,10 @@ fn pulls_in_unscanned_text(text: &str) -> bool {
         let word = text.get(at..end).unwrap_or_default();
         let rest = text.get(end..).unwrap_or_default();
         let bang = rest.trim_start().starts_with('!');
-        let hit = ((word.starts_with("include") || word == "paste") && bang)
+        let hit = matches!(word, "include" | "include_str" | "include_bytes" | "paste")
+            || (word.starts_with("include") && bang)
             || (word == "path" && opens_attribute(text.get(..at).unwrap_or_default()))
-            || (word == "cfg_attr"
-                && rest
-                    .split(']')
-                    .next()
-                    .is_none_or(|attribute| contains_word(attribute, "path")));
+            || (word == "cfg_attr" && contains_word(text, "mod"));
         if hit {
             return true;
         }
@@ -320,16 +329,42 @@ fn opens_attribute(before: &str) -> bool {
         .is_some_and(|rest| rest.ends_with('#'))
 }
 
-/// The number of `fn reader` definitions in `text`, or `None` when some
-/// whole-word mention of `reader` is anything other than such a definition,
-/// a call (`reader(`) inside a `#[test]` function, or a line that is exactly
-/// one plain `use ..;` without `as`. Mentions inside comments or strings
-/// are not definitions or calls, so they refuse too.
-fn reader_mentions(text: &str, reader: &str) -> Option<usize> {
+/// The whole-word mentions of a reader in one file, by kind.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ReaderMentions {
+    /// `fn reader` lines.
+    definitions: usize,
+    /// Calls inside a `#[test]` function and no macro but the `assert!`
+    /// family.
+    calls: usize,
+    /// Lines that are exactly one plain `use ..;`.
+    imports: usize,
+}
+
+/// Macros whose arguments a test's own check reads directly; a reader call
+/// inside any other macro invocation refuses.
+const CHECK_MACROS: [&str; 6] = [
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+];
+
+/// The mentions of `reader` in `text` ([`ReaderMentions`]), or `None` when
+/// some whole-word mention is anything else: a call outside a `#[test]`
+/// function or inside a macro outside [`CHECK_MACROS`], a value use, or a
+/// mention inside a comment or string. Any mention in a file that defines a
+/// `macro_rules!` refuses too, since a local macro can turn `#[test]`-spelled
+/// text into an ordinary function.
+fn reader_mentions(text: &str, reader: &str) -> Option<ReaderMentions> {
     let masked = mask_comments_and_strings(text);
     let bodies = function_bodies(&masked);
+    let macros = macro_invocations(&masked);
+    let local_macros = contains_word(text, "macro_rules");
     let bytes = text.as_bytes();
-    let mut definitions = 0;
+    let mut mentions = ReaderMentions::default();
     for (start, _) in text.match_indices(reader) {
         let end = start + reader.len();
         let whole = start
@@ -340,7 +375,7 @@ fn reader_mentions(text: &str, reader: &str) -> Option<usize> {
         if !whole {
             continue;
         }
-        if masked.get(start..end) != Some(reader) {
+        if local_macros || masked.get(start..end) != Some(reader) {
             return None;
         }
         let line_start = text
@@ -355,14 +390,64 @@ fn reader_mentions(text: &str, reader: &str) -> Option<usize> {
         let after = text.get(end..line_end).unwrap_or_default();
         let line = text.get(line_start..line_end).unwrap_or_default();
         if ends_with_word(before.trim_end(), "fn") {
-            definitions += 1;
+            mentions.definitions += 1;
         } else if is_single_plain_use(line) {
-            continue;
-        } else if !(after.trim_start().starts_with('(') && inside_test_function(&bodies, start)) {
+            mentions.imports += 1;
+        } else if after.trim_start().starts_with('(')
+            && inside_test_function(&bodies, start)
+            && macros
+                .iter()
+                .filter(|(open, close, _)| *open < start && start < *close)
+                .all(|(_, _, name)| CHECK_MACROS.contains(name))
+        {
+            mentions.calls += 1;
+        } else {
             return None;
         }
     }
-    Some(definitions)
+    Some(mentions)
+}
+
+/// Every macro invocation in `masked` as (open delimiter, its matching
+/// close, macro name): an identifier, optional spaces, `!`, optional spaces,
+/// then `(`, `[` or `{`. Delimiters are matched by depth over all three
+/// kinds; an unclosed invocation runs to the end of the text.
+fn macro_invocations(masked: &str) -> Vec<(usize, usize, &str)> {
+    let bytes = masked.as_bytes();
+    let mut found = Vec::new();
+    for (bang, _) in masked.match_indices('!') {
+        let head = masked.get(..bang).unwrap_or_default().trim_end();
+        let name_start = head
+            .bytes()
+            .rposition(|byte| !is_ident_byte(byte))
+            .map_or(0, |at| at + 1);
+        let name = head.get(name_start..).unwrap_or_default();
+        if name.is_empty() {
+            continue;
+        }
+        let after = masked.get(bang + 1..).unwrap_or_default();
+        let open = bang + 1 + (after.len() - after.trim_start().len());
+        if !matches!(bytes.get(open), Some(b'(' | b'[' | b'{')) {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut close = masked.len();
+        for (at, byte) in bytes.iter().enumerate().skip(open) {
+            match byte {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        close = at;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        found.push((open, close, name));
+    }
+    found
 }
 
 /// Whether `line` is exactly one `use` (or `pub use`) statement that does
@@ -933,15 +1018,30 @@ mod tests {
 
     #[test]
     fn only_a_definition_test_calls_and_plain_imports_mention_the_reader() {
-        use super::reader_mentions as mentions;
+        use super::{ReaderMentions, reader_mentions as mentions};
         assert_eq!(
             mentions(
-                "use fx::greet;\npub fn greet(n: &str) -> String {\n    x\n}\n#[test]\nfn t() { greet (\"a\"); }\n",
+                "use fx::greet;\npub fn greet(n: &str) -> String {\n    x\n}\n#[test]\nfn t() { assert_eq!(greet (\"a\"), \"x\"); }\n",
                 "greet"
             ),
-            Some(1)
+            Some(ReaderMentions {
+                definitions: 1,
+                calls: 1,
+                imports: 1,
+            })
         );
-        assert_eq!(mentions("fn greeting() {}\n", "greet"), Some(0));
+        assert_eq!(
+            mentions("fn greeting() {}\n", "greet"),
+            Some(ReaderMentions::default())
+        );
+        assert_eq!(
+            mentions(
+                "#[test]\nfn t() {\n    let e = greet(\"a\");\n    assert_eq!(greet(\"a\"), e);\n}\n",
+                "greet"
+            )
+            .map(|found| found.calls),
+            Some(2)
+        );
         for refused in [
             "const X: fn(&str) -> String = greet;\n",
             "use fx::greet as g;\n",
@@ -950,6 +1050,9 @@ mod tests {
             "pub fn framed() -> String { crate::greet(\"a\") }\n",
             "#[test]\nfn t() {\n    fn expected() -> String { greet(\"a\") }\n}\n",
             "// greet(\"a\")\n",
+            "wrap! {\n    #[test]\n    fn t() { greet(\"a\"); }\n}\n",
+            "#[test]\nfn t() { let v = vec![greet(\"a\")]; }\n",
+            "macro_rules! m { () => {} }\n#[test]\nfn t() { greet(\"a\"); }\n",
         ] {
             assert_eq!(mentions(refused, "greet"), None, "{refused}");
         }
@@ -967,12 +1070,16 @@ mod tests {
             "# [ path = \"a.rs.in\" ]\nmod a;",
             "#[cfg_attr(unix, path = \"a.rs.in\")]\nmod a;",
             "paste::paste! { fn f() {} }",
+            "use std::include as inc;\ninc!(\"a.rs\");",
+            "use paste::paste as p;",
+            "#[cfg_attr(feature = \"]\", path = \"h.rs.in\")]\nmod h;",
         ] {
             assert!(unscanned(refused), "{refused}");
         }
         for kept in [
             "use std::path::Path;\nfn f(path: &Path) {}\n",
             "#[cfg_attr(test, derive(Debug))]\nstruct S;\n",
+            "fn pasted() {}\nlet included_files = 1;\n",
             "fn included() {}\n",
         ] {
             assert!(!unscanned(kept), "{kept}");

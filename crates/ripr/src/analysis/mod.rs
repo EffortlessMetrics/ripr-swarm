@@ -1312,12 +1312,13 @@ pub(crate) fn changed_const_reader_return_lines(
     if declaring.is_empty() {
         return Vec::new();
     }
-    // Every workspace Rust file, so the reader-caller rule sees what check
-    // sees; the decisive raw-text scan (`name_confined`) reads the same
-    // workspace file list from disk in both commands.
-    let paths = workspace_rust_files(root)
-        .into_iter()
-        .chain(declaring.iter().map(|file| file.path.clone()))
+    // Only the declaring files: every retarget guard that reads an index
+    // reads the declaring file's own facts, which check's index always
+    // holds, and the workspace-wide rules (`name_confined`) read the raw
+    // files from disk in both commands, never an index.
+    let paths = declaring
+        .iter()
+        .map(|file| file.path.clone())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();

@@ -876,11 +876,85 @@ fn module_directory_named_target_is_scanned() -> Result<(), String> {
 
 #[test]
 fn reader_called_only_from_tests_still_starts_in_both_commands() -> Result<(), String> {
-    // Positive twin for round 6: test-file and same-file test calls of the
-    // reader, plus a plain import, leave the start in place.
+    // Positive twin for rounds 6 and 7: one call of the reader inside a
+    // same-file `#[test]` function, plus a plain import, keeps the start.
     let old = format!(
         "{BANNER_OLD}\n#[cfg(test)]\nmod tests {{\n    use super::banner_line;\n\n    #[test]\n    fn banner_is_not_empty() {{\n        assert!(!banner_line().is_empty());\n    }}\n}}\n"
     );
-    let repo = Repo::create(&old, &banner_new(&old), BANNER_SELF_TEST)?;
+    let repo = Repo::create(
+        &old,
+        &banner_new(&old),
+        "#[test]\nfn nothing_else() {\n    assert!(true);\n}\n",
+    )?;
     assert_same_start("test-only calls", &repo)
+}
+
+#[test]
+fn renamed_include_macro_keeps_the_declaration() -> Result<(), String> {
+    // Round 7 (1): `inc!` is `include!` under another name.
+    let repo = Repo::create_with_files(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        &format!("use std::include as inc;\ninc!(\"expected.inc\");\n\n{BANNER_FROM_EXPECTED}"),
+        &[(
+            "tests/expected.inc",
+            "fn expected() -> String {\n    format!(\"[{}]\", fx::BANNER)\n}\n",
+        )],
+    )?;
+    assert_declaration_kept("renamed include", &repo)
+}
+
+#[test]
+fn renamed_paste_macro_keeps_the_declaration() -> Result<(), String> {
+    let repo = Repo::create(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        &format!(
+            "use paste::paste as p;\np! {{\n    fn expected() -> String {{\n        format!(\"[{{}}]\", fx::[<BAN NER>])\n    }}\n}}\n\n{BANNER_FROM_EXPECTED}"
+        ),
+    )?;
+    assert_declaration_kept("renamed paste", &repo)
+}
+
+#[test]
+fn conditional_path_attribute_with_a_bracket_in_a_string_keeps_the_declaration()
+-> Result<(), String> {
+    // Round 7 (2): the `]` inside the string is not the attribute's end.
+    let repo = path_module_case("#[cfg_attr(feature = \"]\", path = \"helpers.rs.in\")]")?;
+    assert_declaration_kept("cfg_attr with ]", &repo)
+}
+
+#[test]
+fn test_attribute_inside_a_local_macro_keeps_the_declaration() -> Result<(), String> {
+    // Round 7 (3): `helper!` turns the `#[test]`-spelled item into an
+    // ordinary function, so the one call of the reader is a helper's.
+    let repo = Repo::create(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        "use fx::banner_line;\n\nmacro_rules! helper {\n    (#[test] fn $name:ident() $body:block) => {\n        pub fn $name() -> String $body\n    };\n}\n\nhelper! {\n    #[test]\n    fn expected() {\n        banner_line()\n    }\n}\n\n#[test]\nfn expected_is_bracketed() {\n    assert!(expected().starts_with('['));\n}\n",
+    )?;
+    assert_declaration_kept("macro_rules test text", &repo)
+}
+
+#[test]
+fn reader_called_inside_another_crates_macro_keeps_the_declaration() -> Result<(), String> {
+    // Round 7 (3): what `wrap!` makes of its `#[test]` item is unknown.
+    let repo = Repo::create(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        "use fx::banner_line;\n\nhelpers::wrap! {\n    #[test]\n    fn expected() -> String {\n        banner_line()\n    }\n}\n\n#[test]\nfn expected_is_bracketed() {\n    assert!(expected().starts_with('['));\n}\n",
+    )?;
+    assert_declaration_kept("external macro", &repo)
+}
+
+#[test]
+fn test_that_keeps_the_readers_own_output_as_expected_keeps_the_declaration() -> Result<(), String>
+{
+    // Round 7 (4): two calls, one of them the expected side.
+    let repo = Repo::create(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        "use fx::banner_line;\n\n#[test]\nfn banner_line_is_stable() {\n    let expected = banner_line();\n    assert_eq!(banner_line(), expected);\n}\n",
+    )?;
+    assert_declaration_kept("reader output as expected", &repo)
 }
