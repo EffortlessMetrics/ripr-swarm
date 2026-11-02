@@ -35,7 +35,23 @@ impl AdapterSubstrateQualificationV1 {
                 "one qualification cannot promote multiple languages",
             ));
         }
+        if self
+            .shared_adapter_family_id
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(error(
+                AdapterSubstrateQualificationErrorCodeV1::MissingField,
+                "shared_adapter_family_id is empty",
+            ));
+        }
         validate_authority_ref(&self.adr_ref, "adr_ref")?;
+        if self.adr_ref.ref_kind != AdapterSubstrateAuthorityRefKindV1::AdrDocument {
+            return Err(error(
+                AdapterSubstrateQualificationErrorCodeV1::AuthorityViolation,
+                "adr_ref must reference an ADR document",
+            ));
+        }
         if self.adr_ref.currentness == AuthorityCurrentnessV1::Stale {
             return Err(error(
                 AdapterSubstrateQualificationErrorCodeV1::StaleAuthorityReference,
@@ -71,9 +87,16 @@ pub fn substrate_classes_compatible(
     left: &AdapterSubstrateQualificationV1,
     right: &AdapterSubstrateQualificationV1,
 ) -> bool {
-    left.shared_adapter_family_id.is_some()
-        && left.shared_adapter_family_id == right.shared_adapter_family_id
-        && left.language != right.language
+    let Some(family) = left.shared_adapter_family_id.as_deref() else {
+        return false;
+    };
+    if family.trim().is_empty() || left.shared_adapter_family_id != right.shared_adapter_family_id {
+        return false;
+    }
+    if left.language == right.language {
+        return false;
+    }
+    left.substrate_class == right.substrate_class && left.dependencies == right.dependencies
 }
 
 fn validate_substrate_class_laws(
@@ -152,16 +175,47 @@ fn validate_claim_ceiling(
     )?;
     for layer in &qualification.layers {
         if layer.layer_class == AdapterSubstrateLayerClassV1::SyntaxOnly
-            && matches!(
-                layer.claim_ceiling.ceiling,
-                SemanticClaimCeilingV1::CompilerFactsWithFallback
-                    | SemanticClaimCeilingV1::NativePlatformLimited
-            )
+            && layer.claim_ceiling.ceiling == SemanticClaimCeilingV1::CompilerFactsWithFallback
         {
             return Err(error(
                 AdapterSubstrateQualificationErrorCodeV1::ImpossibleClaimCeiling,
                 "syntax-only layer cannot inherit compiler-resolved claim ceilings",
             ));
+        }
+    }
+    if qualification.claim_ceiling.ceiling == SemanticClaimCeilingV1::CompilerFactsWithFallback
+        && !qualification.layers.iter().any(|layer| {
+            matches!(
+                layer.layer_class,
+                AdapterSubstrateLayerClassV1::CompilerResolved
+                    | AdapterSubstrateLayerClassV1::Semantic
+                    | AdapterSubstrateLayerClassV1::Hybrid
+            )
+        })
+    {
+        return Err(error(
+            AdapterSubstrateQualificationErrorCodeV1::ImpossibleClaimCeiling,
+            "receipt claim ceiling requires a compiler-capable layer",
+        ));
+    }
+    if qualification.substrate_class == AdapterSubstrateClassV1::PacketProducerConsumer {
+        for layer in &qualification.layers {
+            if layer.layer_class != AdapterSubstrateLayerClassV1::SyntaxOnly {
+                return Err(error(
+                    AdapterSubstrateQualificationErrorCodeV1::ImpossibleClaimCeiling,
+                    "packet producer layers cannot claim local compiler authority",
+                ));
+            }
+            if !matches!(
+                layer.claim_ceiling.ceiling,
+                SemanticClaimCeilingV1::PacketFactsOnly
+                    | SemanticClaimCeilingV1::NoLocalSemanticAuthority
+            ) {
+                return Err(error(
+                    AdapterSubstrateQualificationErrorCodeV1::ImpossibleClaimCeiling,
+                    "packet producer layers cannot claim local syntax or compiler authority",
+                ));
+            }
         }
     }
     Ok(())
@@ -170,12 +224,11 @@ fn validate_claim_ceiling(
 fn has_generated_parser_packaging_disposition(
     packaging: &SubstratePackagingImplicationsV1,
 ) -> bool {
-    let build_script = packaging.build_script.trim();
     let generated_code = packaging.generated_code.trim();
-    !build_script.is_empty()
-        && !generated_code.is_empty()
-        && !build_script.eq_ignore_ascii_case("none")
-        && !generated_code.eq_ignore_ascii_case("none")
+    if generated_code.is_empty() || generated_code.eq_ignore_ascii_case("none") {
+        return false;
+    }
+    !packaging.build_script.trim().is_empty()
 }
 
 fn validate_layers(
@@ -249,8 +302,10 @@ fn validate_packaging(
     require_non_empty("compile_size_class", &packaging.compile_size_class)?;
     require_non_empty("binary_size_class", &packaging.binary_size_class)?;
     require_non_empty("distribution_notes", &packaging.distribution_notes)?;
-    if qualification.substrate_class == AdapterSubstrateClassV1::InProcessParser
-        && packaging.license_spdx.eq_ignore_ascii_case("unknown")
+    if packaging
+        .license_spdx
+        .trim()
+        .eq_ignore_ascii_case("unknown")
     {
         return Err(error(
             AdapterSubstrateQualificationErrorCodeV1::MissingPackagingDisposition,
@@ -270,6 +325,7 @@ fn validate_input_behavior(
     require_non_empty("unavailable_tool", &profile.unavailable_tool)?;
     if profile
         .unavailable_tool
+        .trim()
         .eq_ignore_ascii_case("clean_result")
     {
         return Err(error(

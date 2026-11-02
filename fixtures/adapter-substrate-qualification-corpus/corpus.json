@@ -692,8 +692,8 @@
             "layer_id": "syntax",
             "layer_class": "syntax_only",
             "claim_ceiling": {
-              "ceiling": "syntax_facts_only",
-              "message": "syntax facts only"
+              "ceiling": "no_local_semantic_authority",
+              "message": "packet-only layer"
             },
             "dependency_ids": [
               "dep.primary"
@@ -1915,6 +1915,397 @@
           "unsafe_surface": "forbidden",
           "build_script": "none",
           "generated_code": "none",
+          "native_runtime": "none",
+          "platform_limits": [
+            "all-tier1"
+          ],
+          "compile_size_class": "small",
+          "binary_size_class": "small",
+          "distribution_notes": "fixture"
+        },
+        "safety_refs": [
+          {
+            "receipt_id": "safety/no-exec.v1",
+            "harness_generation": "6512.v1",
+            "no_execution": true,
+            "no_network": true,
+            "root_containment": true,
+            "process_tree_bounded": true,
+            "currentness": "current"
+          }
+        ],
+        "package_inclusion_disposition": "optional_feature",
+        "claim_ceiling": {
+          "ceiling": "syntax_facts_only",
+          "message": "syntax-only substrate"
+        },
+        "required_fallback": null,
+        "limitations": [],
+        "non_claims": [
+          {
+            "claim": "analyzer_correctness",
+            "reason": "not established here"
+          }
+        ],
+        "semantic_digest": null,
+        "supersession_history": []
+      }
+    },
+    {
+      "id": "receipt_compiler_ceiling_without_compiler_layer",
+      "expect": "reject",
+      "error_code": "ImpossibleClaimCeiling",
+      "qualification": {
+        "schema_version": "ripr_adapter_substrate_qualification.v1",
+        "qualification_id": "receipt.compiler",
+        "controller": "ripr",
+        "language": "python",
+        "dialect": null,
+        "framework": null,
+        "platform": "host",
+        "analysis_modes": [
+          "diff"
+        ],
+        "substrate_class": "in_process_parser",
+        "shared_adapter_family_id": null,
+        "layers": [
+          {
+            "layer_id": "syntax",
+            "layer_class": "syntax_only",
+            "claim_ceiling": {
+              "ceiling": "syntax_facts_only",
+              "message": "syntax facts only"
+            },
+            "dependency_ids": [
+              "dep.primary"
+            ]
+          }
+        ],
+        "dependencies": [
+          {
+            "dependency_id": "dep.primary",
+            "crate_or_tool": "example-parser",
+            "exact_version": "1.0.0",
+            "grammar_or_schema_generation": "grammar.v1"
+          }
+        ],
+        "adr_ref": {
+          "ref_kind": "adr_document",
+          "ref_id": "adr/0009-python-parser-substrate",
+          "ref_generation": "accepted.v3",
+          "currentness": "current"
+        },
+        "producer_owner": "analysis::language::python",
+        "source_input_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "project_configuration_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "platform_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "currentness_generation": "currentness.v1",
+        "input_behavior": {
+          "exact_span": "retain_exact_spans",
+          "malformed_partial_input": "typed_limit",
+          "source_map": "preserve_when_present",
+          "generated_code": "mark_generated_nodes",
+          "unavailable_tool": "typed_unavailable"
+        },
+        "packaging": {
+          "license_spdx": "MIT",
+          "msrv": "1.95",
+          "unsafe_surface": "forbidden",
+          "build_script": "none",
+          "generated_code": "none",
+          "native_runtime": "none",
+          "platform_limits": [
+            "all-tier1"
+          ],
+          "compile_size_class": "small",
+          "binary_size_class": "small",
+          "distribution_notes": "fixture"
+        },
+        "safety_refs": [
+          {
+            "receipt_id": "safety/no-exec.v1",
+            "harness_generation": "6512.v1",
+            "no_execution": true,
+            "no_network": true,
+            "root_containment": true,
+            "process_tree_bounded": true,
+            "currentness": "current"
+          }
+        ],
+        "package_inclusion_disposition": "optional_feature",
+        "claim_ceiling": {
+          "ceiling": "compiler_facts_with_fallback",
+          "message": "too strong"
+        },
+        "required_fallback": null,
+        "limitations": [],
+        "non_claims": [
+          {
+            "claim": "analyzer_correctness",
+            "reason": "not established here"
+          }
+        ],
+        "semantic_digest": null,
+        "supersession_history": []
+      }
+    },
+    {
+      "id": "adr_ref_must_be_adr_document",
+      "expect": "reject",
+      "error_code": "AuthorityViolation",
+      "qualification": {
+        "schema_version": "ripr_adapter_substrate_qualification.v1",
+        "qualification_id": "pure.rust",
+        "controller": "ripr",
+        "language": "python",
+        "dialect": null,
+        "framework": null,
+        "platform": "host",
+        "analysis_modes": [
+          "diff"
+        ],
+        "substrate_class": "in_process_parser",
+        "shared_adapter_family_id": null,
+        "layers": [
+          {
+            "layer_id": "syntax",
+            "layer_class": "syntax_only",
+            "claim_ceiling": {
+              "ceiling": "syntax_facts_only",
+              "message": "syntax facts only"
+            },
+            "dependency_ids": [
+              "dep.primary"
+            ]
+          }
+        ],
+        "dependencies": [
+          {
+            "dependency_id": "dep.primary",
+            "crate_or_tool": "example-parser",
+            "exact_version": "1.0.0",
+            "grammar_or_schema_generation": "grammar.v1"
+          }
+        ],
+        "adr_ref": {
+          "ref_kind": "capability_manifest",
+          "ref_id": "adr/0009-python-parser-substrate",
+          "ref_generation": "accepted.v3",
+          "currentness": "current"
+        },
+        "producer_owner": "analysis::language::python",
+        "source_input_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "project_configuration_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "platform_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "currentness_generation": "currentness.v1",
+        "input_behavior": {
+          "exact_span": "retain_exact_spans",
+          "malformed_partial_input": "typed_limit",
+          "source_map": "preserve_when_present",
+          "generated_code": "mark_generated_nodes",
+          "unavailable_tool": "typed_unavailable"
+        },
+        "packaging": {
+          "license_spdx": "MIT",
+          "msrv": "1.95",
+          "unsafe_surface": "forbidden",
+          "build_script": "none",
+          "generated_code": "none",
+          "native_runtime": "none",
+          "platform_limits": [
+            "all-tier1"
+          ],
+          "compile_size_class": "small",
+          "binary_size_class": "small",
+          "distribution_notes": "fixture"
+        },
+        "safety_refs": [
+          {
+            "receipt_id": "safety/no-exec.v1",
+            "harness_generation": "6512.v1",
+            "no_execution": true,
+            "no_network": true,
+            "root_containment": true,
+            "process_tree_bounded": true,
+            "currentness": "current"
+          }
+        ],
+        "package_inclusion_disposition": "optional_feature",
+        "claim_ceiling": {
+          "ceiling": "syntax_facts_only",
+          "message": "syntax-only substrate"
+        },
+        "required_fallback": null,
+        "limitations": [],
+        "non_claims": [
+          {
+            "claim": "analyzer_correctness",
+            "reason": "not established here"
+          }
+        ],
+        "semantic_digest": null,
+        "supersession_history": []
+      }
+    },
+    {
+      "id": "packet_layer_compiler_authority",
+      "expect": "reject",
+      "error_code": "ImpossibleClaimCeiling",
+      "qualification": {
+        "schema_version": "ripr_adapter_substrate_qualification.v1",
+        "qualification_id": "packet.layer.compiler",
+        "controller": "ripr",
+        "language": "python",
+        "dialect": null,
+        "framework": null,
+        "platform": "host",
+        "analysis_modes": [
+          "diff"
+        ],
+        "substrate_class": "packet_producer_consumer",
+        "shared_adapter_family_id": null,
+        "layers": [
+          {
+            "layer_id": "syntax",
+            "layer_class": "compiler_resolved",
+            "claim_ceiling": {
+              "ceiling": "compiler_facts_with_fallback",
+              "message": "forbidden"
+            },
+            "dependency_ids": [
+              "dep.primary"
+            ]
+          }
+        ],
+        "dependencies": [
+          {
+            "dependency_id": "dep.primary",
+            "crate_or_tool": "example-parser",
+            "exact_version": "1.0.0",
+            "grammar_or_schema_generation": "grammar.v1"
+          }
+        ],
+        "adr_ref": {
+          "ref_kind": "adr_document",
+          "ref_id": "adr/0009-python-parser-substrate",
+          "ref_generation": "accepted.v3",
+          "currentness": "current"
+        },
+        "producer_owner": "analysis::language::python",
+        "source_input_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "project_configuration_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "platform_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "currentness_generation": "currentness.v1",
+        "input_behavior": {
+          "exact_span": "retain_exact_spans",
+          "malformed_partial_input": "typed_limit",
+          "source_map": "preserve_when_present",
+          "generated_code": "mark_generated_nodes",
+          "unavailable_tool": "typed_unavailable"
+        },
+        "packaging": {
+          "license_spdx": "MIT",
+          "msrv": "1.95",
+          "unsafe_surface": "forbidden",
+          "build_script": "none",
+          "generated_code": "none",
+          "native_runtime": "none",
+          "platform_limits": [
+            "all-tier1"
+          ],
+          "compile_size_class": "small",
+          "binary_size_class": "small",
+          "distribution_notes": "fixture"
+        },
+        "safety_refs": [
+          {
+            "receipt_id": "safety/no-exec.v1",
+            "harness_generation": "6512.v1",
+            "no_execution": true,
+            "no_network": true,
+            "root_containment": true,
+            "process_tree_bounded": true,
+            "currentness": "current"
+          }
+        ],
+        "package_inclusion_disposition": "optional_feature",
+        "claim_ceiling": {
+          "ceiling": "no_local_semantic_authority",
+          "message": "packet only"
+        },
+        "required_fallback": null,
+        "limitations": [],
+        "non_claims": [
+          {
+            "claim": "analyzer_correctness",
+            "reason": "not established here"
+          }
+        ],
+        "semantic_digest": null,
+        "supersession_history": []
+      }
+    },
+    {
+      "id": "generated_parser_checked_in_tables",
+      "expect": "accept",
+      "qualification": {
+        "schema_version": "ripr_adapter_substrate_qualification.v1",
+        "qualification_id": "generated.checked_in",
+        "controller": "ripr",
+        "language": "python",
+        "dialect": null,
+        "framework": null,
+        "platform": "host",
+        "analysis_modes": [
+          "diff"
+        ],
+        "substrate_class": "generated_parser",
+        "shared_adapter_family_id": null,
+        "layers": [
+          {
+            "layer_id": "syntax",
+            "layer_class": "syntax_only",
+            "claim_ceiling": {
+              "ceiling": "syntax_facts_only",
+              "message": "syntax facts only"
+            },
+            "dependency_ids": [
+              "dep.primary"
+            ]
+          }
+        ],
+        "dependencies": [
+          {
+            "dependency_id": "dep.primary",
+            "crate_or_tool": "example-parser",
+            "exact_version": "1.0.0",
+            "grammar_or_schema_generation": "grammar.v1"
+          }
+        ],
+        "adr_ref": {
+          "ref_kind": "adr_document",
+          "ref_id": "adr/0009-python-parser-substrate",
+          "ref_generation": "accepted.v3",
+          "currentness": "current"
+        },
+        "producer_owner": "analysis::language::python",
+        "source_input_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "project_configuration_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "platform_identity": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "currentness_generation": "currentness.v1",
+        "input_behavior": {
+          "exact_span": "retain_exact_spans",
+          "malformed_partial_input": "typed_limit",
+          "source_map": "preserve_when_present",
+          "generated_code": "mark_generated_nodes",
+          "unavailable_tool": "typed_unavailable"
+        },
+        "packaging": {
+          "license_spdx": "MIT",
+          "msrv": "1.95",
+          "unsafe_surface": "forbidden",
+          "build_script": "none",
+          "generated_code": "checked-in parser tables",
           "native_runtime": "none",
           "platform_limits": [
             "all-tier1"

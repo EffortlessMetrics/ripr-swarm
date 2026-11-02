@@ -197,7 +197,7 @@ fn every_substrate_class_has_a_constructible_shape() -> Result<(), String> {
         let mut qualification = base_qualification(class.as_str(), "python", class);
         match class {
             AdapterSubstrateClassV1::GeneratedParser => {
-                qualification.packaging.build_script = "build.rs runs c codegen".into();
+                qualification.packaging.build_script = "none".into();
                 qualification.packaging.generated_code = "checked-in parser tables".into();
             }
             AdapterSubstrateClassV1::ExternalHelper => {
@@ -207,6 +207,10 @@ fn every_substrate_class_has_a_constructible_shape() -> Result<(), String> {
                 qualification.claim_ceiling.ceiling =
                     SemanticClaimCeilingV1::NoLocalSemanticAuthority;
                 qualification.claim_ceiling.message = "packet-only".into();
+                qualification.layers[0].claim_ceiling = SubstrateClaimCeilingV1 {
+                    ceiling: SemanticClaimCeilingV1::NoLocalSemanticAuthority,
+                    message: "packet-only layer".into(),
+                };
             }
             AdapterSubstrateClassV1::NativeLibrary => {
                 qualification.packaging.platform_limits = vec!["linux-x86_64".into()];
@@ -259,6 +263,71 @@ fn same_dependency_version_different_grammar_generations_validate() -> Result<()
     ];
     qualification.layers[0].dependency_ids = vec!["dep.v1".into(), "dep.v2".into()];
     require_ok(qualification.validate(), "two grammars")?;
+    Ok(())
+}
+
+#[test]
+fn receipt_compiler_ceiling_requires_compiler_capable_layer() -> Result<(), String> {
+    let mut qualification = base_qualification(
+        "receipt.compiler",
+        "python",
+        AdapterSubstrateClassV1::InProcessParser,
+    );
+    qualification.claim_ceiling = SubstrateClaimCeilingV1 {
+        ceiling: SemanticClaimCeilingV1::CompilerFactsWithFallback,
+        message: "compiler facts".into(),
+    };
+    let error = require_err(qualification.validate(), "receipt compiler")?;
+    if error.code != AdapterSubstrateQualificationErrorCodeV1::ImpossibleClaimCeiling {
+        return Err(format!("receipt compiler: got {:?}", error.code));
+    }
+    Ok(())
+}
+
+#[test]
+fn shared_family_requires_matching_implementation() {
+    let mut typescript = base_qualification(
+        "typescript.oxc",
+        "typescript",
+        AdapterSubstrateClassV1::InProcessParser,
+    );
+    typescript.shared_adapter_family_id = Some("oxc.shared".into());
+    let mut javascript = base_qualification(
+        "javascript.helper",
+        "javascript",
+        AdapterSubstrateClassV1::ExternalHelper,
+    );
+    javascript.shared_adapter_family_id = Some("oxc.shared".into());
+    javascript.required_fallback = Some("syntax_only_in_process".into());
+    assert!(!substrate_classes_compatible(&typescript, &javascript));
+}
+
+#[test]
+fn native_syntax_layer_may_declare_platform_limited_ceiling() -> Result<(), String> {
+    let mut qualification = base_qualification(
+        "native.platform",
+        "python",
+        AdapterSubstrateClassV1::NativeLibrary,
+    );
+    qualification.packaging.platform_limits = vec!["linux-x86_64".into()];
+    qualification.layers[0].claim_ceiling = SubstrateClaimCeilingV1 {
+        ceiling: SemanticClaimCeilingV1::NativePlatformLimited,
+        message: "platform limited syntax".into(),
+    };
+    require_ok(qualification.validate(), "native platform layer")?;
+    Ok(())
+}
+
+#[test]
+fn generated_parser_allows_checked_in_tables_without_build_script() -> Result<(), String> {
+    let mut qualification = base_qualification(
+        "generated.checked_in",
+        "python",
+        AdapterSubstrateClassV1::GeneratedParser,
+    );
+    qualification.packaging.build_script = "none".into();
+    qualification.packaging.generated_code = "checked-in parser tables".into();
+    require_ok(qualification.validate(), "checked-in generated parser")?;
     Ok(())
 }
 
