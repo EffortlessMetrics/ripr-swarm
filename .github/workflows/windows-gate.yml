@@ -95,16 +95,24 @@ jobs:
                 *.rs) ;;
                 *) continue ;;
               esac
-              if git diff -U0 "$BASE_SHA"..."$HEAD_SHA" -- "$path" 2>/dev/null | grep -Eq '^[+-].*cfg\(windows\)'; then
+              diff_tmp="$(mktemp)"
+              if git diff -U0 "$BASE_SHA"..."$HEAD_SHA" -- "$path" 2>/dev/null > "$diff_tmp" \
+                && grep -Eq '^[+-].*cfg\(windows\)' "$diff_tmp"; then
+                rm -f "$diff_tmp"
                 windows_relevant=true
                 reason=cfg_windows_diff_hunk
                 return 0
               fi
-              if git show "$HEAD_SHA:$path" 2>/dev/null | grep -q 'cfg(windows)'; then
+              rm -f "$diff_tmp"
+              path_tmp="$(mktemp)"
+              if git show "$HEAD_SHA:$path" 2>/dev/null > "$path_tmp" \
+                && grep -q 'cfg(windows)' "$path_tmp"; then
+                rm -f "$path_tmp"
                 windows_relevant=true
                 reason=cfg_windows_file_superset
                 return 0
               fi
+              rm -f "$path_tmp"
             done < "$changed"
             reason=not_windows_relevant
           }
