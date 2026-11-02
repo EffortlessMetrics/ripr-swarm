@@ -265,3 +265,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_nested_literal (22)
+
+Reason:
+RIPR-SPEC-0094 / #12146: proximity-only related tests whose assertions pin another function no longer credit any seam kind (collateral to repo-seam fix; same refusal as blessed goldens in #12254).
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_nested_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

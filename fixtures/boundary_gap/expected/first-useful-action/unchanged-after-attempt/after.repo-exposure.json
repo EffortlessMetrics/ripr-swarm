@@ -1,14 +1,5 @@
 {
-  "analysis_inputs": {
-    "analyzer_version": "normalized-for-portable-fixture",
-    "cfg_features_hash": "cbf29ce484222325",
-    "config_hash": "881255e2f498d9f2",
-    "lockfile_hash": "0b74165b4cea4f09",
-    "suppressions_hash": "cbf29ce484222325",
-    "test_intent_hash": "cbf29ce484222325",
-    "toolchain_hash": "normalized-for-portable-fixture",
-    "workspace_manifests_hash": "normalized-for-portable-fixture"
-  },
+  "schema_version": "0.5",
   "artifact": {
     "analysis": {
       "base_revision": null,
@@ -20,7 +11,7 @@
       "worktree": "dirty"
     },
     "canonicalization": "raw_json_placeholder_v1",
-    "content_sha256": "sha256:6d7c7effe8174e6b46ff4f27ea12f5327dc6985a6e891a4c22df79ab207c91bf",
+    "content_sha256": "sha256:205e4009d010441c375ff8513071d3ba2d2d18f985695c2630ca200e2f72107f",
     "kind": "repo_exposure",
     "producer": {
       "tool": "ripr",
@@ -33,36 +24,107 @@
     "schema_version": "1",
     "snapshot_identity": "snapshot:input:v4:fnv1a64:60b2588ac0bbf962;revision:8a00693e680c8ad5172d5191bbb08484cbd5e300"
   },
-  "metrics": {
-    "activation_unknown": 0,
-    "discrimination_unknown": 0,
-    "headline_eligible": 1,
-    "intentional": 0,
-    "observation_unknown": 0,
-    "opaque": 0,
-    "propagation_unknown": 0,
-    "reachable_unrevealed": 0,
-    "seams_total": 1,
-    "strongly_gripped": 0,
-    "suppressed": 0,
-    "ungripped": 0,
-    "weakly_gripped": 1
+  "source_subject": {
+    "corpus": {
+      "analyzed_production_files": [
+        "src/lib.rs"
+      ],
+      "cache_schema_version": "1.139",
+      "files_content_hash": "16ab297ea99e68bf",
+      "scope": "rust_workspace"
+    },
+    "digest_algorithm": "sha256",
+    "files": [
+      {
+        "digest": "sha256:0656ec79def352524409bf600a1a57abc4a7a096c73059ee4de3c00376cd3392",
+        "path": "src/lib.rs"
+      },
+      {
+        "digest": "sha256:2409d6fc3d51d11f0b17d5dcd51b10e3217f9d8b6b5652987b7c043d16833b39",
+        "path": "tests/pricing.rs"
+      }
+    ]
   },
-  "run_status": "complete",
-  "schema_version": "0.5",
+  "analysis_inputs": {
+    "analyzer_version": "normalized-for-portable-fixture",
+    "cfg_features_hash": "cbf29ce484222325",
+    "config_hash": "881255e2f498d9f2",
+    "lockfile_hash": "0b74165b4cea4f09",
+    "suppressions_hash": "cbf29ce484222325",
+    "test_intent_hash": "cbf29ce484222325",
+    "toolchain_hash": "normalized-for-portable-fixture",
+    "workspace_manifests_hash": "normalized-for-portable-fixture"
+  },
   "scope": "repo",
+  "run_status": "complete",
+  "metrics": {
+    "seams_total": 1,
+    "headline_eligible": 1,
+    "strongly_gripped": 0,
+    "weakly_gripped": 1,
+    "ungripped": 0,
+    "reachable_unrevealed": 0,
+    "activation_unknown": 0,
+    "propagation_unknown": 0,
+    "observation_unknown": 0,
+    "discrimination_unknown": 0,
+    "opaque": 0,
+    "intentional": 0,
+    "suppressed": 0
+  },
   "seams": [
     {
+      "seam_id": "67fc764ba37d77bd",
+      "kind": "predicate_boundary",
+      "file": "src/lib.rs",
+      "line": 2,
       "column": 8,
-      "end_column": 36,
       "end_line": 2,
+      "end_column": 36,
+      "owner": "src/lib.rs::discounted_total",
+      "expression": "amount >= discount_threshold",
+      "grip_class": "weakly_gripped",
+      "headline_eligible": true,
       "evidence": {
+        "reach": "yes",
         "activate": "yes",
-        "discriminate": "yes",
-        "observe": "yes",
         "propagate": "yes",
-        "reach": "yes"
+        "observe": "yes",
+        "discriminate": "yes"
       },
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "below_threshold_has_no_discount",
+          "file": "tests/pricing.rs",
+          "line": 4,
+          "oracle_kind": "exact_value",
+          "oracle_strength": "strong",
+          "evidence_summary": "exact value assertion",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "far_above_threshold_discounts",
+          "file": "tests/pricing.rs",
+          "line": 9,
+          "oracle_kind": "exact_value",
+          "oracle_strength": "strong",
+          "evidence_summary": "exact value assertion",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "observed_values": [
+        "50",
+        "10_000"
+      ],
+      "missing_discriminators": [
+        {
+          "value": "discount_threshold (equality boundary)",
+          "reason": "observed values do not include the equality-boundary case for this predicate"
+        }
+      ],
       "evidence_record": {
         "actionability": {
           "class": "actionable_related_test_extension",
@@ -366,69 +428,7 @@
         "seam_id": "67fc764ba37d77bd",
         "seam_kind": "predicate_boundary",
         "static_limitations": []
-      },
-      "expression": "amount >= discount_threshold",
-      "file": "src/lib.rs",
-      "grip_class": "weakly_gripped",
-      "headline_eligible": true,
-      "kind": "predicate_boundary",
-      "line": 2,
-      "missing_discriminators": [
-        {
-          "reason": "observed values do not include the equality-boundary case for this predicate",
-          "value": "discount_threshold (equality boundary)"
-        }
-      ],
-      "observed_values": [
-        "50",
-        "10_000"
-      ],
-      "owner": "src/lib.rs::discounted_total",
-      "related_tests": [
-        {
-          "evidence_summary": "exact value assertion",
-          "file": "tests/pricing.rs",
-          "line": 4,
-          "name": "below_threshold_has_no_discount",
-          "oracle_kind": "exact_value",
-          "oracle_strength": "strong",
-          "relation_confidence": "high",
-          "relation_reason": "direct_owner_call"
-        },
-        {
-          "evidence_summary": "exact value assertion",
-          "file": "tests/pricing.rs",
-          "line": 9,
-          "name": "far_above_threshold_discounts",
-          "oracle_kind": "exact_value",
-          "oracle_strength": "strong",
-          "relation_confidence": "high",
-          "relation_reason": "direct_owner_call"
-        }
-      ],
-      "related_tests_total": 2,
-      "seam_id": "67fc764ba37d77bd"
-    }
-  ],
-  "source_subject": {
-    "corpus": {
-      "analyzed_production_files": [
-        "src/lib.rs"
-      ],
-      "cache_schema_version": "1.138",
-      "files_content_hash": "16ab297ea99e68bf",
-      "scope": "rust_workspace"
-    },
-    "digest_algorithm": "sha256",
-    "files": [
-      {
-        "digest": "sha256:0656ec79def352524409bf600a1a57abc4a7a096c73059ee4de3c00376cd3392",
-        "path": "src/lib.rs"
-      },
-      {
-        "digest": "sha256:2409d6fc3d51d11f0b17d5dcd51b10e3217f9d8b6b5652987b7c043d16833b39",
-        "path": "tests/pricing.rs"
       }
-    ]
-  }
+    }
+  ]
 }
