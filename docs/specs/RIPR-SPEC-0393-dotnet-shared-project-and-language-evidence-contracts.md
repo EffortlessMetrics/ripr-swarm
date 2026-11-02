@@ -164,29 +164,51 @@ schema_version = "ripr-dotnet-project-facts.v1"
 proof_generation = "proof.v1"
 currentness_generation = "currentness.v1"
 
+[[project_contexts]]
+project_context_id = "repo:src/App.csproj#Debug#net8.0"
+project_id = "repo:src/App.csproj"
+configuration = "Debug"
+target_framework = "net8.0"
+currentness = "exact"
+
+[[project_contexts]]
+project_context_id = "repo:tests/Tests.csproj#Debug#net8.0"
+project_id = "repo:tests/Tests.csproj"
+configuration = "Debug"
+target_framework = "net8.0"
+currentness = "exact"
+
 [[projects]]
-project_id = "repo:relative/path/App.csproj"
-language = "csharp" # project primary language, not finding language
+fact_id = "project:repo:src/App.csproj"
+project_id = "repo:src/App.csproj"
+language = "csharp"
 sdk_style = true
 target_frameworks = ["net8.0", "net48"]
 configurations = ["Debug", "Release"]
+currentness = "partial"
 
 [[projects.compile_items]]
+fact_id = "compile:repo:src/App.csproj:src/Pricing.cs"
 path = "src/Pricing.cs"
-role = "handwritten" # handwritten | generated | linked | unknown
-generator = "" # nonempty when declared
-link_target = "" # nonempty when Link metadata present
-contexts = ["App.csproj#Debug#net8.0"]
+role = "handwritten"
+generator = ""
+link_target = ""
+project_context_id = "repo:src/App.csproj#Debug#net8.0"
+currentness = "exact"
 
 [[projects.references]]
-kind = "project" # project | package | assembly
-target_project_id = "repo:relative/path/Contracts.csproj"
+fact_id = "ref:repo:src/App.csproj:repo:src/Contracts.csproj"
+kind = "project"
+target_project_id = "repo:src/Contracts.csproj"
 version = ""
-contexts = ["App.csproj#Debug#net8.0"]
+project_context_id = "repo:src/App.csproj#Debug#net8.0"
+currentness = "exact"
 
 [[projects.test_signals]]
-framework_hint = "xunit" # declared package/id only
-contexts = ["Tests.csproj#Debug#net8.0"]
+fact_id = "test-signal:repo:tests/Tests.csproj:xunit"
+framework_hint = "xunit"
+project_context_id = "repo:tests/Tests.csproj#Debug#net8.0"
+currentness = "exact"
 ```
 
 ### Semantic evidence contracts (per language)
@@ -529,7 +551,8 @@ Planned tests:
 - `mstest_vb_and_cs_test_identities_remain_language_scoped`
 
 Until #5634–#5645 land, `fixtures/dotnet-evidence-contract-corpus/corpus.json` is the
-executable contract check for this spec slice.
+executable contract check for this spec slice (`cargo xtask check-fixture-contracts`
+validates required accept/reject case ids).
 
 ## Implementation Mapping
 
