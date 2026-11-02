@@ -121,6 +121,19 @@ impl WorkspaceRootAuthority {
         seam_file: &Path,
         test_source_digest: &str,
     ) -> bool {
+        self.validates_target_digest_with_pass(test_file, seam_file, test_source_digest, None)
+    }
+
+    /// [`validates_target_digest`] with optional pass-scoped filesystem capture
+    /// (#4292): distinct admitted paths stat once per pass and are recaptured
+    /// at publication.
+    pub(crate) fn validates_target_digest_with_pass(
+        &self,
+        test_file: &Path,
+        seam_file: &Path,
+        test_source_digest: &str,
+        pass: Option<&EvidencePassFilesystemCurrentness>,
+    ) -> bool {
         let Some(file) = self.files.get(test_file) else {
             return false;
         };
@@ -133,8 +146,8 @@ impl WorkspaceRootAuthority {
         // One admission observes each shared directory once: the test and the
         // seam usually sit in one package, so their ancestor chains overlap.
         let mut observed = ObservedEntries::default();
-        let test_current = self.current_file_is_current(test_file, file, &mut observed);
-        let seam_current = self.current_file_is_current(seam_file, seam, &mut observed);
+        let test_current = self.current_file_is_current(test_file, file, &mut observed, pass);
+        let seam_current = self.current_file_is_current(seam_file, seam, &mut observed, pass);
         test_current && seam_current && test_source_digest == file.source_digest
     }
 
@@ -143,8 +156,12 @@ impl WorkspaceRootAuthority {
         path: &Path,
         authority: &WorkspaceFileAuthority,
         observed: &mut ObservedEntries,
+        pass: Option<&EvidencePassFilesystemCurrentness>,
     ) -> bool {
-        let fingerprint = filesystem_fingerprint(&self.root, path, observed);
+        let fingerprint = match pass {
+            Some(pass) => pass.fingerprint_for(self, path),
+            None => filesystem_fingerprint(&self.root, path, observed),
+        };
         if let Ok(cache) = self.current_files.lock()
             && let Some((cached_fingerprint, valid)) = cache.get(path)
             && cached_fingerprint == &fingerprint
@@ -177,6 +194,78 @@ impl WorkspaceRootAuthority {
             cache.insert(path.to_path_buf(), (fingerprint, valid));
         }
         valid
+    }
+}
+
+/// Pass-scoped filesystem metadata: each distinct admitted path pays one stat
+/// walk during evaluation and the same paths are recaptured before publication
+/// (#4292).
+pub(crate) struct EvidencePassFilesystemCurrentness {
+    observed: Mutex<ObservedEntries>,
+    initial_fingerprints: Mutex<BTreeMap<PathBuf, String>>,
+}
+
+impl EvidencePassFilesystemCurrentness {
+    pub(crate) fn new() -> Self {
+        Self {
+            observed: Mutex::new(ObservedEntries::default()),
+            initial_fingerprints: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    pub(crate) fn tracked_path_count(&self) -> usize {
+        self.initial_fingerprints
+            .lock()
+            .map(|map| map.len())
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn fingerprint_for(
+        &self,
+        authority: &WorkspaceRootAuthority,
+        path: &Path,
+    ) -> String {
+        if let Ok(map) = self.initial_fingerprints.lock()
+            && let Some(cached) = map.get(path)
+        {
+            return cached.clone();
+        }
+        let fingerprint = match self.observed.lock() {
+            Ok(mut observed) => filesystem_fingerprint(&authority.root, path, &mut observed),
+            Err(_) => {
+                filesystem_fingerprint(&authority.root, path, &mut ObservedEntries::default())
+            }
+        };
+        if let Ok(mut map) = self.initial_fingerprints.lock() {
+            map.entry(path.to_path_buf())
+                .or_insert_with(|| fingerprint.clone());
+        }
+        fingerprint
+    }
+
+    pub(crate) fn terminal_generation_matches(&self, authority: &WorkspaceRootAuthority) -> bool {
+        let Ok(initial) = self.initial_fingerprints.lock() else {
+            return false;
+        };
+        if initial.is_empty() {
+            return true;
+        }
+        let paths: Vec<PathBuf> = initial.keys().cloned().collect();
+        drop(initial);
+        for path in paths {
+            let after =
+                filesystem_fingerprint(&authority.root, &path, &mut ObservedEntries::default());
+            let Ok(map) = self.initial_fingerprints.lock() else {
+                return false;
+            };
+            let Some(before) = map.get(&path) else {
+                return false;
+            };
+            if before != &after {
+                return false;
+            }
+        }
+        true
     }
 }
 
@@ -2940,6 +3029,66 @@ fn checks_helper() {
             Path::new("pkg/src/lib.rs"),
             "#[test]\nfn source_test() { assert_eq!(1, 1); }\n"
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn pass_terminal_generation_rejects_mid_pass_manifest_insert()
+    -> Result<(), Box<dyn std::error::Error>> {
+        struct FixtureCleanup(PathBuf);
+        impl Drop for FixtureCleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "ripr-authority-pass-terminal-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let _cleanup = FixtureCleanup(root.clone());
+        std::fs::create_dir_all(root.join("pkg/src"))?;
+        std::fs::create_dir_all(root.join("pkg/tests"))?;
+        std::fs::write(root.join("pkg/Cargo.toml"), "[package]\nname = \"pkg\"\n")?;
+        let sources = [
+            (
+                PathBuf::from("pkg/src/lib.rs"),
+                "pub fn source() -> i32 { 1 }\n",
+            ),
+            (
+                PathBuf::from("pkg/tests/lib.rs"),
+                "#[test]\nfn source_test() { assert_eq!(1, 1); }\n",
+            ),
+        ];
+        for (path, source) in &sources {
+            std::fs::write(root.join(path), source)?;
+        }
+        let files = sources
+            .iter()
+            .map(|(path, source)| {
+                (
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: (*source).into(),
+                        ..FileFacts::default()
+                    },
+                )
+            })
+            .collect();
+        let authority = WorkspaceRootAuthority::from_index(&root, &files);
+        let pass = EvidencePassFilesystemCurrentness::new();
+        let test = Path::new("pkg/tests/lib.rs");
+        let source = Path::new("pkg/src/lib.rs");
+        let digest = source_digest(sources[1].1.as_bytes());
+        assert!(authority.validates_target_digest_with_pass(test, source, &digest, Some(&pass)));
+        std::fs::write(
+            root.join("pkg/tests/Cargo.toml"),
+            "[package]\nname = \"nested-tests\"\n",
+        )?;
+        assert!(!pass.terminal_generation_matches(&authority));
         Ok(())
     }
 

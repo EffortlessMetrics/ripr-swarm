@@ -294,13 +294,18 @@ pub(crate) struct EvidencePass<'index> {
     context: Option<CompactGripContext<'index>>,
     /// The whole-index tables are paid once per pass, not per stage.
     shared_tables_warmed: std::sync::Once,
+    pass_filesystem: Arc<crate::analysis::facts::EvidencePassFilesystemCurrentness>,
 }
 
 impl<'index> EvidencePass<'index> {
     pub(crate) fn new(index: &'index RustIndex) -> Self {
+        let pass_filesystem =
+            Arc::new(crate::analysis::facts::EvidencePassFilesystemCurrentness::new());
         let context_started = Instant::now();
         trace_latency_phase("evidence_context", "start", Duration::ZERO);
-        let context = CompactGripContext::try_new(index).ok();
+        let context =
+            CompactGripContext::try_new_with_pass_filesystem(index, Arc::clone(&pass_filesystem))
+                .ok();
         trace_latency_phase(
             "evidence_context",
             &format!(
@@ -312,6 +317,7 @@ impl<'index> EvidencePass<'index> {
         Self {
             context,
             shared_tables_warmed: std::sync::Once::new(),
+            pass_filesystem,
         }
     }
 
@@ -373,6 +379,40 @@ impl<'index> EvidencePass<'index> {
                 })
             })
             .collect();
+        let terminal_started = Instant::now();
+        if let Some(authority) = context.index.workspace_authority.as_ref() {
+            if self.pass_filesystem.terminal_generation_matches(authority) {
+                trace_latency_phase(
+                    "evidence_filesystem_currentness",
+                    &format!(
+                        "granularity=pass_capture_terminal distinct_paths={}",
+                        self.pass_filesystem.tracked_path_count()
+                    ),
+                    terminal_started.elapsed(),
+                );
+            } else {
+                trace_latency_phase(
+                    "evidence_filesystem_currentness",
+                    "stale_generation",
+                    terminal_started.elapsed(),
+                );
+                for evidence in &mut out {
+                    evidence.related_tests = evidence
+                        .related_tests
+                        .iter()
+                        .map(|related| {
+                            if related.test_target.is_none() {
+                                Arc::clone(related)
+                            } else {
+                                let mut stripped = (**related).clone();
+                                stripped.test_target = None;
+                                Arc::new(stripped)
+                            }
+                        })
+                        .collect();
+                }
+            }
+        }
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
         out
     }
@@ -5025,7 +5065,12 @@ fn test_target_evidence_memo<'a>(
             let valid = context
                 .indexed_source_digest(&test.file)
                 .is_some_and(|digest| {
-                    authority.validates_target_digest(&test.file, seam.file(), &digest)
+                    authority.validates_target_digest_with_pass(
+                        &test.file,
+                        seam.file(),
+                        &digest,
+                        context.pass_filesystem_currentness(),
+                    )
                 });
             validated_targets.insert(test.file.as_path(), valid);
             valid

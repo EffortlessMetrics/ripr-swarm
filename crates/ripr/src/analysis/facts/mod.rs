@@ -443,6 +443,7 @@ pub use model::{
     TestFact, TestSummary, UnresolvedPropertyMacroFact,
 };
 // Hot evidence loops hash each indexed file once and validate by digest.
+pub(crate) use model::EvidencePassFilesystemCurrentness;
 pub(crate) use model::WorkspaceFileAuthority;
 #[cfg(test)]
 pub(crate) use model::WorkspaceRootAuthority;

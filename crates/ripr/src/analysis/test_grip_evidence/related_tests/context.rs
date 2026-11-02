@@ -100,6 +100,10 @@ pub(crate) struct CompactGripContext<'a> {
     /// ran in line while holding it). Not window-cleared: nothing in
     /// here derives from bytes a window can change, only from the index.
     pin_syntax: crate::analysis::classify::OwnerPinSyntax,
+    /// When set, test-target authority reuses one filesystem capture per pass
+    /// (#4292).
+    pass_filesystem_currentness:
+        Option<Arc<crate::analysis::facts::EvidencePassFilesystemCurrentness>>,
 }
 
 /// Candidate generation only: the existing `contains` and `same_module`
@@ -301,18 +305,39 @@ impl<'a> CompactGripContext<'a> {
     }
 
     pub(crate) fn new(index: &'a RustIndex) -> Self {
-        match Self::build(index, || Ok::<(), std::convert::Infallible>(())) {
+        match Self::build(index, None, || Ok::<(), std::convert::Infallible>(())) {
             Ok(context) => context,
             Err(never) => match never {},
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn try_new(index: &'a RustIndex) -> Result<Self, String> {
-        Self::build(index, crate::analysis::cancellation::checkpoint)
+        Self::build(index, None, crate::analysis::cancellation::checkpoint)
+    }
+
+    pub(crate) fn try_new_with_pass_filesystem(
+        index: &'a RustIndex,
+        pass_filesystem: Arc<crate::analysis::facts::EvidencePassFilesystemCurrentness>,
+    ) -> Result<Self, String> {
+        Self::build(
+            index,
+            Some(pass_filesystem),
+            crate::analysis::cancellation::checkpoint,
+        )
+    }
+
+    pub(in crate::analysis::test_grip_evidence) fn pass_filesystem_currentness(
+        &self,
+    ) -> Option<&crate::analysis::facts::EvidencePassFilesystemCurrentness> {
+        self.pass_filesystem_currentness.as_deref()
     }
 
     fn build<E>(
         index: &'a RustIndex,
+        pass_filesystem_currentness: Option<
+            Arc<crate::analysis::facts::EvidencePassFilesystemCurrentness>,
+        >,
         mut checkpoint: impl FnMut() -> Result<(), E>,
     ) -> Result<Self, E> {
         checkpoint()?;
@@ -658,6 +683,7 @@ impl<'a> CompactGripContext<'a> {
             unseen_reach_names: OnceLock::new(),
             shared_grips: Mutex::new(SharedGrips::default()),
             pin_syntax: crate::analysis::classify::OwnerPinSyntax::default(),
+            pass_filesystem_currentness,
         })
     }
 
