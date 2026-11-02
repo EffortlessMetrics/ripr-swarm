@@ -108,7 +108,8 @@ Options:
   --root PATH        Workspace root. Defaults to the current directory, then
                      walks up to the enclosing workspace or package, or the git
                      top level; `--root .` pins this directory.
-  --seam-id ID       Select one visible seam by ID.
+  --seam-id ID       Select one visible seam by ID, or by any ID that
+                     `ripr check` or `ripr pilot` prints.
   --gap-ledger PATH  Explicit gap decision ledger JSON, read as typed from
                      the current directory.
   --gap-id ID        Select a GapRecord by gap_id or canonical_gap_id.
@@ -132,7 +133,8 @@ Options:
   --root PATH      Workspace root. Defaults to the current directory, then
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
-  --seam-id ID     Select one visible seam by ID.
+  --seam-id ID     Select one visible seam by ID, or by any ID that
+                   `ripr check` or `ripr pilot` prints.
   --json           Emit the versioned repair_card.v1 JSON document. Without
                    this flag the same typed fields render as a short plain
                    brief; add the global `--verbose` for the full field list
