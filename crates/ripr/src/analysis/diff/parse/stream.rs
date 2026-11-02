@@ -11,6 +11,8 @@ use super::{
 
 #[cfg(test)]
 use super::DEFAULT_DIFF_CHANGED_LINE_LIMIT;
+#[cfg(test)]
+pub(crate) use super::DIFF_CHANGED_LINE_LIMIT_ENV;
 
 /// How many scoped-out paths the parse keeps by name for the disclosure; the
 /// total comes from the distinct-path set.
