@@ -152,6 +152,7 @@ impl AnalysisRecoveryKind {
             Self::Retry => "retry",
             Self::InspectFailure => "inspect_failure",
             Self::DeclareHandwrittenFiles => "declare_handwritten_files",
+            Self::DeclarePreviewExcludedPatterns => "declare_preview_excluded_patterns",
             Self::RenameGeneratedMarkedSource => "rename_generated_marked_source",
         }
     }
@@ -167,6 +168,7 @@ impl AnalysisRecoveryKind {
             Self::Retry => "retry",
             Self::InspectFailure => "inspect the failure",
             Self::DeclareHandwrittenFiles => "declare hand-written files",
+            Self::DeclarePreviewExcludedPatterns => "declare preview exclusion patterns",
             Self::RenameGeneratedMarkedSource => "rename the generated-marked source",
         }
     }
@@ -232,6 +234,9 @@ pub(crate) enum AnalysisRecoveryKind {
     /// Admit an exact hand-written path past the built-in excluded-directory
     /// conventions through the language's `handwritten_files` list.
     DeclareHandwrittenFiles,
+    /// Omit fixture or data paths from preview indexing through
+    /// `excluded_file_patterns` (#5380).
+    DeclarePreviewExcludedPatterns,
     /// A file name that marks generated code stays excluded even when its
     /// exact path is declared; the only route is renaming the file.
     RenameGeneratedMarkedSource,
@@ -949,6 +954,10 @@ mod tests {
             (
                 AnalysisRecoveryKind::DeclareHandwrittenFiles,
                 "declare_handwritten_files",
+            ),
+            (
+                AnalysisRecoveryKind::DeclarePreviewExcludedPatterns,
+                "declare_preview_excluded_patterns",
             ),
             (
                 AnalysisRecoveryKind::RenameGeneratedMarkedSource,

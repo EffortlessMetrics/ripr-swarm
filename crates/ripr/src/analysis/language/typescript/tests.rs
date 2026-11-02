@@ -21244,7 +21244,7 @@ fn diff_needs_workspace_for_every_file_the_loop_would_analyze() {
     let needs = |paths: &[&str], handwritten: &[&str]| {
         let files: Vec<ChangedFile> = paths.iter().map(|path| changed(path)).collect();
         let handwritten: Vec<String> = handwritten.iter().map(|path| path.to_string()).collect();
-        diff_needs_typescript_workspace(&files, &handwritten)
+        diff_needs_typescript_workspace(&files, &handwritten, &[])
     };
     assert!(needs(&["README.md", "src/lib.js"], &[]));
     assert!(needs(&["README.md", "src/lib.tsx"], &[]));

@@ -186,10 +186,11 @@ pub(crate) struct WorkspaceScan {
 pub(crate) fn collect_workspace_typescript_files_with_handwritten(
     root: &Path,
     handwritten: &[String],
+    excluded_file_patterns: &[String],
 ) -> WorkspaceScan {
     let max_entries = ts_workspace_file_limit_from_env(std::env::var(TS_MAX_WORKSPACE_FILES_ENV))
         .unwrap_or(DEFAULT_TS_MAX_WORKSPACE_FILES);
-    visit_workspace_with_handwritten(root, max_entries, handwritten)
+    visit_workspace_with_handwritten(root, max_entries, handwritten, excluded_file_patterns)
 }
 
 /// Whether `path` is a TS/JS source the walker admits: a routed extension,
@@ -213,6 +214,7 @@ pub(crate) fn visit_workspace_with_handwritten(
     root: &Path,
     max_entries: usize,
     handwritten: &[String],
+    excluded_file_patterns: &[String],
 ) -> WorkspaceScan {
     let max_total_entries = ts_workspace_entry_backstop(max_entries);
     let mut out = Vec::new();
@@ -296,6 +298,12 @@ pub(crate) fn visit_workspace_with_handwritten(
                     break;
                 }
                 let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
+                if crate::config::path_matches_preview_excluded_patterns(
+                    excluded_file_patterns,
+                    &relative,
+                ) {
+                    continue;
+                }
                 if !crate::config::is_detectable_excluded_typescript_path(&relative)
                     || crate::config::is_declared_handwritten_typescript_path(
                         handwritten,
@@ -795,7 +803,7 @@ mod tests {
         workspace.write("src/main.ts", "export const a = 1;\n");
         workspace.write("packages/core/src/index.tsx", "export const b = 2;\n");
         workspace.write("packages/core/README.md", "not source\n");
-        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &[]);
+        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &[], &[]);
         assert!(!scan.truncated, "scan must not trip the cap");
         assert_eq!(
             scan.files,
@@ -823,7 +831,7 @@ mod tests {
         ] {
             workspace.write(generated, "export const generated = 1;\n");
         }
-        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &[]);
+        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &[], &[]);
         assert!(!scan.truncated, "scan must not trip the cap");
         assert_eq!(
             scan.files,
@@ -844,7 +852,7 @@ mod tests {
         workspace.write("dist/pricing.ts", "export const price = 1;\n");
         workspace.write("dist/bundle.ts", "export const bundled = 1;\n");
         let declared = vec!["dist/pricing.ts".to_string()];
-        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &declared);
+        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &declared, &[]);
         assert!(!scan.truncated, "scan must not trip the cap");
         assert_eq!(
             scan.files,
@@ -858,6 +866,22 @@ mod tests {
     }
 
     #[test]
+    fn configured_excluded_file_patterns_prune_fixture_paths() {
+        let workspace = TempWorkspace::new("excluded-ts-walk");
+        workspace.write("src/keep.ts", "export const kept = 1;\n");
+        workspace.write("tests/syntax-tests/case.ts", "export const x = 1;\n");
+        let excluded = vec!["tests/syntax-tests/**".to_string()];
+        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &[], &excluded);
+        assert!(!scan.truncated, "scan must not trip the cap");
+        assert_eq!(
+            scan.files,
+            vec![PathBuf::from("src/keep.ts")],
+            "configured exclusion must drop fixture paths; got {:?}",
+            scan.files
+        );
+    }
+
+    #[test]
     fn workspace_file_limit_trips_truncation_disclosure() {
         let workspace = TempWorkspace::new("file-limit");
         workspace.write("a/one.ts", "export const a = 1;\n");
@@ -866,7 +890,7 @@ mod tests {
         // Cap below the number of admitted source files. Directories no
         // longer consume the budget, so a limit of 2 (not 4) is what
         // truncates three sibling sources.
-        let scan = visit_workspace_with_handwritten(&workspace.0, 2, &[]);
+        let scan = visit_workspace_with_handwritten(&workspace.0, 2, &[], &[]);
         assert!(scan.truncated, "cap must trip the truncated flag");
         assert!(
             scan.files.len() < 3,
@@ -874,7 +898,7 @@ mod tests {
             scan.files
         );
         // Without a cap the same workspace scans clean.
-        let full = visit_workspace_with_handwritten(&workspace.0, 10_000, &[]);
+        let full = visit_workspace_with_handwritten(&workspace.0, 10_000, &[], &[]);
         assert!(!full.truncated);
         assert_eq!(full.files.len(), 3);
     }
@@ -901,7 +925,7 @@ mod tests {
         }
         // 12 pngs + 6 generated + 3 sources + dirs is well above 8; counting
         // every directory entry therefore truncates before this change.
-        let scan = visit_workspace_with_handwritten(&workspace.0, 8, &[]);
+        let scan = visit_workspace_with_handwritten(&workspace.0, 8, &[], &[]);
         assert!(
             !scan.truncated,
             "non-source and generated entries must not trip the source cap; files={:?}",
@@ -926,7 +950,7 @@ mod tests {
         for i in 0..5 {
             workspace.write(&format!("src/f{i}.ts"), "export const v = 1;\n");
         }
-        let scan = visit_workspace_with_handwritten(&workspace.0, 2, &[]);
+        let scan = visit_workspace_with_handwritten(&workspace.0, 2, &[], &[]);
         assert!(scan.truncated, "more sources than the cap must truncate");
         assert_eq!(
             scan.files.len(),
@@ -934,7 +958,7 @@ mod tests {
             "the walk must stop at the candidate cap; got {:?}",
             scan.files
         );
-        let full = visit_workspace_with_handwritten(&workspace.0, 10_000, &[]);
+        let full = visit_workspace_with_handwritten(&workspace.0, 10_000, &[], &[]);
         assert!(!full.truncated);
         assert_eq!(full.files.len(), 5);
     }
@@ -949,7 +973,7 @@ mod tests {
         for i in 0..(backstop + 5) {
             workspace.write(&format!("assets/blob-{i}.png"), "not source\n");
         }
-        let scan = visit_workspace_with_handwritten(&workspace.0, limit, &[]);
+        let scan = visit_workspace_with_handwritten(&workspace.0, limit, &[], &[]);
         assert!(
             scan.truncated,
             "a huge non-source tree must trip the total-entry backstop"
@@ -979,7 +1003,7 @@ mod tests {
             workspace.write(&format!("docs/page{i}.txt"), "unrelated\n");
         }
         workspace.write("diff.patch", "diff\n");
-        let scan = visit_workspace_with_handwritten(&workspace.0, 3, &[]);
+        let scan = visit_workspace_with_handwritten(&workspace.0, 3, &[], &[]);
         assert!(
             scan.truncated,
             "cap 3 plus a dozen docs files must still trip the 5× entry backstop; files={:?} entries={}",
@@ -1061,8 +1085,12 @@ mod tests {
             _ => return,
         };
 
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(scan.skipped_links, 1, "the one link must be counted");
         assert!(
             !scan
@@ -1098,7 +1126,7 @@ mod tests {
         let root = &workspace.0;
         workspace.write("docs/guide.md", "# guide\n");
         symlink(root.join("README.md"), root.join("docs/index.md"))?;
-        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[], &[]);
         assert_eq!(
             scan.skipped_links, 0,
             "a markdown file link hides no source and must not be disclosed"
@@ -1108,7 +1136,7 @@ mod tests {
             root.join("README.md"),
             root.join("docs/bundle.generated.ts"),
         )?;
-        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[], &[]);
         assert_eq!(
             scan.skipped_links, 0,
             "a generated-named file link is a name the walk never indexes"
@@ -1118,11 +1146,11 @@ mod tests {
             root.join("real/linked.test.ts"),
             root.join("linked.test.ts"),
         )?;
-        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[], &[]);
         assert_eq!(scan.skipped_links, 1, "a source-named file link is counted");
 
         symlink(root.join("real"), root.join("docs/real.md"))?;
-        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[], &[]);
         assert_eq!(
             scan.skipped_links, 1,
             "a link to a walked in-root directory is an alias and adds no file"
@@ -1131,7 +1159,7 @@ mod tests {
         let outside = TempWorkspace::new("link-nonsource-outside");
         outside.write("pkg/other.test.ts", "test('y', () => {});\n");
         symlink(outside.0.join("pkg"), root.join("docs/outside.md"))?;
-        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[], &[]);
         assert_eq!(
             scan.skipped_links, 2,
             "a directory link leaving the root is counted even under a non-source name"
@@ -1139,14 +1167,14 @@ mod tests {
 
         workspace.write("node_modules/pkg/index.test.ts", "test('z', () => {});\n");
         symlink(root.join("node_modules/pkg"), root.join("docs/vendored.md"))?;
-        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[], &[]);
         assert_eq!(
             scan.skipped_links, 3,
             "a link into an excluded directory is not a walked alias and is counted"
         );
 
         symlink(root.join("missing.md"), root.join("docs/dangling.md"))?;
-        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(root, DEFAULT_TS_MAX_WORKSPACE_FILES, &[], &[]);
         assert_eq!(
             scan.skipped_links, 4,
             "a dangling link cannot be shown harmless and is counted"
@@ -1166,8 +1194,12 @@ mod tests {
         workspace.write(".agent/skills/triage/helper.mjs", "export const t = 1;\n");
         workspace.write(".tools/README.md", "# codex\n");
         symlink("../.agent/skills", workspace.0.join(".tools/skills"))?;
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
         assert!(
             scan.files.iter().any(|file| file.ends_with("src/sum.ts")),
@@ -1204,8 +1236,12 @@ mod tests {
             std::fs::canonicalize(workspace.0.join("src"))?,
             "the alias must resolve to the real indexed directory, not dangle"
         );
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert!(scan.files.iter().any(|file| file.ends_with("src/sum.ts")));
         assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
 
@@ -1215,8 +1251,12 @@ mod tests {
             "tests/sum.test.ts",
             "import { sum } from '../src/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
         );
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
 
         // A comment quote before the real import must not hide it.
@@ -1224,8 +1264,12 @@ mod tests {
             "tests/sum.test.ts",
             "/* \" */ import { sum } from \"../alias/sum\";\ntest('s', () => {});\n",
         );
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
         Ok(())
     }
@@ -1249,8 +1293,12 @@ mod tests {
             std::fs::canonicalize(workspace.0.join("real/skills"))?,
             "the alias must resolve to the real indexed directory, not dangle"
         );
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert!(
             scan.files
                 .iter()
@@ -1263,8 +1311,12 @@ mod tests {
             "real/skills/run.ts",
             "// real/skills/run.ts\nimport { x } from '../../link/skills/x';\n",
         );
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
         Ok(())
     }
@@ -1291,15 +1343,23 @@ mod tests {
             "import { x } from '../unreal\\u002fskills/x';\n",
         ] {
             workspace.write("tests/x.test.ts", import);
-            let scan =
-                visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+            let scan = visit_workspace_with_handwritten(
+                &workspace.0,
+                DEFAULT_TS_MAX_WORKSPACE_FILES,
+                &[],
+                &[],
+            );
             assert_eq!(scan.skipped_links, 1, "{import}: {:?}", scan.files);
         }
 
         // Control: a spelling through the real parent is still the real path.
         workspace.write("tests/x.test.ts", "import { x } from '../real/skills/x';\n");
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
         Ok(())
     }
@@ -1352,6 +1412,7 @@ mod tests {
                     &workspace.0,
                     DEFAULT_TS_MAX_WORKSPACE_FILES,
                     &[],
+                    &[],
                 );
                 assert_eq!(
                     scan.skipped_links, expected,
@@ -1376,8 +1437,12 @@ mod tests {
             "import { sum } from '../a$b/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
         );
         symlink("src", workspace.0.join("a$b"))?;
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
         Ok(())
     }
@@ -1396,15 +1461,23 @@ mod tests {
             "import { sum } from '../src/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
         );
         symlink("src", workspace.0.join("my lib"))?;
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
         workspace.write(
             "tests/sum.test.ts",
             "import { sum } from '../my lib/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
         );
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
         Ok(())
     }
@@ -1423,15 +1496,23 @@ mod tests {
             "tests/sum.test.ts",
             "import { sum } from '../src/sum';\nconst note = 'a\\nb';\ntest('s', () => { expect(sum).toBe(1); });\n",
         );
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
         workspace.write(
             "tests/sum.test.ts",
             "import { sum } from '../al\\u0069as/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
         );
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
 
         // An escaped separator leaves neither `./` nor `/alias` in the raw
@@ -1440,8 +1521,12 @@ mod tests {
             "tests/sum.test.ts",
             "import { sum } from '..\\u002falias/sum';\ntest('s', () => { expect(sum).toBe(1); });\n",
         );
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
 
         // Escapes beside an unrelated, cleanly parsed import do not count
@@ -1450,8 +1535,12 @@ mod tests {
             "tests/sum.test.ts",
             "import { sum } from '../src/sum';\nconst snow = '\\u2603';\ntest('s', () => { expect(sum).toBe(1); });\n",
         );
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(scan.skipped_links, 0, "{:?}", scan.files);
         Ok(())
     }
@@ -1470,8 +1559,12 @@ mod tests {
         fs::set_permissions(&private, fs::Permissions::from_mode(0o300))?;
         symlink(&private, workspace.0.join("alias.md"))?;
         let unlistable = fs::read_dir(&private).is_err();
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         fs::set_permissions(&private, fs::Permissions::from_mode(0o700))?;
         if unlistable {
             assert_eq!(scan.skipped_links, 1, "{:?}", scan.files);
@@ -1498,8 +1591,12 @@ mod tests {
             Err(_) => return, // platform refused; nothing to assert here
         };
 
-        let scan =
-            visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
+        let scan = visit_workspace_with_handwritten(
+            &workspace.0,
+            DEFAULT_TS_MAX_WORKSPACE_FILES,
+            &[],
+            &[],
+        );
         assert_eq!(
             scan.skipped_links, 0,
             "a socket is not a link and must not disclose a link limitation"
@@ -1534,7 +1631,7 @@ mod tests {
         ] {
             workspace.write(rel, "export const value = 1;\n");
         }
-        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &[]);
+        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &[], &[]);
         assert!(!scan.truncated, "scan must not trip the cap");
         for expected in [
             "src/ok.ts",
