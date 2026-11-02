@@ -15,6 +15,7 @@ import {
   placementArchiveUrl,
   resolveServerManifestPlacement
 } from '../../src/downloader';
+import { ManagedServerInstallRequest, readManagedServerInstallation } from '../../src/managedServerInstall';
 import { RiprPlatform } from '../../src/platform';
 import { ServerDistributionDescriptor } from '../../src/serverDescriptor';
 
@@ -755,5 +756,110 @@ suite('Downloader Manifest Placement', () => {
       /Server manifest is not an object\.|Unexpected token/
     );
     assert.deepStrictEqual(fetchedUrls, [stableUrl], 'a malformed stable manifest must not authorize the RC placement');
+  });
+
+  suite('Managed server download adversarial integration (#1976)', () => {
+    function storageInstallRequest(storage: string, version: string): ManagedServerInstallRequest {
+      const platform = fixturePlatform();
+      return {
+        serversRoot: path.join(storage, 'servers'),
+        version,
+        platformTarget: platform.target,
+        executableName: platform.executableName,
+        archiveExtension: platform.archiveExtension
+      };
+    }
+
+    test('production downloadServer rejects archive checksum mismatch before promotion', async function () {
+      this.timeout(60_000);
+      const server = new ManifestFixtureServer();
+      await server.start();
+      const archiveRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ripr-adversarial-archive-'));
+      const storage = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ripr-adversarial-checksum-'));
+      try {
+        const archive = await buildFixtureArchive(archiveRoot);
+        const archivePath = `/fixtures/ripr-server-archive${process.platform === 'win32' ? '.zip' : '.tar.gz'}`;
+        server.route('/ripr-server-manifest-v2.0.0.json', {
+          status: 200,
+          body: manifestJson('2.0.0', `${server.base}${archivePath}`, 'f'.repeat(64))
+        });
+        server.route(archivePath, { status: 200, body: archive.bytes });
+
+        const attempt = downloadServer(
+          mockContext(storage),
+          fixtureConfig(server.base),
+          fixturePlatform(),
+          '2.0.0',
+          captureOutput().channel
+        );
+        await assert.rejects(attempt, /Server archive checksum mismatch/);
+
+        assert.strictEqual(await readManagedServerInstallation(storageInstallRequest(storage, '2.0.0')), undefined);
+        const versionDir = path.join(storage, 'servers', '2.0.0', 'fixture-target');
+        assert.strictEqual(fs.existsSync(versionDir), false, 'checksum failure must not promote an installation');
+
+        const paths = server.requests.map((request) => request.path);
+        assert.ok(paths.includes('/ripr-server-manifest-v2.0.0.json'));
+        assert.ok(paths.includes(archivePath), 'archive may be fetched before digest verification rejects promotion');
+      } finally {
+        await fs.promises.rm(storage, { recursive: true, force: true });
+        await fs.promises.rm(archiveRoot, { recursive: true, force: true });
+        await server.stop();
+      }
+    });
+
+    test('production downloadServer failed upgrade preserves prior verified cache', async function () {
+      this.timeout(120_000);
+      const server = new ManifestFixtureServer();
+      await server.start();
+      const archiveRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ripr-adversarial-upgrade-'));
+      const storage = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ripr-adversarial-prior-'));
+      try {
+        const priorArchive = await buildFixtureArchive(path.join(archiveRoot, 'prior'));
+        const upgradeArchive = await buildFixtureArchive(path.join(archiveRoot, 'upgrade'));
+        const priorArchivePath = `/fixtures/prior${process.platform === 'win32' ? '.zip' : '.tar.gz'}`;
+        const upgradeArchivePath = `/fixtures/upgrade${process.platform === 'win32' ? '.zip' : '.tar.gz'}`;
+        server.route('/ripr-server-manifest-v2.0.0.json', {
+          status: 200,
+          body: manifestJson('2.0.0', `${server.base}${priorArchivePath}`, priorArchive.sha256)
+        });
+        server.route(priorArchivePath, { status: 200, body: priorArchive.bytes });
+        server.route('/ripr-server-manifest-v2.1.0.json', {
+          status: 200,
+          body: manifestJson('2.1.0', `${server.base}${upgradeArchivePath}`, 'e'.repeat(64))
+        });
+        server.route(upgradeArchivePath, { status: 200, body: upgradeArchive.bytes });
+
+        const prior = await downloadServer(
+          mockContext(storage),
+          fixtureConfig(server.base),
+          fixturePlatform(),
+          '2.0.0',
+          captureOutput().channel
+        );
+        assert.strictEqual(prior.receipt.installationState, 'complete');
+
+        await assert.rejects(
+          downloadServer(
+            mockContext(storage),
+            fixtureConfig(server.base),
+            fixturePlatform(),
+            '2.1.0',
+            captureOutput().channel
+          ),
+          /Server archive checksum mismatch/
+        );
+
+        const retained = await readManagedServerInstallation(storageInstallRequest(storage, '2.0.0'));
+        assert.ok(retained);
+        assert.strictEqual(retained.executablePath, prior.executablePath);
+        assert.strictEqual(await readManagedServerInstallation(storageInstallRequest(storage, '2.1.0')), undefined);
+        assert.strictEqual(fs.existsSync(path.join(storage, 'servers', '2.1.0', 'fixture-target')), false);
+      } finally {
+        await fs.promises.rm(storage, { recursive: true, force: true });
+        await fs.promises.rm(archiveRoot, { recursive: true, force: true });
+        await server.stop();
+      }
+    });
   });
 });
