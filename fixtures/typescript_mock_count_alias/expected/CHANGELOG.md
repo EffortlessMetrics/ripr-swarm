@@ -128,3 +128,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_mock_count_alias (11)
+
+Reason:
+RIPR-SPEC-0027: strong oracle with untied changed line no longer asks for another exact-value assertion (#12463)
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

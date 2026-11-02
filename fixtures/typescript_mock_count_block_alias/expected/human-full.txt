@@ -69,7 +69,7 @@ TypeScript preview card (advisory)
   related test: test/notify.test.ts:4 notify block count
   oracle: exact_value (strong)
   missing discriminator: call sender.send includes 2 * id
-  suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
+  suggested assertion shape: The related test's check is already strong, but ripr cannot tie it to the changed line. Exercise the changed branch with an input that flips it.
   repair packet ready: false
   why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
   repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available

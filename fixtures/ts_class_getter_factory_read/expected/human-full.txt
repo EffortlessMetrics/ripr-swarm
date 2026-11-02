@@ -68,7 +68,7 @@ TypeScript preview card (advisory)
   related test: tests/cache.test.ts:3 cached memoizes the first result
   oracle: exact_value (strong)
   missing discriminator: getter == undefined
-  suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
+  suggested assertion shape: The related test's check is already strong, but ripr cannot tie it to the changed line. Exercise the changed branch with an input that flips it.
   repair packet ready: false
   why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
   repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available

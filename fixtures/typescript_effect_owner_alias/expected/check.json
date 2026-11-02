@@ -108,7 +108,7 @@
         "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
         "source": "check_typescript_preview",
         "static_limits": [],
-        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "suggested_assertion_shape": "The related test's check is already strong, but ripr cannot tie it to the changed line. Exercise the changed branch with an input that flips it.",
         "verify": {
           "command": "node --test tests/receipt.test.ts"
         },

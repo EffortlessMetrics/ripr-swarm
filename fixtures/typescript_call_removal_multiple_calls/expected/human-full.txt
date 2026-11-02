@@ -22,7 +22,7 @@ Shared evidence and guidance
   E4 [findings 1, 2]: observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)
   E5 [findings 1, 2]: discriminator weak: TypeScript preview adapter: strong oracle found but the preview adapter does not recognise the shape of the changed line; discriminate unknown
   E6 [findings 1, 2]: related test test/audit.test.ts:4 writes once uses strong exact value oracle: assert.equal(...); unconfirmed: the preview adapter could not confirm that this assertion observes the changed behavior
-  N1 [findings 1, 2]: TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit
+  N1 [findings 1, 2]: TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit
 
 Finding 1: WARNING src/audit.ts:2
   id: probe:src_audit.ts:typescript_preview:a853f862
@@ -62,7 +62,7 @@ TypeScript preview card (advisory)
   changed behavior: predicate changed at src/audit.ts:2: `void event;`
   related test: test/audit.test.ts:4 writes once
   oracle: exact_value (strong)
-  suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
+  suggested assertion shape: The related test's check is already strong, but ripr cannot tie it to the changed line. Exercise the changed branch with an input that flips it.
   verify: node --test test/audit.test.ts
   repair packet ready: false
   why not actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
@@ -119,7 +119,7 @@ TypeScript preview card (advisory)
   changed behavior: predicate changed at src/audit.ts:3: `void sink;`
   related test: test/audit.test.ts:4 writes once
   oracle: exact_value (strong)
-  suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
+  suggested assertion shape: The related test's check is already strong, but ripr cannot tie it to the changed line. Exercise the changed branch with an input that flips it.
   verify: node --test test/audit.test.ts
   repair packet ready: false
   why not actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape

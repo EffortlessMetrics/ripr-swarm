@@ -67,7 +67,7 @@ TypeScript preview card (advisory)
   related test: tests/pricing.test.ts:3 no discount below threshold
   oracle: exact_value (strong)
   missing discriminator: DISCOUNT_THRESHOLD == amount
-  suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
+  suggested assertion shape: The related test's check is already strong, but ripr cannot tie it to the changed line. Exercise the changed branch with an input that flips it.
   verify: npx --no-install jest tests/pricing.test.ts
   repair packet ready: true
   why actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)

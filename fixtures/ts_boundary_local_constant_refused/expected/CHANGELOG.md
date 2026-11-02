@@ -96,3 +96,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_boundary_local_constant_refused (9)
+
+Reason:
+RIPR-SPEC-0027: strong oracle with untied changed line no longer asks for another exact-value assertion (#12463)
+
+Command:
+`cargo xtask goldens bless ts_boundary_local_constant_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

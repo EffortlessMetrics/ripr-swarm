@@ -7935,6 +7935,9 @@ pub(crate) fn classify_resolved_owner(
                 owner.name
             )
         }
+        _ if strongest_strength >= OracleStrength::Strong.rank() => {
+            "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.".to_string()
+        }
         _ => {
             "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.".to_string()
         }

@@ -1,5 +1,6 @@
 use crate::domain::{
-    Finding, LanguageId, LanguageStatus, OracleKind, ProbeFamily, RelatedTest, StaticLimitKind,
+    ExposureClass, Finding, LanguageId, LanguageStatus, OracleKind, OracleStrength, ProbeFamily,
+    RelatedTest, StaticLimitKind,
 };
 use crate::output::preview_actionability::{
     PreviewActionability, PreviewRawEvidenceRef, preview_actionability_for,
@@ -177,6 +178,7 @@ pub(crate) fn typescript_preview_card(finding: &Finding) -> Option<TypeScriptPre
         suggested_assertion_shape: suggested_assertion_shape(
             finding,
             strongest.map(|test| &test.oracle_kind),
+            strongest.map(|test| &test.oracle_strength),
             missing_discriminator.as_deref(),
             &static_limits,
         ),
@@ -266,6 +268,7 @@ fn related_test_card(test: &RelatedTest) -> TypeScriptPreviewCardRelatedTest {
 fn suggested_assertion_shape(
     finding: &Finding,
     oracle_kind: Option<&OracleKind>,
+    oracle_strength: Option<&OracleStrength>,
     missing_discriminator: Option<&str>,
     static_limits: &[String],
 ) -> String {
@@ -276,6 +279,20 @@ fn suggested_assertion_shape(
     }
     if !static_limits.is_empty() {
         return "Resolve the named static limitation before selecting an assertion shape."
+            .to_string();
+    }
+
+    // A strong snapshot or exact-value check already exists, so asking for
+    // another one is misleading: the gap is the missing tie to the changed line.
+    // An exposed finding already has the tie, so its wording stays as is.
+    if finding.class != ExposureClass::Exposed
+        && matches!(oracle_strength, Some(OracleStrength::Strong))
+        && matches!(
+            oracle_kind,
+            Some(OracleKind::Snapshot | OracleKind::ExactValue)
+        )
+    {
+        return "The related test's check is already strong, but ripr cannot tie it to the changed line. Exercise the changed branch with an input that flips it."
             .to_string();
     }
 
