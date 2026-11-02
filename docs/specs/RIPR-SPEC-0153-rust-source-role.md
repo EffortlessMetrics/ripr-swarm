@@ -175,6 +175,12 @@ cannot supply the binary's binding. Existing unique proc-macro and cfg
 checks still apply; this does not trace a macro expansion or resolve an
 unchanged dependency outside the index.
 
+The review-comments test-edit path (`diff_test_changes`) loads the changed
+file's crate root and a path-bound wrapper crate within the disclosure budget
+so an added module-level `#[crate::test]` function is attributed as a test
+edit. Registry dependencies, workspace-inherited deps, and missing companions
+stay uncredited rather than inventing a test role (#10141).
+
 For a binary-root alias, manifest dependency authority must bind the imported
 crate name to the indexed proc-macro library; a registry, wrong-path, missing,
 or ambiguous dependency does not gain credit from a workspace namesake. In a
@@ -468,6 +474,10 @@ fragments (#9009); `crates/ripr/tests/rust_discovery_comments.rs`
 pins end to end that a BOM-prefixed module walk, `#[path]` rename, and
 `include!` fragment behave exactly like their BOM-free counterparts. `analysis/language/rust/mod.rs` pins the diff-level module-tree
 seeding and `lsp/diagnostics.rs` the matching editor partition.
+`analysis/test_changes.rs` pins that an added module-level `#[crate::test]`
+function is a review-comments test edit when the unchanged crate root aliases
+a path-bound wrapper, and that missing aliases, `#[crate::tests]` lookalikes,
+and foreign imports stay uncredited.
 `cargo xtask check-rust-source-role-authority` structurally rejects
 consumer-side role re-derivation and inventories the approved
 `rust_index::is_test_file` consumers. Its production regions come from

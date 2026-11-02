@@ -2123,6 +2123,11 @@ tests = [
   "crates/ripr/src/output/review_comments/mod.rs::tests::resolved_production_edits_do_not_become_test_edits_from_filename",
   "crates/ripr/src/cli/commands/review_comments.rs::tests::review_comments_disclosure_bounds_head_blobs_beyond_dirty_worktree",
   "crates/ripr/src/cli/commands/review_comments.rs::tests::review_comments_disclosure_keeps_test_named_production_source_in_its_role",
+  "crates/ripr/src/analysis/test_changes.rs::tests::added_module_crate_test_is_a_test_edit",
+  "crates/ripr/src/analysis/test_changes.rs::tests::added_module_crate_test_without_alias_is_not_a_test_edit",
+  "crates/ripr/src/analysis/test_changes.rs::tests::added_module_crate_tests_lookalike_is_not_a_test_edit",
+  "crates/ripr/src/analysis/test_changes.rs::tests::added_module_crate_test_with_foreign_import_is_not_a_test_edit",
+  "crates/ripr/src/analysis/test_changes.rs::tests::added_module_builtin_test_stays_a_test_edit",
   "crates/ripr/src/output/review_comments/mod.rs::tests::unresolved_test_edits_do_not_claim_unchanged_or_hide_recommendations",
   "crates/ripr/src/analysis/facts/index_tests.rs::finalization_observes_deadline_at_return_after_compaction_and_membership_refresh",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs::tests::unqualified_helper_calls_have_no_module_candidates",
@@ -2204,6 +2209,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/test_changes.rs",
+  "crates/ripr/src/analysis/facts/local_test_alias.rs",
   "crates/ripr/src/app/agent_brief.rs",
   "crates/ripr/src/analysis/facts/index.rs",
   "crates/ripr/src/analysis/generated_rust_corpus.rs",
@@ -12181,6 +12187,11 @@ id = "RIPR-SPEC-0153"
 name = "Rust producer-owned source role"
 spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
 tests = [
+  "crates/ripr/src/analysis/test_changes.rs::tests::added_module_crate_test_is_a_test_edit",
+  "crates/ripr/src/analysis/test_changes.rs::tests::added_module_crate_test_without_alias_is_not_a_test_edit",
+  "crates/ripr/src/analysis/test_changes.rs::tests::added_module_crate_tests_lookalike_is_not_a_test_edit",
+  "crates/ripr/src/analysis/test_changes.rs::tests::added_module_crate_test_with_foreign_import_is_not_a_test_edit",
+  "crates/ripr/src/analysis/test_changes.rs::tests::added_module_builtin_test_stays_a_test_edit",
   "crates/ripr/src/analysis/facts/test_styles/tests.rs::binary_root_alias_uses_its_own_import",
   "crates/ripr/src/analysis/facts/test_styles/tests.rs::binary_root_alias_never_borrows_a_library_or_sibling_binding",
   "crates/ripr/src/analysis/facts/test_styles/tests.rs::binary_root_alias_preserves_cfg_and_ambiguity_refusals",
@@ -12345,6 +12356,8 @@ code = [
   "crates/ripr/src/analysis/facts/role_composition.rs",
   "crates/ripr/src/analysis/facts/cfg_predicates.rs",
   "crates/ripr/src/analysis/facts/test_styles.rs",
+  "crates/ripr/src/analysis/facts/local_test_alias.rs",
+  "crates/ripr/src/analysis/test_changes.rs",
   "crates/ripr/src/analysis/facts/build.rs",
   "crates/ripr/src/analysis/harness_projection.rs",
   "crates/ripr/src/config.rs",
