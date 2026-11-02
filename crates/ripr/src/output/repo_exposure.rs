@@ -2185,6 +2185,7 @@ pub(crate) mod tests {
                 relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
             })],
             reach: stage(StageState::Yes),
+            unresolved_reach_limit: None,
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),
             observe: stage(StageState::Yes),

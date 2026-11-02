@@ -3349,6 +3349,7 @@ weakly_gripped = "note"
                 relation_confidence: RelationConfidence::High,
             })],
             reach: stage(StageState::Yes, "related test calls owner"),
+            unresolved_reach_limit: None,
             activate: stage(StageState::Yes, "amount value observed"),
             propagate: stage(StageState::Yes, "return value sink reached"),
             observe: stage(StageState::Yes, "returned value asserted"),

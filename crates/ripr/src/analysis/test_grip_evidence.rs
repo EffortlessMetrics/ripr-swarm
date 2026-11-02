@@ -60,7 +60,7 @@ use crate::analysis::cancellation;
 use crate::{
     domain::{
         Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
-        StageState, SymbolId, ValueContext,
+        StageState, StaticLimitKind, SymbolId, ValueContext,
     },
     value_origins::LocatedValueFact as ValueFact,
 };
@@ -83,6 +83,10 @@ pub(crate) struct TestGripEvidence {
     /// Shared records: equal grips across seams are one allocation (#5341).
     pub(crate) related_tests: Vec<Arc<RelatedTestGrip>>,
     pub(crate) reach: StageEvidence,
+    /// Producer-owned unresolved-reach category when reach is `opaque` with a
+    /// named witness (#5492). The reach summary remains a projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) unresolved_reach_limit: Option<crate::domain::StaticLimitKind>,
     pub(crate) activate: StageEvidence,
     pub(crate) propagate: StageEvidence,
     pub(crate) observe: StageEvidence,
@@ -111,6 +115,9 @@ impl TestGripEvidence {
     /// record's own marker that a named limitation, not a missing test,
     /// explains the stage (#10703).
     pub(crate) fn names_static_limit(&self, limit: crate::domain::StaticLimitKind) -> bool {
+        if self.unresolved_reach_limit == Some(limit) {
+            return true;
+        }
         [
             &self.reach,
             &self.activate,
@@ -511,6 +518,8 @@ fn evidence_for_seam_with_context(
         .map(|(indexed, reason)| (indexed.test, *reason))
         .collect();
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
+    let unresolved_reach_limit =
+        unresolved_reach_limit_for_owner(reach.state, owner_fn, context, &reach.summary);
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();
@@ -590,6 +599,7 @@ fn evidence_for_seam_with_context(
         seam_id: seam.id().clone(),
         related_tests,
         reach,
+        unresolved_reach_limit,
         activate,
         propagate,
         observe,
@@ -2334,11 +2344,14 @@ pub(crate) fn compact_evidence_for_seam(
         .iter()
         .filter(|test| test_has_contradicted_assertion(test, owner_fn, context.index))
         .count();
+    let unresolved_reach_limit =
+        unresolved_reach_limit_for_owner(reach.state, owner_fn, context, &reach.summary);
 
     let mut evidence = TestGripEvidence {
         seam_id: seam.id().clone(),
         related_tests: Vec::new(),
         reach,
+        unresolved_reach_limit,
         activate,
         propagate,
         observe,
@@ -2388,6 +2401,21 @@ pub(crate) fn compact_evidence_for_seam(
 /// it `weak` too.
 /// Either way the seam can no longer read `strongly_gripped`; the related
 /// tests stay listed as suggestions.
+fn unresolved_reach_limit_for_owner(
+    reach_state: StageState,
+    owner_fn: Option<&FunctionSummary>,
+    context: &CompactGripContext<'_>,
+    reach_summary: &str,
+) -> Option<StaticLimitKind> {
+    match reach_state {
+        StageState::Opaque | StageState::Weak => owner_fn
+            .and_then(|owner| reach_limit::unresolved_reach_evidence(owner, context))
+            .map(|(_summary, kind)| kind)
+            .or_else(|| reach_limit::summary_limit_kind(reach_summary)),
+        _ => None,
+    }
+}
+
 fn reach_evidence(
     seam: &RepoSeam,
     related: &[(&TestSummary, RelationReason)],

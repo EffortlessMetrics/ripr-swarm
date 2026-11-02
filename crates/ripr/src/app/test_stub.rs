@@ -2027,6 +2027,7 @@ mod tests {
                 seam_id: seam.id().clone(),
                 related_tests: Vec::new(),
                 reach: stage(),
+                unresolved_reach_limit: None,
                 activate: stage(),
                 propagate: stage(),
                 observe: stage(),

@@ -27,6 +27,7 @@ fn evidence(states: [StageState; 5]) -> TestGripEvidence {
         seam_id: seam().id().clone(),
         related_tests: Vec::new(),
         reach: stage(states[0].clone()),
+        unresolved_reach_limit: None,
         activate: stage(states[1].clone()),
         propagate: stage(states[2].clone()),
         observe: stage(states[3].clone()),

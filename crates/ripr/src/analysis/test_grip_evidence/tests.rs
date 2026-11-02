@@ -18154,7 +18154,9 @@ fn observes_items() {
 
 /// #5411: the reach stage and grip class for the `amount > 100` seam in
 /// `src/lib.rs`, given the crate's sources.
-fn unresolved_reach_case(files: &[(&str, &str)]) -> Result<(StageEvidence, SeamGripClass), String> {
+fn unresolved_reach_case(
+    files: &[(&str, &str)],
+) -> Result<(TestGripEvidence, SeamGripClass), String> {
     let files: Vec<(PathBuf, &str)> = files
         .iter()
         .map(|(path, source)| (PathBuf::from(path), *source))
@@ -18174,12 +18176,12 @@ fn unresolved_reach_case(files: &[(&str, &str)]) -> Result<(StageEvidence, SeamG
         evidence.related_tests
     );
     let class = crate::analysis::seam_classification::classify_seam(seam, &evidence);
-    Ok((evidence.reach, class))
+    Ok((evidence, class))
 }
 
 #[test]
 fn seam_reached_by_no_test_path_stays_ungripped() -> Result<(), String> {
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub fn total(n: u32) -> u32 { n + 1 }\n\
@@ -18190,7 +18192,7 @@ fn seam_reached_by_no_test_path_stays_ungripped() -> Result<(), String> {
             "#[test] fn totals() { assert_eq!(ripr_fixture::total(1), 2); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(evidence.reach.state, StageState::No, "{:?}", evidence.reach);
     assert_eq!(class, SeamGripClass::Ungripped);
     Ok(())
 }
@@ -18199,7 +18201,7 @@ fn seam_reached_by_no_test_path_stays_ungripped() -> Result<(), String> {
 fn seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped() -> Result<(), String> {
     // RIPR-SPEC-0230 rule 5 with RIPR-SPEC-0114 step 5 (#8047): the test
     // enters a chain six helper hops from the owner, past the bounded walk.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub fn checkout(amount: u32) -> u32 { h5(amount) }
@@ -18217,11 +18219,16 @@ fn seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped() -> Result
 ",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     // Pin the full seam summary, not a substring of the witness: a wording
     // or location regression must fail (#8106).
     assert_eq!(
-        reach.summary,
+        evidence.reach.summary,
         "Reach unresolved (rust_integration_public_api_path_unresolved): `checks_out` (tests/checkout.rs:1) calls `checkout`, which may lead to `surcharge` through a call path ripr does not fully trace; no gap is reported"
     );
     assert_eq!(class, SeamGripClass::Opaque);
@@ -18232,7 +18239,7 @@ fn seam_behind_a_helper_chain_past_five_hops_is_opaque_not_ungripped() -> Result
 fn seam_reach_past_five_hops_does_not_displace_a_macro_witness() -> Result<(), String> {
     // RIPR-SPEC-0114 step 5 (#8047): the walk past the bound is the last
     // seam reach witness, so the one-macro-hop path stays named.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "macro_rules! check_surcharge { ($a:expr) => { surcharge($a) }; }
@@ -18253,13 +18260,18 @@ fn seam_reach_past_five_hops_does_not_displace_a_macro_witness() -> Result<(), S
 ",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert!(
-        reach.summary.contains("macro `check_surcharge!`")
-            && reach.summary.contains("`quotes`")
-            && !reach.summary.contains("`checks_out`"),
+        evidence.reach.summary.contains("macro `check_surcharge!`")
+            && evidence.reach.summary.contains("`quotes`")
+            && !evidence.reach.summary.contains("`checks_out`"),
         "the macro witness stays named: {}",
-        reach.summary
+        evidence.reach.summary
     );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
@@ -18267,7 +18279,7 @@ fn seam_reach_past_five_hops_does_not_displace_a_macro_witness() -> Result<(), S
 
 #[test]
 fn seam_behind_an_unresolved_transitive_path_is_opaque_not_ungripped() -> Result<(), String> {
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub fn checkout(amount: u32) -> u32 { if surcharge(amount) { amount + 5 } else { amount } }\n\
@@ -18278,18 +18290,30 @@ fn seam_behind_an_unresolved_transitive_path_is_opaque_not_ungripped() -> Result
             "#[test] fn checks_out() { let total = ripr_fixture::checkout(150); assert_eq!(total, 155); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert!(
-        reach
+        evidence
+            .reach
             .summary
             .contains("rust_integration_public_api_path_unresolved")
-            && reach
+            && evidence
+                .reach
                 .summary
                 .contains("`checks_out` (tests/checkout.rs:1) calls `checkout`"),
         "the limit and its witness are named: {}",
-        reach.summary
+        evidence.reach.summary
     );
     assert_eq!(class, SeamGripClass::Opaque);
+    assert_eq!(
+        evidence.unresolved_reach_limit,
+        Some(crate::domain::StaticLimitKind::RustIntegrationPublicApiPathUnresolved),
+        "{evidence:?}"
+    );
     Ok(())
 }
 
@@ -18462,7 +18486,7 @@ fn unresolved_reach_for_owner_file(
 
 #[test]
 fn trait_method_of_a_type_tests_use_is_opaque_not_ungripped() -> Result<(), String> {
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -18486,23 +18510,37 @@ fn trait_method_of_a_type_tests_use_is_opaque_not_ungripped() -> Result<(), Stri
              #[test] fn send() { assert_send::<ripr_fixture::Amount>(); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert!(
-        reach.summary.contains("(trait dispatch)")
-            && reach.summary.contains("trait method of `Amount`")
-            && reach
+        evidence
+            .reach
+            .summary
+            .contains("rust_trait_dispatch_unresolved")
+            && evidence.reach.summary.contains("trait method of `Amount`")
+            && evidence
+                .reach
                 .summary
                 .contains("test `renders` (tests/amount.rs:2) uses `Amount`"),
         "the limit and its witness are named: {}",
-        reach.summary
+        evidence.reach.summary
     );
     assert_eq!(class, SeamGripClass::Opaque);
+    assert_eq!(
+        evidence.unresolved_reach_limit,
+        Some(crate::domain::StaticLimitKind::RustTraitDispatchUnresolved),
+        "{evidence:?}"
+    );
     Ok(())
 }
 
 #[test]
 fn trait_method_of_a_type_no_test_reaches_stays_ungripped() -> Result<(), String> {
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub fn total(n: u32) -> u32 { n + 1 }\n\
@@ -18519,14 +18557,14 @@ fn trait_method_of_a_type_no_test_reaches_stays_ungripped() -> Result<(), String
             "#[test] fn totals() { assert_eq!(ripr_fixture::total(1), 2); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(evidence.reach.state, StageState::No, "{:?}", evidence.reach);
     assert_eq!(class, SeamGripClass::Ungripped);
     Ok(())
 }
 
 #[test]
 fn helper_run_only_through_trait_dispatch_is_opaque_not_ungripped() -> Result<(), String> {
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -18543,14 +18581,23 @@ fn helper_run_only_through_trait_dispatch_is_opaque_not_ungripped() -> Result<()
              #[test] fn renders() { assert_eq!(Amount(150).to_string(), \"large\"); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert!(
-        reach.summary.contains("(trait dispatch)")
-            && reach
+        evidence
+            .reach
+            .summary
+            .contains("rust_trait_dispatch_unresolved")
+            && evidence
+                .reach
                 .summary
                 .contains("`label` may run from `fmt` (src/lib.rs:3)"),
         "the dispatch root is named: {}",
-        reach.summary
+        evidence.reach.summary
     );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
@@ -18559,7 +18606,7 @@ fn helper_run_only_through_trait_dispatch_is_opaque_not_ungripped() -> Result<()
 #[test]
 fn trait_method_reached_only_by_delegation_is_opaque_not_ungripped() -> Result<(), String> {
     // No test or test-reached body names `Inner`; `Outer::fmt` delegates to it.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "#[derive(Default)]\n\
@@ -18584,14 +18631,23 @@ fn trait_method_reached_only_by_delegation_is_opaque_not_ungripped() -> Result<(
              #[test] fn renders() { assert_eq!(Outer::default().to_string(), \"small\"); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert!(
-        reach.summary.contains("(trait dispatch)")
-            && reach
+        evidence
+            .reach
+            .summary
+            .contains("rust_trait_dispatch_unresolved")
+            && evidence
+                .reach
                 .summary
                 .contains("`fmt` may run from `fmt` (src/lib.rs:12), a trait method of `Outer`"),
         "the delegating root is named: {}",
-        reach.summary
+        evidence.reach.summary
     );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
@@ -18600,7 +18656,7 @@ fn trait_method_reached_only_by_delegation_is_opaque_not_ungripped() -> Result<(
 #[test]
 fn helper_shared_by_two_dispatch_roots_names_the_root_that_sorts_first() -> Result<(), String> {
     // `Beta::fmt` sorts after `Alpha::fmt`, so `Alpha::fmt` claims `label`.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Alpha(pub u32);\n\
@@ -18623,13 +18679,19 @@ fn helper_shared_by_two_dispatch_roots_names_the_root_that_sorts_first() -> Resu
              #[test] fn renders() { assert_eq!(Beta(1).to_string(), Alpha(150).to_string()); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert!(
-        reach
+        evidence
+            .reach
             .summary
             .contains("`label` may run from `fmt` (src/lib.rs:3), a trait method of `Alpha`"),
         "the first root in path order is named: {}",
-        reach.summary
+        evidence.reach.summary
     );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
@@ -18639,7 +18701,7 @@ fn helper_shared_by_two_dispatch_roots_names_the_root_that_sorts_first() -> Resu
 fn dispatch_callees_record_mentions_in_path_order_not_call_order() -> Result<(), String> {
     // `Outer::fmt` calls `late` before `early`; both name `Inner`. The
     // mention credited for `Inner` is the callee that sorts first by path.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "struct Inner(u32);\n\
@@ -18666,13 +18728,18 @@ fn dispatch_callees_record_mentions_in_path_order_not_call_order() -> Result<(),
              #[test] fn renders() { assert_eq!(Outer::default().to_string(), \"smallsmall\"); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert!(
-        reach.summary.contains(
+        evidence.reach.summary.contains(
             "`early` (src/lib.rs:8), which may itself run through trait dispatch, uses `Inner`"
         ),
         "the path-first callee is the witness: {}",
-        reach.summary
+        evidence.reach.summary
     );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
@@ -19064,6 +19131,7 @@ fn debug_impl_case(test_body: &str) -> Result<(StageEvidence, SeamGripClass), St
         ),
         ("tests/amount.rs", test_source.as_str()),
     ])
+    .map(|(evidence, class)| (evidence.reach, class))
 }
 
 #[test]
@@ -19096,7 +19164,7 @@ fn debug_impl_of_a_type_a_test_debug_formats_is_opaque() -> Result<(), String> {
 
 #[test]
 fn display_impl_names_the_syntax_that_runs_it() -> Result<(), String> {
-    let (reach, _) = unresolved_reach_case(&[
+    let (evidence, _) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -19114,11 +19182,12 @@ fn display_impl_names_the_syntax_that_runs_it() -> Result<(), String> {
         ),
     ])?;
     assert!(
-        reach
+        evidence
+            .reach
             .summary
             .contains("uses `to_string`, which runs `Display`"),
         "{}",
-        reach.summary
+        evidence.reach.summary
     );
     Ok(())
 }
@@ -19127,7 +19196,7 @@ fn display_impl_names_the_syntax_that_runs_it() -> Result<(), String> {
 fn display_delegation_does_not_reach_an_unused_debug_impl() -> Result<(), String> {
     // `Outer::fmt` calls `.fmt(f)`. Name matching reaches every `fmt`, but
     // nothing test-reached debug-formats, so `Inner`'s `Debug` stays a gap.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "struct Inner(u32);\n\
@@ -19151,7 +19220,7 @@ fn display_delegation_does_not_reach_an_unused_debug_impl() -> Result<(), String
              #[test] fn renders() { assert_eq!(Outer::new().to_string(), \"\"); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(evidence.reach.state, StageState::No, "{:?}", evidence.reach);
     assert_eq!(class, SeamGripClass::Ungripped);
     Ok(())
 }
@@ -19159,7 +19228,7 @@ fn display_delegation_does_not_reach_an_unused_debug_impl() -> Result<(), String
 #[test]
 fn trait_impl_for_a_primitive_is_opaque_when_test_reached_code_names_the_trait()
 -> Result<(), String> {
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub trait Encode { fn encode(&self) -> u8; }\n\
@@ -19173,11 +19242,16 @@ fn trait_impl_for_a_primitive_is_opaque_when_test_reached_code_names_the_trait()
             "#[test] fn bulk() { let items: [u32; 1] = [150]; assert_eq!(ripr_fixture::encode_all(&items), vec![1]); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert!(
-        reach.summary.contains("trait method of `u32`"),
+        evidence.reach.summary.contains("trait method of `u32`"),
         "{}",
-        reach.summary
+        evidence.reach.summary
     );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
@@ -19185,7 +19259,7 @@ fn trait_impl_for_a_primitive_is_opaque_when_test_reached_code_names_the_trait()
 
 #[test]
 fn trait_impl_for_a_primitive_stays_ungripped_when_nothing_names_the_trait() -> Result<(), String> {
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub trait Encode { fn encode(&self) -> u8; }\n\
@@ -19199,7 +19273,7 @@ fn trait_impl_for_a_primitive_stays_ungripped_when_nothing_names_the_trait() -> 
             "#[test] fn doubles() { assert_eq!(ripr_fixture::double(2u32), 4); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(evidence.reach.state, StageState::No, "{:?}", evidence.reach);
     assert_eq!(class, SeamGripClass::Ungripped);
     Ok(())
 }
@@ -19207,7 +19281,7 @@ fn trait_impl_for_a_primitive_stays_ungripped_when_nothing_names_the_trait() -> 
 #[test]
 fn a_test_does_not_call_a_helper_that_shares_its_name() -> Result<(), String> {
     // The test `check`'s own signature is not a call to the helper `check`.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub fn check(amount: u32) -> bool { surcharge(amount) }\n\
@@ -19219,7 +19293,7 @@ fn a_test_does_not_call_a_helper_that_shares_its_name() -> Result<(), String> {
             "#[test] fn check() { assert_eq!(ripr_fixture::total(1), 2); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(evidence.reach.state, StageState::No, "{:?}", evidence.reach);
     assert_eq!(class, SeamGripClass::Ungripped);
     Ok(())
 }
@@ -19228,7 +19302,7 @@ fn a_test_does_not_call_a_helper_that_shares_its_name() -> Result<(), String> {
 fn display_impl_run_through_a_generic_helper_is_opaque() -> Result<(), String> {
     // #6662 review: `render<T: Display>` names no `Amount`, but runs its
     // `Display` for whatever type the test passes.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -19247,13 +19321,19 @@ fn display_impl_run_through_a_generic_helper_is_opaque() -> Result<(), String> {
              #[test] fn renders() { let value = Amount::new(150); assert_eq!(render(&value), \"large\"); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert!(
-        reach
+        evidence
+            .reach
             .summary
             .contains("`render` (src/lib.rs:9) uses `to_string`"),
         "{}",
-        reach.summary
+        evidence.reach.summary
     );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
@@ -19270,7 +19350,7 @@ fn debug_impl_a_snapshot_macro_formats_is_opaque() -> Result<(), String> {
 #[test]
 fn serde_impl_a_test_file_imports_a_format_crate_for_is_opaque() -> Result<(), String> {
     // The test body says only `to_string`; the file's `use` says serde.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -19289,14 +19369,19 @@ fn serde_impl_a_test_file_imports_a_format_crate_for_is_opaque() -> Result<(), S
              #[test] fn encodes() { assert_eq!(to_string(&Amount::new(150)).ok(), Some(\"\\\"large\\\"\".into())); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }
 
 #[test]
 fn serde_impl_no_test_serializes_stays_ungripped() -> Result<(), String> {
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -19314,7 +19399,7 @@ fn serde_impl_no_test_serializes_stays_ungripped() -> Result<(), String> {
              #[test] fn reads() { assert_eq!(Amount::new(150).get(), 150); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(evidence.reach.state, StageState::No, "{:?}", evidence.reach);
     assert_eq!(class, SeamGripClass::Ungripped);
     Ok(())
 }
@@ -19323,7 +19408,7 @@ fn serde_impl_no_test_serializes_stays_ungripped() -> Result<(), String> {
 fn display_impl_a_method_runs_on_self_is_opaque() -> Result<(), String> {
     // #6662 review: `render` calls `self.to_string()` and names no type, but
     // runs `Amount`'s own `Display`.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -19341,13 +19426,19 @@ fn display_impl_a_method_runs_on_self_is_opaque() -> Result<(), String> {
              #[test] fn renders() { assert_eq!(Amount::new(150).render(), \"large\"); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert!(
-        reach
+        evidence
+            .reach
             .summary
             .contains("`render` (src/lib.rs:2) uses `to_string`"),
         "{}",
-        reach.summary
+        evidence.reach.summary
     );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
@@ -19357,7 +19448,7 @@ fn display_impl_a_method_runs_on_self_is_opaque() -> Result<(), String> {
 fn debug_impl_of_a_field_type_a_method_formats_is_opaque() -> Result<(), String> {
     // #6662 review: `describe` formats `self.inner`, an `Amount`, without
     // naming it; `Wrapper`'s fields say what it holds.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -19376,7 +19467,12 @@ fn debug_impl_of_a_field_type_a_method_formats_is_opaque() -> Result<(), String>
              #[test] fn renders() { assert_eq!(Wrapper::new(Amount(150)).describe(), \"large\"); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }
@@ -19385,7 +19481,7 @@ fn debug_impl_of_a_field_type_a_method_formats_is_opaque() -> Result<(), String>
 fn debug_impl_of_a_parameters_field_type_is_opaque() -> Result<(), String> {
     // #6662 review: `describe` formats `item.inner`, an `Amount`, through a
     // parameter; only `Wrapper` is named.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -19404,7 +19500,12 @@ fn debug_impl_of_a_parameters_field_type_is_opaque() -> Result<(), String> {
              #[test] fn renders() { assert_eq!(describe(&Wrapper { inner: Amount(150) }), \"large\"); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }
@@ -19442,6 +19543,7 @@ fn held_depth_case(levels: usize) -> Result<(StageEvidence, SeamGripClass), Stri
         ("src/lib.rs", source.as_str()),
         ("tests/wrapper.rs", test.as_str()),
     ])
+    .map(|(evidence, class)| (evidence.reach, class))
 }
 
 #[test]
@@ -19701,7 +19803,7 @@ fn debug_callee_deferred_until_a_later_root_uses_its_syntax_is_opaque() -> Resul
     // in the same round, formats its `Hidden` field with `{:?}`, and the
     // retry then reaches it. No reached body names `Hidden`, so it never
     // becomes a dispatch root itself.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Hidden(pub u32);\n\
@@ -19726,7 +19828,12 @@ fn debug_callee_deferred_until_a_later_root_uses_its_syntax_is_opaque() -> Resul
              #[test] fn renders() { assert_eq!(Outer(150).to_string(), \"150\"); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }
@@ -19760,7 +19867,7 @@ fn uncalled_sibling_named_by_a_doctest_keeps_weak_reach() -> Result<(), String> 
 fn debug_impl_a_method_does_not_hold_stays_ungripped() -> Result<(), String> {
     // Negative control: `describe` formats a `u32` field, so building an
     // `Amount` elsewhere does not run `Amount`'s `Debug`.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -19779,7 +19886,7 @@ fn debug_impl_a_method_does_not_hold_stays_ungripped() -> Result<(), String> {
              #[test] fn renders() { let _amount = Amount(150); assert_eq!(Counter::new(3).describe(), \"3\"); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(evidence.reach.state, StageState::No, "{:?}", evidence.reach);
     assert_eq!(class, SeamGripClass::Ungripped);
     Ok(())
 }
@@ -19788,7 +19895,7 @@ fn debug_impl_a_method_does_not_hold_stays_ungripped() -> Result<(), String> {
 fn display_impl_another_display_impl_delegates_to_is_opaque() -> Result<(), String> {
     // #6662 review: `Outer`'s `Display` passes its gate through `to_string`
     // and delegates to `Inner`'s, which no test-reached body names.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Inner(pub u32);\n\
@@ -19810,7 +19917,12 @@ fn display_impl_another_display_impl_delegates_to_is_opaque() -> Result<(), Stri
              #[test] fn renders() { assert_eq!(describe(&Outer(ripr_fixture::Inner(150))), \"large\"); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }
@@ -19819,7 +19931,7 @@ fn display_impl_another_display_impl_delegates_to_is_opaque() -> Result<(), Stri
 fn partial_ord_impl_a_test_compares_without_spaces_is_opaque() -> Result<(), String> {
     // #6662 review: `Amount(1)<Amount(2)` runs `PartialOrd` as much as a
     // spaced `<` does.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "#[derive(PartialEq)]\n\
@@ -19837,7 +19949,12 @@ fn partial_ord_impl_a_test_compares_without_spaces_is_opaque() -> Result<(), Str
              #[test] fn ordered() { assert!(Amount(1)<Amount(2)); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }
@@ -19845,7 +19962,7 @@ fn partial_ord_impl_a_test_compares_without_spaces_is_opaque() -> Result<(), Str
 #[test]
 fn partial_eq_impl_a_test_looks_up_in_a_hash_map_is_opaque() -> Result<(), String> {
     // #6662 review: a `HashMap` lookup compares keys with `PartialEq`.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "#[derive(Hash, Eq)]\n\
@@ -19864,7 +19981,12 @@ fn partial_eq_impl_a_test_looks_up_in_a_hash_map_is_opaque() -> Result<(), Strin
              #[test] fn found() { let mut m = HashMap::new(); m.insert(Amount(1), 1); assert!(m.get(&Amount(1)).is_some()); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }
@@ -19873,7 +19995,7 @@ fn partial_eq_impl_a_test_looks_up_in_a_hash_map_is_opaque() -> Result<(), Strin
 fn debug_impl_a_should_panic_test_formats_in_its_panic_is_opaque() -> Result<(), String> {
     // #6662 review: a `#[should_panic]` test passes by panicking, so its
     // panic message formats `Amount` with `Debug`.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -19892,7 +20014,12 @@ fn debug_impl_a_should_panic_test_formats_in_its_panic_is_opaque() -> Result<(),
              fn reports() { panic!(\"{:?}\", Amount(150)); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }
@@ -19901,7 +20028,7 @@ fn debug_impl_a_should_panic_test_formats_in_its_panic_is_opaque() -> Result<(),
 fn debug_impl_a_passing_test_formats_only_in_its_panic_stays_ungripped() -> Result<(), String> {
     // Negative control: without `#[should_panic]` the panic message formats
     // only when the test fails.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -19920,7 +20047,7 @@ fn debug_impl_a_passing_test_formats_only_in_its_panic_stays_ungripped() -> Resu
              fn reports() { let a = Amount(150); if a.get() != 150 { panic!(\"{:?}\", a); } }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(evidence.reach.state, StageState::No, "{:?}", evidence.reach);
     assert_eq!(class, SeamGripClass::Ungripped);
     Ok(())
 }
@@ -19929,7 +20056,7 @@ fn debug_impl_a_passing_test_formats_only_in_its_panic_stays_ungripped() -> Resu
 fn debug_impl_a_catch_unwind_test_formats_in_its_panic_is_opaque() -> Result<(), String> {
     // #6662 review: a comment line above `catch_unwind` must not hide it,
     // and the caught panic formats `Amount` with `Debug`.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -19951,7 +20078,12 @@ fn debug_impl_a_catch_unwind_test_formats_in_its_panic_is_opaque() -> Result<(),
              }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }
@@ -19961,7 +20093,7 @@ fn debug_impl_production_code_a_should_panic_test_reaches_formats_is_opaque() ->
 {
     // A `#[should_panic]` test passes through `check`'s panic, whose message
     // formats `Amount` with `Debug`; the test's own body formats nothing.
-    let (reach, class) = unresolved_reach_case(&[
+    let (evidence, class) = unresolved_reach_case(&[
         (
             "src/lib.rs",
             "pub struct Amount(pub u32);\n\
@@ -19981,7 +20113,12 @@ fn debug_impl_production_code_a_should_panic_test_reaches_formats_is_opaque() ->
              fn rejects() { check(&Amount(150)); }\n",
         ),
     ])?;
-    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(
+        evidence.reach.state,
+        StageState::Opaque,
+        "{:?}",
+        evidence.reach
+    );
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }

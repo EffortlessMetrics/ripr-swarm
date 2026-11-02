@@ -1757,6 +1757,7 @@ mod seam_hover_tests {
                 relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
             })],
             reach: stage(StageState::Yes, "Related tests reach discounted_total"),
+            unresolved_reach_limit: None,
             activate: stage(StageState::Yes, "Observed amount = 50, amount = 10000"),
             propagate: stage(StageState::Yes, "Seam flows to return_value"),
             observe: stage(StageState::Yes, "Exact value assertion exists"),
