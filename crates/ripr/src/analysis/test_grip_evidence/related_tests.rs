@@ -762,6 +762,14 @@ pub(super) fn sort_related_tests_for_seam<'a>(
 ) -> Vec<BestOracle> {
     let owner = seam_owner_activation(seam, context);
     let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, context.index);
+    // The gate reads the complete relation set of this seam (#12434); asking
+    // per test would see a lone proximity relation and disagree with the
+    // stage views.
+    let refuse = super::refuses_other_function_oracle(
+        seam,
+        related.iter().map(|(_, reason)| *reason),
+        owner_fn.is_some(),
+    );
     let mut ranked: Vec<_> = related
         .iter()
         .map(|&entry| {
@@ -770,8 +778,8 @@ pub(super) fn sort_related_tests_for_seam<'a>(
             // proximity test whose assertion pins another function keeps its
             // identity but offers no oracle for this match arm or predicate
             // boundary (#12434).
-            let credited = super::refuses_other_function_oracle(seam).then(|| {
-                super::credited_related_tests(seam, context, owner_fn, &[(indexed.test, reason)])
+            let credited = refuse.then(|| {
+                super::credited_related_tests(context, owner_fn, &[(indexed.test, reason)], refuse)
             });
             let credited_test = credited
                 .as_ref()
