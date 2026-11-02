@@ -50,7 +50,7 @@ pub(super) fn assert_investigation_stage_contract(observation_json: &str) -> Res
         .filter_map(|stage| stage.get("name").and_then(Value::as_str))
         .collect::<Vec<_>>();
     for required in INVESTIGATION_STAGE_CONTRACT_V1 {
-        if !stage_names.iter().any(|name| *name == *required) {
+        if !stage_names.contains(required) {
             return Err(format!(
                 "observation missing required investigation stage `{required}`; saw {stage_names:?}"
             ));
