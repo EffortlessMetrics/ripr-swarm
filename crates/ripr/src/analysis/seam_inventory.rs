@@ -1192,7 +1192,6 @@ pub(crate) struct ScopedClassifiedSeamInventory {
 /// preparation serves every scope-local evaluation in a multi-scope
 /// canonical-gap rerun.
 pub(crate) struct PreparedDiffScopedClassifiedWorkspace {
-    verifier: OwnedWorkspaceState,
     pub(crate) consumed_sources: super::consumed_source::ConsumedRustSources,
     cached: super::facts::CachedRustIndex,
     pub(crate) workspace_cache_key: super::seam_cache::RepoSeamCacheKey,
@@ -2418,7 +2417,6 @@ fn prepare_diff_scoped_classified_workspace_from_state(
     #[cfg(test)]
     diff_scoped_preparation_probe::record();
     Ok(PreparedDiffScopedClassifiedWorkspace {
-        verifier: state,
         consumed_sources,
         cached,
         workspace_cache_key,
@@ -2441,7 +2439,9 @@ pub(crate) fn evaluate_diff_scoped_classified_seams_from_prepared<'a>(
         consumer,
         cache_stats,
     } = input;
-    prepared.verifier.verify_corpus_unchanged()?;
+    // `prepare_diff_scoped_classified_workspace_from_state` already refused a
+    // corpus change via `build_index`; repeating `verify_corpus_unchanged` on
+    // every scope-local evaluation would reread the whole workspace (#3862).
     let production_files = &prepared.production_files;
     let cached = &prepared.cached;
     let production_file_set = production_files
