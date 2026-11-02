@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0406"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0406-terraform-module-native-test-plan-apply-provider-value-state-and-external-edge-boundaries.md"
+status = "proposed"
+owner = "language-adapter"
+standalone_reason = "Issue #5969 defines normative Terraform preview evidence law (module, native test, plan/apply, provider, value, state, external edges) before adapters or support promotion; spec-only slice."
