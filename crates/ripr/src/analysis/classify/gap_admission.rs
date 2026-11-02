@@ -1263,17 +1263,17 @@ fn next_step(judged: &[String], macro_name: &str, finding: &Finding) -> String {
     } else {
         judged.join(", ")
     };
-    if let Some(reason) = crate::domain::assertion_not_credited_reason(&finding.evidence) {
-        if let Some(kind) = crate::domain::guard_refusal_kind(reason) {
-            return match kind {
-                crate::domain::GuardRefusalKind::ValueGuard => format!(
-                    "ripr could not tell whether a conditional return skips the assertion in {tests}, because that depends on a value it does not evaluate, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
-                ),
-                crate::domain::GuardRefusalKind::GuardedReturn => format!(
-                    "ripr could not tell whether a conditional return skips the assertion in {tests} on the executed path, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
-                ),
-            };
-        }
+    if let Some(reason) = crate::domain::assertion_not_credited_reason(&finding.evidence)
+        && let Some(kind) = crate::domain::guard_refusal_kind(reason)
+    {
+        return match kind {
+            crate::domain::GuardRefusalKind::ValueGuard => format!(
+                "ripr could not tell whether a conditional return skips the assertion in {tests}, because that depends on a value it does not evaluate, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
+            ),
+            crate::domain::GuardRefusalKind::GuardedReturn => format!(
+                "ripr could not tell whether a conditional return skips the assertion in {tests} on the executed path, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
+            ),
+        };
     }
     format!(
         "ripr could not read whether the assertions in {tests} run as the standard `{macro_name}!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."

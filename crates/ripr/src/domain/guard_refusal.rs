@@ -7,7 +7,7 @@
 use super::ASSERTION_NOT_CREDITED_PREFIX;
 
 /// Why the related assertion was not credited, when the classifier recorded one.
-pub(crate) fn assertion_not_credited_reason<'a>(evidence: &'a [String]) -> Option<&'a str> {
+pub(crate) fn assertion_not_credited_reason(evidence: &[String]) -> Option<&str> {
     assertion_not_credited_entry(evidence).and_then(|entry| {
         entry
             .rsplit_once(": ")
@@ -28,7 +28,7 @@ pub(crate) fn assertion_not_credited_entry_for_test<'a>(
     })
 }
 
-fn assertion_not_credited_entry<'a>(evidence: &'a [String]) -> Option<&'a str> {
+fn assertion_not_credited_entry(evidence: &[String]) -> Option<&str> {
     evidence
         .iter()
         .find_map(|entry| entry.strip_prefix(ASSERTION_NOT_CREDITED_PREFIX))
