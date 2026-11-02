@@ -1815,7 +1815,7 @@ fn custom_assertion_helper_name(line: &str) -> Option<String> {
 /// operator, and no `&&`/`||` widening. Anything wider stays weak: a
 /// missed promotion keeps a gap open, while a wrong one manufactures a
 /// false `exposed`.
-pub(super) fn is_exact_membership_any_assertion(line: &str) -> bool {
+pub(crate) fn is_exact_membership_any_assertion(line: &str) -> bool {
     exact_membership_any_condition(line).is_some()
 }
 

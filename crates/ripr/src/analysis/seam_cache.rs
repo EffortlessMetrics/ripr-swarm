@@ -637,6 +637,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.140`: a verified `use claims::..` `assert_ok_eq!` / `assert_some_eq!` of a
 /// literal pins an `Ok`/`Some` tail and reads `exact_value` / strong
 /// (RIPR-SPEC-0197, RIPR-SPEC-0231 rule 10, #12304). Old entries keep `unknown`.
+/// `1.141`: a comment inside a table-test callback no longer demotes the
+/// row; the single-expect container check skips complete comments (#12494).
 /// `1.142`: an assertion whose `Err(..)` constructor feeds a value-supplying
 /// adapter is a relation, not an exact oracle of any kind (#12610).
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.142";
@@ -821,6 +823,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.142";
 /// `0.140`: same adapter-fed `Err(..)` refusal as full `1.138` (#12359).
 /// `0.141`: same table-row quoted-word rule as full `1.139` (#12253).
 /// `0.142`: same claims payload-equality pin as full `1.140` (#12304).
+/// `0.143`: same table-callback comment rule as full `1.141` (#12494).
 /// `0.144`: same adapter-fed `Err(..)` relation as full `1.142` (#12610).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.144";
 
@@ -1006,6 +1009,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.144";
 /// `0.140`: same adapter-fed `Err(..)` refusal as full `1.138` (#12359).
 /// `0.141`: same table-row quoted-word rule as full `1.139` (#12253).
 /// `0.142`: same claims payload-equality pin as full `1.140` (#12304).
+/// `0.143`: same table-callback comment rule as full `1.141` (#12494).
 /// `0.144`: same adapter-fed `Err(..)` relation as full `1.142` (#12610).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.144";
 
@@ -2842,6 +2846,39 @@ impl FileFactCacheStats {
             self.hits, self.misses, self.corrupt_ignored, self.store_errors
         )
     }
+
+    /// When a store failed during a batch, name the retained rows so a
+    /// cancellation or deadline error is not mistaken for a cache mismatch
+    /// (#6746).
+    pub(crate) fn store_failure_diagnostic(&self) -> Option<String> {
+        if self.store_errors == 0 {
+            return None;
+        }
+        let mut message = format!("file fact cache store failed {} time(s)", self.store_errors);
+        if !self.store_failures.is_empty() {
+            let rows: Vec<String> = self
+                .store_failures
+                .iter()
+                .map(|row| {
+                    format!(
+                        "{} at {} stage: {}",
+                        row.path.display(),
+                        row.stage,
+                        row.error
+                    )
+                })
+                .collect();
+            message.push_str(": ");
+            message.push_str(&rows.join("; "));
+        }
+        if self.store_failures_dropped > 0 {
+            message.push_str(&format!(
+                " ({} additional failure(s) not shown)",
+                self.store_failures_dropped
+            ));
+        }
+        Some(message)
+    }
 }
 
 /// Layer directories whose stale schema siblings were already pruned this
@@ -3195,6 +3232,61 @@ impl RepoFileFactCache {
             }
         }
         KnownFilePaths { candidates }
+    }
+
+    /// Test-only strict inventory: every header-matching entry must decode for
+    /// the current build identity, or the report names the failure (#6746).
+    #[cfg(test)]
+    pub(crate) fn test_inventory_report(&self) -> Result<(), String> {
+        let identity = crate::build_identity::cache_identity();
+        let entries = std::fs::read_dir(&self.dir).map_err(|err| {
+            format!(
+                "read file fact cache dir {} failed: {err}",
+                self.dir.display()
+            )
+        })?;
+        let mut problems = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|err| format!("read cache dir entry failed: {err}"))?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let bytes = match std::fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    problems.push(format!("{}: read failed: {err}", path.display()));
+                    continue;
+                }
+            };
+            match codec::decode_file_facts(&bytes) {
+                Ok(envelope) => {
+                    if envelope.file_fact_cache_schema_version != FILE_FACT_CACHE_SCHEMA_VERSION {
+                        problems.push(format!(
+                            "{}: schema {} (expected {})",
+                            path.display(),
+                            envelope.file_fact_cache_schema_version,
+                            FILE_FACT_CACHE_SCHEMA_VERSION
+                        ));
+                    } else if envelope.analyzer_version != identity {
+                        problems.push(format!("{}: analyzer identity mismatch", path.display()));
+                    } else if let Err(reason) = envelope.validate_integrity() {
+                        problems.push(format!(
+                            "{}: integrity check failed: {reason}",
+                            path.display()
+                        ));
+                    }
+                }
+                Err(reason) => {
+                    problems.push(format!("{}: decode failed: {reason}", path.display()));
+                }
+            }
+        }
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(problems.join("\n"))
+        }
     }
 
     pub(crate) fn store_file_facts(
@@ -5764,6 +5856,7 @@ mod tests {
         // 1.137 -> 1.138: adapter-fed Err refusal (#12359).
         // 1.138 -> 1.139: table-row quoted words no longer hide the route (#12253).
         // 1.139 -> 1.140: claims payload-equality owner pin (#12304).
+        // 1.140 -> 1.141: comments inside table-test callbacks no longer demote the row (#12494).
         // 1.141 -> 1.142: adapter-fed Err is a relation (#12610).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.142");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
@@ -5887,6 +5980,7 @@ mod tests {
         // 0.139 -> 0.140: same adapter-fed Err refusal as full 1.138 (#12359).
         // 0.140 -> 0.141: same table-row quoted-word rule as full 1.139 (#12253).
         // 0.141 -> 0.142: same claims payload-equality pin as full 1.140 (#12304).
+        // 0.142 -> 0.143: same table-callback comment rule as full 1.141 (#12494).
         // 0.143 -> 0.144: same adapter-fed Err relation as full 1.142 (#12610).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.144");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.144");

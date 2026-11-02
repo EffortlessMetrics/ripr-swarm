@@ -12938,6 +12938,21 @@
       ]
     },
     {
+      "id": "rust_array_sibling_exit_field_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_array_sibling_exit_field",
+      "vector": "sibling_element_field_may_exit_before_return_value_oracle",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
       "id": "rust_array_sibling_plain_field",
       "language": "rust",
       "tier": "pure",
