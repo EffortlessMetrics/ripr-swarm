@@ -31,7 +31,7 @@ Static exposure
   reachable_unrevealed (warning, confidence 0.66)
 
 Evidence
-  - reach weak: No test is seen calling as_object; tests share only its file or a name token: ignored_operand
+  - reach weak: No test is seen calling as_object; tests share only a name token
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence match arm result: Self::Object(value) =>
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
@@ -69,7 +69,7 @@ Static exposure
   reachable_unrevealed (warning, confidence 0.63)
 
 Evidence
-  - reach weak: No test is seen calling as_object; tests share only its file or a name token: ignored_operand
+  - reach weak: No test is seen calling as_object; tests share only a name token
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation weak: No complete owner-bound propagation witness found for returned value: Self::Object(value) => Some(*value)
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
