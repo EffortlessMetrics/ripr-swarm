@@ -24,9 +24,11 @@ fn selected(language: Option<LanguageId>) -> Vec<&'static CapabilityCell> {
 fn language_status(language: LanguageId) -> &'static str {
     match language {
         LanguageId::Rust => "stable",
-        LanguageId::TypeScript | LanguageId::JavaScript | LanguageId::Python | LanguageId::Perl => {
-            "preview"
-        }
+        LanguageId::TypeScript
+        | LanguageId::JavaScript
+        | LanguageId::Python
+        | LanguageId::Perl
+        | LanguageId::Php => "preview",
     }
 }
 
@@ -105,6 +107,9 @@ fn plain_summary(language: LanguageId) -> &'static str {
         }
         LanguageId::Perl => {
             "not supported yet: it needs a special ripr build and a Perl facts exporter, and default builds only report that Perl files changed."
+        }
+        LanguageId::Php => {
+            "not supported yet: RIPR-SPEC-0392 defines the preview contract; rebuild with lang-php after the adapter lands."
         }
     }
 }

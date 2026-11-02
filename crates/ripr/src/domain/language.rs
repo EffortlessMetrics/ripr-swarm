@@ -34,7 +34,7 @@ pub(crate) fn is_pytest_verify_command(command: &str) -> bool {
 /// The set of source languages an adapter can report.
 ///
 /// `Rust` is the reference language. `TypeScript`, `JavaScript`, `Python`,
-/// and `Perl` are preview surfaces added in later work items.
+/// `Perl`, and `Php` are preview surfaces added in later work items.
 /// JavaScript is implemented by the TypeScript-family adapter and remains
 /// separately labeled in output. Adding a new variant here is a deliberate
 /// contract change and must update RIPR-SPEC-0026.
@@ -46,16 +46,18 @@ pub enum LanguageId {
     JavaScript,
     Python,
     Perl,
+    Php,
 }
 
 impl LanguageId {
     /// Every language id, in declaration order.
-    pub(crate) const ALL: [LanguageId; 5] = [
+    pub(crate) const ALL: [LanguageId; 6] = [
         LanguageId::Rust,
         LanguageId::TypeScript,
         LanguageId::JavaScript,
         LanguageId::Python,
         LanguageId::Perl,
+        LanguageId::Php,
     ];
 
     /// Human-facing language name for prose (`TypeScript`, `JavaScript`),
@@ -67,6 +69,7 @@ impl LanguageId {
             LanguageId::JavaScript => "JavaScript",
             LanguageId::Python => "Python",
             LanguageId::Perl => "Perl",
+            LanguageId::Php => "PHP",
         }
     }
 
@@ -87,6 +90,7 @@ impl LanguageId {
             LanguageId::JavaScript => "javascript",
             LanguageId::Python => "python",
             LanguageId::Perl => "perl",
+            LanguageId::Php => "php",
         }
     }
 
@@ -98,6 +102,7 @@ impl LanguageId {
             "javascript" => Some(LanguageId::JavaScript),
             "python" => Some(LanguageId::Python),
             "perl" => Some(LanguageId::Perl),
+            "php" => Some(LanguageId::Php),
             _ => None,
         }
     }
@@ -109,6 +114,7 @@ impl LanguageId {
             LanguageId::JavaScript => cfg!(feature = "lang-typescript"),
             LanguageId::Python => cfg!(feature = "lang-python"),
             LanguageId::Perl => cfg!(feature = "lang-perl"),
+            LanguageId::Php => cfg!(feature = "lang-php"),
         }
     }
 
@@ -119,6 +125,7 @@ impl LanguageId {
             LanguageId::JavaScript => "lang-typescript",
             LanguageId::Python => "lang-python",
             LanguageId::Perl => "lang-perl",
+            LanguageId::Php => "lang-php",
         }
     }
 
@@ -789,7 +796,7 @@ mod tests {
         // Catches duplicates, gaps and a stale `ALL`. It cannot enumerate the
         // enum: a variant added to the match but to neither `COUNT` nor `ALL`
         // is not detected, only forced to be classified here.
-        const COUNT: usize = 5;
+        const COUNT: usize = 6;
         fn ordinal(language: LanguageId) -> usize {
             match language {
                 LanguageId::Rust => 0,
@@ -797,6 +804,7 @@ mod tests {
                 LanguageId::JavaScript => 2,
                 LanguageId::Python => 3,
                 LanguageId::Perl => 4,
+                LanguageId::Php => 5,
             }
         }
         let ordinals: Vec<usize> = LanguageId::ALL.iter().copied().map(ordinal).collect();
@@ -834,6 +842,7 @@ mod tests {
         assert_eq!(LanguageId::JavaScript.as_str(), "javascript");
         assert_eq!(LanguageId::Python.as_str(), "python");
         assert_eq!(LanguageId::Perl.as_str(), "perl");
+        assert_eq!(LanguageId::Php.as_str(), "php");
     }
 
     #[test]
@@ -880,9 +889,11 @@ mod tests {
             cfg!(feature = "lang-python")
         );
         assert_eq!(LanguageId::Perl.is_available(), cfg!(feature = "lang-perl"));
+        assert_eq!(LanguageId::Php.is_available(), cfg!(feature = "lang-php"));
         assert_eq!(LanguageId::JavaScript.required_feature(), "lang-typescript");
         assert_eq!(LanguageId::Python.required_feature(), "lang-python");
         assert_eq!(LanguageId::Perl.required_feature(), "lang-perl");
+        assert_eq!(LanguageId::Php.required_feature(), "lang-php");
     }
 
     #[test]
@@ -893,6 +904,7 @@ mod tests {
             LanguageId::JavaScript,
             LanguageId::Python,
             LanguageId::Perl,
+            LanguageId::Php,
         ] {
             assert_eq!(
                 language.unavailable_adapter_notice().is_some(),

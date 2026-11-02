@@ -61,6 +61,10 @@ const BINDINGS: &[Binding] = &[
             "perl/any/diff/repair_routing",
         ],
     },
+    Binding {
+        row: "PHP preview evidence contract",
+        cells: &["php/any/diff/static_facts", "php/any/repo/static_facts"],
+    },
 ];
 
 impl Binding {

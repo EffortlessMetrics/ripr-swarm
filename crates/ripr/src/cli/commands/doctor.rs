@@ -1292,9 +1292,11 @@ fn enable_before_first_command_line(enablement: Option<&PreviewEnablement>) -> O
 fn language_status(id: LanguageId) -> LanguageStatus {
     match id {
         LanguageId::Rust => LanguageStatus::Stable,
-        LanguageId::TypeScript | LanguageId::JavaScript | LanguageId::Python | LanguageId::Perl => {
-            LanguageStatus::Preview
-        }
+        LanguageId::TypeScript
+        | LanguageId::JavaScript
+        | LanguageId::Python
+        | LanguageId::Perl
+        | LanguageId::Php => LanguageStatus::Preview,
     }
 }
 
@@ -1962,6 +1964,38 @@ fn detect_test_surfaces(
                         "perl",
                         None,
                         "perl: no Perl files detected".to_string(),
+                    ));
+                }
+            }
+            LanguageId::Php => {
+                let php_count = count_files(root, "php");
+                if root.join("composer.json").exists() || php_count > 0 {
+                    surfaces.push(surface(
+                        "php",
+                        None,
+                        format!(
+                            "php: {} .php file(s){}; adapter not implemented yet (RIPR-SPEC-0392 contract only)",
+                            php_count,
+                            if root.join("composer.json").exists() {
+                                "; composer.json present"
+                            } else {
+                                ""
+                            }
+                        ),
+                    ));
+                    if !id.is_available() {
+                        surfaces.push(surface(
+                            "php",
+                            None,
+                            "php: adapter NOT compiled (see PHP preview contract below)"
+                                .to_string(),
+                        ));
+                    }
+                } else {
+                    surfaces.push(surface(
+                        "php",
+                        None,
+                        "php: no PHP project markers detected".to_string(),
                     ));
                 }
             }

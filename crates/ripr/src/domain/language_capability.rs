@@ -152,12 +152,14 @@ const TS_REPAIR_LIMIT: &str = "advisory preview actionability only; repair_packe
 const PERL_LIMIT: &str = "requires a ripr build with Cargo feature lang-perl plus a compatible fact exporter; default builds report changed Perl files as not analyzed and no released ripr plus exporter combination analyzes Perl yet";
 const PERL_REPAIR_LIMIT: &str =
     "blocked on real-repository producer proof and real Perl repository receipts";
+const PHP_LIMIT: &str = "contract-only registry row: no lang-php adapter or fixture corpus yet; default builds do not analyze PHP";
 
 const SPEC_RUST: &[&str] = &["RIPR-SPEC-0001", "RIPR-SPEC-0117", "RIPR-SPEC-0197"];
 const SPEC_RUST_REPAIR: &[&str] = &["RIPR-SPEC-0001", "RIPR-SPEC-0057"];
 const SPEC_PYTHON: &[&str] = &["RIPR-SPEC-0026", "RIPR-SPEC-0028"];
 const SPEC_TS: &[&str] = &["RIPR-SPEC-0026", "RIPR-SPEC-0027"];
 const SPEC_PERL: &[&str] = &["RIPR-SPEC-0026", "RIPR-SPEC-0064"];
+const SPEC_PHP: &[&str] = &["RIPR-SPEC-0026", "RIPR-SPEC-0392"];
 
 macro_rules! cell {
     ($language:expr, $framework:expr, $mode:expr, $family:expr, $state:expr, $tier:expr, $limit:expr, $proof:expr $(,)?) => {
@@ -339,6 +341,26 @@ pub(crate) const CAPABILITY_CELLS: &[CapabilityCell] = &[
         Preview,
         Some(PERL_REPAIR_LIMIT),
         SPEC_PERL,
+    ),
+    cell!(
+        LanguageId::Php,
+        FRAMEWORK_ANY,
+        Diff,
+        StaticFacts,
+        NotProven,
+        Preview,
+        Some(PHP_LIMIT),
+        SPEC_PHP,
+    ),
+    cell!(
+        LanguageId::Php,
+        FRAMEWORK_ANY,
+        Repo,
+        StaticFacts,
+        NotProven,
+        Preview,
+        Some(PHP_LIMIT),
+        SPEC_PHP,
     ),
 ];
 
@@ -645,7 +667,7 @@ mod tests {
     #[test]
     fn table_matches_the_documented_support_statement() {
         const FALLBACK: &str = "supported_with_required_fallback";
-        let expected: [(&str, &str, &str); 16] = [
+        let expected: [(&str, &str, &str); 18] = [
             ("rust/any/diff/static_facts", FALLBACK, "usable_alpha"),
             ("rust/any/repo/static_facts", FALLBACK, "usable_alpha"),
             ("rust/any/diff/repair_routing", FALLBACK, "usable_alpha"),
@@ -670,6 +692,8 @@ mod tests {
             ("perl/any/diff/static_facts", "not_proven", "preview"),
             ("perl/any/repo/static_facts", "not_proven", "preview"),
             ("perl/any/diff/repair_routing", "not_proven", "preview"),
+            ("php/any/diff/static_facts", "not_proven", "preview"),
+            ("php/any/repo/static_facts", "not_proven", "preview"),
         ];
         let mut actual: Vec<(String, &str, &str)> = CAPABILITY_CELLS
             .iter()
