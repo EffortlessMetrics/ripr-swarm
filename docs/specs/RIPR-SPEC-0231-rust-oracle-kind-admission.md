@@ -642,6 +642,35 @@ Two pattern terms are used below.
    whole function exactly as before: unidentified, never a "has no
    assertion" gap (#9478).
 
+10. **A verified claims payload equality is an exact `assert_eq!` (#12304).**
+    `assert_ok_eq!(owner(..), literal)` and `assert_some_eq!(owner(..),
+    literal)` from the `claims` crate compare the call's `Ok`/`Some` payload
+    with the literal and panic otherwise. The classifier reads only text, and
+    text cannot tell the claims macro from a same-named local one, so the
+    line stays `unknown` / none here. Whether the import is the verified
+    `claims` one is the RIPR-SPEC-0197 owner-pin binding scan's decision
+    (Claims payload equality pins), which runs after extraction. Reveal
+    therefore grades the line `exact_value` / strong for one probe, and only
+    when all of these are true:
+    - the probe family is `return_value`;
+    - the extractor read the line `unknown` / none and its text is exactly one
+      plain `assert_ok_eq!(..)` / `assert_some_eq!(..)` invocation;
+    - the owner pin admits the assertion under every RIPR-SPEC-0197 gate:
+      verified import under the macro's own name, the macro's own direction,
+      a literal expected operand, and an owner call that is the first
+      operand.
+
+    The grade is fail-closed by construction: the only path to it is the pin's
+    admission, so no import evidence, any refusal and any unestablished pin
+    leave the oracle `unknown` and the finding where the macro limitation
+    (RIPR-SPEC-0120) puts it. The re-grade changes the reported
+    `oracle_kind` and `oracle_strength` of that related test for that finding
+    only, so the finding never reads `exposed` through an oracle that reports
+    `unknown`. It adds no oracle kind or strength value. Adding the two names
+    to the trusted macro set also stops a verified-import invocation from
+    reading as an opaque macro in the other owner-pin scans, as `assert_ok!`
+    already does.
+
 ### Reveal admission of an excluded sibling
 
 Rule 1 sets the kind and strength of an inequality; reveal still decides
@@ -756,6 +785,11 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 ## Required Evidence
 
+- Rule 10: acceptance examples 41 to 44 read as stated, through the public
+  API. Every negative control is the credited twin with exactly one thing
+  changed. The RIPR-SPEC-0120 inventory rows `claims_assert_ok_eq` and
+  `claims_assert_some_eq` use a `predicate` probe and stay `unknown` on
+  purpose; the `return_value` twins credit in the rule 10 test.
 - Each row of the Problem table, and each overstatement listed after it,
   reads the kind and strength the rules give, in JSON `related_tests[]`.
 - `assert_eq!(check(20), Err(e))` with a bound value stays
@@ -973,8 +1007,25 @@ rejected alternative. Any can be reversed later without touching the rest.
     statements (`let y = bump(x); y`), no `use test_case::test_case`, a
     non-literal row argument, or fewer row values than parameters: unread.
 
+41. `assert_ok_eq!(parse(5), 10)` under a verified `use claims::assert_ok_eq;`
+    beside an `Ok(..)` tail change: the related test reads `exact_value` /
+    strong and the finding reads `exposed`.
+42. The same line with no import, another crate's `assert_ok_eq`, a renamed
+    or path-qualified import, a local `macro_rules! assert_ok_eq`, or a
+    `path`/`package` `claims` dependency: `unknown` / none, and the
+    finding keeps `rust_macro_wrapped_assertion_unresolved`.
+43. The same line with a non-literal expected operand, an expected value
+    computed from the owner, or `assert_ok_eq!` on a `Some` tail
+    (`assert_some_eq!` on an `Ok` tail): `unknown` / none.
+44. `assert_some_eq!(pick(5), 10)` beside a `Some(..)` tail change reads as
+    example 41; beside a `None` exit change it stays `unknown` / none.
+
 ## Test Mapping
 
+- Rule 10: `crates/ripr/tests/claims_payload_eq_owner_pin.rs`; the
+  inventory rows in
+  `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs` are the
+  predicate-family contrast.
 - Existing: `crates/ripr/src/analysis/extract/oracles/classify.rs` unit tests.
 - Existing: `classify.rs` unit test for `ensure!(s != X)` changes with
   example 13.
