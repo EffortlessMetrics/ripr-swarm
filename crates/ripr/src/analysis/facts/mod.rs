@@ -414,8 +414,28 @@ pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses(
     paths: &[PathBuf],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
-    let cached = index_phase("index_cached_parse", || {
-        build::build_index_from_paths_with_cache(root, paths, MissAttribution::Named)
+    build_index_from_paths_with_cache_and_test_harnesses_and_consumed(
+        root,
+        paths,
+        registrations,
+        None,
+    )
+}
+
+pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses_and_consumed(
+    root: &Path,
+    paths: &[PathBuf],
+    registrations: &[TestHarnessRegistration],
+    consumed: Option<&mut crate::analysis::consumed_source::ConsumedRustSources>,
+) -> Result<build::CachedRustIndex, String> {
+    let cached = index_phase("index_cached_parse", || match consumed {
+        Some(consumed) => build::build_index_from_paths_with_cache_and_consumed(
+            root,
+            paths,
+            MissAttribution::Named,
+            Some(consumed),
+        ),
+        None => build::build_index_from_paths_with_cache(root, paths, MissAttribution::Named),
     })?;
     post_process_cached_index(cached, root, registrations)
 }
