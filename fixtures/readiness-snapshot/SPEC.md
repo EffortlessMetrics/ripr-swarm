@@ -8,8 +8,10 @@ snapshot command; they do not run package builds or network actions.
 
 ## Given
 
-- a workspace root at the pinned `source_sha` with lockfile and toolchain digests
-  recorded in each receipt `identity` block;
+- a workspace root whose lockfile and toolchain digests match each receipt
+  `identity` block (fixture JSON may pin an illustrative `source_sha`; xtask
+  tests rebind receipts to `HEAD` so shallow CI checkouts need not fetch old
+  commits);
 - optional supply-chain component rows on the supply-chain fixture.
 
 ## When

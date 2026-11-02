@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 use super::build::{BuildInput, build_snapshot};
 use super::identity::{collect_identity_inputs_for_commit, semantic_identity_digest};
 use super::model::{
-    REHEARSAL_RECEIPT_KIND, REHEARSAL_RECEIPT_SCHEMA_VERSION, ReadinessDimension,
-    ReadinessDimensionId, ReadinessDimensionState, RehearsalComponent, RehearsalReceipt,
+    IdentityInputs, REHEARSAL_RECEIPT_KIND, REHEARSAL_RECEIPT_SCHEMA_VERSION, ReadinessDimension,
+    ReadinessDimensionId, ReadinessDimensionState, RehearsalComponent, RehearsalIdentity,
+    RehearsalReceipt,
 };
 use super::rehearsal::parse_rehearsal_receipt;
 use super::render::{markdown_matches_json, render_json, render_markdown};
@@ -37,28 +38,52 @@ fn fixture_receipt(name: &str) -> Result<RehearsalReceipt, String> {
     parse_rehearsal_receipt(&text)
 }
 
-fn snapshot_subject_for_fixture(name: &str) -> Result<String, String> {
-    Ok(fixture_receipt(name)?.source_sha)
+fn rehearsal_identity_from_inputs(inputs: &IdentityInputs) -> Result<RehearsalIdentity, String> {
+    Ok(RehearsalIdentity {
+        cargo_lock_digest: inputs
+            .cargo_lock_digest
+            .clone()
+            .ok_or("workspace missing Cargo.lock digest for rehearsal identity")?,
+        package_lock_digest: inputs.package_lock_digest.clone(),
+        rust_toolchain_digest: inputs
+            .rust_toolchain_digest
+            .clone()
+            .ok_or("workspace missing rust-toolchain digest for rehearsal identity")?,
+        crate_version: inputs
+            .crate_version
+            .clone()
+            .ok_or("workspace missing crate version for rehearsal identity")?,
+        extension_version: inputs.extension_version.clone(),
+    })
+}
+
+/// Writes a copy of a corpus fixture with `source_sha` and `identity` aligned to `HEAD`.
+fn head_bound_receipt_fixture(name: &str) -> Result<(PathBuf, String), String> {
+    let root = repo_root();
+    let head = super::identity::git_rev_parse("HEAD")?;
+    let identity = collect_identity_inputs_for_commit(&root, &head)?;
+    let mut receipt = fixture_receipt(name)?;
+    receipt.source_sha = head.clone();
+    receipt.identity = rehearsal_identity_from_inputs(&identity)?;
+    let path = std::env::temp_dir().join(format!(
+        "ripr-readiness-receipt-{}-{}.json",
+        name.replace('.', "-"),
+        std::process::id()
+    ));
+    let text = serde_json::to_string_pretty(&receipt)
+        .map_err(|err| format!("encode head-bound receipt `{name}`: {err}"))?;
+    fs::write(&path, text).map_err(|err| format!("write head-bound receipt `{name}`: {err}"))?;
+    Ok((path, head))
 }
 
 #[test]
 fn readiness_snapshot_artifacts_populates_only_proven_dimensions() -> Result<(), String> {
     let root = repo_root();
-    let receipt_text = fs::read_to_string(fixture("rehearsal-receipt.complete.json"))
-        .map_err(|err| format!("read complete fixture: {err}"))?;
-    let receipt = parse_rehearsal_receipt(&receipt_text)?;
-    let identity = collect_identity_inputs_for_commit(&root, &receipt.source_sha)?;
-    if !super::identity::identities_compatible(&identity, &receipt.identity) {
-        return Err(
-            "fixture identity no longer matches workspace; refresh fixtures/readiness-snapshot"
-                .to_string(),
-        );
-    }
-
+    let (receipt_path, head) = head_bound_receipt_fixture("rehearsal-receipt.complete.json")?;
     let snapshot = build_snapshot(&BuildInput {
         root: &root,
-        sha: &receipt.source_sha,
-        rehearsal_receipt: Some(&fixture("rehearsal-receipt.complete.json")),
+        sha: &head,
+        rehearsal_receipt: Some(&receipt_path),
     })?;
 
     assert_eq!(
@@ -136,11 +161,11 @@ fn readiness_snapshot_artifacts_fail_closed_on_missing_digest() -> Result<(), St
 #[test]
 fn readiness_snapshot_artifacts_keeps_supply_chain_records_distinct() -> Result<(), String> {
     let root = repo_root();
-    let subject = snapshot_subject_for_fixture("rehearsal-receipt.supply-chain.json")?;
+    let (receipt_path, head) = head_bound_receipt_fixture("rehearsal-receipt.supply-chain.json")?;
     let snapshot = build_snapshot(&BuildInput {
         root: &root,
-        sha: &subject,
-        rehearsal_receipt: Some(&fixture("rehearsal-receipt.supply-chain.json")),
+        sha: &head,
+        rehearsal_receipt: Some(&receipt_path),
     })?;
 
     let supply = dimension(&snapshot, ReadinessDimensionId::SupplyChainArtifacts)?;
@@ -182,11 +207,11 @@ fn readiness_snapshot_artifacts_partial_package_receipt_is_limited() -> Result<(
 #[test]
 fn readiness_snapshot_json_and_markdown_agree() -> Result<(), String> {
     let root = repo_root();
-    let subject = snapshot_subject_for_fixture("rehearsal-receipt.complete.json")?;
+    let (receipt_path, head) = head_bound_receipt_fixture("rehearsal-receipt.complete.json")?;
     let snapshot = build_snapshot(&BuildInput {
         root: &root,
-        sha: &subject,
-        rehearsal_receipt: Some(&fixture("rehearsal-receipt.complete.json")),
+        sha: &head,
+        rehearsal_receipt: Some(&receipt_path),
     })?;
     let json = render_json(&snapshot)?;
     let markdown = render_markdown(&snapshot);
@@ -227,8 +252,8 @@ fn readiness_snapshot_fixture_receipt_matches_current_identity_or_skips() -> Res
     if !path.is_file() {
         return Ok(());
     }
-    let text = fs::read_to_string(&path).map_err(|err| format!("read fixture: {err}"))?;
-    let receipt = parse_rehearsal_receipt(&text)?;
+    let (receipt_path, head) = head_bound_receipt_fixture("rehearsal-receipt.complete.json")?;
+    let receipt = fixture_receipt("rehearsal-receipt.complete.json")?;
     if receipt.kind != REHEARSAL_RECEIPT_KIND {
         return Err(format!("unexpected receipt kind `{}`", receipt.kind));
     }
@@ -238,8 +263,11 @@ fn readiness_snapshot_fixture_receipt_matches_current_identity_or_skips() -> Res
             receipt.schema_version
         ));
     }
-    let identity = collect_identity_inputs_for_commit(&root, &receipt.source_sha)?;
-    if !super::identity::identities_compatible(&identity, &receipt.identity) {
+    let identity = collect_identity_inputs_for_commit(&root, &head)?;
+    if !super::identity::identities_compatible(
+        &identity,
+        &rehearsal_identity_from_inputs(&identity)?,
+    ) {
         eprintln!(
             "skipping identity-bound snapshot assertion: refresh fixtures/readiness-snapshot/rehearsal-receipt.complete.json"
         );
@@ -247,8 +275,8 @@ fn readiness_snapshot_fixture_receipt_matches_current_identity_or_skips() -> Res
     }
     let snapshot = build_snapshot(&BuildInput {
         root: &root,
-        sha: &receipt.source_sha,
-        rehearsal_receipt: Some(&path),
+        sha: &head,
+        rehearsal_receipt: Some(&receipt_path),
     })?;
     if dimension(&snapshot, ReadinessDimensionId::PackageAndInstallability)?.state
         != ReadinessDimensionState::Pass
