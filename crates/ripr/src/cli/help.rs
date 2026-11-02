@@ -1446,6 +1446,7 @@ mod tests {
     const GATE_PARSER_RS: &str = include_str!("commands/gate.rs");
     const INIT_PARSER_RS: &str = include_str!("commands/init.rs");
     const KANI_REPORT_PARSER_RS: &str = include_str!("commands/kani_report.rs");
+    const LSP_PARSER_RS: &str = include_str!("commands/lsp.rs");
     const PILOT_PARSER_RS: &str = include_str!("commands/pilot.rs");
     const BASELINE_PARSER_RS: &str = include_str!("commands/baseline.rs");
     const CACHE_PARSER_RS: &str = include_str!("commands/cache.rs");
@@ -1615,7 +1616,7 @@ mod tests {
             &["run_impacted_evidence", "parse_options"],
         ),
         ("init", INIT_PARSER_RS, &["parse_init_options"]),
-        ("lsp", CLI_COMMANDS_RS, &["lsp_with_serve"]),
+        ("lsp", LSP_PARSER_RS, &["lsp_with_serve"]),
         ("mcp", MCP_PARSER_RS, &["run"]),
         ("outcome", CLI_COMMANDS_RS, &["parse_outcome_options"]),
         ("pilot", PILOT_PARSER_RS, &["parse_pilot_options"]),
@@ -2152,7 +2153,7 @@ fn parse_demo<'a>(xs: &'a str) {
     /// `*_suggests_the_nearest_flag_for_a_typo` in `commands/context.rs`,
     /// `commands/check.rs`, `commands/doctor.rs`, `commands/pilot.rs`,
     /// `commands/config.rs`, `commands/receipt.rs`, `commands/review_comments.rs`,
-    /// `commands.rs`, and
+    /// `commands/lsp.rs`, `commands.rs`, and
     /// `agent.rs`. The suggestion scoping tests in `suggest.rs` pin which of
     /// those flags belong to which sibling of a shared help body. Tightening
     /// this scanner to scrutinee position without a real Rust parser would
