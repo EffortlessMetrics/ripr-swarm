@@ -134,10 +134,10 @@ id = "output-contracts"
 posture = "required"
 workflow = ".github/workflows/ci.yml"
 jobs = ["rust"]
-commands = ["cargo xtask check-output-contracts", "cargo xtask check-fixture-contracts", "cargo xtask check-generated"]
-estimated_lem = 4
+commands = ["cargo xtask check-output-contracts", "cargo xtask check-fixture-contracts", "cargo xtask check-generated", "cargo xtask goldens check", "cargo xtask fixtures"]
+estimated_lem = 8
 artifact_families = ["ripr-evidence"]
-description = "Output, fixture, and generated artifact contract checks."
+description = "Output, fixture, golden, and generated artifact contract checks."
 
 [[lane]]
 id = "traceability"
