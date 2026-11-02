@@ -6,6 +6,7 @@ mod discover;
 mod module_graph;
 mod named_dependent_scope;
 mod path_dependencies;
+mod rust_project_facts;
 mod select;
 mod source_role;
 
