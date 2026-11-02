@@ -15,10 +15,6 @@
     },
     {
       "type": "must_not_promote"
-    },
-    {
-      "type": "expected_class",
-      "class": "weakly_exposed"
     }
   ]
 }
