@@ -1,4 +1,3 @@
-use super::ReviewPlacement;
 use crate::agent::loop_commands::display_path;
 use crate::analysis::ClassifiedSeam;
 use crate::app::agent_brief::{AgentBriefResolvedWorkingSet, AgentBriefSelectedSeam};
@@ -10,7 +9,6 @@ use crate::output::evidence_record::{
 use crate::output::gap_decision_ledger::GapRecord;
 use crate::output::markdown::code_span;
 use serde_json::{Value, json};
-use std::path::Path;
 
 use super::placement::{is_test_like_path, normalize_path_text};
 use super::render::gap_record_id;

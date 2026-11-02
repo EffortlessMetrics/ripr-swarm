@@ -7,40 +7,30 @@ use crate::agent::loop_commands::{
 };
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::canonical_gap_identity;
-use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::Mode;
-use crate::app::agent_brief::{
-    AgentBriefResolvedWorkingSet, AgentBriefSelectedSeam, AgentBriefSelection,
-    AgentBriefWhyNowReason,
-};
+use crate::app::agent_brief::AgentBriefSelectedSeam;
 use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::config::RiprConfig;
 use crate::output::agent_seam_packets;
 use crate::output::agent_seam_packets::missing_discriminator_records_for as missing_records_for;
 use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY, CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE,
-    EvidenceRecordStaticLimitation, NO_TEST_REACHES_OWNER_CATEGORY, actionability_for,
+    EvidenceRecordStaticLimitation, NO_TEST_REACHES_OWNER_CATEGORY,
     canonical_receipt_command_for, canonical_repair_command_for,
-    cross_language_test_target_unresolved, gap_state_for, static_limitations_for,
+    cross_language_test_target_unresolved, static_limitations_for,
 };
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute};
 use crate::output::markdown::{code_span, inline_prose};
 use serde_json::{Value, json};
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::Path;
 
-use super::ReviewPlacement;
-use super::placement::{is_test_like_path, normalize_path_text, placement_for, placement_json};
 use super::publish_plan::{
-    card_gap_state, card_is_actionable, changed_test_paths, gap_record_cap_suppressed_json,
-    reason_for, review_warnings_json, suggested_test_intent, suppressed_json,
+    card_gap_state,
+    reason_for, suggested_test_intent,
 };
 use super::{
-    DEFAULT_REVIEW_MAX_INLINE_COMMENTS, DEFAULT_REVIEW_MAX_SUMMARY_ITEMS,
-    LLM_PROMPT_VERIFY_SENTENCE, REVIEW_COMMENTS_SCHEMA_VERSION, ReviewCommentsAnalysisScope,
-    ReviewCommentsRenderContext, SUMMARY_REASON_INLINE_CAP_REACHED,
-    SUMMARY_REASON_NAVIGATION_ONLY_CROSS_LANGUAGE, SUMMARY_REASON_NO_SAFE_PLACEMENT,
+    LLM_PROMPT_VERIFY_SENTENCE, ReviewCommentsAnalysisScope,
 };
 
 pub(super) fn render_review_comments_markdown_value(

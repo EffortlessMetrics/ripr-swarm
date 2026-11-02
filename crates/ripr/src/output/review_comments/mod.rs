@@ -1,34 +1,18 @@
-use crate::agent::command_specs::command_displays_are_complete;
-use crate::agent::loop_commands::{
-    WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_BRIEF_ARTIFACT,
-    WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT,
-    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, display_path, portable_agent_brief_command,
-    portable_agent_verify_command, portable_check_analysis_outcome_command_with_base, shell_arg,
-};
-use crate::analysis::ClassifiedSeam;
-use crate::analysis::canonical_gap::canonical_gap_identity;
+use crate::agent::loop_commands::display_path;
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::Mode;
 use crate::app::agent_brief::{
-    AgentBriefResolvedWorkingSet, AgentBriefSelectedSeam, AgentBriefSelection,
+    AgentBriefResolvedWorkingSet, AgentBriefSelection,
     AgentBriefWhyNowReason,
 };
 use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::config::RiprConfig;
 use crate::output::agent_seam_packets;
-use crate::output::agent_seam_packets::missing_discriminator_records_for as missing_records_for;
-use crate::output::evidence_record::{
-    CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY, CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE,
-    EvidenceRecordStaticLimitation, NO_TEST_REACHES_OWNER_CATEGORY, actionability_for,
-    canonical_receipt_command_for, canonical_repair_command_for,
-    cross_language_test_target_unresolved, gap_state_for, static_limitations_for,
-};
-use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute};
-use crate::output::markdown::{code_span, inline_prose};
+use crate::output::evidence_record::cross_language_test_target_unresolved;
+use crate::output::gap_decision_ledger::GapRecord;
 #[cfg(test)]
 use crate::testing::cwd_placeholder::project_cwd_text;
 use serde_json::{Value, json};
-use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -53,7 +37,7 @@ use render::{
 };
 
 #[cfg(test)]
-use publish_plan::{card_gap_state, suggested_test_intent};
+use publish_plan::suggested_test_intent;
 pub(crate) const REVIEW_COMMENTS_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const DEFAULT_REVIEW_MAX_INLINE_COMMENTS: usize = 3;
 pub(crate) const DEFAULT_REVIEW_MAX_SUMMARY_ITEMS: usize = 10;
@@ -498,6 +482,9 @@ pub(crate) const LLM_PROMPT_VERIFY_SENTENCE: &str = "Verify with ripr agent veri
 
 #[cfg(test)]
 mod tests {
+    use crate::agent::loop_commands::shell_arg;
+    use crate::output::agent_seam_packets::missing_discriminator_records_for as missing_records_for;
+    use crate::output::markdown::code_span;
     use super::publish_plan::reason_for;
     use super::render::{
         gap_record_related_test, push_analysis_scope_summary, push_markdown_items, repair_intent,
