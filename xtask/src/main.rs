@@ -27,6 +27,7 @@ mod blind_journey;
 mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
+mod cache_payload_tamper_recovery;
 mod check_fast_cli;
 mod check_fast_selector;
 mod command;
