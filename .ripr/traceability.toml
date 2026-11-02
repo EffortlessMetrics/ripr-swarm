@@ -21430,6 +21430,28 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0403"
+name = "PowerShell edition, module, pipeline, stream, Pester, and system-effect evidence contracts"
+spec = "docs/specs/RIPR-SPEC-0403-powershell-edition-module-pipeline-stream-pester-system-effect-evidence-contracts.md"
+tests = []
+fixtures = [
+  "fixtures/rust-verdict-corpus/spec-scopes/RIPR-SPEC-0403.toml",
+  "fixtures/python-verdict-corpus/spec-scopes/RIPR-SPEC-0403.toml",
+  "fixtures/typescript-verdict-corpus/spec-scopes/RIPR-SPEC-0403.toml",
+  "fixtures/perl-verdict-corpus/spec-scopes/RIPR-SPEC-0403.toml",
+]
+code = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0403-powershell-edition-module-pipeline-stream-pester-system-effect-evidence-contracts.md",
+  "docs/spec-index.d/RIPR-SPEC-0403.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0403.toml",
+]
+metrics = [
+  "powershell_evidence_contract_registered",
+  "powershell_capability_cell_index_complete",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0406"
 name = "Terraform module, native-test, plan/apply, provider, value, state, and external-edge preview boundaries"
 spec = "docs/specs/RIPR-SPEC-0406-terraform-module-native-test-plan-apply-provider-value-state-and-external-edge-boundaries.md"
