@@ -2308,16 +2308,17 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
     use crate::output::agent_seam_packets::targeted_test_brief_outline_for_classified_seam;
 
     let artifacts = pilot_artifacts();
-    for (test_files, eligible, offered_expected) in [
-        (&["tests/pricing.rs"][..], true, true),
+    for (test_files, eligible, offered_expected, rankable) in [
+        (&["tests/pricing.rs"][..], true, true, true),
         (
             &["tests/pricing.rs", "tests/pricing.test.ts"][..],
+            false,
             false,
             false,
         ),
         // Eligible, but the recommended test is an inline module in a
         // production file, which `agent repair` refuses as an edit target.
-        (&["src/pricing.rs"][..], true, false),
+        (&["src/pricing.rs"][..], true, false, true),
     ] {
         let test_file = test_files.join(" + ");
         let entry = route_ready_entry(test_files);
@@ -2356,9 +2357,25 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
             serde_json::from_str(&json).map_err(|e| format!("parse pilot JSON: {e}\n{json}"))?;
         let md = render_pilot_summary_md(&entries, pilot_context(&artifacts));
 
-        // Both must be the ranked top seam, or the negative half is vacuous.
-        if !terminal.contains(&format!("gap {}: ", entries[0].seam.id().as_str())) {
-            return Err(format!("{test_file}: must be the top seam\n{terminal}"));
+        if rankable {
+            // Both must be the ranked top seam, or the negative half is vacuous.
+            if !terminal.contains(&format!("gap {}: ", entries[0].seam.id().as_str())) {
+                return Err(format!("{test_file}: must be the top seam\n{terminal}"));
+            }
+        } else {
+            assert_eq!(
+                summary["withheld_static_limitations_total"], 1,
+                "{test_file}: cross-language static limitation must be withheld\n{json}"
+            );
+            assert_eq!(
+                summary["top_actionable_seams"],
+                serde_json::json!([]),
+                "{test_file}\n{json}"
+            );
+            assert!(
+                terminal.contains("none ranked: 1 seam were withheld"),
+                "{test_file}\n{terminal}"
+            );
         }
         let offered = [
             terminal.contains(&format!("  repair this gap: {command}\n")),
