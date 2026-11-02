@@ -2187,7 +2187,10 @@ keys); do not take the next number.
   judged on its syntax tree (identifiers, property names, `this`,
   `new.target`, `with`), so the same words in a title, string or comment no
   longer unresolve the table; a text that does not parse keeps the
-  whole-word check, which refuses them anywhere. Unit
+  whole-word check, which refuses them anywhere. A computed member key
+  (`globalThis["eval"]`, `globalThis["eval" + ""]`) is a route when a string
+  or template text inside it holds one of the words. `for...of` tables keep
+  the raw-text statement-list and loop-body guards (#12572). Unit
   `row_text_guard_refuses_hidden_mutation_routes_outside_quotes`; fixture
   `ts_table_row_quoted_words_credited` pins a credited quoted-word title and a
   refused real `this`.

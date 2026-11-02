@@ -53,7 +53,7 @@ fn has_hidden_mutation_route(text: &str) -> bool {
     if parsed.panicked || !parsed.errors.is_empty() {
         return substring();
     }
-    let mut finder = HiddenRouteFinder(false);
+    let mut finder = HiddenRouteFinder(false, 0);
     oxc_ast_visit::Visit::visit_program(&mut finder, &parsed.program);
     finder.0
 }
@@ -61,7 +61,7 @@ fn has_hidden_mutation_route(text: &str) -> bool {
 /// Sets its flag on any identifier-like name in [`HIDDEN_ROUTE_WORDS`]
 /// (references, bindings, labels and property names, so `globalThis.eval`
 /// is a route), on `this`, on `new.target`/`import.meta` and on `with`.
-struct HiddenRouteFinder(bool);
+struct HiddenRouteFinder(bool, u32);
 
 impl<'a> oxc_ast_visit::Visit<'a> for HiddenRouteFinder {
     fn visit_identifier_name(&mut self, it: &oxc_ast::ast::IdentifierName<'a>) {
@@ -85,28 +85,38 @@ impl<'a> oxc_ast_visit::Visit<'a> for HiddenRouteFinder {
     fn visit_with_statement(&mut self, _it: &oxc_ast::ast::WithStatement<'a>) {
         self.0 = true;
     }
-    /// `globalThis["eval"]` reaches the same route as `globalThis.eval`, so a
-    /// computed key spelled as a hidden word is a route even though it is a
-    /// string. A string anywhere else (a title, an expected value) is not.
+    /// `globalThis["eval"]` reaches the same route as `globalThis.eval`, and
+    /// so does `globalThis["eval" + ""]`, so inside a computed member key
+    /// a string or template text that holds a
+    /// hidden word as a whole word is a route. A string anywhere else (a
+    /// title, an expected value) is not.
     fn visit_computed_member_expression(
         &mut self,
         it: &oxc_ast::ast::ComputedMemberExpression<'a>,
     ) {
-        let key = match &it.expression {
-            oxc_ast::ast::Expression::StringLiteral(lit) => Some(lit.value.as_str()),
-            oxc_ast::ast::Expression::TemplateLiteral(tpl)
-                if tpl.expressions.is_empty() && tpl.quasis.len() == 1 =>
-            {
-                tpl.quasis
-                    .first()
-                    .and_then(|q| q.value.cooked.as_ref())
-                    .map(|c| c.as_str())
-            }
-            _ => None,
-        };
-        self.0 |= key.is_some_and(|k| HIDDEN_ROUTE_WORDS.contains(&k));
-        oxc_ast_visit::walk::walk_computed_member_expression(self, it);
+        oxc_ast_visit::Visit::visit_expression(self, &it.object);
+        self.1 += 1;
+        oxc_ast_visit::Visit::visit_expression(self, &it.expression);
+        self.1 -= 1;
     }
+    fn visit_string_literal(&mut self, it: &oxc_ast::ast::StringLiteral<'a>) {
+        self.0 |= self.1 > 0 && text_names_hidden_word(it.value.as_str());
+    }
+    fn visit_template_element(&mut self, it: &oxc_ast::ast::TemplateElement<'a>) {
+        let text = it
+            .value
+            .cooked
+            .as_ref()
+            .map_or(it.value.raw.as_str(), |cooked| cooked.as_str());
+        self.0 |= self.1 > 0 && text_names_hidden_word(text);
+    }
+}
+
+/// Whether `text` holds a hidden-route word as a whole word.
+fn text_names_hidden_word(text: &str) -> bool {
+    HIDDEN_ROUTE_WORDS
+        .iter()
+        .any(|word| super::match_object_guard::whole_word_count(text, word) > 0)
 }
 
 /// The one guard every row-table entry path runs on its whole call text
@@ -687,6 +697,9 @@ mod tests {
             "(t) => { globalThis[\"eval\"](\"p=1\"); expect(f(t.a)).toBe(t.out); }",
             "(t) => { const F = window[\"Function\"]; F(\"return 1\")(); expect(f(t.a)).toBe(t.out); }",
             "(t) => { x[`this`]; expect(f(t.a)).toBe(t.out); }",
+            "(t) => { globalThis[\"eval\" + \"\"](\"p=1\"); expect(f(t.a)).toBe(t.out); }",
+            "(t) => { x[`${k}Function`]; expect(f(t.a)).toBe(t.out); }",
+            "(t) => { globalThis[(\"ev\", \"eval\")](\"p=1\"); expect(f(t.a)).toBe(t.out); }",
             "(t) => { expect(f(t.a, new Function(\"1\")())).toBe(t.out); }",
             "(t) => { expect(f(t.a, this.x)).toBe(t.out); }",
             "(t) => { expect(f(t.a, new.target)).toBe(t.out); }",
