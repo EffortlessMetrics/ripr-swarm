@@ -3089,9 +3089,10 @@ pub(crate) fn assertion_root_is_available(path: &str, node: &ra_ap_syntax::Synta
                 }))
 }
 
-/// Parser oracle admission for qualified drop-in assertion paths. Shares the
-/// whole-file glob refusal in [`assertion_root_binding_is_unrebound`], which
-/// closes the out-of-line-module glob gap (#7641).
+/// Parser oracle admission for qualified drop-in assertion paths. External
+/// drop-in crates (`pretty_assertions::`, etc.) fail closed on any whole-file
+/// glob import (#7641). Standard roots keep the existing parser path; their
+/// glob and manifest checks stay in owner-pin admission.
 fn qualified_drop_in_parser_rebound(
     macro_name: &str,
     node: &ra_ap_syntax::SyntaxNode,
@@ -3100,9 +3101,20 @@ fn qualified_drop_in_parser_rebound(
     if drop_in_root_may_be_rebound(macro_name, node, scope) {
         return true;
     }
+    let path = macro_name.strip_prefix("::").unwrap_or(macro_name);
+    let Some((root, _)) = path.split_once("::") else {
+        return false;
+    };
+    if matches!(root, "std" | "core") {
+        return false;
+    }
     drop_in_assertion_leaf(macro_name).is_some()
         && matches!(scope, DropInScope::WholeFile)
-        && !assertion_root_binding_is_unrebound(macro_name, node)
+        && node.ancestors().last().is_some_and(|file| {
+            file.descendants()
+                .filter_map(ast::UseTree::cast)
+                .any(|tree| tree.star_token().is_some())
+        })
 }
 
 /// Whether a crate-qualified drop-in assertion (`pretty_assertions::assert_eq!`)
