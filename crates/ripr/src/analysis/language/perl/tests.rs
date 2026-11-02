@@ -267,10 +267,7 @@ fn perl_fact_packet_adapter_accepts_v1_and_v2_schema_versions() -> Result<(), St
     let v1 = consume(EXACT_RETURN_PACKET)?;
     assert_eq!(v1.schema_version, crate::app::PERL_FACT_PACKET_SCHEMA);
 
-    let v2_text = EXACT_RETURN_PACKET.replace(
-        "\"ripr-perl-facts-v1\"",
-        "\"ripr-perl-facts-v2\"",
-    );
+    let v2_text = EXACT_RETURN_PACKET.replace("\"ripr-perl-facts-v1\"", "\"ripr-perl-facts-v2\"");
     let v2 = consume(&v2_text)?;
     assert_eq!(v2.schema_version, crate::app::PERL_FACT_PACKET_V2_SCHEMA);
     Ok(())
