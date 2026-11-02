@@ -78,7 +78,7 @@ fork is permitted.
 
 Additive optional fields:
 
-- `language`: one of `rust`, `typescript`, `javascript`, `python`, `perl`.
+- `language`: one of `rust`, `typescript`, `javascript`, `python`, `perl`, `julia`.
   Omitted when unknown.
 - `language_status`: `stable` or `preview`. Omitted when `rust`.
 - `probe.owner`: stable owner identifier when a preview adapter can map the
@@ -134,6 +134,9 @@ Routing rules:
 - `*.js`, `*.jsx`, `*.mjs`, `*.cjs` → TypeScript-family adapter with
   JavaScript preview labels (preview, opt-in).
 - `*.py` → Python adapter (preview, opt-in).
+- `*.jl` → Julia adapter (preview, opt-in) when enabled and the binary was
+  built with `lang-julia`; routes production and test Julia sources only after
+  project role classification (see RIPR-SPEC-0405).
 - Perl fact-packet preview is a producer/consumer path, not a live Perl parser
   route in this contract slice. A configured Perl language value must fail
   closed unless the binary was built with `lang-perl`, and `ripr check` must not
@@ -146,7 +149,7 @@ Repo configuration adds a `[languages]` section to `ripr.toml`:
 ```toml
 [languages]
 enabled = ["rust"]
-# Preview adapters are opt-in. Adding "typescript", "python", or "perl" enables
+# Preview adapters are opt-in. Adding "typescript", "python", "perl", or "julia" enables
 # the corresponding preview surface when the binary supports it.
 ```
 
@@ -180,7 +183,7 @@ default build may include preview adapter support, but Rust-only binaries
 are allowed. If `languages.enabled` names a preview language that was not
 compiled into the current binary, config validation must fail closed with
 an actionable message naming the missing Cargo feature, such as
-`lang-typescript`, `lang-python`, or `lang-perl`. The editor and other projection
+`lang-typescript`, `lang-python`, `lang-perl`, or `lang-julia`. The editor and other projection
 surfaces must treat that as unavailable adapter state, not as a reason to
 invent diagnostics.
 
@@ -288,6 +291,8 @@ Follow-up fixtures and tests cover:
   unsupported values.
 - Repo configuration parsing rejects `perl` with a clear `lang-perl` message
   when the current binary lacks the Perl preview feature.
+- Repo configuration parsing rejects `julia` with a clear `lang-julia` message
+  when the current binary lacks the Julia preview feature.
 - Generated CI fixtures for Rust-default and language-grouped advisory
   summaries.
 

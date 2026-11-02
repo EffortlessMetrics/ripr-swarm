@@ -69,8 +69,8 @@ enabled = ["rust", "julia"]
 and the `lang-julia` Cargo feature when compiled. It routes at least:
 
 - `*.jl` source files;
-- `Project.toml`, bounded `Manifest.toml` context, and `JuliaProject.toml` markers
-  as project/environment facts only;
+- `Project.toml`, bounded `Manifest.toml` / `JuliaManifest.toml` context, and
+  `JuliaProject.toml` markers as project/environment facts only;
 - `scripts/` and `test/` paths by declared role, not by filename alone.
 
 It emits the same RIPR fact families as other preview adapters and tags each
@@ -113,11 +113,10 @@ or oracle eligibility.
 | Wire language | `julia` |
 | Feature gate | `lang-julia` |
 | File routing | `.jl` production, test, script, and generated sources after role classification |
-| Version evidence | Optional `compat` / `julia = "..."` bounds from `Project.toml` when parsed statically; never inherit host `julia --version` silently |
-| Environment | Bounded `Manifest.toml` / `[compat]` snapshot ids with explicit `currentness`; unresolved selected environment names a limitation |
+| Environment | Bounded `Manifest.toml` or `JuliaManifest.toml` snapshot plus `[compat]` bounds from `Project.toml` or `JuliaProject.toml` when parsed statically; never inherit host `julia --version` silently |
 
-Build-only paths (`Project.toml`, `Manifest.toml`, `Artifacts.toml`, CI YAML) feed
-**project facts** only and MUST NOT enter semantic adapters as mutation owners
+Build-only paths (`Project.toml`, `JuliaProject.toml`, `Manifest.toml`,
+`JuliaManifest.toml`, `Artifacts.toml`, CI YAML) feed **project facts** only and MUST NOT enter semantic adapters as mutation owners
 unless a later slice explicitly classifies a script role.
 
 ### Project, package, and source roles
@@ -143,7 +142,8 @@ Owners the adapter must recognise:
 - `struct` and `mutable struct` types, inner constructors, and outer constructor
   methods;
 - callable objects (`struct` + `(obj)(args...)` when syntactically bound);
-- macros (`macro`, `@macro` definitions) as definition sites, not expanded bodies;
+- macros (`macro NAME ... end` definitions; `@NAME` invocation sites as syntactic
+  context only, not expanded bodies);
 - `@generated` function definitions;
 - package **extension** activation sites tied to `[extensions]` entries when
   syntactically declared.
@@ -324,8 +324,9 @@ capability reporting by analysis mode but does not define corpus files here.
 
 This spec slice is documentation-only. Satisfaction requires:
 
-- this document with positive and negative acceptance examples for every contract
-  family above;
+- this document with positive and negative acceptance examples for each contract
+  family named in **Behavior** (wire/project, owners, probes, Test activation,
+  numerical, array, relations, native/GPU, limitations);
 - `docs/spec-index.d/RIPR-SPEC-0405.md` index row;
 - `.ripr/traceability.d/` behavior entry;
 - `metrics/capabilities.toml` and `docs/CAPABILITY_MATRIX.md` rows for
@@ -432,12 +433,40 @@ Expected: `exception_path` oracle with resolvable `ArgumentError` type.
 ### 9. `@test_skip` activation (activation)
 
 ```julia
-@test_skip "later" 1 == 2
+@testset "later" begin
+    @test_skip 1 == 2
+end
 ```
 
 Expected: `skipped` activation; must not suppress unrelated active tests (#5542).
 
-### 10. Macro expansion limit (negative)
+### 10. Vendor source role deny (negative)
+
+A changed seam under `vendor/` or a declared vendored tree. Expected: file tagged
+`vendor` role; probes refused or marked ineligible for mutation seams.
+
+### 11. Opaque property macro (negative)
+
+```julia
+@test isapprox_prop(x, y)
+```
+
+where `isapprox_prop` is a custom property macro. Expected:
+`julia_opaque_property` limit unless the macro body is on a closed inspect list.
+
+### 12. External state limit (negative)
+
+Production reads `ENV["API_URL"]` without a local test binding that fixes the
+value. Expected: `julia_external_state` at the read site; no strong oracle from
+ENV name alone.
+
+### 13. Unresolved manifest environment (negative)
+
+`Project.toml` present but selected manifest digest ambiguous between
+`Manifest.toml` and `JuliaManifest.toml`. Expected:
+`julia_manifest_unresolved`; no package-version reach claims.
+
+### 14. Macro expansion limit (negative)
 
 ```julia
 @my_macro generate_tests()
@@ -446,7 +475,7 @@ Expected: `skipped` activation; must not suppress unrelated active tests (#5542)
 Expected: `julia_macro_expansion` or `julia_custom_test_macro`; no oracle credit
 from macro name alone.
 
-### 11. `@generated` limit (negative)
+### 15. `@generated` limit (negative)
 
 ```julia
 @generated function foo(x)
@@ -456,7 +485,7 @@ end
 
 Expected: `julia_generated_function`; no promotion without evidenced expansion body.
 
-### 12. World age / eval limit (negative)
+### 16. World age / eval limit (negative)
 
 ```julia
 eval(:(f(x)))
@@ -464,7 +493,7 @@ eval(:(f(x)))
 
 Expected: `julia_eval_metaprogramming` or `julia_world_age`; not `no_static_path`.
 
-### 13. Native `ccall` without edge (negative)
+### 17. Native `ccall` without edge (negative)
 
 ```julia
 ccall(:libfoo, Cint, (Cint,), 1)
@@ -473,12 +502,12 @@ ccall(:libfoo, Cint, (Cint,), 1)
 Expected: `julia_native_ccall` or shared `cross_language_edge_missing`; no reach
 from symbol spelling.
 
-### 14. Native `ccall` with #5559 edge (positive)
+### 18. Native `ccall` with #5559 edge (positive)
 
 When a registered edge links Julia call site to foreign descriptor. Expected:
 cross-language relation cites edge id and digest; both-side descriptors present.
 
-### 15. GPU kernel without edge (negative)
+### 19. GPU kernel without edge (negative)
 
 ```julia
 CUDA.@cuda mykernel!(A)
@@ -486,17 +515,17 @@ CUDA.@cuda mykernel!(A)
 
 Expected: `julia_gpu_kernel`; no callee-name reach.
 
-### 16. Package extension declaration (positive)
+### 20. Package extension declaration (positive)
 
 `Project.toml` lists `[extensions]` entry `MyExt = "WeakDep"`. Expected: static
 extension registration fact; activation unknown until evidenced or limited.
 
-### 17. Project dependency not reach (negative)
+### 21. Project dependency not reach (negative)
 
 `[deps]` lists `LinearAlgebra` but test only mentions package name in a string.
 Expected: no related-test edge from dependency string.
 
-### 18. `@allocated` declaration (distinct fact)
+### 22. `@allocated` declaration (distinct fact)
 
 ```julia
 @test @allocated foo() == 0
@@ -505,7 +534,7 @@ Expected: no related-test edge from dependency string.
 Expected: `allocation_declared` separate from return-value and mutation facts;
 `julia_runtime_inference` when static proof requires runtime counters.
 
-### 19. Callable object owner (positive)
+### 23. Callable object owner (positive)
 
 ```julia
 struct Adder
@@ -516,7 +545,7 @@ end
 
 Expected: `callable_object` owner for `(a::Adder)(x)` method distinct from struct type.
 
-### 20. Exact span requirement (positive)
+### 24. Exact span requirement (positive)
 
 Any emitted probe or owner fact must cite exact start/end byte or line/column
 spans in adapter output metadata from the first implementation.
