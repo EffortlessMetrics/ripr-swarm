@@ -7676,7 +7676,7 @@ impl Backend {
             "invalidation_reason": reason,
             "recovery_route": REFRESH_COMMAND,
             "recovery_command": REFRESH_COMMAND,
-            "limits_note": "Static editor evidence only; refresh before using seam context or repair guidance.",
+            "limits_note": "Static editor evidence only; refresh before using gap context or repair guidance.",
         })
     }
 
@@ -9256,13 +9256,13 @@ fn top_limitation_dto(
             "seams_deferred",
             "seams_deferred",
             "deferred",
-            "interactive analysis deferred the expensive seam inventory".to_string(),
+            "interactive analysis deferred the full gap list".to_string(),
             "refresh",
             Vec::new(),
             1,
             1,
             vec![
-                "seam evidence is incomplete",
+                "gap evidence is incomplete",
                 "not test adequacy",
                 "not runtime evidence",
             ],

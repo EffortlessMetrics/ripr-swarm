@@ -1012,7 +1012,7 @@ const SOURCE_TEXT_AFTER_COLON_PREFIXES: &[&str] = &[
     "Propagation witness is incomplete for ",
     "Related tests appear to reach ",
     "No test is seen calling ",
-    "Related tests exercise the wrapper seam's converted callee",
+    "Related tests exercise the wrapper seam's converted callee", // user-text-exempt: matches producer text
     "Detected test input literal matching changed boundary",
 ];
 
@@ -1049,6 +1049,10 @@ fn plain_hover_summary(text: &str) -> String {
             "Discriminator" => out.push_str("Check"),
             "discriminators" => out.push_str("checks"),
             "Discriminators" => out.push_str("Checks"),
+            "seam" => out.push_str("spot"),
+            "Seam" => out.push_str("Spot"),
+            "seams" => out.push_str("spots"),
+            "Seams" => out.push_str("Spots"),
             _ => out.push_str(word),
         }
         word.clear();
@@ -2974,6 +2978,20 @@ mod plain_hover_summary_tests {
         assert_eq!(
             plain_hover_summary("no strong discriminator for `x"),
             "no strong discriminator for `x"
+        );
+    }
+
+    #[test]
+    fn says_spot_where_the_producer_says_seam() {
+        assert_eq!(
+            plain_hover_summary(
+                "Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): seam_helper, seam"
+            ),
+            "Related tests exercise the wrapper spot's converted callee (the changed owner is not invoked by them): seam_helper, seam"
+        );
+        assert_eq!(
+            plain_hover_summary("no test reaches this seam; other seams are fine"),
+            "no test reaches this spot; other spots are fine"
         );
     }
 

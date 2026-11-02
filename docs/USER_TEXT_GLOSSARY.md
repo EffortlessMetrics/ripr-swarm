@@ -49,6 +49,17 @@ changed behavior, related test, Next step, base/head, doctor, pilot.
   `agent card` (unknown ID and a real gap), `agent packet`, `agent repair`,
   and the help screens (`--help`, `help --all`, and `help <command>`).
 
+- the editor strings of the LSP sidecar (#12213), surface `lsp-source`: every
+  quoted string literal in the non-test Rust sources under
+  `crates/ripr/src/lsp/` (status messages, hover, code actions, lens, error
+  strings sent to editors). Comments, test modules (`tests.rs`, `*_tests.rs`,
+  everything after `#[cfg(test)]`) and literals made only of identifier
+  characters (JSON keys, ids, `seams_deferred`) are skipped. A literal that must
+  keep a banned word (a machine diagnostic code, or text matched against a
+  producer's own wording) carries `user-text-exempt: <reason>` on its line or
+  the comment line above. The ceilings are in the baseline file like any other
+  surface; `seam` and `discriminator` have none, so any new use fails.
+
 Explicitly not scanned (the allowlist printed in every report):
 
 - `fixtures/**/expected/human-full.txt` and any `--format human-full` output;

@@ -1348,6 +1348,237 @@ fn scan_live(bin: &Path, root: &Path, counts: &mut Counts) -> Result<Vec<String>
     Ok(scanned)
 }
 
+// ------------------------------------------------------------- LSP strings
+
+const LSP_SURFACE: &str = "lsp-source";
+const LSP_EXEMPT_MARKER: &str = "user-text-exempt";
+const LSP_SOURCE_DIR: &str = "crates/ripr/src/lsp";
+
+/// Prose string literals of a Rust source as `(line, text)`.
+///
+/// Comments, character literals and everything from the first `#[cfg(test)]`
+/// line on (the test module) are skipped. A literal made only of identifier
+/// characters (`"seams_deferred"`, `"missing_discriminator"`) is a machine key,
+/// not prose, and is dropped; a label such as `"Seam:"` and any sentence is kept.
+pub(crate) fn rust_prose_segments(source: &str) -> Vec<(usize, String)> {
+    let mut kept = String::new();
+    let mut source_lines = source.lines().peekable();
+    while let Some(line) = source_lines.next() {
+        // Skip an inline `#[cfg(test)] mod name { .. }` (rustfmt closes it with
+        // a `}` in column 0). A `mod name;` declaration and a `#[cfg(test)]`
+        // helper item are production-adjacent and only their own line is kept
+        // out of the scan by the caller's file selection.
+        let is_test_mod = line.trim() == "#[cfg(test)]"
+            && source_lines
+                .peek()
+                .is_some_and(|next| next.starts_with("mod ") && next.trim_end().ends_with('{'));
+        if is_test_mod {
+            for skipped in source_lines.by_ref() {
+                kept.push('\n');
+                if skipped == "}" {
+                    break;
+                }
+            }
+            kept.push('\n');
+            continue;
+        }
+        kept.push_str(line);
+        kept.push('\n');
+    }
+    let chars: Vec<char> = kept.chars().collect();
+    let mut out: Vec<(usize, String)> = Vec::new();
+    let mut line = 1usize;
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\n' {
+            line += 1;
+            i += 1;
+        } else if c == '/' && chars.get(i + 1) == Some(&'/') {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+        } else if c == '/' && chars.get(i + 1) == Some(&'*') {
+            i += 2;
+            while i < chars.len() && !(chars[i] == '*' && chars.get(i + 1) == Some(&'/')) {
+                if chars[i] == '\n' {
+                    line += 1;
+                }
+                i += 1;
+            }
+            i += 2;
+        } else if c == '\'' {
+            // A char literal ('"', '\n') closes within a few characters; a
+            // lifetime ('a) has no closing quote there and is left alone.
+            if chars.get(i + 1) == Some(&'\\') && chars.get(i + 3) == Some(&'\'') {
+                i += 4;
+            } else if chars.get(i + 2) == Some(&'\'') {
+                i += 3;
+            } else {
+                i += 1;
+            }
+        } else if c == 'r'
+            && matches!(chars.get(i + 1), Some('"' | '#'))
+            && (i == 0 || !is_word_char_c(chars[i - 1]))
+        {
+            let mut j = i + 1;
+            let mut hashes = 0usize;
+            while chars.get(j) == Some(&'#') {
+                hashes += 1;
+                j += 1;
+            }
+            if chars.get(j) != Some(&'"') {
+                i += 1;
+                continue;
+            }
+            j += 1;
+            let start_line = line;
+            let mut text = String::new();
+            while j < chars.len() {
+                if chars[j] == '"' && (0..hashes).all(|h| chars.get(j + 1 + h) == Some(&'#')) {
+                    break;
+                }
+                if chars[j] == '\n' {
+                    line += 1;
+                }
+                text.push(chars[j]);
+                j += 1;
+            }
+            out.push((start_line, text));
+            i = j + 1 + hashes;
+        } else if c == '"' {
+            let start_line = line;
+            let mut text = String::new();
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                if chars[i] == '\\' {
+                    i += 1;
+                    match chars.get(i) {
+                        Some('\n') => {
+                            // Line continuation: skip the newline and indent.
+                            while chars.get(i).is_some_and(|c| c.is_whitespace()) {
+                                if chars[i] == '\n' {
+                                    line += 1;
+                                }
+                                i += 1;
+                            }
+                        }
+                        Some('n') => {
+                            text.push('\n');
+                            i += 1;
+                        }
+                        Some(other) => {
+                            text.push(*other);
+                            i += 1;
+                        }
+                        None => {}
+                    }
+                    continue;
+                }
+                if chars[i] == '\n' {
+                    line += 1;
+                }
+                text.push(chars[i]);
+                i += 1;
+            }
+            out.push((start_line, text));
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+    out.retain(|(_, text)| {
+        !text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-' | '/' | ':' | '#'))
+    });
+    // A literal that must hold the word (a machine code, or text matched
+    // against a producer's own wording) says so with `user-text-exempt` on its
+    // line or the comment line above. The reason after the marker is for the reader.
+    let lines: Vec<&str> = kept.lines().collect();
+    out.retain(|(number, _)| {
+        let here = lines.get(number - 1).copied().unwrap_or_default();
+        let above = number
+            .checked_sub(2)
+            .and_then(|at| lines.get(at))
+            .copied()
+            .unwrap_or_default();
+        !(here.contains(LSP_EXEMPT_MARKER)
+            || (above.trim_start().starts_with("//") && above.contains(LSP_EXEMPT_MARKER)))
+    });
+    out
+}
+
+fn is_word_char_c(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// Non-test Rust sources of the LSP sidecar: `crates/ripr/src/lsp/**/*.rs`
+/// minus test modules (`tests.rs`, `tests/`, `*_tests.rs`).
+pub(crate) fn lsp_source_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+        let entries =
+            fs::read_dir(dir).map_err(|err| format!("read dir {}: {err}", dir.display()))?;
+        for entry in entries {
+            let path = entry
+                .map_err(|err| format!("read dir {}: {err}", dir.display()))?
+                .path();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if path.is_dir() {
+                if name != "tests" {
+                    walk(&path, out)?;
+                }
+            } else if name.ends_with(".rs") && name != "tests.rs" && !name.ends_with("_tests.rs") {
+                out.push(path);
+            }
+        }
+        Ok(())
+    }
+    let mut out = Vec::new();
+    walk(&root.join(LSP_SOURCE_DIR), &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+/// Count banned terms in the user-visible prose of the LSP sources (status
+/// messages, hover, code-action, lens and error strings sent to editors). Each
+/// literal line counts once under the `lsp-source` surface. Returns the number
+/// of files and prose strings scanned.
+pub(crate) fn scan_lsp_prose(root: &Path, counts: &mut Counts) -> Result<(usize, usize), String> {
+    let files = lsp_source_files(root)?;
+    let mut strings = 0usize;
+    for path in &files {
+        let text =
+            fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+        let label = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        for (number, segment) in rust_prose_segments(&text) {
+            strings += 1;
+            for (offset, line) in segment.lines().enumerate() {
+                scan_text(
+                    LSP_SURFACE,
+                    &format!("{label}:{}", number + offset),
+                    line,
+                    counts,
+                );
+            }
+        }
+    }
+    if files.is_empty() || strings < 200 {
+        return Err(format!(
+            "check-user-text scanned too little LSP text ({} file(s), {strings} string(s)); is {LSP_SOURCE_DIR} the right directory? zero subjects is not a pass",
+            files.len()
+        ));
+    }
+    Ok((files.len(), strings))
+}
+
 // ------------------------------------------------------------------- report
 
 fn render_report(
@@ -1545,6 +1776,7 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
     // alter live output; a docs-only change scans the goldens only.
     // A foreign tree has no binary built from it, so its live output is not
     // judged here; the golden delta is the whole judgment in that mode.
+    let lsp_scanned = scan_lsp_prose(&root, &mut counts)?;
     let run_live =
         tree.is_none() && live_half_decision(full || ratchet || ripr.is_some(), changed_paths());
     let (live, baseline) = if run_live {
@@ -1563,11 +1795,16 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
         }
         let golden_only = baseline
             .into_iter()
-            .filter(|((surface, _), _)| surface == GOLDEN_SURFACE)
+            .filter(|((surface, _), _)| surface == GOLDEN_SURFACE || surface == LSP_SURFACE)
             .collect();
         (Vec::new(), golden_only)
     };
 
+    let mut live = live;
+    live.push(format!(
+        "{LSP_SURFACE} ({} file(s), {} string(s))",
+        lsp_scanned.0, lsp_scanned.1
+    ));
     let scanned = Scanned {
         counts,
         baseline,
@@ -3050,6 +3287,91 @@ mod tests {
             "{segments:?}"
         );
         assert_eq!(segments[1].0, 3);
+    }
+
+    fn lsp_counts(source: &str) -> Counts {
+        let mut counts = Counts::new();
+        for (number, segment) in rust_prose_segments(source) {
+            for (offset, line) in segment.lines().enumerate() {
+                scan_text(
+                    LSP_SURFACE,
+                    &format!("x.rs:{}", number + offset),
+                    line,
+                    &mut counts,
+                );
+            }
+        }
+        counts
+    }
+
+    /// Negative experiment (#12213): a banned word in an LSP editor string
+    /// exceeds the zero ceiling and fails; plain wording and machine keys pass.
+    #[test]
+    fn a_banned_word_in_an_lsp_string_fails_the_check() {
+        let baseline = Baseline::new();
+        let seeded = lsp_counts(
+            "fn m() -> String {\n    format!(\"run ripr.refreshDiagnostics for the full seam inventory\")\n}\n",
+        );
+        let failing = evaluate(&seeded, &baseline);
+        assert_eq!(failing.violations.len(), 1, "{failing:?}");
+        assert!(failing.violations[0].contains("`seam` in lsp-source"));
+        assert!(failing.violations[0].contains("x.rs:2"), "{failing:?}");
+
+        let multiline = lsp_counts("const A: &str = \"first line\nmissing discriminator here\";\n");
+        assert!(
+            multiline.contains_key(&(LSP_SURFACE.to_string(), "discriminator".to_string())),
+            "{multiline:?}"
+        );
+
+        let clean = lsp_counts(
+            "fn m() -> String {\n    format!(\"run ripr.refreshDiagnostics for every gap\")\n}\n",
+        );
+        assert_eq!(evaluate(&clean, &baseline), Evaluation::default());
+    }
+
+    #[test]
+    fn lsp_prose_scan_skips_keys_comments_tests_and_marked_literals() {
+        let source = concat!(
+            "// a seam comment\n",
+            "const KEY: &str = \"required_discriminator\";\n",
+            "const CODE: &str = \"seams_deferred\";\n",
+            "fn a() -> &'static str {\n",
+            "    // user-text-exempt: machine code\n",
+            "    \"ripr-seam-x seam\"\n",
+            "}\n",
+            "const B: &str = \"matches seam text\"; // user-text-exempt: producer wording\n",
+            "const C: &str = \"seam of the day\";\n",
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    const D: &str = \"test-only seam wording\";\n",
+            "}\n",
+        );
+        let segments = rust_prose_segments(source);
+        assert_eq!(
+            segments,
+            vec![(9, "seam of the day".to_string())],
+            "{segments:?}"
+        );
+    }
+
+    /// The committed LSP sources keep `seam` and `discriminator` out of
+    /// editor-visible strings, and the scan sees a real corpus.
+    #[test]
+    fn lsp_sources_use_plain_words_for_seam_and_discriminator() -> Result<(), String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut counts = Counts::new();
+        let (files, strings) = scan_lsp_prose(&root, &mut counts)?;
+        if files < 20 || strings < 200 {
+            return Err(format!(
+                "scanned too little: {files} files, {strings} strings"
+            ));
+        }
+        for term in ["seam", "discriminator"] {
+            if let Some(found) = counts.get(&(LSP_SURFACE.to_string(), term.to_string())) {
+                return Err(format!("`{term}` in LSP strings: {:?}", found.examples));
+            }
+        }
+        Ok(())
     }
 
     #[test]
