@@ -29,6 +29,7 @@ pub(crate) mod python_repair_binding;
 pub(crate) mod python_repair_verification;
 pub(crate) mod receipt;
 pub(crate) mod repair_attempt;
+pub(crate) mod repair_attempt_closeout_matrix;
 pub(crate) mod repair_card;
 /// Production handoff producer that assembles a `RepairCardV1` for one seam
 /// entry (#4667: card-first bounded agent handoff; canonical packet stays
@@ -71,6 +72,12 @@ pub use check::{check_workspace, check_workspace_repo, repo_seam_inventory_input
 /// (`cli::commands`) reference this single source of truth via
 /// `crate::app::PERL_FACT_PACKET_SCHEMA`.
 pub(crate) const PERL_FACT_PACKET_SCHEMA: &str = "ripr-perl-facts-v1";
+/// Consumer-side v2 wire schema accepted alongside v1 during the #3216 train.
+pub(crate) const PERL_FACT_PACKET_V2_SCHEMA: &str = "ripr-perl-facts-v2";
+
+pub(crate) fn is_supported_perl_fact_packet_schema(schema: &str) -> bool {
+    matches!(schema, PERL_FACT_PACKET_SCHEMA | PERL_FACT_PACKET_V2_SCHEMA)
+}
 
 /// The versioned envelope consumed by the producer-owned agent verification
 /// route and emitted by the agent seam packet renderer.

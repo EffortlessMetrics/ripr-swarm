@@ -1,0 +1,1 @@
+crates/ripr/src/app/repair_attempt_closeout_matrix.rs|child_process|1|#4799|Scenario catalog identity `compatibility.cleanup_no_owned_child_process_or_lock` is a pinned #4799 row id string, not a child-process spawn surface.
