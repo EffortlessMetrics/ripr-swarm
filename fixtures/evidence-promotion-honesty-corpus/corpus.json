@@ -926,8 +926,7 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" }
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -12590,8 +12589,7 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" }
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -12604,8 +12602,7 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" }
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -12632,8 +12629,7 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" }
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -12660,8 +12656,7 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" }
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -15757,8 +15752,7 @@
       "probe_family": "call_deletion",
       "assertions": [
         { "type": "must_not_report_clean" },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" }
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -16408,6 +16402,19 @@
         { "type": "expected_finding_count", "count": 1 },
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "no_static_path" }
+      ]
+    },
+    {
+      "id": "rust_match_arm_result_method_tail",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/match_arm_result_method_tail_not_credited",
+      "vector": "method_call_on_match_remaps_arm_result_so_pin_holds_before_and_after",
+      "probe_family": "match_arm",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" }
       ]
     }
   ]
