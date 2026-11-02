@@ -962,7 +962,8 @@ pub(super) fn collect_tests_from_statements(
                         ),
                 );
                 // pytest does not parametrize unittest methods; Hypothesis
-                // `@example` rows run under either framework.
+                // `@example` rows run only when settings still include
+                // `Phase.explicit`.
                 let parametrize = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list, parametrize_scope))
                     .flatten()
@@ -971,6 +972,7 @@ pub(super) fn collect_tests_from_statements(
                             source,
                             &function.args,
                             &function.decorator_list,
+                            &definition_imports,
                         )
                     });
                 let imports = test_imports(file, imports, &function.body);
@@ -1093,7 +1095,8 @@ pub(super) fn collect_tests_from_statements(
                     .collect();
                 let assertions = test_assertions(&function.body, source, function.range, false);
                 // pytest does not parametrize unittest methods; Hypothesis
-                // `@example` rows run under either framework.
+                // `@example` rows run only when settings still include
+                // `Phase.explicit`.
                 let parametrize = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list, parametrize_scope))
                     .flatten()
@@ -1102,6 +1105,7 @@ pub(super) fn collect_tests_from_statements(
                             source,
                             &function.args,
                             &function.decorator_list,
+                            &definition_imports,
                         )
                     });
                 let imports = test_imports(file, imports, &function.body);

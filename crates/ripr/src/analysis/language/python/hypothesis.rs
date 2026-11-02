@@ -6,19 +6,24 @@
 //! a conftest that does not exist. Positional strategies fill the rightmost
 //! positional parameters; keyword strategies fill the parameters they name.
 //!
-//! `@example(...)` rows always run, with literal values, so they bind owner
-//! inputs the way literal `parametrize` cases do (`parametrize.rs`). Positional
+//! `@example(...)` rows run only when Hypothesis's effective settings still
+//! include `Phase.explicit`; otherwise they are withheld. Positional
 //! values fill the rightmost parameters, as many as there are values (as
 //! Hypothesis zips them with the tail of the signature); keyword values fill
 //! the parameters they name. A chained example
 //! (`@example(1).xfail()`, `.via(...)`) is skipped: it may be expected to
 //! fail, and any example that is skipped only removes a row.
 
+use super::PythonImport;
 use super::expr_full_name;
 use super::parametrize::PythonParametrizeCases;
 use super::source_utils::text_for_range;
 use rustpython_parser::ast::{self, Expr, Ranged};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Hypothesis phase names ripr can read statically from `Phase.*` or string
+/// literals in a `phases=` list (#10752).
+const STATIC_PHASE_NAMES: &[&str] = &["explicit", "reuse", "generate", "shrink", "target"];
 
 /// Hypothesis's own decorator spelled bare or through the module.
 fn is_hypothesis_decorator(name: &str, decorator: &str) -> bool {
@@ -88,15 +93,115 @@ pub(super) fn given_parameter_names(args: &ast::Arguments, decorators: &[Expr]) 
     names
 }
 
+fn settings_phases(call: &ast::ExprCall) -> Option<&Expr> {
+    call.keywords
+        .iter()
+        .find(|keyword| {
+            keyword
+                .arg
+                .as_ref()
+                .is_some_and(|arg| arg.as_str() == "phases")
+        })
+        .map(|keyword| &keyword.value)
+}
+
+fn resolves_to_hypothesis_module(name: &str, imports: &[PythonImport]) -> bool {
+    if name == "hypothesis" {
+        return true;
+    }
+    imports.iter().rev().any(|import| {
+        import.alias == name && import.source_module.is_empty() && import.imported == "hypothesis"
+    })
+}
+
+fn resolves_to_hypothesis_phase_type(type_name: &str, imports: &[PythonImport]) -> bool {
+    if type_name == "hypothesis.Phase" {
+        return true;
+    }
+    if let Some(module) = type_name.strip_suffix(".Phase") {
+        return resolves_to_hypothesis_module(module, imports);
+    }
+    imports.iter().rev().any(|import| {
+        import.alias == type_name
+            && import.source_module == "hypothesis"
+            && import.imported == "Phase"
+    })
+}
+
+fn static_phase_member(expr: &Expr, imports: &[PythonImport]) -> Option<String> {
+    let full = expr_full_name(expr)?;
+    let (type_name, member) = full.rsplit_once('.')?;
+    if !STATIC_PHASE_NAMES.contains(&member) {
+        return None;
+    }
+    resolves_to_hypothesis_phase_type(type_name, imports).then(|| member.to_string())
+}
+
+fn static_phase_list(expr: &Expr, imports: &[PythonImport]) -> Option<BTreeSet<String>> {
+    let elements = match expr {
+        Expr::List(list) => &list.elts,
+        Expr::Tuple(tuple) => &tuple.elts,
+        _ => return None,
+    };
+    let mut phases = BTreeSet::new();
+    for element in elements {
+        if let Some(name) = static_phase_member(element, imports) {
+            phases.insert(name);
+            continue;
+        }
+        let Expr::Constant(constant) = element else {
+            return None;
+        };
+        let ast::Constant::Str(text) = &constant.value else {
+            return None;
+        };
+        if STATIC_PHASE_NAMES.contains(&text.as_str()) {
+            phases.insert(text.to_string());
+        } else {
+            return None;
+        }
+    }
+    Some(phases)
+}
+
+/// Whether any `@settings(phases=...)` on the test statically omits
+/// `Phase.explicit`, or phases cannot be read conservatively.
+fn explicit_examples_enabled(decorators: &[Expr], imports: &[PythonImport]) -> bool {
+    for decorator in decorators {
+        let Expr::Call(call) = decorator else {
+            continue;
+        };
+        if !expr_full_name(&call.func)
+            .is_some_and(|name| is_hypothesis_decorator(&name, "settings"))
+        {
+            continue;
+        }
+        let Some(phases_expr) = settings_phases(call) else {
+            continue;
+        };
+        let Some(phases) = static_phase_list(phases_expr, imports) else {
+            return false;
+        };
+        if !phases.contains("explicit") {
+            return false;
+        }
+    }
+    true
+}
+
 /// The literal-or-source rows of a `@given` test's `@example(...)`
 /// decorators, as parametrize-style cases, or None when there is no readable
-/// example.
+/// example or `@settings` withholds the explicit phase.
 pub(super) fn example_cases(
     source: &str,
     args: &ast::Arguments,
     decorators: &[Expr],
+    definition_imports: &[PythonImport],
 ) -> Option<PythonParametrizeCases> {
     given_call(decorators)?;
+    if !explicit_examples_enabled(decorators, definition_imports) {
+        return None;
+    }
     let positional = positional_parameters(args);
     let cases: Vec<BTreeMap<String, String>> = decorators
         .iter()
@@ -162,9 +267,9 @@ mod tests {
             .unwrap_or_default()
     }
 
-    fn examples(source: &str) -> Option<Vec<Vec<(String, String)>>> {
+    fn examples(source: &str, imports: &[PythonImport]) -> Option<Vec<Vec<(String, String)>>> {
         let f = function(source)?;
-        example_cases(source, &f.args, &f.decorator_list).map(|found| {
+        example_cases(source, &f.args, &f.decorator_list, imports).map(|found| {
             found
                 .cases
                 .into_iter()
@@ -201,11 +306,19 @@ mod tests {
         assert!(given_names("def test_a(x):\n    pass\n").is_empty());
     }
 
+    fn phase_imports() -> Vec<PythonImport> {
+        vec![PythonImport {
+            imported: "Phase".to_string(),
+            alias: "Phase".to_string(),
+            source_module: "hypothesis".to_string(),
+        }]
+    }
+
     #[test]
     fn example_rows_bind_the_given_parameters() {
         let source = "@given(st.integers(0, 100))\n@example(49)\n@example(score=50)\ndef test_a(score):\n    pass\n";
         assert_eq!(
-            examples(source),
+            examples(source, &[]),
             Some(vec![
                 vec![("score".to_string(), "49".to_string())],
                 vec![("score".to_string(), "50".to_string())],
@@ -216,12 +329,21 @@ mod tests {
     #[test]
     fn chained_examples_and_examples_without_given_record_no_row() {
         assert_eq!(
-            examples("@given(st.integers())\n@example(1).xfail()\ndef test_a(x):\n    pass\n"),
+            examples(
+                "@given(st.integers())\n@example(1).xfail()\ndef test_a(x):\n    pass\n",
+                &[]
+            ),
             None
         );
-        assert_eq!(examples("@example(1)\ndef test_a(x):\n    pass\n"), None);
         assert_eq!(
-            examples("@given(st.integers())\n@example(1, 2)\ndef test_a(x):\n    pass\n"),
+            examples("@example(1)\ndef test_a(x):\n    pass\n", &[]),
+            None
+        );
+        assert_eq!(
+            examples(
+                "@given(st.integers())\n@example(1, 2)\ndef test_a(x):\n    pass\n",
+                &[]
+            ),
             None
         );
     }
@@ -232,9 +354,56 @@ mod tests {
         // `@given` supplies.
         assert_eq!(
             examples(
-                "@given(st.integers(), st.integers())\n@example(5)\ndef test_a(lo, hi):\n    pass\n"
+                "@given(st.integers(), st.integers())\n@example(5)\ndef test_a(lo, hi):\n    pass\n",
+                &[],
             ),
             Some(vec![vec![("hi".to_string(), "5".to_string())]])
+        );
+    }
+
+    #[test]
+    fn examples_withheld_when_settings_omit_explicit_phase() {
+        let source = "@settings(phases=[Phase.generate])\n@given(st.integers(0, 100))\n@example(49)\ndef test_a(score):\n    pass\n";
+        assert_eq!(examples(source, &phase_imports()), None);
+    }
+
+    #[test]
+    fn examples_admitted_when_settings_include_explicit_phase() {
+        let source = "@settings(phases=[Phase.generate, Phase.explicit])\n@given(st.integers(0, 100))\n@example(49)\ndef test_a(score):\n    pass\n";
+        assert_eq!(
+            examples(source, &phase_imports()),
+            Some(vec![vec![("score".to_string(), "49".to_string())]])
+        );
+    }
+
+    #[test]
+    fn settings_below_given_still_governs_examples() {
+        let source = "@given(st.integers(0, 100))\n@settings(phases=[Phase.generate])\n@example(49)\ndef test_a(score):\n    pass\n";
+        assert_eq!(examples(source, &phase_imports()), None);
+    }
+
+    #[test]
+    fn unresolved_phases_withhold_examples() {
+        let source = "@settings(phases=enabled_phases())\n@given(st.integers())\n@example(1)\ndef test_a(x):\n    pass\n";
+        assert_eq!(examples(source, &[]), None);
+    }
+
+    #[test]
+    fn shadowed_phase_name_withholds_examples() {
+        let source = "@settings(phases=[Phase.generate])\n@given(st.integers())\n@example(1)\ndef test_a(x):\n    pass\n";
+        assert_eq!(examples(source, &[]), None);
+    }
+
+    #[test]
+    fn changing_only_settings_phases_toggles_example_rows() {
+        let base = "@given(st.integers(0, 100))\n@example(50)\ndef test_a(score):\n    pass\n";
+        let disabled = format!("@settings(phases=[Phase.generate])\n{base}");
+        let enabled = format!("@settings(phases=[Phase.explicit, Phase.generate])\n{base}");
+        let imports = phase_imports();
+        assert_eq!(examples(&disabled, &imports), None);
+        assert_eq!(
+            examples(&enabled, &imports),
+            Some(vec![vec![("score".to_string(), "50".to_string())]])
         );
     }
 }
