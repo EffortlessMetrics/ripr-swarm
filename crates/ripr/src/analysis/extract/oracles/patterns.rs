@@ -147,12 +147,15 @@ const VALUE_SUPPLYING_ADAPTERS: &[&str] = &[
 /// calls (`Some(..)`, `Result::eq(..)`, the assertion macro) keep their reading.
 fn err_constructor_feeds_value_adapter(line: &str) -> bool {
     let masked = strip_turbofish(&mask_comments_and_strings(line));
-    masked.match_indices("Err(").any(|(index, _)| {
-        let before_ok = masked[..index]
-            .chars()
-            .next_back()
-            .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
+    masked.match_indices("Err").any(|(index, _)| {
+        let is_token =
+            |ch: Option<char>| ch.is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
+        let before_ok = is_token(masked[..index].chars().next_back());
+        // `Err (..)` and a constructor separated from its `(` by a comment
+        // (blanked by the mask) are the same constructor as `Err(..)`.
+        let after = &masked[index + "Err".len()..];
         before_ok
+            && after.trim_start().starts_with('(')
             && enclosing_callee(&masked[..index])
                 .is_some_and(|name| VALUE_SUPPLYING_ADAPTERS.contains(&name))
     })
@@ -2791,6 +2794,10 @@ mod issue_12359_tests {
             r#"assert_eq!(Result::or::<u8, E>(parse("x"), Err(ParseError::Empty)), Err(ParseError::Empty));"#,
             r#"assert_eq!(find("x").ok_or(Err(ParseError::Empty)), Err(ParseError::Empty));"#,
             r#"assert_eq!(parse("x").or((Err(ParseError::Empty))).unwrap_err(), ParseError::Empty);"#,
+            r#"assert_eq!(parse("x").or(Err (ParseError::Empty)), Err(ParseError::Empty));"#,
+            r#"assert_eq!(parse("x").or(Err/* c */(ParseError::Empty)).unwrap_err(), ParseError::Empty);"#,
+            "assert_eq!(parse(\"x\").or(Err\n(ParseError::Empty)), Err(ParseError::Empty));",
+            r#"assert_eq!(parse("x").or /* c */ (Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);"#,
             r#"assert_eq!(parse("x").or(((Err(ParseError::Empty)))).unwrap_err(), ParseError::Empty);"#,
             r#"assert_eq!(parse("x"), Err(_));"#,
         ] {

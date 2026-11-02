@@ -21835,6 +21835,8 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
         "(Result::or(parse(\"1\"), Err(Fault::Odd)))",
         "parse(\"1\").or(Err(Fault::Odd))",
         "parse(\"1\").or((Err(Fault::Odd)))",
+        "parse(\"1\").or(Err (Fault::Odd))",
+        "parse(\"1\").or(Err/* c */(Fault::Odd))",
         "((Result::map_err(parse(\"1\"), |_| Fault::Odd)))",
         "parse(\"1\").map_err::<Fault, _>(|_| Fault::Odd)",
     ] {
@@ -21845,6 +21847,18 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
             mapped_turbofish.0,
             StageState::Yes,
             "a turbofish map_err is not a pin on the owner's error: {turbofish}"
+        );
+    }
+    for spelled in [
+        "assert_eq!(parse(\"1\").or(Err (Fault::Odd)), Err(Fault::Odd));",
+        "assert_eq!(parse(\"1\").or(Err/* c */(Fault::Odd)), Err(Fault::Odd));",
+        "assert_eq!(parse(\"1\").or(Err(Fault::Odd)), Err(Fault::Odd));",
+    ] {
+        let spaced = read(&format!("#[test] fn odd() {{ {spelled} }}"))?;
+        assert_ne!(
+            spaced.0,
+            StageState::Yes,
+            "an Err constructor spelled with spacing or a comment is still the test's own error: {spelled}"
         );
     }
     let grouped =
