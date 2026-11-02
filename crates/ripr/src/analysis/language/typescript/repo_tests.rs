@@ -35,7 +35,7 @@ fn run(root: &Path, limit: usize) -> Result<LanguageRepoResult, String> {
         ts_workspace_file_limit(),
         ts_file_read_limit(),
         ts_workspace_read_budget(),
-        &[],
+        &crate::config::TypescriptLanguageConfig::default(),
     )
 }
 
@@ -244,7 +244,7 @@ fn truncated_discovery_walk_is_partial() -> Result<(), String> {
         3,
         ts_file_read_limit(),
         ts_workspace_read_budget(),
-        &[],
+        &crate::config::TypescriptLanguageConfig::default(),
     );
     let _ = std::fs::remove_dir_all(&root);
     let reason = result?
@@ -361,7 +361,7 @@ fn over_read_bound_file_leaves_the_denominator_and_is_partial() -> Result<(), St
         ts_workspace_file_limit(),
         8,
         ts_workspace_read_budget(),
-        &[],
+        &crate::config::TypescriptLanguageConfig::default(),
     );
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
@@ -397,7 +397,10 @@ fn declared_handwritten_source_under_an_excluded_directory_is_admitted() -> Resu
         ts_workspace_file_limit(),
         ts_file_read_limit(),
         ts_workspace_read_budget(),
-        &declared,
+        &crate::config::TypescriptLanguageConfig {
+            handwritten_files: declared,
+            ..crate::config::TypescriptLanguageConfig::default()
+        },
     );
     let without_decl = run(&root, 800);
     let _ = std::fs::remove_dir_all(&root);
@@ -484,7 +487,7 @@ fn truncated_walk_names_the_discovery_cap_first_and_leaves_total_unknown() -> Re
         2,
         ts_file_read_limit(),
         ts_workspace_read_budget(),
-        &[],
+        &crate::config::TypescriptLanguageConfig::default(),
     );
     let _ = std::fs::remove_dir_all(&root);
     let accounting = result?.file_accounting;

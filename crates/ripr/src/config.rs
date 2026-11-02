@@ -45,12 +45,13 @@ pub use model::{
 };
 pub(crate) use model::{
     HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, PythonLanguageConfig, RustLanguageConfig,
-    perl_executable_opt_in,
+    TypescriptLanguageConfig, perl_executable_opt_in,
 };
 
 pub(crate) use preview_excluded::{
     is_probable_fixture_or_data_path, path_matches_preview_excluded_patterns,
 };
+#[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
 pub(crate) use python::{
     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, declared_python_handwritten_under,

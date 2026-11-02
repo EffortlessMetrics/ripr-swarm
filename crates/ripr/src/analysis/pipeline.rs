@@ -1638,7 +1638,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                         options,
                         oracle_policy,
                         preview_changed_files,
-                        &language_config.typescript.handwritten_files,
+                        &language_config.typescript,
                     )
                 })
             }
@@ -2525,11 +2525,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         let attempted = match language {
             LanguageId::TypeScript | LanguageId::JavaScript => {
                 contain_adapter_panic(options, *language, || {
-                    analyze_typescript_repo(
-                        options,
-                        oracle_policy,
-                        &language_config.typescript.handwritten_files,
-                    )
+                    analyze_typescript_repo(options, oracle_policy, &language_config.typescript)
                 })
             }
             LanguageId::Python => contain_adapter_panic(options, *language, || {
@@ -3126,10 +3122,10 @@ fn analyze_typescript_diff(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     changed_files: &[diff::ChangedFile],
-    handwritten: &[String],
+    typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageDiffResult, String> {
     let _ = oracle_policy;
-    TypeScriptAdapter::analyze_diff_with_handwritten_env(options, changed_files, handwritten)
+    TypeScriptAdapter::analyze_diff_with_handwritten_env(options, changed_files, typescript_config)
 }
 
 #[cfg(not(feature = "lang-typescript"))]
@@ -3137,7 +3133,7 @@ fn analyze_typescript_diff(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
     _changed_files: &[diff::ChangedFile],
-    _handwritten: &[String],
+    _typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageDiffResult, String> {
     unavailable_language(LanguageId::TypeScript)
 }
@@ -3188,17 +3184,17 @@ fn analyze_python_diff(
 fn analyze_typescript_repo(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
-    handwritten: &[String],
+    typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageRepoResult, String> {
     let _ = oracle_policy;
-    TypeScriptAdapter::analyze_repo_with_handwritten_env(options, handwritten)
+    TypeScriptAdapter::analyze_repo_with_handwritten_env(options, typescript_config)
 }
 
 #[cfg(not(feature = "lang-typescript"))]
 fn analyze_typescript_repo(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
-    _handwritten: &[String],
+    _typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageRepoResult, String> {
     unavailable_language(LanguageId::TypeScript)
 }

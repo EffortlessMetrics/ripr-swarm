@@ -1249,13 +1249,14 @@ fn parse_budget_limitation(
         format!("{portable} looks like a fixture or data file; {detail}")
     } else {
         detail
-    };
+    }
+    .chars()
+    .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+    .collect::<String>();
     let recovery = if probable_fixture {
         AnalysisRecovery::new(
             AnalysisRecoveryKind::DeclarePreviewExcludedPatterns,
-            format!(
-                "The Python preview adapter hit a parse budget on {portable}, which looks like fixture or data content you typically should not rewrite. Add a repository-relative glob under `[languages.python] excluded_file_patterns` (for example `tests/syntax-tests/**`) to omit it from preview-language indexing, then re-run the analysis."
-            ),
+            "The Python preview adapter hit a parse budget on a file that looks like fixture or data content you typically should not rewrite. Add a repository-relative glob under `[languages.python] excluded_file_patterns` (for example `tests/syntax-tests/**`) to omit it from preview-language indexing, then re-run the analysis.",
         )?
     } else {
         AnalysisRecovery::new(
@@ -2257,6 +2258,63 @@ impl PythonAdapter {
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
         })
+    }
+}
+
+#[cfg(test)]
+mod parse_budget_limitation_tests {
+    use super::DomainLanguageId;
+    use super::parse_budget_limitation;
+    use crate::analysis::language::python::source_facts::{
+        PythonSourceFacts, PythonSourceLimitation,
+    };
+    use crate::analysis_outcome::{AnalysisRecoveryKind, MAX_ANALYSIS_LIMITATION_DETAIL_CHARS};
+    use crate::domain::StaticLimitKind;
+    use std::path::PathBuf;
+
+    #[test]
+    fn fixture_refusal_survives_long_repository_relative_path() -> Result<(), String> {
+        let deep = PathBuf::from(format!(
+            "tests/syntax-tests/{}/file.py",
+            "nested/".repeat(120)
+        ));
+        let facts = PythonSourceFacts {
+            file: deep.clone(),
+            language: DomainLanguageId::Python.as_str(),
+            owners: Vec::new(),
+            tests: Vec::new(),
+            fixtures: Vec::new(),
+            fixture_side_effects: Default::default(),
+            substitution_scope: Default::default(),
+            helper_module: Default::default(),
+            conftest_implicit_setup: false,
+            conftest_declares_fixture_or_hook: false,
+            facts: Vec::new(),
+            limitations: vec![PythonSourceLimitation {
+                kind: StaticLimitKind::UnsupportedSyntax,
+                evidence: "parse_budget: depth exceeded".to_string(),
+                missing: String::new(),
+            }],
+            docstring_line_ranges: Vec::new(),
+            import_line_ranges: Vec::new(),
+            assigned_attributes: None,
+            module_attribute_writes: Vec::new(),
+            foreign_lexes: None,
+            star_facts: None,
+        };
+        let limitation = parse_budget_limitation(&deep, &facts)?
+            .ok_or_else(|| "expected a parse-budget limitation".to_string())?;
+        assert_eq!(
+            limitation.recovery.kind,
+            AnalysisRecoveryKind::DeclarePreviewExcludedPatterns
+        );
+        let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.chars().count() <= MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
+            "detail must stay bounded, got {} chars",
+            detail.chars().count()
+        );
+        Ok(())
     }
 }
 
