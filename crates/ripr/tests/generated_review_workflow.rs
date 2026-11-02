@@ -1325,6 +1325,90 @@ fn generated_first_pr_preflight_recovery_commands_quote_root_and_refs() -> Resul
             );
         }
     }
+
+    // Both refs still resolve, but `git diff` fails once the head tree object is
+    // missing (#5339).
+    let tree = fixture_git_output(&repo, &["rev-parse", "HEAD^{tree}"])?
+        .trim()
+        .to_string();
+    assert!(
+        tree.len() == 40 && tree.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "fixture did not produce a SHA-1 tree: {tree:?}"
+    );
+    let object = repo.join(".git/objects").join(&tree[..2]).join(&tree[2..]);
+    fs::remove_file(&object)?;
+    let label = "diff inspect failure";
+    let output = replay::ripr(
+        &parent,
+        &[
+            "first-pr",
+            "--root",
+            "repo root",
+            "--base",
+            "HEAD~1",
+            "--head",
+            "HEAD",
+        ],
+    )?;
+    assert!(
+        output.status.success(),
+        "{label}: first-pr failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let packet: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        repo.join("target/ripr/reports/start-here.json"),
+    )?)?;
+    let diff_check = packet["preflight"]["checks"]
+        .as_array()
+        .and_then(|checks| {
+            checks
+                .iter()
+                .find(|check| check.get("id").and_then(|id| id.as_str()) == Some("git_diff"))
+        })
+        .ok_or_else(|| format!("{label}: no git_diff preflight check in {packet}"))?;
+    assert_eq!(
+        diff_check["status"].as_str(),
+        Some("needs_attention"),
+        "{label}: {packet}"
+    );
+    assert!(
+        diff_check["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Could not inspect diff range")),
+        "{label}: {packet}"
+    );
+    let recovery = recovery_texts(&packet, "git_diff");
+    assert!(
+        !recovery.is_empty(),
+        "{label}: no `git_diff` recovery command in {packet}"
+    );
+    for text in recovery {
+        let rerun = text
+            .split('`')
+            .find(|segment| segment.starts_with("ripr first-pr "))
+            .ok_or_else(|| format!("{label}: no `ripr first-pr` rerun in `{text}`"))?;
+        assert!(
+            rerun.contains(&format!("--root '{}'", canonical_repo.display())),
+            "{label}: rerun does not bind the quoted root: {rerun}"
+        );
+        let run = replay::bash(&foreign, rerun, &[])?;
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            run.status.success(),
+            "{label}: rerun failed from a foreign directory: {rerun}\nstdout={stdout}\nstderr={stderr}"
+        );
+        assert!(
+            stdout.contains(&canonical_repo.display().to_string()),
+            "{label}: rerun did not analyze the selected root: {stdout}"
+        );
+        assert!(
+            !foreign.join("target").exists() && !decoy.join("target").exists(),
+            "{label}: rerun read or wrote outside the selected root: {rerun}"
+        );
+    }
+
     fs::remove_dir_all(base)?;
     Ok(())
 }

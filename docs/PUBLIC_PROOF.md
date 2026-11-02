@@ -107,7 +107,7 @@ Not measured, and why:
 Each line below is computed from the receipts above. Detail sections follow.
 
 - **Wrong gaps.** On changes from real repositories ripr reported a gap on 0 of 22 whose tests caught every listed mutant (0.0%): no case recorded. On the authored cases, which were written to fill empty corpus cells, it did so on 0 of 398 (0.0%).
-- **Mostly unsure.** On real-repository changes it abstained on 32 of 36 cases (88.9%); on the authored cases, 278 of 782 (35.5%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Mostly unsure.** On real-repository changes it abstained on 32 of 36 cases (88.9%); on the authored cases, 277 of 782 (35.4%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 12 mutants on seams ripr called ungripped, real mutation testing caught 0 that ripr said nothing would catch; ripr agreed on 12. No false-gap examples are recorded.
 - **Thin ground truth.** Only 75 of 1745 mutants (4.3%) enter an agreement rate. 493 join a ripr seam precisely, and 418 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
@@ -166,8 +166,8 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | False actionable (of discriminated) | 0/420 (0.0%) | 0/22 (0.0%) | 0/398 (0.0%) |
 | False exposed (of not fully discriminated) | 0/398 (0.0%) | 0/14 (0.0%) | 0/384 (0.0%) |
 | False silent (of not fully discriminated) | 0/398 (0.0%) | 0/14 (0.0%) | 0/384 (0.0%) |
-| Ideal verdict | 508/818 (62.1%) | 4/36 (11.1%) | 504/782 (64.5%) |
-| Abstained (limited or silent where acceptable) | 310/818 (37.9%) | 32/36 (88.9%) | 278/782 (35.5%) |
+| Ideal verdict | 509/818 (62.2%) | 4/36 (11.1%) | 505/782 (64.6%) |
+| Abstained (limited or silent where acceptable) | 309/818 (37.8%) | 32/36 (88.9%) | 277/782 (35.4%) |
 | Findings with a contradiction | 0/1006 (0.0%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
@@ -722,7 +722,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `spec0094-effect-blind` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0094-effect-confirmed` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spec0094-return-value-blind` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `spec0096-named-binding-used` | authored | discriminated | credited | limited | static_unknown | abstained | none |
+| `spec0096-named-binding-used` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spec0096-returned-call-ok-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0096-wildcard-discard-unobserved` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
 | `spec0106-unwrap-err-exact-variant` | authored | discriminated | credited | credited | exposed | ideal | none |

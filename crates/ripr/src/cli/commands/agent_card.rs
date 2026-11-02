@@ -387,7 +387,10 @@ pub(crate) fn agent_card_prose_lines(
     }
     lines.push(done_when_line(&card.done_when));
     for stop in &card.stop_conditions {
-        lines.push(format!("  stop: {stop}"));
+        lines.push(format!(
+            "  stop: {}",
+            crate::output::human::plain_repair_card_user_wording(stop)
+        ));
     }
     // Group only references with identical destination, state and reason.
     // Each family remains named, and a stale or missing reference cannot be

@@ -219,6 +219,8 @@ pub use ripr::RiprProviderEvidenceEntryV1
 pub use ripr::RiprProviderEvidenceSummaryV1
 pub use ripr::RiprProviderNativeStatusV1
 pub use ripr::RiprProviderResultClassV1
+pub use ripr::RiprError
+pub use ripr::RiprErrorCategory
 pub use ripr::RiprRepositorySnapshotV1
 pub use ripr::RiprSourceViewV1
 pub use ripr::SourceCurrentness
@@ -261,6 +263,8 @@ pub use ripr::app::check_workspace_repo
 pub use ripr::app::check_workspace_repo_with_config
 pub use ripr::app::check_workspace_with_config
 pub use ripr::app::check_workspace_worktree_with_config
+pub use ripr::app::try_check_workspace
+pub use ripr::app::try_check_workspace_with_config
 pub use ripr::app::collect_context
 pub use ripr::app::collect_context_with_config
 pub use ripr::app::collect_context_with_input
@@ -275,6 +279,7 @@ pub use ripr::app::reject_pr_evidence_error_packet
 pub use ripr::app::repo_seam_inventory_input
 pub use ripr::app::run_impacted_evidence_at
 pub use ripr::check_workspace
+pub use ripr::check_workspace_with_config
 pub use ripr::collect_context
 pub use ripr::config::CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION
 pub use ripr::config::CheckInputExplicit
@@ -427,6 +432,8 @@ pub use ripr::domain::identity_registry_canonical_json
 pub use ripr::domain::identity_registry_markdown
 pub use ripr::domain::identity_registry_violations
 pub use ripr::domain::verify_command_is_unbounded_repo_exposure_snapshot_compare
+pub use ripr::try_check_workspace
+pub use ripr::try_check_workspace_with_config
 pub use ripr::explain_finding
 pub use ripr::explain_finding_with_input
 pub use ripr::lsp::DiagnosticBatch

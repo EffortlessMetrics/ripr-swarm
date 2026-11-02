@@ -417,6 +417,7 @@ pub(crate) fn render_full_with_config_and_navigation(
             JsonPointerWording::CheckFlag,
             shared_sections,
             output.source_value_files(finding),
+            false,
         ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
@@ -1319,6 +1320,7 @@ pub(crate) fn render_finding_with_context_command_and_files(
         JsonPointerWording::ExplainNamesCheck,
         None,
         files,
+        true,
     );
     // #7796: project the owner's observed call shape (the same producer
     // `ripr agent stub` reads) into the verdict-change recipe. Only when the
@@ -1397,7 +1399,8 @@ pub(crate) fn render_finding_agent(
 }
 
 pub(crate) use evidence_lines::{
-    JsonPointerWording, plain_observation_wording, plain_stop_condition,
+    JsonPointerWording, plain_observation_wording, plain_repair_card_user_wording,
+    plain_stop_condition,
 };
 pub(crate) use sections::HUMAN_EVIDENCE_LEGEND;
 pub(crate) use sections::render_finding_with_config;
@@ -8434,6 +8437,27 @@ mod tests {
     }
 
     #[test]
+    fn plain_repair_card_user_wording_rewrites_known_producer_phrases_only() {
+        use super::evidence_lines::plain_repair_card_user_wording;
+        assert_eq!(
+            plain_repair_card_user_wording("repair readiness for this seam"),
+            "repair readiness for this spot"
+        );
+        assert!(
+            plain_repair_card_user_wording(
+                "instruction unavailable exposes no witness-derived assertion on this card (the card's witness pass is diff-scoped and no finding names this seam in the current analysis), but the seam is repair-ready and the bounded repair route still exists: rerun `agent repair --seam-id seam:demo --phase before`, the command the pilot step printed for this seam"
+            )
+            .contains("names this spot")
+        );
+        assert!(
+            plain_repair_card_user_wording(
+                "instruction unavailable exposes no witness-derived assertion on this card (the card's witness pass is diff-scoped and no finding names this seam in the current analysis), but the seam is repair-ready and the bounded repair route still exists: rerun `agent repair --seam-id seam:demo --phase before`, the command the pilot step printed for this seam"
+            )
+            .contains("--seam-id seam:demo")
+        );
+    }
+
+    #[test]
     fn plain_observation_wording_handles_each_producer_form() {
         use super::evidence_lines::plain_observation_wording;
         assert_eq!(
@@ -10291,6 +10315,55 @@ mod tests {
             "{digest}"
         );
         assert!(!digest.contains(&why), "{digest}");
+        Ok(())
+    }
+
+    /// #5496: the human digest names a related test with the shared sentence
+    /// when that row owns a miss, and with no reason when the first row is the
+    /// withheld mock-oracle row.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn python_production_digest_reason_follows_the_named_row() -> Result<(), String> {
+        use crate::output::related_test_miss::related_test_miss_reason;
+        let finding = crate::analysis::python_direct_and_advisory_finding()?;
+        let explained = finding
+            .related_tests
+            .iter()
+            .find(|row| row.miss.is_some())
+            .ok_or("expected one explained row")?;
+        let withheld = finding
+            .related_tests
+            .iter()
+            .find(|row| row.miss.is_none())
+            .ok_or("expected one withheld row")?;
+        let why = related_test_miss_reason(explained, &finding.probe.family)
+            .ok_or("the explained row should have a reason")?;
+        assert_eq!(
+            related_test_miss_reason(withheld, &finding.probe.family),
+            None
+        );
+        let config = crate::config::RiprConfig::default();
+        let digest =
+            super::sections::render_finding_digest_with_config(&finding, &config, Path::new("."));
+        assert!(
+            digest.contains(&format!(" {}\n", withheld.name)),
+            "{digest}"
+        );
+        assert!(!digest.contains(&why), "{digest}");
+        let mut explained_first = finding.clone();
+        explained_first
+            .related_tests
+            .retain(|row| row.name != explained.name);
+        explained_first.related_tests.insert(0, explained.clone());
+        let digest = super::sections::render_finding_digest_with_config(
+            &explained_first,
+            &config,
+            Path::new("."),
+        );
+        assert!(
+            digest.contains(&format!(" {} ({why})\n", explained.name)),
+            "{digest}"
+        );
         Ok(())
     }
 }

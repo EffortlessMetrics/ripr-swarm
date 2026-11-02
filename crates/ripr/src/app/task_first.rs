@@ -868,6 +868,20 @@ pub(crate) fn resolve_repair_start(
     // seam, so repair must not start somewhere else). A diff that changes no
     // Rust production line leaves the whole-repository selection unscoped.
     let diff = live_check_diff_files(root, base);
+    // #11400: a changed `const` stands for the returned expressions of its
+    // readers, by the probe rule `ripr check` uses, so those seams are the
+    // change too.
+    let const_readers = diff.as_ref().map_or_else(Vec::new, |files| {
+        crate::analysis::changed_const_reader_return_lines(
+            root,
+            files,
+            config.analysis().test_harnesses(),
+        )
+    });
+    let seam_touches_change =
+        |entry: &crate::analysis::ClassifiedSeam, files: &[crate::analysis::ChangedFile]| {
+            seam_touches_change(entry, files) || seam_reads_changed_const(entry, &const_readers)
+        };
     let scope = diff.as_ref().and_then(|files| {
         if classified
             .iter()
@@ -1194,6 +1208,25 @@ fn seam_touches_change(
                 .chain(file.removed_lines.iter())
                 .any(|line| (start..=end).contains(&line.new_side_line))
         })
+}
+
+/// #11400: whether `entry` is the return-value seam on a line, with the same
+/// returned expression, that the changed constant reaches
+/// (`changed_const_reader_return_lines`).
+fn seam_reads_changed_const(
+    entry: &crate::analysis::ClassifiedSeam,
+    const_readers: &[(std::path::PathBuf, usize, String)],
+) -> bool {
+    let squeeze = |text: &str| text.split_whitespace().collect::<String>();
+    entry.seam.kind() == crate::analysis::seams::SeamKind::ReturnValue && {
+        let seam_file = normalized_relative_path(entry.seam.file());
+        let seam_text = squeeze(entry.seam.expression());
+        const_readers.iter().any(|(file, line, expression)| {
+            normalized_relative_path(file) == seam_file
+                && entry.seam.display_line() == *line
+                && squeeze(expression) == seam_text
+        })
+    }
 }
 
 fn normalized_relative_path(path: &Path) -> String {
