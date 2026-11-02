@@ -11,8 +11,9 @@
 //! - **expect-test**: `expect![[".."]].assert_debug_eq(&value)` compares the
 //!   whole debug text of the owner's result;
 //! - **insta**: `assert_json_snapshot!(value)` compares a snapshot kept in a
-//!   committed file ripr does not read, and no redaction names the changed
-//!   field;
+//!   committed file ripr does not read; when the macro carries a redaction map,
+//!   a changed struct field that map does not replace is not withheld here
+//!   (#6642);
 //! - **fixture receiver**: the changed tail is a closure over a field of
 //!   `self`, and the test pins `helper().owner(..)` or `let x = helper();
 //!   x.owner(..)` to a literal, so the closure runs over data ripr does not
@@ -74,7 +75,7 @@ impl Idiom {
                 "compares the owner's result with an expect-test debug literal, and ripr does not compare that literal with the changed value"
             }
             Idiom::InstaSnapshot => {
-                "compares the owner's result with an insta snapshot kept outside the source, and no redaction names the changed field"
+                "compares the owner's result with an insta snapshot kept outside the source, and ripr does not read that committed expectation"
             }
             Idiom::FixtureReceiver => {
                 "pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over"
@@ -727,8 +728,11 @@ fn expect_debug_literal(test: &TestFact, owner: &str) -> bool {
 }
 
 /// An insta snapshot macro with no inline `@` literal, on a changed struct
-/// field initializer that no redaction names. Any other changed line keeps
-/// the gap.
+/// field initializer, whose committed expectation ripr still does not read.
+/// Withhold only when the macro names no redaction map (whole-object file
+/// snapshot) or names redaction only for other fields (#6642 keeps an
+/// unredacted sibling as a gap instead of `static_unknown`). Any other changed
+/// line keeps the gap without this idiom.
 fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &str) -> bool {
     let raw: &str = &test.body;
     let code = masked(raw);
@@ -776,10 +780,11 @@ fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &st
             let Some(field) = field_name(changed_text) else {
                 continue;
             };
-            if redaction_selectors(&raw[from..to])
-                .iter()
-                .any(|selector| selector.split(boundary).any(|s| s == field))
-            {
+            let selectors = redaction_selectors(&raw[from..to]);
+            if !selectors.is_empty() {
+                // A redaction map names which serialized paths are replaced;
+                // when it names the changed field, or only sibling paths, the
+                // observation boundary is field-level, not whole-file unread.
                 continue;
             }
             found = true;
@@ -858,6 +863,44 @@ mod tests {
             vec![".id", ".meta.at", "[].n"]
         );
         assert!(redaction_selectors("record").is_empty());
+    }
+
+    #[test]
+    fn insta_withholds_only_whole_object_file_snapshots_without_redaction_maps()
+    -> Result<(), String> {
+        let owner = "make_record";
+        let items_change = "        items: items.len(),";
+        let json_redacted = "#[cfg(test)]
+mod tests {
+    #[test]
+    fn snap() {
+        let record = make_record(2);
+        insta::assert_json_snapshot!(record, { \".id\" => \"[id]\" });
+    }
+}
+";
+        let whole_object = "#[cfg(test)]
+mod tests {
+    #[test]
+    fn snap() {
+        let record = make_record(2);
+        insta::assert_debug_snapshot!(record);
+    }
+}
+";
+        assert!(
+            !insta_leaves_field_unredacted(
+                &test_named(json_redacted, "snap")?,
+                items_change,
+                owner
+            ),
+            "sibling redaction must not trigger whole-file insta withhold"
+        );
+        assert!(
+            insta_leaves_field_unredacted(&test_named(whole_object, "snap")?, items_change, owner),
+            "unread whole-object snapshot still withholds"
+        );
+        Ok(())
     }
 
     #[test]

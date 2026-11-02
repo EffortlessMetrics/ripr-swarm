@@ -423,12 +423,18 @@ fn an_unredacted_insta_field_is_withheld() -> Result<(), String> {
         "        items: items.len(),",
         "        items: items.iter().count(),",
     );
-    for assertion in [
-        "insta::assert_json_snapshot!(record, { \".id\" => \"[id]\" });",
-        "insta::assert_debug_snapshot!(record);",
-    ] {
-        withheld(&insta_source(assertion), &edit, 9, assertion)?;
-    }
+    withheld(
+        &insta_source("insta::assert_debug_snapshot!(record);"),
+        &edit,
+        9,
+        "whole-object file snapshot without a redaction map",
+    )?;
+    keeps_gap(
+        &insta_source("insta::assert_json_snapshot!(record, { \".id\" => \"[id]\" });"),
+        &edit,
+        9,
+        "unredacted sibling beside a redacted path",
+    )?;
     Ok(())
 }
 

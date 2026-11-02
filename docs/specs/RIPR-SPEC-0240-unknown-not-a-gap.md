@@ -409,10 +409,12 @@ non-ignored related test matches one of these shapes:
 - **insta**: a `direct_owner_call` test with a snapshot macro that has no
   inline `@` literal, whose snapshotted value (after an optional literal name)
   derives from the owner as above (a live binding at the assertion), and no `add_redaction`, `with_settings` or `Settings`,
-  on a changed `field:` initializer that no redaction selector (a literal
-  keyed by `=>`, such as `".id"` or `"[].id"`) names. Any other changed line
-  keeps the gap (the `snapshot_oracle` fixture's changed predicate), and so
-  does a redacted field (`lib-insta-json-redacted-id`).
+  on a changed `field:` initializer when the macro names **no** redaction map
+  (whole-object committed snapshot ripr still does not read). When the macro
+  carries a redaction map (`{ ".path" => ".." }`), changed fields—whether the
+  map replaces that path or leaves a sibling serialized—keep the gap without
+  this withhold (#6642); promotion still waits on snapshot identity (#8121).
+  Any other changed line keeps the gap (the `snapshot_oracle` fixture's changed predicate).
 - **fixture receiver** (#9609): a `return_value` probe whose changed line
   holds a closure (`|..|`, `move |..|` or `|| ..` opening an argument; a boolean or bitwise `||` / `|` is not one) in a `&self` method, and a `direct_owner_call` test
   with a strong assertion: an `assert_eq!` with a literal (number, string,
