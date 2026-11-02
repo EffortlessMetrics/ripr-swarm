@@ -99,7 +99,9 @@ fn build_channel_receipt(
         "semantic": {
             "static_movement": static_movement,
             "verification_status": terminal_receipt.pointer("/verification/status"),
-            "gap_movement": terminal_receipt.pointer("/movement"),
+            "gap_movement": terminal_receipt
+                .pointer("/provenance/movement")
+                .or_else(|| terminal_receipt.pointer("/seam/change")),
         },
         "cleanup": {
             "fixture_root": roots.fixture,
@@ -112,6 +114,56 @@ fn build_channel_receipt(
             "Synthetic fixture journey only; not a real-repository dogfood row.",
         ],
     })
+}
+
+fn assert_verified_focused_execution(run: &boundary_gap::FocusedExecution) -> Result<(), String> {
+    if run.selected == 0 || run.executed == 0 || run.passed == 0 || run.failed != 0 {
+        return Err(format!(
+            "focused execution is not verified: selected={} executed={} passed={} failed={} exit={:?} command={:?}",
+            run.selected, run.executed, run.passed, run.failed, run.exit_code, run.command
+        ));
+    }
+    if run.exit_code != Some(0) {
+        return Err(format!(
+            "focused execution exited {:?}: command={:?}",
+            run.exit_code, run.command
+        ));
+    }
+    Ok(())
+}
+
+fn assert_channel_receipt_shape(
+    receipt: &Value,
+    candidate: &InstalledCandidate,
+) -> Result<(), String> {
+    if receipt["vsix_parity_claimed"].as_bool() != Some(false) {
+        return Err("channel receipt must not claim VSIX parity".into());
+    }
+    let digest = receipt
+        .pointer("/artifact/sha256")
+        .and_then(Value::as_str)
+        .ok_or("channel receipt missing artifact.sha256")?;
+    if digest != candidate.digest {
+        return Err(format!(
+            "channel receipt digest must match installed candidate: {digest} != {}",
+            candidate.digest
+        ));
+    }
+    if !digest.starts_with("sha256:") || digest.len() != "sha256:".len() + 64 {
+        return Err(format!(
+            "channel receipt digest must use sha256: prefix: {digest}"
+        ));
+    }
+    if receipt
+        .pointer("/semantic/gap_movement")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        return Err(format!(
+            "qualified channel receipt must carry terminal gap_movement: {receipt}"
+        ));
+    }
+    Ok(())
 }
 
 fn write_channel_receipt(root: &Path, receipt: &Value) -> Result<(), String> {
@@ -207,11 +259,7 @@ fn canonical_positive_journey_completes_before_edit_after_with_closed_movement()
     std::fs::write(roots.fixture.join("tests/pricing.rs"), AFTER_TESTS)
         .map_err(|error| format!("write equality test: {error}"))?;
     let execution = run_focused_cargo_test(&roots.fixture, &roots.cargo_target, EQUALITY_SELECTOR)?;
-    if execution.selected == 0 || execution.passed == 0 {
-        return Err(format!(
-            "focused execution did not verify the edit: {execution:?}"
-        ));
-    }
+    assert_verified_focused_execution(&execution)?;
 
     let after_phase =
         run_printed_ripr(&candidate, &roots.fixture, &roots.decoy, &continue_command)?;
@@ -252,9 +300,16 @@ fn canonical_positive_journey_completes_before_edit_after_with_closed_movement()
         &terminal_receipt,
     );
     write_channel_receipt(&roots.fixture, &channel)?;
-    if channel["vsix_parity_claimed"].as_bool() != Some(false) {
-        return Err("channel receipt must not claim VSIX parity".into());
-    }
+    assert_channel_receipt_shape(&channel, &candidate)?;
+    let receipt_path = roots
+        .fixture
+        .join("target/ripr/reports/packaged-repair-channel-receipt.json");
+    let written = parse_json(
+        "written channel receipt",
+        &std::fs::read_to_string(&receipt_path)
+            .map_err(|error| format!("read channel receipt: {error}"))?,
+    )?;
+    assert_channel_receipt_shape(&written, &candidate)?;
     if decoy_was_invoked(&marker) {
         return Err("PATH decoy was invoked during the positive journey".into());
     }

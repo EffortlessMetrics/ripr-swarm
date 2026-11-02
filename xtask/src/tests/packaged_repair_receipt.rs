@@ -60,5 +60,13 @@ fn packaged_repair_receipt_schema_forbids_vsix_parity_claims() -> Result<(), Str
             "channel receipt schema must pin vsix_parity_claimed to false: {schema}"
         ));
     }
+    let digest_pattern = schema
+        .pointer("/properties/artifact/properties/sha256/pattern")
+        .and_then(Value::as_str);
+    if digest_pattern != Some("^sha256:[0-9a-f]{64}$") {
+        return Err(format!(
+            "channel receipt schema must accept sha256: digest prefix: {schema}"
+        ));
+    }
     Ok(())
 }

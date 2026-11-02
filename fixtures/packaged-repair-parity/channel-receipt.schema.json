@@ -46,7 +46,7 @@
       "required": ["installed_binary", "sha256", "full_version", "workspace_binary_excluded"],
       "properties": {
         "installed_binary": { "type": "string", "minLength": 1 },
-        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "full_version": { "type": "string", "minLength": 1 },
         "workspace_binary_excluded": { "type": "boolean", "const": true }
       }

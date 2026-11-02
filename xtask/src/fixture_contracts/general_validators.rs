@@ -2473,6 +2473,30 @@ pub(crate) fn validate_packaged_repair_parity_fixture(
                 .to_string(),
         );
     }
+    if manifest.get("schema_path").and_then(Value::as_str) != Some("channel-receipt.schema.json") {
+        violations.push(
+            "packaged-repair-parity manifest.schema_path must be channel-receipt.schema.json"
+                .to_string(),
+        );
+    }
+    if schema
+        .pointer("/properties/vsix_parity_claimed/const")
+        .and_then(Value::as_bool)
+        != Some(false)
+    {
+        violations.push(
+            "packaged-repair-parity channel-receipt.schema.json must pin vsix_parity_claimed to false"
+                .to_string(),
+        );
+    }
+    let digest_pattern = schema
+        .pointer("/properties/artifact/properties/sha256/pattern")
+        .and_then(Value::as_str);
+    if digest_pattern != Some("^sha256:[0-9a-f]{64}$") {
+        violations.push(format!(
+            "packaged-repair-parity channel-receipt.schema.json artifact.sha256 pattern must accept shared digest format; got {digest_pattern:?}"
+        ));
+    }
     Ok(())
 }
 
