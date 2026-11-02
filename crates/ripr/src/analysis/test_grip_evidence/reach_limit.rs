@@ -27,7 +27,7 @@ use crate::analysis::classify::{
 };
 use crate::analysis::rust_index::{FunctionSummary, TestSummary, is_test_file};
 use crate::analysis::seams::RepoSeam;
-use crate::domain::{Confidence, StageEvidence, StageState};
+use crate::domain::{Confidence, StageEvidence, StageState, StaticLimitKind};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
@@ -549,7 +549,7 @@ pub(in crate::analysis::test_grip_evidence) fn reach_without_related_tests(
     context: &CompactGripContext<'_>,
 ) -> StageEvidence {
     if let Some(owner_fn) = owner_fn
-        && let Some(summary) = unresolved_reach_summary(owner_fn, context)
+        && let Some((summary, _kind)) = unresolved_reach_evidence(owner_fn, context)
     {
         return StageEvidence::new(StageState::Opaque, Confidence::Low, summary);
     }
@@ -560,66 +560,92 @@ pub(in crate::analysis::test_grip_evidence) fn reach_without_related_tests(
     )
 }
 
-fn unresolved_reach_summary(
+pub(in crate::analysis::test_grip_evidence) fn unresolved_reach_evidence(
     owner_fn: &FunctionSummary,
     context: &CompactGripContext<'_>,
-) -> Option<String> {
+) -> Option<(String, StaticLimitKind)> {
     let owner_name = owner_fn.name.as_str();
     if owner_name.is_empty() {
         return None;
     }
     // RIPR-SPEC-0236 rule R4: cache by owner id so same-file same-named owners
     // cannot leak one witness to another (#6621).
-    if let Some(summary) = cached(context, format!("owner:{}", owner_fn.id.0), || {
-        witness_summary(owner_fn, context)
+    if let Some(evidence) = cached_evidence(context, format!("owner:{}", owner_fn.id.0), || {
+        witness_evidence(owner_fn, context)
     }) {
-        return Some(summary);
+        return Some(evidence);
     }
-    if let Some(summary) = cached(context, format!("id:{}", owner_fn.id.0), || {
-        trait_dispatch_reach_summary(owner_fn, context)
+    if let Some(evidence) = cached_evidence(context, format!("id:{}", owner_fn.id.0), || {
+        trait_dispatch_reach_evidence(owner_fn, context)
     }) {
-        return Some(summary);
+        return Some(evidence);
     }
     // Last: a chain past five hops never displaces a shallower or more
     // specific witness (#8047).
-    cached(context, format!("deep:{}", owner_fn.id.0), || {
+    cached_evidence(context, format!("deep:{}", owner_fn.id.0), || {
         let witness = context
             .transitive_reach
             .deep_transitive_witness(owner_name)?;
-        Some(transitive_summary(owner_name, &witness))
+        Some((
+            transitive_summary(owner_name, &witness),
+            transitive_reach_limit_kind(&witness.test_file),
+        ))
     })
 }
 
-fn cached(
+fn cached_evidence(
     context: &CompactGripContext<'_>,
     key: String,
-    compute: impl FnOnce() -> Option<String>,
-) -> Option<String> {
+    compute: impl FnOnce() -> Option<(String, StaticLimitKind)>,
+) -> Option<(String, StaticLimitKind)> {
     if let Some(cached) = context.unresolved_reach_cached(&key) {
         return cached;
     }
-    let summary = compute();
-    context.cache_unresolved_reach(key, summary.clone());
-    summary
+    let evidence = compute();
+    context.cache_unresolved_reach(key, evidence.clone());
+    evidence
 }
 
-fn witness_summary(owner_fn: &FunctionSummary, context: &CompactGripContext<'_>) -> Option<String> {
+pub(in crate::analysis::test_grip_evidence) fn summary_limit_kind(
+    summary: &str,
+) -> Option<StaticLimitKind> {
+    [
+        StaticLimitKind::RustIntegrationPublicApiPathUnresolved,
+        StaticLimitKind::RustTransitiveReachUnresolved,
+        StaticLimitKind::RustMacroReachUnresolved,
+        StaticLimitKind::RustMacroWrappedTestCallUnresolved,
+        StaticLimitKind::RustTraitDispatchUnresolved,
+    ]
+    .into_iter()
+    .find(|kind| summary.contains(kind.as_str()))
+}
+
+fn witness_evidence(
+    owner_fn: &FunctionSummary,
+    context: &CompactGripContext<'_>,
+) -> Option<(String, StaticLimitKind)> {
     if let Some(witness) = context
         .transitive_reach
         .transitive_witness_for_owner(owner_fn)
     {
-        return Some(transitive_summary(owner_fn.name.as_str(), &witness));
+        return Some((
+            transitive_summary(owner_fn.name.as_str(), &witness),
+            transitive_reach_limit_kind(&witness.test_file),
+        ));
     }
     let witness = context
         .transitive_reach
         .macro_reach_witness_for_owner(owner_fn)?;
-    Some(macro_summary(owner_fn.name.as_str(), &witness))
+    Some((
+        macro_summary(owner_fn.name.as_str(), &witness),
+        macro_reach_limit_kind(&witness.macro_host),
+    ))
 }
 
-fn trait_dispatch_reach_summary(
+fn trait_dispatch_reach_evidence(
     owner_fn: &FunctionSummary,
     context: &CompactGripContext<'_>,
-) -> Option<String> {
+) -> Option<(String, StaticLimitKind)> {
     let owner_name = owner_fn.name.as_str();
     let mentions = context.type_mentions();
     if is_trait_impl_method(owner_fn)
@@ -628,8 +654,9 @@ fn trait_dispatch_reach_summary(
         && let Some(mention) = mentions.mention(&self_type)
     {
         let trait_use = mentions.trait_use(&owner_fn.id.0).ok().flatten();
-        return Some(trait_dispatch_summary(
-            owner_name, &self_type, mention, trait_use,
+        return Some((
+            trait_dispatch_summary(owner_name, &self_type, mention, trait_use),
+            StaticLimitKind::RustTraitDispatchUnresolved,
         ));
     }
     // A trait method whose own type nothing names may still run from another
@@ -637,8 +664,9 @@ fn trait_dispatch_reach_summary(
     let root = mentions.dispatch_root(&owner_fn.id.0)?;
     let mention = mentions.mention(&root.self_type)?;
     let trait_use = mentions.trait_use(&root.id).ok().flatten();
-    Some(dispatch_reached_summary(
-        owner_name, root, mention, trait_use,
+    Some((
+        dispatch_reached_summary(owner_name, root, mention, trait_use),
+        StaticLimitKind::RustTraitDispatchUnresolved,
     ))
 }
 
@@ -1415,7 +1443,8 @@ fn trait_dispatch_summary(
     trait_use: Option<(GatedTrait, &TraitUse)>,
 ) -> String {
     format!(
-        "Reach unresolved (trait dispatch): `{owner_name}` is a trait method of `{self_type}`, which operators, formatting and generic calls run without naming it; {}{}. ripr does not trace trait dispatch, so no gap is reported",
+        "Reach unresolved ({}): `{owner_name}` is a trait method of `{self_type}`, which operators, formatting and generic calls run without naming it; {}{}. ripr does not trace trait dispatch, so no gap is reported",
+        StaticLimitKind::RustTraitDispatchUnresolved.as_str(),
         mention_text(self_type, mention),
         trait_use_text(trait_use),
     )
@@ -1428,7 +1457,8 @@ fn dispatch_reached_summary(
     trait_use: Option<(GatedTrait, &TraitUse)>,
 ) -> String {
     format!(
-        "Reach unresolved (trait dispatch): `{owner_name}` may run from `{}` ({}), a trait method of `{}` that operators, formatting and generic calls run without naming it; {}{}. ripr does not trace trait dispatch, so no gap is reported",
+        "Reach unresolved ({}): `{owner_name}` may run from `{}` ({}), a trait method of `{}` that operators, formatting and generic calls run without naming it; {}{}. ripr does not trace trait dispatch, so no gap is reported",
+        StaticLimitKind::RustTraitDispatchUnresolved.as_str(),
         root.method,
         location(&root.file, root.line),
         root.self_type,

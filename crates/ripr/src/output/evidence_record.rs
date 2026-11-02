@@ -1334,13 +1334,11 @@ fn push_stage_limitation(
 ) {
     if matches!(evidence.state, StageState::Unknown | StageState::Opaque) {
         let state = evidence.state.as_str();
-        // RIPR-SPEC-0236 example 23: a reach limitation that already names a
-        // rust-macro-reach limit kind is opaque static evidence, not a
-        // macro-generated *value*. The substring classifier still treats any
-        // "macro" mention as `macro_generated_value` and would otherwise
-        // steal this row. Honor the producer token only on the reach stage so
-        // examples 21/22 (snapshot/mock/generated name inference) stay out.
-        let category = if stage == "reach" && rust_macro_reach_limitation_reason(&evidence.summary)
+        // RIPR-SPEC-0236: producer-owned reach kinds map straight to
+        // opaque static evidence instead of the summary substring classifier.
+        let category = if stage == "reach"
+            && (entry.evidence.unresolved_reach_limit.is_some()
+                || rust_macro_reach_limitation_reason(&evidence.summary))
         {
             "opaque_static_evidence"
         } else {
@@ -1985,6 +1983,7 @@ mod tests {
                     relation_confidence: RelationConfidence::High,
                 })],
                 reach: stage(StageState::Yes, "owner is reached"),
+                unresolved_reach_limit: None,
                 activate: stage(activate_state, "activation evidence unavailable"),
                 propagate: stage(StageState::Yes, "return value flow"),
                 observe: stage(StageState::Yes, "assertion observes output"),
@@ -2056,6 +2055,7 @@ mod tests {
                     StageState::Yes,
                     "binding seam is visible through external tests",
                 ),
+                unresolved_reach_limit: None,
                 activate: stage(
                     StageState::Yes,
                     "configured binding route reaches the Rust seam",
@@ -2133,6 +2133,7 @@ mod tests {
                     relation_confidence: RelationConfidence::Medium,
                 })],
                 reach: stage(StageState::Yes, "owner is reached"),
+                unresolved_reach_limit: None,
                 activate: stage(
                     StageState::Unknown,
                     "No direct owner call observed for value-insensitive seam `zq_render_target_token(path)`",

@@ -370,6 +370,10 @@ pub enum StaticLimitKind {
     /// this label names the unresolved integration/public-API edge, not a
     /// coverage claim. See RIPR-SPEC-0118.
     RustIntegrationPublicApiPathUnresolved,
+    /// A trait-impl method may run through operator, formatting, or generic
+    /// call syntax without naming the method. Repo-seam reach stays unresolved;
+    /// this label names the dispatch limit, not positive reach credit (#5492).
+    RustTraitDispatchUnresolved,
     /// A Rust test reaches an entry point whose path toward the changed owner
     /// stops at a same-repo macro invocation that ripr does not expand. The
     /// macro definition lexically mentions the changed owner, but the
@@ -539,6 +543,7 @@ impl StaticLimitKind {
             StaticLimitKind::RustIntegrationPublicApiPathUnresolved => {
                 "rust_integration_public_api_path_unresolved"
             }
+            StaticLimitKind::RustTraitDispatchUnresolved => "rust_trait_dispatch_unresolved",
             StaticLimitKind::RustMacroReachUnresolved => "rust_macro_reach_unresolved",
             StaticLimitKind::RustMacroWrappedTestCallUnresolved => {
                 "rust_macro_wrapped_test_call_unresolved"
@@ -640,6 +645,11 @@ impl StaticLimitKind {
             StaticLimitKind::RustIntegrationPublicApiPathUnresolved => {
                 "An integration test may reach this change through a crate public API or test-helper \
                  path ripr cannot fully trace. This is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustTraitDispatchUnresolved => {
+                "A trait implementation method may run through formatting, comparison, or other \
+                 generic call syntax without naming the method. ripr does not trace trait dispatch; \
+                 this is a named reach limitation, not a coverage claim."
             }
             StaticLimitKind::RustMacroReachUnresolved => {
                 "A test may reach this change through a Rust macro path ripr cannot expand. The \
@@ -1067,6 +1077,10 @@ mod tests {
             "rust_integration_public_api_path_unresolved"
         );
         assert_eq!(
+            StaticLimitKind::RustTraitDispatchUnresolved.as_str(),
+            "rust_trait_dispatch_unresolved"
+        );
+        assert_eq!(
             StaticLimitKind::RustValuePropagationUnresolved.as_str(),
             "rust_value_propagation_unresolved"
         );
@@ -1159,6 +1173,7 @@ mod tests {
             StaticLimitKind::CrossLanguageOracleVisibilityUnresolved,
             StaticLimitKind::RustTransitiveReachUnresolved,
             StaticLimitKind::RustIntegrationPublicApiPathUnresolved,
+            StaticLimitKind::RustTraitDispatchUnresolved,
             StaticLimitKind::RustMacroReachUnresolved,
             StaticLimitKind::RustMacroWrappedTestCallUnresolved,
             StaticLimitKind::RustMacroWrappedAssertionUnresolved,

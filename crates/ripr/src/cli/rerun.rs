@@ -3923,6 +3923,7 @@ mod tests {
                 relation_confidence: RelationConfidence::High,
             })],
             reach: stage("owner is reached"),
+            unresolved_reach_limit: None,
             activate: stage("exact error variant flows"),
             propagate: stage("error channel flow"),
             observe: stage("error is observed"),

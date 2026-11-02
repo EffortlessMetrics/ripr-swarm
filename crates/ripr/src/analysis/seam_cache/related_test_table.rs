@@ -19,7 +19,7 @@ use crate::analysis::seam_classification::ClassifiedSeam;
 use crate::analysis::seams::{RepoSeam, SeamGripClass, SeamId};
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
 use crate::{
-    domain::{MissingDiscriminatorFact, StageEvidence, ValueContext},
+    domain::{MissingDiscriminatorFact, StageEvidence, StaticLimitKind, ValueContext},
     value_origins::LocatedValueFact as ValueFact,
 };
 use serde::de::Error as _;
@@ -56,6 +56,8 @@ struct EvidenceRef<'a> {
     missing_discriminators: &'a [MissingDiscriminatorFact],
     statically_contradicted_related_tests: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
+    unresolved_reach_limit: Option<&'a StaticLimitKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     new_test_target: Option<&'a NewTestTargetAdmission>,
 }
 
@@ -87,6 +89,8 @@ struct EvidenceOwned {
     /// No serde default: an entry written before the cache carried this count
     /// must miss rather than decode as a silent zero (#9110).
     statically_contradicted_related_tests: usize,
+    #[serde(default)]
+    unresolved_reach_limit: Option<StaticLimitKind>,
     #[serde(default)]
     new_test_target: Option<NewTestTargetAdmission>,
 }
@@ -247,6 +251,7 @@ fn seam_ref(classified: &ClassifiedSeam, related_tests: Vec<u32>) -> SeamRef<'_>
         seam_id,
         related_tests: _,
         reach,
+        unresolved_reach_limit,
         activate,
         propagate,
         observe,
@@ -269,6 +274,7 @@ fn seam_ref(classified: &ClassifiedSeam, related_tests: Vec<u32>) -> SeamRef<'_>
             observed_values,
             missing_discriminators,
             statically_contradicted_related_tests: *statically_contradicted_related_tests,
+            unresolved_reach_limit: unresolved_reach_limit.as_ref(),
             new_test_target: new_test_target.as_ref(),
         },
         class,
@@ -439,6 +445,7 @@ pub(super) fn deserialize<'de, D: Deserializer<'de>>(
             observed_values,
             missing_discriminators,
             statically_contradicted_related_tests,
+            unresolved_reach_limit,
             new_test_target,
         } = evidence;
         let mut related_tests = Vec::with_capacity(indices.len());
@@ -460,6 +467,7 @@ pub(super) fn deserialize<'de, D: Deserializer<'de>>(
                 seam_id,
                 related_tests,
                 reach,
+                unresolved_reach_limit,
                 activate,
                 propagate,
                 observe,
@@ -534,6 +542,7 @@ pub(super) mod tests {
             seam_id: seam.id().clone(),
             related_tests: related_tests.into_iter().map(Arc::new).collect(),
             reach: StageEvidence::new(StageState::Yes, Confidence::High, "reach"),
+            unresolved_reach_limit: None,
             activate: StageEvidence::new(StageState::Unknown, Confidence::Medium, "activate"),
             propagate: StageEvidence::new(StageState::Unknown, Confidence::Medium, "propagate"),
             observe: StageEvidence::new(StageState::Weak, Confidence::Low, "observe"),
@@ -716,6 +725,27 @@ pub(super) mod tests {
         };
         evidence.remove("statically_contradicted_related_tests");
         assert!(serde_json::from_value::<Body>(stale).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn unresolved_reach_limit_survives_table_round_trip() -> Result<(), String> {
+        let mut classified = seam(1, Vec::new());
+        classified.evidence.unresolved_reach_limit =
+            Some(StaticLimitKind::RustTraitDispatchUnresolved);
+        let encoded = serde_json::to_value(Body {
+            seams: vec![classified.clone()],
+        })
+        .map_err(|err| err.to_string())?;
+        assert_eq!(
+            encoded["seams"]["seams"][0]["evidence"]["unresolved_reach_limit"],
+            "rust_trait_dispatch_unresolved"
+        );
+        let decoded: Body = serde_json::from_value(encoded).map_err(|err| err.to_string())?;
+        assert_eq!(
+            decoded.seams[0].evidence.unresolved_reach_limit,
+            Some(StaticLimitKind::RustTraitDispatchUnresolved)
+        );
         Ok(())
     }
 

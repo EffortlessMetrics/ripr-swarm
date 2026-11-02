@@ -3,6 +3,7 @@ use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::test_grip_evidence::owner_result_binding::ParsedTestFile;
 use crate::analysis::test_grip_evidence::shared_grips::SharedGrips;
 use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
+use crate::domain::StaticLimitKind;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 /// Precomputed per-test facts for repo seam evidence consumers. This
@@ -77,7 +78,7 @@ pub(crate) struct CompactGripContext<'a> {
     type_mentions: OnceLock<crate::analysis::test_grip_evidence::reach_limit::TypeMentionIndex>,
     /// Per owner id: the unresolved-reach summary, or `None` when the
     /// `no` reach is established. Seams share owners.
-    unresolved_reach: Mutex<BTreeMap<String, Option<String>>>,
+    unresolved_reach: Mutex<BTreeMap<String, Option<(String, StaticLimitKind)>>>,
     /// Built on first use; see [`Self::unseen_reach_names`].
     unseen_reach_names: OnceLock<crate::analysis::classify::UnseenReachNames>,
     /// One shared record per distinct related-test grip (#5341, #5362).
@@ -709,16 +710,16 @@ impl<'a> CompactGripContext<'a> {
     pub(in crate::analysis::test_grip_evidence) fn unresolved_reach_cached(
         &self,
         owner_id: &str,
-    ) -> Option<Option<String>> {
+    ) -> Option<Option<(String, StaticLimitKind)>> {
         memo(&self.unresolved_reach).get(owner_id).cloned()
     }
 
     pub(in crate::analysis::test_grip_evidence) fn cache_unresolved_reach(
         &self,
         owner_id: String,
-        summary: Option<String>,
+        evidence: Option<(String, StaticLimitKind)>,
     ) {
-        memo(&self.unresolved_reach).insert(owner_id, summary);
+        memo(&self.unresolved_reach).insert(owner_id, evidence);
     }
 
     /// The single evidence-role function in `path` named `name` that starts

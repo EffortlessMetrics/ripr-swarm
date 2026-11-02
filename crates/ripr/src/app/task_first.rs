@@ -3812,6 +3812,7 @@ pub(crate) mod tests {
                 seam_id,
                 related_tests: related.into_iter().map(std::sync::Arc::new).collect(),
                 reach: stage(),
+                unresolved_reach_limit: None,
                 activate: stage(),
                 propagate: stage(),
                 observe: stage(),
@@ -4264,7 +4265,7 @@ pub(crate) mod tests {
         entry.evidence.reach = StageEvidence::new(
             StageState::Opaque,
             Confidence::Low,
-            "Reach unresolved (trait dispatch): `fmt` is a trait method of `Comparator`, which operators, formatting and generic calls run without naming it; test `test` (tests/test_autotrait.rs:6) uses `Comparator`. ripr does not trace trait dispatch, so no gap is reported",
+            "Reach unresolved (rust_trait_dispatch_unresolved): `fmt` is a trait method of `Comparator`, which operators, formatting and generic calls run without naming it; test `test` (tests/test_autotrait.rs:6) uses `Comparator`. ripr does not trace trait dispatch, so no gap is reported",
         );
         let refusal = repair_start_refusal_for_entry(root, &entry, policy)
             .ok_or("an opaque seam must be refused")?;

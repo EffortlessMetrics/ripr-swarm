@@ -86,6 +86,7 @@ fn classified_entry() -> ClassifiedSeam {
             seam_id,
             related_tests: Vec::new(),
             reach: stage(StageState::Yes),
+            unresolved_reach_limit: None,
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),
             observe: stage(StageState::Yes),

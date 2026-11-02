@@ -123,8 +123,9 @@ through a call path ripr does not fully trace; no gap is reported
 ```
 
 The transitive and macro summaries carry the existing `static_limit_kind`
-wire value that `ripr check` emits for the same witness. Trait dispatch has
-no `static_limit_kind` value and reads `(trait dispatch)`.
+wire value that `ripr check` emits for the same witness. Trait dispatch
+uses `rust_trait_dispatch_unresolved` when the reach stage is opaque or
+weak from dispatch (#5492); older summaries may still read `(trait dispatch)`.
 
 RIPR-SPEC-0005 rule 2 (any stage `opaque` gives `opaque`) then classifies
 the seam `opaque`. It is not headline-eligible, pilot withholds it from the

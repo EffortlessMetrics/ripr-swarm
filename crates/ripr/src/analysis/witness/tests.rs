@@ -275,6 +275,7 @@ impl SeamSpec {
                 seam_id,
                 related_tests: self.related.into_iter().map(std::sync::Arc::new).collect(),
                 reach: stage(self.reach),
+                unresolved_reach_limit: None,
                 activate: stage(self.activate),
                 propagate: stage(self.propagate),
                 observe: stage(self.observe),

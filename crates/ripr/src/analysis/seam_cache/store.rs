@@ -1783,6 +1783,7 @@ mod tests {
             seam_id: seam.id().clone(),
             related_tests: Vec::new(),
             reach: StageEvidence::new(StageState::Yes, Confidence::High, pad),
+            unresolved_reach_limit: None,
             activate: StageEvidence::new(StageState::Unknown, Confidence::Medium, "activate"),
             propagate: StageEvidence::new(StageState::Unknown, Confidence::Medium, "propagate"),
             observe: StageEvidence::new(StageState::Weak, Confidence::Low, "observe"),
