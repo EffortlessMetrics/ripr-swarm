@@ -196,7 +196,7 @@ fn boolean_consistency_distinguishes_the_current_true_and_false_result() -> Resu
             .iter()
             .find(|test| test.name == "adult_boundary")
             .ok_or("fixture lost its test")?;
-        let verdict = boolean_assertion_verdict_for_test(owner, assertion, test);
+        let verdict = boolean_assertion_verdict_for_test(owner, assertion, test, &index);
         if consistent {
             assert_eq!(
                 verdict,
@@ -236,7 +236,7 @@ fn boolean_consistency_requires_representable_matching_integer_literals() -> Res
             .find(|test| test.name == "adult_boundary")
             .ok_or("fixture lost its test")?;
         assert_eq!(
-            boolean_assertion_verdict_for_test(owner, &assertion, test),
+            boolean_assertion_verdict_for_test(owner, &assertion, test, &index),
             expected,
             "the u32 parameter cannot receive an incompatible literal: {argument}"
         );
@@ -265,7 +265,7 @@ fn a_contradicted_boolean_assertion_withholds_the_whole_tests_promotion() -> Res
         .ok_or("fixture lost its paired test")?;
     assert_eq!(test.assertions.len(), 2, "extraction keeps both assertions");
     assert!(
-        test_has_contradicted_assertion(test, Some(owner)),
+        test_has_contradicted_assertion(test, Some(owner), &index),
         "the contradictory boolean assertion must count beside an equality one: {test:?}"
     );
 

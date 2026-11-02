@@ -725,10 +725,24 @@ under `rust_indirect_owner_call_unresolved`:
 - **function value**: a non-ignored test with an assertion, in the owner's file
   or an integration test, names the owner without calling it: an argument
   (`.map(inc)`) or an untyped binding (`let f = inc; f(2)`; a typed `fn` pointer binding is left to RIPR-SPEC-0115). A call
-  `inc(..)`, a macro `inc!`, a method `.inc`, a `use` line, a field label
+  `inc(..)`, a macro `inc!`, a method `.inc`, a `use` declaration, a field label
   `inc:`, a `fn inc` definition and a test that binds a local or parameter
   named `inc` are not value uses. A mention only in production code keeps the
-  gap, since no test is shown to run it.
+  gap, since no test is shown to run it. Item declarations are not value
+  mentions, including multiline imports. A nested `fn` or an import of
+  another item only shadows bare references within its lexical block; an
+  owner-qualified value (including a raw identifier) remains a mention. A
+  nested module does not inherit the enclosing block's item shadows. Grouped
+  imports retain their full
+  paths, and an inner owner-preserving import overrides an outer shadow.
+  References after a declaration on the same line remain visible. Opaque,
+  conditional and glob bindings do not establish another owner. Imports suppress
+  a bare mention only when the shared call-identity resolver establishes a
+  different same-name definition; unresolved reexports and aliases retain the
+  limit. A test body the shared parser refuses proves no declaration range, so
+  a single-line `use` mention keeps its lexical exclusion there and the body's
+  remaining declarations stay unproven. This is not general name resolution or
+  macro expansion (#10162).
 - **generated owner**: the changed line lies in no function of its file and the
   changed expression is an item-position macro invocation
   (`def_add!(add_five, 2 + 3);`). The definition the macro emits is not source
