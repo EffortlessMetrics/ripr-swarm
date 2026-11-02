@@ -117,6 +117,8 @@ pub use language::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
     PartialDiffStopReason,
 };
+#[cfg(all(test, feature = "lang-python"))]
+pub(crate) use language::{python_direct_and_advisory_finding, python_miss_matrix_findings};
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
     normalize_rust_expression, sanitize_path,
