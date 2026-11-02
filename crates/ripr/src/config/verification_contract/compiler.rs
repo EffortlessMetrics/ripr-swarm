@@ -10,7 +10,8 @@ use super::model::{
     VerificationContractSourceClass,
 };
 use crate::config::{
-    RiprConfig, TestHarnessRegistration, test_harness_registration_canonical_identity,
+    RiprConfig, TestHarnessRegistration, canonical_test_harnesses_identity,
+    test_harness_registration_canonical_identity,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -191,19 +192,9 @@ fn tracked_configuration_source(
 }
 
 fn harness_registry_digest(config: &RiprConfig) -> String {
-    let mut ordered = config
-        .analysis()
-        .test_harnesses()
-        .iter()
-        .map(test_harness_registration_canonical_identity)
-        .collect::<Vec<_>>();
-    ordered.sort();
-    let mut identity = ordered.len().to_string();
-    for encoded in ordered {
-        identity.push('\u{0}');
-        identity.push_str(&encoded);
-    }
-    digest_text(&identity)
+    digest_text(&canonical_test_harnesses_identity(
+        config.analysis().test_harnesses(),
+    ))
 }
 
 fn harness_declaration_digest(registration: &TestHarnessRegistration) -> String {
@@ -211,10 +202,19 @@ fn harness_declaration_digest(registration: &TestHarnessRegistration) -> String 
 }
 
 fn workspace_relative_location(root: &Path, path: &Path) -> Option<String> {
-    path.strip_prefix(root)
-        .ok()
-        .map(normalize_repo_relative)
-        .filter(|location| !location.is_empty())
+    if path.is_absolute() {
+        path.strip_prefix(root)
+            .ok()
+            .map(normalize_repo_relative)
+            .filter(|location| !location.is_empty())
+    } else {
+        let location = normalize_repo_relative(path);
+        if location.is_empty() {
+            None
+        } else {
+            Some(location)
+        }
+    }
 }
 
 fn semantic_contract_digest(contract: &RepositoryVerificationContractV1) -> String {
@@ -391,5 +391,10 @@ mod tests {
             workspace_relative_location(root, Path::new("/work/project/ripr.toml")).as_deref(),
             Some("ripr.toml")
         );
+        assert_eq!(
+            workspace_relative_location(root, Path::new("config/ripr.toml")).as_deref(),
+            Some("config/ripr.toml")
+        );
+        assert!(workspace_relative_location(root, Path::new("/outside/ripr.toml")).is_none());
     }
 }

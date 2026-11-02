@@ -507,29 +507,13 @@ fn canonical_sorted_strings(patterns: &[String]) -> String {
 /// Canonical identity encoding for test-harness registrations (#3532).
 /// Length-prefixed, NUL-joined, sorted — injective, so distinct
 /// registration sets never hash to the same artifact identity.
-fn canonical_test_harnesses_identity(registrations: &[TestHarnessRegistration]) -> String {
+/// Canonical identity for the full harness registration set (#3532 / #6428).
+pub(crate) fn canonical_test_harnesses_identity(
+    registrations: &[TestHarnessRegistration],
+) -> String {
     let mut ordered = registrations
         .iter()
-        .map(|registration| {
-            let mut encoded = String::new();
-            for field in [
-                registration.registration_id.as_str(),
-                registration
-                    .target
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .as_str(),
-                registration.kind.as_str(),
-                registration.adapter.as_str(),
-                registration.marker.as_str(),
-            ] {
-                encoded.push_str(&field.len().to_string());
-                encoded.push(':');
-                encoded.push_str(field);
-                encoded.push('\u{0}');
-            }
-            encoded
-        })
+        .map(test_harness_registration_canonical_identity)
         .collect::<Vec<_>>();
     ordered.sort();
 

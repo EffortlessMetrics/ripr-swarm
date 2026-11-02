@@ -44,8 +44,8 @@ pub use model::{
     TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
 };
 pub(crate) use model::{
-    HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig, perl_executable_opt_in,
-    test_harness_registration_canonical_identity,
+    HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig, canonical_test_harnesses_identity,
+    perl_executable_opt_in, test_harness_registration_canonical_identity,
 };
 
 #[cfg(test)]
