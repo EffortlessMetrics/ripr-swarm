@@ -21,6 +21,8 @@ Linked issues:
   the helper's call)
 - #7004 (post-`let` mutation voids a bound boundary name)
 - #7042 item 4 (newline-split reassignment still voids)
+- #7042 items 1–3 (assertion-position liveness, whole-body comment mask,
+  nested-block scope for voiding)
 
 Linked PRs:
 

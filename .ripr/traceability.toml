@@ -13924,7 +13924,8 @@ fixtures = [
   "fixtures/predicate_pairing_reassigned_binding",
   "fixtures/predicate_pairing_compound_assigned_binding",
   "fixtures/predicate_pairing_mutably_borrowed_binding",
-  "fixtures/predicate_pairing_newline_split_reassigned_binding"
+  "fixtures/predicate_pairing_newline_split_reassigned_binding",
+  "fixtures/predicate_pairing_boundary_precision_residuals_7042"
 ]
 code = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs",

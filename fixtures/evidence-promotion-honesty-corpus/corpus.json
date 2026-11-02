@@ -10265,6 +10265,75 @@
       ]
     },
     {
+      "id": "rust_predicate_pairing_post_assertion_mutation_still_pairs",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_pairing_boundary_precision_residuals_7042",
+      "vector": "boundary_binding_post_assertion_mutation_still_pairs",
+      "probe_family": "predicate",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" },
+        {
+          "type": "expected_related_test",
+          "name": "after_assert",
+          "file": "tests/post_assertion.rs",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_predicate_pairing_comment_interior_mutation_still_pairs",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_pairing_boundary_precision_residuals_7042",
+      "vector": "boundary_binding_comment_interior_mutation_still_pairs",
+      "probe_family": "predicate",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" },
+        {
+          "type": "expected_related_test",
+          "name": "commented",
+          "file": "tests/comment_interior.rs",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_predicate_pairing_nested_shadow_mutation_still_pairs",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_pairing_boundary_precision_residuals_7042",
+      "vector": "boundary_binding_nested_shadow_mutation_still_pairs",
+      "probe_family": "predicate",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" },
+        {
+          "type": "expected_related_test",
+          "name": "nested",
+          "file": "tests/nested_shadow.rs",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
       "id": "rust_free_function_receiver_qualified_call",
       "language": "rust",
       "tier": "pure",
