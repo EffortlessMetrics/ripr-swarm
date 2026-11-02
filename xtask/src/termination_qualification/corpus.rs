@@ -544,18 +544,18 @@ pub(crate) const NORMALIZATION_CASES: [(&str, &str, bool); 4] = [
     ("normalized-nonmatch", "src/./other.rs", false),
 ];
 
-/// Root-relative and separator-boundary rows. The changed path may differ from
-/// `src/lib.rs`. Backslash is source text, not a separator, in the shared dialect.
-pub(crate) const BOUNDARY_CASES: [(&str, &str, &str, bool); 4] = [
-    ("leading-slash-pattern", "/src/lib.rs", "src/lib.rs", true),
-    (
-        r"backslash-not-a-separator",
-        r"src\lib.rs",
-        "src/lib.rs",
-        false,
-    ),
+/// Root-relative boundary rows with patterns both consumers accept.
+pub(crate) const BOUNDARY_CASES: [(&str, &str, &str, bool); 2] = [
     ("root-relative-file", "lib.rs", "lib.rs", true),
     ("root-relative-nonmatch", "tests/**", "lib.rs", false),
+];
+
+/// Selectors the shared matcher would understand but product configuration
+/// refuses before matching. Suppression policy only; generated-file patterns
+/// share the same relative-path contract but are exercised through valid rows.
+pub(crate) const POLICY_REFUSAL_PATTERNS: [(&str, &str); 2] = [
+    ("leading-slash-refused", "/src/lib.rs"),
+    (r"backslash-refused", r"src\lib.rs"),
 ];
 
 pub(crate) fn glob_cases() -> Vec<Case> {
@@ -769,6 +769,15 @@ pub(crate) fn glob_cases() -> Vec<Case> {
             } else {
                 GeneratedNotExcluded
             },
+        ));
+    }
+    for (id, pattern) in POLICY_REFUSAL_PATTERNS {
+        cases.push(suppression_case(
+            id,
+            Role::Control,
+            pattern,
+            lib,
+            Expect::PolicyRefused,
         ));
     }
     for (id, pattern, matches) in NORMALIZATION_CASES {

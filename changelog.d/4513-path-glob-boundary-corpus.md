@@ -1,2 +1,2 @@
 <!-- section: Internal / CI -->
-- Termination qualification path-glob corpus v3 adds generated-file adjacent `**` rows and shared boundary fixtures (leading-slash pattern, backslash literal nonmatch, repository-root `lib.rs` match/nonmatch) for both suppression and generated-file consumers (#4513).
+- Termination qualification path-glob corpus v3 adds generated-file adjacent `**` rows, repository-root `lib.rs` fixtures for both consumers, and suppression-policy refusal rows for leading `/` and backslash selectors (#4513).

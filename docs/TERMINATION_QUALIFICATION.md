@@ -46,15 +46,15 @@ and bounded drains.
 |---|---|---|
 | `rust_nesting` | `ripr check --diff` and `ripr pilot` | nested blocks, `if`, parentheses, closures, prefix operators, generic arguments, `else if` chains, long operator chains; a below-budget control; comment, string, char and raw-string lookalikes |
 | `python_nesting` | `ripr check --diff` | long binary, ternary, `not`, unary minus and `await` runs; long `elif` chain; a deep-but-supported control; comment and string lookalikes |
-| `path_glob_suppression` | `ripr check --suppression-policy` | `*`, `?`, `**`, zero-segment `**`, adjacent `**`, `.` and empty segments, Unicode, empty pattern, many-star and many-segment nonmatches, leading-slash patterns, backslash-as-literal nonmatches, root-relative file paths |
+| `path_glob_suppression` | `ripr check --suppression-policy` | `*`, `?`, `**`, zero-segment `**`, adjacent `**`, `.` and empty segments, Unicode, empty pattern, refused leading `/` and backslash selectors, many-star and many-segment nonmatches, repository-root paths |
 | `path_glob_generated_file` | `ripr check` with `generated_file_patterns` | the same dialect through the second consumer, including its slashless-pattern rule and adjacent `**` rows |
 
 Corpus generation `ripr-termination-corpus-v3` retains the v2 row IDs and
-expectations and adds generated-file adjacent `**` rows plus shared boundary
-fixtures: a leading-slash pattern against a workspace-relative path, a backslash
-literal that is not a separator, and a repository-root `lib.rs` match/nonmatch
-pair. Historical v1 and v2 packets retain their original corpus identity and
-coverage. The path-glob families expand from 34 to 43 rows; the packet format
+expectations and adds generated-file adjacent `**` rows, repository-root
+`lib.rs` match/nonmatch pairs for both consumers, and suppression-policy
+refusal rows for leading `/` and backslash selectors the matcher never sees.
+Historical v1 and v2 packets retain their original corpus identity and
+coverage. The path-glob families expand from 34 to 41 rows; the packet format
 remains `ripr-termination-qualification-v1`.
 
 Each Rust and Python row carries an unchanged hostile file outside the diff
@@ -157,4 +157,6 @@ Known gaps against the child issues, each deliberate for this first harness:
   candidate build; the binding between them is the commit in `--version`, not
   a byte comparison.
 - Glob corpus still omits an empty changed path through the product routes; the
-  shared matcher documents `**` against `""` in unit tests only.
+  shared matcher documents `**` against `""` in unit tests only. Invalid
+  leading `/` and backslash selectors are exercised as suppression-policy
+  refusals, not as generated-file rows.
