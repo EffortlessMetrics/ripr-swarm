@@ -385,6 +385,17 @@ fn claims_payload_equality_grades_only_the_return_value_family() -> Result<(), S
             "claims::assert_ok_eq!(\n    checked_div(17, 5),\n    3\n);",
             false,
         ),
+        // A macro that discards its input never runs the statement inside it.
+        (
+            "multi_line_inside_discarded_macro",
+            "macro_rules! ignore {\n    ($($t:tt)*) => {};\n}\nignore! {\n    assert_ok_eq!(\n        checked_div(17, 5),\n        3\n    );\n}",
+            false,
+        ),
+        (
+            "single_line_inside_discarded_macro",
+            "macro_rules! ignore {\n    ($($t:tt)*) => {};\n}\nignore! {\n    assert_ok_eq!(checked_div(17, 5), 3);\n}",
+            false,
+        ),
         (
             "multi_line_comment_in_arguments",
             "assert_ok_eq!(\n    checked_div(17, 5), // quotient\n    3\n);",
@@ -403,6 +414,7 @@ fn claims_payload_equality_grades_only_the_return_value_family() -> Result<(), S
         };
         let outcome = run(&root_dir, &multi, "return_value")?;
         if credited {
+            assert_eq!(outcome.class, "exposed", "{name}: {}", outcome.class);
             assert_eq!(
                 outcome.oracle,
                 ("exact_value".to_string(), "strong".to_string()),
