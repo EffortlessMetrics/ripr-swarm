@@ -164,6 +164,7 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_bound_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
+    inventory_diff_scoped_streamed_seams_with_optional_prepared,
     inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config,
     prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
     scoped_file_seams, seam_kind_for_probe_family,
