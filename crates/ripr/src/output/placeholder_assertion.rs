@@ -11,7 +11,7 @@ pub(crate) const FILL_IN_NOTE: &str =
     "replace each /* ... */ comment with a real value from your test before using it";
 
 pub(crate) fn has_placeholders(text: &str) -> bool {
-    text.contains("/*")
+    text.contains("/*") && text.contains("*/")
 }
 
 /// Pilot-terminal form: `assertion shape:` plus the fill-in note when the
@@ -89,11 +89,17 @@ mod tests {
     }
 
     #[test]
-    fn a_lone_block_comment_opener_is_enough_to_warn() {
+    fn block_comment_pair_triggers_placeholder_wording() {
         assert!(has_placeholders("assert_eq!(f(/* input */), 1)"));
         assert_eq!(
             fill_in_note_line("- ", "assert_eq!(f(/* input */), 1)").as_deref(),
             Some(format!("- ({FILL_IN_NOTE})").as_str())
         );
+    }
+
+    #[test]
+    fn division_by_dereference_is_not_a_placeholder_shape() {
+        assert!(!has_placeholders("assert_eq!(numerator / *denominator, 1)"));
+        assert!(!has_placeholders("x / *y"));
     }
 }
