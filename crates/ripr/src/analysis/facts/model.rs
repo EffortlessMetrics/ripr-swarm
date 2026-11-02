@@ -252,9 +252,9 @@ impl EvidencePassFilesystemCurrentness {
         }
         let paths: Vec<PathBuf> = initial.keys().cloned().collect();
         drop(initial);
+        let mut observed = ObservedEntries::default();
         for path in paths {
-            let after =
-                filesystem_fingerprint(&authority.root, &path, &mut ObservedEntries::default());
+            let after = filesystem_fingerprint(&authority.root, &path, &mut observed);
             let Ok(map) = self.initial_fingerprints.lock() else {
                 return false;
             };

@@ -2299,6 +2299,12 @@ fn classify_scoped_seams_streamed(
             window_size,
         )?)
         .ok_or("review evidence evaluation count overflow")?;
+    if !pass.finalize_filesystem_currentness() {
+        return Err(
+            "filesystem generation changed during evidence pass; no complete guidance is available"
+                .into(),
+        );
+    }
     cancellation::checkpoint()?;
     Ok((evaluated, 0))
 }
@@ -2311,6 +2317,12 @@ fn classify_evidence_windows(
     window_size: usize,
 ) -> Result<usize, String> {
     let mut evaluated = 0usize;
+    struct PendingWindow {
+        ordinals: Vec<usize>,
+        seams: Vec<RepoSeam>,
+        evidence: Vec<test_grip_evidence::TestGripEvidence>,
+    }
+    let mut pending = Vec::new();
     for window in ordinals.chunks(window_size) {
         cancellation::checkpoint()?;
         let window_seams = window
@@ -2319,27 +2331,45 @@ fn classify_evidence_windows(
             .collect::<Vec<_>>();
         let evidence = pass.evidence_for(&window_seams);
         cancellation::checkpoint()?;
-        let classified = seam_classification::classify_seams_owned(window_seams, evidence);
-        if classified.len() != window.len() {
+        pending.push(PendingWindow {
+            ordinals: window.to_vec(),
+            seams: window_seams,
+            evidence,
+        });
+        pass.clear_window_memos();
+        trace_latency_phase(
+            "review_evidence_window",
+            &format!("built_window_{}_pending_{}", window.len(), pending.len()),
+            Duration::ZERO,
+        );
+    }
+    if !pass.finalize_filesystem_currentness() {
+        return Err(
+            "filesystem generation changed during evidence pass; no complete guidance is available"
+                .into(),
+        );
+    }
+    for batch in pending {
+        let classified = seam_classification::classify_seams_owned(batch.seams, batch.evidence);
+        if classified.len() != batch.ordinals.len() {
             return Err(
                 "review evidence window is incomplete; no complete guidance is available".into(),
             );
         }
-        for (ordinal, entry) in window.iter().copied().zip(classified) {
+        for (ordinal, entry) in batch.ordinals.iter().copied().zip(classified) {
             if entry.seam.id() != seams[ordinal].id() {
                 return Err("review evidence window identity mismatch".into());
             }
             consumer.observe(ordinal, entry)?;
         }
         evaluated = evaluated
-            .checked_add(window.len())
+            .checked_add(batch.ordinals.len())
             .ok_or("review evidence evaluation count overflow")?;
-        pass.clear_window_memos();
         trace_latency_phase(
             "review_evidence_window",
             &format!(
                 "evaluated_{evaluated}_window_{}_retained_{}",
-                window.len(),
+                batch.ordinals.len(),
                 consumer.retained_payloads()
             ),
             Duration::ZERO,
@@ -2757,6 +2787,9 @@ fn classify_scoped_seams(
         evaluation_probe::record(first.len());
         evidence = pass.evidence_for(&first);
         cancellation::checkpoint()?;
+        if !pass.finalize_filesystem_currentness() {
+            test_grip_evidence::EvidencePass::withdraw_target_bearing_evidence(&mut evidence);
+        }
         let classified_first =
             classify_seams_retaining(&first, &evidence, super::witness::repo_adapter_input(true));
         if (stages.sufficient)(&classified_first) {
@@ -2785,6 +2818,9 @@ fn classify_scoped_seams(
     // joins the rest without changing any seam's classification or the
     // original seam order.
     evidence.extend(pass.evidence_for(&rest));
+    if !pass.finalize_filesystem_currentness() {
+        test_grip_evidence::EvidencePass::withdraw_target_bearing_evidence(&mut evidence);
+    }
     trace_latency_phase(
         "evidence_for_seams",
         "review_scope_ok",

@@ -279,7 +279,12 @@ pub(crate) struct OracleSemantics {
 /// caller that runs under a cancellation context must checkpoint immediately
 /// after this function returns before using or publishing the vector.
 pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<TestGripEvidence> {
-    EvidencePass::new(index).evidence_for(seams)
+    let pass = EvidencePass::new(index);
+    let mut out = pass.evidence_for(seams);
+    if !pass.finalize_filesystem_currentness() {
+        EvidencePass::withdraw_target_bearing_evidence(&mut out);
+    }
+    out
 }
 
 /// One test context shared by several [`EvidencePass::evidence_for`]
@@ -326,6 +331,58 @@ impl<'index> EvidencePass<'index> {
     pub(crate) fn clear_window_memos(&self) {
         if let Some(context) = &self.context {
             context.clear_window_memos();
+        }
+    }
+
+    /// Recapture every path admitted during this pass and emit the latency
+    /// receipt naming `pass_capture_terminal` granularity (#4292).
+    pub(crate) fn finalize_filesystem_currentness(&self) -> bool {
+        let Some(context) = self.context.as_ref() else {
+            return true;
+        };
+        let Some(authority) = context.index.workspace_authority.as_ref() else {
+            return true;
+        };
+        let terminal_started = Instant::now();
+        let ok = self.pass_filesystem.terminal_generation_matches(authority);
+        if ok {
+            trace_latency_phase(
+                "evidence_filesystem_currentness",
+                &format!(
+                    "granularity=pass_capture_terminal distinct_paths={}",
+                    self.pass_filesystem.tracked_path_count()
+                ),
+                terminal_started.elapsed(),
+            );
+        } else {
+            trace_latency_phase(
+                "evidence_filesystem_currentness",
+                "stale_generation",
+                terminal_started.elapsed(),
+            );
+        }
+        ok
+    }
+
+    /// Remove target-bearing repair facts when publication-boundary recapture
+    /// fails (#4292).
+    pub(crate) fn withdraw_target_bearing_evidence(evidence: &mut [TestGripEvidence]) {
+        for entry in evidence {
+            entry.related_tests = entry
+                .related_tests
+                .iter()
+                .map(|related| {
+                    if related.test_target.is_none() {
+                        Arc::clone(related)
+                    } else {
+                        let mut stripped = (**related).clone();
+                        stripped.test_target = None;
+                        Arc::new(stripped)
+                    }
+                })
+                .collect();
+            entry.missing_discriminators.clear();
+            entry.new_test_target = None;
         }
     }
 
@@ -379,40 +436,6 @@ impl<'index> EvidencePass<'index> {
                 })
             })
             .collect();
-        let terminal_started = Instant::now();
-        if let Some(authority) = context.index.workspace_authority.as_ref() {
-            if self.pass_filesystem.terminal_generation_matches(authority) {
-                trace_latency_phase(
-                    "evidence_filesystem_currentness",
-                    &format!(
-                        "granularity=pass_capture_terminal distinct_paths={}",
-                        self.pass_filesystem.tracked_path_count()
-                    ),
-                    terminal_started.elapsed(),
-                );
-            } else {
-                trace_latency_phase(
-                    "evidence_filesystem_currentness",
-                    "stale_generation",
-                    terminal_started.elapsed(),
-                );
-                for evidence in &mut out {
-                    evidence.related_tests = evidence
-                        .related_tests
-                        .iter()
-                        .map(|related| {
-                            if related.test_target.is_none() {
-                                Arc::clone(related)
-                            } else {
-                                let mut stripped = (**related).clone();
-                                stripped.test_target = None;
-                                Arc::new(stripped)
-                            }
-                        })
-                        .collect();
-                }
-            }
-        }
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
         out
     }
