@@ -322,6 +322,26 @@ packages rather than silently ignoring the row.
 Given one row selects crate = "alpha" and another selects a broader path glob,
 when both match a file in that package,
 then the crate-name selector wins.
+
+Given two equally specific path rows set opposite snapshot_strength values,
+when their document order is reversed,
+then the later row wins and the check-artifact config identity changes.
+
+Given ripr.toml at the workspace root names crate = "beta",
+when load_for_root starts from crates/alpha,
+then the sibling package binds instead of being reported unknown.
+
+Given members = ["crates/*/plugins/*"] and crate = "parser",
+when that nested package exists,
+then the crate selector binds rather than failing as unknown.
+
+Given crate = "alpha" and a nested workspace package under that directory,
+when a file belongs to the nested package,
+then the parent crate overlay does not apply.
+
+Given --candidate-tree and a crate selector,
+when the candidate tree's manifests are bound,
+then a matching package name applies and an unknown name fails closed.
 ```
 
 ### Duplicate suppression declarations fail closed

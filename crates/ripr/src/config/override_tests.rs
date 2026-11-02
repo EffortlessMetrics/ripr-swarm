@@ -46,7 +46,7 @@ fn two_crate_workspace(name: &str) -> Result<PathBuf, String> {
 fn omitted_overrides_keep_repo_wide_severity_byte_identical() -> Result<(), String> {
     let without = tests_only_parse("[severity.findings]\nweakly_exposed = \"warning\"\n")?;
     let empty_array =
-        tests_only_parse("[severity.findings]\nweakly_exposed = \"warning\"\noverrides = []\n")?;
+        tests_only_parse("overrides = []\n\n[severity.findings]\nweakly_exposed = \"warning\"\n")?;
     let path = "crates/alpha/src/lib.rs";
     if without.severity_for(None, path) != empty_array.severity_for(None, path) {
         return Err("an empty overrides array must keep repo-wide severity".to_string());
@@ -237,6 +237,151 @@ fn unknown_override_key_fails_closed() -> Result<(), String> {
         };
     if !error.contains("unknown field") {
         return Err(error);
+    }
+    Ok(())
+}
+
+#[test]
+fn reversed_equal_oracle_rows_change_identity() -> Result<(), String> {
+    let first = tests_only_parse(
+        "[[overrides]]\npath = \"src/**\"\noracles.snapshot_strength = \"strong\"\n\n\
+         [[overrides]]\npath = \"src/**\"\noracles.snapshot_strength = \"weak\"\n",
+    )?;
+    let reversed = tests_only_parse(
+        "[[overrides]]\npath = \"src/**\"\noracles.snapshot_strength = \"weak\"\n\n\
+         [[overrides]]\npath = \"src/**\"\noracles.snapshot_strength = \"strong\"\n",
+    )?;
+    let path = "src/lib.rs";
+    if first.oracles_for(None, path).snapshot_strength()
+        == reversed.oracles_for(None, path).snapshot_strength()
+    {
+        return Err("later equally specific oracle row must win".to_string());
+    }
+    if check_artifact_config_identity_hash(&first) == check_artifact_config_identity_hash(&reversed)
+    {
+        return Err("reordering overlapping oracle rows must change identity".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn member_root_load_accepts_sibling_crate_override() -> Result<(), String> {
+    let root = two_crate_workspace("member-root")?;
+    write_file(
+        &root.join("ripr.toml"),
+        "[[overrides]]\ncrate = \"beta\"\nseverity.findings.weakly_exposed = \"note\"\n",
+    )?;
+    let config = load_for_root(&root.join("crates/alpha"))?;
+    let _ = fs::remove_dir_all(&root);
+    let beta = config
+        .severity_for_file(Path::new("crates/beta/src/lib.rs"))
+        .for_exposure(&ExposureClass::WeaklyExposed);
+    if beta != ConfigSeverity::Note {
+        return Err(format!(
+            "sibling crate named from a member root must bind, got {}",
+            beta.as_str()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn nested_member_glob_binds_crate_name() -> Result<(), String> {
+    let root = temp_root("nested-glob")?;
+    write_file(
+        &root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/*/plugins/*\"]\n",
+    )?;
+    write_package(&root, "crates/team/plugins/parser", "parser")?;
+    write_file(
+        &root.join("ripr.toml"),
+        "[[overrides]]\ncrate = \"parser\"\nseverity.findings.weakly_exposed = \"info\"\n",
+    )?;
+    let config = load_for_root(&root)?;
+    let _ = fs::remove_dir_all(&root);
+    let severity = config
+        .severity_for_file(Path::new("crates/team/plugins/parser/src/lib.rs"))
+        .for_exposure(&ExposureClass::WeaklyExposed);
+    if severity != ConfigSeverity::Info {
+        return Err(format!(
+            "nested member glob must bind parser, got {}",
+            severity.as_str()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn nested_package_does_not_inherit_parent_crate_override() -> Result<(), String> {
+    let root = temp_root("nested-package")?;
+    write_file(
+        &root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/alpha\", \"crates/alpha/plugin\"]\n",
+    )?;
+    write_package(&root, "crates/alpha", "alpha")?;
+    write_package(&root, "crates/alpha/plugin", "plugin")?;
+    write_file(
+        &root.join("ripr.toml"),
+        "[severity.findings]\nweakly_exposed = \"warning\"\n\n\
+         [[overrides]]\ncrate = \"alpha\"\nseverity.findings.weakly_exposed = \"info\"\n",
+    )?;
+    let config = load_for_root(&root)?;
+    let _ = fs::remove_dir_all(&root);
+    let parent = config
+        .severity_for_file(Path::new("crates/alpha/src/lib.rs"))
+        .for_exposure(&ExposureClass::WeaklyExposed);
+    let nested = config
+        .severity_for_file(Path::new("crates/alpha/plugin/src/lib.rs"))
+        .for_exposure(&ExposureClass::WeaklyExposed);
+    if parent != ConfigSeverity::Info {
+        return Err(format!(
+            "parent crate expected info, got {}",
+            parent.as_str()
+        ));
+    }
+    if nested != ConfigSeverity::Warning {
+        return Err(format!(
+            "nested package must keep repo-wide warning, got {}",
+            nested.as_str()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn listed_manifests_bind_candidate_crate_and_reject_unknown() -> Result<(), String> {
+    let manifests = vec![
+        (
+            String::new(),
+            "[workspace]\nmembers = [\"crates/alpha\"]\n".to_string(),
+        ),
+        (
+            "crates/alpha".to_string(),
+            "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\n".to_string(),
+        ),
+    ];
+    let crates = overrides::crates_from_listed_manifests(&manifests);
+    let mut ok = tests_only_parse(
+        "[[overrides]]\ncrate = \"alpha\"\noracles.snapshot_strength = \"strong\"\n",
+    )?;
+    ok.bind_workspace_crates(crates.clone())?;
+    if ok
+        .oracles_for(None, "crates/alpha/src/lib.rs")
+        .snapshot_strength()
+        .clone()
+        != crate::domain::OracleStrength::Strong
+    {
+        return Err("candidate-listed crate selector must apply".to_string());
+    }
+    let mut missing = tests_only_parse(
+        "[[overrides]]\ncrate = \"missing\"\noracles.snapshot_strength = \"strong\"\n",
+    )?;
+    let error = match missing.bind_workspace_crates(crates) {
+        Ok(_) => return Err("unknown candidate crate must fail closed".to_string()),
+        Err(error) => error,
+    };
+    if !error.contains("crate = \"missing\"") {
+        return Err(format!("unknown candidate crate diagnostic: {error}"));
     }
     Ok(())
 }

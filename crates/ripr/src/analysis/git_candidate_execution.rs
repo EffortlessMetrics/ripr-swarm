@@ -495,6 +495,79 @@ pub(crate) fn candidate_config_bytes(
     Ok(Some(String::from_utf8_lossy(&output.stdout).to_string()))
 }
 
+const MAX_CANDIDATE_TREE_LISTING_BYTES: usize = 16 * 1024 * 1024;
+const MAX_CANDIDATE_MANIFESTS: usize = 4096;
+
+/// `Cargo.toml` blobs from the candidate tree, keyed by repository-relative
+/// package directory (`""` for the root manifest). The worktree is never opened.
+pub(crate) fn candidate_cargo_toml_manifests(
+    subject: &GitCandidateSubject,
+    deadline: Option<Duration>,
+) -> Result<Vec<(String, String)>, SubjectError> {
+    let treeish = subject.candidate_tree.as_str();
+    let listing = crate::git::run_git_output_with_optional_deadline_and_limit(
+        &subject.repository_root,
+        &["ls-tree", "-r", "--name-only", treeish],
+        deadline,
+        MAX_CANDIDATE_TREE_LISTING_BYTES,
+    )
+    .map_err(|error| map_candidate_git_error(error, "listing candidate Cargo.toml paths"))?;
+    if !listing.status.success() {
+        return Err(SubjectError::ExecutionFailed {
+            detail: format!(
+                "listing candidate tree {treeish} failed: {}",
+                String::from_utf8_lossy(&listing.stderr)
+            ),
+        });
+    }
+    let paths: Vec<String> = String::from_utf8_lossy(&listing.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| *line == "Cargo.toml" || line.ends_with("/Cargo.toml"))
+        .take(MAX_CANDIDATE_MANIFESTS)
+        .map(|line| line.replace('\\', "/"))
+        .collect();
+    let mut manifests = Vec::with_capacity(paths.len());
+    let manifest_limit = crate::bounded_input::MAX_METADATA_TOML_BYTES as usize;
+    for path in paths {
+        let spec = format!("{treeish}:{path}");
+        let output = crate::git::run_git_output_with_optional_deadline_and_limit(
+            &subject.repository_root,
+            &["show", &spec],
+            deadline,
+            manifest_limit,
+        )
+        .map_err(|error| map_candidate_git_error(error, "reading candidate Cargo.toml"))?;
+        if !output.status.success() {
+            continue;
+        }
+        let dir = path
+            .strip_suffix("/Cargo.toml")
+            .or_else(|| (path == "Cargo.toml").then_some(""))
+            .unwrap_or("")
+            .to_string();
+        manifests.push((dir, String::from_utf8_lossy(&output.stdout).into_owned()));
+    }
+    Ok(manifests)
+}
+
+fn map_candidate_git_error(error: crate::core_error::CoreError, what: &str) -> SubjectError {
+    match error {
+        crate::core_error::CoreError::GitInvocationTimeout {
+            operation,
+            timeout_ms,
+            spawned,
+        } => SubjectError::ExecutionTimedOut {
+            operation,
+            timeout_ms,
+            spawned,
+        },
+        other => SubjectError::ExecutionFailed {
+            detail: format!("{what} failed: {other}"),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

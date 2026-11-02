@@ -9,7 +9,7 @@ use super::model::{
     ConfigSeverity, FindingSeverityConfig, OraclePolicy, RiprConfig, SeamSeverityConfig,
     SeverityConfig,
 };
-use crate::analysis::path_glob::path_glob_matches;
+use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
 use crate::analysis::seams::SeamGripClass;
 use crate::domain::{ExposureClass, OracleStrength};
 use std::fs;
@@ -41,6 +41,9 @@ pub(crate) struct ConfigOverride {
     /// After [`RiprConfig::bind_workspace_crates`], a crate-name selector
     /// also carries `{package_dir}/**` so path-only consumers can match.
     pub resolved_path_glob: Option<String>,
+    /// Package directories nested under this crate. Path-only matching must
+    /// not apply a parent crate overlay to a child package.
+    pub nested_package_dirs: Vec<String>,
 }
 
 /// Workspace package identity used to resolve `crate = "..."` selectors.
@@ -195,15 +198,24 @@ impl ConfigOverride {
     fn matches(&self, crate_name: Option<&str>, path: &str) -> bool {
         match &self.selector {
             OverrideSelector::Crate(name) => {
-                if crate_name == Some(name.as_str()) {
-                    return true;
+                if let Some(crate_name) = crate_name {
+                    return crate_name == name.as_str();
                 }
-                self.resolved_path_glob
-                    .as_deref()
-                    .is_some_and(|glob| path_glob_matches(glob, path))
+                self.crate_path_matches(path)
             }
             OverrideSelector::Path(pattern) => path_glob_matches(pattern, path),
         }
+    }
+
+    fn crate_path_matches(&self, path: &str) -> bool {
+        let Some(glob) = self.resolved_path_glob.as_deref() else {
+            return false;
+        };
+        path_glob_matches(glob, path)
+            && !self
+                .nested_package_dirs
+                .iter()
+                .any(|dir| path_under_package(path, dir))
     }
 
     fn specificity(&self) -> u32 {
@@ -259,6 +271,12 @@ fn path_under_package(path: &str, dir: &str) -> bool {
 }
 
 impl RiprConfig {
+    pub(crate) fn has_crate_override_selectors(&self) -> bool {
+        self.overrides
+            .iter()
+            .any(|row| matches!(row.selector, OverrideSelector::Crate(_)))
+    }
+
     /// Bind Cargo package names/directories so `crate = "..."` selectors
     /// resolve. Unknown crate names fail closed.
     pub(crate) fn bind_workspace_crates(
@@ -296,7 +314,9 @@ impl RiprConfig {
 }
 
 pub(crate) fn oracle_overlay_identity(overrides: &[ConfigOverride]) -> String {
-    let mut encoded = overrides
+    // Document order is load-bearing: equally specific matching rows keep
+    // the later one, so sorting would let a swap reuse stale findings.
+    let encoded = overrides
         .iter()
         .filter(|row| {
             row.oracles
@@ -312,7 +332,6 @@ pub(crate) fn oracle_overlay_identity(overrides: &[ConfigOverride]) -> String {
             format!("{}:{policy}", row.selector.identity_key())
         })
         .collect::<Vec<_>>();
-    encoded.sort();
     format!("{}\u{0}{}", encoded.len(), encoded.join("\u{0}"))
 }
 
@@ -400,19 +419,33 @@ pub(crate) fn sync_compiled_overlays(config: &mut RiprConfig) {
 
 fn refresh_resolved_globs(overrides: &mut [ConfigOverride], crates: &[WorkspaceCrate]) {
     for row in overrides {
-        if let OverrideSelector::Crate(name) = &row.selector {
-            row.resolved_path_glob =
-                crates
-                    .iter()
-                    .find(|member| member.name == *name)
-                    .map(|member| {
-                        if member.dir.is_empty() || member.dir == "." {
-                            "**".to_string()
-                        } else {
-                            format!("{}/**", member.dir.trim_end_matches('/'))
-                        }
-                    });
-        }
+        let OverrideSelector::Crate(name) = &row.selector else {
+            continue;
+        };
+        let Some(member) = crates.iter().find(|candidate| candidate.name == *name) else {
+            row.resolved_path_glob = None;
+            row.nested_package_dirs.clear();
+            continue;
+        };
+        row.resolved_path_glob = Some(package_dir_glob(&member.dir));
+        row.nested_package_dirs = crates
+            .iter()
+            .filter(|other| {
+                other.name != member.name
+                    && !other.dir.is_empty()
+                    && other.dir != member.dir
+                    && path_under_package(&other.dir, &member.dir)
+            })
+            .map(|other| other.dir.clone())
+            .collect();
+    }
+}
+
+fn package_dir_glob(dir: &str) -> String {
+    if dir.is_empty() || dir == "." {
+        "**".to_string()
+    } else {
+        format!("{}/**", dir.trim_end_matches('/'))
     }
 }
 
@@ -454,10 +487,36 @@ fn unknown_crate_message(name: &str, known: &[&str]) -> String {
 /// then fail closed in [`RiprConfig::bind_workspace_crates`].
 pub(crate) fn discover_workspace_crates(root: &Path) -> Vec<WorkspaceCrate> {
     let manifest = root.join("Cargo.toml");
-    let Ok(text) = fs::read_to_string(&manifest) else {
+    let Ok(text) = crate::bounded_input::read_metadata_toml(&manifest) else {
         return Vec::new();
     };
     let Ok(document) = text.parse::<toml::Value>() else {
+        return Vec::new();
+    };
+    let mut listed = vec![(String::new(), text)];
+    for pattern in workspace_string_list(&document, "members") {
+        for dir in expand_workspace_member(root, &pattern) {
+            if dir.is_empty() {
+                continue;
+            }
+            let member_manifest = root.join(&dir).join("Cargo.toml");
+            let Ok(member_text) = crate::bounded_input::read_metadata_toml(&member_manifest) else {
+                continue;
+            };
+            listed.push((dir, member_text));
+        }
+    }
+    crates_from_listed_manifests(&listed)
+}
+
+/// Workspace packages from already-read `Cargo.toml` texts, keyed by
+/// repository-relative package directory (`""` for the root manifest).
+/// Used for both the worktree walk and `--candidate-tree` git blobs.
+pub(crate) fn crates_from_listed_manifests(manifests: &[(String, String)]) -> Vec<WorkspaceCrate> {
+    let Some((_, root_text)) = manifests.iter().find(|(dir, _)| dir.is_empty()) else {
+        return Vec::new();
+    };
+    let Ok(document) = root_text.parse::<toml::Value>() else {
         return Vec::new();
     };
     let mut crates = Vec::new();
@@ -467,28 +526,38 @@ pub(crate) fn discover_workspace_crates(root: &Path) -> Vec<WorkspaceCrate> {
             dir: String::new(),
         });
     }
-    let Some(members) = document
-        .get("workspace")
-        .and_then(|workspace| workspace.get("members"))
-        .and_then(toml::Value::as_array)
-    else {
+    let members = workspace_string_list(&document, "members");
+    if members.is_empty() {
         return crates;
-    };
-    for member in members {
-        let Some(pattern) = member.as_str() else {
+    }
+    let excludes = workspace_string_list(&document, "exclude");
+    let mut dirs = Vec::new();
+    for (dir, _) in manifests {
+        if dir.is_empty() {
+            continue;
+        }
+        if members
+            .iter()
+            .any(|pattern| member_pattern_matches(pattern, dir))
+            && !excludes
+                .iter()
+                .any(|pattern| member_pattern_matches(pattern, dir))
+        {
+            dirs.push(dir.clone());
+        }
+    }
+    dirs.sort();
+    dirs.dedup();
+    for dir in dirs {
+        let Some((_, member_text)) = manifests.iter().find(|(candidate, _)| candidate == &dir)
+        else {
             continue;
         };
-        for dir in expand_workspace_member(root, pattern) {
-            let member_manifest = root.join(&dir).join("Cargo.toml");
-            let Ok(member_text) = fs::read_to_string(&member_manifest) else {
-                continue;
-            };
-            let Ok(member_document) = member_text.parse::<toml::Value>() else {
-                continue;
-            };
-            if let Some(name) = package_name(&member_document) {
-                crates.push(WorkspaceCrate { name, dir });
-            }
+        let Ok(member_document) = member_text.parse::<toml::Value>() else {
+            continue;
+        };
+        if let Some(name) = package_name(&member_document) {
+            crates.push(WorkspaceCrate { name, dir });
         }
     }
     crates
@@ -502,39 +571,119 @@ fn package_name(document: &toml::Value) -> Option<String> {
         .map(str::to_string)
 }
 
+fn workspace_string_list(document: &toml::Value, key: &str) -> Vec<String> {
+    document
+        .get("workspace")
+        .and_then(|workspace| workspace.get(key))
+        .and_then(toml::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn member_pattern_matches(pattern: &str, dir: &str) -> bool {
+    let trimmed = pattern.trim().trim_end_matches('/');
+    if trimmed.is_empty() || !member_pattern_is_safe(trimmed) {
+        return false;
+    }
+    if trimmed == "." {
+        return dir.is_empty();
+    }
+    path_glob_matches(trimmed, dir)
+}
+
+fn member_pattern_is_safe(pattern: &str) -> bool {
+    !pattern.contains('\0') && !pattern.split('/').any(|segment| segment == "..")
+}
+
+const MAX_WORKSPACE_PACKAGES: usize = 4096;
+
 fn expand_workspace_member(root: &Path, pattern: &str) -> Vec<String> {
     let trimmed = pattern.trim().trim_end_matches('/');
-    if trimmed.is_empty() || trimmed.contains('\0') || trimmed.contains("..") {
+    if trimmed.is_empty() || !member_pattern_is_safe(trimmed) {
         return Vec::new();
     }
-    if let Some(parent) = trimmed.strip_suffix("/*") {
-        if parent.contains('*') || parent.contains('?') {
-            return Vec::new();
-        }
-        let Ok(entries) = fs::read_dir(root.join(parent)) else {
-            return Vec::new();
+    if trimmed == "." {
+        return vec![String::new()];
+    }
+    let segments: Vec<&str> = trimmed
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect();
+    if segments.is_empty() {
+        return Vec::new();
+    }
+    let mut dirs = Vec::new();
+    expand_member_segments(root, "", &segments, &mut dirs);
+    dirs
+}
+
+fn expand_member_segments(root: &Path, current: &str, remaining: &[&str], out: &mut Vec<String>) {
+    if out.len() >= MAX_WORKSPACE_PACKAGES {
+        return;
+    }
+    if remaining.is_empty() {
+        let candidate = if current.is_empty() {
+            root.to_path_buf()
+        } else {
+            root.join(current)
         };
-        let mut dirs = Vec::new();
+        if candidate.join("Cargo.toml").is_file() {
+            out.push(current.to_string());
+        }
+        return;
+    }
+    let (segment, rest) = (remaining[0], &remaining[1..]);
+    if segment.contains('\0') || segment == ".." {
+        return;
+    }
+    let current_abs = if current.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(current)
+    };
+    if segment.contains('*') || segment.contains('?') {
+        let Ok(entries) = fs::read_dir(&current_abs) else {
+            return;
+        };
         for entry in entries.flatten() {
+            if out.len() >= MAX_WORKSPACE_PACKAGES {
+                return;
+            }
             let name = entry.file_name();
             let Some(name) = name.to_str() else {
                 continue;
             };
-            if !entry.path().join("Cargo.toml").is_file() {
+            if name == "." || name == ".." {
                 continue;
             }
-            if parent.is_empty() {
-                dirs.push(name.to_string());
-            } else {
-                dirs.push(format!("{parent}/{name}"));
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
             }
+            if !segment_glob_matches(segment, name) {
+                continue;
+            }
+            let next = if current.is_empty() {
+                name.to_string()
+            } else {
+                format!("{current}/{name}")
+            };
+            expand_member_segments(root, &next, rest, out);
         }
-        return dirs;
+        return;
     }
-    if trimmed.contains('*') || trimmed.contains('?') {
-        return Vec::new();
-    }
-    vec![trimmed.to_string()]
+    let next = if current.is_empty() {
+        segment.to_string()
+    } else {
+        format!("{current}/{segment}")
+    };
+    expand_member_segments(root, &next, rest, out);
 }
 
 pub(crate) fn parse_crate_selector(name: &str) -> Result<String, String> {

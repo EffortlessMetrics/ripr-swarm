@@ -122,7 +122,7 @@ fn no_overrides_keep_configured_severity_byte_identical() -> Result<(), String> 
     let repo_wide =
         crate::config::tests_only_parse("[severity.findings]\nweakly_exposed = \"info\"\n")?;
     let empty_overrides = crate::config::tests_only_parse(
-        "[severity.findings]\nweakly_exposed = \"info\"\noverrides = []\n",
+        "overrides = []\n\n[severity.findings]\nweakly_exposed = \"info\"\n",
     )?;
     let left = render_check_with_config(&output, &OutputFormat::Json, &repo_wide)?;
     let right = render_check_with_config(&output, &OutputFormat::Json, &empty_overrides)?;

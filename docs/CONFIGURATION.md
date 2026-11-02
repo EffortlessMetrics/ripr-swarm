@@ -1057,9 +1057,21 @@ repo-wide value. Other `ripr.toml` sections cannot be overridden here.
 
 Resolution: the most specific matching row wins, otherwise the repo-wide
 default. A `crate` selector outranks a `path` glob. Among path globs, more
-literal path segments win. Equal specificity keeps the later matching row.
-Crate names resolve from the selected root's `Cargo.toml` workspace members
-(including a `members = ["crates/*"]` glob of immediate children).
+literal path segments win. Equal specificity keeps the later matching row;
+that later-row order is part of the oracle overlay identity, so swapping two
+equally specific oracle rows is a finding-affecting change.
+
+Crate names resolve from the `Cargo.toml` workspace that owns the discovered
+`ripr.toml` (including nested `members` globs such as `crates/*/plugins/*`,
+and `workspace.exclude`). A crate selector applies to that package's files
+only; nested workspace packages keep their own match. Unknown names fail
+closed at load, including `--candidate-tree` runs, which bind names against
+manifests in that immutable tree rather than the worktree.
+
+Oracle overlays apply on the Rust adapter, which is the only language adapter
+that currently consumes `[oracles]` / `OraclePolicy`. Python, TypeScript, and
+Perl adapters ignore `OraclePolicy` today (repo-wide and overlay alike).
+Severity overlays still apply at render time for every language.
 
 ```toml
 [severity.findings]

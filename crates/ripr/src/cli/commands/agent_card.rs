@@ -199,7 +199,7 @@ fn render_agent_card(
         })?;
 
     let policy = AgentBriefPolicy::from_config(&config);
-    if let Some(reason) = policy.omission_reason_for_class(entry.class) {
+    if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         // #5007 / #7736: a policy decision has its own recovery guidance;
         // re-listing seams cannot fix it.
         return Err(AgentCardError::refusal(

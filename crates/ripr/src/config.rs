@@ -331,8 +331,14 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
     // spelling (#7652).
     config.source_path = Some(path.clone());
     config.source_text = Some(text);
+    // Crate names belong to the workspace that owns ripr.toml, not the
+    // selected member root that discovered it by walking ancestors.
+    let crate_root = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(root);
     config
-        .bind_workspace_crates(discover_workspace_crates(root))
+        .bind_workspace_crates(discover_workspace_crates(crate_root))
         .map_err(|err| config_load_parse_error_for_host(&path, &err, cfg!(windows)))?;
     Ok(config)
 }
@@ -1191,6 +1197,7 @@ fn parse_overrides(
             severity,
             oracles,
             resolved_path_glob: None,
+            nested_package_dirs: Vec::new(),
         });
     }
     Ok(parsed)
@@ -2018,5 +2025,31 @@ pub(crate) fn config_for_candidate(
     })?;
     config.source_path = None;
     config.source_text = Some(text);
+    if config.has_crate_override_selectors() {
+        let manifests = crate::analysis::git_candidate_execution::candidate_cargo_toml_manifests(
+            subject,
+            git_timeout,
+        )
+        .map_err(|error| match error {
+            GitCandidateSubjectError::ExecutionTimedOut {
+                operation,
+                timeout_ms,
+                spawned,
+            } => CandidateConfigError::Timeout {
+                operation,
+                timeout_ms,
+                spawned,
+            },
+            other => CandidateConfigError::Other(other.to_string()),
+        })?;
+        config
+            .bind_workspace_crates(overrides::crates_from_listed_manifests(&manifests))
+            .map_err(|err| {
+                CandidateConfigError::Other(format!(
+                    "candidate tree ripr.toml: {}\n{CANDIDATE_CONFIG_PARSE_HINT}",
+                    err.trim_end()
+                ))
+            })?;
+    }
     Ok(config)
 }

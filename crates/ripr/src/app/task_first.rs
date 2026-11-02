@@ -320,7 +320,7 @@ fn repair_refusal(
         });
     }
     policy
-        .omission_reason_for_class(entry.class)
+        .omission_reason_for_class(entry.class, Some(entry.seam.file()))
         .map(|reason| (RefusalKind::Other, reason))
 }
 

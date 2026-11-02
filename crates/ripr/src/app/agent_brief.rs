@@ -267,8 +267,16 @@ impl<'a> AgentBriefPolicy<'a> {
         self.config.severity().for_seam_in(class, file)
     }
 
-    pub(crate) fn omission_reason_for_class(self, class: SeamGripClass) -> Option<String> {
-        if matches!(self.config.severity().for_seam(class), ConfigSeverity::Off) {
+    pub(crate) fn omission_reason_for_class(
+        self,
+        class: SeamGripClass,
+        file: Option<&Path>,
+    ) -> Option<String> {
+        let configured_off = match file {
+            Some(path) => matches!(self.severity_for(class, path), ConfigSeverity::Off),
+            None => matches!(self.config.severity().for_seam(class), ConfigSeverity::Off),
+        };
+        if configured_off {
             return Some(format!(
                 "is configured off for {} seams and is not included in agent results",
                 class.as_str()
