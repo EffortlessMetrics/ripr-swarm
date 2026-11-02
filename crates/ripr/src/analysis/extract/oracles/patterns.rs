@@ -165,6 +165,120 @@ pub(crate) fn is_unwrap_err_bound_error_assertion(
         .any(|var| line_references_variable(line, var))
 }
 
+/// Inline spelling of the bound-variable pin (#12266): an equality assertion
+/// whose one operand is the `<call>.unwrap_err()` / `.expect_err(..)` result
+/// itself and whose other operand names a specific error (variant, error
+/// constructor or fixed payload). `assert_eq!(f(1).unwrap_err(), E::V)` pins
+/// the same value as `let e = f(1).unwrap_err(); assert_eq!(e, E::V)`. An
+/// opaque expected value, a negative assertion or an unwrapped `Ok` read does
+/// not qualify.
+pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
+    let oracle_text = assertion_oracle_text(line);
+    let line = oracle_text.as_deref().unwrap_or(line);
+    if contains_macro_invocation(line, "assert_ne!")
+        || contains_macro_invocation(line, "debug_assert_ne!")
+    {
+        return false;
+    }
+    let Some(args) = equality_assertion_arguments(line) else {
+        return false;
+    };
+    let (Some(left), Some(right)) = (args.first(), args.get(1)) else {
+        return false;
+    };
+    // The operand must read the error side of the owner call itself: an
+    // adapter that replaces the error (`.map_err(|_| E::Odd)`, `.and(..)`)
+    // makes the asserted value independent of what the owner returned, and
+    // `receiver_keeps_call_error` already refuses those for the uncompared
+    // case. Outer grouping is looked through.
+    let is_error_read = |operand: &str| {
+        let mut operand = operand.trim();
+        while operand.starts_with('(')
+            && group_end(operand, 0) == Some(operand.len().saturating_sub(1))
+        {
+            operand = operand[1..operand.len() - 1].trim();
+        }
+        let masked = mask_comments_and_strings(operand);
+        // `map_err` keeps an `Ok` an `Ok` (so the uncompared-error reader
+        // accepts it, method or UFCS form) but replaces the error, which is
+        // what this pin reads.
+        super::scan::receiver_keeps_call_error(&masked) && !has_error_replacing_adapter(&masked)
+    };
+    // The expected side names the error; another error read names nothing, so
+    // comparing two reads pins no variant.
+    let pins_against = |read: &str, expected: &str| {
+        is_error_read(read)
+            && !is_error_read(expected)
+            && expression_pins_specific_error(&comparable_expression(expected))
+    };
+    pins_against(left, right) || pins_against(right, left)
+}
+
+/// Whether the error read goes through an adapter that can replace the error
+/// the owner returned. Only named replacing adapters are refused (method or
+/// UFCS spelling): `map_err`, `and`, `or`, `ok_or`, `ok_or_else`, and `or_else`.
+/// Plain error reads such as `Result::expect_err(call, msg)` are not adapters (#12336).
+fn has_error_replacing_adapter(masked: &str) -> bool {
+    const REPLACING: &[&str] = &[
+        "map_err",
+        "and",
+        "or",
+        "ok_or",
+        "ok_or_else",
+        "or_else",
+    ];
+    let stripped = strip_turbofish(masked);
+    let masked = stripped.as_str();
+    REPLACING
+        .iter()
+        .any(|name| has_replacing_adapter_call(masked, name))
+}
+
+fn has_replacing_adapter_call(masked: &str, name: &str) -> bool {
+    masked.match_indices(name).any(|(index, _)| {
+        let before_ok = masked[..index]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
+        let after = masked[index + name.len()..].trim_start();
+        before_ok && after.starts_with('(')
+    })
+}
+
+/// Removes balanced `::<...>` generic arguments so `map_err::<_, _>(` and
+/// `Result::<A, B>::map_err(` read like their un-annotated spellings.
+fn strip_turbofish(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(index) = rest.find("::<") {
+        out.push_str(&rest[..index]);
+        let mut depth = 0usize;
+        let mut end = None;
+        for (offset, ch) in rest[index + 2..].char_indices() {
+            match ch {
+                '<' => depth += 1,
+                '>' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = Some(index + 2 + offset + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match end {
+            Some(end) => rest = &rest[end..],
+            None => {
+                out.push_str(&rest[index..]);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn is_bound_error_equality_assertion(
     line: &str,
     bound_error_vars: &std::collections::BTreeSet<String>,
@@ -1332,14 +1446,31 @@ fn result_ufcs_expect_err_start(masked: &str, name_at: usize) -> Option<usize> {
     if name_at < 2 || &bytes[name_at - 2..name_at] != b"::" {
         return None;
     }
-    let ident_end = name_at - 2;
-    let ident_start = bytes[..ident_end]
+    let type_end = name_at - 2;
+    let type_name_start = bytes[..type_end]
         .iter()
         .rposition(|byte| !is_expect_err_ident_byte(*byte))
         .map_or(0, |index| index + 1);
-    masked[ident_start..ident_end]
-        .eq_ignore_ascii_case("Result")
-        .then_some(ident_start)
+    if !masked[type_name_start..type_end].eq_ignore_ascii_case("Result") {
+        return None;
+    }
+    // `std::result::Result::expect_err` shares the same read as `Result::expect_err`;
+    // the UFCS anchor is the whole type path, not only the final `Result` segment.
+    let mut path_start = type_name_start;
+    while path_start > 0 {
+        let before = path_start.saturating_sub(2);
+        if before + 2 <= masked.len() && &masked[before..path_start] == "::" {
+            let seg_end = before;
+            let seg_start = bytes[..seg_end]
+                .iter()
+                .rposition(|byte| !is_expect_err_ident_byte(*byte))
+                .map_or(0, |index| index + 1);
+            path_start = seg_start;
+        } else {
+            break;
+        }
+    }
+    Some(path_start)
 }
 
 fn is_expect_err_ident_byte(byte: u8) -> bool {
@@ -2269,6 +2400,59 @@ mod spec_0106_tests {
             return Err("negative enum-variant assertions must not be promoted".to_string());
         }
         Ok(())
+    }
+
+    // #12266: the inline `<call>.unwrap_err()` operand pins the same value as
+    // the bound variable.
+    #[test]
+    fn inline_unwrap_err_equality_with_a_named_variant_is_recognized() {
+        for line in [
+            r#"assert_eq!(Vec::from_hex("1").unwrap_err(), FromHexError::OddLength);"#,
+            "assert_eq!(FromHexError::OddLength, Vec::from_hex(\"1\").unwrap_err());",
+            "assert_eq!(\n    parse(\"x\").unwrap_err(),\n    ParseError::Empty\n);",
+            r#"assert_eq!(parse("x").expect_err("must fail"), ParseError::Empty);"#,
+            r#"assert_eq!((parse("x").unwrap_err()), ParseError::Empty);"#,
+            r#"assert_eq!(Result::expect_err(parse("x"), "must fail"), ParseError::Empty);"#,
+            r#"assert_eq!(std::result::Result::expect_err(parse("x"), "must fail"), ParseError::Empty);"#,
+        ] {
+            assert!(
+                is_inline_unwrap_err_error_assertion(line),
+                "inline error read against a named variant must be recognized: {line}"
+            );
+        }
+    }
+
+    // #12266 negative controls: nothing here names a specific error, reads the
+    // error side, or asserts equality.
+    #[test]
+    fn inline_unwrap_err_requires_an_equality_with_a_specific_error() {
+        for line in [
+            "assert_eq!(parse(\"x\").unwrap_err(), expected_error);",
+            "assert_ne!(parse(\"x\").unwrap_err(), ParseError::Empty);",
+            "assert_eq!(parse(\"x\").unwrap(), ParseError::Empty);",
+            "assert_eq!(parse(\"x\"), ParseError::Empty);",
+            "assert!(parse(\"x\").unwrap_err().is_empty());",
+            "assert_eq!(parse(\"x\").unwrap_err().kind(), ParseError::Empty);",
+            "assert_eq!(parse(\"x\").unwrap_err(), parse(\"y\").unwrap_err());",
+            "assert_eq!(parse(\"x\").map_err(|_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(parse(\"x\").and(Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(find(\"x\").ok_or(ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(Result::map_err(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(Result::map_err::<_, _>(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(Result::<u8, ParseError>::map_err(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(parse(\"x\").map_err::<ParseError, _>(|_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(std::result::Result::map_err(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(Result::and(parse(\"x\"), Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(Result::or_else(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
+            "assert_eq!((Result::or(parse(\"x\"), Err(ParseError::Empty))).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(((Result::map_err(parse(\"x\"), |_| ParseError::Empty))).unwrap_err(), ParseError::Empty);",
+            "assert_eq!((parse(\"x\").map_err(|_| ParseError::Empty)).unwrap_err(), ParseError::Empty);",
+        ] {
+            assert!(
+                !is_inline_unwrap_err_error_assertion(line),
+                "must not be promoted to an exact error variant: {line}"
+            );
+        }
     }
 
     // Control 3 (GENERIC): generic assertion without variant token → no upgrade.
