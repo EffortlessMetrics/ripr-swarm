@@ -2166,7 +2166,9 @@ impl PythonAdapter {
                 &mut value_origins,
                 &mut related_memo,
             );
-            findings.extend(deleted);
+            for finding in deleted {
+                publish_production_finding(&mut findings, finding);
+            }
         }
         // Freeing the run's facts takes ~0.3 s on one thread for a large
         // workspace (#10914: pandas, ~23k tests). Nothing in the result
