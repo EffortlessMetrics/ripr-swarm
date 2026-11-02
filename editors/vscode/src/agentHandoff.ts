@@ -135,7 +135,7 @@ function currentRepairPacket(queue: RiprActionableGapQueueStatus): string {
   pushOptionalLine(lines, 'Actionability', queue.actionability);
   pushOptionalLine(lines, 'Changed behavior', queue.changedBehavior);
   pushOptionalLine(lines, 'Why this matters', queue.why);
-  pushOptionalLine(lines, 'Missing discriminator', queue.missingDiscriminator);
+  pushOptionalLine(lines, 'Missing check', queue.missingDiscriminator);
   pushOptionalLine(lines, 'Focused proof intent', queue.focusedProofIntent);
   pushOptionalLine(lines, 'Confidence basis', queue.confidenceBasis);
   lines.push(`Related test: ${queue.relatedTest ?? 'not provided by typed queue artifact'}`);
@@ -221,7 +221,7 @@ function repoGapMap(
     pushOptionalLine(lines, 'Changed behavior', queue.changedBehavior);
     pushOptionalLine(lines, 'Why this matters', queue.why);
     pushOptionalLine(lines, 'Repair kind', queue.topRepair);
-    pushOptionalLine(lines, 'Missing discriminator', queue.missingDiscriminator);
+    pushOptionalLine(lines, 'Missing check', queue.missingDiscriminator);
     pushOptionalLine(lines, 'Focused proof intent', queue.focusedProofIntent);
     pushOptionalLine(lines, 'Language', queue.languageStatus ? `${queue.language ?? 'unknown'} (${queue.languageStatus})` : queue.language);
     pushOptionalLine(lines, 'Related test', queue.relatedTest);
