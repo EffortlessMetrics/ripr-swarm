@@ -336,6 +336,21 @@ fn given_a_file_that_patches_only_other_names_then_the_callee_is_still_credited(
             "",
             "    handle = mock.MagicMock()\n    handle.assert_not_called()\n",
         ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch('src.other.helper'):\n        pass\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch.dict('os.environ', {'A': '1'}):\n        pass\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.setattr(rules.Session, 'send', None)\n",
+        ),
         ("import pytest\n", "mocker: pytest.MonkeyPatch", ""),
     ] {
         let tests = tests_with(prelude, params, body);
@@ -347,7 +362,7 @@ fn given_a_file_that_patches_only_other_names_then_the_callee_is_still_credited(
 
 #[test]
 fn given_a_requests_style_utils_file_then_the_callee_is_credited_despite_mock_and_monkeypatch() {
-    let tests = "from unittest import mock\n\nimport pytest\nfrom src.rules import is_adult\n\n\n@pytest.fixture\ndef clean_env(monkeypatch):\n    monkeypatch.setenv('NO_PROXY', '')\n    monkeypatch.delenv('no_proxy', raising=False)\n\n\nclass TestIsAdult:\n    def test_valid(self):\n        assert is_adult(18)\n\n    def test_invalid(self):\n        assert not is_adult(17)\n\n\ndef test_proxy(monkeypatch):\n    monkeypatch.setenv('http_proxy', 'x')\n    handle = mock.MagicMock()\n    handle.assert_not_called()\n";
+    let tests = "from unittest import mock\n\nimport pytest\nfrom src.rules import is_adult\n\n\n@pytest.fixture\ndef clean_env(monkeypatch):\n    monkeypatch.setenv('NO_PROXY', '')\n    monkeypatch.delenv('no_proxy', raising=False)\n\n\nclass TestIsAdult:\n    def test_valid(self):\n        assert is_adult(18)\n\n    def test_invalid(self):\n        assert not is_adult(17)\n\n\ndef test_proxy(monkeypatch):\n    monkeypatch.setenv('http_proxy', 'x')\n    handle = mock.MagicMock()\n    handle.assert_not_called()\n\n\ndef test_other_helper():\n    with mock.patch('src.other.fetch', return_value=1):\n        pass\n    with mock.patch.object(rules.Session, 'send'):\n        pass\n";
     let strengths = credited_strengths(BOOL_OWNER, tests);
     let strong = strengths
         .iter()
@@ -573,12 +588,12 @@ fn given_a_patch_marker_in_the_owner_module_that_names_the_owner_then_the_assert
 }
 
 #[test]
-fn given_a_decorator_that_patches_a_collaborator_then_the_old_veto_keeps_the_assertion_smoke() {
+fn given_a_decorator_that_patches_a_collaborator_then_the_callee_is_still_credited() {
     let tests = format!(
         "from unittest.mock import patch\n{OWNER_RULES_IMPORT}\n\n@patch('src.other.fetch')\ndef test_adult(fetch):\n    assert is_adult(18)\n"
     );
     let strengths = credited_strengths(BOOL_OWNER, &tests);
-    assert_eq!(strengths, vec![OracleStrength::Smoke], "{tests}");
+    assert_eq!(strengths.last(), Some(&OracleStrength::Strong), "{tests}");
 }
 
 #[test]
@@ -656,21 +671,6 @@ fn given_an_escaped_or_dynamic_namespace_write_then_the_assertion_stays_smoke() 
             "from unittest import mock\nimport functools\n",
             "",
             "    swap = functools.partial(mock.patch.object, rules)\n    swap('is_adult')\n",
-        ),
-        (
-            "from unittest import mock\n",
-            "",
-            "    with mock.patch('src.other.helper'):\n        pass\n",
-        ),
-        (
-            "from unittest import mock\n",
-            "",
-            "    with mock.patch.dict('os.environ', {'A': '1'}):\n        pass\n",
-        ),
-        (
-            "",
-            "monkeypatch",
-            "    monkeypatch.setattr(rules.Session, 'send', None)\n",
         ),
         (
             "",
