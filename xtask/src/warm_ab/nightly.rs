@@ -332,6 +332,7 @@ fn run_in(
         out: options.out.clone(),
         work: options.work.clone(),
         limits: options.limits,
+        control_slowdown: options.control_slowdown,
         nightly: None,
     };
     for (id, commit) in &plan.pins {
