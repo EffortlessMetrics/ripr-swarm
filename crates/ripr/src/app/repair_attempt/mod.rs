@@ -4761,6 +4761,57 @@ fn operational_write_rules(
     Ok(rules)
 }
 
+/// Whether file content carries the governed inline `#[cfg(test)]` module
+/// marker. The preflight must treat multiline attribute spellings the same as
+/// one-line gates (#11808); the cfg owner already parses both when given the
+/// full attribute text.
+fn file_content_contains_plain_test_gate(content: &str) -> bool {
+    if content
+        .lines()
+        .any(|line| crate::analysis::attribute_is_plain_test_gate(line.trim()))
+    {
+        return true;
+    }
+    let mut index = 0usize;
+    while index < content.len() {
+        let Some(relative) = content[index..].find("#[") else {
+            break;
+        };
+        index += relative;
+        let Some(end) = attribute_block_end(&content[index..]) else {
+            index += 2;
+            continue;
+        };
+        let attribute = content[index..index + end].trim();
+        if crate::analysis::attribute_is_plain_test_gate(attribute) {
+            return true;
+        }
+        index += end;
+    }
+    false
+}
+
+/// The inclusive end offset of one `#[...]` attribute starting at `source[0]`.
+fn attribute_block_end(source: &str) -> Option<usize> {
+    let mut depth = 0u32;
+    for (offset, ch) in source.char_indices() {
+        match ch {
+            '[' => depth = depth.saturating_add(1),
+            ']' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    return Some(offset + ch.len_utf8());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
     // Canonical test-surface recognition first: the policy constructor
     // admits only `is_test_surface_path` targets (or the confined #5210
@@ -4809,9 +4860,7 @@ fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
         return false;
     }
     match std::fs::read_to_string(&candidate_path) {
-        Ok(content) => !content
-            .lines()
-            .any(|line| crate::analysis::attribute_is_plain_test_gate(line.trim())),
+        Ok(content) => !file_content_contains_plain_test_gate(&content),
         Err(_) => false,
     }
 }
@@ -6351,10 +6400,32 @@ mod tests {
             if dirty_path_cannot_be_repair_target(&root, "src/inline.rs") {
                 return Err("preflight must not name src/inline.rs".to_string());
             }
+            // Multiline `#[cfg(test)]` must defer the same way (#11808).
+            std::fs::write(
+                root.join("src/multiline_inline.rs"),
+                "#[cfg(\n    test\n)]\nmod t {}\n",
+            )
+            .map_err(|e| e.to_string())?;
+            if dirty_path_cannot_be_repair_target(&root, "src/multiline_inline.rs") {
+                return Err("preflight must not name src/multiline_inline.rs".to_string());
+            }
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);
         result
+    }
+
+    #[test]
+    fn file_content_plain_test_gate_recognises_multiline_cfg_test() {
+        assert!(file_content_contains_plain_test_gate(
+            "#[cfg(test)]\nmod t {}\n"
+        ));
+        assert!(file_content_contains_plain_test_gate(
+            "#[cfg(\n    test\n)]\nmod t {}\n"
+        ));
+        assert!(!file_content_contains_plain_test_gate(
+            "#[cfg(\n    feature = \"slow\"\n)]\nmod t {}\n"
+        ));
     }
 
     /// #11458: TypeScript adapter test conventions (`*.spec.*`, `test-*`,
