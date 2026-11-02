@@ -762,27 +762,21 @@ mod tests {
             saved_named,
             "the saved diff against requested base `origin/main` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
         );
-        let default_empty = AnalysisOutcomeKind::NoScope.empty_scope_cause_sentence(
-            None,
-            EmptyScopeDiffAuthority::CommittedSnapshot,
-        );
+        let default_empty = AnalysisOutcomeKind::NoScope
+            .empty_scope_cause_sentence(None, EmptyScopeDiffAuthority::CommittedSnapshot);
         assert_eq!(
             default_empty,
             "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear"
         );
         // `no_changed_lines` shares the default-base cause arm.
         assert_eq!(
-            AnalysisOutcomeKind::NoChangedLines.empty_scope_cause_sentence(
-                None,
-                EmptyScopeDiffAuthority::CommittedSnapshot,
-            ),
+            AnalysisOutcomeKind::NoChangedLines
+                .empty_scope_cause_sentence(None, EmptyScopeDiffAuthority::CommittedSnapshot,),
             default_empty
         );
         assert_eq!(
-            AnalysisOutcomeKind::NoBehavioralCandidates.empty_scope_cause_sentence(
-                None,
-                EmptyScopeDiffAuthority::CommittedSnapshot,
-            ),
+            AnalysisOutcomeKind::NoBehavioralCandidates
+                .empty_scope_cause_sentence(None, EmptyScopeDiffAuthority::CommittedSnapshot,),
             "no base was passed, so the default base was used; the diff has changed lines but none holds a behavior candidate to analyze (a different base may widen it). This is not an all-clear"
         );
         // Every kind with a requested base shares the one requested-base arm.
@@ -799,9 +793,11 @@ mod tests {
                 named
             );
             assert!(kind.is_empty_scope());
-            assert!(!kind
-                .empty_scope_cause_sentence(None, EmptyScopeDiffAuthority::CommittedSnapshot)
-                .is_empty());
+            assert!(
+                !kind
+                    .empty_scope_cause_sentence(None, EmptyScopeDiffAuthority::CommittedSnapshot)
+                    .is_empty()
+            );
         }
         // Complete outcomes are real answers: never empty-scope.
         assert!(!AnalysisOutcomeKind::CompleteNoFindings.is_empty_scope());
