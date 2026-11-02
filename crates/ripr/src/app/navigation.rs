@@ -563,6 +563,17 @@ fn navigation_args(
         }
     }
 
+    // #9340: a scoped check of an oversized diff must print drill-ins that
+    // re-analyze the same files. `ripr check` already accepts these flags;
+    // explain/context parse the same patterns. Quote each value the way
+    // `--root` and `--diff` are quoted so a glob or space pastes as one arg.
+    for include in input.scope.include() {
+        args.push(format!("--path {}", shell_arg(include)));
+    }
+    for exclude in input.scope.exclude() {
+        args.push(format!("--exclude {}", shell_arg(exclude)));
+    }
+
     if mode_explicit || input.mode != Mode::Draft {
         args.push(format!("--mode {}", shell_arg(input.mode.as_str())));
     }
@@ -733,6 +744,87 @@ mod tests {
                 bound("repo"),
                 bound_file("saved artifact.json")
             )
+        );
+    }
+
+    /// #9340: a scoped check of an oversized diff prints drill-ins that
+    /// re-analyze the same `--path`/`--exclude` set. Without the flags the
+    /// pasted `explain`/`context`/`check --json` lines hit `diff_scope_oversized`.
+    #[test]
+    fn finding_navigation_appends_path_and_exclude_from_the_run_scope() {
+        let input = CheckInput {
+            base: Some("HEAD".to_string()),
+            scope: crate::analysis::DiffScopeFilter::new(
+                ["src/lib.rs".to_string(), "crates/api".to_string()],
+                ["generated/**".to_string(), "src/foo bar.rs".to_string()],
+            )
+            .expect("valid scope"),
+            ..CheckInput::default()
+        };
+        let navigation = finding_navigation_with_worktree(&input, None, false, true);
+        let root = bound(".");
+        let path_lib = format!("--path {}", shell_arg("src/lib.rs"));
+        let path_api = format!("--path {}", shell_arg("crates/api"));
+        let exclude_generated = format!("--exclude {}", shell_arg("generated/**"));
+        let exclude_space = format!("--exclude {}", shell_arg("src/foo bar.rs"));
+        let explain = navigation.explain_command("probe:src/lib.rs:error_path:abc123");
+        let context = navigation.context_command("probe:src/lib.rs:error_path:abc123");
+        let list = navigation.list_command();
+        for command in [&explain, &context, &list] {
+            assert!(
+                command.contains(&path_lib)
+                    && command.contains(&path_api)
+                    && command.contains(&exclude_generated)
+                    && command.contains(&exclude_space),
+                "scoped drill-in must carry every --path/--exclude, quoted: {command}"
+            );
+            let path_at = command.find(&path_lib).expect("first --path missing");
+            let exclude_at = command
+                .find(&exclude_generated)
+                .expect("first --exclude missing");
+            assert!(
+                path_at < exclude_at,
+                "--path flags must precede --exclude, matching the check retry: {command}"
+            );
+        }
+        assert_eq!(
+            explain,
+            format!(
+                "ripr explain --root {root} --base HEAD --worktree {path_lib} {path_api} {exclude_generated} {exclude_space} probe:src/lib.rs:error_path:abc123"
+            )
+        );
+        assert_eq!(
+            context,
+            format!(
+                "ripr context --root {root} --base HEAD --worktree {path_lib} {path_api} {exclude_generated} {exclude_space} --at probe:src/lib.rs:error_path:abc123"
+            )
+        );
+        assert_eq!(
+            list,
+            format!(
+                "ripr check --root {root} --base HEAD --worktree {path_lib} {path_api} {exclude_generated} {exclude_space} --json"
+            )
+        );
+        // An unrestricted run must not invent empty scope flags.
+        let unrestricted = finding_navigation_with_worktree(
+            &CheckInput {
+                base: Some("HEAD".to_string()),
+                ..CheckInput::default()
+            },
+            None,
+            false,
+            true,
+        );
+        let command = unrestricted.explain_command("probe:id");
+        assert!(
+            !command.contains("--path") && !command.contains("--exclude"),
+            "unrestricted drill-in must omit scope flags: {command}"
+        );
+        // Repair still names only the seam and bound root: it reads the live
+        // tree and does not re-analyze the git diff (#8166).
+        assert_eq!(
+            navigation.repair_command("67fc764ba37d77bd"),
+            format!("ripr repair 67fc764ba37d77bd --root {root}")
         );
     }
 

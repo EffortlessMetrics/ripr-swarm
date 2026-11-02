@@ -2351,6 +2351,8 @@ fn parse_demo<'a>(xs: &'a str) {
                 EXPLAIN_HELP,
                 &[
                     "--from",
+                    "--path",
+                    "--exclude",
                     "--mode",
                     "--no-unchanged-tests",
                     "--perl-facts",
@@ -2362,6 +2364,8 @@ fn parse_demo<'a>(xs: &'a str) {
                 CONTEXT_HELP,
                 &[
                     "--from",
+                    "--path",
+                    "--exclude",
                     "--at",
                     "--mode",
                     "--perl-facts",

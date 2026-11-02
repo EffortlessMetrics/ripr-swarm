@@ -3210,6 +3210,11 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // #12104: `--format human` (default) or `agent`.
     let mut format = app::ExplainFormat::Human;
     let mut root_explicitly_provided = false;
+    // #9340: same `--path`/`--exclude` narrowing `ripr check` binds, so a
+    // pasted drill-in from a scoped oversized-diff run re-analyzes the same
+    // files instead of tripping `diff_scope_oversized`.
+    let mut scope_include: Vec<String> = Vec::new();
+    let mut scope_exclude: Vec<String> = Vec::new();
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -3259,6 +3264,14 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                     "--suppression-policy",
                 )?));
             }
+            "--path" => {
+                i += 1;
+                scope_include.push(expect_value(args, i, "--path")?.to_string());
+            }
+            "--exclude" => {
+                i += 1;
+                scope_exclude.push(expect_value(args, i, "--exclude")?.to_string());
+            }
             "--help" | "-h" => {
                 help::print_explain_help();
                 return Ok(());
@@ -3280,6 +3293,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
         }
         i += 1;
     }
+    bind_diff_scope_flags(&mut input, scope_include, scope_exclude)?;
     // #4319: the synopsis reads `[--base REV|--diff PATH]` — alternatives —
     // but the loader gives `--diff` precedence and never validates `--base`
     // beside it, so both flags on one command line silently analyzed the
@@ -3481,6 +3495,21 @@ pub(super) fn dirty_tree_default_is_worktree(
             input.git_timeout,
         )
         .is_working_tree()
+}
+
+/// Bind `--path`/`--exclude` onto a drill-in command's [`CheckInput`] (#9340).
+/// Empty vectors leave the unrestricted default. Pattern errors use the same
+/// [`crate::analysis::DiffScopeFilter::new`] messages `ripr check` prints.
+pub(super) fn bind_diff_scope_flags(
+    input: &mut CheckInput,
+    include: Vec<String>,
+    exclude: Vec<String>,
+) -> Result<(), String> {
+    if include.is_empty() && exclude.is_empty() {
+        return Ok(());
+    }
+    input.scope = crate::analysis::DiffScopeFilter::new(include, exclude)?;
+    Ok(())
 }
 
 /// Explicit live sources are mutually exclusive and cannot override a supplied
@@ -9006,6 +9035,55 @@ language = "rust"
         assert_eq!(
             explain(&args(&["--suppression-policy"])),
             Err("missing value for --suppression-policy; pass a value right after it".to_string())
+        );
+        assert_eq!(
+            explain(&args(&["--path"])),
+            Err("missing value for --path; pass a value right after it".to_string())
+        );
+        assert_eq!(
+            explain(&args(&["--exclude"])),
+            Err("missing value for --exclude; pass a value right after it".to_string())
+        );
+    }
+
+    /// #9340: the printed `ripr explain --path/--exclude` line from a scoped
+    /// check must parse, and a pattern `check` would refuse must fail the
+    /// same way rather than as an unknown flag.
+    #[test]
+    fn explain_accepts_path_and_exclude_and_rejects_a_dotdot_pattern() {
+        let unknown = "unknown explain argument \"--path\"";
+        let missing_root = explain(&args(&[
+            "--root",
+            "missing-ripr-root-for-explain-scope",
+            "--path",
+            "src/lib.rs",
+            "--exclude",
+            "generated/**",
+            "probe:src_lib.rs:error_path:abcd",
+        ]));
+        assert!(
+            matches!(
+                &missing_root,
+                Err(message)
+                    if !message.contains(unknown)
+                        && !message.contains("unknown explain argument \"--exclude\"")
+                        && message.contains("missing-ripr-root-for-explain-scope")
+            ),
+            "`--path`/`--exclude` must parse and reach the root-dependent failure: {missing_root:?}"
+        );
+        let err = explain(&args(&[
+            "--path",
+            "../escape",
+            "probe:src_lib.rs:error_path:abcd",
+        ]))
+        .expect_err("dot-dot --path must fail");
+        assert!(
+            err.contains("--path pattern \"../escape\"") && err.contains("`..` segment"),
+            "explain must reuse check's pattern refusal, not an unknown-flag error: {err}"
+        );
+        assert!(
+            !err.contains("unknown explain argument"),
+            "dot-dot --path must not look like an unknown flag: {err}"
         );
     }
 
