@@ -399,18 +399,21 @@ fn patches_builtin(lines: &[&str], index: usize, name: &str, modules: &[String])
             .iter()
             .any(|module| mentions_identifier(text, module))
     };
-    let line = lines[index].trim();
-    if (line.contains("setattr") || line.contains("__dict__") || line.contains("vars("))
-        && lines[index..(index + 4).min(lines.len())]
-            .iter()
-            .any(|following| names_module(following))
-    {
+    let statement_range = statement_line_range(lines, index);
+    let statement_lines: Vec<&str> = statement_range.clone().map(|i| lines[i]).collect();
+    if statement_lines.iter().any(|line| {
+        let trimmed = line.trim();
+        (trimmed.contains("setattr") || trimmed.contains("__dict__") || trimmed.contains("vars("))
+            && statement_lines
+                .iter()
+                .any(|following| names_module(following.trim()))
+    }) {
         return true;
     }
-    if !names_module(line) {
+    if !statement_lines.iter().any(|line| names_module(line.trim())) {
         return false;
     }
-    let compact: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+    let compact = compact_statement(lines, index);
     modules.iter().any(|module| {
         [
             format!("{module}.{name}"),
@@ -428,6 +431,39 @@ fn patches_builtin(lines: &[&str], index: usize, name: &str, modules: &[String])
             })
         })
     })
+}
+
+/// Inclusive index range of physical lines that form one statement with `index`.
+fn statement_line_range(lines: &[&str], index: usize) -> std::ops::RangeInclusive<usize> {
+    let mut start = index;
+    while start > 0 && line_continues_statement(lines[start - 1]) {
+        start -= 1;
+    }
+    let mut end = index;
+    while end + 1 < lines.len() && line_continues_statement(lines[end]) {
+        end += 1;
+    }
+    start..=end
+}
+
+/// Whether `line` continues onto the next physical line (#12593).
+fn line_continues_statement(line: &str) -> bool {
+    let trimmed = strip_comment(line.trim()).trim_end();
+    if trimmed.ends_with('\\') || trimmed.ends_with(',') {
+        return true;
+    }
+    let compact: String = trimmed.chars().filter(|ch| !ch.is_whitespace()).collect();
+    !compact.is_empty() && !closes_cleanly(&compact)
+}
+
+/// Whitespace-stripped text of the statement containing `lines[index]`.
+fn compact_statement(lines: &[&str], index: usize) -> String {
+    statement_line_range(lines, index)
+        .map(|line_index| strip_comment(lines[line_index].trim()))
+        .collect::<String>()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect()
 }
 
 /// Whether the line rebinds `target` (`builtins.name`, `builtins["name"]`;
