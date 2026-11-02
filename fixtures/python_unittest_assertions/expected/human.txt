@@ -39,6 +39,7 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_unittest_assertions/input --diff <cwd>/fixtures/python_unittest_assertions/diff.patch --mode fast probe:src_risk.py:python_preview:6835190f
   ripr context --root <cwd>/fixtures/python_unittest_assertions/input --diff <cwd>/fixtures/python_unittest_assertions/diff.patch --mode fast --at probe:src_risk.py:python_preview:6835190f
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
