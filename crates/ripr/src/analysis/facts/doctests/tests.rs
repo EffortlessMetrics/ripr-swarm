@@ -613,6 +613,22 @@ fn only_the_manifest_default_closure_counts_as_enabled() -> Result<(), Box<dyn E
     ] {
         assert_eq!(registered_with_manifest(manifest, &gate)?, 0, "{manifest}");
     }
+    // `default` named in its own list, directly or through a cycle, must
+    // terminate: the walk never credits `default` as a feature (review of
+    // da949b6ea). Entries beside the cycle still resolve.
+    for manifest in [
+        "\n[features]\ndefault = [\"default\"]\nstd = []\n",
+        "\n[features]\ndefault = [\"default\", \"std\"]\nstd = []\n",
+        "\n[features]\ndefault = [\"a\"]\na = [\"default\", \"std\"]\nstd = []\n",
+        "\n[features]\ndefault = [\"a\"]\na = [\"a\", \"std\"]\nstd = []\n",
+    ] {
+        let expected = usize::from(manifest.contains("\"std\"]") || manifest.contains(", \"std\""));
+        assert_eq!(
+            registered_with_manifest(manifest, &gate)?,
+            expected,
+            "{manifest}"
+        );
+    }
     // A cyclic feature list terminates and still resolves what it reaches.
     assert_eq!(
         registered_with_manifest(
