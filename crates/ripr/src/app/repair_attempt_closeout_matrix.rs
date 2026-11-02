@@ -305,8 +305,11 @@ pub(crate) fn build_slice_report(
 pub(crate) fn render_closeout_json(
     report: &RepairAttemptCloseoutMatrixReport,
 ) -> Result<String, String> {
-    serde_json::to_string_pretty(report)
-        .map_err(|error| format!("encode closeout matrix failed: {error}"))
+    serde_json::to_string_pretty(report).map_err(|error| {
+        format!(
+            "encode closeout matrix failed: {error}; fix non-serializable report fields, then re-run the closeout matrix export"
+        )
+    })
 }
 
 pub(crate) fn render_closeout_markdown(report: &RepairAttemptCloseoutMatrixReport) -> String {
