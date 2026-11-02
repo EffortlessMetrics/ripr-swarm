@@ -1,2 +1,2 @@
 <!-- section: Internal / CI -->
-- Production-path pin: editing `from_str_fortnight` cannot flip the `seconds` `Unit::Fortnight` match-arm verdict from `exposed` to `weakly_exposed` (#6297).
+- Production-path pin: both of the #6297 `from_str_fortnight` assertion shapes keep the `seconds` `Unit::Fortnight` match-arm class `weakly_exposed`; editing that same-file test cannot move it.
