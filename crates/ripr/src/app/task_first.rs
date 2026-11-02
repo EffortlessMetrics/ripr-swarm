@@ -2438,6 +2438,20 @@ pub(crate) fn check_repair_route(
             boundary_input_observed: finding.boundary_input_observed_with_weak_oracle(),
         });
     }
+    // #11402: the shared start gate also requires a test file the repair may
+    // edit. Bare `ripr repair` refuses a seam without one (no test route), so
+    // the check screen must not offer that start either; it names the same
+    // gate's reason the agent card shows.
+    if !crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry)
+        && let Some(refusal) = repair_start_refusal_for_entry(root, entry, policy)
+    {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::Ineligible {
+            reason: refusal.reason,
+            kind: refusal.kind,
+            missing: Vec::new(),
+            boundary_input_observed: false,
+        });
+    }
     if static_limited {
         // F3: no runnable line for a static-limited finding. The refusal
         // arms above still named any concrete ineligibility; reaching here
