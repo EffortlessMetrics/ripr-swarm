@@ -2943,7 +2943,17 @@ impl RustAdapter {
                 // MCP readiness refusal stays `static_limitation`; a finding
                 // without a derivable discriminator keeps the typed refusal
                 // too — no evidence is manufactured here.
-                if finding.static_limit_kind.is_none() {
+                // #11545: verified generator stimulus is visible uncertainty,
+                // not a canonical product-test gap. Preserve the classifier's
+                // refusal through the public pipeline using producer identity.
+                if finding.static_limit_kind.is_none()
+                    && !(probe.after.is_some()
+                        && crate::analysis::facts::is_generator_subject(
+                            &index,
+                            &changed.path,
+                            probe.location.line,
+                        ))
+                {
                     finding.canonical_gap = probe_shape::canonical_rust_gap_for(
                         &changed.path,
                         probe.owner.as_ref(),
@@ -3603,7 +3613,17 @@ impl RustAdapter {
                 );
                 // #5268: same producer-owned canonical gap identity as the
                 // diff loop, behind the same typed static-limitation gate.
-                if finding.static_limit_kind.is_none() {
+                // #11545: verified generator stimulus is visible uncertainty,
+                // not a canonical product-test gap. Preserve the classifier's
+                // refusal through the public pipeline using producer identity.
+                if finding.static_limit_kind.is_none()
+                    && !(probe.after.is_some()
+                        && crate::analysis::facts::is_generator_subject(
+                            &index,
+                            path,
+                            probe.location.line,
+                        ))
+                {
                     finding.canonical_gap = probe_shape::canonical_rust_gap_for(
                         path,
                         probe.owner.as_ref(),
