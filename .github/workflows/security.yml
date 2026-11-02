@@ -38,13 +38,15 @@ jobs:
       - run: cargo-deny check advisories licenses bans sources
 
   # Scheduled runs on main only, in a separate job so the PR-facing cargo-deny
-  # job and its checkout never hold issue-write authority. A red run opens (or
+  # job and its checkout never hold issue-write authority. The merge-ready
+  # clause is the repository's required job guard; a schedule event never
+  # reaches the pull_request branch of it. A red run opens (or
   # comments on) one `deny-red` issue; a later green run comments and closes it.
   # Detection only: nothing here gates a PR or changes what the PR check decides.
   deny-tracker:
     name: Reconcile the deny-red tracker
     needs: cargo-deny
-    if: always() && github.event_name == 'schedule' && github.ref == 'refs/heads/main' && github.repository == 'EffortlessMetrics/ripr-swarm' && (needs.cargo-deny.result == 'success' || needs.cargo-deny.result == 'failure')
+    if: always() && github.event_name == 'schedule' && (github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.ref == 'refs/heads/main' && github.repository == 'EffortlessMetrics/ripr-swarm' && (needs.cargo-deny.result == 'success' || needs.cargo-deny.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
