@@ -78,7 +78,7 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::PathBuf;
     use std::sync::Barrier;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     struct Fixture(PathBuf);
     impl Fixture {
@@ -237,8 +237,21 @@ mod tests {
 
     #[test]
     fn historical_pid_and_clock_name_collides_with_eexist() -> Result<(), String> {
-        let path = historical_pid_nonce_path("help-command", 7);
+        // Nonce is unique per run so an interrupted prior process that reused this
+        // PID cannot fail the first exclusive create. The collision oracle is the
+        // second create_root on that same pid+nonce path, not a globally fixed name.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+            .saturating_add(NEXT.fetch_add(1, Ordering::Relaxed) as u128);
+        let path = historical_pid_nonce_path("help-command", nonce);
         ensure_parent(path.parent().ok_or("historical parent missing")?)?;
+        if path.exists() {
+            std::fs::remove_dir_all(&path)
+                .map_err(|error| format!("remove leftover historical path {path:?}: {error}"))?;
+        }
         create_root(&path)?;
         let _guard = Fixture(path.clone());
         let actual = std::fs::create_dir(&path)
