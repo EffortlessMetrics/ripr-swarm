@@ -1885,12 +1885,13 @@ pub(crate) fn validate_incomplete_diff_corpus_fixture_corpus(
                 ));
             }
         }
-        if let Some(role) = row.get("role").and_then(serde_json::Value::as_str) {
-            if role != "incomplete" && role != "complete_control" {
-                violations.push(format!(
-                    "incomplete diff corpus row {id} has unknown role `{role}`"
-                ));
-            }
+        if let Some(role) = row.get("role").and_then(serde_json::Value::as_str)
+            && role != "incomplete"
+            && role != "complete_control"
+        {
+            violations.push(format!(
+                "incomplete diff corpus row {id} has unknown role `{role}`"
+            ));
         }
         let path = root.join(diff_path);
         let bytes = match fs::read(&path) {
