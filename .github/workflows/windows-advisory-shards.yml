@@ -26,7 +26,7 @@ jobs:
   windows-shard:
     name: windows-shard-${{ matrix.shard }}
     runs-on: windows-latest
-    timeout-minutes: 80
+    timeout-minutes: 105
     env:
       # Tests that need a real NTFS deny ACL (#9688). Git for Windows bash enables
       # SeBackupPrivilege and SeRestorePrivilege and every child inherits them,
@@ -133,6 +133,15 @@ jobs:
       # the real-ACL step below builds `--workspace` and timed out at 20 minutes
       # when `-p xtask` was last (run 41448247627). Each run is partitioned by
       # `count:$shard/4`, so the four shards still cover every test once.
+      #
+      # No-log shard hangs (#12338): runs 39854834481, 41359717895 and 41458879302
+      # each ended as "exceeded the maximum execution time of 1h20m" with no log
+      # and none of the always() steps run. Warm steps take up to 27 minutes, so
+      # the 55-minute step cap and the 44-minute watchdog could not both fit under
+      # an 80-minute job cap; the job cap now leaves room for the step cap and the
+      # real-ACL step. Every minute the step also prints free memory and the four
+      # largest processes (also saved as the `.heartbeat` artifact), so a stalled
+      # shard leaves its last observed state, or shows that the runner stopped.
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
         timeout-minutes: 55
         shell: bash
@@ -165,6 +174,12 @@ jobs:
             fi
           ) > /dev/null 2>&1 &
           watchdog_pid=$!
+          (
+            while kill -0 "$nextest_pid" 2> /dev/null; do
+              powershell -NoProfile -Command "\$o = Get-CimInstance Win32_OperatingSystem; \$t = (Get-Process | Sort-Object WS -Descending | Select-Object -First 4 | ForEach-Object { \$_.Name + ':' + [int](\$_.WS/1MB) + 'MB' }) -join ' '; 'heartbeat ' + (Get-Date -Format o) + ' free_mb=' + [int](\$o.FreePhysicalMemory/1KB) + ' top=' + \$t" 2>&1 | tee -a target/shard-$shard.heartbeat
+              sleep 60
+            done
+          ) &
           set +e
           wait "$nextest_pid"; status=$?
           wait "$watchdog_pid"
@@ -212,6 +227,7 @@ jobs:
             target/shard-${{ matrix.shard }}.status
             target/shard-${{ matrix.shard }}.watchdog
             target/shard-${{ matrix.shard }}.processes
+            target/shard-${{ matrix.shard }}.heartbeat
             target/acl.log
             target/acl.status
           if-no-files-found: warn
