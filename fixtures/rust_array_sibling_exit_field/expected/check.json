@@ -156,12 +156,12 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach rows: pins_second_row", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: [Row { total: { std::process::exit(0) } }, Row { total: a + b }]", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion (observation_unverified)", "local flow reaches returned value: [Row { total: { std::process::exit(0) } }, Row { total: a + b }] (line 6)", "related test src/lib.rs:14 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33);", "source function argument value a = 30 at line 15", "source function argument value b = 3 at line 15", "source assertion argument value 33 at line 16", "missing discriminator [Row { total: { std::process::exit(0) } }, Row { total: a + b }]: Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion (observation_unverified)"],
+      "evidence_path": ["reach yes: Related tests appear to reach rows: pins_second_row", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: [Row { total: { std::process::exit(0) } }, Row { total: a + b }]", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion (observation_unverified)", "local flow reaches returned value: [Row { total: { std::process::exit(0) } }, Row { total: a + b }] (line 6)", "related test src/lib.rs:14 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33);", "source function argument value a = 30 at line 15", "source function argument value b = 3 at line 15", "source assertion argument value 33 at line 16"],
       "flow_sinks": [
         {"kind":"return_value","text":"[Row { total: { std::process::exit(0) } }, Row { total: a + b }]","line":6}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: [Row { total: { std::process::exit(0) } }, Row { total: a + b }]", "Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach rows: pins_second_row"],
-      "missing": ["Missing discriminator value: [Row { total: { std::process::exit(0) } }, Row { total: a + b }]", "No strong discriminator was detected"],
+      "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "15": "let rows = rows(30, 3);",
         "16": "assert_eq!(rows[1].total, 33);"
@@ -185,11 +185,6 @@
           }
         ],
         "missing_discriminators": [
-          {
-            "value": "[Row { total: { std::process::exit(0) } }, Row { total: a + b }]",
-            "reason": "Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion (observation_unverified)",
-            "flow_sink": {"kind":"return_value","text":"[Row { total: { std::process::exit(0) } }, Row { total: a + b }]","line":6}
-          }
         ]
       },
       "observed_values": [
@@ -210,11 +205,6 @@
         }
       ],
       "missing_discriminators": [
-        {
-          "value": "[Row { total: { std::process::exit(0) } }, Row { total: a + b }]",
-          "reason": "Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion (observation_unverified)",
-          "flow_sink": {"kind":"return_value","text":"[Row { total: { std::process::exit(0) } }, Row { total: a + b }]","line":6}
-        }
       ],
       "related_tests_total": 1,
       "related_tests": [
@@ -227,15 +217,15 @@
           "oracle": "assert_eq!(rows[1].total, 33);",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "missing_exact_assertion",
-          "why": "discriminator unconfirmed (observation_unverified)"
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
-      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "recommended_next_step": "The related test `pins_second_row` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
+      "suggested_next_action": "The related test `pins_second_row` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

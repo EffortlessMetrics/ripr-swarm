@@ -51,7 +51,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/rust_array_sibling_exit_field/input --diff <cwd>/fixtures/rust_array_sibling_exit_field/diff.patch --mode fast probe:src_lib.rs:field_construction:d6d7c327
   ripr context --root <cwd>/fixtures/rust_array_sibling_exit_field/input --diff <cwd>/fixtures/rust_array_sibling_exit_field/diff.patch --mode fast --at probe:src_lib.rs:field_construction:d6d7c327
 
-INFO ./src/lib.rs:6
+WARNING ./src/lib.rs:6
   id: probe:src_lib.rs:return_value:9ae488af
 
 Changed
@@ -73,19 +73,18 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: [Row { total: { std::process::exit(0) } }, Row { total: a + b }]
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion (observation_unverified)
+  - discriminator weak: Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion
   - local flow reaches returned value: [Row { total: { std::process::exit(0) } }, Row { total: a + b }] (line 6)
-  - related test src/lib.rs:14 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33); misses: discriminator unconfirmed (observation_unverified)
+  - related test src/lib.rs:14 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source function argument value a = 30 at line 15
   - source function argument value b = 3 at line 15
   - source assertion argument value 33 at line 16
 
 Weakness
   - No strong discriminator was detected
-  - missing discriminator [Row { total: { std::process::exit(0) } }, Row { total: a + b }]: Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion (observation_unverified)
 
 Next step
-  Strengthen the related assertion so it discriminates the changed behavior
+  The related test `pins_second_row` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_array_sibling_exit_field/input --diff <cwd>/fixtures/rust_array_sibling_exit_field/diff.patch --mode fast probe:src_lib.rs:return_value:9ae488af
   ripr context --root <cwd>/fixtures/rust_array_sibling_exit_field/input --diff <cwd>/fixtures/rust_array_sibling_exit_field/diff.patch --mode fast --at probe:src_lib.rs:return_value:9ae488af

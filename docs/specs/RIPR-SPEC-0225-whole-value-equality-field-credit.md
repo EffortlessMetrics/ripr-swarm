@@ -329,10 +329,18 @@ rejected alternative. Any can be reversed later without touching the rest.
      an outside crate's macro or a module in a directory the index skips
      (`src/fixtures/`) may otherwise declare a local `u32`. An outside
      procedural macro's output is not read; a derive or attribute macro that
-     declares a type named after a primitive is outside this decision, as is
-     an owner or element type that ends the process before the assertion
-     (`std::process::exit` in the owner or in a `Drop`), which no owner pin
-     models yet (#8084);
+     declares a type named after a primitive is outside this decision;
+   - for the indexed pin above, a sibling element's matching field built from
+     anything other than a literal or plain path refuses the pin (blocks,
+     calls and non-plain arithmetic), and an owner or element type that ends
+     the process before the assertion (`std::process::exit` in the owner or
+     in a `Drop`) is outside the pin (#8084);
+   - separately, a `return_value` probe on the same owner shape demotes from
+     `exposed` to `weakly_exposed` when any struct field initializer or
+     non-record array element may exit during array construction (blocks,
+     calls, macros and similar exit-capable shapes). Ordinary arithmetic on
+     literals and paths does not demote (#8084,
+     `crates/ripr/src/analysis/classifier/evidence.rs::a_sibling_field_that_may_exit_keeps_return_value_weakly`);
 
    - the owner's name is the name of no other indexed function, because the
      owner call is matched by name and a nested module's `super::rows` or a

@@ -13,12 +13,11 @@ use crate::analysis::classify::{
     has_same_test_boundary_oracle_pairing, helper_only_reach, helper_pins_owner_call,
     infection_evidence_for_owner, is_drop_destructor, local_flow_sinks, method_cannot_store,
     observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
-    returned_array_construction_plain,
     outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
     propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
-    reach_evidence, reveal_outcome, same_test_pairing_missing_summary, setter_plainly_writes,
-    signature_parameters, unconditional_owner_insert_field, unexercised_mask_bits,
-    wrapper_return_boundary_pinned,
+    reach_evidence, returned_array_construction_plain, reveal_outcome,
+    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+    unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -1548,10 +1547,12 @@ impl ClassifiedProbeEvidence {
             discriminate
         };
         // #8084: the generic oracle path can credit an indexed field assertion
-        // as observing the whole returned array; when any element field is
-        // built from a block, call or other non-literal non-path expression,
-        // constructing the array may exit before the test reaches its
-        // assertion, mirroring the indexed pin refusal in `element_field_pin`.
+        // as observing the whole returned array; when any element field or
+        // non-record element may exit during construction (blocks, calls, and
+        // similar), constructing the array may exit before the test reaches
+        // its assertion. Ordinary arithmetic on literals and paths does not
+        // demote, mirroring the indexed pin refusal scope in
+        // `element_field_pin`.
         let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
             && discriminate.state == StageState::Yes
             && context
