@@ -67,8 +67,8 @@ pub(crate) const ADAPTER_PANIC_REASON_PREFIX: &str = "static limit adapter_panic
 fn contain_adapter_panic<T>(
     options: &AnalysisOptions,
     language: LanguageId,
-    run: impl FnOnce() -> Result<T, String>,
-) -> Result<T, String> {
+    run: impl FnOnce() -> Result<T, CoreError>,
+) -> Result<T, CoreError> {
     let contained = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         #[cfg(test)]
         injected_adapter_panic::fire(&options.root, language);
@@ -78,10 +78,10 @@ fn contain_adapter_panic<T>(
     let _ = options;
     match contained {
         Ok(result) => result,
-        Err(_payload) => Err(format!(
+        Err(_payload) => Err(CoreError::message(format!(
             "{ADAPTER_PANIC_REASON_PREFIX}the {} adapter stopped on an internal error while analyzing this workspace; its findings are unavailable for this run",
             language.as_str()
-        )),
+        ))),
     }
 }
 
@@ -1261,11 +1261,11 @@ pub(crate) fn language_admits_changed_path(
 fn enforce_changed_language_line_limit(
     changed_files: &[diff::ChangedFile],
     language: LanguageId,
-    language_label: &str,
-    limit_env: &str,
+    language_label: &'static str,
+    limit_env: &'static str,
     line_limit: usize,
     language_config: &crate::config::LanguagesConfig,
-) -> Result<(), String> {
+) -> Result<(), CoreError> {
     let changed_line_count = changed_language_line_count(changed_files, language, language_config);
     if changed_line_count <= line_limit {
         return Ok(());
@@ -1274,14 +1274,14 @@ fn enforce_changed_language_line_limit(
         .iter()
         .filter(|file| language_admits_changed_path(&file.path, language, language_config))
         .count();
-    Err(format!(
-        "diff_scope_oversized: {changed_line_count} changed {language_label} lines across \
-         {changed_file_count} {language_label} files exceed the {limit_env} limit ({line_limit}); \
-         analysis was not run to protect runner memory before probe expansion. Repair route: \
-         reduce the diff scope, split the extraction PR, run a narrower diff, or raise the \
-         limit via {limit_env}=<number>. To analyze a subset, pass `--path <glob>` and/or \
-         `--exclude <glob>` to `ripr check` (repeatable, repository-relative; files left out \
-         are reported as not analyzed)."
+    Err(CoreError::from(
+        crate::diff_scope_guard::DiffScopeOversized::preview_language_changed_lines(
+            language_label,
+            limit_env,
+            changed_line_count,
+            changed_file_count,
+            line_limit,
+        ),
     ))
 }
 
@@ -1300,7 +1300,7 @@ fn enforce_changed_preview_line_limits(
     languages: &[LanguageId],
     changed_files: &[diff::ChangedFile],
     language_config: &crate::config::LanguagesConfig,
-) -> Result<(), String> {
+) -> Result<(), CoreError> {
     if languages.contains(&LanguageId::Python) {
         enforce_changed_language_line_limit(
             changed_files,
@@ -1349,6 +1349,7 @@ fn run_pipeline_for_diff_text(
         },
         diff_text,
     )
+    .map_err(|error| error.to_string())
 }
 
 /// [`run_pipeline_for_diff_text`] with the parsed `[languages]` repository
@@ -1365,12 +1366,12 @@ fn run_pipeline_for_diff_text_with_language_config(
     // the intake exclusion also covers that writer base (#8751).
     intake: DiffIntake<'_>,
     diff_text: &str,
-) -> Result<AnalysisResult, String> {
+) -> Result<AnalysisResult, CoreError> {
     let diff_scope = intake.scope;
     // #9331: the scope is applied as each section's path registers, so the
     // parse-time file bound measures only what was asked for.
     let parsed_diff =
-        diff::parse_unified_diff_bounded_scoped(diff_text, |path| diff_scope.admits(path))?;
+        diff::parse_unified_diff_bounded_scoped_core(diff_text, |path| diff_scope.admits(path))?;
     // #7663: ripr's own reports and caches under `target/ripr` are tool
     // artifacts, not user source. Standard Python `.gitignore` templates do
     // not cover `target/`, so `git add -A` can commit them; once committed,
@@ -1415,7 +1416,10 @@ fn run_pipeline_for_diff_text_with_language_config(
             .push(file.path.to_string_lossy().replace('\\', "/"));
     }
     if out_of_scope.count > 0 && changed_files.is_empty() {
-        return Err(scope_matched_nothing_error(diff_scope, &out_of_scope));
+        return Err(CoreError::message(scope_matched_nothing_error(
+            diff_scope,
+            &out_of_scope,
+        )));
     }
     // #10796: the scoped intake completed — publish the adapter-facing scoped
     // file count and the out-of-scope count. These are intake quantities, not
@@ -1640,6 +1644,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                         preview_changed_files,
                         &language_config.typescript.handwritten_files,
                     )
+                    .map_err(CoreError::message)
                 })
             }
             // A diff that touches no Python path gives the adapter nothing to
@@ -1665,9 +1670,11 @@ fn run_pipeline_for_diff_text_with_language_config(
                     preview_changed_files,
                     &language_config.python.handwritten_files,
                 )
+                .map_err(CoreError::message)
             }),
             LanguageId::Perl => contain_adapter_panic(options, *language, || {
                 analyze_perl_diff(options, oracle_policy, preview_changed_files)
+                    .map_err(CoreError::message)
             }),
             LanguageId::Rust => {
                 continue;
@@ -1773,6 +1780,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                 }
             }
             Err(reason) => {
+                let reason = reason.to_string();
                 let status = perl_run_status_for_err(&reason);
                 let outcome = LanguageAnalysisOutcomeV1::from_diff_err(
                     *language,
@@ -2495,7 +2503,9 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         if !is_preview_language(*language) {
             // Rust (stable) failures propagate via `?`.
             let result = contain_adapter_panic(options, LanguageId::Rust, || {
-                RustAdapter.analyze_repo_with_rust_config(options, oracle_policy, rust_config)
+                RustAdapter
+                    .analyze_repo_with_rust_config(options, oracle_policy, rust_config)
+                    .map_err(CoreError::message)
             })?;
             cancellation::checkpoint()?;
             let skipped_reason = (result.skipped_files > 0).then(|| {
@@ -2528,13 +2538,14 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                         oracle_policy,
                         &language_config.typescript.handwritten_files,
                     )
+                    .map_err(CoreError::message)
                 })
             }
             LanguageId::Python => contain_adapter_panic(options, *language, || {
-                analyze_python_repo(options, oracle_policy)
+                analyze_python_repo(options, oracle_policy).map_err(CoreError::message)
             }),
             LanguageId::Perl => contain_adapter_panic(options, *language, || {
-                analyze_perl_repo(options, oracle_policy)
+                analyze_perl_repo(options, oracle_policy).map_err(CoreError::message)
             }),
             LanguageId::Rust => {
                 continue;
@@ -2573,6 +2584,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                 }
             }
             Err(reason) => {
+                let reason = reason.to_string();
                 let status = perl_run_status_for_err(&reason);
                 // The failed language is one child; its siblings' evidence
                 // is already recorded and untouched.
@@ -3423,7 +3435,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::super::AnalysisMode;
-    use super::super::language::{is_diff_scope_oversized, with_forced_diff_limit_env};
+    use super::super::language::with_forced_diff_limit_env;
     use crate::config::OraclePolicy;
 
     fn temp_root(name: &str) -> Result<PathBuf, String> {
@@ -8909,7 +8921,8 @@ index 0000000..1111111 100644
                 scope: &scope,
             },
             diff_text,
-        ))
+        )
+        .map_err(|error| error.to_string()))
     }
 
     /// #9331 fixture: one real edit plus more vendored sections than the
@@ -9343,7 +9356,7 @@ index 0000000..1111111 100644
             &crate::config::LanguagesConfig::default(),
         ) {
             Ok(()) => return Err("three changed Python lines should exceed limit two".to_string()),
-            Err(message) => message,
+            Err(error) => error.to_string(),
         };
 
         for needle in [
@@ -9358,9 +9371,9 @@ index 0000000..1111111 100644
                 return Err(format!("missing `{needle}` in message: {message}"));
             }
         }
-        if !is_diff_scope_oversized(&message) {
+        if !message.starts_with("diff_scope_oversized:") {
             return Err(format!(
-                "refusal must match is_diff_scope_oversized: {message}"
+                "refusal must be a diff_scope_oversized guard: {message}"
             ));
         }
         Ok(())
@@ -9377,6 +9390,7 @@ index 0000000..1111111 100644
             2,
             &crate::config::LanguagesConfig::default(),
         )
+        .map_err(|error| error.to_string())
     }
 
     #[test]
@@ -9395,7 +9409,7 @@ index 0000000..1111111 100644
             Ok(()) => {
                 return Err("three changed TypeScript lines should exceed limit two".to_string());
             }
-            Err(message) => message,
+            Err(error) => error.to_string(),
         };
 
         for needle in [
@@ -9410,9 +9424,9 @@ index 0000000..1111111 100644
                 return Err(format!("missing `{needle}` in message: {message}"));
             }
         }
-        if !is_diff_scope_oversized(&message) {
+        if !message.starts_with("diff_scope_oversized:") {
             return Err(format!(
-                "refusal must match is_diff_scope_oversized: {message}"
+                "refusal must be a diff_scope_oversized guard: {message}"
             ));
         }
         Ok(())
@@ -9429,6 +9443,7 @@ index 0000000..1111111 100644
             2,
             &crate::config::LanguagesConfig::default(),
         )
+        .map_err(|error| error.to_string())
     }
 
     #[test]
@@ -9441,6 +9456,7 @@ index 0000000..1111111 100644
             &files,
             &crate::config::LanguagesConfig::default(),
         )
+        .map_err(|error| error.to_string())
     }
 
     #[test]
@@ -9509,7 +9525,7 @@ index 0000000..1111111 100644
         )
         .err()
         .ok_or("an oversized Python diff must be refused")?;
-        assert!(is_diff_scope_oversized(&refusal), "{refusal}");
+        assert!(refusal.starts_with("diff_scope_oversized:"), "{refusal}");
         assert!(refusal.contains("changed Python lines"), "{refusal}");
         assert!(
             refusal.contains(DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV),
@@ -9534,7 +9550,7 @@ index 0000000..1111111 100644
         )
         .err()
         .ok_or("an oversized TypeScript diff must be refused")?;
-        assert!(is_diff_scope_oversized(&refusal), "{refusal}");
+        assert!(refusal.starts_with("diff_scope_oversized:"), "{refusal}");
         assert!(refusal.contains("changed TypeScript lines"), "{refusal}");
         assert!(
             refusal.contains(DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV),

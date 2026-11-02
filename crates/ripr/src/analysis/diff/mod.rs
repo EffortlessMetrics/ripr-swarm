@@ -37,7 +37,8 @@ pub use parse::parse_unified_diff;
 #[cfg(test)]
 pub(crate) use parse::parse_unified_diff_bounded_with_metadata;
 pub(crate) use parse::{
-    parse_unified_diff_bounded_scoped, parse_unified_diff_bounded_with_metadata_core,
+    parse_unified_diff_bounded_scoped, parse_unified_diff_bounded_scoped_core,
+    parse_unified_diff_bounded_with_metadata_core,
 };
 #[cfg(test)]
 pub(crate) use path::diff_path_identity_key_with;

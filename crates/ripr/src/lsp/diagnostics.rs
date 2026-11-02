@@ -2073,9 +2073,18 @@ fn workspace_analysis_error_diagnostics(
             error,
         ));
     }
-    // Oversized-diff and cancellation retain their existing String owners.
+    // #4861: classify the typed diff-scope family before Display; repo scope
+    // guards stay on the legacy string path until a sibling slice types them.
+    if error.is_diff_scope_oversized() {
+        return Ok(oversized_diff_limited_diagnostics(
+            root,
+            config,
+            defer_seam_inventory,
+            error.to_string(),
+        ));
+    }
     let message = error.to_string();
-    if crate::analysis::is_diff_scope_oversized(&message) {
+    if message.trim_start().starts_with("repo_scope_oversized:") {
         return Ok(oversized_diff_limited_diagnostics(
             root,
             config,
@@ -3065,10 +3074,9 @@ fn oversized_diff_error_converts_to_a_committed_limited_snapshot_with_one_warnin
 #[cfg(test)]
 #[test]
 fn repo_scope_and_wrapped_guard_errors_do_not_convert() -> Result<(), String> {
-    // #2299: the conversion guard matches ONLY the raw, unwrapped
-    // `diff_scope_oversized` guard error — the distinct `repo_scope_oversized`
-    // guard (#2109), wrapped errors, and forged lookalikes keep the
-    // no-snapshot `Err` path.
+    // #2299 / #4861: conversion matches ONLY the typed diff-scope family —
+    // repo-scope strings, forged lookalikes, and `CoreError::Message` copies
+    // keep the no-snapshot `Err` path; wrapped typed guards still convert.
     for lookalike in [
         "repo_scope_oversized: 900 indexed files exceed the repo guard",
         "workspace analysis failed: diff_scope_oversized: wrapped must not match",
@@ -3084,21 +3092,20 @@ fn repo_scope_and_wrapped_guard_errors_do_not_convert() -> Result<(), String> {
         "ripr: diff_scope_oversized: wrapped",
         "git_invocation_timeout: a different guard",
         "review_guidance_oversized: a different guard",
+        "diff_scope_oversized: 900 indexed Rust files exceed the 800-file guard",
     ] {
-        if crate::analysis::is_diff_scope_oversized(lookalike) {
+        if CoreError::message(lookalike).is_diff_scope_oversized() {
             return Err(format!("non-guard error matched the guard: {lookalike}"));
         }
     }
-    for error in [
-        "diff_scope_oversized: 900 indexed Rust files exceed the 800-file guard",
-        "diff_scope_oversized:	900 indexed files",
-        "diff_scope_oversized:\n900 indexed files",
-    ] {
-        if !crate::analysis::is_diff_scope_oversized(error) {
-            return Err(format!(
-                "the named guard error must match the guard: {error:?}"
-            ));
-        }
+    let typed =
+        CoreError::from(crate::diff_scope_guard::DiffScopeOversized::rust_indexed_files(800, 900));
+    if !typed.is_diff_scope_oversized() {
+        return Err("typed guard must classify structurally".to_string());
+    }
+    let wrapped = typed.with_context("workspace analysis failed");
+    if !wrapped.is_diff_scope_oversized() {
+        return Err("wrapped typed guard must keep its kind".to_string());
     }
     Ok(())
 }

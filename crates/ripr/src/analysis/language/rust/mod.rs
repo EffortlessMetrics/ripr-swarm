@@ -38,6 +38,7 @@ use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
 use crate::analysis::workspace::limitations_for_absent_changed_files;
 use crate::config::OraclePolicy;
+use crate::core_error::CoreError;
 use crate::domain::{
     ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
 };
@@ -110,7 +111,7 @@ const REPO_INDEX_FILE_LIMIT_ENV: &str = "RIPR_MAX_REPO_INDEX_FILES";
 
 /// Env override for [`DIFF_INDEX_FILE_LIMIT`]. Operators on larger, well-resourced
 /// runners raise it; CI can lower it to exercise the guard.
-const DIFF_INDEX_FILE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_INDEX_FILES";
+pub(crate) const DIFF_INDEX_FILE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_INDEX_FILES";
 
 /// Default ceiling on the number of added/removed Rust diff lines that may be
 /// expanded into probes. Large code-motion PRs can touch only one indexed file
@@ -120,40 +121,27 @@ const DIFF_CHANGED_RUST_LINE_LIMIT: usize = 2_000;
 
 /// Env override for [`DIFF_CHANGED_RUST_LINE_LIMIT`]. Operators can raise it
 /// for larger runners or lower it to exercise the guard.
-const DIFF_CHANGED_RUST_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_RUST_LINES";
+pub(crate) const DIFF_CHANGED_RUST_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_RUST_LINES";
 
-/// Named, matchable prefix for the diff-scope guard errors (#1023, #1324).
-/// The LSP refresh path matches this prefix to convert the fail-closed guard
-/// stop into a committed limited snapshot with one workspace-scoped warning
-/// diagnostic (#2299); the CLI path keeps the non-zero exit and the unchanged
-/// error text. The distinct `repo_scope_oversized` guard (#2109) does NOT
-/// share this prefix and never converts on the LSP path.
-pub(crate) const DIFF_SCOPE_OVERSIZED_PREFIX: &str = "diff_scope_oversized";
+/// Named, matchable kind for the diff-scope guard errors (#1023, #1324).
+/// The LSP refresh path matches the typed [`CoreError::DiffScopeOversized`]
+/// family to convert the fail-closed guard stop into a committed limited
+/// snapshot with one workspace-scoped warning diagnostic (#2299); the CLI
+/// path keeps the non-zero exit and the unchanged error text. The distinct
+/// `repo_scope_oversized` guard (#2109) does NOT share this kind and never
+/// converts on the LSP path.
+pub(crate) use crate::diff_scope_guard::DIFF_SCOPE_OVERSIZED_KIND as DIFF_SCOPE_OVERSIZED_PREFIX;
 
-/// True when `error` is the named diff-scope guard error (#2299). Matchable
-/// by its existing String-family boundary: only the raw,
-/// unwrapped guard error matches — a wrapped error (for example
-/// `workspace analysis failed: ...`) does not. The exact tag must be followed
-/// immediately by its colon delimiter; lookalike names are different errors.
-pub(crate) fn is_diff_scope_oversized(error: &str) -> bool {
-    error
-        .strip_prefix(DIFF_SCOPE_OVERSIZED_PREFIX)
-        .is_some_and(|suffix| suffix.starts_with(':'))
+/// The `diff_scope_oversized` refusal for an index of `files` Rust files.
+fn diff_scope_oversized_error(files: usize, scope_limit: usize) -> CoreError {
+    CoreError::from(
+        crate::diff_scope_guard::DiffScopeOversized::rust_indexed_files(files, scope_limit),
+    )
 }
 const NO_TESTS_INFECTION_SUMMARY: &str =
     "No tests were found, so activation/infection cannot be estimated";
 const NO_STATICALLY_REACHABLE_TEST_PATH_INFECTION_SUMMARY: &str =
     "No statically reachable test path was found, so activation/infection cannot be estimated";
-
-/// The `diff_scope_oversized` refusal for an index of `files` Rust files.
-fn diff_scope_oversized_error(files: usize, scope_limit: usize) -> String {
-    format!(
-        "diff_scope_oversized: {files} indexed Rust files exceed the \
-         {DIFF_INDEX_FILE_LIMIT_ENV} limit ({scope_limit}); analysis was not run to \
-         protect runner memory. Repair route: reduce the diff scope, run a narrower \
-         mode, or raise the limit via {DIFF_INDEX_FILE_LIMIT_ENV}=<number>."
-    )
-}
 
 fn diff_index_file_limit() -> Result<usize, String> {
     diff_index_file_limit_from_env(diff_limit_env(DIFF_INDEX_FILE_LIMIT_ENV))
@@ -232,12 +220,13 @@ fn tracked_open_rust_index_paths(
         .filter_map(|path| path.to_str().map(|text| text.replace('\\', "/")))
         .collect::<BTreeSet<_>>();
     if candidates.len() > scope_limit {
-        return Err(format!(
-            "diff_scope_oversized: {} admitted open Rust files exceed the \
-             {DIFF_INDEX_FILE_LIMIT_ENV} limit ({scope_limit}) before tracking; \
-             reduce the open-file scope or raise the limit",
-            candidates.len()
-        ));
+        return Err(CoreError::from(
+            crate::diff_scope_guard::DiffScopeOversized::rust_open_files_admitted(
+                candidates.len(),
+                scope_limit,
+            ),
+        )
+        .into());
     }
     let candidates = candidates.into_iter().collect::<Vec<_>>();
     let admitted = candidates.iter().cloned().collect::<BTreeSet<_>>();
@@ -1324,7 +1313,7 @@ fn changed_rust_line_count(changed_files: &[ChangedFile]) -> usize {
 fn enforce_changed_rust_line_limit(
     changed_files: &[ChangedFile],
     line_limit: usize,
-) -> Result<(), String> {
+) -> Result<(), CoreError> {
     let changed_line_count = changed_rust_line_count(changed_files);
     if changed_line_count <= line_limit {
         return Ok(());
@@ -1333,15 +1322,12 @@ fn enforce_changed_rust_line_limit(
         .iter()
         .filter(|file| route(&file.path) == Some(LanguageId::Rust))
         .count();
-    Err(format!(
-        "diff_scope_oversized: {changed_line_count} changed Rust lines across \
-         {changed_file_count} Rust files exceed the {DIFF_CHANGED_RUST_LINE_LIMIT_ENV} \
-         limit ({line_limit}); analysis was not run to protect runner memory before \
-         probe expansion. Repair route: reduce the diff scope, split the extraction \
-         PR, run a narrower diff, or raise the limit via \
-         {DIFF_CHANGED_RUST_LINE_LIMIT_ENV}=<number>. To analyze a subset, pass \
-         `--path <glob>` and/or `--exclude <glob>` to `ripr check` (repeatable, \
-         repository-relative; files left out are reported as not analyzed)."
+    Err(CoreError::from(
+        crate::diff_scope_guard::DiffScopeOversized::rust_changed_lines(
+            changed_line_count,
+            changed_file_count,
+            line_limit,
+        ),
     ))
 }
 
@@ -2089,7 +2075,7 @@ impl RustAdapter {
         oracle_policy: &OraclePolicy,
         changed_files: &[ChangedFile],
         enabled_languages: &[LanguageId],
-    ) -> Result<LanguageDiffResult, String> {
+    ) -> Result<LanguageDiffResult, CoreError> {
         self.analyze_diff_for_languages_with_rust_config(
             options,
             oracle_policy,
@@ -2106,7 +2092,7 @@ impl RustAdapter {
         changed_files: &[ChangedFile],
         enabled_languages: &[LanguageId],
         rust_config: &crate::config::RustLanguageConfig,
-    ) -> Result<LanguageDiffResult, String> {
+    ) -> Result<LanguageDiffResult, CoreError> {
         let _syntax_memo = crate::analysis::syntax::run_memo::enter();
         // Exclude conventional generated surfaces before hard line limits and
         // partial-diff budgeting so machine output cannot consume the budget
@@ -2862,7 +2848,9 @@ impl RustAdapter {
                                 dependency_edges.as_ref(),
                             );
                         } else {
-                            return Err("shared reach index reported but not held".to_string());
+                            return Err(CoreError::message(
+                                "shared reach index reported but not held",
+                            ));
                         }
                     }
                     dependent_scope::ReachIndex::Widened(reach_index) => {
@@ -3420,6 +3408,7 @@ impl LanguageAdapter for RustAdapter {
                 LanguageId::Perl,
             ],
         )
+        .map_err(|error| error.to_string())
     }
 
     fn analyze_repo(
@@ -3655,12 +3644,12 @@ mod tests {
         diff_changed_rust_line_limit_from_env, diff_identity_from_changed_files,
         diff_index_file_limit_from_env, diff_narrow_index_files_from_env,
         enforce_changed_rust_line_limit, enforce_repo_index_file_limit, is_binary_source_path,
-        is_cargo_binary_invocation, is_diff_scope_oversized, is_generated_rust_file,
-        is_generated_rust_file_with_patterns, limitations_for_absent_changed_files,
-        partial_diff_budgets_from_env, partition_canonical_form,
-        replace_witnessed_no_path_infection_summary, repo_index_file_limit_from_env,
-        select_partial_diff_partition, select_partial_diff_partition_with_identity,
-        selection_with_open_files, sha256_hex, with_forced_diff_limit_env,
+        is_cargo_binary_invocation, is_generated_rust_file, is_generated_rust_file_with_patterns,
+        limitations_for_absent_changed_files, partial_diff_budgets_from_env,
+        partition_canonical_form, replace_witnessed_no_path_infection_summary,
+        repo_index_file_limit_from_env, select_partial_diff_partition,
+        select_partial_diff_partition_with_identity, selection_with_open_files, sha256_hex,
+        with_forced_diff_limit_env,
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
@@ -5557,7 +5546,7 @@ mod tests {
             || scoped_findings(&root, DependentScopeMode::Auto),
         );
         match refused {
-            Err(error) => assert!(is_diff_scope_oversized(&error), "{error}"),
+            Err(error) => assert!(error.starts_with("diff_scope_oversized:"), "{error}"),
             Ok(_) => return Err("a 1-file guard must refuse the run".to_string()),
         }
         Ok(())
@@ -5580,10 +5569,7 @@ mod tests {
             scoped_findings(&root, DependentScopeMode::Auto)
         });
         match refused {
-            Err(error) => assert!(
-                is_diff_scope_oversized(&error) && error.starts_with("diff_scope_oversized: 2 "),
-                "{error}"
-            ),
+            Err(error) => assert!(error.starts_with("diff_scope_oversized: 2 "), "{error}"),
             Ok(_) => return Err("a two-file core must not fit a 1-file guard".to_string()),
         }
         assert_eq!(
@@ -6642,7 +6628,7 @@ fn absent_delimiter_boundary_returns_head() {
 
         let message = match enforce_changed_rust_line_limit(&files, 2) {
             Ok(()) => return Err("three changed Rust lines should exceed limit two".to_string()),
-            Err(message) => message,
+            Err(error) => error.to_string(),
         };
 
         for needle in [
@@ -6663,7 +6649,7 @@ fn absent_delimiter_boundary_returns_head() {
     #[test]
     fn changed_rust_line_limit_accepts_at_limit() -> Result<(), String> {
         let files = vec![changed_file("src/lib.rs", 1, 1)];
-        enforce_changed_rust_line_limit(&files, 2)
+        enforce_changed_rust_line_limit(&files, 2).map_err(|error| error.to_string())
     }
 
     // --- Partial diff-scope partition tests (RIPR-PROP-0019, #1999) ---

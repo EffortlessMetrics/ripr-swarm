@@ -612,21 +612,14 @@ pub(super) fn machine_refusal_document(
 ) -> Option<Result<String, String>> {
     let notice = error.refusal_notice();
     match format {
-        OutputFormat::Json => {
-            let display = error.to_string();
-            Some(
-                match output::limited_check::render_diff_scope_limited_check_json(
-                    envelope_input,
-                    &display,
-                ) {
-                    Ok(Some(rendered)) => Ok(rendered),
-                    Ok(None) => {
-                        output::limited_check::render_check_failure_json(envelope_input, error)
-                    }
-                    Err(render) => Err(render),
-                },
-            )
-        }
+        OutputFormat::Json => Some(
+            match output::limited_check::render_diff_scope_limited_check_json(envelope_input, error)
+            {
+                Ok(Some(rendered)) => Ok(rendered),
+                Ok(None) => output::limited_check::render_check_failure_json(envelope_input, error),
+                Err(render) => Err(render),
+            },
+        ),
         // SARIF: a schema-valid run whose only signal is a
         // tool-configuration notification — uploadable to code scanning,
         // which an empty stream is not.
