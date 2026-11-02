@@ -20,6 +20,13 @@ use std::time::{Duration, Instant};
 
 const DEFAULT_PILOT_TIMEOUT_MS: u64 = 30_000;
 
+/// After the analysis budget fires, the worker gets this long to reach a
+/// cancellation checkpoint before pilot writes the timeout partial summary.
+const PILOT_CANCEL_GRACE: Duration = Duration::from_secs(5);
+
+/// Poll interval while waiting on the analysis worker under a deadline.
+const PILOT_DEADLINE_POLL: Duration = Duration::from_millis(250);
+
 /// Budget for the auto-retry when the default timeout fires (#2424).
 /// A cold fact cache on a multi-crate workspace can need ~155s; the
 /// default 30s is too low for first-run. The retry budget is set high
@@ -1071,32 +1078,48 @@ where
         let _ignored = tx.send(result);
     });
 
-    let mut outcome = rx.recv_timeout(Duration::from_millis(timeout_ms));
-    if let (Err(mpsc::RecvTimeoutError::Timeout), Some(extension_ms)) = (&outcome, extension_ms) {
-        on_extend();
-        outcome = rx.recv_timeout(Duration::from_millis(extension_ms));
-    }
-    match outcome {
-        Ok(result) => result.map(PilotAnalysisResult::Complete),
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            cancellation_token
-                .cancel(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded);
-            // #5019: the detached worker owns its progress run's terminal
-            // (`cancelled`), and the caller exits soon after this return.
-            // Give the worker a bounded window to reach a cancellation
-            // checkpoint and finish, so the terminal is not lost to process
-            // exit. A worker stuck past the window cannot be forced (it is
-            // a detached thread): a known, bounded limitation.
-            let _ignored = rx.recv_timeout(Duration::from_secs(5));
-            Ok(PilotAnalysisResult::TimedOut)
+    let total_budget_ms = timeout_ms.saturating_add(extension_ms.unwrap_or(0));
+    let started = Instant::now();
+    let mut on_extend = Some(on_extend);
+    loop {
+        let elapsed = started.elapsed();
+        let remaining = Duration::from_millis(total_budget_ms).saturating_sub(elapsed);
+        if remaining.is_zero() {
+            break;
         }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            Err(super::check_budget::worker_stopped_detail(
-                "ripr pilot",
-                "lower --max-seams or narrow the scope",
-            ))
+        if extension_ms.is_some()
+            && elapsed >= Duration::from_millis(timeout_ms)
+            && let Some(callback) = on_extend.take()
+        {
+            callback();
+        }
+        let mut wait = remaining.min(PILOT_DEADLINE_POLL);
+        if on_extend.is_some() {
+            let until_extension = Duration::from_millis(timeout_ms).saturating_sub(elapsed);
+            if !until_extension.is_zero() {
+                wait = wait.min(until_extension);
+            }
+        }
+        match rx.recv_timeout(wait) {
+            Ok(result) => return result.map(PilotAnalysisResult::Complete),
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(super::check_budget::worker_stopped_detail(
+                    "ripr pilot",
+                    "lower --max-seams or narrow the scope",
+                ));
+            }
         }
     }
+    cancellation_token.cancel(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded);
+    // #5019: the detached worker owns its progress run's terminal
+    // (`cancelled`), and the caller exits soon after this return.
+    // Give the worker a bounded window to reach a cancellation
+    // checkpoint and finish, so the terminal is not lost to process
+    // exit. A worker stuck past the window cannot be forced (it is
+    // a detached thread): a known, bounded limitation.
+    let _ignored = rx.recv_timeout(PILOT_CANCEL_GRACE);
+    Ok(PilotAnalysisResult::TimedOut)
 }
 
 fn pilot_artifacts(out_dir: &Path) -> output::pilot::PilotArtifacts {
@@ -1703,6 +1726,43 @@ mod tests {
         assert_eq!(
             super::pilot_complete_summary_timeout(30_000, None, true),
             (30_000, 0),
+            "an explicit hard limit never reports an automatic extension"
+        );
+    }
+
+    #[test]
+    fn pilot_default_extension_wall_clock_stays_within_total_budget() {
+        // #5322: the default-plus-extension path must honor the summed budget
+        // from the start of the run, not stall for multiples of it after cancel.
+        const FIRST_MS: u64 = 40;
+        const EXTENSION_MS: u64 = 60;
+        let started = Instant::now();
+        let (cancelled_tx, cancelled_rx) = mpsc::channel();
+        let extension_notice = std::cell::Cell::new(false);
+        let result = run_pilot_analysis_with_timeout::<(), _>(
+            FIRST_MS,
+            Some(EXTENSION_MS),
+            || extension_notice.set(true),
+            move || {
+                loop {
+                    if crate::analysis::cancellation::checkpoint().is_err() {
+                        let _ignored = cancelled_tx.send(());
+                        return Err("analysis cancelled".to_string());
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            },
+        );
+        assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
+        assert!(extension_notice.get());
+        assert_eq!(cancelled_rx.recv_timeout(Duration::from_secs(1)), Ok(()));
+        let ceiling = Duration::from_millis(FIRST_MS + EXTENSION_MS)
+            + PILOT_CANCEL_GRACE
+            + Duration::from_millis(750);
+        assert!(
+            started.elapsed() <= ceiling,
+            "pilot exceeded its total budget wall clock: {:?} > {ceiling:?}",
+            started.elapsed()
         );
     }
 

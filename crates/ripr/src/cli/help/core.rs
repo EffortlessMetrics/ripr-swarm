@@ -85,7 +85,9 @@ Options:
   --max-seams N     Maximum ranked gaps in the pilot summary. Defaults to 5.
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
                     30000; when the default passes, the same run continues for up to
-                    240000 more. An explicit value is a hard limit.
+                    240000 more (270000 ms total from start, plus up to about 5 s of
+                    cancel grace before the partial summary is written). An explicit value
+                    is a hard limit with no extension.
   --format FORMAT   human (default) or json. `--format json` writes the same
                     pilot-summary.json document to stdout and suppresses the
                     human terminal; packet files are still written.
