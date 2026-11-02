@@ -15,9 +15,8 @@ use crate::output::agent_seam_packets;
 use crate::output::agent_seam_packets::missing_discriminator_records_for as missing_records_for;
 use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY, CROSS_LANGUAGE_TARGET_UNRESOLVED_REPAIR_ROUTE,
-    EvidenceRecordStaticLimitation, NO_TEST_REACHES_OWNER_CATEGORY,
-    canonical_receipt_command_for, canonical_repair_command_for,
-    cross_language_test_target_unresolved, static_limitations_for,
+    EvidenceRecordStaticLimitation, NO_TEST_REACHES_OWNER_CATEGORY, canonical_receipt_command_for,
+    canonical_repair_command_for, cross_language_test_target_unresolved, static_limitations_for,
 };
 use crate::output::gap_decision_ledger::{GapRecord, GapRepairRoute};
 use crate::output::markdown::{code_span, inline_prose};
@@ -25,13 +24,8 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use super::publish_plan::{
-    card_gap_state,
-    reason_for, suggested_test_intent,
-};
-use super::{
-    LLM_PROMPT_VERIFY_SENTENCE, ReviewCommentsAnalysisScope,
-};
+use super::publish_plan::{card_gap_state, reason_for, suggested_test_intent};
+use super::{LLM_PROMPT_VERIFY_SENTENCE, ReviewCommentsAnalysisScope};
 
 pub(super) fn render_review_comments_markdown_value(
     root: &Path,

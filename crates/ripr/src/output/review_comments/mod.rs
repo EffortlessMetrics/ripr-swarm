@@ -2,8 +2,7 @@ use crate::agent::loop_commands::display_path;
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::Mode;
 use crate::app::agent_brief::{
-    AgentBriefResolvedWorkingSet, AgentBriefSelection,
-    AgentBriefWhyNowReason,
+    AgentBriefResolvedWorkingSet, AgentBriefSelection, AgentBriefWhyNowReason,
 };
 use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::config::RiprConfig;
@@ -482,15 +481,15 @@ pub(crate) const LLM_PROMPT_VERIFY_SENTENCE: &str = "Verify with ripr agent veri
 
 #[cfg(test)]
 mod tests {
-    use crate::agent::loop_commands::shell_arg;
-    use crate::output::agent_seam_packets::missing_discriminator_records_for as missing_records_for;
-    use crate::output::markdown::code_span;
     use super::publish_plan::reason_for;
     use super::render::{
         gap_record_related_test, push_analysis_scope_summary, push_markdown_items, repair_intent,
         repair_prompt, repair_text,
     };
     use super::*;
+    use crate::agent::loop_commands::shell_arg;
+    use crate::output::agent_seam_packets::missing_discriminator_records_for as missing_records_for;
+    use crate::output::markdown::code_span;
 
     /// comments.md: a backtick in a seam id, path, or test name must not
     /// close the code span and let `@mention` or HTML after it render live.
