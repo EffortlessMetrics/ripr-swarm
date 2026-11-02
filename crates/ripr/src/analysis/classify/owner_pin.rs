@@ -5153,11 +5153,8 @@ impl OwnerReturnPin {
                 || helper_arguments::expected_literal(second, index).is_none()
                 || doctest.is_some()
                 || !index.files().get(&test.file).is_some_and(|facts| {
-                    source_imported_claims_macros(
-                        &facts.source,
-                        (test.start_line, test.end_line),
-                    )
-                    .contains(&spelling)
+                    source_imported_claims_macros(&facts.source, (test.start_line, test.end_line))
+                        .contains(&spelling)
                 })
             {
                 return false;
