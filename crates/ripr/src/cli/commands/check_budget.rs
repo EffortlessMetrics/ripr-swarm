@@ -36,12 +36,28 @@ pub(super) fn default_check_timeout() -> Option<Duration> {
 /// The refusal diagnostic, also printed on stderr.
 fn timeout_detail(budget: Duration) -> String {
     format!(
-        "analysis_timeout: ripr check exceeded its {}s wall-clock budget and was stopped. \
+        "analysis_timeout: ripr check exceeded its {}s analysis-worker budget and was stopped. \
          No findings were produced, so this is not a clean result. \
          Repair route: raise or disable the budget (0 disables it) with --timeout SECS or \
-         RIPR_CHECK_TIMEOUT=<seconds>, or narrow the diff, then re-run.",
+         RIPR_CHECK_TIMEOUT=<seconds>, or narrow the diff, then re-run. \
+         Git probing and rendering run outside this budget (RIPR_GIT_TIMEOUT per invocation).",
         budget.as_secs()
     )
+}
+
+/// Stderr disclosure when the user explicitly sets `--timeout` (#12508).
+pub(super) fn explicit_check_timeout_disclosure(
+    budget: Option<Duration>,
+    repo_seam_inventory: bool,
+) -> Option<String> {
+    if repo_seam_inventory {
+        return None;
+    }
+    let budget = budget?;
+    Some(format!(
+        "ripr: check analysis budget {}s covers the analysis worker only; git probing and rendering are outside it (RIPR_GIT_TIMEOUT per invocation).",
+        budget.as_secs()
+    ))
 }
 
 /// Run `work` under `budget`. `None` runs it inline with no thread.
@@ -511,6 +527,22 @@ mod tests {
         assert_eq!(
             captured.facts.scoped_changed_file_count, None,
             "no intake count may exist without an intake completion"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_check_timeout_disclosure_names_worker_scope() -> Result<(), String> {
+        let line = super::explicit_check_timeout_disclosure(Some(Duration::from_secs(120)), false)
+            .ok_or("explicit budget must disclose")?;
+        assert!(
+            line.contains("120s") && line.contains("analysis worker"),
+            "{line}"
+        );
+        assert!(line.contains("RIPR_GIT_TIMEOUT"), "{line}");
+        assert!(
+            super::explicit_check_timeout_disclosure(Some(Duration::from_secs(1)), true).is_none(),
+            "repo seam inventory formats skip the check budget disclosure"
         );
         Ok(())
     }

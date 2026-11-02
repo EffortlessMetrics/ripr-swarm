@@ -587,15 +587,23 @@ fn attach_repo_badge_projection(
     source_report: Option<&str>,
 ) {
     match limit_info {
-        Some(limit) => badge::attach_public_projection_with_optional_source(
-            summary,
-            source_report,
-            "limited_seam_cap",
-            Some(format!(
+        Some(limit) => {
+            let limited_reason = format!(
                 "seam limit applied: analyzed {} of {} seams; unscanned seams are not counted",
                 limit.analyzed, limit.total
-            )),
-        ),
+            );
+            badge::attach_public_projection_with_optional_source(
+                summary,
+                source_report,
+                "limited_seam_cap",
+                Some(limited_reason),
+            );
+            summary.warnings.push(format!(
+                "seam limit applied ({}); repair route: {}",
+                crate::output::repo_exposure::REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL,
+                crate::output::repo_exposure::repo_exposure_inventory_repair_route(&limit.source),
+            ));
+        }
         None => match source_report {
             Some(source) => badge::attach_public_projection(summary, source),
             None => {
@@ -1367,6 +1375,41 @@ fn happy_path_passes() {
                 .is_some_and(|reason| reason.contains("analyzed 500 of 501 seams")),
             "the limited reason must name the cap: {:?}",
             projection.limited_reason
+        );
+        assert_eq!(summary.warnings.len(), 1, "{:?}", summary.warnings);
+        let warning = &summary.warnings[0];
+        assert!(
+            warning.contains(crate::output::repo_exposure::REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL),
+            "badge warning must name the control variable: {warning}"
+        );
+        assert!(
+            warning.contains("repair route:"),
+            "badge warning must carry a repair route: {warning}"
+        );
+        assert!(
+            warning.contains(
+                crate::output::repo_exposure::repo_exposure_inventory_repair_route(
+                    &crate::analysis::SeamLimitSource::Default
+                )
+            ),
+            "badge repair route must match repo exposure: {warning}"
+        );
+        Ok(())
+    }
+
+    /// #12508: an uncapped repo badge must not carry a seam-limit repair route.
+    #[test]
+    fn repo_badge_full_scan_projection_carries_no_seam_limit_warning() -> Result<(), String> {
+        let classified: Vec<crate::analysis::ClassifiedSeam> = Vec::new();
+        let mut summary = badge::ripr_canonical_actionable_gap_badge_summary(
+            &classified,
+            badge::BadgePolicy::default(),
+        );
+        attach_repo_badge_projection(&mut summary, None, Some(REPO_RIPR_BADGE_SOURCE_REPORT));
+        assert!(
+            summary.warnings.is_empty(),
+            "uncapped badge must not invent a seam-limit repair route: {:?}",
+            summary.warnings
         );
         Ok(())
     }

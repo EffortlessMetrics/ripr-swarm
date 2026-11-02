@@ -222,7 +222,7 @@ const MAX_TOP_FILES_SUMMARY_JSON: usize = 25;
 
 const REPO_EXPOSURE_INVENTORY_LIMIT_CATEGORY: &str = "repo_seam_limit_applied";
 const REPO_EXPOSURE_PILOT_BUDGET_CATEGORY: &str = "pilot_seam_budget_applied";
-const REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
+pub(crate) const REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
 const REPO_EXPOSURE_PILOT_BUDGET_CONTROL: &str = "RIPR_PILOT_SEAM_BUDGET";
 const REPO_EXPOSURE_SEAM_LIMIT_RUN_STATUS: &str = "seam_limit_applied";
 
@@ -267,36 +267,56 @@ impl<'a> RepoExposureLimit<'a> {
     }
 
     pub(crate) fn repair_route(self) -> &'static str {
-        match (self, &self.info().source) {
-            (Self::Inventory(_), SeamLimitSource::Default) => {
-                "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-            }
-            (Self::Inventory(_), SeamLimitSource::Configured) => {
-                "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-            }
-            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Default) => {
-                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
-            }
-            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Configured) => {
-                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts."
-            }
+        match self {
+            Self::Inventory(_) => repo_exposure_inventory_repair_route(&self.info().source),
+            Self::PilotBudget(_) | Self::Both(_, _) => match self.info().source {
+                SeamLimitSource::Default => {
+                    "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
+                }
+                SeamLimitSource::Configured => {
+                    "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts."
+                }
+            },
         }
     }
 
     fn markdown_repair_route(self) -> &'static str {
-        match (self, &self.info().source) {
-            (Self::Inventory(_), SeamLimitSource::Default) => {
-                "set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
+        match self {
+            Self::Inventory(_) => {
+                repo_exposure_inventory_markdown_repair_route(&self.info().source)
             }
-            (Self::Inventory(_), SeamLimitSource::Configured) => {
-                "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
-            }
-            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Default) => {
-                "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget"
-            }
-            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Configured) => {
-                "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts"
-            }
+            Self::PilotBudget(_) | Self::Both(_, _) => match self.info().source {
+                SeamLimitSource::Default => {
+                    "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget"
+                }
+                SeamLimitSource::Configured => {
+                    "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts"
+                }
+            },
+        }
+    }
+}
+
+/// Repair route for a repo inventory seam cap, shared by md/json exposure and
+/// the repo badge warnings channel (#12508).
+pub(crate) fn repo_exposure_inventory_repair_route(source: &SeamLimitSource) -> &'static str {
+    match source {
+        SeamLimitSource::Default => {
+            "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
+        }
+        SeamLimitSource::Configured => {
+            "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
+        }
+    }
+}
+
+fn repo_exposure_inventory_markdown_repair_route(source: &SeamLimitSource) -> &'static str {
+    match source {
+        SeamLimitSource::Default => {
+            "set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
+        }
+        SeamLimitSource::Configured => {
+            "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
         }
     }
 }
