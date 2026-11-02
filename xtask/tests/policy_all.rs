@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[path = "../../tools/repo-policy/tests/common/git_environment.rs"]
 mod git_environment;
 
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
+
 const CHECKS: &[(&str, &str)] = &[
     ("check-static-language", "static-language.md"),
     ("check-no-panic-family", "no-panic-family.md"),
@@ -87,10 +90,10 @@ impl Fixture {
     }
 
     fn run(&self, check: &str) -> Result<std::process::Output, String> {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
-        command.arg(check).current_dir(&self.0);
-        git_environment::isolate_git_environment(&mut command);
-        command.output().map_err(|error| error.to_string())
+        xtask_bin::output(|command| {
+            command.arg(check).current_dir(&self.0);
+            git_environment::isolate_git_environment(command);
+        })
     }
 
     fn reports(&self) -> PathBuf {

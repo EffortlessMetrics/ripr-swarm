@@ -4,11 +4,14 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "windows_advisory_identity/owner_pin_capture.rs"]
 mod owner_pin_capture;
+
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
 
 const CONTROLS: &[(&str, &str, &str)] = &[
     (
@@ -218,11 +221,8 @@ fn invoke_artifacts(
     if let Some(name) = missing {
         fs::remove_file(root.0.join(name)).map_err(|e| e.to_string())?;
     }
-    // On Windows a sibling test that rebuilds the binary can leave it briefly
-    // missing, which surfaces as NotFound at launch; retry only that case.
-    let mut attempt = 0;
-    loop {
-        let launched = Command::new(env!("CARGO_BIN_EXE_xtask"))
+    xtask_bin::output(|command| {
+        command
             .arg("windows-advisory-summary")
             .arg("--run1")
             .arg(root.0.join("run1.log"))
@@ -231,16 +231,9 @@ fn invoke_artifacts(
             .arg("--run2")
             .arg(root.0.join("run2.log"))
             .arg("--run2-status")
-            .arg(root.0.join("run2.status"))
-            .output();
-        match launched {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound && attempt < 20 => {
-                attempt += 1;
-                std::thread::sleep(std::time::Duration::from_millis(500));
-            }
-            other => return other.map_err(|e| format!("launch summarizer: {e}")),
-        }
-    }
+            .arg(root.0.join("run2.status"));
+    })
+    .map_err(|error| format!("launch summarizer: {error}"))
 }
 
 fn verify(

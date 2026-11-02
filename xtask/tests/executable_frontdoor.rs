@@ -8,6 +8,9 @@ mod executable_index;
 #[path = "../../tools/repo-policy/tests/common/git_environment.rs"]
 mod git_environment;
 
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Result<Self, String> {
@@ -132,12 +135,12 @@ fn retained_xtask_frontdoor_matches_lightweight_policy_snapshots() -> Result<(),
         } else {
             std::fs::write(&allowlist, rows).map_err(|e| e.to_string())?;
         }
-        let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
-        command
-            .arg("check-executable-files")
-            .current_dir(&fixture.0);
-        git_environment::isolate_git_environment(&mut command);
-        let output = command.output().map_err(|e| e.to_string())?;
+        let output = xtask_bin::output(|command| {
+            command
+                .arg("check-executable-files")
+                .current_dir(&fixture.0);
+            git_environment::isolate_git_environment(command);
+        })?;
         assert_eq!(
             output.status.success(),
             matches!(case, "allowed" | "missing_optional"),
