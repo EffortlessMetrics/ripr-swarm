@@ -1844,6 +1844,42 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// Complete canonical inventory for one file's stub guidance (#11358).
+/// Only result reuse differs from the ordinary diff-scoped wrapper: every
+/// scoped seam is classified against the full workspace evidence, with no
+/// staged filtering, caller expansion, or repo-wide seam-limit computation.
+/// The full content/configuration key and source revalidation still govern
+/// both memory and disk hits; an unavailable cache falls back to that same work.
+pub(crate) fn inventory_file_guidance_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    file: &Path,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    let changed = [file.to_path_buf()];
+    let identity = file_guidance_reuse_identity(file);
+    let mut inputs = DiffScopeInputs::canonical(&changed, &[]);
+    inputs.complete_scope_reuse = Some(&identity);
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        inputs,
+        !no_impact_fast_path_disabled(),
+        None,
+        None,
+    )
+}
+
+/// Disjoint from staged/bound identities. Preserve the exact native path
+/// spelling: a literal backslash on Unix must not alias a directory separator.
+/// Equivalent spellings may conservatively miss; neither scope normalization
+/// nor lossy display text owns this cache key. The workspace key separately
+/// binds the root, analyzer, configuration and complete consumed corpus.
+fn file_guidance_reuse_identity(file: &Path) -> Vec<u8> {
+    let mut identity = b"file-guidance-v2-native\0".to_vec();
+    identity.extend_from_slice(file.as_os_str().as_encoded_bytes());
+    identity
+}
+
 /// Whether a seam can be named by a changed finding's gap: it sits in a
 /// changed file, or its owner is exactly a changed gap owner. Every
 /// seam-to-finding join the card binding and the shared repair validator run
@@ -1912,6 +1948,7 @@ pub(crate) fn inventory_diff_scoped_bound_seams_at_with_config(
             changed_owner_names,
             generated_context: None,
             with_repo_seam_limit: true,
+            complete_scope_reuse: None,
         },
         !no_impact_fast_path_disabled(),
         Some(&stages),
@@ -2154,6 +2191,7 @@ pub(crate) fn classify_seams_in_files_at_with_config(
             changed_owner_names: &[],
             generated_context: Some(changed_paths),
             with_repo_seam_limit: false,
+            complete_scope_reuse: None,
         },
         false,
         Some(&stages),
@@ -2358,6 +2396,9 @@ struct DiffScopeInputs<'a> {
     generated_context: Option<&'a [PathBuf]>,
     /// Also derive the repo-wide seam-limit fact from the built index.
     with_repo_seam_limit: bool,
+    /// Explicit opt-in for a complete canonical scope, independently of the
+    /// two-stage consumer. Its identity must bind the exact scope selection.
+    complete_scope_reuse: Option<&'a [u8]>,
 }
 
 impl<'a> DiffScopeInputs<'a> {
@@ -2367,6 +2408,7 @@ impl<'a> DiffScopeInputs<'a> {
             changed_owner_names,
             generated_context: None,
             with_repo_seam_limit: false,
+            complete_scope_reuse: None,
         }
     }
 }
@@ -2546,6 +2588,7 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
         changed_owner_names,
         generated_context,
         with_repo_seam_limit,
+        complete_scope_reuse,
     } = inputs;
     cancellation::checkpoint()?;
     let absent_changed_files = workspace::changed_source_files_absent_from_worktree(
@@ -2584,8 +2627,13 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
     };
     cancellation::checkpoint()?;
     let workspace_cache_key = state.cache_key();
+    // Complete-scope reuse never changes the staged/streamed consumers or
+    // borrows their identity. Its sole caller asks for the canonical file scope.
+    let complete_scope_reuse = complete_scope_reuse
+        .filter(|_| stages.is_none() && generated_context.is_none() && !with_repo_seam_limit);
     let reuse_identity = stages
         .and_then(|stages| stages.reuse)
+        .or(complete_scope_reuse)
         .filter(|_| consumer.is_none() && workspace_cache_key.is_reusable());
     if let Some(identity) = reuse_identity
         && let Some(mut reused) = bound_inventory_reuse::lookup(&workspace_cache_key, identity)
@@ -2596,6 +2644,10 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
             Duration::ZERO,
         );
         reused.absent_changed_files = absent_changed_files;
+        if complete_scope_reuse.is_some() {
+            // Like a persisted hit, this invocation did no file-fact work.
+            reused.file_fact_cache = FileFactCacheStats::default();
+        }
         // The entry is for the hashed corpus; confirm it is still those bytes.
         // The carrier is this invocation's own observation of that corpus.
         reused.consumed_sources = state.consumed.clone();
@@ -14211,3 +14263,7 @@ mod first {{ pub struct Alpha; impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x >
         Ok(())
     }
 }
+
+#[cfg(all(test, feature = "lang-rust"))]
+#[path = "file_guidance_inventory_tests.rs"]
+mod file_guidance_inventory_tests;
