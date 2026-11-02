@@ -3262,7 +3262,8 @@ fn analyze_perl_repo(
 #[cfg(any(
     not(feature = "lang-typescript"),
     not(feature = "lang-python"),
-    not(feature = "lang-perl")
+    not(feature = "lang-perl"),
+    feature = "lang-go"
 ))]
 fn unavailable_language<T>(language: LanguageId) -> Result<T, String> {
     Err(format!(
