@@ -3040,12 +3040,14 @@ mod tests {
 
     #[test]
     fn check_verification_contracts_surfaces_corpus_gate_failures() {
-        let err = check_verification_contracts_with_hooks(
+        let err = match check_verification_contracts_with_hooks(
             &["--check".to_string()],
             |_| Err("verification corpus gate failed: fixture".to_string()),
             |_, _| false,
-        )
-        .expect_err("corpus gate errors must fail the required command");
+        ) {
+            Ok(()) => "corpus gate errors must fail the required command".to_string(),
+            Err(err) => err,
+        };
         assert!(err.contains("verification corpus gate failed"), "{err}");
     }
 
