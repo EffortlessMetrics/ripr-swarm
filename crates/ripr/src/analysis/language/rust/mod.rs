@@ -2930,14 +2930,17 @@ impl RustAdapter {
                 );
                 // #5395: empty related tests plus dependent crates that host
                 // tests is unknown, not a confident `no_static_path`.
-                let owner_file = finding.probe.location.file.clone();
-                classify::withhold_dependent_crate_reach_gap(
-                    &mut finding,
-                    classify::dependent_packages_host_indexed_tests(
-                        dependency_edges.as_ref(),
-                        &owner_file,
-                    ),
-                );
+                if finding.class == ExposureClass::NoStaticPath && finding.related_tests.is_empty()
+                {
+                    let owner_file = finding.probe.location.file.clone();
+                    classify::withhold_dependent_crate_reach_gap(
+                        &mut finding,
+                        classify::dependent_packages_host_indexed_tests(
+                            dependency_edges.as_ref(),
+                            &owner_file,
+                        ),
+                    );
+                }
                 // RIPR-SPEC-0369: name a `verus!` region by the changed file's
                 // own index key; the probe's file is root-joined.
                 probes::apply_verus_macro_region_limit(&mut finding, &probe, &index, changed);
@@ -3606,14 +3609,17 @@ impl RustAdapter {
                 );
                 // #5395: empty related tests plus dependent crates that host
                 // tests is unknown, not a confident `no_static_path`.
-                let owner_file = finding.probe.location.file.clone();
-                classify::withhold_dependent_crate_reach_gap(
-                    &mut finding,
-                    classify::dependent_packages_host_indexed_tests(
-                        Some(&dependency_edges),
-                        &owner_file,
-                    ),
-                );
+                if finding.class == ExposureClass::NoStaticPath && finding.related_tests.is_empty()
+                {
+                    let owner_file = finding.probe.location.file.clone();
+                    classify::withhold_dependent_crate_reach_gap(
+                        &mut finding,
+                        classify::dependent_packages_host_indexed_tests(
+                            Some(&dependency_edges),
+                            &owner_file,
+                        ),
+                    );
+                }
                 // RIPR-SPEC-0369 (#12006): name the file's `verus!` region.
                 probes::apply_verus_macro_region_limit_in_repo_file(
                     &mut finding,
