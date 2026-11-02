@@ -178,3 +178,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_control_qualified (15)
+
+Reason:
+RIPR-SPEC-0005: #4681 public-parent helper delegation graph and index-aware value contradiction
+
+Command:
+`cargo xtask goldens bless module_reach_control_qualified --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

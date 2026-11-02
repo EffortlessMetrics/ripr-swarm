@@ -1062,8 +1062,7 @@ fn parent_uniquely_delegates_to_owner(
         call_text_routes_directly_to_named_call, code_contains_qualified_helper_call,
         owner_token_is_specific_enough,
     };
-    use super::related_tests::strip_comments_and_strings;
-    let body = strip_comments_and_strings(&parent.body);
+    let body = crate::analysis::extract::mask_comments_and_strings(&parent.body);
     let bare = parent_delegates_uniquely_to_owner(parent, &owner.name);
     let qualified = delegation_module_path_for_owner(owner, index).is_some_and(|module_path| {
         code_contains_qualified_helper_call(&body, &module_path, &owner.name)
@@ -1098,10 +1097,6 @@ fn parent_uniquely_delegates_to_owner(
     true
 }
 
-/// #4681: tests may observe a public parent while the seam sits on the
-/// private helper it delegates to. Fail closed unless the parent is a
-/// same-file production function with one direct routed call to the owner
-/// and the owner folds with no forwarded arguments.
 fn fold_through_unique_public_parent(
     actual: &str,
     owner: &FunctionSummary,

@@ -481,3 +481,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — helper_chain_one_hop (38)
+
+Reason:
+RIPR-SPEC-0005: #4681 public-parent helper delegation graph and index-aware value contradiction
+
+Command:
+`cargo xtask goldens bless helper_chain_one_hop --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

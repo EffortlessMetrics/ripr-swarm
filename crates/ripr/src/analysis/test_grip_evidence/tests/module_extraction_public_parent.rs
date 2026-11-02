@@ -209,6 +209,30 @@ fn module_extraction_public_parent_changed_value_keeps_discriminator() -> Result
 }
 
 #[test]
+fn module_extraction_public_parent_rival_seam_stays_unrelated_when_test_calls_entry()
+-> Result<(), String> {
+    for placement in HELPER_PLACEMENTS {
+        let (_root, index, _) = public_parent_fixture(placement, 9, true, true)?;
+        let rival_owner = "src/lib.rs::rival::compute_value";
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let rival = seams
+            .into_iter()
+            .find(|seam| seam.owner() == rival_owner)
+            .ok_or_else(|| format!("missing rival seam for {placement:?}"))?;
+        let evidence = evidence_for_seam(&rival, &index);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .all(|test| test.relation_reason != RelationReason::HelperOwnerCall),
+            "{placement:?}: {evidence:?}"
+        );
+        assert_ne!(evidence.reach.state, StageState::Yes, "{placement:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn module_extraction_public_parent_controls() -> Result<(), String> {
     module_extraction_public_parent_inline_and_file_child_keep_helper_witness()?;
     module_extraction_public_parent_same_named_sibling_with_wrapper_call_stays_witness()?;

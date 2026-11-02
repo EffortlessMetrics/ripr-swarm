@@ -1652,7 +1652,7 @@ pub(in crate::analysis::test_grip_evidence) fn ordinary_module_delegation_owner_
     let parent_module_path = super::module_path_for_index(index, &function.file)
         .unwrap_or_default()
         .replace('/', "::");
-    let body = strip_comments_and_strings(&function.body);
+    let body = crate::analysis::extract::mask_comments_and_strings(&function.body);
     let mut delegated = BTreeSet::new();
     for declaration in &file_facts.module_declarations {
         if declaration.requires_test || declaration.path_target == ModulePathTarget::Unknown {
@@ -1708,26 +1708,46 @@ pub(in crate::analysis::test_grip_evidence) fn ordinary_module_delegation_owner_
             if total_matches != 1 {
                 continue;
             }
-            delegated.insert(owner_name);
+            let delegated_key =
+                if production_owner_name_is_unique_in_package(index, &package, &owner_name) {
+                    owner_name
+                } else {
+                    format!("{}::{owner_name}", declaration.name)
+                };
+            delegated.insert(delegated_key);
         }
     }
     delegated
 }
 
+fn production_owner_name_is_unique_in_package(
+    index: &RustIndex,
+    package: &str,
+    name: &str,
+) -> bool {
+    index
+        .functions()
+        .iter()
+        .filter(|function| {
+            !function.source_role.is_evidence_role()
+                && function.name == name
+                && package_scope(&function.file).as_deref() == Some(package)
+        })
+        .count()
+        == 1
+}
+
 fn same_file_nested_module_delegation_owner_calls(
     function: &FunctionSummary,
-    index: &RustIndex,
+    same_file_functions: &[&FunctionSummary],
 ) -> BTreeSet<String> {
     if function.source_role.is_evidence_role() || rust_index::is_test_file(&function.file) {
         return BTreeSet::new();
     }
-    let body = strip_comments_and_strings(&function.body);
+    let body = crate::analysis::extract::mask_comments_and_strings(&function.body);
     let file_prefix = format!("{}::", function.file.display());
     let mut by_module: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for candidate in index.functions() {
-        if candidate.file != function.file {
-            continue;
-        }
+    for candidate in same_file_functions {
         let Some(rest) = candidate.id.0.strip_prefix(&file_prefix) else {
             continue;
         };
@@ -1752,10 +1772,7 @@ fn same_file_nested_module_delegation_owner_calls(
         }
     }
     let mut bare_sibling = BTreeSet::new();
-    for candidate in index.functions() {
-        if candidate.file != function.file {
-            continue;
-        }
+    for candidate in same_file_functions {
         let Some(rest) = candidate.id.0.strip_prefix(&file_prefix) else {
             continue;
         };
@@ -1773,6 +1790,75 @@ fn same_file_nested_module_delegation_owner_calls(
         delegated.extend(bare_sibling);
     }
     delegated
+}
+
+/// When several production owners share a bare name, helper-owner reach must
+/// follow a production helper the test calls into a delegation edge that
+/// resolves to this owner (#4681 review).
+pub(in crate::analysis::test_grip_evidence) fn production_delegation_from_test_reaches_owner(
+    index: &RustIndex,
+    test: &TestSummary,
+    owner_fn: &FunctionSummary,
+) -> bool {
+    let owner_module = owner_delegation_module_path(index, owner_fn);
+    for call in &test.calls {
+        let cleaned_call = strip_comments_and_strings(&call.text);
+        if !call_text_contains_named_call(&cleaned_call, &call.name) {
+            continue;
+        }
+        for callee in index.functions() {
+            if callee.name != call.name || callee.source_role.is_evidence_role() {
+                continue;
+            }
+            if package_scope(&test.file) != package_scope(&callee.file) {
+                continue;
+            }
+            let body = crate::analysis::extract::mask_comments_and_strings(&callee.body);
+            if let Some(module) = owner_module.as_deref().filter(|module| !module.is_empty()) {
+                if code_contains_qualified_helper_call(&body, module, &owner_fn.name)
+                    || callee_delegates_to_owner_in_same_module(callee, owner_fn)
+                {
+                    return true;
+                }
+                continue;
+            }
+            if callee.file == owner_fn.file
+                && call_text_routes_directly_to_named_call(&callee.body, &owner_fn.name)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn callee_delegates_to_owner_in_same_module(
+    callee: &FunctionSummary,
+    owner: &FunctionSummary,
+) -> bool {
+    if callee.file != owner.file {
+        return false;
+    }
+    if !call_text_routes_directly_to_named_call(&callee.body, &owner.name) {
+        return false;
+    }
+    let Some(owner_scope) = owner.id.0.strip_suffix(&format!("::{}", owner.name)) else {
+        return false;
+    };
+    if owner_scope.is_empty() {
+        return true;
+    }
+    callee.id.0.starts_with(&format!("{owner_scope}::")) || callee.id.0 == owner_scope
+}
+
+fn owner_delegation_module_path(index: &RustIndex, owner: &FunctionSummary) -> Option<String> {
+    let file_prefix = format!("{}::", owner.file.display());
+    if let Some(rest) = owner.id.0.strip_prefix(&file_prefix)
+        && let Some((module, _)) = rest.split_once("::")
+    {
+        return Some(module.to_string());
+    }
+    super::module_path_for_index(index, &owner.file).map(|path| path.replace('/', "::"))
 }
 
 fn production_owner_names_in_modules(
@@ -1846,6 +1932,13 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
         ..
     } = shared;
     let actual_tests = actual_test_keys(index);
+    let mut functions_by_file: BTreeMap<PathBuf, Vec<&FunctionSummary>> = BTreeMap::new();
+    for function in index.functions() {
+        functions_by_file
+            .entry(function.file.clone())
+            .or_default()
+            .push(function);
+    }
     for function in index.functions().iter().filter(|function| {
         !actual_tests.contains(&ActualTestKey {
             file: &function.file,
@@ -1906,8 +1999,13 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
             index,
             owner_names_by_package_and_module_path,
         );
-        let nested_module_delegation =
-            same_file_nested_module_delegation_owner_calls(function, index);
+        let nested_module_delegation = same_file_nested_module_delegation_owner_calls(
+            function,
+            functions_by_file
+                .get(&function.file)
+                .map(|functions| functions.as_slice())
+                .unwrap_or(&[]),
+        );
         owner_calls.extend(module_delegation.iter().cloned());
         owner_calls.extend(nested_module_delegation.iter().cloned());
         free_owner_calls.extend(module_delegation);
@@ -3299,7 +3397,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_directly_delegates_to_spec
 /// delegate/call detection must scan only the braced block. Otherwise the
 /// signature prefix poisons `direct_call_prefix_is_allowed` for calls inside
 /// `{ ... }` (#4681).
-fn function_item_executable_region(text: &str) -> &str {
+pub(in crate::analysis::test_grip_evidence) fn function_item_executable_region(text: &str) -> &str {
     let trimmed = text.trim_start();
     if !(trimmed.starts_with("fn ")
         || trimmed.starts_with("pub fn ")

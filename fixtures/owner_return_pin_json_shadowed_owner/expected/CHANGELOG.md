@@ -253,3 +253,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_shadowed_owner (21)
+
+Reason:
+RIPR-SPEC-0005: #4681 public-parent helper delegation graph and index-aware value contradiction
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_shadowed_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
