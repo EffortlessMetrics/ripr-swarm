@@ -97,10 +97,6 @@ case = "hex-decode-slice-odd"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
-case = "hex-from-hex-odd-variant"
-reason = "Discriminated at runtime, abstained on purpose: the `decode` doctest that pins OddLength sits on an item gated by `#[cfg(feature = \"alloc\")]`, and doctest registration refuses any cfg-gated item rather than guess the feature set (#8639). Delete this entry when default-feature cfg resolution credits it (#12230)."
-
-[[entry]]
 case = "idiom-result-test-sum-accumulate"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 

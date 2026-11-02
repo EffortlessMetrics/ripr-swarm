@@ -30,20 +30,35 @@
 //!   attribute refuse);
 //! - its code declares no `fn main` (rustdoc then runs the code as written,
 //!   not wrapped) and parses cleanly;
-//! - no `#[cfg(..)]` or `#[cfg_attr(..)]` sits between the comment and the
-//!   item except `#[cfg(doctest)]`, which is active when rustdoc runs
-//!   doctests, and the file carries no inner `#![cfg(..)]` gate.
+//! - no refusing gate sits between the comment and the item, and the file
+//!   carries no refusing inner `#![cfg(..)]` gate: a plain `#[cfg(..)]`
+//!   admits the example only when its predicate holds for the doctest
+//!   build under cargo defaults (`doctest` on between the comment and the
+//!   item, `test` off, `feature = "x"` resolved against the owning
+//!   manifest's default-enabled features, #12230). Any other `#[cfg(..)]`
+//!   (target, custom and unknown predicates, `cfg_attr`, a malformed
+//!   predicate) and any `#[cfg_attr(..)]` — including an inner
+//!   `#![cfg_attr(.., cfg(..))]` — refuse, as does any gate with no
+//!   manifest establishing default features.
 //!
-//! Feature, target and custom cfg values are not resolved here: any cfg gate
-//! on the item or the crate root is refused rather than guessed.
+//! The file-level `#![cfg(..)]` gate answers a narrower question than the
+//! item gate: whether the file is in the library `cargo test` builds, which
+//! never sets `doctest` (a `#![cfg(doctest)]` root collects a doctest that
+//! cannot link against the normally built rlib). It admits only predicates
+//! true with `doctest` off, so a `#![cfg(doctest)]` file still refuses while the item-level
+//! `#[cfg(doctest)]` exception (#8639) stands: the doctest build links the
+//! normally built library, in which a `doctest`-only item is absent.
 //!
 //! A doctest is its own crate: call identity reads its scopes from the
 //! synthetic text and names the library by its import names, never through
 //! `crate::` (`RustIndex::doctest_source`).
 
-use super::cfg_predicates::rust_ident_name;
+use super::cfg_predicates::{
+    raw_string_start, rust_ident_name, skip_raw_string, skip_regular_string,
+};
 use super::{FunctionSourceRole, RustIndex, SourceRoleProvenanceEdgeKind, TestFact};
 use crate::analysis::syntax::ra::summarize_file_with_parser;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -94,11 +109,17 @@ impl DocExample {
 pub(super) fn register_doctests(index: &mut RustIndex) {
     let mut generated: Vec<(TestFact, Arc<str>)> = Vec::new();
     for (path, file) in &index.files {
-        if file_has_inner_cfg_gate(&file.data.source) {
+        // Most files hold no fenced example; check that before the manifest:
+        // only a file that can hold an example pays for feature resolution.
+        if !file.data.source.contains("```") {
             continue;
         }
-        // Most files hold no fenced example; check that before the manifest.
-        let examples = doc_examples(&file.data.source);
+        let enabled = index.member_crates.default_enabled_features(path);
+        let enabled = enabled.as_ref();
+        if file_has_inner_cfg_gate(&file.data.source, enabled) {
+            continue;
+        }
+        let examples = doc_examples(&file.data.source, enabled);
         if examples.is_empty() || !composes_under_doctested_library(index, path) {
             continue;
         }
@@ -251,8 +272,11 @@ fn declared_fn_name(line: &str) -> Option<&str> {
     words.find(|word| !word.is_empty())
 }
 
-/// Every runnable fenced example in the file's `///` comment runs.
-pub(super) fn doc_examples(source: &str) -> Vec<DocExample> {
+/// Every runnable fenced example admitted under `enabled`, the owning
+/// package's default-enabled features (`None` when no manifest establishes
+/// them, in which case any feature gate refuses: the pure-syntax scan
+/// cannot tell whether default `cargo test` enables it).
+pub(super) fn doc_examples(source: &str, enabled: Option<&BTreeSet<String>>) -> Vec<DocExample> {
     // Most files hold no fence at all; skip the line scan for them.
     if !source.contains("```") {
         return Vec::new();
@@ -269,7 +293,7 @@ pub(super) fn doc_examples(source: &str) -> Vec<DocExample> {
         while index < lines.len() && outer_doc_text(lines[index]).is_some() {
             index += 1;
         }
-        let item_line = item_after(&lines, index);
+        let item_line = item_after(&lines, index, enabled);
         // rustdoc joins every doc fragment on an item into one document, so
         // a run that shares its item with another `///` run or a `#[doc]`
         // attribute may sit inside a fence opened elsewhere: refuse it.
@@ -306,10 +330,10 @@ fn outer_doc_text(line: &str) -> Option<&str> {
 /// whole-line attribute, a blank line nor a plain comment: the documented
 /// item. `#[inline] pub fn f` on one line is the item line itself, which
 /// then reads as no function head and registers nothing.
-fn item_after(lines: &[&str], from: usize) -> Option<usize> {
+fn item_after(lines: &[&str], from: usize, enabled: Option<&BTreeSet<String>>) -> Option<usize> {
     for (position, line) in lines.iter().enumerate().skip(from) {
         let trimmed = line.trim_start();
-        if between_doc_and_item_cfg_refuses(trimmed) {
+        if between_doc_and_item_cfg_refuses(trimmed, enabled) {
             return None;
         }
         if !is_between_doc_and_item(line) {
@@ -327,9 +351,13 @@ fn is_between_doc_and_item(line: &str) -> bool {
     trimmed.is_empty() || trimmed.starts_with("//") || whole_line_attribute(trimmed)
 }
 
-/// Whether the file is gated by an inner `#![cfg(..)]` attribute rustdoc
-/// may not satisfy in the default library build.
-fn file_has_inner_cfg_gate(source: &str) -> bool {
+/// Whether the file is gated by an inner `#![cfg(..)]` attribute the
+/// doctest build may not satisfy. A plain `cfg` satisfied for the library
+/// `cargo test` builds (`test` and `doctest` off, default features on)
+/// admits the file; anything else — target, custom and unknown predicates,
+/// `cfg_attr`, a malformed predicate, or no manifest establishing default
+/// features — refuses, as before.
+fn file_has_inner_cfg_gate(source: &str, enabled: Option<&BTreeSet<String>>) -> bool {
     for line in source.lines() {
         let trimmed = line.trim_start();
         if trimmed.is_empty() || trimmed.starts_with("//") {
@@ -337,7 +365,12 @@ fn file_has_inner_cfg_gate(source: &str) -> bool {
         }
         // Only `#![cfg(..)]` gates the file; `#![cfg_attr(docsrs, ..)]` and
         // `#![cfg_attr(not(test), no_std)]` are ordinary crate-root headers.
+        // An unparseable `cfg`/`cfg_attr` head fails closed like a gate.
         if trimmed.starts_with("#![") && inner_attribute_may_gate_file(trimmed) {
+            if !inner_cfg_gate_admits(trimmed, enabled) {
+                return true;
+            }
+        } else if trimmed.starts_with("#![") && starts_like_cfg_attribute(trimmed) {
             return true;
         }
         if !trimmed.starts_with('#') {
@@ -345,6 +378,22 @@ fn file_has_inner_cfg_gate(source: &str) -> bool {
         }
     }
     false
+}
+
+/// Whether a gating inner `#![cfg(..)]` holds for the library build: the
+/// same predicate language as the item gate, but `doctest` is off — the
+/// library `cargo test` builds never sets it.
+fn inner_cfg_gate_admits(trimmed: &str, enabled: Option<&BTreeSet<String>>) -> bool {
+    if attribute_cfg_family(trimmed) != AttributeCfgFamily::Cfg {
+        return false;
+    }
+    let Some((_, args)) = attribute_path_and_optional_args(trimmed) else {
+        return false;
+    };
+    let Some(args) = args else {
+        return false;
+    };
+    cfg_satisfied_under_doctest_defaults(args, enabled, false) == Some(true)
 }
 
 /// `#![cfg(..)]`, or an inner `#![cfg_attr(.., cfg(..))]` that can add a
@@ -363,19 +412,53 @@ fn inner_attribute_may_gate_file(trimmed: &str) -> bool {
     }
 }
 
-/// A `#[cfg(..)]` other than `#[cfg(doctest)]`, or any `#[cfg_attr(..)]`,
-/// between the doc comment and the item: rustdoc may not run the example.
-fn between_doc_and_item_cfg_refuses(trimmed: &str) -> bool {
+/// A `#[cfg(..)]` between the doc comment and the item refuses the example
+/// unless its predicate holds for the doctest build under cargo defaults:
+/// `doctest` is on (rustdoc sets it when running doctests, #8639), `test`
+/// is off (the doctest links the normally built library), and
+/// `feature = "x"` follows the owning manifest's default-enabled features
+/// (#12230). Any other predicate — target, custom or unknown atoms,
+/// `cfg_attr`, a malformed predicate — or no manifest establishing default
+/// features refuses, as before.
+fn between_doc_and_item_cfg_refuses(trimmed: &str, enabled: Option<&BTreeSet<String>>) -> bool {
     if !whole_line_attribute(trimmed) {
         return false;
     }
     match attribute_cfg_family(trimmed) {
         AttributeCfgFamily::CfgAttr => true,
-        AttributeCfgFamily::Cfg => !attribute_is_cfg_doctest(trimmed),
-        AttributeCfgFamily::Other => false,
+        AttributeCfgFamily::Cfg => {
+            if attribute_is_cfg_doctest(trimmed) {
+                return false;
+            }
+            let Some((_, args)) = attribute_path_and_optional_args(trimmed) else {
+                return true;
+            };
+            let Some(args) = args else {
+                return true;
+            };
+            cfg_satisfied_under_doctest_defaults(args, enabled, true) != Some(true)
+        }
+        // A `cfg`/`cfg_attr` head the bracket reader could not parse
+        // (unbalanced parens, missing argument) is not an ordinary
+        // attribute: fail closed and refuse. The source does not compile,
+        // so no doctest could run on it.
+        AttributeCfgFamily::Other => starts_like_cfg_attribute(trimmed),
     }
 }
 
+/// Whether the attribute line opens a `cfg` or `cfg_attr` attribute the
+/// bracket reader could not parse, tolerating the inner-attribute `!`.
+/// `#[cfgfoo]` and lookalikes do not match: only the `cfg(`/`cfg_attr(`
+/// heads and the bare words.
+fn starts_like_cfg_attribute(trimmed: &str) -> bool {
+    let Some(body) = trimmed.strip_prefix("#[") else {
+        return false;
+    };
+    let body = body.strip_prefix('!').unwrap_or(body).trim_start();
+    body.starts_with("cfg(") || body.starts_with("cfg_attr(") || body == "cfg" || body == "cfg_attr"
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AttributeCfgFamily {
     Cfg,
     CfgAttr,
@@ -403,6 +486,206 @@ fn attribute_is_cfg_doctest(trimmed: &str) -> bool {
             let collapsed: String = args.split_whitespace().collect();
             rust_ident_name(&collapsed) == "doctest"
         })
+}
+
+/// A `cfg(...)` predicate in the doctest admission position.
+#[derive(Debug, PartialEq, Eq)]
+enum DoctestCfg {
+    /// `test`: off in the doctest build, which links the normally built
+    /// library.
+    Test,
+    /// `doctest`: rustdoc sets it when running doctests.
+    Doctest,
+    /// `feature = "name"`: resolved against default-enabled features.
+    Feature(String),
+    /// Any other atom (`unix`, `target_os = ".."`, custom cfgs): never
+    /// established here.
+    Unknown,
+    All(Vec<DoctestCfg>),
+    Any(Vec<DoctestCfg>),
+    Not(Box<DoctestCfg>),
+}
+
+/// Nesting bound for an admission-position `cfg`: real gates nest a handful
+/// of levels; anything past this bound refuses rather than recursing
+/// without a limit.
+const MAX_DOCTEST_CFG_NESTING: usize = 64;
+
+/// Whether a `cfg(...)` predicate holds for a doctest built under cargo
+/// defaults: `test` is off, `doctest` follows `doctest_on` (on between the
+/// comment and the item, where rustdoc collects the example; off for the
+/// file gate, which answers whether the file is in the library `cargo test`
+/// builds), and `feature = "x"` follows `enabled`, the owning package's
+/// default-enabled features. `None` is unestablished — another atom, a
+/// feature with no manifest authority, or malformed input — and the caller
+/// refuses rather than guesses.
+fn cfg_satisfied_under_doctest_defaults(
+    predicate: &str,
+    enabled: Option<&BTreeSet<String>>,
+    doctest_on: bool,
+) -> Option<bool> {
+    let mut parser = DoctestCfgParser {
+        bytes: predicate.as_bytes(),
+        pos: 0,
+    };
+    let cfg = parser.parse_predicate(0)?;
+    parser.parse_end()?;
+    cfg.evaluate(enabled, doctest_on)
+}
+
+impl DoctestCfg {
+    fn evaluate(&self, enabled: Option<&BTreeSet<String>>, doctest_on: bool) -> Option<bool> {
+        match self {
+            DoctestCfg::Test => Some(false),
+            DoctestCfg::Doctest => Some(doctest_on),
+            DoctestCfg::Feature(name) => enabled.map(|set| set.contains(name)),
+            DoctestCfg::Unknown => None,
+            DoctestCfg::All(parts) => {
+                let mut unknown = false;
+                for part in parts {
+                    match part.evaluate(enabled, doctest_on) {
+                        Some(false) => return Some(false),
+                        None => unknown = true,
+                        Some(true) => {}
+                    }
+                }
+                if unknown { None } else { Some(true) }
+            }
+            DoctestCfg::Any(parts) => {
+                let mut unknown = false;
+                for part in parts {
+                    match part.evaluate(enabled, doctest_on) {
+                        Some(true) => return Some(true),
+                        None => unknown = true,
+                        Some(false) => {}
+                    }
+                }
+                if unknown { None } else { Some(false) }
+            }
+            DoctestCfg::Not(inner) => inner.evaluate(enabled, doctest_on).map(|value| !value),
+        }
+    }
+}
+
+struct DoctestCfgParser<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl DoctestCfgParser<'_> {
+    fn parse_predicate(&mut self, depth: usize) -> Option<DoctestCfg> {
+        if depth > MAX_DOCTEST_CFG_NESTING {
+            return None;
+        }
+        self.skip_ws();
+        let name = self.parse_ident()?;
+        self.skip_ws();
+        match self.bytes.get(self.pos) {
+            Some(b'=') => {
+                self.pos += 1;
+                self.skip_ws();
+                let value = self.parse_string()?;
+                if name == "feature" {
+                    Some(DoctestCfg::Feature(value))
+                } else {
+                    Some(DoctestCfg::Unknown)
+                }
+            }
+            Some(b'(') => {
+                self.pos += 1;
+                let mut args = Vec::new();
+                loop {
+                    self.skip_ws();
+                    // A trailing comma closes like `)`: `any(a,)` reads as
+                    // `any(a)`, matching the shared cfg authority.
+                    if self.bytes.get(self.pos) == Some(&b')') {
+                        self.pos += 1;
+                        break;
+                    }
+                    args.push(self.parse_predicate(depth + 1)?);
+                    self.skip_ws();
+                    match self.bytes.get(self.pos) {
+                        Some(b',') => self.pos += 1,
+                        Some(b')') => {
+                            self.pos += 1;
+                            break;
+                        }
+                        _ => return None,
+                    }
+                }
+                match name.as_str() {
+                    "all" => Some(DoctestCfg::All(args)),
+                    "any" => Some(DoctestCfg::Any(args)),
+                    "not" => match args.len() {
+                        1 => Some(DoctestCfg::Not(Box::new(args.pop()?))),
+                        _ => None,
+                    },
+                    // Only `all`/`any`/`not` combine predicates; anything
+                    // else is malformed and refuses.
+                    _ => None,
+                }
+            }
+            _ => match name.as_str() {
+                "test" => Some(DoctestCfg::Test),
+                "doctest" => Some(DoctestCfg::Doctest),
+                _ => Some(DoctestCfg::Unknown),
+            },
+        }
+    }
+
+    /// The predicate must consume its whole `cfg(...)` argument: a second
+    /// predicate (`cfg(a, b)`) is malformed and refuses.
+    fn parse_end(&mut self) -> Option<()> {
+        self.skip_ws();
+        (self.pos == self.bytes.len()).then_some(())
+    }
+
+    fn skip_ws(&mut self) {
+        while self
+            .bytes
+            .get(self.pos)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            self.pos += 1;
+        }
+    }
+
+    fn parse_ident(&mut self) -> Option<String> {
+        let start = self.pos;
+        while self
+            .bytes
+            .get(self.pos)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            self.pos += 1;
+        }
+        if self.pos == start {
+            return None;
+        }
+        Some(
+            str::from_utf8(self.bytes.get(start..self.pos)?)
+                .ok()?
+                .to_string(),
+        )
+    }
+
+    /// A plain or raw string literal, compared literally: escapes cannot
+    /// name a real feature, so they mismatch and refuse rather than guess.
+    /// Anything else (byte strings, chars, numbers, comments) refuses.
+    fn parse_string(&mut self) -> Option<String> {
+        let (end, inner_start, inner_end) = if self.bytes.get(self.pos) == Some(&b'"') {
+            let end = skip_regular_string(self.bytes, self.pos)?;
+            (end, self.pos + 1, end - 1)
+        } else if let Some((quote, hashes)) = raw_string_start(self.bytes, self.pos) {
+            let end = skip_raw_string(self.bytes, quote, hashes)?;
+            (end, quote + 1, end - hashes - 1)
+        } else {
+            return None;
+        };
+        let inner = self.bytes.get(inner_start..inner_end)?;
+        self.pos = end;
+        Some(str::from_utf8(inner).ok()?.to_string())
+    }
 }
 
 fn attribute_path_and_optional_args(trimmed: &str) -> Option<(&str, Option<&str>)> {

@@ -657,7 +657,9 @@ fn run_workspace_cargo_metadata(
 /// `packages[].features` table. The metadata probe does not pass
 /// `--features` / `--all-features`, and `--no-deps` does not populate a
 /// usable resolve graph, so this expansion is the analyzed set (#7266).
-fn default_enabled_features(package: &serde_json::Value) -> BTreeSet<String> {
+/// The doctest `cfg(feature = ...)` admission reuses the same expansion over
+/// a manifest `[features]` table (#12230).
+pub(crate) fn default_enabled_features(package: &serde_json::Value) -> BTreeSet<String> {
     let Some(features) = package
         .get("features")
         .and_then(serde_json::Value::as_object)
@@ -682,8 +684,12 @@ fn default_enabled_features(package: &serde_json::Value) -> BTreeSet<String> {
 }
 
 /// Transitively enable `default` and the local features it names.
-/// `dep:` and `dep/feature` enables are not local feature names.
-fn expand_default_features(features: &BTreeMap<String, Vec<String>>) -> BTreeSet<String> {
+/// `dep:` and `dep/feature` enables are not local feature names. Shared with
+/// the doctest `cfg(feature = ...)` admission, which expands a manifest
+/// `[features]` table with the same rule (#12230).
+pub(crate) fn expand_default_features(
+    features: &BTreeMap<String, Vec<String>>,
+) -> BTreeSet<String> {
     let mut enabled = BTreeSet::new();
     if !features.contains_key("default") {
         return enabled;

@@ -1227,8 +1227,9 @@ fn positioned_tokens(text: &str) -> Option<Vec<PositionedToken>> {
 
 /// Returns the opening-quote offset and hash count when the bytes at `index`
 /// start a raw string (`r"..."`, `r#"..."#`, `br##"..."##`), otherwise
-/// `None`.
-fn raw_string_start(bytes: &[u8], index: usize) -> Option<(usize, usize)> {
+/// `None`. Shared with the doctest admission-position `cfg` parser, which
+/// must skip the same literals when reading `feature = ".."` values.
+pub(crate) fn raw_string_start(bytes: &[u8], index: usize) -> Option<(usize, usize)> {
     let raw_index = match bytes.get(index) {
         Some(b'r') => index,
         Some(b'b') if bytes.get(index + 1) == Some(&b'r') => index + 1,
@@ -1249,7 +1250,8 @@ fn raw_string_start(bytes: &[u8], index: usize) -> Option<(usize, usize)> {
 
 /// Returns the offset just past a `"..."` string whose opening quote is at
 /// `index`. Escaped quotes do not close the string; EOF fails closed.
-fn skip_regular_string(bytes: &[u8], index: usize) -> Option<usize> {
+/// Shared with the doctest admission-position `cfg` parser (see above).
+pub(crate) fn skip_regular_string(bytes: &[u8], index: usize) -> Option<usize> {
     let mut cursor = index.checked_add(1)?;
     while bytes.get(cursor).is_some() {
         match bytes.get(cursor) {
@@ -1264,7 +1266,8 @@ fn skip_regular_string(bytes: &[u8], index: usize) -> Option<usize> {
 
 /// Returns the offset just past a raw string whose opening quote is at
 /// `index`, closed by `"` followed by exactly `hashes` `#` characters.
-fn skip_raw_string(bytes: &[u8], index: usize, hashes: usize) -> Option<usize> {
+/// Shared with the doctest admission-position `cfg` parser (see above).
+pub(crate) fn skip_raw_string(bytes: &[u8], index: usize, hashes: usize) -> Option<usize> {
     let mut cursor = index.checked_add(1)?;
     while bytes.get(cursor).is_some() {
         if bytes.get(cursor) == Some(&b'"') {

@@ -772,6 +772,24 @@ impl MemberCrates {
             .is_none_or(|value| value.as_bool() == Some(false));
         doctest_on && linkable && not_proc_macro
     }
+
+    /// Features enabled under cargo defaults for the package owning `file`
+    /// (root-relative), for doctest `cfg(feature = ...)` admission (#12230):
+    /// the owning manifest's `[features]` table with `default` expanded
+    /// transitively through local enables, sharing
+    /// `workspace::expand_default_features`' rule (`dep:` and `dep/feature`
+    /// enables name no local feature). `None` when manifest authority is
+    /// absent, or the manifest or its feature table cannot be read: the
+    /// caller fails closed and refuses the gate. A missing `[features]`
+    /// table is established, not unknown: nothing is enabled by default.
+    pub(crate) fn default_enabled_features(&self, file: &Path) -> Option<BTreeSet<String>> {
+        let root = self.root.as_ref()?;
+        let root = lexical(root);
+        let file = lexical(&root.join(file));
+        let directory = file.parent()?;
+        let (package, _) = nearest_package(&root, directory)?;
+        default_enabled_features_of(&package.manifest)
+    }
 }
 
 impl MemberCrates {
@@ -902,6 +920,27 @@ impl MemberCrates {
                 })
         })
     }
+}
+
+/// The owning manifest's default-enabled features from its `[features]`
+/// table: `default` expanded transitively through local enables. `None`
+/// when the table is present but unreadable (a value that is not an array
+/// of strings): the manifest is not one cargo would build, so no feature
+/// set is established.
+fn default_enabled_features_of(manifest: &toml::Table) -> Option<BTreeSet<String>> {
+    let features = match manifest.get("features") {
+        None => return Some(BTreeSet::new()),
+        Some(table) => table.as_table()?,
+    };
+    let mut map = BTreeMap::new();
+    for (name, enables) in features {
+        let mut items = Vec::new();
+        for item in enables.as_array()? {
+            items.push(item.as_str()?.to_string());
+        }
+        map.insert(name.clone(), items);
+    }
+    Some(crate::analysis::workspace::expand_default_features(&map))
 }
 
 /// The nearest package manifest at or above `directory`, read through the

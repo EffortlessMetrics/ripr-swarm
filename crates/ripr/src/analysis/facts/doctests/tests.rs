@@ -31,7 +31,8 @@ pub fn read_u16(bytes: &[u8]) -> u16 {
 ";
 
 fn examples(source: &str) -> Vec<(usize, Vec<String>, usize)> {
-    doc_examples(source)
+    // No manifest context: feature gates refuse in the pure-syntax scan.
+    doc_examples(source, None)
         .into_iter()
         .map(
             |DocExample {
@@ -130,7 +131,7 @@ fn backticks_markdown_may_not_read_as_a_code_block_yield_nothing() {
 
 #[test]
 fn the_synthetic_source_keeps_the_comment_lines() {
-    let example = &doc_examples(WIRE)[0];
+    let example = &doc_examples(WIRE, None)[0];
     let source = example.synthetic_source();
     let lines: Vec<&str> = source.lines().collect();
     assert_eq!(lines[2], "#[test] fn ripr_doctest() {");
@@ -424,6 +425,116 @@ fn cfg_gated_items_and_inner_cfg_files_register_nothing() -> Result<(), Box<dyn 
 }
 
 #[test]
+fn feature_gated_doc_examples_register_only_under_default_features() -> Result<(), Box<dyn Error>> {
+    // The hex shape behind #12262: two attributes (`#[must_use]` and the
+    // feature gate) between the doc comment and `encode_upper`, enabled by
+    // the transitive `default -> std -> alloc` chain.
+    let example = "/// ```\n/// assert_eq!(wire::read_u16(&[0, 1]), 1);\n/// ```\n";
+    let hex_manifest = "[features]\ndefault = [\"std\"]\nstd = [\"alloc\"]\nalloc = []\nserde = [\"dep:serde\"]\n[dependencies]\nserde = { version = \"1\", optional = true }\n";
+    let gated = |gate: &str| format!("{example}{gate}\npub fn read_u16() {{}}\n");
+    let alloc = gated("#[must_use]\n#[cfg(feature = \"alloc\")]");
+    let dir = temp_dir("doctest-default-features")?;
+    // Discriminator: refused before default-feature resolution (#12230),
+    // registered after — the restored rust-hex `encode_upper` pick.
+    package(&dir.0, hex_manifest, &alloc)?;
+    assert_eq!(doctests(&dir.0, &["src/lib.rs"])?.len(), 1);
+    // The pure-syntax scan has no manifest context, so it still refuses.
+    assert!(examples(&alloc).is_empty());
+    for (manifest, lib, expected) in [
+        // A feature outside the defaults refuses, even with defaults present.
+        (hex_manifest, gated("#[cfg(feature = \"serde\")]"), 0),
+        // Disabled defaults refuse: the gate is not in the default build.
+        ("[features]\ndefault = []\nalloc = []\n", alloc.clone(), 0),
+        // No `[features]` table: nothing is enabled by default.
+        ("", alloc.clone(), 0),
+        // Target, custom and unknown predicates refuse with defaults present.
+        (hex_manifest, gated("#[cfg(unix)]"), 0),
+        (hex_manifest, gated("#[cfg(target_os = \"linux\")]"), 0),
+        (hex_manifest, gated("#[cfg(wire_nightly)]"), 0),
+        // An unknown conjunct poisons the predicate; a satisfied disjunct
+        // guarantees the item is present, so it admits.
+        (
+            hex_manifest,
+            gated("#[cfg(all(feature = \"alloc\", unix))]"),
+            0,
+        ),
+        (
+            hex_manifest,
+            gated("#[cfg(any(feature = \"serde\", unix))]"),
+            0,
+        ),
+        (
+            hex_manifest,
+            gated("#[cfg(any(feature = \"alloc\", unix))]"),
+            1,
+        ),
+        // `dep:` and `dep/feature` enables name no local feature (#12230):
+        // `serde` is optional but not default-enabled, so its gate refuses.
+        (
+            "[features]\ndefault = [\"serde/derive\"]\nalloc = []\n[dependencies]\nserde = { version = \"1\", optional = true }\n",
+            gated("#[cfg(feature = \"serde\")]"),
+            0,
+        ),
+        // Malformed predicates refuse: two predicates, an unclosed
+        // combinator, and a two-operand `not`.
+        (
+            hex_manifest,
+            gated("#[cfg(feature = \"alloc\", feature = \"std\")]"),
+            0,
+        ),
+        (hex_manifest, gated("#[cfg(all(feature = \"alloc\")]"), 0),
+        (
+            hex_manifest,
+            gated("#[cfg(not(feature = \"alloc\", feature = \"std\"))]"),
+            0,
+        ),
+        // `cfg_attr` still refuses, even with a default-enabled feature.
+        (
+            hex_manifest,
+            gated("#[cfg_attr(feature = \"alloc\", must_use)]"),
+            0,
+        ),
+        // Satisfied conjunctions admit.
+        (
+            hex_manifest,
+            gated("#[cfg(all(feature = \"std\", feature = \"alloc\"))]"),
+            1,
+        ),
+    ] {
+        package(&dir.0, manifest, &lib)?;
+        assert_eq!(
+            doctests(&dir.0, &["src/lib.rs"])?.len(),
+            expected,
+            "{manifest} {lib}"
+        );
+    }
+    // The file gate follows the library build: a default-enabled feature
+    // admits, anything else refuses — including `doctest`, which the
+    // library `cargo test` builds never sets.
+    for (manifest, lib, expected) in [
+        (
+            hex_manifest,
+            format!("#![cfg(feature = \"alloc\")]\n{WIRE}"),
+            1,
+        ),
+        (
+            hex_manifest,
+            format!("#![cfg(feature = \"serde\")]\n{WIRE}"),
+            0,
+        ),
+        (hex_manifest, format!("#![cfg(doctest)]\n{WIRE}"), 0),
+    ] {
+        package(&dir.0, manifest, &lib)?;
+        assert_eq!(
+            doctests(&dir.0, &["src/lib.rs"])?.len(),
+            expected,
+            "{manifest} {lib}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn a_spaced_doc_attribute_before_the_run_is_a_shared_document() {
     // rustdoc joins `#[ doc = ".."]` with the `///` run below it, so the
     // opening fence in the attribute closes at the run's first fence.
@@ -434,14 +545,125 @@ fn a_spaced_doc_attribute_before_the_run_is_a_shared_document() {
 #[test]
 fn cfg_doctest_attribute_is_allowed_between_doc_and_item() {
     use super::doc_examples;
+    use std::collections::BTreeSet;
     assert!(super::attribute_is_cfg_doctest("#[cfg(doctest)]"));
-    assert!(!super::between_doc_and_item_cfg_refuses("#[cfg(doctest)]"));
+    assert!(!super::between_doc_and_item_cfg_refuses(
+        "#[cfg(doctest)]",
+        None
+    ));
     assert!(super::between_doc_and_item_cfg_refuses(
-        "#[cfg(feature = \"x\")]"
+        "#[cfg(feature = \"x\")]",
+        None
+    ));
+    // An established default-feature context admits the gate the doctest
+    // build enables (#12230); a feature outside the defaults still refuses.
+    let enabled: BTreeSet<String> = ["default", "std", "alloc"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    assert!(!super::between_doc_and_item_cfg_refuses(
+        "#[cfg(feature = \"alloc\")]",
+        Some(&enabled)
+    ));
+    assert!(super::between_doc_and_item_cfg_refuses(
+        "#[cfg(feature = \"serde\")]",
+        Some(&enabled)
     ));
     let example = "/// ```\n/// assert_eq!(1, 1);\n/// ```\n";
     let lib = format!("{example}#[cfg(doctest)]\npub fn read_u16() {{}}\n");
-    assert_eq!(doc_examples(&lib).len(), 1, "{lib}");
+    assert_eq!(doc_examples(&lib, None).len(), 1, "{lib}");
+}
+
+#[test]
+fn cfg_predicates_evaluate_for_the_doctest_build_under_cargo_defaults() {
+    use super::cfg_satisfied_under_doctest_defaults;
+    use std::collections::BTreeSet;
+    let enabled: BTreeSet<String> = ["default", "std", "alloc"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let enabled = Some(&enabled);
+    // (predicate, item gate with `doctest` on, file gate with it off).
+    for (predicate, item, file) in [
+        ("doctest", Some(true), Some(false)),
+        ("test", Some(false), Some(false)),
+        ("feature = \"alloc\"", Some(true), Some(true)),
+        ("feature = \"serde\"", Some(false), Some(false)),
+        (
+            "all(feature = \"std\", feature = \"alloc\")",
+            Some(true),
+            Some(true),
+        ),
+        (
+            "any(feature = \"serde\", feature = \"alloc\")",
+            Some(true),
+            Some(true),
+        ),
+        ("any(feature = \"serde\", unix)", None, None),
+        ("any(feature = \"alloc\", unix)", Some(true), Some(true)),
+        ("all(feature = \"alloc\", unix)", None, None),
+        ("all(feature = \"alloc\", unix)", None, None),
+        ("not(doctest)", Some(false), Some(true)),
+        ("not(test)", Some(true), Some(true)),
+        ("not(unix)", None, None),
+        ("all()", Some(true), Some(true)),
+        ("any()", Some(false), Some(false)),
+        ("unix", None, None),
+        ("target_os = \"linux\"", None, None),
+        ("wire_nightly", None, None),
+        ("feature = \"alloc\", feature = \"std\"", None, None),
+        ("not(feature = \"alloc\", feature = \"std\")", None, None),
+        ("all(feature = \"alloc\"", None, None),
+        ("foo(bar)", None, None),
+        ("feature = 1", None, None),
+        ("feature = b\"alloc\"", None, None),
+        ("r#test", None, None),
+        ("", None, None),
+    ] {
+        assert_eq!(
+            cfg_satisfied_under_doctest_defaults(predicate, enabled, true),
+            item,
+            "item gate: {predicate}"
+        );
+        assert_eq!(
+            cfg_satisfied_under_doctest_defaults(predicate, enabled, false),
+            file,
+            "file gate: {predicate}"
+        );
+    }
+    // Without a manifest no feature resolves; the manifest-free atoms still do.
+    assert_eq!(
+        cfg_satisfied_under_doctest_defaults("feature = \"alloc\"", None, true),
+        None
+    );
+    assert_eq!(
+        cfg_satisfied_under_doctest_defaults("doctest", None, true),
+        Some(true)
+    );
+    assert_eq!(
+        cfg_satisfied_under_doctest_defaults("test", None, true),
+        Some(false)
+    );
+    // Raw strings read the same value; escapes cannot name a real feature,
+    // so they mismatch and refuse rather than guess.
+    assert_eq!(
+        cfg_satisfied_under_doctest_defaults("feature = r\"alloc\"", enabled, true),
+        Some(true)
+    );
+    assert_eq!(
+        cfg_satisfied_under_doctest_defaults("feature = \"al\\loc\"", enabled, true),
+        Some(false)
+    );
+    // Shallow nesting evaluates; absurd nesting refuses.
+    assert_eq!(
+        cfg_satisfied_under_doctest_defaults("not(not(not(test)))", enabled, true),
+        Some(true)
+    );
+    let nested = format!("{}test{}", "not(".repeat(70), ")".repeat(70));
+    assert_eq!(
+        cfg_satisfied_under_doctest_defaults(&nested, enabled, true),
+        None
+    );
 }
 
 #[test]
@@ -455,7 +677,9 @@ fn a_doctest_source_answers_only_for_the_registered_test() -> Result<(), Box<dyn
         .find(|test| index.doctest_source(test).is_some())
         .cloned()
         .ok_or("doc example not indexed")?;
-    let expected = doc_examples(WIRE).first().map(DocExample::synthetic_source);
+    let expected = doc_examples(WIRE, None)
+        .first()
+        .map(DocExample::synthetic_source);
     assert_eq!(index.doctest_source(&test), expected.as_deref());
     // Another test at the same coordinates does not borrow the source.
     let mut other = test;

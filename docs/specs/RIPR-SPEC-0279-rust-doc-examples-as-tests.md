@@ -194,11 +194,16 @@ package (`[lib] name`, else the package name with `-` read as `_`):
   same-named rivals.
 - A runtime claim: a registered example is static evidence that a test
   appears to discriminate, not a claim that it compiles or passes.
-- Resolving a cfg gate: any `#[cfg(..)]` or `#[cfg_attr(..)]` between the
-  comment and the item other than `#[cfg(doctest)]`, and any inner
-  `#![cfg(..)]` (or `#![cfg_attr(.., cfg(..))]`) on the file, refuses the
-  example instead of guessing whether default `cargo test` enables the gate
-  (#8639). Feature, target and custom `--cfg` values are not evaluated.
+- Resolving a cfg gate: a plain `#[cfg(..)]` between the comment and the
+  item (or an inner `#![cfg(..)]` on the file) admits the example only when
+  its predicate holds for the doctest build under cargo defaults — `doctest`
+  on at the item gate, `test` off, and `feature = "x"` resolved against the
+  owning manifest's default-enabled features (#12230). Any other `#[cfg(..)]`
+  (target, custom and unknown predicates, a malformed predicate), any
+  `#[cfg_attr(..)]` (including `#![cfg_attr(.., cfg(..))]`), and any gate
+  without a manifest establishing default features refuse instead of guessing
+  whether default `cargo test` enables the gate (#8639). The file gate never
+  sets `doctest`, so a `#![cfg(doctest)]` file still refuses.
 
 ## Acceptance Examples
 
@@ -230,9 +235,11 @@ package (`[lib] name`, else the package name with `-` read as `_`):
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/facts/doctests.rs`: `register_doctests`,
-  `doc_examples`, `DocExample::synthetic_source`.
+  `doc_examples`, `DocExample::synthetic_source`,
+  `cfg_satisfied_under_doctest_defaults`.
 - `crates/ripr/src/analysis/facts/member_crates.rs`:
-  `MemberCrates::runs_library_doctests`.
+  `MemberCrates::runs_library_doctests`,
+  `MemberCrates::default_enabled_features`.
 - `crates/ripr/src/analysis/facts/index.rs`: `RustIndex::doctest_source`.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
   `OwnerPinSyntax::doctest_refusal`, `OwnerReturnPin::admits`,
