@@ -754,7 +754,7 @@ mod tests {
                 Some(HarnessStatus::Verified)
             ));
             assert_eq!(results.first().map(|row| row.time.as_str()), Some("0.5s"));
-            assert!(lane_verdict(&results, true, false).is_ok());
+            assert_eq!(lane_verdict(&results, true, false).err(), None);
         }
         for selector in ["not_same", "m::notsame", "same::nested"] {
             let output = format!("Checking harness {selector}...\nVERIFICATION:- SUCCESSFUL\n");
