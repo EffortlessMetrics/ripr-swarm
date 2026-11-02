@@ -57,6 +57,10 @@ export interface AgentHandoffHost {
   warnWithOutput(message: string): void;
   setupRepairBlocker(): string | undefined;
   isRiprFileDocument(document: vscode.TextDocument): boolean;
+  tryStartSharedRepairBefore(
+    editor: vscode.TextEditor,
+    actions: Array<vscode.CodeAction | vscode.Command>
+  ): Promise<boolean>;
 }
 
 const DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE =
@@ -842,6 +846,10 @@ export class AgentHandoffController {
       const message = error instanceof Error ? error.message : String(error);
       this.host.output.appendLine(`ripr start current repair failed to collect code actions: ${message}`);
       this.host.warnWithOutput('ripr could not collect current repair actions.');
+      return;
+    }
+
+    if (await this.host.tryStartSharedRepairBefore(editor, actions ?? [])) {
       return;
     }
 
