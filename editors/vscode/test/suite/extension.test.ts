@@ -204,7 +204,7 @@ suite('Extension Smoke', () => {
       );
       assert.notStrictEqual(repairPacket, 'actionable-gap-queue-repair-sentinel');
       assert.ok(repairPacket.includes('Changed behavior: amount >= threshold'), repairPacket);
-      assert.ok(repairPacket.includes('Missing discriminator: amount == threshold'), repairPacket);
+      assert.ok(repairPacket.includes('Missing check: amount == threshold'), repairPacket);
       assert.ok(repairPacket.includes('Focused proof intent: Add exact assertion for amount == threshold.'), repairPacket);
       assert.ok(repairPacket.includes('Repair kind: add_boundary_assertion'), repairPacket);
       assert.ok(repairPacket.includes('Run: ripr agent verify --root . --json'), repairPacket);
@@ -221,7 +221,7 @@ suite('Extension Smoke', () => {
       assert.notStrictEqual(repoMap, 'actionable-gap-queue-map-sentinel');
       assert.ok(repoMap.includes('Canonical gap id: gap:rust:pricing:discount:threshold-boundary'), repoMap);
       assert.ok(repoMap.includes('Changed behavior: amount >= threshold'), repoMap);
-      assert.ok(repoMap.includes('Missing discriminator: amount == threshold'), repoMap);
+      assert.ok(repoMap.includes('Missing check: amount == threshold'), repoMap);
       assert.ok(repoMap.includes('Focused proof intent: Add exact assertion for amount == threshold.'), repoMap);
       assert.ok(repoMap.includes('Movement: improved'), repoMap);
       assert.ok(repoMap.includes('First PR packet state'), repoMap);
@@ -1608,7 +1608,7 @@ suite('Extension Smoke', () => {
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh completed in 42 ms: generation=1, diagnostics=0, files=0, findings=0, seam_diagnostics=0, enabled_languages=1, enabled_language_names=rust, published_files=0, cleared_files=0'
       });
-      assert.ok(context.status.text.includes('ripr: no seams'));
+      assert.ok(context.status.text.includes('ripr: no spots'));
       assert.ok(String(context.status.tooltip).includes('Enabled languages: rust'));
       assert.ok(String(context.status.tooltip).includes('last saved workspace state'));
       assert.ok(String(context.status.tooltip).includes('disabled or unavailable preview languages stay silent'));
@@ -1639,12 +1639,12 @@ suite('Extension Smoke', () => {
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh completed in 42 ms: generation=2, diagnostics=5, files=2, findings=4, seam_diagnostics=0, enabled_languages=1, enabled_language_names=rust, published_files=2, cleared_files=0'
       });
-      assert.ok(context.status.text.includes('ripr: no seams'));
+      assert.ok(context.status.text.includes('ripr: no spots'));
 
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh completed in 42 ms: generation=2, diagnostics=0, files=1, findings=0, seam_diagnostics=0, enabled_languages=3, enabled_language_names=rust|typescript|python, published_files=0, cleared_files=0'
       });
-      assert.ok(context.status.text.includes('ripr: no seams'));
+      assert.ok(context.status.text.includes('ripr: no spots'));
       assert.ok(String(context.status.tooltip).includes('Enabled languages: rust, typescript, python'));
       assert.ok(String(context.status.tooltip).includes('workspace root is correct'));
       assert.ok(String(context.status.tooltip).includes('available in this ripr build'));
@@ -2493,10 +2493,10 @@ suite('Extension Smoke', () => {
       assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
       assert.ok(!context.status.text.includes('ripr: diagnostics'), context.status.text);
       const tooltip = String(context.status.tooltip);
-      assert.ok(tooltip.includes('ripr analysis completed; seam and gap evidence is deferred.'), tooltip);
-      assert.ok(tooltip.includes('Interactive saves defer the seam inventory'), tooltip);
+      assert.ok(tooltip.includes('ripr analysis completed; spot and gap evidence is deferred.'), tooltip);
+      assert.ok(tooltip.includes('Interactive saves defer the spot inventory'), tooltip);
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to compute the full seam inventory.'),
+        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to compute the full spot inventory.'),
         tooltip
       );
     } finally {
@@ -2685,7 +2685,7 @@ suite('Extension Smoke', () => {
       await context.controller.start();
       await context.controller.showStatus();
       const statusOutput = context.outputLines.join('\n');
-      assert.ok(statusOutput.includes('Receipt status: missing; no matching receipt was found for seam 67fc764ba37d77bd'));
+      assert.ok(statusOutput.includes('Receipt status: missing; no matching receipt was found for spot 67fc764ba37d77bd'));
       assert.ok(statusOutput.includes('Receipt command: ripr agent receipt --root . --json'));
       assert.ok(statusOutput.includes('No receipt movement is claimed.'));
       assert.strictEqual(context.runRiprCalls.length, 0);
@@ -2700,7 +2700,7 @@ suite('Extension Smoke', () => {
       await context.controller.start();
       await context.controller.showStatus();
       const statusOutput = context.outputLines.join('\n');
-      assert.ok(statusOutput.includes('Receipt status: movement improved; matching receipt found for seam 67fc764ba37d77bd'));
+      assert.ok(statusOutput.includes('Receipt status: movement improved; matching receipt found for spot 67fc764ba37d77bd'));
       assert.ok(statusOutput.includes('does not prove runtime adequacy or gate eligibility'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
@@ -2714,8 +2714,8 @@ suite('Extension Smoke', () => {
       await context.controller.start();
       await context.controller.showStatus();
       const statusOutput = context.outputLines.join('\n');
-      assert.ok(statusOutput.includes('Receipt status: movement unchanged; matching receipt found for seam 67fc764ba37d77bd'));
-      assert.ok(statusOutput.includes('inspect the focused test and missing discriminator'));
+      assert.ok(statusOutput.includes('Receipt status: movement unchanged; matching receipt found for spot 67fc764ba37d77bd'));
+      assert.ok(statusOutput.includes('inspect the focused test and missing check'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
 
@@ -2728,7 +2728,7 @@ suite('Extension Smoke', () => {
       await context.controller.start();
       await context.controller.showStatus();
       const statusOutput = context.outputLines.join('\n');
-      assert.ok(statusOutput.includes('Receipt status: gap mismatch; receipt seam different-seam does not match current seam 67fc764ba37d77bd'));
+      assert.ok(statusOutput.includes('Receipt status: gap mismatch; receipt spot different-seam does not match current spot 67fc764ba37d77bd'));
       assert.ok(statusOutput.includes('Receipt movement is not projected.'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
@@ -2747,7 +2747,7 @@ suite('Extension Smoke', () => {
       await context.controller.start();
       await context.controller.showStatus();
       const statusOutput = context.outputLines.join('\n');
-      assert.ok(statusOutput.includes('Receipt status: stale; receipt for seam 67fc764ba37d77bd is older than the current first useful action report.'));
+      assert.ok(statusOutput.includes('Receipt status: stale; receipt for spot 67fc764ba37d77bd is older than the current first useful action report.'));
       assert.ok(statusOutput.includes('rerun verify/receipt before trusting movement'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
@@ -3164,7 +3164,7 @@ suite('Extension Smoke', () => {
       assert.ok(statusOutput.includes('Gap identity: gap:rust:pricing:discount:threshold-boundary'));
       assert.ok(statusOutput.includes('Changed behavior: amount >= threshold'));
       assert.ok(statusOutput.includes('Current evidence strength: Static evidence found related Rust test context'));
-      assert.ok(statusOutput.includes('Missing discriminator: Equality-boundary assertion for the changed behavior.'));
+      assert.ok(statusOutput.includes('Missing check: Equality-boundary assertion for the changed behavior.'));
       assert.ok(statusOutput.includes('Focused proof intent: Add a focused boundary assertion in tests/pricing.rs: assert_eq!(discount(100, 100), 90).'));
       assert.ok(statusOutput.includes('Verify: cargo xtask fixtures boundary_gap'));
       assert.ok(statusOutput.includes('Receipt: ripr agent receipt --root . --json'));
@@ -3329,7 +3329,7 @@ suite('Extension Smoke', () => {
           'Gap identity: gap:rust:pricing:discount:threshold-boundary',
           'Changed behavior: amount >= threshold',
           'Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found.',
-          'Missing discriminator: amount == threshold',
+          'Missing check: amount == threshold',
           'Focused proof intent: Add exact assertion for amount == threshold.',
           'Related test: tests/pricing.rs::premium_customer_gets_discount',
           'Verify: ripr agent verify --root . --json',
@@ -3496,7 +3496,7 @@ suite('Extension Smoke', () => {
       assert.ok(packet.includes('Language: rust (stable)'), packet);
       assert.ok(packet.includes('Changed behavior: amount >= threshold'), packet);
       assert.ok(packet.includes('Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found.'), packet);
-      assert.ok(packet.includes('Missing discriminator: amount == threshold'), packet);
+      assert.ok(packet.includes('Missing check: amount == threshold'), packet);
       assert.ok(packet.includes('Focused proof intent: Add exact assertion for amount == threshold.'), packet);
       assert.ok(packet.includes('Related test: tests/pricing.rs::premium_customer_gets_discount'), packet);
       assert.ok(packet.includes('Repair kind: add_boundary_assertion'), packet);
@@ -3691,7 +3691,7 @@ suite('Extension Smoke', () => {
         'ripr validated 1 actionable gap artifact.',
         'Actionable gap queue: top repair ready; target/ripr/reports/actionable-gaps.json is advisory.',
         'Next safe action: Open the related test or copy a bounded repair packet',
-        'Receipt status: movement improved; matching receipt found for seam 67fc764ba37d77bd',
+        'Receipt status: movement improved; matching receipt found for spot 67fc764ba37d77bd',
         'First PR packet: top repairable gap available; target/ripr/first-pr/start-here.json is advisory.'
       ]);
 
@@ -3700,7 +3700,7 @@ suite('Extension Smoke', () => {
         'ripr validated 1 actionable gap artifact.',
         'Actionable gap queue: top repair ready; target/ripr/reports/actionable-gaps.json is advisory.',
         'Artifact first useful action report: target/ripr/reports/first-useful-action.json (found',
-        'Receipt status: movement improved; matching receipt found for seam 67fc764ba37d77bd',
+        'Receipt status: movement improved; matching receipt found for spot 67fc764ba37d77bd',
         'First PR packet: top repairable gap available; target/ripr/first-pr/start-here.json is advisory.',
         'Verify: cargo xtask fixtures boundary_gap',
         'Receipt: ripr agent receipt --root . --json',
@@ -3724,7 +3724,7 @@ suite('Extension Smoke', () => {
       assert.ok(context.clipboardWrites.at(-1)?.includes('Gap identity: gap:rust:pricing:discount:threshold-boundary'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Changed behavior: amount >= threshold'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Current evidence strength: Static evidence found related Rust test context'));
-      assert.ok(context.clipboardWrites.at(-1)?.includes('Missing discriminator: Equality-boundary assertion for the changed behavior.'));
+      assert.ok(context.clipboardWrites.at(-1)?.includes('Missing check: Equality-boundary assertion for the changed behavior.'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Focused proof intent: Add a focused boundary assertion in tests/pricing.rs: assert_eq!(discount(100, 100), 90).'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Receipt path: target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('static advisory evidence only; not runtime proof'));
@@ -3740,7 +3740,7 @@ suite('Extension Smoke', () => {
         assert.ok(repairPacket.includes('Repair route: AddBoundaryAssertion'), repairPacket);
         assert.ok(repairPacket.includes('Changed behavior: amount >= threshold'), repairPacket);
         assert.ok(repairPacket.includes('Current evidence strength: Static evidence found related Rust test context'), repairPacket);
-        assert.ok(repairPacket.includes('Missing discriminator: Equality-boundary assertion for the changed behavior.'), repairPacket);
+        assert.ok(repairPacket.includes('Missing check: Equality-boundary assertion for the changed behavior.'), repairPacket);
         assert.ok(repairPacket.includes('Focused proof intent: Add a focused boundary assertion in tests/pricing.rs: assert_eq!(discount(100, 100), 90).'), repairPacket);
         assert.ok(repairPacket.includes('Related test: tests/pricing.rs::premium_customer_gets_discount'), repairPacket);
         assert.ok(repairPacket.includes('Receipt path:'), repairPacket);
@@ -3959,10 +3959,10 @@ suite('Extension Smoke', () => {
       });
       const report = await diagnoseSetupReport(context);
       assertReportIncludes(report, [
-        'Status: ripr analysis completed with no actionable seam diagnostics.',
+        'Status: ripr analysis completed with no actionable spot diagnostics.',
         'Config: ripr.toml (found',
         'Enabled languages: rust',
-        'No ripr seam diagnostics were published',
+        'No ripr spot diagnostics were published',
         'disabled or unavailable preview languages stay silent'
       ]);
     });

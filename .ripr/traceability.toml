@@ -5763,6 +5763,10 @@ tests = [
   "crates/ripr/src/output/json/finding_alignment.rs::tests::opaque_report_helper_names_without_supported_lookup_signal_stay_limited",
   "crates/ripr/src/output/json/finding_alignment.rs::tests::rendered_policy_label_without_observer_is_actionable",
   "xtask/src/main.rs::tests::dogfood_finding_alignment_scenarios_have_checked_receipts",
+  "crates/ripr/tests/const_reader_repair_start.rs::weakly_checked_reader_of_a_changed_constant_starts_in_both_commands",
+  "crates/ripr/tests/const_reader_repair_start.rs::constant_the_value_evaluation_reads_keeps_its_evaluated_answer",
+  "crates/ripr/tests/const_reader_repair_start.rs::a_second_reader_without_a_returned_read_keeps_the_constant_unknown",
+  "crates/ripr/tests/const_reader_repair_start.rs",
   "crates/ripr/src/output/json/finding_alignment.rs",
   "crates/ripr/src/output/json/mod.rs",
   "xtask/src/main.rs",
@@ -5775,6 +5779,9 @@ fixtures = [
 code = [
   "crates/ripr/src/output/json/finding_alignment.rs",
   "crates/ripr/src/output/json/mod.rs",
+  "crates/ripr/src/analysis/classify/const_readers.rs",
+  "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/app/task_first.rs",
   "xtask/src/main.rs",
 ]
 outputs = [
@@ -17920,6 +17927,7 @@ spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
   "crates/ripr/src/analysis/language/python/owners_tests/tests.rs::nested_owner_records_whether_the_enclosing_body_calls_it",
   "crates/ripr/src/analysis/language/python/owners_tests/tests.rs::nested_owner_call_check_skips_defs_in_compound_blocks_lambdas_and_rebinds",
+  "crates/ripr/src/analysis/language/python/owners_tests/tests.rs::nested_owner_records_when_the_enclosing_body_discards_the_result",
   "crates/ripr/src/analysis/language/python/python_tests.rs::body_calls_owner_refuses_nested_function_the_enclosing_body_never_calls",
   "crates/ripr/src/analysis/language/python/derived_expectation_tests.rs::given_an_expectation_bound_from_the_owner_then_it_is_demoted",
   "crates/ripr/src/analysis/language/python/derived_expectation_tests.rs::given_an_expectation_rewritten_from_the_owner_then_it_is_demoted",
