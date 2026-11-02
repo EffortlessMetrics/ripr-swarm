@@ -461,7 +461,7 @@ function validateInitializeResult(result: unknown): Omit<LspCompatibilityEvidenc
   }
   const capabilities = result.capabilities;
   const missing: string[] = [];
-  const syncFailure = unsupportedTextDocumentSyncReason(capabilities.textDocumentSync);
+  const syncFailure = textDocumentSyncAdmissionFailureReason(capabilities.textDocumentSync);
   if (syncFailure) missing.push(`textDocumentSync (${syncFailure})`);
   if (!providerEnabled(capabilities.hoverProvider)) missing.push('hoverProvider');
   if (!providerEnabled(capabilities.codeActionProvider)) missing.push('codeActionProvider');
@@ -524,7 +524,7 @@ function validateInitializeResult(result: unknown): Omit<LspCompatibilityEvidenc
   };
 }
 
-function unsupportedTextDocumentSyncReason(value: unknown): string | undefined {
+export function textDocumentSyncAdmissionFailureReason(value: unknown): string | undefined {
   if (value === 1) {
     return undefined;
   }
