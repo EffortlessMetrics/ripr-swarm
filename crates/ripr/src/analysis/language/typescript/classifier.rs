@@ -8992,7 +8992,7 @@ fn ts_snapshot_subject_is_owner_result(
             .iter()
             .filter(|receiver| {
                 class_untouched
-                    && ts_single_declaration_only_member_calls(&test.body_text, receiver)
+                    && ts_receiver_is_constructed_once(&test.body_text, receiver, &constructors)
             })
             .map(|receiver| format!("{receiver}.{}", owner.name))
             .collect();
@@ -9003,7 +9003,17 @@ fn ts_snapshot_subject_is_owner_result(
             return false;
         }
         receivers = unshadowed_owner_namespace_receivers(test, owner, alias_map, workspace_root);
-        names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
+        // The owner's bare name counts only when no import binds it to
+        // something else (`import { enqueue as real } from owner` beside
+        // `import { enqueue } from other` leaves `enqueue(..)` unrelated),
+        // and no name the test redeclares locally counts.
+        let bare_is_unrelated =
+            owner_name_shadowed_by_unrelated_import(test, owner, alias_map, workspace_root);
+        names = ts_owner_call_names(candidate, owner, alias_map, workspace_root)
+            .into_iter()
+            .filter(|name| !(bare_is_unrelated && *name == owner.name.as_str()))
+            .filter(|name| !local_identifier_declared_in_test_body(&test.body_text, name))
+            .collect();
     }
     if names.is_empty() {
         return false;
@@ -9073,9 +9083,72 @@ fn ts_single_declaration_uses(
     }) && declarations.get() == 1
 }
 
-/// [`ts_single_declaration_uses`] where every other use is `ident.member(..)`.
-fn ts_single_declaration_only_member_calls(body: &str, ident: &str) -> bool {
-    ts_single_declaration_uses(body, ident, |_, after| ts_use_is_member_call(after))
+/// `true` when `receiver` has exactly one declaration, whose initializer is
+/// exactly `new <Class>(..)` for one of the owner's `constructors` (not a
+/// conditional, logical, call-chain or other expression that merely contains
+/// it), and every other use is `receiver.member(..)`.
+fn ts_receiver_is_constructed_once(body: &str, receiver: &str, constructors: &[String]) -> bool {
+    let declarations = std::cell::Cell::new(0usize);
+    ts_identifier_uses_all(body, receiver, |before, after| {
+        if ts_use_is_declaration(before, after) {
+            declarations.set(declarations.get() + 1);
+            ts_initializer_is_new_of(after, constructors)
+        } else {
+            ts_use_is_member_call(after)
+        }
+    }) && declarations.get() == 1
+}
+
+/// `after` is `= new <Class>(..)` for one of `constructors`, ended by `;`, the
+/// end of the text, or a line break not continued by an operator.
+fn ts_initializer_is_new_of(after: &str, constructors: &[String]) -> bool {
+    let Some(rest) = after.trim_start().strip_prefix('=') else {
+        return false;
+    };
+    let Some(rest) = rest.trim_start().strip_prefix("new") else {
+        return false;
+    };
+    if !rest.starts_with(char::is_whitespace) {
+        return false;
+    }
+    let rest = rest.trim_start();
+    let Some(open) = rest.find('(') else {
+        return false;
+    };
+    let class = rest[..open].trim();
+    if !constructors.iter().any(|name| name == class) {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut end = None;
+    for (index, c) in rest[open..].char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    end = Some(open + index + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(end) = end else {
+        return false;
+    };
+    let trimmed = rest[end..].trim_start_matches([' ', '\t']);
+    if trimmed.is_empty() || trimmed.starts_with(';') {
+        return true;
+    }
+    if !trimmed.starts_with(['\n', '\r']) {
+        return false;
+    }
+    trimmed
+        .trim_start()
+        .chars()
+        .next()
+        .is_none_or(|c| !".([`+-*/%<>=?&|,:!".contains(c))
 }
 
 /// `true` when `ident` occurs nowhere in the body's code as a whole word,

@@ -178,6 +178,17 @@ fn snapshot_of_an_unrelated_method_subject_reads_weak() -> Result<(), String> {
             format!(
                 "  const box = new Outbox();\n  function g() {{\n    const box = {{ send: () => ['shipped 7'] }};\n    return box.send(7);\n  }}\n  expect(g()).{SNAPSHOT};\n"
             ),
+            // The receiver initializer is not exactly `new Outbox(..)` (Devin review).
+            format!(
+                "  const fake = {{ send: () => ['shipped 7'] }};\n  const box = true ? fake : new Outbox();\n  expect(box.send(7)).{SNAPSHOT};\n"
+            ),
+            format!(
+                "  const fake = {{ send: () => ['shipped 7'] }};\n  const box = fake || new Outbox();\n  expect(box.send(7)).{SNAPSHOT};\n"
+            ),
+            format!(
+                "  const box = new Outbox() || {{ send: () => ['shipped 7'] }};\n  expect(box.send(7)).{SNAPSHOT};\n"
+            ),
+            format!("  const box = new Outbox().self();\n  expect(box.send(7)).{SNAPSHOT};\n"),
             // The owner class's method is patched or spied through its prototype.
             format!(
                 "  Outbox.prototype.send = () => ['shipped 7'];\n  const box = new Outbox();\n  expect(box.send(7)).{SNAPSHOT};\n"
@@ -185,6 +196,31 @@ fn snapshot_of_an_unrelated_method_subject_reads_weak() -> Result<(), String> {
             format!(
                 "  jest.spyOn(Outbox.prototype, 'send').mockReturnValue(['shipped 7']);\n  const box = new Outbox();\n  expect(box.send(7)).{SNAPSHOT};\n"
             ),
+        ],
+        false,
+    )
+}
+
+#[test]
+fn an_unrelated_import_of_the_owner_name_does_not_inherit_the_owner_credit() -> Result<(), String> {
+    let import =
+        "import { enqueue as real } from '../src/lib';\nimport { enqueue } from '../src/other';\n";
+    // Control: the renamed import is the owner.
+    expect_class(
+        FN_LIB,
+        FN_CHANGED,
+        "import { enqueue as real } from '../src/lib';\n",
+        &[format!("  expect(real([], 7)).{SNAPSHOT};\n")],
+        true,
+    )?;
+    // The bare `enqueue` is another module's function (Devin review).
+    expect_class(
+        FN_LIB,
+        FN_CHANGED,
+        import,
+        &[
+            format!("  real([], 7);\n  expect(enqueue([], 7)).{SNAPSHOT};\n"),
+            format!("  real([], 7);\n  const r = enqueue([], 7);\n  expect(r).{SNAPSHOT};\n"),
         ],
         false,
     )

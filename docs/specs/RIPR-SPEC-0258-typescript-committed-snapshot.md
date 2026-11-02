@@ -200,9 +200,14 @@ a `snapshot` assertion only when its asserted subject is on an allowlist:
 
 - the whole result of one owner call: `expect(owner(x))` or
   `expect(await owner(x))`, also through an owner-module namespace receiver or
-  a rename local; for a method owner, `expect(receiver.m(x))` where the
+  a rename local, where the owner's bare name counts only when no import
+  binds it to another module (`import { enqueue as real } from owner` beside
+  `import { enqueue } from other` leaves `enqueue(..)` unrelated) and the
+  test does not redeclare it; for a method owner, `expect(receiver.m(x))` where the
   receiver is a local the test constructs from the owner's class
-  (`const receiver = new Owner()`), declares exactly once in the test body
+  (`const receiver = new Owner()`, the whole initializer, not a conditional,
+  logical or call-chain expression that merely contains `new Owner()`),
+  declares exactly once in the test body
   (an inner block, function, parameter, `catch` or loop binding of the same
   name refuses) and reads only as `receiver.<member>(..)` (a rebinding of the
   receiver, or `receiver.m = ...`, refuses). The test must also only
@@ -418,7 +423,9 @@ existing rules and limits.
    expect(r)` and `const box = new Outbox(); expect(box.send(7))` with a
    snapshot of the pushed text: `exposed`. Snapshotting an unrelated local or
    literal, `expect(enqueue([], 7).length)`, a rebound receiver, a receiver
-   name redeclared in an inner block or function, a replaced `box.send`,
+   name redeclared in an inner block or function, a receiver initialized by
+   `true ? fake : new Outbox()`, an owner name bound to another module by an
+   import, a replaced `box.send`,
    `Outbox.prototype.send = ..` or `jest.spyOn(Outbox.prototype, 'send')`, a
    typed local `const r: string[] = ..`, a cast, parenthesized or non-null
    subject, a spy's `mock.calls`, a local rewritten by `r = ..`,
@@ -485,15 +492,21 @@ existing rules and limits.
   `snapshot_of_an_unrelated_function_subject_reads_weak`,
   `a_bound_local_that_is_rewritten_or_shadowed_reads_weak`,
   `snapshot_of_an_unrelated_method_subject_reads_weak` and
-  `typed_locals_and_wrapped_subjects_are_deliberately_uncredited` pin
-  example 9.
+  `typed_locals_and_wrapped_subjects_are_deliberately_uncredited` and
+  `an_unrelated_import_of_the_owner_name_does_not_inherit_the_owner_credit`
+  pin example 9.
 - Fixtures `typescript_snapshot_effect_owner_result_control`,
   `typescript_snapshot_effect_method_owner_result_control`,
   `typescript_snapshot_effect_unrelated_subject`,
   `typescript_snapshot_effect_unrelated_committed`,
   `typescript_snapshot_effect_rebound_local`,
-  `typescript_snapshot_effect_receiver_redeclared` and
-  `typescript_snapshot_effect_spy_calls_weak` pin example 9 end to end.
+  `typescript_snapshot_effect_receiver_redeclared`,
+  `typescript_snapshot_effect_unrelated_import_binding`,
+  `typescript_snapshot_effect_conditional_receiver` and
+  `typescript_snapshot_effect_spy_calls_weak` pin example 9 end to end. The
+  negative fixtures are also honesty-corpus cases with `must_not_promote`
+  (`fixtures/evidence-promotion-honesty-corpus/corpus.json`, ids
+  `ts_effect_snapshot_*`).
 - `unicode_json_update_flags_stay_medium`,
   `unicode_json_config_flag_separators_stay_medium` and
   `unicode_json_literal_escapes_keep_snapshot_credit` in
@@ -516,7 +529,8 @@ existing rules and limits.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `ts_changed_value_is_observed` (the effect-seam snapshot branch),
   `ts_snapshot_subject_is_owner_result`, `ts_identifier_uses_all`,
-  `ts_single_declaration_uses`, `ts_single_declaration_only_member_calls`,
+  `ts_single_declaration_uses`, `ts_receiver_is_constructed_once`,
+  `ts_initializer_is_new_of`,
   `ts_identifier_is_absent`, `ts_use_is_declaration`,
   `ts_use_is_expect_argument` and `ts_use_is_member_call` implement rule 3.
 
