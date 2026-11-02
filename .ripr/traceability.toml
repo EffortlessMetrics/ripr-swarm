@@ -21324,8 +21324,13 @@ tests = [
   "xtask/src/verification_plan_corpus.rs::tests::verification_plan_row_digest_is_stable",
   "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_wrong_plan_digest",
   "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_zero_subject_success",
+  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_unselected_executed_subject",
+  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_removed_row_without_evidence",
+  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_fixture_identity_changes_when_expectation_drifts",
   "xtask/src/verification_plan_corpus.rs::tests::committed_fixture_corpus_covers_required_mechanics_scenarios",
   "xtask/src/reports/verification_plan_corpus.rs::tests::verification_plan_corpus_report_json_and_markdown_agree_on_totals",
+  "xtask/src/reports/verification_plan_corpus.rs::tests::verification_plan_real_case_safe_rate_excludes_inconclusive_dispositions",
+  "xtask/src/reports/verification_plan_corpus.rs::tests::verification_plan_negative_control_mutation_fails_check",
 ]
 fixtures = [
   "fixtures/verification-plan-corpus/corpus.json",
