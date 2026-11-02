@@ -729,6 +729,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "bun-ub-cross-language-dogfood"
                     | "convergence"
                     | "cross-language-oracle-graph-corpus"
+                    | "cross-language-edge-registry-corpus"
                     | "editor_gap_cockpit"
                     | "editor_first_run_usability"
                     | "editor_first_pr_bridge"
