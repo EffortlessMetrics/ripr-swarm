@@ -15766,13 +15766,6 @@ fn client_features_with_commands(commands: &[&str]) -> Result<ClientFeatureProfi
 fn diagnostic_with_fix_site_ready(
     mut diagnostic: tower_lsp_server::ls_types::Diagnostic,
 ) -> tower_lsp_server::ls_types::Diagnostic {
-    use crate::domain::{FixInstructionState, FixInstructionSummary};
-    let summary = FixInstructionSummary {
-        state: FixInstructionState::FixSiteReady,
-        has_fix_site: true,
-        has_suggested_assertion: true,
-        limitation_kinds: Vec::new(),
-    };
     let mut data = diagnostic
         .data
         .take()
@@ -15780,7 +15773,12 @@ fn diagnostic_with_fix_site_ready(
         .unwrap_or_default();
     data.insert(
         "fix_instruction".to_string(),
-        serde_json::to_value(summary).expect("fix_instruction summary serializes"),
+        serde_json::json!({
+            "state": "fix_site_ready",
+            "has_fix_site": true,
+            "has_suggested_assertion": true,
+            "limitation_kinds": [],
+        }),
     );
     diagnostic.data = Some(serde_json::Value::Object(data));
     diagnostic
