@@ -109,7 +109,7 @@ fn plain_summary(language: LanguageId) -> &'static str {
             "not supported yet: it needs a special ripr build and a Perl facts exporter, and default builds only report that Perl files changed."
         }
         LanguageId::Php => {
-            "not supported yet: RIPR-SPEC-0392 defines the preview contract; rebuild with lang-php after the adapter lands."
+            "not supported yet: rebuild with lang-php after the PHP adapter lands; the preview contract is docs-only for now."
         }
     }
 }

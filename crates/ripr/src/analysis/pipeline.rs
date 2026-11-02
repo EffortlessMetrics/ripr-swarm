@@ -1669,7 +1669,9 @@ fn run_pipeline_for_diff_text_with_language_config(
             LanguageId::Perl => contain_adapter_panic(options, *language, || {
                 analyze_perl_diff(options, oracle_policy, preview_changed_files)
             }),
-            LanguageId::Php => unavailable_language(*language),
+            LanguageId::Php => contain_adapter_panic(options, *language, || {
+                analyze_php_diff(options, oracle_policy, preview_changed_files)
+            }),
             LanguageId::Rust => {
                 continue;
             }
@@ -2537,7 +2539,9 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
             LanguageId::Perl => contain_adapter_panic(options, *language, || {
                 analyze_perl_repo(options, oracle_policy)
             }),
-            LanguageId::Php => unavailable_language(*language),
+            LanguageId::Php => contain_adapter_panic(options, *language, || {
+                analyze_php_repo(options, oracle_policy)
+            }),
             LanguageId::Rust => {
                 continue;
             }
@@ -3255,6 +3259,51 @@ fn analyze_perl_repo(
     unavailable_language(LanguageId::Perl)
 }
 
+/// Stable unavailable error when a language id is known but its adapter is not
+/// shipped in this binary (#5620 / RIPR-SPEC-0392). Always compiled so
+/// `lang-php` can be declared before PHP dispatch lands.
+fn language_not_available_in_binary<T>(language: LanguageId) -> Result<T, String> {
+    Err(format!(
+        "language `{}` is not available in this ripr binary; {}",
+        language.as_str(),
+        language.unavailable_adapter_recovery()
+    ))
+}
+
+#[cfg(feature = "lang-php")]
+fn analyze_php_diff(
+    _options: &AnalysisOptions,
+    _oracle_policy: &OraclePolicy,
+    _changed_files: &[diff::ChangedFile],
+) -> Result<LanguageDiffResult, String> {
+    language_not_available_in_binary(LanguageId::Php)
+}
+
+#[cfg(not(feature = "lang-php"))]
+fn analyze_php_diff(
+    _options: &AnalysisOptions,
+    _oracle_policy: &OraclePolicy,
+    _changed_files: &[diff::ChangedFile],
+) -> Result<LanguageDiffResult, String> {
+    unavailable_language(LanguageId::Php)
+}
+
+#[cfg(feature = "lang-php")]
+fn analyze_php_repo(
+    _options: &AnalysisOptions,
+    _oracle_policy: &OraclePolicy,
+) -> Result<LanguageRepoResult, String> {
+    language_not_available_in_binary(LanguageId::Php)
+}
+
+#[cfg(not(feature = "lang-php"))]
+fn analyze_php_repo(
+    _options: &AnalysisOptions,
+    _oracle_policy: &OraclePolicy,
+) -> Result<LanguageRepoResult, String> {
+    unavailable_language(LanguageId::Php)
+}
+
 #[cfg(any(
     not(feature = "lang-typescript"),
     not(feature = "lang-python"),
@@ -3262,11 +3311,7 @@ fn analyze_perl_repo(
     not(feature = "lang-php"),
 ))]
 fn unavailable_language<T>(language: LanguageId) -> Result<T, String> {
-    Err(format!(
-        "language `{}` is not available in this ripr binary; {}",
-        language.as_str(),
-        language.unavailable_adapter_recovery()
-    ))
+    language_not_available_in_binary(language)
 }
 
 /// Rebase every finding/probe location prefix from the materialized

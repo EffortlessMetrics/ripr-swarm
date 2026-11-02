@@ -1244,6 +1244,7 @@ mod tests {
                 ("javascript", "JavaScript"),
                 ("python", "Python"),
                 ("perl", "Perl"),
+                ("php", "PHP"),
             ]
         );
         for language in LanguageId::ALL {

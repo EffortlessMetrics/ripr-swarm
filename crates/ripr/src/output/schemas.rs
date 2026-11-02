@@ -574,7 +574,7 @@ mod tests {
             return Err(invalid());
         }
         let mut fields = languages.split(',');
-        for name in ["rust", "typescript", "python", "perl"] {
+        for name in ["rust", "typescript", "python", "perl", "php"] {
             let bit = fields
                 .next()
                 .and_then(|field| field.strip_prefix(name))
@@ -592,14 +592,15 @@ mod tests {
     #[test]
     fn rerun_example_analyzer_identity_accepts_language_feature_sets() -> Result<(), String> {
         for commit in ["a".repeat(40), "b".repeat(64)] {
-            for bits in 0u8..16 {
+            for bits in 0u8..32 {
                 let identity = format!(
-                    "{}+{commit}+languages:rust={},typescript={},python={},perl={}",
+                    "{}+{commit}+languages:rust={},typescript={},python={},perl={},php={}",
                     env!("CARGO_PKG_VERSION"),
                     bits & 1,
                     (bits >> 1) & 1,
                     (bits >> 2) & 1,
                     (bits >> 3) & 1,
+                    (bits >> 4) & 1,
                 );
                 validate_clean_analyzer_example(&identity)?;
             }
@@ -617,14 +618,14 @@ mod tests {
             "+languages:rust=1,typescript=1,python=1,perl=2",
             "+languages:rust=1,typescript=1,python=1,perl=true",
             "+languages:rust=1,typescript=1,python=1,perl=01",
-            "+languages:typescript=1,rust=1,python=1,perl=0",
-            "+languages:rust=1,typescript=1,python=1,perl=0,perl=1",
-            "+languages:rust=1,typescript=1,python=1,perl=0,",
-            "+languages:rust=1,typescript=1,python=1,perl=0+extra",
+            "+languages:typescript=1,rust=1,python=1,perl=0,php=0",
+            "+languages:rust=1,typescript=1,python=1,perl=0,php=0,perl=1",
+            "+languages:rust=1,typescript=1,python=1,perl=0,php=0,",
+            "+languages:rust=1,typescript=1,python=1,perl=0,php=0+extra",
         ] {
             assert!(validate_clean_analyzer_example(&format!("{source}{suffix}")).is_err());
         }
-        let suffix = "+languages:rust=1,typescript=1,python=1,perl=0";
+        let suffix = "+languages:rust=1,typescript=1,python=1,perl=0,php=0";
         for source in [
             "wrong-package-version+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
             format!("{}+abc123", env!("CARGO_PKG_VERSION")),
