@@ -326,7 +326,8 @@ fn measure_corpus_entry(
         .filter(|value| !value.is_empty());
     let check_args = warm_check_args(&root, &base);
     let editor_base = base.clone();
-    let subject = warm_check_subject(root, base, head);
+    let mut subject = warm_check_subject(root, base, head);
+    subject.expected_partial = entry.expected_partial.clone();
     // The contradiction scan reads every finding, so the measured check
     // renders the full set instead of the byte-bounded prefix that a large
     // diff (131 findings on `ripr-swarm-2026-10`) is otherwise cut to.
@@ -518,6 +519,7 @@ pub(crate) fn warm_check_subject(root: String, base: String, head: Option<String
         mode: WARM_CHECK_MODE.to_string(),
         base,
         head,
+        expected_partial: None,
     }
 }
 

@@ -61,6 +61,10 @@ pub(crate) struct CheckSubject {
     /// Checkout HEAD when known. Absent means the field is unknown, not
     /// that any head is acceptable.
     pub(crate) head: Option<String>,
+    /// Static limit the pinned diff is expected to stop at. When set, the
+    /// intended analysis is the typed partial outcome carrying it, not a
+    /// complete one (a corpus row over a workspace-walk cap, #12052).
+    pub(crate) expected_partial: Option<String>,
 }
 
 /// Whether a captured check child may enter the successful complete-work
@@ -249,6 +253,9 @@ pub(crate) fn admit_check_document(value: &Value, subject: &CheckSubject) -> Che
             subject.base
         ));
     }
+    if let Some(limit) = subject.expected_partial.as_deref() {
+        return admit_expected_partial(object, outcome, kind, limit);
+    }
     if !analysis_complete {
         return rejected(&format!("analysis is not complete (`{kind}`)"));
     }
@@ -267,6 +274,41 @@ pub(crate) fn admit_check_document(value: &Value, subject: &CheckSubject) -> Che
     CheckAdmission::Complete {
         findings: findings.unwrap_or(0),
         rendering_truncated: truncated,
+        kind: kind.to_string(),
+    }
+}
+
+/// A row that declares an expected partial outcome passes only when the
+/// analysis is the typed `partial_with_limitations` outcome and a finding
+/// names the declared static limit. A complete result means the pinned diff
+/// no longer reproduces the refusal; another limit or kind is a different
+/// failure. Either way the sample is not admitted (#12052).
+fn admit_expected_partial(
+    envelope: &serde_json::Map<String, Value>,
+    outcome: &serde_json::Map<String, Value>,
+    kind: &str,
+    limit: &str,
+) -> CheckAdmission {
+    if kind != "partial_with_limitations" {
+        return rejected(&format!(
+            "expected a partial outcome stopped at `{limit}`, got `{kind}`"
+        ));
+    }
+    let names_limit = envelope
+        .get("findings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|finding| finding.get("static_limit_kind").and_then(Value::as_str) == Some(limit));
+    if !names_limit {
+        return rejected(&format!(
+            "partial outcome carries no finding with static limit `{limit}`"
+        ));
+    }
+    let findings = finding_count(envelope, outcome).unwrap_or(0);
+    CheckAdmission::Complete {
+        findings,
+        rendering_truncated: findings_rendering_truncated(&Value::Object(envelope.clone())),
         kind: kind.to_string(),
     }
 }
@@ -569,6 +611,7 @@ mod tests {
             mode: "draft".to_string(),
             base: "HEAD~1".to_string(),
             head: Some("abc123".to_string()),
+            expected_partial: None,
         }
     }
 
@@ -1235,6 +1278,77 @@ mod tests {
                 .is_err_and(|err| err.contains("rendering prefix"))
         );
         Ok(())
+    }
+
+    const TS_LIMIT: &str = "typescript_workspace_discovery_truncated";
+
+    fn expecting_partial() -> CheckSubject {
+        CheckSubject {
+            expected_partial: Some(TS_LIMIT.to_string()),
+            ..subject()
+        }
+    }
+
+    /// A partial outcome whose findings carry `limit` as their static limit,
+    /// the shape the pinned `typescript-compiler` diff produces.
+    fn partial_document(limit: Option<&str>) -> Value {
+        let mut finding = json!({
+            "id": "p1",
+            "classification": "static_unknown",
+            "related_tests_total": 0,
+            "evidence": []
+        });
+        if let Some(limit) = limit {
+            finding["static_limit_kind"] = json!(limit);
+        }
+        let mut doc = complete_document("complete_with_findings", vec![finding]);
+        doc["analysis_outcome"]["analysis_complete"] = json!(false);
+        doc["analysis_outcome"]["outcome"]["kind"] = json!("partial_with_limitations");
+        doc["analysis_outcome"]["outcome"]["limitations"] =
+            json!([{ "kind": "diff_scope_oversized" }]);
+        doc
+    }
+
+    #[test]
+    fn an_expected_partial_outcome_naming_the_limit_is_admitted() {
+        let doc = partial_document(Some(TS_LIMIT));
+        let admission = admit_check_document(&doc, &expecting_partial());
+        assert!(admission.is_complete(), "{admission:?}");
+        assert_eq!(admission.findings(), Some(1));
+        // The same document is rejected by a row that expects a complete
+        // analysis, so the declaration is what admits it.
+        assert!(!admit_check_document(&doc, &subject()).is_complete());
+    }
+
+    #[test]
+    fn an_expected_partial_row_rejects_everything_else() {
+        let subject = expecting_partial();
+        let wrong_limit =
+            admit_check_document(&partial_document(Some("dynamic_dispatch")), &subject);
+        assert!(
+            wrong_limit
+                .reason()
+                .contains("no finding with static limit")
+        );
+        let no_limit = admit_check_document(&partial_document(None), &subject);
+        assert!(no_limit.reason().contains("no finding with static limit"));
+        let complete = complete_document("complete_with_findings", vec![one_finding()]);
+        let admission = admit_check_document(&complete, &subject);
+        assert!(!admission.is_complete());
+        assert!(
+            admission.reason().contains("expected a partial outcome"),
+            "{admission:?}"
+        );
+        let failed = {
+            let mut doc = partial_document(Some(TS_LIMIT));
+            doc["analysis_outcome"]["outcome"]["kind"] = json!("analysis_failed");
+            admit_check_document(&doc, &subject)
+        };
+        assert!(!failed.is_complete());
+        // Identity checks still apply before the expected-partial path.
+        let mut other_root = partial_document(Some(TS_LIMIT));
+        other_root["root"] = json!("/tmp/elsewhere");
+        assert!(!admit_check_document(&other_root, &subject).is_complete());
     }
 
     #[test]

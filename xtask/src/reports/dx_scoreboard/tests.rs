@@ -2076,6 +2076,7 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
         heavy: false,
         language: None,
         ceilings: BTreeMap::new(),
+        expected_partial: None,
     };
     let full = "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b";
     assert_eq!(validate_corpus(&[entry("a", full)]), Ok(()));
@@ -3416,6 +3417,7 @@ fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_par
         heavy: false,
         language: None,
         ceilings: BTreeMap::new(),
+        expected_partial: None,
     };
 
     let refused = super::measure::prepare_checkout(&entry, &options);
@@ -3652,6 +3654,7 @@ fn admission_subject() -> CheckSubject {
         mode: "draft".to_string(),
         base: "HEAD~1".to_string(),
         head: Some("abc123".to_string()),
+        expected_partial: None,
     }
 }
 
@@ -5161,6 +5164,34 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
                 "{id} must gate warm checks at {ms} ms and {rss} MiB, got {:?}",
                 entry.ceilings
             ));
+        }
+    }
+    // Only the over-the-walk-cap compiler row expects a partial outcome; a
+    // row that expected one by accident would admit an incomplete analysis.
+    for entry in &config.corpus {
+        let expected = (entry.id == "typescript-compiler")
+            .then_some("typescript_workspace_discovery_truncated");
+        if entry.expected_partial.as_deref() != expected {
+            return Err(format!(
+                "{} expected_partial must be {expected:?}, got {:?}",
+                entry.id, entry.expected_partial
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn an_expected_partial_limit_must_be_a_snake_case_name() -> Result<(), String> {
+    let mut config = ceilinged_config("\"speed.warm_check_ms\" = 2000.0")?;
+    let entry = config.corpus.first_mut().ok_or("config has no rows")?;
+    entry.expected_partial = Some("typescript_workspace_discovery_truncated".to_string());
+    validate_corpus(&config.corpus)?;
+    for bad in ["", "Truncated", "two words", "limit-kind"] {
+        let entry = config.corpus.first_mut().ok_or("config has no rows")?;
+        entry.expected_partial = Some(bad.to_string());
+        if validate_corpus(&config.corpus).is_ok() {
+            return Err(format!("`{bad}` must not be a valid expected_partial"));
         }
     }
     Ok(())

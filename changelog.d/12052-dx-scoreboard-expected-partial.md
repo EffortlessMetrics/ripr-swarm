@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- DX scoreboard: a corpus row can declare `expected_partial = "<static limit>"`. The sample is admitted only when the analysis is the typed `partial_with_limitations` outcome and a finding names that limit; a complete result or any other limit fails the row. `typescript-compiler` (over the 20,000-entry workspace-walk cap) declares `typescript_workspace_discovery_truncated`, so its speed ceilings are measured instead of `incomplete` (#12052).

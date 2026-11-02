@@ -261,13 +261,14 @@ ceilings = { "speed.warm_check_ms" = 90000, "speed.warm_check_peak_rss_mb" = 102
 # on 4 cores: 16.1 s cold, 2.6 s warm, 62 MiB. The ceilings are a regression
 # gate above those numbers, not a claim that the 2 s bar is met.
 #
-# Not yet a usable speed row (#12052). The truncation is reported as
-# `partial_with_limitations` (`diff_scope_oversized` plus unindexed test
-# files), and a warm-check sample is admitted only from a complete analysis, so
-# both hosted nightlies of 2026-11-01 recorded this row's `speed.warm_check_*`
-# as `incomplete` ("analysis is not complete") and the ceilings read as
-# "not established". The measured 1.0 s / 60 MiB are not admissible values, so
-# the ceilings stay at their local calibration until the row can complete.
+# The truncation is reported as `partial_with_limitations`
+# (`diff_scope_oversized` plus unindexed test files), and a warm-check sample
+# is admitted only from a complete analysis, so both hosted nightlies of
+# 2026-11-01 recorded this row's `speed.warm_check_*` as `incomplete`
+# ("analysis is not complete"). `expected_partial` declares the intended
+# outcome: the sample is admitted only when the analysis is that typed partial
+# outcome and a finding names the limit, and a complete result or any other
+# limit fails the row. The ceilings stay (#12052).
 [[corpus]]
 id = "typescript-compiler"
 url = "https://github.com/microsoft/TypeScript"
@@ -276,6 +277,7 @@ language = "typescript"
 note = "TypeScript compiler repository (over the 20,000-entry workspace-walk cap); commit fixes declaration emit for nested binding patterns in src/compiler and adds baseline files"
 heavy = true
 ceilings = { "speed.warm_check_ms" = 5000, "speed.warm_check_peak_rss_mb" = 256 }
+expected_partial = "typescript_workspace_discovery_truncated"
 
 [[corpus]]
 id = "hono-typescript"

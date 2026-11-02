@@ -137,6 +137,13 @@ pub(crate) struct CorpusEntry {
     /// does not, and it does not depend on a same-runner baseline existing.
     #[serde(default)]
     pub(crate) ceilings: BTreeMap<String, f64>,
+    /// Static limit a warm check on this row is expected to stop at (for
+    /// example `typescript_workspace_discovery_truncated`). The analysis is
+    /// `partial_with_limitations` by design, so a sample is admitted only
+    /// when it is that partial outcome and a finding names this limit;
+    /// a complete result or any other limit fails the row (#12052).
+    #[serde(default)]
+    pub(crate) expected_partial: Option<String>,
 }
 
 /// Languages a corpus entry may declare.
@@ -427,6 +434,7 @@ pub(crate) fn corpus_from_manifest(value: &Value) -> Result<(String, Vec<CorpusE
             // The shared manifest carries no ceilings; they are set per
             // entry in the inline list only.
             ceilings: BTreeMap::new(),
+            expected_partial: None,
             // A present non-string value is an error, not an absent field:
             // reading it as absent would file the entry under `rust`.
             language: match &repo["language"] {
@@ -459,6 +467,17 @@ pub(crate) fn validate_corpus(corpus: &[CorpusEntry]) -> Result<(), String> {
                 entry.id,
                 entry.language(),
                 CORPUS_LANGUAGES.join(", ")
+            ));
+        }
+        if entry.expected_partial.as_deref().is_some_and(|limit| {
+            limit.is_empty()
+                || !limit
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        }) {
+            return Err(format!(
+                "corpus `{}` expected_partial must name a static limit in snake_case",
+                entry.id
             ));
         }
         if !full_sha(&entry.sha)
