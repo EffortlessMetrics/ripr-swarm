@@ -648,36 +648,51 @@ fn patch_route_target_unreadable(tokens: &[Tok], open: usize, chain: &Chain<'_>)
     };
     let args = &tokens[open + 1..close];
     match verb {
-        "patch"
-            if chain
-                .segments
-                .get(chain.segments.len().wrapping_sub(2))
-                .is_some_and(|segment| has_marker(segment)) =>
-        {
+        "patch" => {
+            let qualified = chain.segments.len() >= 2
+                && chain
+                    .segments
+                    .get(chain.segments.len().wrapping_sub(2))
+                    .is_some_and(|segment| has_marker(segment));
+            let bare_import = chain.segments.len() == 1;
+            if !qualified && !bare_import {
+                return false;
+            }
             !argument_group_is_single_string_literal(
                 positional_argument_groups(args).first().map(Vec::as_slice),
             )
         }
         "dict" | "multiple" => args.iter().any(|token| matches!(token, Tok::Name { .. })),
-        "setattr" | "delattr" => !argument_group_is_single_string_literal(
-            positional_argument_groups(args)
-                .get(1)
-                .map(|group| group.as_slice()),
-        ),
+        "setattr" | "delattr" => attribute_name_argument_is_unreadable(args, "name"),
         "object"
             if chain
                 .segments
                 .iter()
                 .any(|segment| segment.contains("patch")) =>
         {
-            !argument_group_is_single_string_literal(
-                positional_argument_groups(args)
-                    .get(1)
-                    .map(|group| group.as_slice()),
-            )
+            attribute_name_argument_is_unreadable(args, "attribute")
         }
         _ => false,
     }
+}
+
+fn attribute_name_argument_is_unreadable(args: &[Tok], keyword: &str) -> bool {
+    !attribute_name_literal_is_readable(args, keyword)
+}
+
+fn attribute_name_literal_is_readable(args: &[Tok], keyword: &str) -> bool {
+    positional_argument_groups(args)
+        .get(1)
+        .is_some_and(|group| argument_group_is_single_string_literal(Some(group.as_slice())))
+        || keyword_argument_is_single_string_literal(args, keyword)
+}
+
+fn keyword_argument_is_single_string_literal(args: &[Tok], keyword: &str) -> bool {
+    args.windows(3).any(|window| {
+        matches!(&window[0], Tok::Name { name } if name == keyword)
+            && matches!(window[1], Tok::Equal)
+            && matches!(window[2], Tok::String { .. })
+    })
 }
 
 fn argument_group_is_single_string_literal(group: Option<&[&Tok]>) -> bool {

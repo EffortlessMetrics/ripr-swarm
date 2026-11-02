@@ -351,6 +351,16 @@ fn given_a_file_that_patches_only_other_names_then_the_callee_is_still_credited(
             "monkeypatch",
             "    monkeypatch.setattr(rules.Session, 'send', None)\n",
         ),
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.setattr(target=rules.Session, name='send', value=None)\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch.object(target=rules.Session, attribute='send'):\n        pass\n",
+        ),
         ("import pytest\n", "mocker: pytest.MonkeyPatch", ""),
     ] {
         let tests = tests_with(prelude, params, body);
@@ -459,6 +469,11 @@ fn given_a_patch_target_that_cannot_be_read_then_the_assertion_stays_smoke() {
             "from unittest import mock\n",
             "",
             "    with mock.patch(TARGET):\n        pass\n",
+        ),
+        (
+            "from unittest.mock import patch\n",
+            "",
+            "    with patch(TARGET):\n        pass\n",
         ),
         (
             "from unittest import mock\n",
