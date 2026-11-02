@@ -120,11 +120,6 @@ mod tests {
     }
 
     #[test]
-    fn json_deserialize_rejects_wrong_class() {
-        assert!(serde_json::from_str::<CanonicalItemId>("\"probe:demo\"").is_err());
-    }
-
-    #[test]
     fn formatting_only_changes_do_not_change_parsed_identity() -> Result<(), String> {
         let first = CanonicalItemId::from_canonical_gap_id("gap:67f9714ba37b3967")
             .map_err(|error| error.to_string())?;

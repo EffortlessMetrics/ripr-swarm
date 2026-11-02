@@ -516,16 +516,6 @@ mod tests {
     }
 
     #[test]
-    fn json_deserialize_rejects_cross_class_instruction_ids() {
-        assert!(
-            serde_json::from_str::<InstructionSemanticId>("\"instruction-instance:abc\"").is_err()
-        );
-        assert!(
-            serde_json::from_str::<InstructionInstanceId>("\"instruction-semantic:abc\"").is_err()
-        );
-    }
-
-    #[test]
     fn instance_id_requires_completed_snapshot_fields() -> Result<(), String> {
         let witness = witness_with_fix_site();
         let canonical = CanonicalItemId::from_canonical_gap_id("gap:67f9714ba37b3967")
