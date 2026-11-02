@@ -458,7 +458,8 @@ fn wrapper_sanitizes_newline_bearing_head_in_outputs() -> Result<(), String> {
             "newline-bearing head must not forge an extra GITHUB_OUTPUT line, got: {outputs}"
         ));
     }
-    if outputs.lines().count() != 11
+    // 11 candidate/cut lines plus the four history-sync lines (#12437).
+    if outputs.lines().count() != 15
         || !outputs
             .lines()
             .any(|line| line.starts_with("detail=") && line.contains("status=admitted"))

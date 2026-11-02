@@ -193,6 +193,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      # The history-sync route reads who last applied its label (#12437).
+      issues: read
       pull-requests: read
     outputs:
       status: ${{ steps.candidate.outputs.status }}
@@ -206,6 +208,10 @@ jobs:
       competing_prs: ${{ steps.candidate.outputs.competing_prs }}
       changed_files: ${{ steps.candidate.outputs.changed_files }}
       changed_lines: ${{ steps.candidate.outputs.changed_lines }}
+      history_sync_status: ${{ steps.candidate.outputs.history_sync_status }}
+      history_sync_detail: ${{ steps.candidate.outputs.history_sync_detail }}
+      history_sync_source: ${{ steps.candidate.outputs.history_sync_source }}
+      history_sync_destination_base: ${{ steps.candidate.outputs.history_sync_destination_base }}
       labels: ${{ steps.entry.outputs.labels }}
       pr: ${{ steps.entry.outputs.pr }}
       head: ${{ steps.entry.outputs.head }}
@@ -374,6 +380,10 @@ jobs:
       disk-guard-threshold: 35
       use-scratch: true
       pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
       artifact-name: ripr-rust-small-cx43
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
@@ -392,6 +402,10 @@ jobs:
       disk-guard-threshold: 35
       use-scratch: true
       pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
       artifact-name: ripr-rust-small-cpx42
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
@@ -410,6 +424,10 @@ jobs:
       disk-guard-threshold: 50
       use-scratch: true
       pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
       artifact-name: ripr-rust-small-cx53
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
@@ -443,6 +461,10 @@ jobs:
       # The hosted gates leave the nextest step to rust-github-tests (#10507).
       test-shards: 4
       pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
       artifact-name: ripr-rust-small-github
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
@@ -615,6 +637,7 @@ jobs:
           EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
           EXPECTED_REQUEST: ${{ needs.admission.outputs.request }}
           EXPECTED_QUEUE_ENTRY: ${{ needs.admission.outputs.queue_entry }}
+          ADMISSION_REASON: ${{ needs.admission.outputs.reason }}
           EVENT_NAME: ${{ github.event_name }}
           GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
@@ -630,11 +653,13 @@ jobs:
             [[ "$EXPECTED_REQUEST" == "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]] || return 1
             read_pr() {
               pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER") || return
-              jq -e --arg repo "$REPOSITORY" --arg head "$EXPECTED_HEAD" --argjson number "$PR_NUMBER" --arg event "$EVENT_NAME" '
+              # A history-sync admission (#12437) also needs its label to still be present.
+              jq -e --arg repo "$REPOSITORY" --arg head "$EXPECTED_HEAD" --argjson number "$PR_NUMBER" --arg event "$EVENT_NAME" --arg reason "${ADMISSION_REASON:-}" '
                 .number == $number and .state == "open" and .draft == false and
                 .head.sha == $head and .head.repo.full_name == $repo and
                 .base.ref == "main" and .base.repo.full_name == $repo and
-                ($event != "pull_request" or (.labels | type == "array" and any(.name == "merge-ready")))
+                ($event != "pull_request" or (.labels | type == "array" and any(.name == "merge-ready"))) and
+                ($reason != "history_sync_admitted" or ($event == "pull_request" and (.labels | type == "array" and any(.name == "history-sync"))))
               ' <<<"$pr" >/dev/null
             }
             # Same-head succession (#4986, #8082): a newer run of this workflow for
@@ -741,6 +766,15 @@ jobs:
           ADMISSION_COMPETING_PRS: ${{ needs.admission.outputs.competing_prs }}
           ADMISSION_CHANGED_FILES: ${{ needs.admission.outputs.changed_files }}
           ADMISSION_CHANGED_LINES: ${{ needs.admission.outputs.changed_lines }}
+          ADMISSION_HEAD: ${{ needs.admission.outputs.head }}
+          ADMISSION_HISTORY_SYNC: ${{ needs.admission.outputs.history_sync_status }}
+          ADMISSION_HISTORY_SYNC_DETAIL: ${{ needs.admission.outputs.history_sync_detail }}
+          ADMISSION_HISTORY_SYNC_SOURCE: ${{ needs.admission.outputs.history_sync_source }}
+          ADMISSION_HISTORY_SYNC_BASE: ${{ needs.admission.outputs.history_sync_destination_base }}
+          CX43_PR_EVIDENCE: ${{ needs.rust-cx43.outputs.pr_evidence }}
+          CPX42_PR_EVIDENCE: ${{ needs.rust-cpx42.outputs.pr_evidence }}
+          CX53_PR_EVIDENCE: ${{ needs.rust-cx53.outputs.pr_evidence }}
+          GITHUB_PR_EVIDENCE: ${{ needs.rust-github.outputs.pr_evidence }}
           TARGET: ${{ needs.route.outputs.router_target }}
           REASON: ${{ needs.route.outputs.router_reason }}
           ROUTE_RESULT: ${{ needs.route.result }}
@@ -837,9 +871,21 @@ jobs:
               *) status=fail; message="unknown routed target: $TARGET" ;;
             esac
           fi
+          # #12437: PR evidence may be recorded not_applicable only for a history-sync
+          # admission of this exact pull_request head. Every succeeded implementation
+          # job must then carry exactly that record, and no other run may carry any.
+          sync_record=""
+          if [ "$EVENT_NAME:$ADMISSION_STATUS:$ADMISSION_REASON" = "pull_request:admitted:history_sync_admitted" ] && [[ "$ADMISSION_HEAD" =~ ^[0-9a-f]{40}$ ]]; then sync_record="not_applicable:history_sync:$ADMISSION_HEAD"; fi
+          for lane in "cx43:$CX43_RESULT:$CX43_PR_EVIDENCE" "cpx42:$CPX42_RESULT:$CPX42_PR_EVIDENCE" "cx53:$CX53_RESULT:$CX53_PR_EVIDENCE" "github:$GITHUB_RESULT:$GITHUB_PR_EVIDENCE"; do
+            IFS=: read -r name result evidence <<<"$lane"
+            [ "$status" = pass ] && [ "$result" = success ] || continue
+            if [ -n "$sync_record" ] && [ "$evidence" != "$sync_record" ]; then status=fail; message="history-sync admission of $ADMISSION_HEAD requires $name to record PR evidence $sync_record, got ${evidence:-nothing}"
+            elif [ -z "$sync_record" ] && [[ "$evidence" == not_applicable:* ]]; then status=fail; message="$name recorded PR evidence $evidence without a history-sync admission of this pull_request head"
+            fi
+          done
           echo "### Ripr Rust Small Result" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "github tests:$GITHUB_TESTS_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "runner command exit code:$RUNNER_QUERY_EXIT_CODE" "runner query attempts:$RUNNER_QUERY_ATTEMPTS" "runner query last HTTP status:$RUNNER_QUERY_HTTP" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
+          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "admission head:$ADMISSION_HEAD" "history-sync:$ADMISSION_HISTORY_SYNC" "history-sync detail:$ADMISSION_HISTORY_SYNC_DETAIL" "history-sync source:$ADMISSION_HISTORY_SYNC_SOURCE" "history-sync destination base:$ADMISSION_HISTORY_SYNC_BASE" "cx43 pr evidence:$CX43_PR_EVIDENCE" "cpx42 pr evidence:$CPX42_PR_EVIDENCE" "cx53 pr evidence:$CX53_PR_EVIDENCE" "github pr evidence:$GITHUB_PR_EVIDENCE" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "github tests:$GITHUB_TESTS_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "runner command exit code:$RUNNER_QUERY_EXIT_CODE" "runner query attempts:$RUNNER_QUERY_ATTEMPTS" "runner query last HTTP status:$RUNNER_QUERY_HTTP" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
             echo "- ${row%%:*}: \`${row#*:}\`" >> "$GITHUB_STEP_SUMMARY"
           done
           [ "$status" = "pass" ]

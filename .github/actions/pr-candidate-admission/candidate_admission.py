@@ -91,6 +91,18 @@ TEMPLATE_LINES = {
     "claim": "Governing issue or accepted claim:",
     "delta": "Acceptance delta (one sentence):",
 }
+# History-sync route (#12437). A true merge between the public ripr repository
+# and this swarm repository cannot be split without losing the history it
+# exists to keep, so a validated subject is admitted past the size caps (and
+# only past them). Every condition below must hold; anything unread, malformed
+# or ambiguous leaves the PR on the ordinary route.
+HISTORY_SYNC_LABEL = "history-sync"
+HISTORY_SYNC_REASON = "history_sync_admitted"
+HISTORY_SYNC_REPOSITORIES = ("effortlessmetrics/ripr", "effortlessmetrics/ripr-swarm")
+HISTORY_SYNC_ROLES = {"admin", "maintain"}
+HISTORY_SYNC_SOURCE_LINE = "history-sync source:"
+HISTORY_SYNC_BASE_LINE = "history-sync destination base:"
+HISTORY_SYNC_SOURCE_RE = re.compile(r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([0-9a-f]{40})")
 
 
 def normalize(value: str) -> str:
@@ -438,6 +450,166 @@ def refusal(
     }
 
 
+def history_sync_record(status: str, detail: str = "", declared: dict[str, str] | None = None) -> dict[str, str]:
+    declared = declared or {}
+    return {
+        "status": status,
+        "detail": detail,
+        "source": declared.get("source", ""),
+        "source_sha": declared.get("source_sha", ""),
+        "destination_base": declared.get("destination_base", ""),
+    }
+
+
+HISTORY_SYNC_NOT_REQUESTED = history_sync_record("not_requested")
+
+
+def history_sync_declaration(body: str) -> tuple[dict[str, str] | None, str]:
+    """The declared source and destination base, each on exactly one line."""
+    sources: list[str] = []
+    bases: list[str] = []
+    for raw in (body or "").splitlines():
+        line = raw.strip()
+        folded = line.casefold()
+        for prefix, found in ((HISTORY_SYNC_SOURCE_LINE, sources), (HISTORY_SYNC_BASE_LINE, bases)):
+            if folded.startswith(prefix):
+                found.append(line[len(prefix) :].strip().strip("`").strip())
+    if len(sources) != 1 or len(bases) != 1:
+        return None, "the PR body must carry exactly one `History-sync source: <owner>/<repo>@<40-hex sha>` line and one `History-sync destination base: <40-hex sha>` line"
+    source = HISTORY_SYNC_SOURCE_RE.fullmatch(sources[0])
+    if not source:
+        return None, "`History-sync source:` must be `<owner>/<repo>@<full lowercase 40-hex sha>`"
+    if not SHA_RE.fullmatch(bases[0]):
+        return None, "`History-sync destination base:` must be a full lowercase 40-hex sha"
+    return {
+        "source": source.group(1),
+        "source_sha": source.group(2),
+        "destination_base": bases[0],
+    }, ""
+
+
+def gh_api_json(path: str, paginate: bool = False) -> Any:
+    """One read-only GitHub API read; None on any failure, never an exception."""
+    args = [GH, "api", path] + (["--paginate", "--slurp"] if paginate else [])
+    try:
+        done = subprocess.run(args, capture_output=True, check=False, timeout=BLOB_READ_TIMEOUT_SECONDS)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if done.returncode != 0:
+        return None
+    try:
+        data = json.loads(done.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if paginate:
+        if not isinstance(data, list) or not all(isinstance(page, list) for page in data):
+            return None
+        return [item for page in data for item in page]
+    return data
+
+
+def history_sync_check(
+    current: dict[str, Any],
+    repository: str,
+    event_name: str,
+    base_tip: str,
+    api: Callable[..., Any],
+) -> dict[str, str]:
+    """Whether the PR is a validated history-sync subject (#12437).
+
+    `api(path, paginate=False)` returns parsed JSON or None on any failure. No
+    read is made unless the label is present. Every unread, malformed or
+    unexpected fact rejects; a rejection only means the ordinary route applies.
+    """
+    labels = [label.get("name") for label in current.get("labels") or [] if isinstance(label, dict)]
+    if HISTORY_SYNC_LABEL not in labels:
+        return HISTORY_SYNC_NOT_REQUESTED
+    declared: dict[str, str] | None = None
+
+    def reject(detail: str) -> dict[str, str]:
+        return history_sync_record("rejected", detail, declared)
+
+    if event_name != "pull_request":
+        return reject("history-sync is honored only on a merge-ready pull_request request, never a merge-queue or other event")
+    base_repository = (((current.get("base") or {}).get("repo") or {}).get("full_name") or "")
+    if (
+        not repository
+        or head_repository(current).casefold() != repository.casefold()
+        or base_repository.casefold() != repository.casefold()
+    ):
+        return reject("head and base must both be this repository (no fork)")
+    declared, why = history_sync_declaration(current.get("body") or "")
+    if declared is None:
+        return reject(why)
+    source = declared["source"].casefold()
+    if source not in HISTORY_SYNC_REPOSITORIES or source == repository.casefold():
+        return reject(f"source repository {declared['source']} is not the other repository of the sync pair")
+    head = str((current.get("head") or {}).get("sha") or "")
+    number = current.get("number")
+    if not SHA_RE.fullmatch(head) or not SHA_RE.fullmatch(base_tip or "") or not isinstance(number, int):
+        return reject("the PR head, number or live base tip is not available")
+
+    events = api(f"repos/{repository}/issues/{number}/events?per_page=100", paginate=True)
+    if not isinstance(events, list):
+        return reject("the PR label events could not be read")
+    toggles = [
+        event
+        for event in events
+        if isinstance(event, dict)
+        and event.get("event") in ("labeled", "unlabeled")
+        and ((event.get("label") or {}).get("name") == HISTORY_SYNC_LABEL)
+    ]
+    if not toggles or any(not isinstance(event.get("created_at"), str) for event in toggles):
+        return reject("no readable `history-sync` label event")
+    last = max(toggles, key=lambda event: (event["created_at"], int(event.get("id") or 0)))
+    actor = str((last.get("actor") or {}).get("login") or "")
+    if last.get("event") != "labeled" or not actor:
+        return reject("the latest `history-sync` label event is not a labeling with a known actor")
+    permission = api(f"repos/{repository}/collaborators/{quote(actor)}/permission")
+    if not isinstance(permission, dict) or permission.get("role_name") not in HISTORY_SYNC_ROLES:
+        return reject(f"`history-sync` was last applied by {actor}, who does not hold admin or maintain on {repository}")
+
+    # Identity model: S (declared source), B (declared destination base), H (the
+    # exact PR head). The head's own shape is not authority: repair commits may
+    # follow the sync merge. What makes it a sync is that H brings S's history
+    # in while B does not already contain S.
+    def compare_status(repo: str, older: str, newer: str) -> str | None:
+        """`ahead`/`identical` when `older` is reachable from `newer`; another
+        GitHub status otherwise; None when unread or inconsistent."""
+        compared = api(f"repos/{repo}/compare/{older}...{quote(newer, safe='')}?per_page=1")
+        if not isinstance(compared, dict) or (compared.get("base_commit") or {}).get("sha") != older:
+            return None
+        status = compared.get("status")
+        reachable = (compared.get("merge_base_commit") or {}).get("sha") == older
+        if status in ("ahead", "identical") and reachable:
+            return str(status)
+        if status in ("behind", "diverged") and not reachable:
+            return str(status)
+        return None
+
+    def ancestor(repo: str, older: str, newer: str, allow_identical: bool) -> bool:
+        allowed = ("ahead", "identical") if allow_identical else ("ahead",)
+        return compare_status(repo, older, newer) in allowed
+
+    source_repo = api(f"repos/{declared['source']}")
+    default_branch = source_repo.get("default_branch") if isinstance(source_repo, dict) else None
+    if not isinstance(default_branch, str) or not default_branch:
+        return reject(f"the default branch of {declared['source']} could not be read")
+    if not ancestor(declared["source"], declared["source_sha"], default_branch, True):
+        return reject(f"source {declared['source_sha']} is not on the {declared['source']} default branch {default_branch}")
+    if not ancestor(repository, declared["source_sha"], head, False):
+        return reject(f"source {declared['source_sha']} is not an ancestor of the PR head {head}")
+    if not ancestor(repository, declared["destination_base"], head, False):
+        return reject(f"destination base {declared['destination_base']} is not an ancestor of the PR head {head}")
+    if not ancestor(repository, declared["destination_base"], base_tip, True):
+        return reject(f"destination base {declared['destination_base']} is not an ancestor of the live base tip {base_tip}")
+    # S must be new history for B: reachable from H, not from B. An unread
+    # comparison rejects, never counts as "not reachable".
+    if compare_status(repository, declared["source_sha"], declared["destination_base"]) not in ("behind", "diverged"):
+        return reject(f"source {declared['source_sha']} is already contained in destination base {declared['destination_base']} (or that could not be read); nothing new is synced")
+    return history_sync_record("validated", "", declared)
+
+
 def decide(
     current: dict[str, Any],
     open_candidates: list[dict[str, Any]],
@@ -448,13 +620,20 @@ def decide(
     generated_files: int = 0,
     generated_lines: int = 0,
     max_generated_lines: int = DEFAULT_MAX_GENERATED_LINES,
+    history_sync: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     fields = effective_fields(current)
     actual_head = ((current.get("head") or {}).get("sha") or "")
-    refuse = lambda reason, peers=None, detail="": refusal(  # noqa: E731
-        reason, current, fields, max_files, max_lines, peers, detail,
-        generated_files, generated_lines,
-    )
+    sync = history_sync or HISTORY_SYNC_NOT_REQUESTED
+
+    def refuse(reason: str, peers: list[int] | None = None, detail: str = "") -> dict[str, Any]:
+        result = refusal(
+            reason, current, fields, max_files, max_lines, peers, detail,
+            generated_files, generated_lines,
+        )
+        result["history_sync"] = sync
+        return result
+
     if not expected_head or not SHA_RE.fullmatch(expected_head):
         return refuse(
             "expected_head_missing",
@@ -498,11 +677,6 @@ def decide(
             detail=f"trusted competing PR(s) {listed} share the same governing claim and acceptance delta; reconcile them and record the accepted winner/losing disposition naming the winning PR in one of the competing PR bodies (or name a listed peer as the proposed replacement in the winning PR body) before qualification",
         )
 
-    if not docs_only and generated_lines > max_generated_lines:
-        return refuse(
-            "generated_scope_oversized",
-            detail=f"candidate changes {generated_lines} generated lines, exceeding the limit of {max_generated_lines}; split the regeneration from the hand-written change",
-        )
     changed_files = max(0, int(current.get("changed_files") or 0) - generated_files)
     changed_lines = max(
         0,
@@ -510,15 +684,29 @@ def decide(
         + int(current.get("deletions") or 0)
         - generated_lines,
     )
-    if not docs_only and (changed_files > max_files or changed_lines > max_lines):
+    # Only the size caps yield to a validated history-sync subject (#12437);
+    # every refusal above has already applied.
+    validated_sync = sync.get("status") == "validated"
+    unhonored = (
+        f"; the `{HISTORY_SYNC_LABEL}` label was not honored: {sync.get('detail')}"
+        if sync.get("status") == "rejected"
+        else ""
+    )
+    if not validated_sync and not docs_only and generated_lines > max_generated_lines:
+        return refuse(
+            "generated_scope_oversized",
+            detail=f"candidate changes {generated_lines} generated lines, exceeding the limit of {max_generated_lines}; split the regeneration from the hand-written change{unhonored}",
+        )
+    if not validated_sync and not docs_only and (changed_files > max_files or changed_lines > max_lines):
         return refuse(
             "qualification_scope_oversized",
-            detail=f"candidate changes {changed_files} files / {changed_lines} changed lines outside declared generated paths, exceeding the ordinary limit of {max_files} files / {max_lines} changed lines; split or recompose the candidate before ordinary qualification",
+            detail=f"candidate changes {changed_files} files / {changed_lines} changed lines outside declared generated paths, exceeding the ordinary limit of {max_files} files / {max_lines} changed lines; split or recompose the candidate before ordinary qualification{unhonored}",
         )
 
     return {
         "status": "admitted",
-        "reason": "candidate_current_unique_bounded",
+        "reason": HISTORY_SYNC_REASON if validated_sync else "candidate_current_unique_bounded",
+        "history_sync": sync,
         "detail": "",
         "claim": claim,
         "acceptance_delta": delta,
@@ -981,7 +1169,212 @@ def self_test() -> None:
         assert decide(wired, [wired], head, False, max_files, max_lines, wired_files, wired_lines)["status"] == "admitted"
         assert generated_from_files(wired, files_path, Path(tmp) / "absent") == (0, 0)
         assert generated_from_files(wired, None, attrs_path) == (0, 0)
+    history_sync_self_test(max_files, max_lines)
     print("candidate-admission self-test: all controls passed")
+
+
+def history_sync_self_test(max_files: int, max_lines: int) -> None:
+    """#12437: each history-sync condition, missing on its own, leaves the PR
+    on the ordinary route; other refusals still win for a validated subject."""
+    repo = "EffortlessMetrics/ripr-swarm"
+    source_repo = "EffortlessMetrics/ripr"
+    head, source, dest, tip = "a" * 40, "5" * 40, "d" * 40, "e" * 40
+    sync_body = fixture_body(
+        claim="#12009",
+        delta="sync ripr main into swarm",
+        extra=f"History-sync source: {source_repo}@{source}\nHistory-sync destination base: `{dest}`\n",
+    )
+
+    def sync_pr(**overrides: Any) -> dict[str, Any]:
+        labels = overrides.pop("labels", ["history-sync", "merge-ready"])
+        pr = fixture(body=sync_body, head=head, changed_files=334, additions=60000, deletions=12000, **overrides)
+        pr["labels"] = [{"name": name} for name in labels]
+        return pr
+
+    def compare(older: str, status: str) -> dict[str, Any]:
+        merge_base = older if status in ("ahead", "identical") else "0" * 40
+        return {"status": status, "base_commit": {"sha": older}, "merge_base_commit": {"sha": merge_base}}
+
+    def responses() -> dict[str, Any]:
+        return {
+            f"repos/{repo}/issues/10/events?per_page=100": [
+                {"id": 1, "event": "labeled", "created_at": "2026-11-01T00:00:00Z", "label": {"name": "history-sync"}, "actor": {"login": "contributor"}},
+                {"id": 2, "event": "unlabeled", "created_at": "2026-11-01T01:00:00Z", "label": {"name": "history-sync"}, "actor": {"login": "contributor"}},
+                {"id": 3, "event": "labeled", "created_at": "2026-11-01T02:00:00Z", "label": {"name": "history-sync"}, "actor": {"login": "owner"}},
+                {"id": 4, "event": "labeled", "created_at": "2026-11-01T03:00:00Z", "label": {"name": "merge-ready"}, "actor": {"login": "contributor"}},
+            ],
+            f"repos/{repo}/collaborators/owner/permission": {"permission": "admin", "role_name": "admin"},
+            f"repos/{repo}/collaborators/contributor/permission": {"permission": "write", "role_name": "write"},
+            f"repos/{repo}/collaborators/maintainer/permission": {"permission": "write", "role_name": "maintain"},
+            f"repos/{source_repo}": {"default_branch": "main"},
+            f"repos/{source_repo}/compare/{source}...main?per_page=1": compare(source, "ahead"),
+            f"repos/{repo}/compare/{source}...{head}?per_page=1": compare(source, "ahead"),
+            f"repos/{repo}/compare/{dest}...{head}?per_page=1": compare(dest, "ahead"),
+            f"repos/{repo}/compare/{dest}...{tip}?per_page=1": compare(dest, "ahead"),
+            # S is new history for B: B does not reach S.
+            f"repos/{repo}/compare/{source}...{dest}?per_page=1": compare(source, "diverged"),
+        }
+
+    def check(
+        pr: dict[str, Any],
+        table: dict[str, Any],
+        event: str = "pull_request",
+        repository: str = repo,
+        base_tip: str = tip,
+    ) -> dict[str, str]:
+        calls: list[tuple[str, bool]] = []
+
+        def api(path: str, paginate: bool = False) -> Any:
+            calls.append((path, paginate))
+            return json.loads(json.dumps(table[path])) if path in table else None
+
+        sync = history_sync_check(pr, repository, event, base_tip, api)
+        if HISTORY_SYNC_LABEL not in [label["name"] for label in pr.get("labels") or []]:
+            assert calls == [], "no history-sync read without the label"
+        # The head's own parent shape is never read or relied on: a single-parent
+        # repair commit on top of the sync merge is as valid as the merge itself.
+        assert not any("/git/commits/" in path for path, _ in calls), calls
+        assert all(paginate == ("/events" in path) for path, paginate in calls), calls
+        return sync
+
+    def admit(pr: dict[str, Any], sync: dict[str, str], peers: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        return decide(pr, [pr] if peers is None else peers, head, False, max_files, max_lines, history_sync=sync)
+
+    validated = check(sync_pr(), responses())
+    assert validated == {
+        "status": "validated", "detail": "", "source": source_repo, "source_sha": source, "destination_base": dest,
+    }, validated
+    admitted = admit(sync_pr(), validated)
+    assert admitted["status"] == "admitted" and admitted["reason"] == HISTORY_SYNC_REASON, admitted
+    assert admitted["history_sync"]["source_sha"] == source and admitted["history_sync"]["destination_base"] == dest
+    assert admitted["changed_files"] == 334 and admitted["changed_lines"] == 72000
+    huge_generated = decide(sync_pr(), [sync_pr()], head, False, max_files, max_lines, 1, 50000, history_sync=validated)
+    assert huge_generated["reason"] == HISTORY_SYNC_REASON, "the generated cap is a size cap too"
+    maintainer = responses()
+    maintainer[f"repos/{repo}/issues/10/events?per_page=100"][2]["actor"]["login"] = "maintainer"
+    assert check(sync_pr(), maintainer)["status"] == "validated", "maintain is privileged"
+    identical = responses()
+    identical[f"repos/{source_repo}/compare/{source}...main?per_page=1"] = compare(source, "identical")
+    identical[f"repos/{repo}/compare/{dest}...{tip}?per_page=1"] = compare(dest, "identical")
+    assert check(sync_pr(), identical)["status"] == "validated", "the source may be the default tip; the base may be the tip"
+
+    def must_fall_back(name: str, sync: dict[str, str], pr: dict[str, Any] | None = None, why: str = "") -> None:
+        pr = pr or sync_pr()
+        assert sync["status"] != "validated", (name, sync)
+        assert why in sync["detail"], (name, why, sync)
+        decision = admit(pr, sync)
+        assert decision["status"] == "refused" and decision["reason"] == "qualification_scope_oversized", (name, decision)
+        if sync["status"] == "rejected":
+            assert "history-sync` label was not honored" in decision["detail"], (name, decision)
+
+    must_fall_back("label absent", check(sync_pr(labels=["merge-ready"]), responses()), sync_pr(labels=["merge-ready"]))
+    assert check(sync_pr(labels=["History-Sync"]), responses())["status"] == "not_requested", "the label name is exact"
+    unprivileged = responses()
+    unprivileged[f"repos/{repo}/issues/10/events?per_page=100"][2]["actor"]["login"] = "contributor"
+    must_fall_back("non-privileged labeler", check(sync_pr(), unprivileged))
+    legacy_only = responses()
+    legacy_only[f"repos/{repo}/collaborators/owner/permission"] = {"permission": "admin"}
+    must_fall_back("permission without a role name", check(sync_pr(), legacy_only))
+    unreadable_permission = responses()
+    del unreadable_permission[f"repos/{repo}/collaborators/owner/permission"]
+    must_fall_back("unreadable permission", check(sync_pr(), unreadable_permission))
+    relabeled_off = responses()
+    relabeled_off[f"repos/{repo}/issues/10/events?per_page=100"].append(
+        {"id": 5, "event": "unlabeled", "created_at": "2026-11-01T04:00:00Z", "label": {"name": "history-sync"}, "actor": {"login": "owner"}}
+    )
+    must_fall_back("latest label event is a removal", check(sync_pr(), relabeled_off))
+    no_events = responses()
+    del no_events[f"repos/{repo}/issues/10/events?per_page=100"]
+    must_fall_back("unreadable label events", check(sync_pr(), no_events))
+    fork = sync_pr(repository="external/fork")
+    must_fall_back("fork head", check(fork, responses()), fork)
+    must_fall_back("wrong current repository", check(sync_pr(), responses(), repository="other/repo"))
+    for line in (f"History-sync source: {source_repo}@{source}\n", f"History-sync destination base: `{dest}`\n"):
+        body_pr = sync_pr()
+        body_pr["body"] = sync_body.replace(line, "")
+        must_fall_back(f"missing {line.split(':')[0]}", check(body_pr, responses()), body_pr)
+    for name, bad in (
+        ("duplicate source line", f"History-sync source: {source_repo}@{source}\nHistory-sync source: {source_repo}@{source}\n"),
+        ("short source sha", f"History-sync source: {source_repo}@{source[:12]}\n"),
+        ("39-hex source sha", f"History-sync source: {source_repo}@{source[:39]}\n"),
+        ("upper-case source sha", f"History-sync source: {source_repo}@{'A' * 40}\n"),
+        ("self repository", f"History-sync source: {repo}@{source}\n"),
+        ("unknown repository", f"History-sync source: someone/ripr@{source}\n"),
+    ):
+        body_pr = sync_pr()
+        body_pr["body"] = sync_body.replace(f"History-sync source: {source_repo}@{source}\n", bad)
+        why = "not the other repository" if "repository" in name else "History-sync source"
+        must_fall_back(name, check(body_pr, responses()), body_pr, why)
+    for name, short in (("short destination base", dest[:12]), ("41-hex destination base", dest + "d")):
+        body_pr = sync_pr()
+        body_pr["body"] = sync_body.replace(f"`{dest}`", short)
+        must_fall_back(name, check(body_pr, responses()), body_pr, "History-sync destination base")
+    # S already contained in B: the PR brings no new source history.
+    for status in ("ahead", "identical"):
+        contained = responses()
+        contained[f"repos/{repo}/compare/{source}...{dest}?per_page=1"] = compare(source, status)
+        must_fall_back(f"source {status} in the destination base", check(sync_pr(), contained), why="already contained")
+    unread_containment = responses()
+    del unread_containment[f"repos/{repo}/compare/{source}...{dest}?per_page=1"]
+    must_fall_back("unreadable containment", check(sync_pr(), unread_containment), why="already contained")
+    inconsistent = responses()
+    inconsistent[f"repos/{repo}/compare/{source}...{dest}?per_page=1"] = {
+        "status": "diverged", "base_commit": {"sha": source}, "merge_base_commit": {"sha": source},
+    }
+    must_fall_back("inconsistent containment read", check(sync_pr(), inconsistent), why="already contained")
+    for name, key, status in (
+        ("source off the source default branch", f"repos/{source_repo}/compare/{source}...main?per_page=1", "diverged"),
+        ("source not an ancestor of the head", f"repos/{repo}/compare/{source}...{head}?per_page=1", "diverged"),
+        ("source identical to the head", f"repos/{repo}/compare/{source}...{head}?per_page=1", "identical"),
+        ("destination base not an ancestor of the head", f"repos/{repo}/compare/{dest}...{head}?per_page=1", "behind"),
+        ("destination base not on the live base", f"repos/{repo}/compare/{dest}...{tip}?per_page=1", "diverged"),
+    ):
+        broken = responses()
+        broken[key] = compare(key.split("/compare/")[1][:40], status)
+        must_fall_back(name, check(sync_pr(), broken))
+    missing_source = responses()
+    del missing_source[f"repos/{source_repo}/compare/{source}...main?per_page=1"]
+    must_fall_back("source sha absent from the source repository", check(sync_pr(), missing_source))
+    must_fall_back("merge-queue event", check(sync_pr(), responses(), event="merge_group"))
+    must_fall_back("no live base tip", check(sync_pr(), responses(), base_tip=""), why="live base tip is not available")
+    # Other refusals still win for a validated subject; a non-sync PR is unaffected.
+    no_claim = sync_pr()
+    no_claim["body"] = sync_body.replace("Governing issue or accepted claim: #12009\n", "")
+    assert admit(no_claim, check(no_claim, responses()))["reason"] == "claim_identity_missing"
+    rival = fixture(number=11, body=fixture_body(claim="#12009", delta="sync ripr main into swarm"), head="b" * 40)
+    competing = admit(sync_pr(), validated, [sync_pr(), rival])
+    assert competing["reason"] == "competing_candidate", competing
+    assert decide(sync_pr(), [sync_pr()], "b" * 40, False, max_files, max_lines, history_sync=validated)["reason"] == "candidate_head_moved"
+    assert decide(sync_pr(draft=True), [], head, False, max_files, max_lines, history_sync=validated)["reason"] == "candidate_not_open_ready"
+    ordinary = fixture(body=fixture_body(), head=head)
+    assert decide(ordinary, [ordinary], head, False, max_files, max_lines)["reason"] == "candidate_current_unique_bounded"
+    assert decide(ordinary, [ordinary], head, False, max_files, max_lines)["history_sync"]["status"] == "not_requested"
+    oversized = fixture(body=fixture_body(), head=head, changed_files=334)
+    assert decide(oversized, [oversized], head, False, max_files, max_lines)["reason"] == "qualification_scope_oversized"
+    # The live reader: pagination is flattened, and any failure is None.
+    pages = {"out": b"[[1,2],[3]]", "rc": 0}
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        assert kwargs.get("timeout"), "every read has a timeout"
+        if pages["rc"] == -1:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, pages["rc"], pages["out"], b"")
+
+    real_run = subprocess.run
+    subprocess.run = fake_run  # type: ignore[assignment]
+    try:
+        assert gh_api_json("repos/o/r/issues/1/events", paginate=True) == [1, 2, 3]
+        pages["out"] = b"[1,2]"
+        assert gh_api_json("repos/o/r/issues/1/events", paginate=True) is None, "an unpaged body is not trusted"
+        assert gh_api_json("repos/o/r") == [1, 2]
+        pages["out"] = b"not json"
+        assert gh_api_json("repos/o/r") is None
+        pages["rc"], pages["out"] = 1, b"{}"
+        assert gh_api_json("repos/o/r") is None
+        pages["rc"] = -1
+        assert gh_api_json("repos/o/r") is None
+    finally:
+        subprocess.run = real_run
 
 
 def gh_blob_lines(
@@ -1100,6 +1493,7 @@ def main() -> int:
         help=".gitattributes text from the PR's base commit; the only source of generated paths",
     )
     parser.add_argument("--max-generated-lines", type=int, default=DEFAULT_MAX_GENERATED_LINES)
+    parser.add_argument("--base-sha", help="live base branch tip the wrapper resolved; history-sync needs it")
     parser.add_argument("--check-attributes", type=Path)
     parser.add_argument("--docs-only", action="store_true")
     parser.add_argument("--max-changed-files", type=int, default=160)
@@ -1135,6 +1529,14 @@ def main() -> int:
         repository, os.environ.get("ADMISSION_PR_NUMBER", ""), current
     ):
         generated_files = generated_lines = 0
+    # The event name comes from the runner, not from a candidate-supplied input.
+    sync = history_sync_check(
+        current, repository, os.environ.get("GITHUB_EVENT_NAME", ""), args.base_sha or "", gh_api_json
+    )
+    if sync["status"] == "validated" and not head_unmoved(
+        repository, os.environ.get("ADMISSION_PR_NUMBER", ""), current
+    ):
+        sync = history_sync_record("rejected", "the PR head moved while the history-sync facts were read", sync)
     result = decide(
         current,
         load_json(args.open_prs),
@@ -1145,6 +1547,7 @@ def main() -> int:
         generated_files,
         generated_lines,
         args.max_generated_lines,
+        sync,
     )
     print(json.dumps(result, sort_keys=True))
     return 1 if result["status"] == "refused" else 0
