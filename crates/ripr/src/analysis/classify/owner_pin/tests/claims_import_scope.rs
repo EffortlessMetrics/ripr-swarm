@@ -48,6 +48,27 @@ fn an_import_that_reaches_the_test_resolves_the_macro() -> Result<(), String> {
         "the test's own body"
     );
 
+    let reimported_by_the_test_module = "use claims::assert_ok;\n\nmod tests {\n    use super::*;\n\n    #[test]\n    fn asserts() {\n        assert_ok!(f());\n    }\n}\n";
+    assert_eq!(
+        imported(reimported_by_the_test_module)?,
+        vec!["assert_ok"],
+        "a root import the test's module re-imports with `use super::*`"
+    );
+
+    let reimported_named = "use claims::assert_ok;\n\nmod tests {\n    use super::assert_ok;\n\n    #[test]\n    fn asserts() {\n        assert_ok!(f());\n    }\n}\n";
+    assert_eq!(
+        imported(reimported_named)?,
+        vec!["assert_ok"],
+        "re-imported by name"
+    );
+
+    let two_levels = "mod outer {\n    use claims::assert_ok;\n\n    mod inner {\n        use super::*;\n\n        #[test]\n        fn asserts() {\n            assert_ok!(f());\n        }\n    }\n}\n";
+    assert_eq!(
+        imported(two_levels)?,
+        vec!["assert_ok"],
+        "an ancestor module's import, re-imported by the child"
+    );
+
     let plain_test_gate = "#[cfg(test)]\nuse claims::assert_some;\n\n#[test]\nfn asserts() {\n    assert_some!(f());\n}\n";
     assert_eq!(
         imported(plain_test_gate)?,
@@ -86,6 +107,24 @@ fn an_import_the_test_cannot_see_resolves_nothing() -> Result<(), String> {
         "import under cfg_attr"
     );
 
+    let child_without_reimport = "mod outer {\n    use claims::assert_ok;\n\n    mod inner {\n        #[test]\n        fn asserts() {\n            assert_ok!(f());\n        }\n    }\n}\n";
+    assert!(
+        imported(child_without_reimport)?.is_empty(),
+        "a child module does not inherit its parent's import"
+    );
+
+    let root_without_reimport = "use claims::assert_ok;\n\nmod tests {\n    #[test]\n    fn asserts() {\n        assert_ok!(f());\n    }\n}\n";
+    assert!(
+        imported(root_without_reimport)?.is_empty(),
+        "a root import does not reach a test module that lacks `use super::*`"
+    );
+
+    let gated_reimport = "use claims::assert_ok;\n\nmod tests {\n    #[cfg(feature = \"extra\")]\n    use super::*;\n\n    #[test]\n    fn asserts() {\n        assert_ok!(f());\n    }\n}\n";
+    assert!(
+        imported(gated_reimport)?.is_empty(),
+        "a re-import under a feature gate may be compiled out"
+    );
+
     let nested_block = "#[test]\nfn asserts() {\n    {\n        use claims::assert_ok;\n    }\n    assert_ok!(f());\n}\n";
     assert!(
         imported(nested_block)?.is_empty(),
@@ -95,7 +134,7 @@ fn an_import_the_test_cannot_see_resolves_nothing() -> Result<(), String> {
 }
 
 #[test]
-fn an_unplaced_test_keeps_only_file_root_imports() -> Result<(), String> {
+fn an_unplaced_test_keeps_only_a_doc_examples_root_imports() -> Result<(), String> {
     let at_root = "use claims::assert_ok;\n\n#[test]\nfn asserts() {\n    assert_ok!(f());\n}\n";
     let in_module = "mod tests {\n    use claims::assert_ok;\n\n    #[test]\n    fn asserts() {\n        assert_ok!(f());\n    }\n}\n";
     // No span: a doc example, which has no lines in its own source.
@@ -104,11 +143,8 @@ fn an_unplaced_test_keeps_only_file_root_imports() -> Result<(), String> {
         vec!["assert_ok"]
     );
     assert!(source_imported_claims_macros(in_module, None).is_empty());
-    // A span that is not in the source places nothing either.
+    // A span that is not in the source places no test, so nothing is credited.
     assert!(source_imported_claims_macros(in_module, Some((90, 99))).is_empty());
-    assert_eq!(
-        source_imported_claims_macros(at_root, Some((90, 99))),
-        vec!["assert_ok"]
-    );
+    assert!(source_imported_claims_macros(at_root, Some((90, 99))).is_empty());
     Ok(())
 }
