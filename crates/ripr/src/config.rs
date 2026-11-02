@@ -409,6 +409,14 @@ const CONFIG_LOAD_READ_HINT: &str = concat!(
     config_removal_advice!()
 );
 
+fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
+    format!(
+        "{}: {}\n{CONFIG_LOAD_PARSE_HINT}",
+        config_load_error_path_for_host(path, windows),
+        err.trim_end()
+    )
+}
+
 fn config_load_read_error_for_host(
     path: &Path,
     err: &impl std::fmt::Display,
