@@ -79,7 +79,7 @@ impl SampleSeries {
                 "raw_samples_ms": sorted,
             })
         } else {
-            let p95_index = ((n as f64) * 0.95).floor() as usize;
+            let p95_index = (n.saturating_mul(95) / 100).min(n.saturating_sub(1));
             json!({
                 "tail_not_established": false,
                 "p95_ms": sorted[p95_index.min(n.saturating_sub(1))],

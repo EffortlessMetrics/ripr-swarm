@@ -229,18 +229,16 @@ pub(crate) fn overlay_measurement_identity(measurement: &mut Value) -> Result<()
         if let Some(receipt) = subject
             .get_mut("sequence_receipt")
             .and_then(Value::as_object_mut)
-        {
-            if let Some(receipt_identity) =
+            && let Some(receipt_identity) =
                 receipt.get_mut("identity").and_then(Value::as_object_mut)
-            {
-                receipt_identity.insert("source_sha".to_string(), json!(head.clone()));
-                receipt_identity.insert("host_class".to_string(), json!(host_class()));
-                receipt_identity.insert(
-                    "binary_path".to_string(),
-                    json!("ripr --lib saved_edit_sequence"),
-                );
-                receipt_identity.insert("binary_digest".to_string(), json!("not_measured"));
-            }
+        {
+            receipt_identity.insert("source_sha".to_string(), json!(head.clone()));
+            receipt_identity.insert("host_class".to_string(), json!(host_class()));
+            receipt_identity.insert(
+                "binary_path".to_string(),
+                json!("ripr --lib saved_edit_sequence"),
+            );
+            receipt_identity.insert("binary_digest".to_string(), json!("not_measured"));
         }
     }
     recompute_measurement_packet_digest(measurement)
