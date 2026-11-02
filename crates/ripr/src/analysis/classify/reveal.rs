@@ -2434,12 +2434,22 @@ fn analyze_related_assertions(
         // standard-method dispatch is not an observation witness. Indexed
         // implicit trait dispatch in this test retains its authority (#7820). Keep
         // token/collection confirmation and opaque macro allowances.
+        let claims_candidates: Vec<OracleFact> = if matches!(probe.family, ProbeFamily::ReturnValue)
+        {
+            super::owner_pin::claims_payload_eq_candidates(test)
+                .into_iter()
+                .filter(|candidate| (return_admission.owner_return_pin)(test, candidate))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let assertions: Vec<_> = test
             .assertions
             .iter()
             .filter(|assertion| (return_admission.assertion_admitted)(test, assertion))
+            .chain(claims_candidates.iter())
             .collect();
-        let refused_here = assertions.len() != test.assertions.len();
+        let refused_here = assertions.len() != test.assertions.len() + claims_candidates.len();
         refused_context |= refused_here;
         if assertions.is_empty() {
             related.push(RelatedTest {
@@ -2539,6 +2549,29 @@ fn analyze_related_assertions(
                     ..assertion.clone()
                 };
                 &excluded_sibling
+            } else {
+                assertion
+            };
+            // RIPR-SPEC-0197 / RIPR-SPEC-0231 rule 10: extraction is text-only
+            // and keeps `assert_ok_eq!(call, literal)` `unknown`. The owner
+            // pin's verified-import decision is the only authority that
+            // grades it, so the re-grade lives here, per probe, and only
+            // where that decision admits it: no verified import, a refused
+            // direction, a non-literal expected operand or an unestablished
+            // owner call leaves the oracle `unknown`.
+            let claims_graded;
+            let assertion = if matches!(probe.family, ProbeFamily::ReturnValue)
+                && assertion.kind == OracleKind::Unknown
+                && assertion.strength == OracleStrength::None
+                && super::owner_pin::is_claims_payload_eq_text(&assertion.text)
+                && (return_admission.owner_return_pin)(test, assertion)
+            {
+                claims_graded = OracleFact {
+                    kind: OracleKind::ExactValue,
+                    strength: OracleStrength::Strong,
+                    ..assertion.clone()
+                };
+                &claims_graded
             } else {
                 assertion
             };

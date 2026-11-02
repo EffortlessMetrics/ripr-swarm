@@ -955,6 +955,16 @@ impl ClassifiedProbeEvidence {
                         })
                     },
                     pin_syntax,
+                ) || pin.admits_claims_payload_eq(
+                    test,
+                    assertion,
+                    context.index,
+                    &|file, name| {
+                        context.index.files().get(file).is_some_and(|facts| {
+                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
+                        })
+                    },
+                    pin_syntax,
                 )
             })
         };

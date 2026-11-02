@@ -503,7 +503,12 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "assert_ne",
     "assert_none",
     "assert_ok",
+    // `assert_ok_eq!` and `assert_some_eq!` (RIPR-SPEC-0197 claims payload
+    // equality pins) evaluate their first operand once and compare its
+    // payload, like `assert_eq!`; trusted only on the same verified import.
+    "assert_ok_eq",
     "assert_some",
+    "assert_some_eq",
     "cfg",
     "column",
     "concat",
@@ -1560,7 +1565,8 @@ const CLAIMS_CRATES: &[&str] = &["claims"];
 /// The crates whose export under `name` is a drop-in for the trusted macro.
 fn drop_in_crates(name: &str) -> &'static [&'static str] {
     match name {
-        "assert_ok" | "assert_err" | "assert_some" | "assert_none" => CLAIMS_CRATES,
+        "assert_ok" | "assert_err" | "assert_some" | "assert_none" | "assert_ok_eq"
+        | "assert_some_eq" => CLAIMS_CRATES,
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
@@ -1643,7 +1649,14 @@ pub(crate) fn source_imported_claims_macros(source: &str) -> Vec<&'static str> {
         .collect()
 }
 
-const CLAIMS_MACRO_NAMES: [&str; 4] = ["assert_err", "assert_none", "assert_ok", "assert_some"];
+const CLAIMS_MACRO_NAMES: [&str; 6] = [
+    "assert_err",
+    "assert_none",
+    "assert_ok",
+    "assert_ok_eq",
+    "assert_some",
+    "assert_some_eq",
+];
 
 /// Words that let tokens bind or import a name, or pull in unseen items,
 /// once a macro expansion parses them as items.
@@ -5167,7 +5180,9 @@ fn cfg_if_macro_use_modules(tree: &ast::TokenTree) -> Option<Vec<(TextSize, Stri
 
 /// The assertion macros the owner-pin collectors read (#8983), in the test body
 /// and in the check helpers it calls.
-const ASSERTION_CANDIDATES: [&str; 6] = [
+const ASSERTION_CANDIDATES: [&str; 8] = [
+    "assert_ok_eq",
+    "assert_some_eq",
     "assert_eq",
     "assert",
     "debug_assert_eq",

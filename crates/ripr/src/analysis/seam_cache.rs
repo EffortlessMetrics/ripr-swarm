@@ -623,7 +623,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// local it reads no longer confirms the changed arm (#12056).
 /// `1.135`: a changed match arm whose `match` value is consumed before the
 /// owner returns it (method call, or a used `let`) is not confirmed (#12143).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.135";
+/// `1.136`: a verified `use claims::..` `assert_ok_eq!` / `assert_some_eq!` of a
+/// literal pins an `Ok`/`Some` tail and reads `exact_value` / strong
+/// (RIPR-SPEC-0197, RIPR-SPEC-0231 rule 10, #12304). Old entries keep `unknown`.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.136";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1176,7 +1179,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// expression (#10797); `1.49` facts keep the unsubstituted row.
 /// `1.51`: exact `#[kani::proof]` functions carry the proof-harness role
 /// (RIPR-SPEC-0367); `1.50` facts leave them production.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.51";
+/// `1.52`: `assert_ok_eq` and `assert_some_eq` are trusted macro names, so the
+/// stored binding candidates may name them (#12304); `1.51` facts cannot.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.52";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
