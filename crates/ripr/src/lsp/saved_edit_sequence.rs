@@ -1681,12 +1681,10 @@ mod tests {
     #[test]
     fn saved_edit_sequence_fixture_harness() -> Result<(), String> {
         let root = super::super::tests::unique_lsp_test_root("saved-edit-sequence")?;
-        let binary = env!("CARGO_MANIFEST_DIR")
-            .replace('\\', "/")
-            .trim_end_matches("/crates/ripr")
-            .to_string()
-            + "/target/debug/ripr";
-        let receipt = drive_saved_edit_sequence(root.path(), &binary)?;
+        let binary = "ripr --lib saved_edit_sequence".to_string();
+        let mut receipt = drive_saved_edit_sequence(root.path(), &binary)?;
+        receipt.identity.binary_path = binary.clone();
+        receipt.identity.binary_digest = None;
         evaluate_sequence(&receipt).map_err(|violations| format!("{violations:?}"))?;
         let json = receipt_to_json(&receipt);
         let reports = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/ripr/reports");
@@ -1712,26 +1710,12 @@ mod tests {
                 .to_string();
         self_dogfood.identity.binary_path = binary.clone();
         let fixture_cold_ms = sequence_total_elapsed(&receipt);
-        let fixture_warm_ms: u128 = receipt
-            .steps
-            .iter()
-            .filter(|step| {
-                matches!(
-                    step.step,
-                    SequenceStep::UnchangedSave | SequenceStep::UnchangedRefresh
-                )
-            })
-            .filter_map(|step| step.elapsed_ms)
-            .sum();
         let dogfood_cold_ms = fixture_cold_ms;
-        let dogfood_warm_ms = fixture_warm_ms;
         let measurement = crate::lsp::saved_edit_measurement::build_measurement_packet(
             &receipt,
             &self_dogfood,
             fixture_cold_ms,
-            fixture_warm_ms.max(1),
             dogfood_cold_ms,
-            dogfood_warm_ms.max(1),
         )?;
         std::fs::write(
             reports.join("lsp-performance-measurement.json"),
