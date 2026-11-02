@@ -22,6 +22,7 @@ Linked issues:
 
 - #12109: internal Kani claim boundaries.
 - #12468: ambiguous harness-to-result joins.
+- #12579: bounded pre-run Kani availability discovery.
 
 Linked PRs:
 
@@ -97,6 +98,14 @@ remain NOT-ESTABLISHED; the report discloses the process-level problem. Native
 failure does not convert a failed harness into an unobserved timeout or upgrade
 a successful-looking row into complete-run assurance. This does not establish
 native-source provenance or inventory completeness.
+
+The `cargo kani --version` availability probe uses the same bounded child
+capture as verification. Its separate deadline is the smaller of 10 seconds
+and the requested `--timeout-secs` verification budget; a failed, signaled,
+status-less, missing or timed-out probe reports an explicit NOT-ESTABLISHED
+reason and never starts verification. This preliminary allowance is **in
+addition to** the subsequent `--timeout-secs` verification deadline, not a
+whole-command deadline. `--allow-empty` never overrides unavailable tooling.
 
 The command exits nonzero when any harness is `FAILED` or `NOT-ESTABLISHED`,
 when `cargo kani` is not runnable, and when no harness is found unless
@@ -180,6 +189,11 @@ It does not claim:
   `lane_never_passes_by_absence`,
   `arguments_parse_and_reject_unknown_flags`,
   `report_names_every_status_word`.
+
+The Unix synthetic-process integration controls in
+`xtask/tests/kani_version_probe.rs` exercise normal and unavailable discovery,
+bound a deliberately delayed version child, verify persisted reports and ensure
+failed discovery cannot invoke a verification child. They do not run Kani.
 
 ## Implementation Mapping
 

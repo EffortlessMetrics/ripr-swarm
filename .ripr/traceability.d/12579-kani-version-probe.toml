@@ -1,0 +1,9 @@
+# Pre-run availability has a distinct timeout and does not establish native proof.
+[[extend]]
+id = "RIPR-SPEC-0371"
+code = ["xtask/src/kani_lane.rs"]
+tests = [
+  "xtask/tests/kani_version_probe.rs::kani_availability_probe_deadline_prevents_a_verification_launch",
+  "xtask/tests/kani_version_probe.rs::kani_availability_probe_refuses_nonzero_signal_and_missing_tool",
+  "xtask/tests/kani_version_probe.rs::kani_availability_probe_preserves_success_and_the_empty_opt_out",
+]
