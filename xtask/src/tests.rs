@@ -258,16 +258,130 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+// Concurrent tests in one process can observe the same clock tick; a process-wide
+// sequence keeps `create_dir` exclusive (#10613).
+static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn temp_dir_path(name: &str, stamp: u128, sequence: u64) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "ripr-xtask-{name}-{}-{stamp}-{sequence}",
+        std::process::id()
+    ))
+}
+
 pub(crate) fn temp_dir(name: &str) -> PathBuf {
+    loop {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let dir = temp_dir_path(name, stamp, sequence);
+        match fs::create_dir(&dir) {
+            Ok(()) => return dir,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                eprintln!("create exclusive temp root at {dir:?}: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+#[test]
+fn temp_dir_same_stamp_allocations_claim_distinct_exclusive_roots() -> Result<(), String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .map_err(|error| error.to_string())?
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("ripr-xtask-{name}-{stamp}"));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    let first_seq = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let first = temp_dir_path("collision-control", stamp, first_seq);
+    fs::create_dir(&first).map_err(|error| error.to_string())?;
+    let second_seq = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let second = temp_dir_path("collision-control", stamp, second_seq);
+    fs::create_dir(&second).map_err(|error| error.to_string())?;
+    if first == second {
+        return Err(format!(
+            "same-stamp allocations reused exclusive root {first:?}"
+        ));
+    }
+    fs::remove_dir_all(&first).map_err(|error| error.to_string())?;
+    fs::remove_dir_all(&second).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn temp_dir_deterministic_collision_preserves_existing_owner() -> Result<(), String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let path = temp_dir_path("collision-control", stamp, sequence);
+    fs::create_dir(&path).map_err(|error| error.to_string())?;
+    let sentinel = path.join("owned.txt");
+    fs::write(&sentinel, "retained").map_err(|error| error.to_string())?;
+    match fs::create_dir(&path) {
+        Ok(()) => Err(format!(
+            "deterministic collision path was accepted: {path:?}"
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let contents = fs::read_to_string(&sentinel).map_err(|e| e.to_string())?;
+            if contents != "retained" {
+                return Err(format!("collision overwrote owner sentinel: {contents:?}"));
+            }
+            fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        Err(error) => Err(format!("unexpected collision error: {error}")),
+    }
+}
+
+#[test]
+fn temp_dir_concurrent_allocations_all_claim_distinct_roots() -> Result<(), String> {
+    use std::sync::Barrier;
+
+    const THREADS: usize = 8;
+    let barrier = Barrier::new(THREADS);
+    let results = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    temp_dir("concurrent-schema-sweep")
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| match handle.join() {
+                Ok(path) => Ok(path),
+                Err(_) => Err("temp_dir worker panicked".to_string()),
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    let mut paths = BTreeSet::new();
+    for path in &results {
+        if !path.is_dir() {
+            return Err(format!("temp root is not a directory: {path:?}"));
+        }
+        if !paths.insert(path.clone()) {
+            return Err(format!("duplicate temp root {path:?}"));
+        }
+    }
+    if paths.len() != THREADS {
+        return Err(format!(
+            "expected {THREADS} distinct roots, got {}",
+            paths.len()
+        ));
+    }
+    for path in results {
+        fs::remove_dir_all(path).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub(crate) fn write(path: &Path, text: &str) {
