@@ -31,12 +31,11 @@ pub(crate) fn resolve_review_guidance_prepared_workspace<'a>(
     if let Some(prepared) = in_memory {
         return Ok(ReviewGuidancePreparedWorkspace::Reuse { prepared });
     }
-    if check_output.is_none() {
+    let Some(path) = check_output else {
         return Ok(ReviewGuidancePreparedWorkspace::Recompute {
             reason: "no_check_output_handoff_requested",
         });
-    }
-    let path = check_output.expect("check_output presence checked above");
+    };
     let text = crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
             "review-comments --check-output {} is invalid: read failed: {err}",
@@ -68,6 +67,18 @@ pub(crate) fn took_index_recompute_compatibility_route(
         (decision, check_output),
         (ReviewGuidancePreparedWorkspace::Recompute { .. }, Some(_))
     )
+}
+
+/// Whether the completed receipt should disclose index recompute (#4692).
+///
+/// The compatibility route can still take the no-impact fast path without
+/// building an index; [`ScopedClassifiedSeamInventory::consumed_sources`] stays
+/// empty in that case.
+pub(crate) fn should_record_index_recompute_compatibility(
+    took_compat_route: bool,
+    inventory: &crate::analysis::ScopedClassifiedSeamInventory,
+) -> bool {
+    took_compat_route && !inventory.consumed_sources.is_empty()
 }
 
 #[cfg(test)]
@@ -109,5 +120,45 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    #[test]
+    fn recompute_disclosure_requires_observed_rust_sources() {
+        use crate::analysis::ScopedClassifiedSeamInventory;
+        use crate::analysis::seam_cache::{FileFactCacheStats, RepoSeamCacheKey};
+
+        let fast_path_inventory = ScopedClassifiedSeamInventory {
+            classified: Vec::new(),
+            classified_seams_considered: 0,
+            file_fact_cache: FileFactCacheStats::zero_work(),
+            workspace_cache_key: RepoSeamCacheKey {
+                schema_version: String::new(),
+                analyzer_version: String::new(),
+                workspace_root_hash: String::new(),
+                files_content_hash: String::new(),
+                cfg_features_hash: String::new(),
+                config_hash: String::new(),
+                test_intent_hash: String::new(),
+                suppressions_hash: String::new(),
+                workspace_manifests_hash: String::new(),
+                lockfile_hash: String::new(),
+                toolchain_hash: String::new(),
+                seam_limit_key: String::new(),
+            },
+            total_rust_files: 0,
+            total_production_files: 0,
+            scoped_production_files: Vec::new(),
+            changed_production_files: Vec::new(),
+            parser_declined_files: Vec::new(),
+            immediate_caller_files: Vec::new(),
+            unevaluated_seams: 0,
+            absent_changed_files: Vec::new(),
+            repo_seam_limit: None,
+            consumed_sources: Default::default(),
+        };
+        assert!(
+            !should_record_index_recompute_compatibility(true, &fast_path_inventory),
+            "no-impact-style inventory must not trigger rebuild disclosure"
+        );
     }
 }

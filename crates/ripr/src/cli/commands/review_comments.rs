@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 
 use super::review_guidance_index_handoff::{
     ReviewGuidancePreparedWorkspace, resolve_review_guidance_prepared_workspace,
-    took_index_recompute_compatibility_route,
+    should_record_index_recompute_compatibility, took_index_recompute_compatibility_route,
 };
 use super::write_text_file;
 
@@ -998,7 +998,7 @@ fn review_comments_with_admission(
         options.timeout_ms,
         "artifact_io",
     )?;
-    if index_recompute_compatibility
+    if should_record_index_recompute_compatibility(index_recompute_compatibility, &scoped_inventory)
         && let ReviewGuidancePreparedWorkspace::Recompute { reason } = &prepared_workspace_decision
     {
         receipt.index_recompute_compatibility(reason);
