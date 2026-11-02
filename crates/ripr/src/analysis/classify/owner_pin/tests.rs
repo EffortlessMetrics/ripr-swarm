@@ -8400,6 +8400,112 @@ fn a_bare_assert_pins_a_bool_owner_to_true_or_false() {
     }
 }
 
+const BOOL_METHOD_LIB: &str = "pub struct Person { pub age: u32 }\n\nimpl Person {\n    pub fn is_adult(&self) -> bool {\n        self.age >= 18\n    }\n}\n";
+
+#[test]
+fn bool_owner_assert_pins_method_receiver_and_qualified_path_like_assert_eq() -> Result<(), String>
+{
+    let tests = "use demo::Person;\n\n#[test]\nfn pins() {\n    assert!(Person { age: 19 }.is_adult());\n    assert_eq!(Person { age: 19 }.is_adult(), true);\n    assert!(!Person { age: 17 }.is_adult());\n}\n";
+    let index = index(&[(LIB, BOOL_METHOD_LIB), (TESTS, tests)]);
+    let owner = owner(&index, "is_adult");
+    let pin = OwnerReturnPin::establish(&return_probe(owner, "self.age >= 18"), owner, &index)
+        .ok_or("bool method owner must establish a pin")?;
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec![
+            "assert!(Person { age: 19 }.is_adult());".to_string(),
+            "assert_eq!(Person { age: 19 }.is_adult(), true);".to_string(),
+            "assert!(!Person { age: 17 }.is_adult());".to_string(),
+        ]
+    );
+
+    let root = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-bool-9092",
+        &[
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"agecheck\", \"panel\"]\n",
+            ),
+            (
+                "agecheck/Cargo.toml",
+                "[package]\nname = \"agecheck\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "panel/Cargo.toml",
+                "[package]\nname = \"panel\"\nversion = \"0.1.0\"\n\n[dependencies]\nagecheck = { path = \"../agecheck\" }\n",
+            ),
+        ],
+    )?;
+    let lib = "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n";
+    let integration = "#[test]\nfn pins() {\n    assert!(agecheck::is_adult(18));\n    assert_eq!(agecheck::is_adult(18), true);\n    assert!(!agecheck::is_adult(17));\n}\n";
+    let mut index = RustIndex::default();
+    for (path, text) in [
+        ("agecheck/src/lib.rs", lib),
+        ("panel/src/lib.rs", "//! panel\n"),
+        ("panel/tests/integration.rs", integration),
+    ] {
+        let facts = summarize_file(PathBuf::from(path), text.to_string());
+        index.extend_functions(facts.functions.iter().cloned());
+        index.extend_tests(facts.tests.iter().cloned());
+        index.insert_file_only(PathBuf::from(path), facts);
+    }
+    index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root);
+    crate::analysis::facts::compose_fixture_source_roles(&mut index, &root);
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| {
+            function.name == "is_adult" && function.file == Path::new("agecheck/src/lib.rs")
+        })
+        .ok_or("cross-crate owner")?;
+    let pin = OwnerReturnPin::establish(&return_probe(owner, "age >= 18"), owner, &index)
+        .ok_or("cross-crate bool owner must establish a pin")?;
+    let syntax = OwnerPinSyntax::default();
+    let test = index.tests().at(0);
+    let admitted: Vec<_> = test
+        .assertions
+        .iter()
+        .filter(|assertion| {
+            pin.admits(
+                test,
+                assertion,
+                &index,
+                &|file, name| {
+                    index.files().get(file).is_some_and(|facts| {
+                        file_imports_foreign_callee_name(&facts.source, name, &index.package_names)
+                    })
+                },
+                &syntax,
+            )
+        })
+        .map(|assertion| assertion.text.clone())
+        .collect();
+    assert_eq!(
+        admitted,
+        vec![
+            "assert!(agecheck::is_adult(18));".to_string(),
+            "assert_eq!(agecheck::is_adult(18), true);".to_string(),
+            "assert!(!agecheck::is_adult(17));".to_string(),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn bool_owner_assert_refuses_disjunction_and_mutable_reassignment() {
+    const GATE2_LIB: &str = "pub fn gate(value: u32) -> bool {\n    value >= 18\n}\n";
+    let tests = "use demo::gate;\n\n#[test]\nfn weak() {\n    assert!(gate(19) || gate(17));\n    let mut hit = gate(19);\n    hit = gate(17);\n    assert!(hit);\n    assert_eq!(gate(19), true);\n}\n";
+    let index = index(&[(LIB, GATE2_LIB), (TESTS, tests)]);
+    let owner = owner(&index, "gate");
+    let pin = OwnerReturnPin::establish(&return_probe(owner, "value >= 18"), owner, &index);
+    assert!(pin.is_some());
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(gate(19), true);".to_string()]
+    );
+}
+
 #[test]
 fn a_bare_assert_pins_nothing_on_a_non_bool_owner() {
     let tests = "use demo::level;\n\n#[test]\nfn pins() {\n    assert!(level(1));\n    assert_eq!(level(1), 11);\n}\n";
