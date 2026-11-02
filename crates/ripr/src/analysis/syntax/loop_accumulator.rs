@@ -7,7 +7,7 @@
 //! and keeps the update's existing `static_unknown`.
 
 use ra_ap_syntax::{
-    AstNode, AstToken, SyntaxKind,
+    AstNode, AstToken, SyntaxKind, SyntaxToken,
     ast::{self, HasArgList, HasName},
 };
 
@@ -91,8 +91,10 @@ pub(crate) fn loop_accumulator(
             && ast::BinExpr::cast(update.rhs()?.syntax().clone())?
                 .op_token()
                 .is_some_and(|op| op.text() == "-"));
-    // A plain term, or a call of one other function on the loop variable.
-    let (call_term, awaited) = if is_plain_term(&term, &loop_variable) {
+    let method_chain = builtin_method_chain_term(&term, &loop_variable);
+    // A plain term, a whitelisted method chain on the loop variable, or a call
+    // of one other function on the loop variable.
+    let (call_term, awaited) = if is_plain_term(&term, &loop_variable) || method_chain {
         (None, false)
     } else {
         let (call, awaited) = call_term(&term, &loop_variable, subtracts)?;
@@ -111,10 +113,13 @@ pub(crate) fn loop_accumulator(
     if function.async_token().is_some() && call_term.is_none() {
         return None;
     }
-    let position = function
-        .param_list()?
-        .params()
-        .position(|param| parameter_is_integer_slice_named(&param, &walked))?;
+    let position = function.param_list()?.params().position(|param| {
+        if method_chain {
+            parameter_is_str_lines_slice_named(&param, &walked)
+        } else {
+            parameter_is_integer_slice_named(&param, &walked)
+        }
+    })?;
     // The owner returns the local as its whole tail.
     let tail = stmts.tail_expr()?;
     if path_ident(&tail).as_deref() != Some(local.as_str()) {
@@ -175,7 +180,11 @@ pub(crate) fn loop_accumulator(
         .syntax()
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
-        .filter(|token| token.kind() == SyntaxKind::IDENT && token.text() == local)
+        .filter(|token| {
+            token.kind() == SyntaxKind::IDENT
+                && token.text() == local
+                && !token_is_method_name_ref(token)
+        })
         .count();
     let expected = if update.op_token().is_some_and(|op| op.text() == "=") {
         4
@@ -266,6 +275,41 @@ fn is_plain_term(term: &ast::Expr, loop_variable: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// A built-in method chain on the loop binding whose value is fixed by the
+/// element alone: `line.split_whitespace().count()`. User methods (`w.weight`)
+/// could carry a custom `AddAssign`, and operators inside the term have
+/// mutants a total pin does not separate.
+fn builtin_method_chain_term(term: &ast::Expr, loop_variable: &str) -> bool {
+    let ast::Expr::MethodCallExpr(count_call) = term else {
+        return false;
+    };
+    if count_call
+        .name_ref()
+        .is_none_or(|name| name.text() != "count")
+        || count_call
+            .arg_list()
+            .is_some_and(|args| args.args().next().is_some())
+    {
+        return false;
+    }
+    let Some(ast::Expr::MethodCallExpr(split_call)) = count_call.receiver() else {
+        return false;
+    };
+    if split_call
+        .name_ref()
+        .is_none_or(|name| name.text() != "split_whitespace")
+        || split_call
+            .arg_list()
+            .is_some_and(|args| args.args().next().is_some())
+    {
+        return false;
+    }
+    let Some(receiver) = split_call.receiver() else {
+        return false;
+    };
+    path_ident(&receiver).as_deref() == Some(loop_variable)
 }
 
 /// `callee(*x)`, `callee(x)`, either followed by `.await`, and optionally
@@ -370,6 +414,22 @@ fn path_ident(expr: &ast::Expr) -> Option<String> {
     Some(path.segment()?.name_ref()?.text().to_string())
 }
 
+fn token_is_method_name_ref(token: &SyntaxToken) -> bool {
+    let Some(name_ref) = token
+        .parent()
+        .filter(|parent| parent.kind() == SyntaxKind::NAME_REF)
+    else {
+        return false;
+    };
+    name_ref
+        .parent()
+        .and_then(ast::MethodCallExpr::cast)
+        .is_some_and(|call| {
+            call.name_ref()
+                .is_some_and(|method| method.syntax().text_range() == name_ref.text_range())
+        })
+}
+
 /// The parameter name `for _ in items` / `items.iter()` walks.
 fn walked_parameter(for_expr: &ast::ForExpr) -> Option<String> {
     let iterable = for_expr.iterable()?;
@@ -383,6 +443,45 @@ fn walked_parameter(for_expr: &ast::ForExpr) -> Option<String> {
         return None;
     }
     path_ident(&call.receiver()?)
+}
+
+/// `lines: &[&str]` (or `&mut [&str]`) walked by `for line in lines`.
+fn parameter_is_str_lines_slice_named(param: &ast::Param, name: &str) -> bool {
+    let Some(ast::Pat::IdentPat(pattern)) = param.pat() else {
+        return false;
+    };
+    if pattern.name().is_none_or(|ident| ident.text() != name) {
+        return false;
+    }
+    let Some(ty) = param.ty() else {
+        return false;
+    };
+    let ty = type_spelling_without_lifetimes(&ty);
+    let ty = ty.trim_start_matches('&');
+    let ty = ty.strip_prefix("mut").unwrap_or(ty);
+    let element = ty
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .or_else(|| {
+            ty.strip_prefix("Vec<")
+                .and_then(|rest| rest.strip_suffix('>'))
+        });
+    element == Some("&str")
+}
+
+fn type_spelling_without_lifetimes(ty: &ast::Type) -> String {
+    let mut spelling = String::new();
+    for token in ty
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+    {
+        if token.kind() == SyntaxKind::LIFETIME_IDENT {
+            continue;
+        }
+        spelling.push_str(token.text());
+    }
+    spelling.chars().filter(|ch| !ch.is_whitespace()).collect()
 }
 
 fn parameter_is_integer_slice_named(param: &ast::Param, name: &str) -> bool {
@@ -529,6 +628,39 @@ mod tests {
             accumulator(second).map(|found| found.walked_position),
             Some(1)
         );
+    }
+
+    #[test]
+    fn word_count_with_split_whitespace_count_is_an_accumulator() {
+        let source = "pub fn word_count(lines: &[&str]) -> usize {
+    let mut count = 0;
+    for line in lines {
+        count += line.split_whitespace().count();
+    }
+    count
+}
+";
+        assert_eq!(
+            accumulator(source),
+            Some(LoopAccumulator {
+                local: "count".to_string(),
+                walked_position: 0,
+                term: None,
+            })
+        );
+    }
+
+    #[test]
+    fn str_lines_slice_with_explicit_lifetime_qualifies() {
+        let source = "pub fn word_count(lines: &[&'static str]) -> usize {
+    let mut count = 0;
+    for line in lines {
+        count += line.split_whitespace().count();
+    }
+    count
+}
+";
+        assert!(accumulator(source).is_some());
     }
 
     #[test]
