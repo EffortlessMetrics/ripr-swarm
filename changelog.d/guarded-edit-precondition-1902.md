@@ -1,0 +1,1 @@
+- Ratify ADR 0025 and RIPR-SPEC-0320: accept one guarded test-only assertion replacement class with versioned `ExactTestEditPrecondition` / `GuardedEditUnavailable` DTOs and corpus-backed fail-closed builder (#1902). No LSP edit emission in this slice.

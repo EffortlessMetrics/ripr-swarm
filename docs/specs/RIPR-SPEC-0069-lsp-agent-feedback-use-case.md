@@ -454,8 +454,10 @@ governed code is a catalog-breaking change and is not worth it for wording.
 
 ## Non-Goals
 
-- No autonomous edits. The LSP never modifies source; every command
-  is read-only or copy-only.
+- No autonomous edits by default. The LSP never modifies source; every command
+  today is read-only or copy-only. ADR 0025 and RIPR-SPEC-0320 ratify one
+  future exception — a guarded, opt-in, test-only assertion replacement — but
+  no command emits or applies that edit until a later implementation slice lands.
 - No generated test patches. Suggested assertion shapes are
   guidance text, not applied edits.
 - No provider integration: no model calls from the LSP, and no
