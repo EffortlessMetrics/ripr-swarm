@@ -64,6 +64,10 @@ import {
   type AttemptInventoryRow,
   type AttemptStatusPresentation
 } from './attemptStatus';
+import {
+  CRASH_RECOVERY_SESSION_BUDGET,
+  CrashRecoveryController
+} from './crashRecovery';
 
 // Re-export for backward compatibility: the picker test imports these symbols
 // from '../../src/client'. They now live in workspaceHelpers.ts (#2553).
@@ -137,9 +141,9 @@ const COPY_INSTALL_COMMAND_ACTION = 'Copy Install Command';
 const RETRY_ACTION = 'Retry';
 /** Action on the mid-session crash message; runs `ripr.restartServer`. */
 export const SERVER_CRASH_RESTART_ACTION = 'Restart Server';
-/** Automatic `CloseAction.Restart` budget inside `SERVER_CRASH_RESTART_WINDOW_MS`. */
-export const SERVER_CRASH_RESTART_LIMIT = 4;
-const SERVER_CRASH_RESTART_WINDOW_MS = 3 * 60 * 1000;
+/** Failed-session budget before typed `circuit_open` (#1744). */
+export const SERVER_CRASH_RESTART_LIMIT = CRASH_RECOVERY_SESSION_BUDGET;
+export { CRASH_RECOVERY_SESSION_BUDGET, CRASH_RECOVERY_BACKOFF_MS } from './crashRecovery';
 const SERVER_CRASH_MESSAGE =
   'The ripr server stopped unexpectedly and will not restart on its own. Restart the server to continue analysis.';
 
@@ -509,8 +513,9 @@ export class RiprClientController {
   private client: RiprLanguageClient | undefined;
   private server: ResolvedServer | undefined;
   private readonly notificationDisposables = new Map<RiprLanguageClient, vscode.Disposable[]>();
-  private crashRestartAtMs: number[] = [];
-  private lastCrashCloseAction: CloseAction | undefined;
+  private readonly crashRecovery: CrashRecoveryController;
+  /** Dedupes duplicate end signals for one session attempt. */
+  private crashEndChargedForAttempt = false;
   private stoppingClient = false;
   private receivedTypedAnalysisStatus = false;
   private typedAnalysisStatusState: RiprAnalysisStatusPayload['state'] | undefined;
@@ -584,8 +589,10 @@ export class RiprClientController {
     private readonly output: vscode.LogOutputChannel,
     private readonly runtime: RiprClientRuntime = defaultRuntime,
     private readonly statusBar?: vscode.StatusBarItem,
-    private readonly attemptStatusBar?: vscode.StatusBarItem
+    private readonly attemptStatusBar?: vscode.StatusBarItem,
+    crashRecovery?: CrashRecoveryController
   ) {
+    this.crashRecovery = crashRecovery ?? new CrashRecoveryController();
     this.updateStatus(this.status);
   }
 
@@ -929,6 +936,7 @@ export class RiprClientController {
   }
 
   async restart(): Promise<void> {
+    this.crashRecovery.resetCircuit();
     await this.stop();
     await this.start();
   }
@@ -1036,6 +1044,7 @@ export class RiprClientController {
   }
 
   private async restartThroughLifecycle(): Promise<void> {
+    this.crashRecovery.resetCircuit();
     if (this.runtime.restartWorkspaceRoot) {
       await this.runtime.restartWorkspaceRoot();
       return;
@@ -1094,6 +1103,7 @@ export class RiprClientController {
     this.workspaceRootSelectionSuppressed = true;
     this.pendingWorkspaceRoot = undefined;
     this.selectedWorkspaceRoot = undefined;
+    this.crashRecovery.cancelPendingRetry();
     // Cancel any setup for a folder removed before it acquired a client.
     this.startGeneration++;
   }
@@ -1159,24 +1169,112 @@ export class RiprClientController {
     if (this.stoppingClient || this.client === undefined) {
       return { action: CloseAction.DoNotRestart, handled: true };
     }
-    const now = Date.now();
-    this.crashRestartAtMs = this.crashRestartAtMs.filter(
-      (stamp) => now - stamp <= SERVER_CRASH_RESTART_WINDOW_MS
-    );
-    if (this.crashRestartAtMs.length < SERVER_CRASH_RESTART_LIMIT) {
-      this.crashRestartAtMs.push(now);
-      this.lastCrashCloseAction = CloseAction.Restart;
-      this.output.appendLine('ripr server stopped unexpectedly; restarting it.');
-      return { action: CloseAction.Restart };
-    }
-    this.crashRestartAtMs = [];
-    this.lastCrashCloseAction = CloseAction.DoNotRestart;
-    this.output.appendLine(
-      'ripr server stopped unexpectedly too many times and will not restart on its own.'
-    );
-    this.markServerStoppedUnexpectedly();
-    this.offerCrashRestart();
+    this.maybeChargeUnexpectedSessionEnd();
     return { action: CloseAction.DoNotRestart, handled: true };
+  }
+
+  private serverIdentityDetail(): string | undefined {
+    const server = this.server;
+    return server ? `Server: ${server.source} (${server.detail})` : undefined;
+  }
+
+  private paintCrashRecoveryStatus(outcome: 'retry_scheduled' | 'circuit_open'): void {
+    const serverLine = this.serverIdentityDetail();
+    const snapshot = this.crashRecovery.snapshot();
+    if (outcome === 'circuit_open') {
+      this.updateStatus({
+        kind: 'circuitOpen',
+        summary: 'The ripr server stopped unexpectedly too many times.',
+        detail: serverLine ?? 'Automatic recovery is paused after repeated unexpected exits.',
+        nextStep: `Run ${SERVER_CRASH_RESTART_ACTION} to start a fresh admitted session.`
+      });
+      this.offerCrashRestart();
+      return;
+    }
+    const delayMs = snapshot.pendingRetryDelayMs ?? 0;
+    this.updateStatus({
+      kind: 'serverFailed',
+      summary: 'The ripr server stopped unexpectedly; retrying shortly.',
+      detail: [
+        serverLine,
+        `Retry ${snapshot.failedSessions} of ${CRASH_RECOVERY_SESSION_BUDGET} in ${delayMs} ms.`
+      ].filter((line): line is string => Boolean(line)).join('\n'),
+      nextStep: `Wait for automatic retry, or run ${SERVER_CRASH_RESTART_ACTION}.`
+    });
+  }
+
+  private detachStoppedClient(client: RiprLanguageClient): void {
+    if (this.client === client) {
+      this.client = undefined;
+    }
+    this.disposeNotifications(client);
+  }
+
+  private async executeCrashRecoveryRetry(capturedGeneration: number): Promise<void> {
+    if (this.startGeneration !== capturedGeneration) {
+      return;
+    }
+    if (this.crashRecovery.isCircuitOpen()) {
+      return;
+    }
+    if (!this.runtime.isWorkspaceTrusted()) {
+      this.output.appendLine('ripr crash recovery skipped: workspace is not trusted.');
+      return;
+    }
+    const staleClient = this.client;
+    if (staleClient) {
+      this.crashRecovery.beginIntentionalStop();
+      try {
+        await staleClient.stop();
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.output.appendLine(`ripr crash recovery cleanup stop failed: ${message}`);
+      } finally {
+        this.crashRecovery.endIntentionalStop();
+      }
+      this.detachStoppedClient(staleClient);
+    }
+    if (this.startGeneration !== capturedGeneration) {
+      return;
+    }
+    this.output.appendLine('ripr server retry after unexpected exit: re-resolving and restarting.');
+    try {
+      await this.start();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`ripr crash recovery restart failed: ${message}`);
+      this.crashEndChargedForAttempt = false;
+      this.maybeChargeUnexpectedSessionEnd();
+    }
+  }
+
+  private maybeChargeUnexpectedSessionEnd(): void {
+    if (this.stoppingClient || this.crashRecovery.intentionalStopActive()) {
+      return;
+    }
+    if (this.crashEndChargedForAttempt) {
+      return;
+    }
+    this.crashEndChargedForAttempt = true;
+    const capturedGeneration = this.startGeneration;
+    const client = this.client;
+    if (client) {
+      this.detachStoppedClient(client);
+    }
+    const outcome = this.crashRecovery.handleUnexpectedSessionEnd({
+      startGeneration: capturedGeneration,
+      readStartGeneration: () => this.startGeneration,
+      onRetry: () => this.executeCrashRecoveryRetry(capturedGeneration)
+    });
+    if (outcome === 'ignored') {
+      return;
+    }
+    this.output.appendLine(
+      outcome === 'circuit_open'
+        ? 'ripr server stopped unexpectedly too many times; circuit is open.'
+        : 'ripr server stopped unexpectedly; scheduling bounded retry.'
+    );
+    this.paintCrashRecoveryStatus(outcome);
   }
 
   private handleClientStateChange(
@@ -1186,22 +1284,28 @@ export class RiprClientController {
     if (this.client !== client || this.stoppingClient) {
       return;
     }
+    if (event.newState === State.Starting) {
+      this.crashEndChargedForAttempt = false;
+      return;
+    }
     if (event.newState === State.Running) {
-      this.lastCrashCloseAction = undefined;
+      this.crashRecovery.noteSuccessfulSession();
+      this.crashEndChargedForAttempt = false;
       return;
     }
     if (event.newState === State.StartFailed) {
-      this.lastCrashCloseAction = undefined;
-      this.markServerStoppedUnexpectedly();
       return;
     }
     if (event.newState !== State.Stopped) {
       return;
     }
-    if (this.lastCrashCloseAction === CloseAction.Restart) {
+    if (this.crashRecovery.hasPendingRetry() || this.crashRecovery.isCircuitOpen()) {
       return;
     }
-    this.markServerStoppedUnexpectedly();
+    if (this.stoppingClient || this.crashRecovery.intentionalStopActive()) {
+      return;
+    }
+    this.maybeChargeUnexpectedSessionEnd();
   }
 
   private markServerStoppedUnexpectedly(): void {
@@ -1243,6 +1347,8 @@ export class RiprClientController {
     const client = this.client;
     const starting = this.startingPromise;
     let startupFailed = false;
+    this.crashRecovery.beginIntentionalStop();
+    this.crashRecovery.cancelPendingRetry();
     // Bump the generation so any in-flight startOnce() detects that stop()
     // ran during its async setup window. The captured start is awaited before
     // the client is cleared or stopped, so a stop during startup cannot lose
@@ -1279,8 +1385,6 @@ export class RiprClientController {
       return { kind: this.client ? 'replaced' : startupFailed ? 'startupFailed' : 'cancelled' };
     }
     this.stoppingClient = true;
-    this.crashRestartAtMs = [];
-    this.lastCrashCloseAction = undefined;
     try {
       if (client) {
         await client.stop();
@@ -1289,6 +1393,7 @@ export class RiprClientController {
       }
     } finally {
       this.stoppingClient = false;
+      this.crashRecovery.endIntentionalStop();
     }
     this.server = undefined;
     this.receivedTypedAnalysisStatus = false;

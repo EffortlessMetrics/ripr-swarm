@@ -89,6 +89,7 @@ const MAIN_STATUS_BAR_VISIBILITY: Record<RiprStatusKind, boolean> = {
   resolvingServer: true,
   serverUnavailable: false,
   serverFailed: true,
+  circuitOpen: true,
   starting: true,
   analysisQueued: true,
   ready: true,
