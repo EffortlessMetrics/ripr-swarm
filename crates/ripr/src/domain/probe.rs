@@ -446,6 +446,19 @@ pub(crate) fn input_boundary_fact<'a>(
     }
 }
 
+/// Row-local exact-discriminator support for #5575: typed value/field/error/effect
+/// facts only, never input-activation gaps (guard unentered, unselected arm).
+pub(crate) fn row_exact_discriminator_fact<'a>(
+    facts: &'a [MissingDiscriminatorFact],
+    family: &ProbeFamily,
+) -> Option<&'a MissingDiscriminatorFact> {
+    let boundary = input_boundary_fact(facts, family);
+    facts.iter().find(|fact| {
+        !is_unselected_input_reason(&fact.reason)
+            && boundary.is_none_or(|boundary| !std::ptr::eq(*fact, boundary))
+    })
+}
+
 /// The missing discriminator that names an exact assertion no test makes
 /// (an error variant or a constructed field): the first fact that is not the
 /// predicate input boundary.
