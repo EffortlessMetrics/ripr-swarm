@@ -27,6 +27,18 @@ fn tsconfig_path_aliases_resolve_by_default_and_explicit_false_opts_out() -> Res
 }
 
 #[test]
+fn semantic_config_diagnostic_human_first_line_includes_exact_coordinates() {
+    let source = "[analysis]\nmode = \"bad\"\n";
+    let diagnostic = parse_config_diagnostic(source).expect_err("invalid mode");
+    let line = diagnostic.human_first_line("/tmp/ripr.toml");
+    assert!(
+        line.starts_with("/tmp/ripr.toml:2:"),
+        "expected path:line:column prefix, got {line}"
+    );
+    assert!(line.contains("analysis.mode"));
+}
+
+#[test]
 fn semantic_config_diagnostic_locates_canonical_value_not_comment_or_other_leaf() {
     let source = "# reachable_unrevealed = \"eror\"\n[severity.seams]\nreachable_unrevealed = \"warning\"\n[severity.findings]\nreachable_unrevealed = \"eror\"\n";
     let diagnostic = parse_config_diagnostic(source).expect_err("invalid nested severity");

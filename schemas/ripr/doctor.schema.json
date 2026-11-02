@@ -206,6 +206,28 @@
       "description": "A boolean that is null where the producer could not determine the value.",
       "type": ["boolean", "null"]
     },
+    "config_validation": {
+      "description": "Structured semantic ripr.toml validation coordinates (#2624). Present on a failing config check when the loader produced a typed ConfigDiagnostic; omitted for structural TOML parse failures.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "file", "location_status", "message"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "config_path": { "$ref": "#/$defs/nullable_string" },
+        "file": { "type": "string", "minLength": 1 },
+        "location_status": { "enum": ["exact", "unavailable"] },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "start_column": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "end_column": { "type": "integer", "minimum": 1 },
+        "invalid_value": { "$ref": "#/$defs/nullable_string" },
+        "expected_values": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "message": { "type": "string" }
+      }
+    },
     "check": {
       "type": "object",
       "additionalProperties": false,
@@ -214,6 +236,7 @@
         "name": { "type": "string", "minLength": 1 },
         "status": { "$ref": "#/$defs/check_status" },
         "evidence": { "$ref": "#/$defs/nullable_string" },
+        "validation": { "$ref": "#/$defs/config_validation" },
         "elapsed_ms": {
           "description": "How long this check's computation took, in milliseconds (additive, #8540). Omitted for skipped checks. Volatile (#9807): emitted only with `ripr doctor --json --timings`.",
           "type": "integer",

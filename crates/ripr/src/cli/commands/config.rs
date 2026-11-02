@@ -290,6 +290,38 @@ path = ".ripr/suppressions\u0000.toml"
     }
 
     #[test]
+    fn validate_reports_line_column_for_semantic_mode_error() -> Result<(), String> {
+        let root = temp_dir("semantic-line");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let source = "[analysis]\nmode = \"bad\"\n";
+        fs::write(root.join(CONFIG_FILE_NAME), source).map_err(|error| error.to_string())?;
+
+        let diagnostic = crate::config::parse_config_diagnostic(source)
+            .expect_err("invalid mode must fail parse");
+        let location = diagnostic
+            .location
+            .as_ref()
+            .ok_or_else(|| "expected exact coordinates on invalid mode".to_string())?;
+
+        let result = validate_config(&root);
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        let error = match result {
+            Ok(message) => {
+                return Err(format!("invalid mode unexpectedly passed with {message}"));
+            }
+            Err(error) => error,
+        };
+        let first_line = error.lines().next().unwrap_or("");
+        let needle = format!(":{}:{}:", location.start.line, location.start.column);
+        if !first_line.contains(&needle) {
+            return Err(format!(
+                "expected semantic coordinates {needle} in {first_line}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn validate_returns_the_loader_error_for_invalid_toml() -> Result<(), String> {
         let root = temp_dir("invalid");
         fs::create_dir_all(&root).map_err(|error| error.to_string())?;
