@@ -1,8 +1,17 @@
 //! Operation-preserving I/O diagnostics for the bounded help-proof adapter.
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+// Concurrent tests in one process can read the same clock tick. Nested
+// process-group cleanup also allocates a help-command scratch while another
+// capture may be doing the same, so the name carries a process-wide sequence
+// in addition to pid and clock nonce. Historical `ripr-{label}-{pid}-{nonce}`
+// names failed exclusive create_dir with EEXIST (os error 17) on the real
+// group-cleanup path (#7545).
+static SCRATCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn io_error(operation: &str, path: &Path, error: io::Error) -> String {
     format!(
@@ -18,6 +27,18 @@ pub fn ensure_parent(parent: &Path) -> Result<(), String> {
 
 pub fn create_root(root: &Path) -> Result<(), String> {
     std::fs::create_dir(root).map_err(|e| io_error("create exclusive scratch root", root, e))
+}
+
+pub fn exclusive_scratch_root(label: &str, nonce: u128) -> Result<PathBuf, String> {
+    let parent = std::env::temp_dir();
+    ensure_parent(&parent)?;
+    let sequence = SCRATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let root = parent.join(format!(
+        "ripr-{label}-{}-{nonce}-{sequence}",
+        std::process::id()
+    ));
+    create_root(&root)?;
+    Ok(root)
 }
 
 pub fn exclusive_capture(path: &Path) -> Result<File, String> {
@@ -54,8 +75,10 @@ pub fn spawn_context(command: &Command, scratch: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Barrier;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     struct Fixture(PathBuf);
     impl Fixture {
@@ -206,5 +229,130 @@ mod tests {
             return Err("spawn diagnostic exposed environment".into());
         }
         Ok(())
+    }
+
+    fn historical_pid_nonce_path(label: &str, nonce: u128) -> PathBuf {
+        std::env::temp_dir().join(format!("ripr-{label}-{}-{nonce}", std::process::id()))
+    }
+
+    fn per_run_nonce() -> Result<u128, String> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Ok(std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+            .saturating_add(NEXT.fetch_add(1, Ordering::Relaxed) as u128))
+    }
+
+    #[test]
+    fn historical_pid_and_clock_name_collides_with_eexist() -> Result<(), String> {
+        // Nonce is unique per run so an interrupted prior process that reused this
+        // PID cannot fail the first exclusive create. The collision oracle is the
+        // second create_root on that same pid+nonce path, not a globally fixed name.
+        let path = historical_pid_nonce_path("help-command", per_run_nonce()?);
+        ensure_parent(path.parent().ok_or("historical parent missing")?)?;
+        if path.exists() {
+            std::fs::remove_dir_all(&path)
+                .map_err(|error| format!("remove leftover historical path {path:?}: {error}"))?;
+        }
+        create_root(&path)?;
+        let _guard = Fixture(path.clone());
+        let actual = std::fs::create_dir(&path)
+            .err()
+            .ok_or("historical colliding name was accepted by create_dir")?;
+        if actual.kind() != io::ErrorKind::AlreadyExists {
+            return Err(format!(
+                "historical collision kind {:?}, expected AlreadyExists",
+                actual.kind()
+            ));
+        }
+        let diagnostic = create_root(&path)
+            .err()
+            .ok_or("historical colliding name was accepted by create_root")?;
+        for expected in [
+            "create exclusive scratch root".to_string(),
+            format!("{path:?}"),
+            format!("kind={:?}", actual.kind()),
+            format!("raw_os_error={:?}", actual.raw_os_error()),
+            actual.to_string(),
+        ] {
+            if !diagnostic.contains(&expected) {
+                return Err(format!("missing {expected:?} in {diagnostic:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn same_nonce_allocations_create_distinct_exclusive_roots() -> Result<(), String> {
+        let nonce = per_run_nonce()?;
+        let first = exclusive_scratch_root("help-command", nonce)?;
+        let _first = Fixture(first.clone());
+        let second = exclusive_scratch_root("help-command", nonce)?;
+        let _second = Fixture(second.clone());
+        if first == second {
+            return Err(format!(
+                "same-nonce allocations reused exclusive root {first:?}"
+            ));
+        }
+        if !first.is_dir() || !second.is_dir() {
+            return Err(format!(
+                "same-nonce roots were not both directories: {first:?}, {second:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_same_nonce_allocations_all_succeed() -> Result<(), String> {
+        const THREADS: usize = 8;
+        let nonce = per_run_nonce()?;
+        let barrier = Barrier::new(THREADS);
+        let results = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..THREADS)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        exclusive_scratch_root("help-command", nonce)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| match handle.join() {
+                    Ok(result) => result,
+                    Err(_) => Err("same-nonce worker panicked".into()),
+                })
+                .collect::<Vec<_>>()
+        });
+        let mut guards = Vec::new();
+        let mut paths = BTreeSet::new();
+        let mut failures = Vec::new();
+        for result in results {
+            match result {
+                Ok(path) => {
+                    if !path.is_dir() {
+                        failures.push(format!("same-nonce root is not a directory: {path:?}"));
+                    }
+                    if !paths.insert(path.clone()) {
+                        failures.push(format!("duplicate exclusive root {path:?}"));
+                    }
+                    guards.push(Fixture(path));
+                }
+                Err(error) => failures.push(error),
+            }
+        }
+        drop(guards);
+        if paths.len() != THREADS {
+            failures.push(format!(
+                "expected {THREADS} distinct roots, got {}",
+                paths.len()
+            ));
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
+        }
     }
 }
