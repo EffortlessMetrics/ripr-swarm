@@ -413,6 +413,7 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "import builtins as b\nb.isinstance: object  # a=b\n\n\n",
         "import builtins as b\nb.isinstance, other; value = 1\n\n\n",
         "import builtins as b\nlabel = \"say \\\"b.isinstance = 1\\\"\"\n\n\n",
+        "import builtins as b\nlabel = \"b.isinstance += 1\"\n\n\n",
         "import builtins as b\nfor name in [b.isinstance, b.len]: count = 1\n\n\n",
         // #12592 controls: augmented ops on the right or unrelated targets bind nothing.
         "import builtins as b\nlimit = b.isinstance + 1\n\n\n",
