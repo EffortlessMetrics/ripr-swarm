@@ -2530,7 +2530,15 @@ impl RustAdapter {
         // stays out, the index stays partial and the bypass stays off.
         let workspace_index_complete = index_files.len() == analyzable_rust_files.len();
         let index_file_set: std::collections::BTreeSet<&PathBuf> = index_files.iter().collect();
-        let unindexed_test_reach_abstains = !workspace_index_complete
+        // #5316: instant (and any run with unchanged tests excluded) must not
+        // emit definite `no_static_path` without searching omitted test files.
+        // #5320 name-admitted dependent scope also leaves files unindexed on
+        // purpose; withholding there would break narrowed/full parity.
+        let partial_index_from_selection = matches!(options.mode, AnalysisMode::Instant)
+            || !options.include_unchanged_tests;
+        let unindexed_test_reach_abstains = dependent_scope.is_none()
+            && partial_index_from_selection
+            && !workspace_index_complete
             && analyzable_rust_files.iter().any(|path| {
                 !index_file_set.contains(path)
                     && rust_index::path_may_hold_unindexed_rust_tests(path)
