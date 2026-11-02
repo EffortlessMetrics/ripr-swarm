@@ -2,7 +2,9 @@
 //! nodes) shared; each consumer creates its own thread-local red syntax view.
 //! Unknown parses and ambiguous declarations are cached as unknown, never sync.
 
-use super::{NameScopes, name_scope::name_scopes_in_tree, parse_clean_source_file, ra::LineIndex};
+use super::{
+    NameScopes, name_scope::name_scopes_for_test_caller, parse_clean_source_file, ra::LineIndex,
+};
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use ra_ap_syntax::{
     AstNode, AstPtr, Parse, SourceFile, TextRange,
@@ -427,7 +429,7 @@ impl SourceSnapshot {
     pub(crate) fn name_scopes(&self, caller: &TestSummary) -> Option<Arc<NameScopes>> {
         let key = (caller.name.clone(), caller.start_line, caller.end_line);
         let compute = || {
-            name_scopes_in_tree(
+            name_scopes_for_test_caller(
                 &self.parse.as_ref()?.tree(),
                 &self.lines,
                 caller.start_line,

@@ -16,7 +16,7 @@
 use super::nesting::parse_clean_source_file;
 use super::ra::LineIndex;
 use ra_ap_syntax::{
-    AstNode, SyntaxNode,
+    AstNode, SyntaxNode, TextSize,
     ast::{self, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -303,6 +303,92 @@ pub(super) fn name_scopes_in_tree(
         // associated fn's scope continues at its enclosing module.
     }
     Some(NameScopes { scopes })
+}
+
+enum TestFnAtLine {
+    Absent,
+    Unique,
+    Ambiguous,
+}
+
+fn test_fn_at_line(
+    tree: &ast::SourceFile,
+    line_index: &LineIndex,
+    fn_line: usize,
+    fn_name: &str,
+) -> TestFnAtLine {
+    let mut functions = tree.syntax().descendants().filter_map(|node| {
+        let function = ast::Fn::cast(node)?;
+        let token = function.fn_token()?;
+        let named = function.name().is_some_and(|ident| ident.text() == fn_name);
+        (named && line_index.line(token.text_range().start()) == fn_line).then_some(())
+    });
+    match (functions.next(), functions.next()) {
+        (None, None) => TestFnAtLine::Absent,
+        (Some(_), None) => TestFnAtLine::Unique,
+        _ => TestFnAtLine::Ambiguous,
+    }
+}
+
+/// Name scopes for a test summary: the function body when a unique `fn` sits
+/// on `fn_line`, else the module scopes visible at `fn_line` for a
+/// macro-generated test pinned to its invocation (#12320).
+pub(crate) fn name_scopes_for_test_caller(
+    tree: &ast::SourceFile,
+    line_index: &LineIndex,
+    fn_line: usize,
+    fn_name: &str,
+) -> Option<NameScopes> {
+    match test_fn_at_line(tree, line_index, fn_line, fn_name) {
+        TestFnAtLine::Unique => name_scopes_in_tree(tree, line_index, fn_line, fn_name),
+        TestFnAtLine::Absent => name_scopes_at_line(tree, line_index, fn_line),
+        TestFnAtLine::Ambiguous => None,
+    }
+}
+
+fn name_scopes_at_line(
+    tree: &ast::SourceFile,
+    line_index: &LineIndex,
+    line: usize,
+) -> Option<NameScopes> {
+    let start = line_index.line_start(line)?;
+    let offset = TextSize::try_from(start).ok()?;
+    let token = tree
+        .syntax()
+        .token_at_offset(offset)
+        .find(|token| line_index.line(token.text_range().start()) == line)?;
+    let modules_of = |node: &SyntaxNode| {
+        let mut modules: Vec<String> = node
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .filter_map(|module| module.name().map(|ident| ident.text().to_string()))
+            .collect();
+        modules.reverse();
+        modules
+    };
+    let mut scopes = Vec::new();
+    for ancestor in token.parent()?.ancestors() {
+        if ast::Fn::can_cast(ancestor.kind()) {
+            // Macro-generated tests are pinned to an item-position invocation;
+            // an invocation inside a function body is refused by the expander.
+            return None;
+        }
+        if let Some(module) = ast::Module::cast(ancestor.clone()) {
+            let mut scope = NameScope {
+                modules: modules_of(&ancestor),
+                ..NameScope::default()
+            };
+            if let Some(items) = module.item_list() {
+                for item in items.items() {
+                    record_item(&item, &mut scope);
+                }
+            }
+            scopes.push(scope);
+        } else if let Some(file) = ast::SourceFile::cast(ancestor.clone()) {
+            scopes.push(name_scope_for_file(&file));
+        }
+    }
+    (!scopes.is_empty()).then_some(NameScopes { scopes })
 }
 
 /// End line of the closure body when `pattern` is a parameter of a closure
@@ -729,6 +815,32 @@ mod tests {
         assert_eq!(imports_of(tests, "other_render"), vec![UseBinding::Opaque]);
         assert_eq!(imports_of(tests, "a"), vec![UseBinding::Opaque]);
         assert_eq!(tests.globs, vec![None]);
+    }
+
+    #[test]
+    fn macro_invocation_line_borrows_enclosing_module_imports() -> Result<(), String> {
+        let source = "\
+use demo::owner;\n\
+child_table! {\n\
+    child_under(3, 5, true)\n\
+}\n\
+macro_rules! child_table {\n\
+    ($name:ident) => {\n\
+        #[test]\n\
+        fn $name() { assert_eq!(owner(3, 5), true); }\n\
+    };\n\
+}\n";
+        let parse = parse_clean_source_file(source).ok_or_else(|| "parse".to_string())?;
+        let line_index = LineIndex::new(source);
+        let scopes = name_scopes_for_test_caller(&parse.tree(), &line_index, 2, "child_under")
+            .ok_or_else(|| "invocation scopes".to_string())?;
+        assert!(
+            scopes.scopes.iter().any(|scope| {
+                imports_of(scope, "owner") == vec![UseBinding::Path(strings(&["demo", "owner"]))]
+            }),
+            "{scopes:?}"
+        );
+        Ok(())
     }
 
     #[test]

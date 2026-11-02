@@ -3152,6 +3152,10 @@ impl LineIndex {
         self.line_from_offset(text_size_to_usize(offset))
     }
 
+    pub(crate) fn line_start(&self, line: usize) -> Option<usize> {
+        self.starts.get(line.saturating_sub(1)).copied()
+    }
+
     pub(crate) fn line_for_range_end(&self, offset: TextSize) -> usize {
         self.line_from_offset(text_size_to_usize(offset).saturating_sub(1))
     }
