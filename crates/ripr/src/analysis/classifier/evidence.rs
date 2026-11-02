@@ -944,6 +944,11 @@ impl ClassifiedProbeEvidence {
                     context.workspace_root,
                     context.owner_fn,
                 ) && test.calls.iter().any(|call| {
+                    let same_line_count = test
+                        .calls
+                        .iter()
+                        .filter(|other| other.name == callee && other.line == call.line)
+                        .count();
                     call.name == callee
                         && bindings.call_resolves_to_owner(
                             root,
@@ -952,6 +957,7 @@ impl ClassifiedProbeEvidence {
                             callee,
                             &owner.file,
                             &owner.name,
+                            same_line_count,
                         )
                 }) {
                     return false;
