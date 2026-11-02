@@ -170,7 +170,7 @@ fn given_an_imported_or_owner_built_receiver_then_the_owner_is_matched() {
 }
 
 /// Literal operands read no name, so a pair with one needs no file bindings
-/// (#12447); anything a binding could stand for does.
+/// (#12515); anything a binding could stand for does.
 #[test]
 fn only_pairs_of_two_named_operands_need_bindings() {
     use derived_expectation::{needs_bindings, reads_a_name};

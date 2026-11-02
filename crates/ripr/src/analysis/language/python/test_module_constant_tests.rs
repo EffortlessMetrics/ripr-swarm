@@ -213,7 +213,7 @@ fn an_unrelated_conftest_keeps_the_constant_credit() -> Result<(), String> {
 }
 
 /// The indexed lookup returns what scanning every write for every test did
-/// (#12447): the writer's own file is excluded, `*` writes reach every test,
+/// (#12515): the writer's own file is excluded, `*` writes reach every test,
 /// and a module name only reaches tests importable under it.
 #[test]
 fn foreign_writes_indexed_lookup_matches_the_full_scan() {
