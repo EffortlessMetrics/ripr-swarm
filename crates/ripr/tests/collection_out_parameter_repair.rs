@@ -18,8 +18,7 @@ const NEW: &str =
     "pub fn log_line(buf: &mut Vec<String>, msg: &str) {\n    buf.push(msg.to_uppercase());\n}\n";
 
 /// The plain reason both commands give once the value is followed.
-const CONTENTS_CHECK: &str =
-    "an exact check of what the test's vector holds after the call, which ripr cannot write yet";
+const CONTENTS_CHECK: &str = "an exact check of the full contents the test reads back after the call, which ripr cannot write yet";
 /// The plain reason both commands give while the value is not followed.
 const NOT_FOLLOWED: &str = "a way to follow the changed value to something a test can check";
 
@@ -323,4 +322,51 @@ fn should_panic_test_is_not_followed() -> Result<(), String> {
             "use fx::log_line;\n\n#[test]\n#[should_panic]\nfn log_line_appends() {{\n{COUNT_BODY}}}\n"
         ),
     )
+}
+
+#[test]
+fn string_count_read_is_followed_in_both_commands() -> Result<(), String> {
+    let old = "pub fn add_mark(buf: &mut String, c: char) {\n    buf.push(c);\n}\n";
+    let repo = Repo::create(
+        old,
+        &old.replace("buf.push(c)", "buf.push(c.to_ascii_uppercase())"),
+        "use fx::add_mark;\n\n#[test]\nfn add_mark_appends() {\n    let mut s = String::new();\n    add_mark(&mut s, 'a');\n    assert_eq!(s.len(), 1);\n}\n",
+    )?;
+    assert_both_refuse_with("String", &repo, CONTENTS_CHECK, NOT_FOLLOWED)
+}
+
+#[test]
+fn push_argument_that_may_return_first_is_not_followed() -> Result<(), String> {
+    // With `skip` true the owner returns before pushing, so the count read
+    // of zero says nothing about the pushed value.
+    let old = "pub fn log_line(buf: &mut Vec<String>, msg: &str, skip: bool) {\n    buf.push(if skip { return } else { msg.to_string() });\n}\n";
+    assert_not_followed(
+        "return in the argument",
+        old,
+        &old.replace("msg.to_string()", "msg.to_uppercase()"),
+        "use fx::log_line;\n\n#[test]\nfn log_line_skips() {\n    let mut b = Vec::new();\n    log_line(&mut b, \"hi\", true);\n    assert_eq!(b.len(), 0);\n}\n",
+    )
+}
+
+#[test]
+fn exactly_checked_vector_is_already_noticed_not_a_contents_gap() -> Result<(), String> {
+    // An exact read of the receiver by name already checks the pushed value,
+    // so the contents-check refusal must not replace that answer.
+    let repo = Repo::create(
+        OLD,
+        NEW,
+        "use fx::log_line;\n\n#[test]\nfn log_line_appends() {\n    let mut buf = Vec::new();\n    log_line(&mut buf, \"hi\");\n    assert_eq!(buf, vec![\"HI\".to_string()]);\n}\n",
+    )?;
+    let (check, started, repair) = repo.answers(&[])?;
+    if started || check_start_id(&check).is_some() {
+        return Err(format!(
+            "exact check: neither may start:\n{check}\n{repair}"
+        ));
+    }
+    if check.contains(CONTENTS_CHECK) || repair.contains(CONTENTS_CHECK) {
+        return Err(format!(
+            "exact check: the contents-check refusal must not apply:\n{check}\n{repair}"
+        ));
+    }
+    Ok(())
 }
