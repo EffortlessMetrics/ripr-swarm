@@ -64,6 +64,13 @@ import {
   type AttemptInventoryRow,
   type AttemptStatusPresentation
 } from './attemptStatus';
+import {
+  buildAgentRepairBeforeArgs,
+  extractAgentRepairLoopTarget,
+  findLiveRepairAttemptForSeam,
+  parseBeforePhaseRepairStart,
+  seamIdFromAgentRepairTarget
+} from './repairStart';
 
 // Re-export for backward compatibility: the picker test imports these symbols
 // from '../../src/client'. They now live in workspaceHelpers.ts (#2553).
@@ -1566,6 +1573,10 @@ export class RiprClientController {
       return;
     }
 
+    if (await this.tryStartSharedRepairBefore(editor, actions ?? [])) {
+      return;
+    }
+
     const candidates = startRepairActions(actions ?? []);
     if (candidates.length === 0) {
       this.runtime.showInformationMessage('No bounded ripr repair action is available for the current gap. Refresh saved-workspace analysis if this looks stale.');
@@ -1582,6 +1593,122 @@ export class RiprClientController {
       selected.command.command,
       ...(selected.command.arguments ?? [])
     );
+  }
+
+  /**
+   * When the LSP exposes a seam-bound `agent_repair` handoff, run the shared
+   * before phase through the CLI and present the bounded summary (#4645).
+   */
+  private async tryStartSharedRepairBefore(
+    editor: vscode.TextEditor,
+    actions: Array<vscode.CodeAction | vscode.Command>
+  ): Promise<boolean> {
+    const rawTarget = extractAgentRepairLoopTarget(actions);
+    if (!rawTarget) {
+      return false;
+    }
+    const loopTarget = rawTarget as RiprAgentLoopCommandTarget;
+    const rootBlocker = this.copyActionRootBlocker(uriFromTarget(loopTarget));
+    if (rootBlocker) {
+      this.runtime.showInformationMessage(rootBlocker);
+      return true;
+    }
+    const generation = this.startGeneration;
+    const redirectRoots = await workspaceRedirectRoots(this.workspaceRoot);
+    if (!validatedAgentLoopCommand(loopTarget, redirectRoots)) {
+      return false;
+    }
+    const seamId = seamIdFromAgentRepairTarget(rawTarget);
+    if (!seamId) {
+      return false;
+    }
+    const root = this.workspaceRoot ?? this.runtime.workspaceRootState().root;
+    if (!root) {
+      this.runtime.showInformationMessage(
+        'Open a workspace folder (or run ripr: Select Workspace Root) before starting a repair.'
+      );
+      return true;
+    }
+    const config = this.runtime.getConfig();
+    const server = this.server ?? await this.resolveServerForCommand(config);
+    if (!server) {
+      return true;
+    }
+    const inventory = await this.readAttemptInventory(server.command, root);
+    if (generation !== this.startGeneration) {
+      return true;
+    }
+    if (!inventory) {
+      this.runtime.showInformationMessage(
+        'ripr could not read the repair attempt inventory; Start Current Repair is unavailable until agent status is readable.'
+      );
+      return true;
+    }
+    const existing = findLiveRepairAttemptForSeam(inventory, seamId);
+    if (existing) {
+      this.rememberAttempt(root, existing.attemptId);
+      this.runtime.showInformationMessage(
+        `A live repair attempt already exists for seam ${seamId} (${existing.attemptId}); resuming it instead of creating a duplicate.`
+      );
+      await this.showAttemptStatus(existing.attemptId);
+      return true;
+    }
+    let stdout: string;
+    try {
+      stdout = await this.runtime.runRipr(
+        server.command,
+        buildAgentRepairBeforeArgs(root, seamId),
+        root
+      );
+    } catch (error) {
+      const message = errorMessage(error);
+      this.output.appendLine(`ripr start repair before phase failed: ${message}`);
+      this.runtime.showInformationMessage(
+        message.split('\n').find((line) => line.trim() !== '') ?? 'ripr could not start the shared repair attempt.'
+      );
+      return true;
+    }
+    if (
+      !this.actionRootStillCurrent(generation, editor.document.uri, (target) =>
+        this.copyActionRootBlocker(target)
+      )
+    ) {
+      return true;
+    }
+    const started = parseBeforePhaseRepairStart(stdout);
+    if (!started) {
+      this.failAttemptStatus('ripr could not parse the shared repair before-phase result.');
+      return true;
+    }
+    this.rememberAttempt(root, started.attemptId);
+    for (const line of started.summaryLines) {
+      this.output.appendLine(line);
+    }
+    this.runtime.showInformationMessage(
+      `ripr repair attempt ${started.attemptId} is awaiting an external test edit (not complete).`
+    );
+    const relatedTarget = this.openRelatedTestTargetFromActions(actions);
+    if (relatedTarget) {
+      await this.openRelatedTest(relatedTarget);
+    }
+    await this.showAttemptStatus(started.attemptId);
+    return true;
+  }
+
+  private openRelatedTestTargetFromActions(
+    actions: Array<vscode.CodeAction | vscode.Command>
+  ): RiprRelatedTestTarget | undefined {
+    for (const action of actions) {
+      const command = commandForAction(action);
+      if (!command || command.command !== 'ripr.openRelatedTest') {
+        continue;
+      }
+      const first = command.arguments?.[0];
+      if (first && typeof first === 'object') {
+        return first as RiprRelatedTestTarget;
+      }
+    }
+    return undefined;
   }
 
   async copySuggestedAssertion(target?: RiprSuggestedAssertionTarget): Promise<void> {

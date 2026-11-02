@@ -6199,6 +6199,7 @@ name = "Editor adoption assurance"
 spec = "docs/specs/RIPR-SPEC-0054-editor-adoption-assurance.md"
 tests = [
   "editors/vscode/test/suite/extension.test.ts",
+  "editors/vscode/test/suite/repairStart.test.ts",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -6206,6 +6207,7 @@ fixtures = [
 ]
 code = [
   "editors/vscode/src/client.ts",
+  "editors/vscode/src/repairStart.ts",
   "xtask/src/main.rs",
 ]
 outputs = [
