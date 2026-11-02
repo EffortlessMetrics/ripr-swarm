@@ -1472,6 +1472,7 @@ tests = [
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::fixed_root_probe_timeout_names_only_effective_consumer_recovery",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::task_first_commands_resolve_workspace_root_from_a_member_directory",
   "crates/ripr/tests/task_first_facade.rs::member_directory_commands_use_the_resolved_workspace_root",
+  "crates/ripr/tests/task_first_facade.rs::continue_outside_any_workspace_refuses_without_scanning",
   "crates/ripr/tests/task_first_facade.rs::member_relative_selector_never_reaches_a_sibling_members_file",
   "crates/ripr/tests/task_first_facade.rs::member_directory_agent_rerun_diff_explain_use_the_resolved_workspace_root",
   "crates/ripr/tests/task_first_facade.rs::member_directory_root_resolution_failure_keeps_the_json_refusal_envelope",
@@ -1492,6 +1493,9 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_rejects_unknown_arguments",
   "crates/ripr/tests/cli_help_hierarchy.rs::init_ci_provider_errors_recover_near_misses",
   "crates/ripr/tests/cli_help_hierarchy.rs::init_ci_provider_valid_preview_keeps_workflow_contract",
+  "crates/ripr/src/cli/commands/init.rs::tests::plan_adds_gitlab_ci_for_ci_gitlab",
+  "crates/ripr/src/cli/commands/init_workflow/gitlab_ci.rs::tests::generated_gitlab_ci_is_advisory_merge_request_only",
+  "crates/ripr/src/cli/commands.rs::tests::init_generated_gitlab_ci_is_advisory_merge_request_flow",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_is_advisory",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional",
   "crates/ripr/src/cli/commands.rs::tests::init_ci_github_writes_workflow_and_preserves_existing_config",
@@ -1512,6 +1516,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::init_dry_run_prints_config_without_writing",
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_dry_run_prints_config_and_workflow_without_writing",
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_writes_non_blocking_report_workflow",
+  "crates/ripr/tests/cli_smoke.rs::init_ci_gitlab_writes_advisory_merge_request_pipeline",
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_refuses_existing_workflow_without_force",
   "crates/ripr/tests/cli_smoke.rs::init_refuses_existing_config_without_force",
   "crates/ripr/tests/cli_smoke.rs::init_force_overwrites_existing_config",
@@ -8574,6 +8579,7 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::direct_collection_mutation_discriminates_actual_observer_not_sibling_collection",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_proximity_test_cannot_confirm_beside_reaching_test",
+  "crates/ripr/tests/match_arm_proximity_flip.rs::editing_from_str_fortnight_does_not_flip_the_seconds_arm",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::error_variant_proximity_test_cannot_confirm_beside_reaching_test",
   "crates/ripr/src/analysis/classify/flow.rs::tests::turbofish_err_return_sinks_to_the_error_variant",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner",
@@ -11841,7 +11847,7 @@ tests = [
   "crates/ripr/src/app/check_artifact/tests.rs::concurrent_writers_never_leave_a_torn_artifact",
   "crates/ripr/src/config.rs::tests::check_artifact_identity_fields_classify_every_config_field",
   "crates/ripr/src/config.rs::tests::check_artifact_config_identity_hash_tracks_finding_affecting_fields_only",
-  "crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain_and_context_reuse_byte_identical",
+  "crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_source_navigation",
   "crates/ripr/tests/cli_smoke.rs::explain_from_fails_closed_on_tampered_identity",
   "crates/ripr/tests/cli_smoke.rs::check_write_artifact_rejects_unsupported_run_shapes",
   "crates/ripr/tests/cli_smoke.rs::explain_from_consumes_artifact_written_with_non_default_mode",
@@ -12730,6 +12736,8 @@ tests = [
   "crates/ripr/tests/crate_qualified_entry_reach.rs::conditional_remapped_and_duplicate_chains_keep_a_relative_import_refused",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::an_in_file_test_module_import_resolves_from_its_own_scope",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::an_in_file_relative_import_of_another_scope_stays_refused",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::test_crate_reexport_module_routes_link_through_self",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::test_crate_reexport_module_routes_refuse_shadow_and_cycle",
   "crates/ripr/src/analysis/facts/build.rs::tests::root_library_name_reads_lib_name_then_package_and_refuses_moved_roots",
 ]
 fixtures = [
@@ -13969,7 +13977,8 @@ fixtures = [
   "fixtures/predicate_pairing_reassigned_binding",
   "fixtures/predicate_pairing_compound_assigned_binding",
   "fixtures/predicate_pairing_mutably_borrowed_binding",
-  "fixtures/predicate_pairing_newline_split_reassigned_binding"
+  "fixtures/predicate_pairing_newline_split_reassigned_binding",
+  "fixtures/predicate_pairing_boundary_precision_residuals_7042"
 ]
 code = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs",
@@ -17424,6 +17433,11 @@ tests = [
   "crates/ripr/src/analysis/classify/variant_field_pattern.rs::a_variant_another_production_site_builds_is_not_pinned_through_one_pattern",
   "crates/ripr/tests/variant_field_pattern.rs::a_variant_other_production_code_builds_stays_unconfirmed",
   "crates/ripr/tests/variant_field_pattern.rs::a_test_side_build_or_input_stays_unconfirmed",
+  "crates/ripr/tests/variant_field_pattern.rs::a_production_namesake_under_a_path_remap_stays_unconfirmed",
+  "crates/ripr/tests/variant_field_pattern.rs::a_foreign_glob_integration_import_stays_unconfirmed",
+  "crates/ripr/tests/variant_field_pattern.rs::a_foreign_glob_does_not_defeat_a_crate_qualified_owner_call",
+  "crates/ripr/tests/variant_field_pattern.rs::an_own_package_integration_test_import_is_exposed",
+  "crates/ripr/src/analysis/classify/reveal.rs::foreign_glob_defeats_bare_callee_without_own_import",
 ]
 fixtures = [
   "fixtures/rust_array_element_drop_exit",
@@ -19899,6 +19913,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::a_for_body_over_an_empty_literal_never_runs",
   "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::unreadable_guard_shapes_keep_the_credit",
   "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::a_parenthesized_scalar_is_not_a_one_element_container",
+  "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::patching_a_builtin_through_the_builtins_module_is_not_read_as_the_builtin",
+  "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin",
   "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
   "fixtures/python_effect_order_guarded_before_call",
 ]
@@ -21171,6 +21187,41 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0348-pure-reformats-seed-no-probes.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0378"
+name = "Cross-language edge registry v1"
+spec = "docs/specs/RIPR-SPEC-0378-cross-language-edge-registry-v1.md"
+tests = [
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::corpus_cases_cover_registry_acceptance_matrix",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::same_display_name_without_edge_is_unrelated",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::registered_edge_connects_exact_subjects",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::config_digest_is_load_bearing_for_subject_identity",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::duplicate_edge_ids_fail_precisely",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::incompatible_family_strength_fails_precisely",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::unknown_fields_are_rejected_at_deserialize",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::semantic_digest_is_order_and_relocation_invariant",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::every_boundary_family_has_a_constructible_edge_shape",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::colon_in_project_ids_do_not_collide_identities",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::uppercase_hex_digests_match_lowercase_identities",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::positive_edge_with_unresolved_leg_is_rejected",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::same_language_positive_edge_is_rejected",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::duplicate_producer_ids_are_rejected",
+]
+fixtures = [
+  "fixtures/cross-language-edge-registry-corpus/corpus.json",
+]
+code = [
+  "crates/ripr/src/provider_contract/cross_language_edge/model.rs",
+  "crates/ripr/src/provider_contract/cross_language_edge/validate.rs",
+  "crates/ripr/src/provider_contract/cross_language_edge/digest.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0378-cross-language-edge-registry-v1.md",
 ]
 metrics = [
   "unit_test_pass_rate",

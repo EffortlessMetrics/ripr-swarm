@@ -2444,14 +2444,8 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                 if !(local_root && names_entry) {
                     return false;
                 }
-                // `crate::` from a unit test inside the library's `src/` stays
-                // credited. A relative `self::`/`super::` import (#9971) is
-                // credited only when the scope-aware resolver proves it names
-                // the entry's own module; every other relative-prefixed
-                // import of the entry (an integration test's, an aliased or
-                // unresolved one) is never resolved and refuses.
-                !(in_src_unit_test
-                    && (segments.first() == Some(&"crate")
+                if in_src_unit_test {
+                    return !(segments.first() == Some(&"crate")
                         || import.alias.is_none()
                             && super::call_identity::unit_test_relative_import_names_entry(
                                 index,
@@ -2460,7 +2454,20 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
                                 test.start_line,
                                 &import.path,
                                 caller,
-                            )))
+                            ));
+                }
+                if segments.first() == Some(&"self")
+                    && import.alias.is_none()
+                    && super::owner_pin::integration_test_relative_import_delivers_entry(
+                        index,
+                        test,
+                        &import.path,
+                        caller,
+                    )
+                {
+                    return false;
+                }
+                true
             })
     };
     if binds_entry_locally(&facts.source) || binds_entry_locally(&test.body) {
@@ -2494,7 +2501,23 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
     let relative_route = in_src_unit_test
         && !uses_prefix
         && (uses_relative(&facts.source) || uses_relative(&test.body));
-    if !uses_prefix && !relative_route {
+    let integration_relative_route = !in_src_unit_test
+        && !uses_prefix
+        && super::reveal::flattened_use_paths(&facts.source)
+            .iter()
+            .any(|import| {
+                import.path.split("::").next() == Some("self")
+                    && import.alias.is_none()
+                    && import.path.rsplit("::").next().map(unraw).as_deref()
+                        == Some(caller.name.as_str())
+                    && super::owner_pin::integration_test_relative_import_delivers_entry(
+                        index,
+                        test,
+                        &import.path,
+                        caller,
+                    )
+            });
+    if !uses_prefix && !relative_route && !integration_relative_route {
         return true;
     }
     // Resolve the imported suffix, not just the prefix: every import of the
@@ -2652,7 +2675,7 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
     {
         return false;
     }
-    if relative_route {
+    if relative_route || integration_relative_route {
         return true;
     }
     if !suffix_resolves(&facts.source) || !suffix_resolves(&test.body) {

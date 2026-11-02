@@ -24,7 +24,7 @@ import {
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, isWindowsHost, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, integerSetting, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
-import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction, shouldShowMainStatusBar } from './statusRender';
+import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction, shouldShowMainStatusBar, workspaceStatusDeliveryBudgetLines } from './statusRender';
 import type { RiprStatusKind, RiprStatusState, FirstUsefulActionStatus, StatusBarColors } from './statusRender';
 import {
   validateFirstPrPacket,
@@ -2225,6 +2225,9 @@ export class RiprClientController {
             if (parts.length > 0) {
               this.output.appendLine(`ripr top limitation: ${parts.join(' | ')}`);
             }
+          }
+          for (const line of workspaceStatusDeliveryBudgetLines(s)) {
+            this.output.appendLine(line);
           }
         }
       } catch (error) {
