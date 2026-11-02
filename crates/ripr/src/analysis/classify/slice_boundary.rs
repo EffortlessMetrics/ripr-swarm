@@ -331,13 +331,39 @@ pub(super) fn literal_slice_length(text: &str) -> Option<usize> {
     let ast::Expr::ArrayExpr(array) = reference.expr()? else {
         return None;
     };
-    if array.semicolon_token().is_some()
-        || array
-            .syntax()
-            .descendants()
-            .any(|node| ast::Attr::can_cast(node.kind()))
+    if array
+        .syntax()
+        .descendants()
+        .any(|node| ast::Attr::can_cast(node.kind()))
     {
         return None;
+    }
+    if array.semicolon_token().is_some() {
+        let exprs: Vec<_> = array.exprs().collect();
+        let [element, repeat] = exprs.as_slice() else {
+            return None;
+        };
+        let ast::Expr::Literal(repeat_lit) = repeat else {
+            return None;
+        };
+        let ast::LiteralKind::IntNumber(number) = repeat_lit.kind() else {
+            return None;
+        };
+        let repeat_count = usize::try_from(number.value().ok()?).ok()?;
+        if repeat_count > 256 {
+            return None;
+        }
+        return match element {
+            ast::Expr::Literal(lit) => matches!(
+                lit.kind(),
+                ast::LiteralKind::Byte(_) | ast::LiteralKind::Char(_)
+            )
+            .then_some(repeat_count),
+            ast::Expr::PrefixExpr(prefix) => (prefix.op_kind() == Some(ast::UnaryOp::Neg)
+                && matches!(prefix.expr(), Some(ast::Expr::Literal(_))))
+            .then_some(repeat_count),
+            _ => None,
+        };
     }
     let elements: Vec<_> = array.exprs().collect();
     (elements.len() <= 256
@@ -350,6 +376,34 @@ pub(super) fn literal_slice_length(text: &str) -> Option<usize> {
             _ => false,
         }))
     .then_some(elements.len())
+}
+
+/// Byte length of a slice argument at an owner call: `&[1, 2]`, `&[b'f'; 16]`,
+/// or a byte string `b"ff"` coerced to `&[u8]`.
+pub(super) fn slice_argument_byte_length(text: &str) -> Option<usize> {
+    if let Some(length) = literal_slice_length(text) {
+        return Some(length);
+    }
+    if text.len() > 4096 {
+        return None;
+    }
+    let parse = parse_clean_source_file(&format!("fn input() {{ let value = {text}; }}"))?;
+    let binding = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)?;
+    let ast::Expr::Literal(literal) = binding.initializer()? else {
+        return None;
+    };
+    match literal.kind() {
+        ast::LiteralKind::ByteString(text) => text
+            .value()
+            .ok()
+            .map(|value| value.len())
+            .filter(|length| *length <= 256),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -390,7 +444,8 @@ mod tests {
             ("&mut [1]", None),
             ("&raw const [1]", None),
             ("[1, 2]", None),
-            ("&[0; 4]", None),
+            ("&[0; 4]", Some(4)),
+            ("&[b'f'; 16]", Some(16)),
             ("&[1 + 1]", None),
             ("&[x]", None),
             ("&[-x]", None),
