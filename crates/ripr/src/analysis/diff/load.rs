@@ -208,6 +208,7 @@ pub(crate) fn load_diff_with_effective_base_core(
         &format!("{base}...HEAD"),
         &["--no-ext-diff", "--submodule=short", "--unified=0"],
         git_timeout,
+        None,
     )?;
     Ok(LoadedDiff {
         text,
@@ -279,6 +280,7 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
             &cached.merge_base_origin,
             &["--submodule=short"],
             git_timeout,
+            None,
         )?;
         return Ok(LoadedDiff {
             text,
@@ -300,7 +302,7 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
     if let Some((head_sha, base_sha)) = probe_worktree_identity_shas(root, &base, git_timeout) {
         let origin =
             worktree_diff_origin_from_shas(root, &base, &head_sha, &base_sha, git_timeout)?;
-        let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout)?;
+        let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout, None)?;
         // `resolved_base_commit` is the PROBED `base_sha`, not the earlier
         // resolve result: the two are separate Git reads, and an explicit
         // base that moved A→B between them would otherwise leave the returned
@@ -333,7 +335,7 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
     }
 
     let origin = worktree_diff_origin(root, &base, git_timeout)?;
-    let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout)?;
+    let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout, None)?;
     Ok(LoadedDiff {
         text,
         effective_base: Some(base),
@@ -1815,12 +1817,25 @@ pub(crate) fn load_diff_range_with_deadline_core(
     head: &str,
     git_timeout: Option<Duration>,
 ) -> Result<String, CoreError> {
+    load_diff_range_with_deadline_and_git_stdout_limit_core(root, base, head, git_timeout, None)
+}
+
+/// Like [`load_diff_range_with_deadline_core`], but caps captured Git stdout
+/// while the child is running (#5000 / #4388 review-comments ingress).
+pub(crate) fn load_diff_range_with_deadline_and_git_stdout_limit_core(
+    root: &Path,
+    base: &str,
+    head: &str,
+    git_timeout: Option<Duration>,
+    max_git_stdout_bytes: Option<usize>,
+) -> Result<String, CoreError> {
     verify_head_revision(root, head, git_timeout)?;
     run_git_diff(
         root,
         &format!("{base}...{head}"),
         &["--unified=0", "--no-ext-diff", "--submodule=short"],
         git_timeout,
+        max_git_stdout_bytes,
     )
 }
 
@@ -2077,6 +2092,7 @@ fn load_pr_evidence_diff_range_within(
         &["--binary"],
         "3",
         Some(deadline),
+        None,
     )?;
     String::from_utf8(bytes).map_err(|err| format!("packet diff is not valid UTF-8: {err}"))
 }
@@ -2446,6 +2462,7 @@ fn run_git_diff(
     range: &str,
     extra_args: &[&str],
     git_timeout: Option<Duration>,
+    max_stdout_bytes: Option<usize>,
 ) -> Result<String, CoreError> {
     // Analysis loaders consume source-coordinate patches: zero context
     // lines stay the assembly default.
@@ -2460,7 +2477,7 @@ fn run_git_diff(
     let mut args = Vec::with_capacity(extra_args.len() + 1);
     args.push("--relative");
     args.extend_from_slice(extra_args);
-    run_git_diff_with_unified(root, range, &args, "0", git_timeout)
+    run_git_diff_with_unified(root, range, &args, "0", git_timeout, max_stdout_bytes)
 }
 
 fn run_git_diff_with_unified(
@@ -2469,6 +2486,7 @@ fn run_git_diff_with_unified(
     extra_args: &[&str],
     unified: &str,
     git_timeout: Option<Duration>,
+    max_stdout_bytes: Option<usize>,
 ) -> Result<String, CoreError> {
     // Analysis decodes lossy (unchanged): coordinates come from the
     // C-quoted path contract above, and hunk bodies are parsed, not
@@ -2479,6 +2497,7 @@ fn run_git_diff_with_unified(
         extra_args,
         unified,
         git_timeout,
+        max_stdout_bytes,
     )?)
     .into_owned())
 }
@@ -2489,6 +2508,7 @@ fn run_git_diff_bytes(
     extra_args: &[&str],
     unified: &str,
     git_timeout: Option<Duration>,
+    max_stdout_bytes: Option<usize>,
 ) -> Result<Vec<u8>, CoreError> {
     // Delegate the spawn to the shared git authority (#1921, #2303), which
     // spawns with `current_dir(root)`. A missing root never reaches the
@@ -2557,7 +2577,16 @@ fn run_git_diff_bytes(
         "--inter-hunk-context=0",
     ]);
     args.push(range);
-    let output = match crate::git::run_git_output_with_deadline(root, &args, git_timeout) {
+    let output = match max_stdout_bytes {
+        Some(limit) => crate::git::run_git_output_with_optional_deadline_and_limit(
+            root,
+            &args,
+            git_timeout,
+            limit,
+        ),
+        None => crate::git::run_git_output_with_deadline(root, &args, git_timeout),
+    };
+    let output = match output {
         Ok(output) => output,
         Err(err)
             if err.is_git_invocation_timeout()
@@ -4030,7 +4059,7 @@ mod tests {
         let planted = dir.join("planted");
         let base = format!("--output={}", planted.display());
         // The sink: `git diff --output=<path>...HEAD` would create the file.
-        let sink = run_git_diff_bytes(&dir, &format!("{base}...HEAD"), &[], "0", None);
+        let sink = run_git_diff_bytes(&dir, &format!("{base}...HEAD"), &[], "0", None, None);
         // The LSP settings path and the CLI path both refuse it before git.
         let resolved = resolve_effective_base(&dir, Some(&base), None);
         let identity = resolve_base_commit(&dir, Some(&base), None);

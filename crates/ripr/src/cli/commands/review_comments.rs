@@ -1093,17 +1093,48 @@ fn load_review_comments_diff(
     base: &str,
     head: &str,
 ) -> Result<String, crate::core_error::CoreError> {
+    let max_git_stdout_bytes =
+        GuidancePayloadCeiling::from_env().map_err(crate::core_error::CoreError::message)?;
+    let max_git_stdout_bytes = usize::try_from(max_git_stdout_bytes.max_payload_bytes).map_err(
+        |error| {
+            crate::core_error::CoreError::message(format!(
+                "{REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES_ENV}={} is too large for this platform: {error}",
+                max_git_stdout_bytes.max_payload_bytes
+            ))
+        },
+    )?;
     let base = analysis::resolve_effective_base(
         root,
         Some(base),
         analysis::cancellation::remaining_budget(),
     )?;
-    analysis::load_diff_range_with_deadline_core(
+    analysis::load_diff_range_with_deadline_and_git_stdout_limit_core(
         root,
         &base,
         head,
         analysis::cancellation::remaining_budget(),
+        Some(max_git_stdout_bytes),
     )
+    .map_err(map_review_comments_git_diff_ingress_error)
+}
+
+fn map_review_comments_git_diff_ingress_error(
+    error: crate::core_error::CoreError,
+) -> crate::core_error::CoreError {
+    let message = error.to_string();
+    if message.contains("git_output_limit_exceeded") {
+        return crate::core_error::CoreError::message(format!(
+            "{REVIEW_GUIDANCE_OVERSIZED_PREFIX}: git diff stdout exceeds the review-guidance \
+             byte ceiling ({env}={limit}); the guidance pass was not run to protect runner \
+             memory. Repair route: raise the limit via {env}=<number> on a runner with enough \
+             memory, or reduce the diff scope with `--path` / `--exclude`.",
+            env = REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES_ENV,
+            limit = GuidancePayloadCeiling::from_env()
+                .map(|ceiling| ceiling.max_payload_bytes.to_string())
+                .unwrap_or_else(|_| REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES_DEFAULT.to_string()),
+        ));
+    }
+    error
 }
 
 fn review_comments_markdown_path(json_path: &Path) -> PathBuf {
@@ -1596,6 +1627,50 @@ mod tests {
                 && err.to_string().contains("--head <ref>")
                 && !err.to_string().contains("ambiguous argument"),
             "head failure must be named by ripr, got: {err}"
+        );
+        remove_fixture_tree(&root)
+    }
+
+    #[test]
+    fn review_comments_git_diff_ingress_maps_stdout_limit_to_oversized() -> Result<(), String> {
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = unique_command_test_dir("review-comments-git-diff-ingress-limit");
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        let lib = root.join("src/lib.rs");
+        fixture_git_ok(&root, &["init", "-q", "--initial-branch=main"])?;
+        for (key, value) in [
+            ("user.name", "Review Comments"),
+            ("user.email", "review-comments@example.com"),
+            ("commit.gpgsign", "false"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        std::fs::write(&lib, "pub fn f(x: i32) -> bool { x > 1 }\n")
+            .map_err(|err| format!("write base lib: {err}"))?;
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+        std::fs::write(&lib, "pub fn f(x: i32) -> bool { x >= 1 }\n")
+            .map_err(|err| format!("write head lib: {err}"))?;
+        fixture_git_ok(&root, &["commit", "-q", "-am", "head"])?;
+        let base = analysis::resolve_effective_base(&root, Some("HEAD~1"), None)
+            .map_err(|err| err.to_string())?;
+        let Err(err) = analysis::load_diff_range_with_deadline_and_git_stdout_limit_core(
+            &root,
+            &base,
+            "HEAD",
+            None,
+            Some(1),
+        ) else {
+            return Err(
+                "a one-byte Git stdout limit must fail before an unbounded capture".to_string(),
+            );
+        };
+        let err = map_review_comments_git_diff_ingress_error(err);
+        let message = err.to_string();
+        assert!(
+            message.starts_with("review_guidance_oversized:")
+                && message.contains(REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES_ENV),
+            "{message}"
         );
         remove_fixture_tree(&root)
     }
