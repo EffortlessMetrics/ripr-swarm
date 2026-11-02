@@ -49530,16 +49530,23 @@ fn lsp_cockpit_report_reads_boundary_gap_fixture_expectations() -> Result<(), St
     assert!(
         boundary_gap
             .action_titles
-            .contains(&"Write targeted test: copy brief".to_string())
-    );
-    assert!(
-        boundary_gap
-            .action_titles
             .contains(&"Write targeted test: open best related test".to_string())
     );
+    assert!(
+        !boundary_gap
+            .action_titles
+            .contains(&"Write targeted test: copy brief".to_string()),
+        "repair-packet brief is gated on fix_site_ready (#1663)"
+    );
     assert!(boundary_gap.context.seam_packet_available);
-    assert!(boundary_gap.context.targeted_test_brief_available);
-    assert!(boundary_gap.context.agent_repair_command_available);
+    assert!(
+        !boundary_gap.context.targeted_test_brief_available,
+        "pinned fixtures omit copyTargetedTestBrief until fix_site_ready"
+    );
+    assert!(
+        !boundary_gap.context.agent_repair_command_available,
+        "pinned fixtures omit copyAgentRepairCommand until fix_site_ready"
+    );
     assert!(boundary_gap.context.agent_packet_command_available);
     assert!(boundary_gap.context.agent_brief_command_available);
     assert!(boundary_gap.context.after_snapshot_command_available);
@@ -49570,8 +49577,14 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
     assert_eq!(editor_fixture.diagnostic_count, 1);
     assert_eq!(editor_fixture.seam_diagnostic_count, 1);
     assert!(editor_fixture.context.seam_packet_available);
-    assert!(editor_fixture.context.targeted_test_brief_available);
-    assert!(editor_fixture.context.agent_repair_command_available);
+    assert!(
+        !editor_fixture.context.targeted_test_brief_available,
+        "editor_lsp_workflow pins repair-packet suppression without fix_site_ready"
+    );
+    assert!(
+        !editor_fixture.context.agent_repair_command_available,
+        "editor_lsp_workflow pins repair start suppression without fix_site_ready"
+    );
     assert!(editor_fixture.context.agent_packet_command_available);
     assert!(editor_fixture.context.agent_brief_command_available);
     assert!(editor_fixture.context.after_snapshot_command_available);
@@ -49754,7 +49767,7 @@ fn lsp_cockpit_report_json_and_markdown_are_structured() -> Result<(), String> {
         serde_json::from_str(&json).map_err(|err| format!("cockpit JSON should parse: {err}"))?;
     assert_eq!(value["schema_version"], "0.1");
     assert_eq!(value["tool"], "ripr");
-    assert!(json.contains("Write targeted test: copy brief"));
+    assert!(json.contains("Write targeted test: copy suggested assertion"));
 
     let markdown = lsp_cockpit_report_markdown(&report);
     assert!(markdown.contains("# ripr LSP cockpit report"));
