@@ -17867,6 +17867,21 @@ fn dogfood_typescript_preview_repair_loop_receipts_are_checked() -> Result<(), S
         );
         assert!(
             scenarios.iter().any(|scenario| {
+                scenario.gap_state == "already_observed"
+                    && scenario.outcome == "already_observed_unchanged"
+            }),
+            "TypeScript preview repair-loop receipts should retain a positive already_observed control"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .filter(|scenario| scenario.must_not_claim_already_observed)
+                .count()
+                >= 2,
+            "TypeScript preview repair-loop receipts should pin spurious already_observed guards"
+        );
+        assert!(
+            scenarios.iter().any(|scenario| {
                 scenario.name == "typescript_complete_boundary_packet_closed"
                     && scenario.repair_packet_ready
                     && scenario.gap_state == "actionable"
@@ -18423,6 +18438,7 @@ fn valid_typescript_preview_repair_loop_scenario() -> DogfoodTypescriptPreviewRe
             must_have_receipt_command: true,
             must_not_invent_verify_command: true,
             must_not_emit_repair_packet: true,
+            must_not_claim_already_observed: false,
             authority_boundary: "preview_advisory_only".to_string(),
             expected_test_or_observer_shape: "exact equality-boundary assertion".to_string(),
             verify_command: "npm test -- discount".to_string(),

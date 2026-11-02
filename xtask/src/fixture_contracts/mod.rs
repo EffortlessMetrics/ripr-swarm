@@ -1898,6 +1898,14 @@ pub(crate) const TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES: &[(&str, &str)] 
         "javascript_already_observed_unchanged",
         "unanchored_relation_holds_advisory",
     ),
+    (
+        "typescript_table_case_already_observed_unchanged",
+        "already_observed_unchanged",
+    ),
+    (
+        "typescript_dynamic_oracle_spurious_already_observed_guard",
+        "intentionally_skipped",
+    ),
     ("typescript_complete_boundary_packet_closed", "resolved"),
 ];
 
