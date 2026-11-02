@@ -6620,14 +6620,31 @@ mod tests {
             );
         }
         assert_eq!(aggregate.completeness(), DiffCompleteness::Incomplete);
-        assert_eq!(
-            analysis
-                .language_runs
-                .iter()
-                .map(|run| (run.language.as_str(), run.status))
-                .collect::<Vec<_>>(),
-            vec![("rust", LanguageRunStatus::Failed)]
-        );
+        let rust_run = analysis
+            .language_runs
+            .iter()
+            .find(|run| run.language == "rust")
+            .ok_or_else(|| format!("no rust run in {:?}", analysis.language_runs))?;
+        assert_eq!(rust_run.status, LanguageRunStatus::Failed);
+        if cfg!(feature = "lang-python") {
+            assert_eq!(
+                analysis
+                    .language_runs
+                    .iter()
+                    .map(|run| (run.language.as_str(), run.status))
+                    .collect::<Vec<_>>(),
+                vec![("rust", LanguageRunStatus::Failed)]
+            );
+        } else {
+            assert_eq!(
+                analysis
+                    .language_runs
+                    .iter()
+                    .find(|run| run.language == "python")
+                    .map(|run| run.status),
+                Some(LanguageRunStatus::Unavailable)
+            );
+        }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
