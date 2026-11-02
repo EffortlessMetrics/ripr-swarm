@@ -20,7 +20,7 @@
 //! `root_directory` evidence, skip reasons, and MissingRoot guidance cannot
 //! claim an existing file does not exist (#5101).
 
-use crate::config::{CONFIG_FILE_NAME, RiprConfig, load_for_root};
+use crate::config::{CONFIG_FILE_NAME, ConfigValidationMachine, RiprConfig, load_for_root_failure};
 use crate::domain::NextActionDoctorRecovery;
 use crate::domain::{
     CanonicalNextActionV1, LanguageId, LanguageStatus, NextActionCurrentness, NextActionDiffSource,
@@ -603,6 +603,11 @@ pub(crate) struct DoctorCheck {
     /// Human-readable evidence (e.g. "Cargo.toml found at /workspace").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) evidence: Option<String>,
+    /// Structured semantic validation coordinates when the `config` check fails
+    /// on a typed `ConfigDiagnostic` (#2624). Omitted for structural parse
+    /// failures and for non-config checks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) validation: Option<ConfigValidationMachine>,
     /// How long the check's own computation took, in milliseconds
     /// (additive, #8540). Measured at the production site; `None` for
     /// skipped checks and for checks produced without a timer, so an absent
@@ -1067,8 +1072,24 @@ impl DoctorReport {
             name: name.to_string(),
             status: status.into(),
             evidence,
+            validation: None,
             elapsed_ms: None,
         });
+    }
+
+    pub(crate) fn attach_check_validation(
+        &mut self,
+        name: &str,
+        validation: ConfigValidationMachine,
+    ) {
+        if let Some(check) = self
+            .checks
+            .iter_mut()
+            .rev()
+            .find(|check| check.name == name)
+        {
+            check.validation = Some(validation);
+        }
     }
 
     /// Record how long the most recently added check with `name` took.
@@ -1113,6 +1134,7 @@ impl DoctorReport {
             name: name.to_string(),
             status: DoctorCheckStatus::Skipped,
             evidence: Some(evidence),
+            validation: None,
             elapsed_ms: None,
         });
     }
@@ -1122,6 +1144,7 @@ impl DoctorReport {
             name: name.to_string(),
             status: DoctorCheckStatus::Advisory,
             evidence: Some(evidence),
+            validation: None,
             elapsed_ms: None,
         });
     }
@@ -1138,6 +1161,7 @@ impl DoctorReport {
                 DoctorCheckStatus::Advisory
             },
             evidence: Some(evidence),
+            validation: None,
             elapsed_ms: None,
         });
     }
@@ -1241,23 +1265,6 @@ impl DoctorReport {
         }
         report
     }
-}
-
-/// Strip a `toml` parse error down to its first line.
-///
-/// `toml::de::Error`'s `Display` embeds the offending source excerpt and a
-/// caret pointing at the failing column (e.g. `"...\n  |\n1 | [invalid\n  |
-/// ^...\n"`). Echoing that excerpt into `ripr doctor --json` would leak
-/// `ripr.toml` source text — which may contain repository-specific paths or
-/// other content the caller did not intend to publish — into machine-readable
-/// output that gets captured in CI logs, PR comments, and agent context
-/// (RIPR-SPEC-0007, P2). The first line alone (path, "invalid ripr.toml",
-/// parse location) is enough to act on and contains no source text, so
-/// doctor's JSON evidence keeps only that line.
-/// The misplaced-key hint (#4534) is kept too: it names only a key and a
-/// table from a fixed allowlist, never file content.
-fn redact_config_parse_error(error: &str) -> String {
-    crate::config::config_error_summary(error)
 }
 
 /// Result of evaluating the doctor core checks, plus the raw config load
@@ -1904,12 +1911,16 @@ fn evaluate_doctor_core_with_probe_for_profile(
     // #8540: time each check's own computation where it runs, so the
     // first-run cost is attributable. Skipped checks keep no measurement.
     let config_started = std::time::Instant::now();
-    let config = load_for_root(root);
+    let config = load_for_root_failure(root);
     let config_elapsed = config_started.elapsed();
     let located_started = std::time::Instant::now();
     let located = locate_cargo_toml(root);
     let located_elapsed = located_started.elapsed();
-    let rust_scope = rust_toolchain_scope(&config, detected, located.is_some());
+    let config_human: Result<RiprConfig, String> = match &config {
+        Ok(loaded) => Ok(loaded.clone()),
+        Err(failure) => Err(failure.human_display(root, cfg!(windows))),
+    };
+    let rust_scope = rust_toolchain_scope(&config_human, detected, located.is_some());
     let root_started = std::time::Instant::now();
     let root_path = DoctorRootPath::classify(root);
     let (root_status, root_evidence) = root_path.root_directory_evidence(root);
@@ -2003,11 +2014,16 @@ fn evaluate_doctor_core_with_probe_for_profile(
                 None => format!("{CONFIG_FILE_NAME} not found; using built-in defaults"),
             }),
         ),
-        Err(error) => report.add_check(
-            "config",
-            DoctorStatus::Fail,
-            Some(redact_config_parse_error(error)),
-        ),
+        Err(failure) => {
+            report.add_check(
+                "config",
+                DoctorStatus::Fail,
+                Some(failure.human_summary_for_machine()),
+            );
+            if let Some(validation) = failure.semantic_validation() {
+                report.attach_check_validation("config", validation);
+            }
+        }
     }
     report.mark_check_elapsed("config", config_elapsed);
     for tool in DOCTOR_TOOLS {
@@ -2059,7 +2075,10 @@ fn evaluate_doctor_core_with_probe_for_profile(
             .map(|language| language.as_str().to_string())
             .collect();
     }
-    DoctorCoreEvaluation { report, config }
+    DoctorCoreEvaluation {
+        report,
+        config: config_human,
+    }
 }
 
 /// Probe a single tool's availability via `<tool> --version`.
@@ -4985,6 +5004,41 @@ mod tests {
             evidence.to_lowercase().contains("line"),
             "evidence must still point at a parse location: {evidence:?}"
         );
+        assert!(
+            config_check.validation.is_none(),
+            "structural parse failures must not emit typed validation: {:?}",
+            config_check.validation
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn config_check_json_carries_semantic_validation_coordinates() -> Result<(), String> {
+        let dir = unique_test_dir("semantic-validation");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        std::fs::write(
+            dir.join(CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"bad-mode\"\n",
+        )
+        .map_err(|err| format!("write invalid config: {err}"))?;
+
+        let report = evaluate_doctor_core(&dir, &[]);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let config_check = report
+            .checks
+            .iter()
+            .find(|check| check.name == "config")
+            .ok_or_else(|| "missing config check".to_string())?;
+        let validation = config_check
+            .validation
+            .as_ref()
+            .ok_or_else(|| "expected typed validation on semantic failure".to_string())?;
+        assert_eq!(validation.config_path.as_deref(), Some("analysis.mode"));
+        assert_eq!(validation.location_status, "exact");
+        assert_eq!(validation.start_line, Some(2));
+        assert!(validation.start_column.is_some());
+        assert_eq!(validation.invalid_value.as_deref(), Some("\"bad-mode\""));
         Ok(())
     }
 
