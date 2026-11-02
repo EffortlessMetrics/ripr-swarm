@@ -78,6 +78,7 @@ use crate::analysis::facts::{
 };
 use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
+use crate::analysis::syntax::ra::LineIndex;
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, ItemNesting, MacroBindingCandidates,
     MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, RootShadow,
@@ -1165,11 +1166,13 @@ impl OwnerPinSyntax {
         // rebinding; it outranks a workspace site that only may
         // rebind the name, or the refusal would read as an analyzer
         // limit (RIPR-SPEC-0240) for a macro that is really replaced.
+        let bytes = SiteCoverBytes::for_assertion(self, index, test, assertion_line);
         let local = test_macro_binding_site(
             name,
             test,
             assertion_line,
             index,
+            bytes,
             &self.test_file_macro_sites,
             self.target_roots(index),
             &resolved,
@@ -1209,6 +1212,7 @@ impl OwnerPinSyntax {
             })
             .or_else(|| {
                 let facts = index.files().get(&test.file)?;
+                let bytes = SiteCoverBytes::for_assertion(self, index, test, assertion_line);
                 self.test_file_macro_sites
                     .borrow_mut()
                     .entry((name.to_string(), test.file.clone()))
@@ -1225,7 +1229,8 @@ impl OwnerPinSyntax {
                     })
                     .iter()
                     .find(|(_, site)| {
-                        site_covers_assertion(site, test, assertion_line) && field_site_blocks(site)
+                        site_covers_assertion(site, test, assertion_line, bytes)
+                            && field_site_blocks(site)
                     })
                     .map(|(_, site)| (test.file.clone(), site.clone()))
             })
@@ -1492,7 +1497,7 @@ impl OwnerPinSyntax {
                 None => self.trusted_macro_ambiguities(index).contains(name),
             }
             && !self
-                .scoped_names_for(test, line)
+                .scoped_names_for(test, line, index)
                 .iter()
                 .any(|candidate| candidate == name)
             && !self
@@ -1948,7 +1953,7 @@ impl OwnerPinSyntax {
         {
             ambiguous.insert("json".to_string());
         }
-        ambiguous.extend(self.scoped_names_for(test, line));
+        ambiguous.extend(self.scoped_names_for(test, line, index));
         ambiguous.extend(self.crate_names_for(test, index));
         ambiguous.extend(self.module_names_for(test, index));
         Ok(ambiguous)
@@ -2876,14 +2881,20 @@ impl OwnerPinSyntax {
     /// check helper lends (#6482) sits in the helper's body, whose scoped
     /// bindings never overlap the test's span. Filled by the workspace scan
     /// in `refusal`.
-    fn scoped_names_for(&self, test: &TestSummary, assertion_line: usize) -> Vec<String> {
+    fn scoped_names_for(
+        &self,
+        test: &TestSummary,
+        assertion_line: usize,
+        index: &RustIndex,
+    ) -> Vec<String> {
+        let bytes = SiteCoverBytes::for_assertion(self, index, test, assertion_line);
         self.scoped_macro_bindings
             .borrow()
             .as_ref()
             .and_then(|scoped| scoped.get(&test.file))
             .into_iter()
             .flatten()
-            .filter(|(_, site)| site_covers_assertion(site, test, assertion_line))
+            .filter(|(_, site)| site_covers_assertion(site, test, assertion_line, bytes))
             .map(|(name, _)| name.clone())
             .collect()
     }
@@ -2892,23 +2903,128 @@ impl OwnerPinSyntax {
 /// Whether a scoped site may reach the invocation at `assertion_line` in
 /// `test`: it overlaps the test, or (for an assertion a check helper lends,
 /// #6482) its scope holds the assertion's own line in the helper's body.
+#[derive(Clone, Copy)]
+struct SiteCoverBytes {
+    test: Option<(u32, u32)>,
+    assertion: Option<(u32, u32)>,
+}
+
+impl SiteCoverBytes {
+    fn for_assertion(
+        syntax: &OwnerPinSyntax,
+        index: &RustIndex,
+        test: &TestSummary,
+        assertion_line: usize,
+    ) -> Self {
+        Self {
+            test: test_fn_byte_range(syntax, index, test),
+            assertion: assertion_byte_range(index, test, assertion_line),
+        }
+    }
+}
+
 fn site_covers_assertion(
     site: &MacroBindingSite,
     test: &TestSummary,
     assertion_line: usize,
+    bytes: SiteCoverBytes,
 ) -> bool {
-    site_covers(site, test)
-        || site
-            .scope
-            .is_some_and(|(start, end)| (start..=end).contains(&assertion_line))
+    if site_covers(site, test, bytes.test) {
+        return true;
+    }
+    let Some((start, end)) = site.scope else {
+        return false;
+    };
+    if !(start..=end).contains(&assertion_line) {
+        return false;
+    }
+    let same_line_scope = start == end && assertion_line == start;
+    if !same_line_scope {
+        return true;
+    }
+    match (site.scope_bytes, bytes.assertion) {
+        (Some((scope_start, scope_end)), Some((assert_start, assert_end))) => {
+            scope_start <= assert_start && assert_end <= scope_end
+        }
+        (None, _) => true,
+        (Some(_), None) => false,
+    }
 }
 
-/// Whether a scoped site may reach `test`: any overlap of their line spans.
-/// A `use` in the test's own body is scoped to the body block, which starts
-/// after the `fn` line when the signature wraps, so containment would miss it.
-fn site_covers(site: &MacroBindingSite, test: &TestSummary) -> bool {
-    site.scope
-        .is_some_and(|(start, end)| start <= test.end_line && test.start_line <= end)
+/// Whether a scoped site may reach `test`: line spans must overlap, and when
+/// byte spans are available the test function must sit inside the scoped item
+/// (#5695). A `use` in the test's own body is scoped to the body block, which
+/// starts after the `fn` line when the signature wraps, so containment would
+/// miss it; [`site_covers_assertion`] also matches the assertion line.
+fn site_covers(
+    site: &MacroBindingSite,
+    test: &TestSummary,
+    test_bytes: Option<(u32, u32)>,
+) -> bool {
+    let Some((start, end)) = site.scope else {
+        return false;
+    };
+    if test.start_line > end || test.end_line < start {
+        return false;
+    }
+    let same_line_scope =
+        start == end && test.start_line == test.end_line && test.start_line == start;
+    if !same_line_scope {
+        return true;
+    }
+    match (site.scope_bytes, test_bytes) {
+        (Some((scope_start, scope_end)), Some((test_start, test_end))) => {
+            scope_start <= test_start && test_end <= scope_end
+        }
+        (Some(_), None) => false,
+        _ => true,
+    }
+}
+
+fn test_fn_byte_range(
+    syntax: &OwnerPinSyntax,
+    index: &RustIndex,
+    test: &TestSummary,
+) -> Option<(u32, u32)> {
+    let facts = index.files().get(&test.file)?;
+    let name = test.name.trim_start_matches("r#");
+    if let Some(scopes) = syntax.file_scopes(index, &test.file)
+        && let Some(function) = scopes
+            .fns
+            .iter()
+            .find(|function| function.name == name && function.start_line == test.start_line)
+    {
+        return Some((function.start, function.end));
+    }
+    let tree = crate::analysis::syntax::parse_clean_source_file(&facts.source)?.tree();
+    build_file_scopes(&tree)
+        .fns
+        .into_iter()
+        .find(|function| function.name == name && function.start_line == test.start_line)
+        .map(|function| (function.start, function.end))
+}
+
+fn assertion_byte_range(index: &RustIndex, test: &TestSummary, line: usize) -> Option<(u32, u32)> {
+    let facts = index.files().get(&test.file)?;
+    let oracle = test
+        .assertions
+        .iter()
+        .find(|assertion| assertion.line == line)?;
+    let tree = crate::analysis::syntax::parse_clean_source_file(&facts.source)?.tree();
+    let lines = LineIndex::new(&facts.source);
+    let needle = oracle.text.trim();
+    for call in tree.syntax().descendants().filter_map(ast::MacroCall::cast) {
+        let range = call.syntax().text_range();
+        if lines.line(range.start()) != line {
+            continue;
+        }
+        if call.syntax().text().to_string().trim() == needle
+            || call.syntax().text().to_string().contains(needle)
+        {
+            return Some((u32::from(range.start()), u32::from(range.end())));
+        }
+    }
+    None
 }
 
 /// Why an `assert_eq!` was not credited as executing the standard macro.
@@ -3331,11 +3447,16 @@ fn rebinds(site: &MacroBindingSite) -> bool {
 }
 
 /// The scoped site in the test's own file that covers the test.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "macro-site lookup threads memo, roots, module resolution and byte cover context"
+)]
 fn test_macro_binding_site(
     name: &str,
     test: &TestSummary,
     assertion_line: usize,
     index: &RustIndex,
+    bytes: SiteCoverBytes,
     memo: &SyncMemo<TestFileMacroSites>,
     roots: &TargetRoots,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
@@ -3358,7 +3479,7 @@ fn test_macro_binding_site(
             )
         })
         .iter()
-        .find(|(_, site)| site_covers_assertion(site, test, assertion_line))
+        .find(|(_, site)| site_covers_assertion(site, test, assertion_line, bytes))
         .map(|(_, site)| (test.file.clone(), site.clone()))
 }
 
@@ -11066,6 +11187,7 @@ struct ScopeFn {
     name: String,
     start: u32,
     end: u32,
+    start_line: usize,
 }
 
 /// #7097: one module scope: its inline-module stack from the file top
@@ -11151,6 +11273,8 @@ impl OwnerPinSyntax {
 /// #7097: the scope table of `source`, or `None` when it does not parse.
 fn build_file_scopes(tree: &ast::SourceFile) -> FileScopes {
     let end: u32 = tree.syntax().text_range().end().into();
+    let source = tree.syntax().text().to_string();
+    let lines = LineIndex::new(&source);
     let mut scopes = FileScopes::default();
     scopes.push_scope(tree.syntax(), Vec::new(), 0, end);
     for func in tree.syntax().descendants().filter_map(ast::Fn::cast) {
@@ -11163,6 +11287,7 @@ fn build_file_scopes(tree: &ast::SourceFile) -> FileScopes {
                 name: strip_raw(&text).to_string(),
                 start,
                 end,
+                start_line: lines.line(range.start()),
             });
         }
     }

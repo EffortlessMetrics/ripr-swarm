@@ -6191,6 +6191,28 @@ fn a_definition_confined_to_an_inline_module_refuses_only_tests_inside_it() {
     assert_eq!(weight_refusal(&after, &[]), None);
 }
 
+/// #5695: a sibling inline `mod` whose scoped import shares the test's line
+/// must not refuse the neighboring `#[test]`.
+#[test]
+fn a_same_line_sibling_module_import_does_not_refuse_sibling_test() {
+    let outside = "use demo::weight;\nmod helper { use other::assert_eq; } #[test] fn checks() { assert_eq!(weight(4), 12); }\n";
+    assert_eq!(
+        weight_refusal(outside, &[]),
+        None,
+        "same-line sibling import must not taint the test"
+    );
+    let inside = "use demo::weight;\nmod helper { use other::assert_eq; #[test] fn inner() { assert_eq!(weight(4), 12); } }\n";
+    assert!(
+        matches!(
+            weight_refusal(inside, &[]),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        ),
+        "nested test inside helper must stay refused"
+    );
+}
+
 #[test]
 fn a_private_import_confined_to_an_inline_module_refuses_only_tests_inside_it() {
     let outside = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
@@ -8453,6 +8475,7 @@ fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
                     line: 3,
                     kind,
                     scope: None,
+                    scope_bytes: None,
                     crate_local: false,
                     module_local: false,
                 },
