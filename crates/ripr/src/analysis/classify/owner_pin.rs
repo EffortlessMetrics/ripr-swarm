@@ -7467,48 +7467,98 @@ pub(in crate::analysis) fn is_claims_payload_eq_text(text: &str) -> bool {
         .any(|name| claims_eq_operands(text, name).is_some())
 }
 
-/// Single-line plain `assert_ok_eq!(..)` / `assert_some_eq!(..)` statements of
-/// `test` that extraction did not list. Extraction stays text-only and lists
-/// no oracle for these macros (RIPR-SPEC-0120), so reveal nominates them here
-/// as `unknown` / none candidates and keeps one only when the owner pin
-/// admits it. A multi-line invocation is not nominated (fail closed).
+/// Plain `assert_ok_eq!(..)` / `assert_some_eq!(..)` statements of `test`
+/// that extraction did not list, on one line or spread over several. Extraction
+/// stays text-only and lists no oracle for these macros (RIPR-SPEC-0120), so
+/// reveal nominates them here as `unknown` / none candidates and keeps one only
+/// when the owner pin admits it. A statement that starts a line is read through
+/// its matching `)`; anything else on the closing line besides the `;` and a
+/// comment (a second statement, a chained call) is not nominated (fail closed).
 pub(in crate::analysis) fn claims_payload_eq_candidates(test: &TestSummary) -> Vec<OracleFact> {
     if !CLAIMS_EQ_MACROS.iter().any(|name| test.body.contains(name)) {
         return Vec::new();
     }
-    let mut candidates: Vec<OracleFact> = test
-        .body
-        .lines()
-        .enumerate()
-        .filter_map(|(offset, line)| {
-            let text = line.trim();
-            let at = test.start_line + offset;
-            // The invocation alone, with its statement `;`: a trailing comment
-            // is not part of the key the syntax admission looks up.
-            let masked = mask_comments_and_strings(text);
-            let close = masked.rfind(')')?;
+    let masked_body = mask_comments_and_strings(&test.body);
+    let mut line_start = 0usize;
+    let mut candidates: Vec<OracleFact> = Vec::new();
+    for (offset, raw_line) in test.body.split_inclusive('\n').enumerate() {
+        let start_of_line = line_start;
+        line_start += raw_line.len();
+        let line = raw_line.trim_end_matches(['\n', '\r']);
+        let text = line.trim();
+        let at = test.start_line + offset;
+        // The invocation alone, with its statement `;`: a trailing comment
+        // is not part of the key the syntax admission looks up.
+        let masked = mask_comments_and_strings(text);
+        let single = masked.rfind(')').and_then(|close| {
             let terminated = masked[close + 1..].contains(';');
             let mut call = text.get(..=close)?.to_string();
             if terminated {
                 call.push(';');
             }
-            let text = call.as_str();
-            (is_claims_payload_eq_text(text) && !test.assertions.iter().any(|fact| fact.line == at))
-                .then(|| OracleFact {
-                    line: at,
-                    text: text.to_string(),
-                    kind: crate::domain::OracleKind::Unknown,
-                    strength: crate::domain::OracleStrength::None,
-                    observed_tokens: crate::analysis::extract::extract_identifier_tokens(text),
-                    ok_value_observed: None,
-                })
-        })
-        .collect();
+            is_claims_payload_eq_text(&call).then_some(call)
+        });
+        let Some(call) = single.or_else(|| {
+            multiline_claims_eq_text(
+                &test.body,
+                &masked_body,
+                start_of_line + (line.len() - line.trim_start().len()),
+            )
+        }) else {
+            continue;
+        };
+        if test.assertions.iter().any(|fact| fact.line == at) {
+            continue;
+        }
+        candidates.push(OracleFact {
+            line: at,
+            observed_tokens: crate::analysis::extract::extract_identifier_tokens(&call),
+            text: call,
+            kind: crate::domain::OracleKind::Unknown,
+            strength: crate::domain::OracleStrength::None,
+            ok_value_observed: None,
+        });
+    }
     // The statements extraction drops as never run (after `panic!`, `todo!`,
     // `return`, ...) are not nominated either; the owner pin does not read the
     // diverging macros, so this is the only gate for them.
     crate::analysis::extract::retain_reached_oracles(&mut candidates, &test.body, test.start_line);
     candidates
+}
+
+/// The raw text of a claims payload-equality statement that opens at byte
+/// `start` of `body` and closes on a later line, as the syntax admission keys
+/// it: from the macro name through the `;` that ends it on the closing line
+/// (or through the `)` without one). `None` when the statement closes on its
+/// own line (the single-line path reads it), is not a claims equality macro,
+/// or shares its closing line with anything but a `;` and a comment.
+fn multiline_claims_eq_text(body: &str, masked: &str, start: usize) -> Option<String> {
+    let name = CLAIMS_EQ_MACROS.into_iter().find(|name| {
+        masked
+            .get(start..)
+            .is_some_and(|rest| rest.starts_with(name))
+    })?;
+    let after_bang = masked[start + name.len()..]
+        .trim_start()
+        .strip_prefix('!')?
+        .trim_start();
+    let open = masked.len() - after_bang.len();
+    let close = matching_close(masked, open, b'(', b')')?;
+    if !masked[start..close].contains('\n') {
+        return None;
+    }
+    let rest_of_line = masked[close + 1..].split('\n').next().unwrap_or("");
+    let semicolon = rest_of_line.trim_start().strip_prefix(';');
+    let tail = semicolon.unwrap_or(rest_of_line);
+    if !tail.trim().is_empty() {
+        return None;
+    }
+    let end = match semicolon {
+        Some(_) => close + 1 + rest_of_line.find(';')? + 1,
+        None => close + 1,
+    };
+    let text = body.get(start..end)?;
+    is_claims_payload_eq_text(text).then(|| text.to_string())
 }
 
 /// RIPR-SPEC-0197 claims payload equality: the two compared operands of one
