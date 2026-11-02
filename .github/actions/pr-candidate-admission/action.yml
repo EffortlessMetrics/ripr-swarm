@@ -138,7 +138,7 @@ runs:
         }
 
         python3 "$action_root/candidate_admission.py" --self-test
-        python3 "$action_root/release_cut_admission.py" --self-test
+        python3 "$action_root/release_cut_admission.py" --self-test && python3 "$action_root/review_disposition.py" --self-test
         # Generated declarations must name data files only (see docs/CI.md).
         python3 "$action_root/candidate_admission.py" --check-attributes "${GITHUB_WORKSPACE}/.gitattributes" \
           || refuse_early "generated_declaration_invalid" "a linguist-generated declaration in .gitattributes is outside the declarable generated shapes in candidate_admission.py"

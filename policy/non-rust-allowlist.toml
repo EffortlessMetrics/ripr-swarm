@@ -860,6 +860,15 @@ reason = "Stdlib Python decision logic extracted from the pre-allocation admissi
 covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest"]
 
 [[allow]]
+glob = ".github/actions/pr-candidate-admission/review_source_gate.sh"
+kind = "admission_gate_shell"
+owner = "ci/admission"
+surface = "ci"
+classification = "tooling"
+reason = "Shared merge-ready source-review attestation gate invoked from routed-rust admission and final eligibility (#8157)."
+covered_by = ["cargo test -p repo-policy --test review_disposition_admission"]
+
+[[allow]]
 glob = "policy/release-ledger-overrides.json"
 kind = "release_ledger_overrides"
 owner = "release/control"

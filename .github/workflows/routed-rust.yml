@@ -252,7 +252,7 @@ jobs:
           trusted="$GITHUB_WORKSPACE/.admission-trusted"
           [[ "$TRUSTED_ADMISSION_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse
           [ "$(git -C "$trusted" rev-parse HEAD)" = "$TRUSTED_ADMISSION_SHA" ] || refuse
-          for name in action.yml candidate_admission.py release_cut_admission.py; do
+          for name in action.yml candidate_admission.py release_cut_admission.py review_disposition.py review_source_gate.sh; do
             path=".github/actions/pr-candidate-admission/$name"
             [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ] || refuse
             expected="$(git -C "$trusted" rev-parse "$TRUSTED_ADMISSION_SHA:$path")" || refuse
@@ -329,6 +329,18 @@ jobs:
       # hour later, after every test shard went green. Refuse at request time
       # instead, naming the threads. A read failure is only a warning: the final
       # recheck remains the authority and fails closed on its own.
+      - name: Refuse narrative or superseded source-review attestation
+        if: github.event_name == 'pull_request' && steps.candidate.outputs.status == 'admitted'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.entry.outputs.pr }}
+          EXPECTED_HEAD: ${{ steps.entry.outputs.head }}
+        run: |
+          set -euo pipefail
+          bash "$GITHUB_WORKSPACE/.admission-trusted/.github/actions/pr-candidate-admission/review_source_gate.sh" \
+            "$GITHUB_WORKSPACE/.admission-trusted" "$REPOSITORY" "$PR_NUMBER" "$EXPECTED_HEAD"
       - name: Refuse unresolved review threads at request time
         if: github.event_name == 'pull_request' && steps.candidate.outputs.status == 'admitted'
         shell: bash
@@ -682,6 +694,12 @@ jobs:
             }
             why=pull_request_state
             read_pr || return
+            why=source_review_attestation
+            b=$(jq -r .base.sha <<<"$pr") || return; [[ "$b" =~ ^[0-9a-f]{40}$ ]] || return 1
+            t="$RUNNER_TEMP/trusted"; mkdir -p "$t/.github/actions/pr-candidate-admission"
+            for n in review_disposition.py review_source_gate.sh; do gh api -H "Accept: application/vnd.github.raw" "repos/$REPOSITORY/contents/.github/actions/pr-candidate-admission/$n?ref=$b" > "$t/.github/actions/pr-candidate-admission/$n" || return; done
+            chmod +x "$t/.github/actions/pr-candidate-admission/review_source_gate.sh"
+            bash "$t/.github/actions/pr-candidate-admission/review_source_gate.sh" "$t" "$REPOSITORY" "$PR_NUMBER" "$EXPECTED_HEAD" || return
             why=review_decision_and_threads
             while :; do
               page=$((page + 1)); [ "$page" -le 100 ] || return 1
