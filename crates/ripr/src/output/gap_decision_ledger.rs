@@ -180,6 +180,9 @@ pub(crate) struct GapRecord {
     pub(crate) safe_gate_predicate: Option<SafeGatePredicate>,
     #[serde(default)]
     pub(crate) authority_boundary: String,
+    /// Nearest TypeScript `package.json` directory relative to the workspace root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) typescript_package_root: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -1615,6 +1618,7 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "gate_decision_artifact_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -1840,6 +1844,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         authority_boundary: string_at(card, &["authority_boundary"])
             .unwrap_or("preview_advisory_only")
             .to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -2045,6 +2050,9 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
         authority_boundary: string_at(packet, &["authority_boundary"])
             .unwrap_or("preview_advisory_only")
             .to_string(),
+        typescript_package_root: crate::output::markdown::typescript_package_root_from_gap_record(
+            finding,
+        ),
     })
 }
 
@@ -2188,6 +2196,7 @@ fn gap_record_from_typescript_not_delegatable_finding(
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -2289,6 +2298,7 @@ fn gap_record_from_typescript_no_action_finding(
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -2449,6 +2459,7 @@ fn gap_record_from_perl_preview_finding(finding: &Value, index: usize) -> Option
         authority_boundary: string_at(card, &["authority_boundary"])
             .unwrap_or("preview_advisory_only")
             .to_string(),
+        typescript_package_root: None,
     })
     .filter(|record| {
         record.repair_route.is_some()
@@ -2538,6 +2549,7 @@ fn gap_record_from_python_static_limit_finding(finding: &Value, index: usize) ->
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -2624,6 +2636,7 @@ fn gap_record_from_python_no_action_finding(finding: &Value, index: usize) -> Op
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -2755,6 +2768,7 @@ fn gap_record_from_python_no_repair_card_finding(
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -3146,6 +3160,7 @@ fn gap_record_from_finding_alignment_item(item: &Value, index: usize) -> Option<
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "gate_decision_artifact_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
