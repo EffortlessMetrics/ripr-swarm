@@ -23,6 +23,9 @@ pub struct RiprConfig {
     pub perl: PerlConfig,
     pub source_path: Option<PathBuf>,
     pub source_text: Option<String>,
+    /// Passive VP29A compile output when configuration is loaded from disk (#6428).
+    pub(crate) verification_contract_decision:
+        Option<super::verification_contract::RepositoryVerificationContractDecisionV1>,
 }
 
 impl RiprConfig {
@@ -857,6 +860,7 @@ impl RiprConfig {
             perl,
             source_path: _,
             source_text: _,
+            verification_contract_decision: _,
         } = self;
         let AnalysisConfig {
             mode: _,
@@ -1171,6 +1175,12 @@ impl RiprConfig {
                 role: ConfigIdentityRole::Excluded,
                 value: None,
                 note: "loader container metadata, not a ripr.toml field",
+            },
+            ConfigIdentityField {
+                name: "verification_contract_decision",
+                role: ConfigIdentityRole::Excluded,
+                value: None,
+                note: "passive VP29A compile output derived at load time, not authored config",
             },
         ]);
         fields

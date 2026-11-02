@@ -11,3 +11,4 @@ mod model;
 pub(crate) use compiler::{
     VerificationContractCompileInput, compile_repository_verification_contract,
 };
+pub(crate) use model::RepositoryVerificationContractDecisionV1;

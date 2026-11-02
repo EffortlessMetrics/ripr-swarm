@@ -329,6 +329,16 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
     // spelling (#7652).
     config.source_path = Some(path);
     config.source_text = Some(text);
+    config.verification_contract_decision = Some(
+        verification_contract::compile_repository_verification_contract(
+            verification_contract::VerificationContractCompileInput {
+                repository_root: root,
+                ripr_toml_path: config.source_path.as_deref(),
+                ripr_toml_content_digest: loaded_config_identity(&config),
+                config: &config,
+            },
+        ),
+    );
     Ok(config)
 }
 
