@@ -87,20 +87,12 @@ jobs:
           cargo xtask check-covered-by
           cargo xtask check-file-policy
 
-      - name: Explain why hard_cut_admission_selftest rebuilds when warm
+      - name: Show the nested cargo output of the warm combined build
         timeout-minutes: 30
         shell: bash
         run: |
-          cargo xtask check-covered-by
-          cargo xtask check-file-policy > target/fp-warm.log 2>&1 || true
-          for i in 1 2; do
-            start=$(date +%s)
-            cargo test -p xtask --test hard_cut_admission_selftest --no-run -v > "target/hc-$i.log" 2>&1 || true
-            echo "HC RUN $i $(( $(date +%s) - start ))s"
-            grep -E "Dirty|Fresh xtask|Compiling|Running .*hard_cut|Finished|Executable" "target/hc-$i.log" | cut -c1-300 | head -12
-          done
-          start=$(date +%s)
-          CARGO_LOG=cargo::core::compiler::fingerprint=debug cargo test -p xtask --test hard_cut_admission_selftest --no-run > target/hc-fp.log 2>&1 || true
-          echo "FINGERPRINT RUN $(( $(date +%s) - start ))s"
-          grep -iE "dirty|stale|newer|outdated|hard_cut" target/hc-fp.log | cut -c1-300 | head -20
-          ls -la target/debug/deps/hard_cut_admission_selftest* 2>/dev/null | head
+          cargo xtask check-file-policy > target/fp-a.log 2>&1 || true
+          export WV_PROBE_STDERR=1 CARGO_TERM_VERBOSE=true CARGO_LOG=cargo::core::compiler::fingerprint=info
+          cargo xtask check-file-policy > target/fp-b.log 2>&1 || true
+          grep -n "WVPROBE" target/fp-b.log | head -3
+          grep -E "Dirty|dirty|Compiling|Fresh xtask|xtask.exe|Access is denied|relink|stale|newer" target/fp-b.log | cut -c1-300 | head -40 || true

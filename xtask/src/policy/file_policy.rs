@@ -262,6 +262,11 @@ fn validate_test_covered_by_recorded(
             TEST_COVERED_BY_BUILD_TIMEOUT,
             "test-valued covered_by combined build",
         );
+        if std::env::var_os("WV_PROBE_STDERR").is_some() {
+            if let Ok(out) = &captured {
+                eprintln!("WVPROBE combined elapsed? stderr:\n{}", out.stderr);
+            }
+        }
         diagnostics.push(CommandDiagnostic::captured("cargo", &args, &captured));
     }
     validate_test_covered_by_recorded_with(path, commands, host, diagnostics, |spawn| {
