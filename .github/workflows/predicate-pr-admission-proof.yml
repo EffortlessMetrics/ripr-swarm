@@ -6,6 +6,7 @@ on:
 permissions:
   contents: write
   pull-requests: read
+  actions: write
 concurrency:
   group: ripr-11358-pr-admission
   cancel-in-progress: false
@@ -14,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      SUBJECT: 8d0371fc731646ee79cf7c75dab8fb3fc57087d5
+      SUBJECT: b9f496383803b7010801a274e3b4e8cecf90bd47
       BASIS: 9896777133d6e1beb6ac1ca28b5e772f7a150463
       DESTINATION: codex/11358-complete-stub-inventory-reuse
       CARGO_BUILD_JOBS: '2'
@@ -26,16 +27,16 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: 8d0371fc731646ee79cf7c75dab8fb3fc57087d5
+          ref: b9f496383803b7010801a274e3b4e8cecf90bd47
           path: build
           fetch-depth: 0
           persist-credentials: false
-      - name: Bind Draft and compose the material prerequisite
+      - name: Bind existing Draft and the reviewed repair
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          export EVIDENCE="$RUNNER_TEMP/predicate-composition"
+          export EVIDENCE="$RUNNER_TEMP/predicate-corpus-repair"
           mkdir -p "$EVIDENCE"
           echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
           test "$(git rev-parse HEAD)" = "$SUBJECT"
@@ -46,46 +47,24 @@ jobs:
           from pathlib import Path
           e=Path(os.environ['EVIDENCE']); pr=json.loads((e/'pr-before.json').read_text())
           assert pr['head']['sha']==os.environ['SUBJECT'] and pr['state']=='open' and pr['draft']
-          assert 'merge-ready' not in [x['name'] for x in pr['labels']]
+          assert pr['auto_merge'] is None and 'merge-ready' not in [x['name'] for x in pr['labels']]
           (e/'pr-body.json').write_text(json.dumps({'body':pr['body']})+'\n')
           assert shutil.disk_usage('.').free>=18*1024**3, 'owned target and reserve unavailable'
           PY
-          git fetch --no-tags origin "$BASIS"
-          test "$(git rev-parse "$BASIS^{commit}")" = "$BASIS"
-          git config user.name 'Steven Zimmerman'
-          git config user.email '15812269+EffortlessSteven@users.noreply.github.com'
-          set +e
-          git -c commit.gpgsign=false merge --no-ff --no-commit "$BASIS" > "$EVIDENCE/merge.stdout" 2> "$EVIDENCE/merge.stderr"
-          code=$?
-          set -e
-          echo "merge exit=$code" >> "$EVIDENCE/status.txt"
-          git status --porcelain > "$EVIDENCE/merge-status.txt"
-          if [ "$code" != 0 ]; then git diff > "$EVIDENCE/conflict.diff"; cat "$EVIDENCE/merge.stderr"; exit "$code"; fi
-          git -c commit.gpgsign=false commit -m 'merge: compose guidance reuse with main build recovery (#11358)'
-          git diff --name-only "$BASIS" HEAD > "$EVIDENCE/candidate-paths.txt"
+          for blob in 67d84e3306f3785b6b2427feb7cea8cb82622b3e 37f9fb618859189ae439e3bb3994bf2fad51213b; do
+            gh api repos/$GITHUB_REPOSITORY/git/blobs/$blob > "$EVIDENCE/$blob.json"
+          done
           python3 - <<'PY'
-          import os, subprocess, json
+          import base64,hashlib,json,os
           from pathlib import Path
           e=Path(os.environ['EVIDENCE'])
-          expected={'changelog.d/11358-complete-stub-inventory-reuse.md','crates/ripr/src/analysis/file_guidance_inventory_tests.rs','crates/ripr/src/analysis/mod.rs','crates/ripr/src/analysis/seam_inventory.rs','crates/ripr/src/app/test_stub.rs','crates/ripr/src/app/test_stub_inventory_tests.rs'}
-          assert set((e/'candidate-paths.txt').read_text().splitlines())==expected
-          git=lambda *a: subprocess.check_output(['git',*a],text=True).strip()
-          parents=git('show','-s','--format=%P','HEAD').split()
-          assert parents==[os.environ['SUBJECT'],os.environ['BASIS']]
-          stub=Path('crates/ripr/src/app/test_stub.rs').read_text()
-          assert 'rust_test_stub(&seam, None, source, Some(root))' in stub
-          assert 'analysis::inventory_file_guidance_at_with_config(root, config, &relative)' in stub
-          inv=Path('crates/ripr/src/analysis/seam_inventory.rs').read_text()
-          assert 'file-guidance-v2-native' in inv and 'prepare_diff_scoped_classified_workspace_from_state' in inv
-          (e/'identity.json').write_text(json.dumps({'head':git('rev-parse','HEAD'),'tree':git('rev-parse','HEAD^{tree}'),'parents':parents,'controller':os.environ['GITHUB_SHA'],'run':os.environ['GITHUB_RUN_ID'],'attempt':os.environ['GITHUB_RUN_ATTEMPT']},indent=2)+'\n')
-          subprocess.run(['git','archive','--format=tar.gz','--output='+str(e/'candidate-source.tar.gz'),'HEAD',*sorted(expected)],check=True)
-          subprocess.run(['git','archive','--format=tar.gz','--output='+str(e/'basis-source.tar.gz'),os.environ['BASIS'],*[p for p in sorted(expected) if p not in {'changelog.d/11358-complete-stub-inventory-reuse.md','crates/ripr/src/analysis/file_guidance_inventory_tests.rs'}]],check=True)
+          for sha,name,digest in [('67d84e3306f3785b6b2427feb7cea8cb82622b3e','rename-control.patch','e8953247ed057c632ae2b45913d0883bc29a3305d11335aa8b4e3c0d104000d0'),('37f9fb618859189ae439e3bb3994bf2fad51213b','repair.patch','f90b3b80e969b24bb82dbfc36b12773abe2b6404e359efa6dd368e3f125af5fe')]:
+              obj=json.loads((e/(sha+'.json')).read_text()); assert obj['encoding']=='base64'
+              data=base64.b64decode(obj['content'])
+              assert hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()==sha
+              assert hashlib.sha256(data).hexdigest()==digest
+              (e/name).write_bytes(data)
           PY
-          git cat-file commit HEAD > "$EVIDENCE/candidate.commit"
-          git diff --binary "$BASIS" HEAD > "$EVIDENCE/candidate.patch"
-          git diff --check "$BASIS" HEAD
-          git status --porcelain > "$EVIDENCE/source-status.txt"
-          test ! -s "$EVIDENCE/source-status.txt"
           cat > "$EVIDENCE/run.sh" <<'SH'
           run() {
             local name="$1"; shift
@@ -97,14 +76,30 @@ jobs:
             if [ "$code" != 0 ]; then tail -n 100 "$EVIDENCE/$name.stderr"; return "$code"; fi
           }
           SH
-      - name: Retain the exact composed source before compilation
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: predicate-composition-source-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/predicate-composition/
-          if-no-files-found: error
-          retention-days: 14
+      - name: Withdraw only exact-subject superseded qualification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']); repo=os.environ['GITHUB_REPOSITORY']
+          for run in [41437010026,41437010087,41437009999,41437009891,41437009971,41437010025]:
+              endpoint=f'repos/{repo}/actions/runs/{run}'
+              raw=subprocess.check_output(['gh','api',endpoint]); (e/f'superseded-{run}-before.json').write_bytes(raw)
+              item=json.loads(raw)
+              assert item['head_sha']==os.environ['SUBJECT'] and item['event']=='pull_request'
+              assert any(pr['number']==12008 for pr in item['pull_requests']), 'not this candidate run'
+              if item['status']!='completed':
+                  result=subprocess.run(['gh','api','--method','POST',endpoint+'/cancel'],capture_output=True)
+                  (e/f'superseded-{run}-cancel.stdout').write_bytes(result.stdout)
+                  (e/f'superseded-{run}-cancel.stderr').write_bytes(result.stderr)
+                  with (e/'status.txt').open('a') as f: f.write(f'cancel-{run} exit={result.returncode}\n')
+                  after=subprocess.check_output(['gh','api',endpoint]); (e/f'superseded-{run}-after.json').write_bytes(after)
+              else:
+                  with (e/'status.txt').open('a') as f: f.write(f'cancel-{run} not_requested_terminal={item["conclusion"]}\n')
+          PY
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: 1.95.0
@@ -114,11 +109,56 @@ jobs:
           workspaces: build -> target
           shared-key: ripr-8547-focused
           save-if: 'false'
-      - name: Exercise composed guidance and existing consumers
+      - name: Prove the old guidance reuses a renamed test incorrectly
         run: |
           set -euo pipefail
           source "$EVIDENCE/run.sh"
           rustc +1.95.0 -Vv > "$EVIDENCE/rustc.txt"
+          git apply --check "$EVIDENCE/rename-control.patch"
+          git apply "$EVIDENCE/rename-control.patch"
+          git diff --binary > "$EVIDENCE/red-source.patch"
+          code=0
+          run renamed-red cargo +1.95.0 test --locked -p ripr --lib complete_guidance_native_corpus_rename_recomputes_memory_and_disk -- --nocapture --test-threads=1 || code=$?
+          test "$code" = 101
+          grep -F 'test result: FAILED. 0 passed; 1 failed; 0 ignored;' "$EVIDENCE/renamed-red.stdout"
+          grep -F 'native corpus rename must recompute instead of replaying the old test path' "$EVIDENCE/renamed-red.stderr"
+      - name: Apply and bind only the reviewed admission repair
+        run: |
+          set -euo pipefail
+          git apply --check "$EVIDENCE/repair.patch"
+          git apply "$EVIDENCE/repair.patch"
+          cargo +1.95.0 fmt --all
+          git diff --name-only > "$EVIDENCE/repair-paths.txt"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          assert set((e/'repair-paths.txt').read_text().splitlines())=={'crates/ripr/src/analysis/seam_inventory.rs','crates/ripr/src/analysis/file_guidance_inventory_tests.rs','changelog.d/11358-complete-stub-inventory-reuse.md'}
+          PY
+          git config user.name 'Steven Zimmerman'
+          git config user.email '15812269+EffortlessSteven@users.noreply.github.com'
+          git add crates/ripr/src/analysis/seam_inventory.rs crates/ripr/src/analysis/file_guidance_inventory_tests.rs changelog.d/11358-complete-stub-inventory-reuse.md
+          git -c commit.gpgsign=false commit -m 'fix(stub): refuse guidance reuse for lossy corpus identities (#11358)'
+          git cat-file commit HEAD > "$EVIDENCE/candidate.commit"
+          git diff --binary "$SUBJECT" HEAD > "$EVIDENCE/actual-repair.patch"
+          git diff --binary "$BASIS" HEAD > "$EVIDENCE/complete-candidate.patch"
+          git diff --name-only "$BASIS" HEAD > "$EVIDENCE/candidate-paths.txt"
+          git diff --check "$SUBJECT" HEAD
+          python3 - <<'PY'
+          import os,json,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']); git=lambda *a: subprocess.check_output(['git',*a],text=True).strip()
+          paths=(e/'candidate-paths.txt').read_text().splitlines()
+          expected={'changelog.d/11358-complete-stub-inventory-reuse.md','crates/ripr/src/analysis/file_guidance_inventory_tests.rs','crates/ripr/src/analysis/mod.rs','crates/ripr/src/analysis/seam_inventory.rs','crates/ripr/src/app/test_stub.rs','crates/ripr/src/app/test_stub_inventory_tests.rs'}
+          assert set(paths)==expected and git('show','-s','--format=%P','HEAD')==os.environ['SUBJECT']
+          (e/'identity.json').write_text(json.dumps({'head':git('rev-parse','HEAD'),'tree':git('rev-parse','HEAD^{tree}'),'parent':os.environ['SUBJECT'],'basis':os.environ['BASIS'],'controller':os.environ['GITHUB_SHA'],'run':os.environ['GITHUB_RUN_ID'],'attempt':os.environ['GITHUB_RUN_ATTEMPT']},indent=2)+'\n')
+          subprocess.run(['git','archive','--format=tar.gz','--output='+str(e/'candidate-source.tar.gz'),'HEAD',*sorted(expected)],check=True)
+          PY
+          test -z "$(git status --porcelain)"
+      - name: Exercise repaired cache and retained consumers
+        run: |
+          set -euo pipefail
+          source "$EVIDENCE/run.sh"
           run format cargo +1.95.0 fmt --all -- --check
           run guidance cargo +1.95.0 test --locked -p ripr --lib file_guidance_inventory_tests -- --nocapture --test-threads=8
           run stub cargo +1.95.0 test --locked -p ripr --lib app::test_stub -- --nocapture --test-threads=8
@@ -128,20 +168,18 @@ jobs:
           import os,re
           from pathlib import Path
           e=Path(os.environ['EVIDENCE'])
-          for name,minimum in [('guidance',9),('stub',32),('bound',10),('persisted',6)]:
-              text=(e/(name+'.stdout')).read_text()
-              m=re.search(r'test result: ok\. (\d+) passed; 0 failed; 0 ignored;',text)
-              assert m and int(m[1])>=minimum, (name,'missing or empty intended subjects')
+          for name,minimum in [('guidance',11),('stub',33),('bound',11),('persisted',6)]:
+              m=re.search(r'test result: ok\. (\d+) passed; 0 failed; 0 ignored;',(e/(name+'.stdout')).read_text())
+              assert m and int(m[1])>=minimum, (name,'missing intended subjects')
           PY
           git diff --exit-code
-      - name: Check actual body and applicable integration policy
+      - name: Validate current body and applicable policy with strict compilation
         run: |
           set -euo pipefail
           source "$EVIDENCE/run.sh"
           run body cargo +1.95.0 run --locked -p xtask -- check-pr-shape --body-file "$EVIDENCE/pr-body.json"
           run precommit cargo +1.95.0 run --locked -p xtask -- precommit
           run clippy cargo +1.95.0 clippy --locked -p ripr --all-targets --all-features -- -D warnings
-          git diff --exit-code
           test -z "$(git status --porcelain)"
       - name: Normally advance only the unchanged existing Draft
         env:
@@ -154,25 +192,29 @@ jobs:
           from pathlib import Path
           e=Path(os.environ['EVIDENCE']); pr=json.loads((e/'pr-before-push.json').read_text()); identity=json.loads((e/'identity.json').read_text())
           assert pr['head']['sha']==os.environ['SUBJECT'] and pr['state']=='open' and pr['draft']
-          assert 'merge-ready' not in [x['name'] for x in pr['labels']]
+          assert pr['auto_merge'] is None and 'merge-ready' not in [x['name'] for x in pr['labels']]
           assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==identity['head']
           PY
           git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin "HEAD:refs/heads/$DESTINATION" > "$EVIDENCE/push.stdout" 2> "$EVIDENCE/push.stderr"
+          echo 'push exit=0' >> "$EVIDENCE/status.txt"
+          gh api repos/$GITHUB_REPOSITORY/git/ref/heads/$DESTINATION > "$EVIDENCE/branch-after.json"
           gh api repos/$GITHUB_REPOSITORY/pulls/12008 > "$EVIDENCE/pr-after.json"
           python3 - <<'PY'
           import json,os
           from pathlib import Path
-          e=Path(os.environ['EVIDENCE']); pr=json.loads((e/'pr-after.json').read_text()); identity=json.loads((e/'identity.json').read_text())
-          assert pr['head']['sha']==identity['head'] and pr['state']=='open' and pr['draft']
+          e=Path(os.environ['EVIDENCE']); identity=json.loads((e/'identity.json').read_text()); branch=json.loads((e/'branch-after.json').read_text()); pr=json.loads((e/'pr-after.json').read_text())
+          with (e/'status.txt').open('a') as f:
+              f.write(f'publication_observation expected={identity["head"]} branch={branch["object"]["sha"]} pr={pr["head"]["sha"]}\n')
+          assert branch['object']['sha']==identity['head'], 'retain successful push and reconcile stale ref; never repeat blindly'
+          assert pr['state']=='open' and pr['draft']
           PY
-          echo 'publish exit=0' >> "$EVIDENCE/status.txt"
-      - name: Retain terminal proof without binaries or caches
+      - name: Retain native source and all terminal observations
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: predicate-composition-${{ github.run_attempt }}
+          name: predicate-corpus-repair-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/predicate-composition/
+            ${{ runner.temp }}/predicate-corpus-repair/
             build/target/ripr/reports/
           if-no-files-found: error
           retention-days: 14
