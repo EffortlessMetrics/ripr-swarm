@@ -18266,6 +18266,42 @@ fn same_named_unreferenced_owner_stays_ungripped_without_sharing_witness() -> Re
     Ok(())
 }
 
+/// #6621: inline sibling modules in one file keep distinct reach witnesses and
+/// evaluation order must not share the run-scoped cache entry.
+#[test]
+fn same_file_inline_sibling_owners_keep_distinct_reach_witnesses() -> Result<(), String> {
+    let files = [
+        (
+            "src/lib.rs",
+            "mod a {\n\
+             pub fn route(total: u64) -> u64 { tier(total) }\n\
+             fn tier(total: u64) -> u64 { if total >= 100 { 20 } else { 0 } }\n\
+             }\n\
+             mod b {\n\
+             fn tier(total: u64) -> u64 { if total >= 50 { 99 } else { 0 } }\n\
+             }\n\
+             pub fn run(total: u64) -> u64 { a::route(total) }\n",
+        ),
+        (
+            "tests/run.rs",
+            "#[test] fn runs_large_order() { assert_eq!(ripr_fixture::run(150), 20); }\n",
+        ),
+    ];
+    let (a_reach, a_class) = unresolved_reach_for_owner_file("src/lib.rs", "total >= 100", &files)?;
+    assert_eq!(a_reach.state, StageState::Opaque, "{a_reach:?}");
+    assert!(
+        a_reach.summary.contains("runs_large_order") && a_reach.summary.contains("tier"),
+        "a::tier keeps the transitive witness: {}",
+        a_reach.summary
+    );
+    assert_eq!(a_class, SeamGripClass::Opaque);
+
+    let (b_reach, b_class) = unresolved_reach_for_owner_file("src/lib.rs", "total >= 50", &files)?;
+    assert_eq!(b_reach.state, StageState::No, "{b_reach:?}");
+    assert_eq!(b_class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
 /// RIPR-SPEC-0236 example 23: macro-blocked reach names
 /// `rust_macro_reach_unresolved` (#6621).
 #[test]

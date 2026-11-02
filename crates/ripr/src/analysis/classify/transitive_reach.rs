@@ -20,7 +20,9 @@
 //!   This check only sets `static_limit_kind` to name the limitation.
 //! - If no candidate transitive path is found the finding is left exactly as-is.
 
-use crate::analysis::classify::call_identity::{shared_owner_call_identity, text_calls_owner};
+use crate::analysis::classify::call_identity::{
+    production_text_calls_owner, shared_owner_call_identity,
+};
 use crate::analysis::facts::{CallFact, FunctionContainer, FunctionSummary, RustIndex, TestFact};
 use crate::domain::StaticLimitKind;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -1262,10 +1264,7 @@ impl<'a> TransitiveReachIndex<'a> {
                     .any(|call| !is_macro_call(call.name.as_str()) && call.name == callee_name)
             })
             .filter(|function| {
-                !path_aware || {
-                    let summary = production_as_test(function);
-                    text_calls_owner(self.index, callee, &summary, function.body.as_ref())
-                }
+                !path_aware || production_text_calls_owner(self.index, callee, function)
             })
             .copied()
             .collect()
@@ -1804,33 +1803,7 @@ impl<'a> TransitiveReachIndex<'a> {
             .iter()
             .find(|function| function.id == owner.id)?;
         let owner_name = owner.name.as_str();
-        let graph = self.graph();
-        if graph
-            .by_name
-            .get(owner_name)
-            .is_some_and(|functions| functions.len() > 1)
-            && shared_owner_call_identity(self.index, owner).is_some()
-            && self.names_reaching_owner(owner).is_empty()
-        {
-            return None;
-        }
         self.macro_reach_witness(owner_name)
-    }
-}
-
-fn production_as_test(function: &FunctionSummary) -> TestFact {
-    TestFact {
-        name: function.name.clone(),
-        file: function.file.clone(),
-        start_line: function.start_line,
-        end_line: function.end_line,
-        body: function.body.clone(),
-        calls: function.calls.clone(),
-        assertions: Vec::new(),
-        literals: function.literals.clone(),
-        attrs: function.attrs.clone(),
-        nested_fn_names: function.nested_fn_names.clone(),
-        let_bindings: function.let_bindings.clone(),
     }
 }
 

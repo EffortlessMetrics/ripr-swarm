@@ -568,10 +568,9 @@ fn unresolved_reach_summary(
     if owner_name.is_empty() {
         return None;
     }
-    let owner_file = owner_fn.file.display().to_string().replace('\\', "/");
-    // RIPR-SPEC-0236 rule R4: cache by owner file and name so a later
-    // path-aware witness search cannot leak one owner's answer to another.
-    if let Some(summary) = cached(context, format!("name:{owner_file}::{owner_name}"), || {
+    // RIPR-SPEC-0236 rule R4: cache by owner id so same-file same-named owners
+    // cannot leak one witness to another (#6621).
+    if let Some(summary) = cached(context, format!("owner:{}", owner_fn.id.0), || {
         witness_summary(owner_fn, context)
     }) {
         return Some(summary);
@@ -583,7 +582,7 @@ fn unresolved_reach_summary(
     }
     // Last: a chain past five hops never displaces a shallower or more
     // specific witness (#8047).
-    cached(context, format!("deep:{owner_file}::{owner_name}"), || {
+    cached(context, format!("deep:{}", owner_fn.id.0), || {
         let witness = context
             .transitive_reach
             .deep_transitive_witness(owner_name)?;
