@@ -31264,6 +31264,7 @@ fn known_commands_include_current_report_and_policy_commands() {
     assert!(commands.contains(&"cockpit"));
     assert!(commands.contains(&"release-readiness --version <version>"));
     assert!(commands.contains(&"targeted-test-outcome --before <path> --after <path>"));
+    assert!(commands.contains(&"native-libtest --root <path> --package <name> [--target-dir <path>] [--locked] [--offline] [--replay-filter <name>] [--out <path>]"));
     assert!(commands.contains(&"mutation-calibration [root] --mutants-json <path>"));
     assert!(
         commands.contains(&"bun-ub-calibration [--corpus <path>] [--out <path>] [--out-md <path>]")
