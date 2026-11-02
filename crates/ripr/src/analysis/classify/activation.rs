@@ -5039,45 +5039,41 @@ fn owner_call_parameter_values_where(
                 !crate::analysis::value_resolution::test_case_bound_literals(test, argument)
                     .is_empty()
             };
-            let case_column_heights = || {
-                cells
-                    .iter()
-                    .filter(|(_, _, argument, table)| !*table && case_column(argument))
-                    .map(|(_, values, _, _)| values.len())
+            let case_arguments = cells
+                .iter()
+                .filter(|(_, _, argument, table)| !*table && case_column(argument))
+                .map(|(_, _, argument, _)| *argument)
+                .collect::<Vec<_>>();
+            let readable_case_rows = if case_arguments.is_empty() {
+                Vec::new()
+            } else {
+                (0..crate::analysis::value_resolution::rstest_case_row_count(test))
+                    .filter(|&case_index| {
+                        case_arguments.iter().all(|argument| {
+                            test_case_scalar_at(test, argument, case_index).is_some()
+                        })
+                    })
                     .collect::<Vec<_>>()
-            };
-            let aligned_case_height = |heights: &[usize]| -> Option<usize> {
-                let mut iter = heights.iter();
-                let first = *iter.next()?;
-                iter.all(|height| *height == first)
-                    .then_some(first)
-                    .filter(|height| *height > 0)
             };
             let table_height = cells
                 .iter()
                 .filter(|(_, _, _, table)| *table)
                 .map(|(_, values, _, _)| values.len())
                 .max();
-            let case_zip_height = aligned_case_height(&case_column_heights());
-            let case_table_height = table_height.and_then(|table_height| {
-                case_zip_height.map(|case_height| (case_height, table_height))
-            });
             let by_row = cells.iter().any(|(_, _, _, table)| *table)
                 && cells.iter().all(|(_, values, argument, table)| {
                     *table || (values.len() == 1 && !case_column(argument))
                 });
-            let mut push_row = |case_index: Option<usize>,
-                                table_index: Option<usize>,
-                                zip_index: Option<usize>| {
+            let mut push_row = |case_index: Option<usize>, table_index: Option<usize>| {
                 let row = cells
                     .iter()
                     .filter_map(|(parameter, values, argument, table)| {
                         let value = if *table {
-                            table_index.and_then(|idx| values.get(idx))?
+                            table_index.and_then(|idx| values.get(idx)).cloned()?
                         } else if case_column(argument) {
-                            case_index.or(zip_index).and_then(|idx| values.get(idx))?
+                            test_case_scalar_at(test, argument, case_index?)?
                         } else {
-                            values.first()?
+                            values.first()?.clone()
                         };
                         Some(ParameterValue {
                             parameter: (*parameter).clone(),
@@ -5092,52 +5088,50 @@ fn owner_call_parameter_values_where(
                     rows.push(row);
                 }
             };
-            if let Some((case_height, table_height)) = case_table_height {
+            if let Some(table_height) = table_height.filter(|_| !readable_case_rows.is_empty()) {
                 // Each rstest case runs the inner constant-row loop, so case
                 // rows and table rows are independent dimensions (#7127).
-                for case_index in 0..case_height {
+                for &case_index in &readable_case_rows {
                     for table_index in 0..table_height {
-                        push_row(Some(case_index), Some(table_index), None);
+                        push_row(Some(case_index), Some(table_index));
                     }
                 }
+            } else if table_height.is_none() && !readable_case_rows.is_empty() {
+                // Columns of the same `#[case(..)]` row stay correlated.
+                for &case_index in &readable_case_rows {
+                    push_row(Some(case_index), None);
+                }
             } else if table_height.is_none() {
-                if let Some(case_height) = case_zip_height {
-                    // Columns of the same `#[case(..)]` row stay correlated.
-                    for zip_index in 0..case_height {
-                        push_row(None, None, Some(zip_index));
-                    }
+                let height = if by_row {
+                    cells
+                        .iter()
+                        .map(|(_, values, _, _)| values.len())
+                        .max()
+                        .unwrap_or(0)
                 } else {
-                    let height = if by_row {
-                        cells
-                            .iter()
-                            .map(|(_, values, _, _)| values.len())
-                            .max()
-                            .unwrap_or(0)
-                    } else {
-                        usize::from(!cells.is_empty())
-                    };
-                    for position in 0..height {
-                        let row = cells
-                            .iter()
-                            .filter_map(|(parameter, values, _, _)| {
-                                let value = match values.len() {
-                                    _ if !by_row => values.first(),
-                                    1 => values.first(),
-                                    len if len == height => values.get(position),
-                                    _ => None,
-                                }?;
-                                Some(ParameterValue {
-                                    parameter: (*parameter).clone(),
-                                    value: value.clone(),
-                                    line: call.line,
-                                    text: call.text.to_string(),
-                                    file: Some(test.file.clone()),
-                                })
+                    usize::from(!cells.is_empty())
+                };
+                for position in 0..height {
+                    let row = cells
+                        .iter()
+                        .filter_map(|(parameter, values, _, _)| {
+                            let value = match values.len() {
+                                _ if !by_row => values.first(),
+                                1 => values.first(),
+                                len if len == height => values.get(position),
+                                _ => None,
+                            }?;
+                            Some(ParameterValue {
+                                parameter: (*parameter).clone(),
+                                value: value.clone(),
+                                line: call.line,
+                                text: call.text.to_string(),
+                                file: Some(test.file.clone()),
                             })
-                            .collect::<Vec<_>>();
-                        if !row.is_empty() {
-                            rows.push(row);
-                        }
+                        })
+                        .collect::<Vec<_>>();
+                    if !row.is_empty() {
+                        rows.push(row);
                     }
                 }
             } else {
@@ -7049,6 +7043,15 @@ fn owner_argument_values_in(test: &TestSummary, argument: &str, text_cells: bool
         .filter(|value| !value.starts_with(['"', '\'']))
         .filter(|value| scalar_values(value).as_slice() == std::slice::from_ref(value))
         .collect()
+}
+
+/// One readable scalar from rstest case row `case_index` for `ident`, using
+/// the same guards and scalar filter as [`owner_argument_values_in`].
+fn test_case_scalar_at(test: &TestSummary, ident: &str, case_index: usize) -> Option<String> {
+    let value = crate::analysis::value_resolution::test_case_bound_cell(test, ident, case_index)?;
+    (!value.starts_with(['"', '\''])
+        && scalar_values(&value).as_slice() == std::slice::from_ref(&value))
+    .then_some(value)
 }
 
 /// The argument with the wrappers that keep a literal's value stripped: a
@@ -10738,6 +10741,43 @@ assert_eq!(input.amount, 100);"#
             })
             .collect::<Vec<_>>();
         assert_eq!(pairs, vec![("1", "2"), ("2", "1")]);
+    }
+
+    #[test]
+    fn rstest_case_zip_uses_original_row_index_not_compressed_columns() {
+        // When one case cell is unreadable, do not zip surviving literals from
+        // different original case rows (#7127 / Devin review).
+        let body = "fn t(#[case] left: u32, #[case] right: u32) {\n    assert_eq!(eq(left, right), left == right);\n}";
+        let mut test = test_with_body_calls(body, &[(13, "eq(left, right)")]);
+        test.attrs = vec![
+            "#[rstest]".to_string(),
+            "#[case(1, 2)]".to_string(),
+            "#[case(UNKNOWN, 4)]".to_string(),
+            "#[case(4, UNKNOWN)]".to_string(),
+            "#[case(5, 6)]".to_string(),
+        ];
+        let rows = owner_call_parameter_values(
+            &[&test],
+            "eq",
+            false,
+            &["left".to_string(), "right".to_string()],
+        );
+        let pairs = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.iter()
+                        .find(|cell| cell.parameter == "left")
+                        .map(|cell| cell.value.as_str())
+                        .unwrap_or(""),
+                    row.iter()
+                        .find(|cell| cell.parameter == "right")
+                        .map(|cell| cell.value.as_str())
+                        .unwrap_or(""),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(pairs, vec![("1", "2"), ("5", "6")]);
     }
 
     #[test]

@@ -1513,25 +1513,12 @@ fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnPa
     (cases, params)
 }
 
-/// The values rstest `#[case(..)]` rows bind to the test parameter
-/// `ident`, one per row, for the check-path activation stage (which can
-/// promote a finding to `exposed`). Fails closed to no values when the
-/// parameter is `mut` or anything in the body may rebind the name before
-/// the owner call: a `let` (simple or pattern), a `for`, `if let` or
-/// `while let` binding, a closure parameter or a match arm. A nested
-/// `fn` item also binds nothing: an owner call inside it reads that fn's
-/// own parameters, which the case rows do not bind.
-pub(crate) fn test_case_bound_literals(test: &TestSummary, ident: &str) -> Vec<String> {
+fn test_case_bound_context(test: &TestSummary, ident: &str) -> Option<(Vec<Vec<String>>, usize)> {
     if !test.nested_fn_names.is_empty() {
-        return Vec::new();
+        return None;
     }
-    // Parser authority first: the case parameter must be the only binding
-    // of `ident` anywhere in the test (a char or raw-string literal cannot
-    // hide a later `let` from the parser), and an unparsable body binds
-    // nothing. The lexical scan below still covers bindings written inside
-    // macro token trees, which the parser does not expand.
     if crate::analysis::syntax::fn_name_binding_count(&test.body, ident) != Some(1) {
-        return Vec::new();
+        return None;
     }
     let cleaned = strip_comments_and_strings(&test.body);
     let rebound = find_all(&cleaned, "let ").into_iter().any(|start| {
@@ -1543,15 +1530,48 @@ pub(crate) fn test_case_bound_literals(test: &TestSummary, ident: &str) -> Vec<S
         .is_empty()
         || !non_let_shadowing_lines(&cleaned, ident, test.start_line).is_empty();
     if rebound {
-        return Vec::new();
+        return None;
     }
     let (cases, params) = extract_rstest_case_params(test);
-    let Some(position) = params.iter().position(|param| param.name == ident) else {
+    let position = params.iter().position(|param| param.name == ident)?;
+    if params[position].is_mut {
+        return None;
+    }
+    Some((cases, position))
+}
+
+/// Number of rstest `#[case(..)]` rows on `test`.
+pub(crate) fn rstest_case_row_count(test: &TestSummary) -> usize {
+    let (cases, _) = extract_rstest_case_params(test);
+    cases.len()
+}
+
+/// The raw `#[case]` cell bound to `ident` at `case_index`, when the
+/// parameter passes the same fail-closed guards as [`test_case_bound_literals`].
+pub(crate) fn test_case_bound_cell(
+    test: &TestSummary,
+    ident: &str,
+    case_index: usize,
+) -> Option<String> {
+    let (cases, position) = test_case_bound_context(test, ident)?;
+    cases
+        .get(case_index)
+        .and_then(|case| case.get(position))
+        .map(|value| value.trim().to_string())
+}
+
+/// The values rstest `#[case(..)]` rows bind to the test parameter
+/// `ident`, one per row, for the check-path activation stage (which can
+/// promote a finding to `exposed`). Fails closed to no values when the
+/// parameter is `mut` or anything in the body may rebind the name before
+/// the owner call: a `let` (simple or pattern), a `for`, `if let` or
+/// `while let` binding, a closure parameter or a match arm. A nested
+/// `fn` item also binds nothing: an owner call inside it reads that fn's
+/// own parameters, which the case rows do not bind.
+pub(crate) fn test_case_bound_literals(test: &TestSummary, ident: &str) -> Vec<String> {
+    let Some((cases, position)) = test_case_bound_context(test, ident) else {
         return Vec::new();
     };
-    if params[position].is_mut {
-        return Vec::new();
-    }
     cases
         .iter()
         .filter_map(|case| case.get(position).map(|value| value.trim().to_string()))
