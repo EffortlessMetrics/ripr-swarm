@@ -5258,6 +5258,9 @@ fn eager_path(
             if through_closure {
                 return Err("a nested closure");
             }
+            if let Some(statement) = super::bolero::bolero_for_each_consumer(&closure, function) {
+                return eager_path(statement, function, false, first_return);
+            }
             if let Some(call) = closure_invocation(&closure, function, first_return) {
                 return eager_path(call.syntax().clone(), function, true, first_return);
             }

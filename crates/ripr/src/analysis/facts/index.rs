@@ -176,6 +176,7 @@ pub struct RustIndex {
     /// serialized provider receipt. Rebuilt together with property registration.
     pub(super) proptest_metadata_failures:
         BTreeMap<(PathBuf, usize, String), super::proptest::ProptestMetadataFailure>,
+    pub(super) bolero_receipts: BTreeMap<(PathBuf, usize, String), super::bolero::BoleroReceipt>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -493,6 +494,11 @@ impl RustIndex {
         ))
     }
 
+    pub(crate) fn is_registered_bolero(&self, test: &TestFact) -> bool {
+        self.bolero_receipts
+            .contains_key(&(test.file.clone(), test.start_line, test.name.clone()))
+    }
+
     /// A generation-owned interpretation of an exact provider-bound property.
     /// Raw/cached/deserialized TestFacts cannot manufacture this authority.
     pub(crate) fn proptest_source(&self, test: &TestFact) -> Option<(&str, usize)> {
@@ -731,6 +737,8 @@ impl RustIndex {
         self.proptest_receipts
             .retain(|(file, _, _), _| file.as_path() != path);
         self.proptest_metadata_failures
+            .retain(|(file, _, _), _| file.as_path() != path);
+        self.bolero_receipts
             .retain(|(file, _, _), _| file.as_path() != path);
         // Positions follow the retained orders; rebuild them now so slot
         // lookups never answer from the pre-removal layout.

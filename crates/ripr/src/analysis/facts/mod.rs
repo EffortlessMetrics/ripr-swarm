@@ -51,6 +51,9 @@ pub(crate) fn register_macro_generated_tests_for_test(index: &mut model::RustInd
     // abort here.
     let _ = macro_generated_tests::register_macro_generated_tests(index);
 }
+mod bolero;
+#[cfg(test)]
+mod bolero_tests;
 pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
@@ -85,6 +88,8 @@ pub(crate) fn normalize_reconstructed_source_roles(
     test_styles::normalize_index_test_styles(index)?;
     index.refresh_memberships()?;
     proptest::register_proptest_tests(index, root)?;
+    index.refresh_memberships()?;
+    bolero::register_bolero_tests(index, root)?;
     index.refresh_memberships()?;
     harness_registry::apply_registrations(index, root, registrations);
     index.finalize()
@@ -121,6 +126,10 @@ pub fn build_index_with_test_harnesses(
     })?;
     index_phase("index_proptest_tests", || {
         proptest::register_proptest_tests(&mut index, root)?;
+        index.refresh_memberships()
+    })?;
+    index_phase("index_bolero_tests", || {
+        bolero::register_bolero_tests(&mut index, root)?;
         index.refresh_memberships()
     })?;
     // Composition runs strictly after the normalizer: the normalizer
@@ -371,6 +380,10 @@ fn post_process_cached_index(
     })?;
     index_phase("index_proptest_tests", || {
         proptest::register_proptest_tests(&mut cached.index, root)?;
+        cached.index.refresh_memberships()
+    })?;
+    index_phase("index_bolero_tests", || {
+        bolero::register_bolero_tests(&mut cached.index, root)?;
         cached.index.refresh_memberships()
     })?;
     index_phase("index_role_composition", || {
