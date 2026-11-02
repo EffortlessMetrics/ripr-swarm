@@ -3736,11 +3736,15 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lang-python")]
     fn another_base_candidate_yields_no_advice_for_an_invalid_preview_budget() -> std::io::Result<()>
     {
         // #10821: the same fail-closed rule as the Rust limit (#9013): an
         // unreadable preview budget must not become advice. Forced through
         // the shared lookup so the test does not mutate process env.
+        // Requires `lang-python`: `load_for_root` refuses
+        // `enabled = ["python"]` in a rust-only binary, so the public
+        // entry cannot enable the preview budget that this case invalidates.
         let dir = unique_fixture_root("another-base-candidate-invalid-python-budget")?;
         ignore_remove_dir_all(&dir);
         init_git_repo(&dir, "master")?;
