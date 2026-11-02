@@ -204,7 +204,9 @@ fn walk_rust_files(
             }
             let relative = path
                 .strip_prefix(workspace_root)
-                .map_err(|_| format!("directory {path:?} escapes workspace root"))?;
+                .map_err(|error| {
+                    format!("directory {path:?} escapes workspace root: {error}")
+                })?;
             if path_is_excluded(relative, excluded) {
                 continue;
             }
@@ -214,7 +216,7 @@ fn walk_rust_files(
         if path.extension().is_some_and(|ext| ext == "rs") {
             let relative = path
                 .strip_prefix(workspace_root)
-                .map_err(|_| format!("path {path:?} escapes workspace root"))?;
+                .map_err(|error| format!("path {path:?} escapes workspace root: {error}"))?;
             files.push(relative.to_path_buf());
         }
     }
