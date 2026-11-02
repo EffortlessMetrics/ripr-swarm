@@ -80,6 +80,136 @@ another test, a different or longer-named local, a `should_panic` test, an
 unresolved receiver) stays uncredited. The helper decides only that the
 assertion reads the call's out-parameter; it grants no strength or reach.
 
+### Free-function collection argument read by count (#11402)
+
+The rule above credits an exact assertion for a method owner. A plain free
+function that pushes into a `&mut Vec` parameter, tested by passing a fresh
+local and reading only its length, is a separate, weaker shape:
+
+```rust
+pub fn log_line(buf: &mut Vec<String>, msg: &str) { buf.push(msg.to_uppercase()); }
+
+let mut b = Vec::new();
+log_line(&mut b, "hi");
+assert_eq!(b.len(), 1);
+```
+
+The pushed value lands in `b`, so the changed value is followed to a local the
+test holds: the repository evidence reads propagation `yes`. The count read
+cannot tell a changed pushed value apart, so it grants no assertion strength
+and the check stays weak. The shape holds only when every link is exact:
+
+- the owner is a free function (not async, `const`, `unsafe`, generic or a
+  method, read from its full source declaration, since the indexed body
+  starts at `fn` and drops those qualifiers) whose only statement is one unconditional `receiver.push(..)` into a
+  `&mut Vec<..>` or `&mut String` parameter, and the pushed argument always
+  reaches the push: it holds no `return`, `?`, `break`, `continue`,
+  `.await`, `yield` or `let`, and no macro, closure, block, `if`, `match`
+  or loop, and neither the owner's file nor
+  the test's file shadows `Vec` or `String`;
+- the test's recorded attributes are exactly one plain `#[test]` (so no
+  `#[ignore]`, `#[should_panic]`, `cfg`, attribute macro or async harness;
+  no recorded attribute is refused too); at its top level it binds
+  `let mut b = Vec::new();` (or `String::new()`, or a `default()`), with no
+  type, pattern or `else`, and calls the owner exactly once, resolved to the
+  owner and not a namesake, with `&mut b` at the pushed parameter's position
+  and no other argument naming `b`;
+- up to the last read of `b`, the test's top-level statements are only the
+  definition, the call and the reads, so no `return`, `?`, branch or other
+  statement can end the test early, and the body holds no inner attribute
+  (`#![..]`); every read is a recorded `assert!`,
+  `assert_eq!` or `assert_ne!` with no attribute, whose every mention of `b`
+  is `b.len()` or `b.is_empty()`; and the body's tail expression (a final
+  check written without `;`) does not mention `b`.
+
+Anything else leaves propagation as it was: a reborrow (`let r = &mut b;`), a
+use before the call, an alias after it (`let c = &b;`), a different binding, a
+namesake owner in another module, a conditional or second push, an `async`
+owner the test never polls, and a read of
+the contents (`b[0]`, `assert_eq!(b, ..)`), which may already check the pushed
+value and is not this rule's to grade.
+
+#### A count read that pins the single push
+
+One push into a fresh, empty local leaves it non-empty; a deleted push leaves
+it empty. So a count read that holds only for a non-empty local notices a
+deleted push, though it still cannot tell a changed pushed value apart. A read
+pins the push when its compact text is exactly `assert_eq!(b.len(), N)` or
+`assert_eq!(N, b.len())` with a positive integer literal `N`. Both sides grade
+that exact equality a strong check, so they agree the deletion is noticed.
+Any other count read pins nothing: `assert!(!b.is_empty())` (a boolean read,
+which both sides grade weaker), `assert_ne!(b.len(), 2)`, `assert!(b.len() < 3)`
+or a message argument.
+
+`assertion_pins_pushed_collection_count` is the one rule for that read. The
+diff-side deleted-call probe (`call_deletion`) and the repository-side
+call-presence seam both read it, so a pinning read grades the deleted push
+noticed on both sides: the finding reads `exposed` in `ripr check`, and the
+seam is already checked in `ripr repair`. It never grades the changed pushed
+value.
+
+#### The repair route and stub
+
+Once the value is followed, the effect repair route would otherwise propose a
+mock expectation, which is the wrong check for a vector the test holds. For
+any push into a plain collection receiver whose value is followed, the route
+requires `collection contents check proposal` and never proposes a mock.
+
+The route supplies that evidence, and proposes `whole_object_equality`, only
+for the side-effect seam (a changed pushed value) whose propagation stage
+carries the marker `PUSHED_COLLECTION_COUNT_PINNED`. The propagation stage
+writes that marker only when no related test's assertion already follows
+the sink and a related test is followed by this rule with a count read that
+pins the push. Every other followed push keeps the evidence missing and does
+not start, including a call-presence seam that is not already checked.
+
+For that seam, the stub (`ripr agent stub --kind side_effect`) writes an exact
+contents check instead of refusing for want of an observer. The owner must be
+exactly the owner shape the rule above follows (`sole_pushed_buffer_at`, one
+check shared with the rule): a plain free function whose only statement is
+one unconditional push into one of its `&mut Vec<..>` or `&mut String`
+parameters, so a conditional push or a local that shadows the parameter keeps
+the observer refusal. The owner's file must not declare its own `Vec` or
+`String`. The stub binds that parameter to `Vec::new()` or `String::new()`,
+calls the owner and asserts `assert_eq!(buf, expected_buf)` with the full
+expected contents left to fill in. A push into any other receiver, such as
+the function's own local, keeps the observer refusal.
+
+`ripr check` and bare `ripr repair` read the same repository evidence and the
+same `repair_packet_eligibility` decision. In the default check and with
+`--mode instant` or `--no-unchanged-tests`:
+- a pinning count read starts in both commands, on the same gap in the
+  default check. With `--no-unchanged-tests` or `--mode instant`, `check`
+  leaves the unchanged test out of its evidence, so it may offer no start
+  while bare `ripr repair` still starts; the agreement claimed in those modes
+  is only that neither command starts on a negative and that any start
+  `check` offers is the gap bare `ripr repair` starts;
+- a followed read that does not pin refuses in both, and in the default check
+  both name the same reason: "an exact count the test checks after the
+  call, such as `assert_eq!(v.len(), 1)`, that would fail if nothing were
+  pushed; until then, check the full contents by hand". (Slice 1 named the
+  contents check as one ripr could not write yet; the stub now writes it, so
+  the reason names what the start still needs.)
+
+Bare `ripr repair` also needs a test file it may edit: a test surface, or
+the owner file's own inline test module when the new-test producer admits it.
+That producer does not yet admit an inline module for a changed effect, so a
+pinning count read written in the owner file's own `#[cfg(test)]` module
+refuses with no test route. `ripr check` now applies the same edit-target
+check (`recommended_test_is_repair_edit_target`, through the shared
+`repair_start_refusal_for_entry` gate the agent card uses) before it offers a
+start, so it offers none there either, for any kind of gap.
+
+The diff-side next-step text for a changed side effect is #12456.
+
+Before this rule, a push into a plain collection receiver was followed only
+by an assertion that already discriminates it: an exact read of the receiver
+by name, or the `&mut s.items` field-projection observer. Such an assertion
+grades the check strong, and a strongly checked spot is already reported as
+checked before the route's evidence is read. So the gate only changes the
+answer for a push this rule follows; an exactly checked vector still reads as
+already noticed.
+
 ## Required Evidence
 
 - Positive: asserting the local passed `&mut` exposes the changed line.
@@ -202,6 +332,7 @@ assertion reads the call's out-parameter; it grants no strength or reach.
 ## Test Mapping
 
 - `crates/ripr/tests/out_parameter_oracle.rs`.
+- `crates/ripr/tests/collection_out_parameter_repair.rs` (#11402).
 - `fixtures/out_parameter_unrelated_write_no_promote` and
   `fixtures/out_parameter_empty_expected_no_promote`, plus
   `fixtures/out_parameter_named_empty_no_promote`, pinned as
@@ -214,6 +345,23 @@ assertion reads the call's out-parameter; it grants no strength or reach.
   `assertion_out_parameter`.
 - `crates/ripr/src/analysis/classify/reveal.rs`: `analyze_related_assertions`
   consumes it through `ReturnOracleAdmission::out_parameter_read`.
+- `crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs`:
+  `test_counts_pushed_collection_argument` (#11402), read by
+  `propagate_evidence` in `crates/ripr/src/analysis/test_grip_evidence.rs`.
+  `assertion_pins_pushed_collection_count` and
+  `test_count_pins_pushed_collection` (#11402, the pinning count read), read
+  by `oracle_discriminates_seam_in_test` and `propagate_evidence` in
+  `crates/ripr/src/analysis/test_grip_evidence.rs` and by the
+  `collection_argument_observed` admission in
+  `crates/ripr/src/analysis/classifier/evidence.rs`.
+- `crates/ripr/src/analysis/repair_route.rs`: `effect_route_readiness`
+  requires `COLLECTION_CONTENTS_CHECK_EVIDENCE` for a followed push into a
+  plain collection receiver, and supplies it with a proposed
+  `whole_object_equality` only through
+  `TestGripEvidence::follows_push_to_counted_local`.
+- `crates/ripr/src/analysis/test_stub.rs`: `pushed_buffer_parameter`.
+- `crates/ripr/src/app/task_first.rs`: `check_repair_route` refuses a start
+  whose recommended test is not an editable target.
 
 ## Metrics
 

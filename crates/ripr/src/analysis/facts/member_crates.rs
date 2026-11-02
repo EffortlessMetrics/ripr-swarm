@@ -321,12 +321,17 @@ impl MemberCrates {
                         .is_some_and(|path| path == file)
                 })
             });
+        let autodiscovered_bin = |path: &Path| {
+            path.extension().is_some_and(|extension| extension == "rs")
+                && (path.parent() == Some(directory.join("src/bin").as_path())
+                    || path.file_name().is_some_and(|name| name == "main.rs")
+                        && path.parent().and_then(|parent| parent.parent())
+                            == Some(directory.join("src/bin").as_path()))
+        };
         let automatic = package
             .get("autobins")
             .is_none_or(|value| value.as_bool() == Some(true))
-            && (file == directory.join("src/main.rs")
-                || (file.parent() == Some(directory.join("src/bin").as_path())
-                    && file.extension().is_some_and(|extension| extension == "rs")));
+            && (file == directory.join("src/main.rs") || autodiscovered_bin(&file));
         explicit || automatic
     }
 
@@ -732,25 +737,9 @@ impl MemberCrates {
     /// `proc-macro`, or no `crate-type`). Without manifest authority, or with
     /// any value it cannot read, the answer is no.
     pub(crate) fn runs_library_doctests(&self, crate_root: &Path) -> bool {
-        let Some(root) = &self.root else {
+        let Some(package) = self.default_library_package(crate_root) else {
             return false;
         };
-        if !crate_root.ends_with(Path::new("src").join("lib.rs"))
-            || !self.is_default_target_root(crate_root)
-        {
-            return false;
-        }
-        let root = lexical(root);
-        let crate_root = lexical(&root.join(crate_root));
-        let Some(directory) = crate_root.parent().and_then(Path::parent) else {
-            return false;
-        };
-        let Some((package, _)) = nearest_package(&root, directory) else {
-            return false;
-        };
-        if package.directory != directory || !is_default_library_root(&package, &crate_root) {
-            return false;
-        }
         let Some(lib) = package.manifest.get("lib") else {
             return true;
         };
@@ -771,6 +760,109 @@ impl MemberCrates {
             .get("proc-macro")
             .is_none_or(|value| value.as_bool() == Some(false));
         doctest_on && linkable && not_proc_macro
+    }
+}
+
+impl MemberCrates {
+    /// The package whose default library root is `crate_root`, a
+    /// root-relative `src/lib.rs`, or `None` without manifest authority, for
+    /// a moved or non-default root, or for any manifest value it cannot read.
+    fn default_library_package(&self, crate_root: &Path) -> Option<Package> {
+        let root = self.root.as_ref()?;
+        if !crate_root.ends_with(Path::new("src").join("lib.rs"))
+            || !self.is_default_target_root(crate_root)
+        {
+            return None;
+        }
+        let root = lexical(root);
+        let crate_root = lexical(&root.join(crate_root));
+        let directory = crate_root.parent().and_then(Path::parent)?;
+        let (package, _) = nearest_package(&root, directory)?;
+        if package.directory != directory || !is_default_library_root(&package, &crate_root) {
+            return None;
+        }
+        Some(package)
+    }
+
+    /// `package`'s `Cargo.toml` as the analysis reads sources: through the
+    /// committed-source overlay when one is active, else the worktree file.
+    /// `None` when it cannot be read or has no `[package]`.
+    fn analyzed_manifest(&self, package: &Package) -> Option<toml::Table> {
+        let root = self.root.as_ref()?;
+        let relative = package.directory.strip_prefix(lexical(root)).ok()?;
+        let read_root = snapshot_root(root)?;
+        let text = read_manifest(&read_root, &read_root.join(relative), true).ok()??;
+        let manifest = text.parse::<toml::Table>().ok()?;
+        manifest.get("package")?;
+        Some(manifest)
+    }
+
+    /// The cargo features a plain `cargo test` of the library rooted at
+    /// `crate_root` enables: the closure of the manifest's `[features]
+    /// default = [..]` over plain feature names (RIPR-SPEC-0279, #12230).
+    /// A `dep:name` or weak `name?/feature` entry adds nothing; a plain
+    /// `name/feature` entry enables the optional dependency `name`, which
+    /// credits `name` only where it is that dependency's implicit feature.
+    /// The declared `default` feature itself is enabled. `None` when the
+    /// package cannot be read, or its
+    /// `default` or a followed feature entry is not an array of strings:
+    /// the caller then resolves no feature gate.
+    pub(crate) fn default_library_features(
+        &self,
+        crate_root: &Path,
+    ) -> Option<std::collections::BTreeSet<String>> {
+        let package = self.default_library_package(crate_root)?;
+        // Package selection above reads the worktree; the feature table is
+        // read where the analyzed sources are read, so a dirty `Cargo.toml`
+        // cannot add a default feature the analyzed commit lacks (review of
+        // #12368). With no committed overlay active this is the worktree file.
+        let manifest = self.analyzed_manifest(&package)?;
+        let Some(table) = manifest.get("features") else {
+            return Some(std::collections::BTreeSet::new());
+        };
+        let table = table.as_table()?;
+        // `visited` bounds the walk so a list that names `default`
+        // (directly or through a cycle) terminates; `enabled` is what the
+        // walk credits, which includes a declared `default` feature.
+        let implicit = implicit_dependency_features(&manifest, table);
+        let mut enabled = std::collections::BTreeSet::new();
+        let mut visited = std::collections::BTreeSet::new();
+        let mut pending = vec!["default".to_string()];
+        while let Some(name) = pending.pop() {
+            if !visited.insert(name.clone()) {
+                continue;
+            }
+            // A name with no `[features]` entry is credited only as an
+            // optional dependency's implicit feature (Cargo has no other
+            // such feature, and drops the implicit one once any feature
+            // list spells `dep:name`); it walks no further.
+            let Some(entry) = table.get(&name) else {
+                if implicit.contains(&name) {
+                    enabled.insert(name);
+                }
+                continue;
+            };
+            enabled.insert(name.clone());
+            for member in entry.as_array()? {
+                let member = member.as_str()?;
+                if member.starts_with("dep:") {
+                    continue;
+                }
+                // `name/feature` enables the optional dependency `name`
+                // (and so its implicit feature, if it has one); the weak
+                // `name?/feature` enables nothing by itself.
+                if let Some((dependency, _)) = member.split_once('/') {
+                    if !dependency.ends_with('?') && implicit.contains(dependency) {
+                        enabled.insert(dependency.to_string());
+                    }
+                    continue;
+                }
+                if !visited.contains(member) {
+                    pending.push(member.to_string());
+                }
+            }
+        }
+        Some(enabled)
     }
 }
 
@@ -935,6 +1027,51 @@ fn committed_package(
 }
 
 /// One package manifest: its directory and parsed table.
+/// The implicit features Cargo creates for the package's optional
+/// dependencies: one per `optional = true` entry of `[dependencies]` and
+/// `[build-dependencies]` (target tables included), minus any name some
+/// `[features]` list spells as `dep:name`, which turns the implicit feature
+/// off. A default-feature name outside this set and the `[features]` table
+/// names nothing Cargo would enable, so it is not credited.
+fn implicit_dependency_features(
+    manifest: &toml::Table,
+    features: &toml::Table,
+) -> std::collections::BTreeSet<String> {
+    const SECTIONS: [&str; 2] = ["dependencies", "build-dependencies"];
+    let mut tables: Vec<&toml::Table> = SECTIONS
+        .iter()
+        .filter_map(|section| manifest.get(*section).and_then(toml::Value::as_table))
+        .collect();
+    if let Some(targets) = manifest.get("target").and_then(toml::Value::as_table) {
+        for target in targets.values().filter_map(toml::Value::as_table) {
+            tables.extend(
+                SECTIONS
+                    .iter()
+                    .filter_map(|section| target.get(*section).and_then(toml::Value::as_table)),
+            );
+        }
+    }
+    let mut names: std::collections::BTreeSet<String> = tables
+        .into_iter()
+        .flat_map(|table| table.iter())
+        .filter(|(_, spec)| {
+            spec.as_table()
+                .and_then(|spec| spec.get("optional"))
+                .and_then(toml::Value::as_bool)
+                == Some(true)
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    for entries in features.values().filter_map(toml::Value::as_array) {
+        for entry in entries.iter().filter_map(toml::Value::as_str) {
+            if let Some(suppressed) = entry.strip_prefix("dep:") {
+                names.remove(suppressed);
+            }
+        }
+    }
+    names
+}
+
 struct Package {
     directory: PathBuf,
     manifest: toml::Table,
@@ -1631,6 +1768,7 @@ mod tests {
             (format!("{binary}[lib]\npath='lib.rs'\n"), "parse.rs", true),
             (PRICING.to_string(), "src/main.rs", true),
             (PRICING.to_string(), "src/bin/tool.rs", true),
+            (PRICING.to_string(), "src/bin/tool/main.rs", true),
             (PRICING.to_string(), "parse.rs", false),
             (PRICING.to_string(), "src/lib.rs", false),
             (format!("{PRICING}autobins=false\n"), "src/main.rs", false),

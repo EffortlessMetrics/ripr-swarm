@@ -24,7 +24,7 @@ import {
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, isWindowsHost, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, integerSetting, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
-import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction, shouldShowMainStatusBar } from './statusRender';
+import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction, shouldShowMainStatusBar, workspaceStatusDeliveryBudgetLines } from './statusRender';
 import type { RiprStatusKind, RiprStatusState, FirstUsefulActionStatus, StatusBarColors } from './statusRender';
 import {
   validateFirstPrPacket,
@@ -69,6 +69,13 @@ import {
   CRASH_RECOVERY_STABLE_MS,
   CrashRecoveryController
 } from './crashRecovery';
+import {
+  buildAgentRepairBeforeArgs,
+  extractAgentRepairLoopTarget,
+  findLiveRepairAttemptForSeam,
+  parseBeforePhaseRepairStart,
+  seamIdFromAgentRepairTarget
+} from './repairStart';
 import {
   AgentHandoffController,
   actionableGapQueueSuppressedMessage,
@@ -628,7 +635,9 @@ export class RiprClientController {
       workspaceFolderForUri: (uri) => this.workspaceFolderForUri(uri),
       warnWithOutput: (message) => this.warnWithOutput(message),
       setupRepairBlocker: () => setupRepairBlocker(this.statusContext()),
-      isRiprFileDocument: (document) => isRiprFileDocument(document)
+      isRiprFileDocument: (document) => isRiprFileDocument(document),
+      tryStartSharedRepairBefore: (editor, actions) =>
+        this.tryStartSharedRepairBefore(editor, actions)
     });
     this.updateStatus(this.status);
   }
@@ -1568,6 +1577,122 @@ export class RiprClientController {
     return this.agentHandoff.startCurrentRepair();
   }
 
+  /**
+   * When the LSP exposes a seam-bound `agent_repair` handoff, run the shared
+   * before phase through the CLI and present the bounded summary (#4645).
+   */
+  async tryStartSharedRepairBefore(
+    editor: vscode.TextEditor,
+    actions: Array<vscode.CodeAction | vscode.Command>
+  ): Promise<boolean> {
+    const rawTarget = extractAgentRepairLoopTarget(actions);
+    if (!rawTarget) {
+      return false;
+    }
+    const loopTarget = rawTarget as RiprAgentLoopCommandTarget;
+    const rootBlocker = this.copyActionRootBlocker(uriFromTarget(loopTarget));
+    if (rootBlocker) {
+      this.runtime.showInformationMessage(rootBlocker);
+      return true;
+    }
+    const generation = this.startGeneration;
+    const redirectRoots = await workspaceRedirectRoots(this.workspaceRoot);
+    if (!validatedAgentLoopCommand(loopTarget, redirectRoots)) {
+      return false;
+    }
+    const seamId = seamIdFromAgentRepairTarget(rawTarget);
+    if (!seamId) {
+      return false;
+    }
+    const root = this.workspaceRoot ?? this.runtime.workspaceRootState().root;
+    if (!root) {
+      this.runtime.showInformationMessage(
+        'Open a workspace folder (or run ripr: Select Workspace Root) before starting a repair.'
+      );
+      return true;
+    }
+    const config = this.runtime.getConfig();
+    const server = this.server ?? await this.resolveServerForCommand(config);
+    if (!server) {
+      return true;
+    }
+    const inventory = await this.readAttemptInventory(server.command, root);
+    if (generation !== this.startGeneration) {
+      return true;
+    }
+    if (!inventory) {
+      this.runtime.showInformationMessage(
+        'ripr could not read the repair attempt inventory; Start Current Repair is unavailable until agent status is readable.'
+      );
+      return true;
+    }
+    const existing = findLiveRepairAttemptForSeam(inventory, seamId);
+    if (existing) {
+      this.rememberAttempt(root, existing.attemptId);
+      this.runtime.showInformationMessage(
+        `A live repair attempt already exists for spot ${seamId} (${existing.attemptId}); resuming it instead of creating a duplicate.`
+      );
+      await this.showAttemptStatus(existing.attemptId);
+      return true;
+    }
+    let stdout: string;
+    try {
+      stdout = await this.runtime.runRipr(
+        server.command,
+        buildAgentRepairBeforeArgs(root, seamId),
+        root
+      );
+    } catch (error) {
+      const message = errorMessage(error);
+      this.output.appendLine(`ripr start repair before phase failed: ${message}`);
+      this.runtime.showInformationMessage(
+        message.split('\n').find((line) => line.trim() !== '') ?? 'ripr could not start the shared repair attempt.'
+      );
+      return true;
+    }
+    if (
+      !this.actionRootStillCurrent(generation, editor.document.uri, (target) =>
+        this.copyActionRootBlocker(target)
+      )
+    ) {
+      return true;
+    }
+    const started = parseBeforePhaseRepairStart(stdout);
+    if (!started) {
+      this.failAttemptStatus('ripr could not parse the shared repair before-phase result.');
+      return true;
+    }
+    this.rememberAttempt(root, started.attemptId);
+    for (const line of started.summaryLines) {
+      this.output.appendLine(line);
+    }
+    this.runtime.showInformationMessage(
+      `ripr repair attempt ${started.attemptId} is awaiting an external test edit (not complete).`
+    );
+    const relatedTarget = this.openRelatedTestTargetFromActions(actions);
+    if (relatedTarget) {
+      await this.openRelatedTest(relatedTarget);
+    }
+    await this.showAttemptStatus(started.attemptId);
+    return true;
+  }
+
+  private openRelatedTestTargetFromActions(
+    actions: Array<vscode.CodeAction | vscode.Command>
+  ): RiprRelatedTestTarget | undefined {
+    for (const action of actions) {
+      const command = commandForAction(action);
+      if (!command || command.command !== 'ripr.openRelatedTest') {
+        continue;
+      }
+      const first = command.arguments?.[0];
+      if (first && typeof first === 'object') {
+        return first as RiprRelatedTestTarget;
+      }
+    }
+    return undefined;
+  }
+
   async copySuggestedAssertion(target?: RiprSuggestedAssertionTarget): Promise<void> {
     return this.agentHandoff.copySuggestedAssertion(target);
   }
@@ -1703,7 +1828,10 @@ export class RiprClientController {
     if (!packet || !this.currentDiagnosticMatchesFirstPrPacket(packet)) {
       return;
     }
-    await this.copyFirstPrText(packet.verifyCommand ?? '', 'verify command');
+    await this.copyFirstPrText(
+      packet.verifyCommandClipboard ?? packet.verifyCommand ?? '',
+      'verify command'
+    );
   }
 
   async copyFirstPrReceiptCommand(): Promise<void> {
@@ -2225,6 +2353,9 @@ export class RiprClientController {
             if (parts.length > 0) {
               this.output.appendLine(`ripr top limitation: ${parts.join(' | ')}`);
             }
+          }
+          for (const line of workspaceStatusDeliveryBudgetLines(s)) {
+            this.output.appendLine(line);
           }
         }
       } catch (error) {
@@ -3863,6 +3994,7 @@ interface RiprAnalysisStatusPayload {
   root_state?: string;
   effective_root?: string | null;
   candidate_roots?: string[];
+  candidate_roots_omitted_count?: number;
   root_input_identity?: string | null;
   root_detail?: string | null;
   root_recovery_route?: string;
@@ -4243,10 +4375,14 @@ function composeLimitedNextStep(
 
 function analysisRootStatusDetail(status: RiprAnalysisStatusPayload): string {
   const candidates = status.candidate_roots?.filter((root) => root.length > 0) ?? [];
+  const omitted = status.candidate_roots_omitted_count ?? 0;
+  const candidateField = candidates.length > 0 || omitted > 0
+    ? `candidate_roots=${candidates.join('|')}${omitted > 0 ? ` (+${omitted} more omitted)` : ''}`
+    : undefined;
   return [
     `root_state=${status.root_state ?? 'unknown'}`,
     status.effective_root ? `effective_root=${status.effective_root}` : undefined,
-    candidates.length > 0 ? `candidate_roots=${candidates.join('|')}` : undefined,
+    candidateField,
     status.root_detail ?? undefined,
     status.root_recovery_route ? `recovery=${status.root_recovery_route}` : undefined
   ].filter((field): field is string => Boolean(field)).join(', ');

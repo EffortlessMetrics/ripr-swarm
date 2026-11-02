@@ -690,8 +690,10 @@ wrong credits.
      re-export), raw identifiers, macro input, `include!`, Unicode
      whitespace inside a macro matcher and a prelude name can each put
      another value under the name, so any of them refuses. Items a derive
-     or attribute proc macro emits stay invisible, as for every other rule,
-     as do items an out-of-workspace `macro_rules!` invocation emits (#7160).
+     or attribute proc macro emits stay invisible, as for every other rule.
+     An item-position macro whose definition is not in the
+     indexed workspace text may emit unread items, so any such invocation
+     in the workspace refuses (#7160).
      An inline receiver `T::f(..).name(..)` is typed exactly as
      `let recv = T::f(..);` would be, so `Stack::new(1).depth()` pins
      `Stack::depth` under the same constructor-signature rules.
@@ -1623,6 +1625,46 @@ elsewhere in the file that has no such import in scope; such a subject does not
 compile, so the credit is for a test that cannot run. Scoping the import to the
 asserting test's module chain is a follow-up.
 
+### Claims payload equality pins (#12304)
+
+claims' `assert_ok_eq!(call, expected)` and `assert_some_eq!(call, expected)`
+evaluate `call` once, panic unless it has the named variant and compare the
+payload with `expected`, so each reads as the unwrapped pin above
+(`assert_eq!(call.unwrap(), expected)` beside an `Ok`/`Some` tail).
+
+1. Trusted import. `assert_ok_eq` and `assert_some_eq` join the trusted
+   test-scoped claims macros of "Claims payload pins" rule 1 and are trusted
+   on exactly that terms: a `use claims::{..}` import under their own name
+   that the test's file carries, whose `claims` package is a plain registry
+   requirement on the same manifest terms as `pretty_assertions`. A rename,
+   another crate's import, a path-qualified invocation, a local
+   `macro_rules!`, a `path`, `git` or `package` dependency, a missing
+   dependency or no import at all leaves the macro opaque. Without verified
+   import evidence the macro earns no credit and no grade.
+2. Shape. One plain invocation whose first operand is exactly the owner call
+   and whose second operand is a literal (`4`, `-1.5`, `'x'`, `true`,
+   `"text"`, `String::from("text")`). Further arguments are the panic
+   message and decide nothing. An owner call in the second operand, a
+   non-literal expected operand (a binding, a constant, a call, a value
+   computed from the owner) and an owner call wrapped in anything refuse.
+3. The pin. The binding, expected-value and exit-gate rules are the unwrapped
+   pin's, applied to the synthesized `Ok(expected)` / `Some(expected)`.
+4. Direction. `assert_ok_eq!` reads only an `Ok` pin and `assert_some_eq!`
+   only a `Some` pin; a pin on the `Err` exit, or `assert_ok_eq!` on a
+   `Some` tail, is the opposite direction, since the macro panics on that
+   exit before any comparison. An owner file that binds `Ok`, `Err`, `Some`
+   or `None` as a value refuses, as for the unwrapped pin.
+5. Grade. The oracle extractor stays text-only and reads the line
+   `unknown` / none (RIPR-SPEC-0120). Reveal grades it `exact_value` /
+   strong for one probe, and only for the `return_value` family, when this
+   pin admits the assertion (RIPR-SPEC-0231 rule 10). The grade lives in the
+   finding's related test. Analyses that read the extracted oracle list
+   directly (test-grip evidence, the refusal notes) still see no oracle on
+   that line.
+
+The import is read at file granularity, with the same accepted limitation as
+"Claims payload pins".
+
 ### Bool-owner pins
 
 An owner whose signature declares `-> bool` has two values, so a bare
@@ -2294,6 +2336,12 @@ receiving call is itself resolved.
   #6950): the nested child test binds the parent module's own `Window`,
   so the pin is refused and the relation stays name-only
   (`weak_token_substring`).
+- Nested autodiscovered binary roots (#6916): `src/bin/NAME/main.rs` is a
+  recognized target root and manifest-established binary boundary, so a nested
+  binary's `#[macro_use] extern crate` site no longer refuses unrelated library
+  integration tests; pinned by
+  `a_nested_src_bin_main_target_does_not_reach_integration_tests` and
+  `binary_macro_boundaries_require_manifest_authority` (`src/bin/tool/main.rs`).
 - A fixture pins a single-file raw-identifier rename as non-exposed
   (`fixtures/owner_return_pin_single_file_raw_rename_shadow`, #7067):
   the test binds the renamed item through the plain spelling, so the
@@ -2425,9 +2473,9 @@ receiving call is itself resolved.
   `#![no_implicit_prelude]`, or a `macro_rules!` without `#[macro_export]`
   (a `macro` 2.0 item without visibility). Its crate is the root reached
   through resolved module edges, recognized only when that root is a Cargo
-  autodiscovered target (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, and
-  `tests/*.rs`, `benches/*.rs`, `examples/*.rs`, `build.rs` beside an
-  indexed `src/`). humantime's `benches/datetime_format.rs`
+  autodiscovered target (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`,
+  `src/bin/NAME/main.rs`, and `tests/*.rs`, `benches/*.rs`, `examples/*.rs`,
+  `build.rs` beside an indexed `src/`). humantime's `benches/datetime_format.rs`
   (`#[macro_use] extern crate bencher;`) no longer refuses the library's
   `tests/*.rs` assertions. An unresolved `#[macro_use] mod` may
   `#[macro_export]` its macros, so it stays workspace-wide like exported
@@ -2444,8 +2492,13 @@ receiving call is itself resolved.
   holds while any `#[path]` is unresolvable (`cfg_attr`, non-literal), which
   records no module edge for its target. A withheld file in the
   dependent scope is routed by root only when its own path is a `src/lib.rs`,
-  `src/main.rs` or `src/bin/*.rs` root, so named mode matches the full
-  closure; every other withheld site stays workspace-wide. Limits: a
+  `src/main.rs`, `src/bin/*.rs`, or `src/bin/NAME/main.rs` root, so named
+  mode matches the full closure; every other withheld site stays workspace-wide.
+  Named dependent-scope admission must recover the same disable signals from
+  withheld bytes: a withheld sibling that would use lexical fallback in the full
+  index, and composition spelled through attribute-head comments or non-ASCII
+  gap whitespace after `[`, so crate-root macro routing does not stay path-local
+  when the full index refuses it (#6919). Limits: a
   `[lib]`/`[[bin]]`/`[[test]]` `path` that moves a target is not read, so a
   file at a default target path that some other target includes through
   `#[path]` is still judged by its default root.
@@ -2794,6 +2847,14 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- Claims payload equality pins (#12304):
+  `crates/ripr/tests/claims_payload_eq_owner_pin.rs` (the credited twins and
+  one negative control per refusal above, the early-`Err` and `None` exit
+  directions, the non-`return_value` families and a multi-line invocation).
+  The inventory rows `claims_assert_ok_eq` / `claims_assert_some_eq` in
+  `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs` use a
+  `predicate` probe and therefore stay `unknown` on purpose; the
+  return-value twins are in the test above.
 - Claims payload pins (#9619): `crates/ripr/tests/claims_payload_owner_pin.rs`
   (single and grouped import, trailing `assert_err!`, `assert_some!`
   positives; missing, foreign, renamed, locally redefined import, `mut`,
@@ -3019,6 +3080,9 @@ assertions. This repair shares the existing callback without that larger migrati
   layouts fail on a `4 + self.step()` mutant.
   `reexported_value_under_a_unit_struct_name_is_not_credited` imports a
   `pub use std::u32::MAX;` re-export over a unit struct `MAX`, and
+  `out_of_workspace_item_macro_emits_unread_unit_binding` (#7160) invokes a
+  dependency `macro_rules!` at item position that re-exports `MAX` without
+  naming it in the arguments; both keep the mutant green at `weakly_exposed`.
   `aliased_outside_module_beside_a_same_named_module_is_not_credited` globs
   `use std::u32 as nums;` beside an unrelated `mod nums`; in both the mutant
   passes and the finding reads `weakly_exposed`.

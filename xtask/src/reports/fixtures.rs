@@ -143,6 +143,15 @@ enum GoldenCheckRun {
 }
 
 fn golden_check_run() -> Result<GoldenCheckRun, String> {
+    if let Err(err) = preparation::ensure_ready() {
+        let violations = vec![err];
+        let provenance = golden_drift_provenance();
+        let message = goldens_check_failure_message(&[], &violations, &provenance);
+        return Ok(GoldenCheckRun::Failed {
+            message,
+            violations,
+        });
+    }
     let run_set = collect_golden_runs()?;
     // #8614: warn (do not fail) when a fixture input's working-tree endings
     // differ from its normalized form; `goldens bless` refuses on the same
@@ -731,6 +740,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "convergence"
                     | "cross-language-oracle-graph-corpus"
                     | "cross-language-edge-registry-corpus"
+                    | "dotnet-evidence-contract-corpus"
                     | "editor_gap_cockpit"
                     | "editor_first_run_usability"
                     | "editor_first_pr_bridge"
@@ -749,6 +759,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "issue_lifecycle_real_rows"
                     | "github_unanalyzed_states"
                     | "orchestration_attempt_receipts"
+                    | "packaged-repair-parity"
                     | "perl_lsp_facts_exporter"
                     | "perl-real-repo-evals"
                     | "perl_packet_contract_migration"
@@ -1074,9 +1085,7 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
             normalize_path(path)
         ));
     }
-    if name == preparation::FIXTURE {
-        preparation::ensure_ready()?;
-    }
+    preparation::ensure_ready()?;
 
     let actual_dir = Path::new("target")
         .join("ripr")
@@ -3276,14 +3285,14 @@ mod tests {
 
     #[test]
     fn precommit_goldens_treat_only_preparation_failures_as_an_environment_gap() {
-        let gap = "fixture dependency preparation failed for owner_return_pin_fallible_literal\nenvironment: X\nerror".to_string();
+        let gap = "fixture dependency preparation failed for locked owner-return golden fixtures\nenvironment: X\nerror".to_string();
         let drift = "drift for fixture `rust_map_overwrite_count` [human.txt]".to_string();
         let other = "fixture contract violation".to_string();
 
         assert_eq!(
             super::classify_precommit_goldens(std::slice::from_ref(&gap)),
             Some(super::PrecommitGoldens::EnvironmentGap(vec![
-                "fixture dependency preparation failed for owner_return_pin_fallible_literal"
+                "fixture dependency preparation failed for locked owner-return golden fixtures"
                     .to_string()
             ]))
         );

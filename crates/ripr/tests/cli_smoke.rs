@@ -6614,7 +6614,9 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(!packet.status.success());
     let stderr = String::from_utf8_lossy(&packet.stderr);
     assert!(
-        stderr.contains("is a `ripr check` finding ID, not a seam ID"),
+        stderr.contains(
+            "agent packet --seam-id `probe:src_lib.rs:predicate:566edf6b` names no current seam"
+        ) && stderr.contains("the `ripr check` finding ID is stale or maps to no current seam"),
         "{stderr}"
     );
     // The pilot route names the root the failing call used, not `.`.
@@ -6666,7 +6668,7 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     );
 
     // The other ID `ripr check` prints, its canonical gap ID, gets the same
-    // family-named refusal instead of the generic hint (#8158).
+    // stale-id refusal naming this command (#12420).
     let gap_packet = run_ripr(&[
         "agent",
         "packet",
@@ -6679,7 +6681,7 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(!gap_packet.status.success());
     let stderr = String::from_utf8_lossy(&gap_packet.stderr);
     assert!(
-        stderr.contains("is a `ripr check` canonical gap ID, not a seam ID"),
+        stderr.contains("agent packet --seam-id `gap:0123456789abcdef` names no current seam"),
         "{stderr}"
     );
     assert!(
@@ -6701,7 +6703,8 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     assert!(!repo_probe_packet.status.success());
     let stderr = String::from_utf8_lossy(&repo_probe_packet.stderr);
     assert!(
-        stderr.contains("`repo-probe:...` is a `ripr check` finding ID, not a seam ID"),
+        stderr.contains("agent packet --seam-id `repo-probe:src_lib.rs:predicate:566edf6b` names no current seam")
+            && stderr.contains("the `ripr check` finding ID is stale or maps to no current seam"),
         "{stderr}"
     );
     assert!(
@@ -6968,7 +6971,9 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
     );
     let stderr = String::from_utf8_lossy(&unknown.stderr);
     assert!(
-        stderr.contains("is a `ripr check` finding ID, not a seam ID"),
+        stderr.contains(
+            "agent card --seam-id `probe:src_lib.rs:predicate:566edf6b` names no current seam"
+        ) && stderr.contains("the `ripr check` finding ID is stale or maps to no current seam"),
         "{stderr}"
     );
     let typed = run_ripr(&[
@@ -7001,7 +7006,7 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
     assert!(
         envelope["error"]["message"]
             .as_str()
-            .is_some_and(|message| message.contains("was not found")),
+            .is_some_and(|message| message.contains("names no current seam")),
         "{envelope}"
     );
     assert!(
@@ -7011,7 +7016,7 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
         "{envelope}"
     );
     assert!(
-        typed_stderr.contains("is a `ripr check` finding ID, not a seam ID"),
+        typed_stderr.contains("the `ripr check` finding ID is stale or maps to no current seam"),
         "the human prose rendering stays on stderr: {typed_stderr}"
     );
     std::fs::remove_dir_all(root)?;
@@ -11491,6 +11496,47 @@ fn agent_verify_rejects_plausible_uncommitted_json() -> Result<(), Box<dyn std::
     assert!(diagnostic.contains(env!("CARGO_PKG_VERSION")));
     assert!(diagnostic.contains("recovered.repo-exposure.json"));
     assert!(diagnostic.contains("Replace this input"));
+    assert!(diagnostic.contains("artifact produced by legacy/unknown RIPR (schema 0.3)"));
+    assert!(diagnostic.contains("different ripr binary likely won PATH resolution"));
+    assert!(diagnostic.contains("`ripr --version`"));
+    assert!(!diagnostic.contains("missing field"));
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn agent_verify_refuses_older_producer_stamp_before_schema_error()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-verify-older-producer");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    let before = root.join("before.repo-exposure.json");
+    let after = root.join("after.repo-exposure.json");
+    let older = r#"{"schema_version":"0.3","scope":"repo","seams":[],"artifact":{"producer":{"tool":"ripr","version":"0.10.0"}}}"#;
+    std::fs::write(&before, older)?;
+    std::fs::write(&after, older)?;
+
+    let before_path = before.display().to_string();
+    let after_path = after.display().to_string();
+    let output = run_ripr(&[
+        "agent",
+        "verify",
+        "--root",
+        &root.display().to_string(),
+        "--before",
+        &before_path,
+        "--after",
+        &after_path,
+        "--json",
+    ]);
+    assert_failure(&output);
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(diagnostic.contains("produced by RIPR 0.10.0"));
+    assert!(diagnostic.contains("artifact produced by ripr 0.10.0 (schema 0.3)"));
+    assert!(diagnostic.contains(env!("CARGO_PKG_VERSION")));
+    assert!(diagnostic.contains("expects schema 0.5"));
+    assert!(diagnostic.contains("different ripr binary likely won PATH resolution"));
+    assert!(diagnostic.contains("`ripr --version`"));
     assert!(!diagnostic.contains("missing field"));
     std::fs::remove_dir_all(root)?;
     Ok(())
@@ -18246,11 +18292,13 @@ fn pilot_withholds_static_limitations_and_keeps_a_true_gap()
 
     let md = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
     assert!(
-        md.contains("- Withheld: 1 seam (static evidence is unknown or opaque"),
+        md.contains("- Withheld: 1 spot (ripr cannot tell from the code whether a test would notice a change there"),
         "{md}"
     );
+    assert!(!md.contains("static limitations, not gaps"), "{md}");
+    assert!(!md.contains("- Withheld: 1 seam"), "{md}");
     let stdout = String::from_utf8_lossy(&pilot.stdout);
-    assert!(stdout.contains("  withheld: 1 seam ("), "{stdout}");
+    assert!(stdout.contains("  withheld: 1 spot ("), "{stdout}");
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -21511,7 +21559,7 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
     // Pilot analyzed Python (the preview block above), so it must not also
     // list Python as "Not scanned" (#11215).
     assert!(
-        stdout.contains("Python preview:\n  status: ready"),
+        stdout.contains("Python preview:\n  result: a Python repair is ready"),
         "{stdout}"
     );
     assert!(!stdout.contains("Not scanned by pilot"), "{stdout}");
@@ -21793,7 +21841,7 @@ fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String
     );
     assert!(
         stdout.contains(
-            "current change: not part of it. Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque"
+            "current change: this gap is not on a line you changed. Pilot withholds the checked spot on a line changed since origin/main: ripr cannot tell from the code whether a test would notice a change there"
         ),
         "{stdout}"
     );
@@ -21986,7 +22034,7 @@ fn pilot_names_a_changed_build_script_its_ranking_leaves_out() -> Result<(), Str
     );
     assert!(
         stdout.contains(
-            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main: every changed Rust line is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out. This recommendation is elsewhere in the repo"
+            "current change: this gap is not on a line you changed. Pilot checked no spot on a line changed since origin/main: every changed Rust line is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out. For the change itself, run"
         ),
         "{stdout}"
     );
@@ -22209,10 +22257,13 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     );
     assert!(
         stdout.contains(
-            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main. This recommendation is elsewhere in the repo"
+            "current change: this gap is not on a line you changed. Pilot checked no spot on a line changed since origin/main. For the change itself, run"
         ),
         "{stdout}"
     );
+    assert!(!stdout.contains("not part of it. "), "{stdout}");
+    assert!(!stdout.contains("elsewhere in the repo"), "{stdout}");
+    assert!(!stdout.contains("static limitations, not gaps"), "{stdout}");
     assert!(stdout.contains("run: ripr check --root "), "{stdout}");
     // A committed change is what plain `ripr check` reads.
     assert!(!stdout.contains("--worktree"), "{stdout}");
@@ -22222,7 +22273,10 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         ),
         "{stdout}"
     );
-    assert!(md.contains("- Current change: not part of it."), "{md}");
+    assert!(
+        md.contains("- Current change: this gap is not on a line you changed."),
+        "{md}"
+    );
 
     // An uncommitted edit to `is_digit` is the current change: its seam now
     // outranks the better-classed `discounted` seam and is labeled part of it.
@@ -22248,6 +22302,8 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         "{stdout}"
     );
     assert!(md.contains("- Current change: part of it"), "{md}");
+    assert!(!md.contains("Status: `no_"), "{md}");
+    assert!(!md.contains("this seam is on"), "{md}");
 
     // A seam budget of one would cut the changed `is_digit` seam, which comes
     // after `discounted` in inventory order; pilot keeps it past the cut.

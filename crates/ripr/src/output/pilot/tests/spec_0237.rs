@@ -431,7 +431,7 @@ fn assert_note_under_first(md: &str, listed: &[&str], note: &str) {
 fn assert_withheld_not_counted(md: &str, listed: &[&str], withheld: usize) {
     assert_eq!(md_places(md), listed, "{md}");
     assert!(!md.contains("Also in this function"), "{md}");
-    let noun = if withheld == 1 { "seam" } else { "seams" };
+    let noun = if withheld == 1 { "spot" } else { "spots" };
     assert_eq!(
         md.matches(&format!("- Withheld: {withheld} {noun} ("))
             .count(),
