@@ -2823,6 +2823,26 @@ impl FileFactCacheStats {
         }
     }
 
+    /// Merge another stats snapshot into this one, preserving the bounded
+    /// `store_failures` row cap across concatenation (#4975).
+    pub(crate) fn merge_from(&mut self, source: &Self) {
+        self.hits += source.hits;
+        self.misses += source.misses;
+        self.corrupt_ignored += source.corrupt_ignored;
+        self.stores += source.stores;
+        self.store_errors += source.store_errors;
+        for failure in source.store_failures.iter().cloned() {
+            if self.store_failures.len() < MAX_STORE_FAILURE_ROWS {
+                self.store_failures.push(failure);
+            } else {
+                self.store_failures_dropped += 1;
+            }
+        }
+        self.store_failures_dropped += source.store_failures_dropped;
+        self.invalidated_files
+            .extend(source.invalidated_files.iter().cloned());
+    }
+
     pub(crate) fn status_label(&self) -> String {
         format!(
             "hits_{}_misses_{}_corrupt_{}_store_errors_{}",

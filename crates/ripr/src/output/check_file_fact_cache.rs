@@ -10,9 +10,10 @@ pub(crate) fn render_verbose_line(stats: &FileFactCacheStats) -> Option<String> 
     if !stats.did_work() {
         return None;
     }
+    let recomputed = stats.misses.saturating_add(stats.corrupt_ignored);
     let mut line = format!(
         "rust file facts: {} reused, {} recomputed, {} stored",
-        stats.hits, stats.misses, stats.stores
+        stats.hits, recomputed, stats.stores
     );
     match stats.corrupt_ignored {
         0 => {}
@@ -30,7 +31,7 @@ pub(crate) fn render_verbose_line(stats: &FileFactCacheStats) -> Option<String> 
 
 /// Append additive verbose-only JSON fields for file-fact cache telemetry.
 pub(crate) fn append_verbose_json_fields(out: &mut String, stats: Option<&FileFactCacheStats>) {
-    use crate::output::json::formatter::field;
+    use crate::output::json::field;
 
     out.push_str(",\n");
     match stats {
@@ -43,7 +44,7 @@ pub(crate) fn append_verbose_json_fields(out: &mut String, stats: Option<&FileFa
             field(out, 1, "file_fact_cache_limitation", "zero_work", false);
         }
         Some(stats) => {
-            let receipt = crate::analysis::seam_inventory::file_fact_cache_receipt(stats);
+            let receipt = crate::analysis::file_fact_cache_receipt(stats);
             let serialized = serde_json::to_string(&receipt).unwrap_or_else(|error| {
                 format!(
                     "{{\"serialization_error\":{}}}",
@@ -62,6 +63,20 @@ mod tests {
     use super::*;
     use crate::analysis::seam_cache::{FileFactCacheStats, FileFactStoreError, FileFactStoreStage};
     use std::path::PathBuf;
+
+    #[test]
+    fn verbose_line_counts_corrupt_rebuilds_as_recomputed() -> Result<(), String> {
+        let stats = FileFactCacheStats {
+            corrupt_ignored: 1,
+            stores: 1,
+            ..FileFactCacheStats::default()
+        };
+        let line = render_verbose_line(&stats).ok_or("line")?;
+        if !line.contains("0 reused, 1 recomputed") {
+            return Err(format!("corrupt rebuild: {line}"));
+        }
+        Ok(())
+    }
 
     #[test]
     fn verbose_line_names_reused_and_recomputed() -> Result<(), String> {
@@ -87,9 +102,11 @@ mod tests {
 
     #[test]
     fn verbose_json_carries_receipt_and_store_failures() -> Result<(), String> {
-        let mut stats = FileFactCacheStats::default();
-        stats.misses = 1;
-        stats.stores = 1;
+        let mut stats = FileFactCacheStats {
+            misses: 1,
+            stores: 1,
+            ..FileFactCacheStats::default()
+        };
         stats.record_store_failure(
             PathBuf::from("src/lib.rs"),
             FileFactStoreError {
@@ -97,7 +114,7 @@ mod tests {
                 message: "disk full".to_string(),
             },
         );
-        let mut out = String::from("{");
+        let mut out = String::from("{\n  \"tool\": \"ripr\"\n");
         append_verbose_json_fields(&mut out, Some(&stats));
         out.push('}');
         let value: serde_json::Value =

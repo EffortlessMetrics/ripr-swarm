@@ -535,8 +535,8 @@ fn check_with_progress_and_origins_run(
             if let Some(line) = crate::output::check_file_fact_cache::render_verbose_line(stats) {
                 eprintln!("ripr: {line}");
             }
-            for line in crate::analysis::seam_inventory::file_fact_store_failure_summary(stats) {
-                eprintln!("{line}");
+            for line in crate::analysis::file_fact_store_failure_summary(stats) {
+                eprintln!("{}", terminal_safe(line));
             }
         }
     }
@@ -544,11 +544,11 @@ fn check_with_progress_and_origins_run(
     progress.emit(AnalysisProgressStage::BuildingOutput);
     let suppression_policy = input.suppression_policy.clone();
     let origins = analysis.rust_diagnostic_origins.clone();
-    let consumed_sources = std::mem::take(&mut analysis.rust_consumed_sources);
+    let mut consumed_sources = std::mem::take(&mut analysis.rust_consumed_sources);
     let language_view = analysis.language_view.take();
     let human_output = matches!(input.format, OutputFormat::Human | OutputFormat::HumanFull);
     let mut output = output_builder::check_output_from_analysis(input, analysis);
-    output.file_fact_cache = consumed_sources.file_fact_cache;
+    output.file_fact_cache = consumed_sources.file_fact_cache.take();
     // #6340: only a human-rendered run pays for the Python test walk; JSON, LSP
     // refreshes and other machine consumers never read the note.
     if human_output && python_test_note_possible(&output.findings) {
