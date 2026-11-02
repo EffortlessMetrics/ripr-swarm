@@ -128,7 +128,8 @@ pub(crate) fn typescript_preview_card(finding: &Finding) -> Option<TypeScriptPre
         })
         .unwrap_or("unknown")
         .to_string();
-    let strongest = strongest_related_test(finding);
+    let strongest =
+        crate::output::related_test_miss::typescript_script_preview_related_test(finding);
     let oracle_kind = strongest
         .map(|test| test.oracle_kind.as_str())
         .unwrap_or("unknown")
@@ -289,7 +290,7 @@ fn suggested_assertion_shape(
                 .to_string()
         }
         Some(OracleKind::MockExpectation) => {
-            if strongest_related_test(finding)
+            if crate::output::related_test_miss::typescript_script_preview_related_test(finding)
                 .and_then(|test| test.oracle.as_deref())
                 .is_some_and(|oracle| oracle.contains("toHaveBeenCalledWith") || oracle.contains("toHaveBeenCalledTimes"))
             {
@@ -333,10 +334,6 @@ fn suggested_assertion_shape(
             _ => "Add an exact assertion for the changed behavior.".to_string(),
         },
     }
-}
-
-fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
-    crate::output::related_test_miss::strongest_related_test(&finding.related_tests)
 }
 
 fn evidence_value<'a>(finding: &'a Finding, prefix: &str) -> Option<&'a str> {

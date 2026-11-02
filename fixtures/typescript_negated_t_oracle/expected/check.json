@@ -104,8 +104,8 @@
         "probe_family": "predicate",
         "related_test": {
           "file": "tests/discount.test.ts",
-          "line": 1,
-          "name": "discounted value is not the full amount"
+          "line": 5,
+          "name": "discounted value is not deeply equal to the full amount"
         },
         "repair_packet_ready": false,
         "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",

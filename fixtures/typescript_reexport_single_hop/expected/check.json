@@ -98,8 +98,8 @@
         "probe_family": "return_value",
         "related_test": {
           "file": "test/util.test.ts",
-          "line": 3,
-          "name": "isRawNetworkError returns true for network fetch errors"
+          "line": 8,
+          "name": "isRawNetworkError returns false for non-Error values"
         },
         "repair_packet_ready": false,
         "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",

@@ -1388,16 +1388,12 @@ impl TypeScriptAdapter {
                     // lockfile, …) omit the limitation rather than contradict
                     // the detected name. Do not invent a second limitation
                     // code for the no-related-test case (#7646).
-                    let inferred_cmd = finding
-                        .related_tests
-                        .iter()
-                        // #11228: the first of the strongest rows, the one the
-                        // headline, card and packet name (`max_by_key` would
-                        // return the last of equal strength).
-                        .min_by_key(|t| std::cmp::Reverse(t.oracle_strength.rank()))
-                        .and_then(|best_test| {
-                            verify_command_for_discovery(&pkg_discovery, &best_test.file)
-                        });
+                    let inferred_cmd = crate::domain::typescript_script_preview_related_test(
+                        &finding,
+                    )
+                    .and_then(|best_test| {
+                        verify_command_for_discovery(&pkg_discovery, &best_test.file)
+                    });
                     if let Some(cmd) = inferred_cmd {
                         finding
                             .evidence

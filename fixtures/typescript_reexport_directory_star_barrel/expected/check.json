@@ -98,8 +98,8 @@
         "probe_family": "return_value",
         "related_test": {
           "file": "test/base.test.ts",
-          "line": 7,
-          "name": "withoutBase strips the base prefix"
+          "line": 11,
+          "name": "withoutBase keeps input outside the base"
         },
         "repair_packet_ready": false,
         "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",

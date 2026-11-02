@@ -66,7 +66,7 @@ TypeScript preview card (advisory)
   owner: discountedTotal
   owner kind: function
   changed behavior: predicate changed at src/pricing.ts:4: `if (amount >= DISCOUNT_THRESHOLD) {`
-  related test: tests/pricing.test.ts:3 no discount below threshold
+  related test: tests/pricing.test.ts:7 discounts far above threshold
   oracle: exact_value (strong)
   missing discriminator: amount == DISCOUNT_THRESHOLD
   suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.

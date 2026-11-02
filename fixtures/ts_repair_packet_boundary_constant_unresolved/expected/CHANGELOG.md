@@ -581,3 +581,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_constant_unresolved (44)
+
+Reason:
+RIPR-SPEC-0224: TypeScript preview surfaces select the producer oracle-ref row before raw cross-test strength (#5505)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_unresolved --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

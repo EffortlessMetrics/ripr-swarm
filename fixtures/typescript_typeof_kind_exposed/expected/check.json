@@ -97,8 +97,8 @@
         "probe_family": "predicate",
         "related_test": {
           "file": "tests/utils.test.ts",
-          "line": 4,
-          "name": "resolveValue returns a number unchanged"
+          "line": 8,
+          "name": "resolveValue calls a function input"
         },
         "repair_packet_ready": false,
         "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",

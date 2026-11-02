@@ -22,7 +22,7 @@ Start here:
   Check (observed, advisory): Related test reaches `resolveValue` with an `exact_value` oracle.
     Static evidence suggests the changed behavior is observed under an exact-value or
     exact-error-variant check
-  Related test (1 of 2 matched rows): tests/utils.test.ts:4 resolveValue returns a number unchanged
+  Related test (1 of 2 matched rows): tests/utils.test.ts:8 resolveValue calls a function input
   Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
