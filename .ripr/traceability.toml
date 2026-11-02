@@ -1434,8 +1434,12 @@ name = "defaults-first adoption"
 spec = "docs/specs/RIPR-SPEC-0009-defaults-first-adoption.md"
 tests = [
   "crates/ripr/src/output/agent_seam_packets.rs::tests::strict_boundary_hint_names_the_equality_value",
-  "crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::placeholder_shape_is_labelled_a_shape_with_a_fill_in_note",
-  "crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::concrete_assertion_keeps_its_label_and_gets_no_note",
+  "crates/ripr/src/output/placeholder_assertion.rs::tests::placeholder_shape_is_labelled_a_shape_with_a_fill_in_note",
+  "crates/ripr/src/output/placeholder_assertion.rs::tests::concrete_assertion_keeps_its_label_and_gets_no_note",
+  "crates/ripr/src/output/placeholder_assertion.rs::tests::empty_and_not_applicable_text_are_not_placeholders",
+  "crates/ripr/src/output/placeholder_assertion.rs::tests::a_lone_block_comment_opener_is_enough_to_warn",
+  "crates/ripr/src/lsp/hover.rs::seam_hover_tests::given_seam_hover_when_rendered_then_suggested_test_shape_is_visible",
+  "crates/ripr/src/cli/commands/agent.rs::before_phase_stdout_tests::placeholder_assertion_in_summary_gets_a_fill_in_note",
   "crates/ripr/src/output/pilot/tests.rs::multiline_match_heads_follow_changed_lines_without_moving_seam_identity",
   "crates/ripr/src/output/pilot/tests.rs::multiline_match_guard_lines_exclude_the_arm_body",
   "crates/ripr/src/output/pilot/tests.rs::pilot_match_source_lines_preserve_identity_and_refuse_invalid_ranges",
@@ -7378,10 +7382,16 @@ tests = [
     "editors/vscode/test/suite/extension.test.ts::typed unavailable_languages status names the language in the status bar, not message text (#8585)",
     "editors/vscode/test/suite/extension.test.ts::closing an unsaved buffer restores the typed language-not-enabled status (#8585)",
     "editors/vscode/test/suite/extension.test.ts::language-not-enabled status keeps degraded component recovery and trust warning (#8585)",
+    "crates/ripr/src/lsp/backend.rs::list_actionable_items_tests::list_actionable_items_discloses_an_empty_scope",
+    "crates/ripr/src/lsp/backend.rs::list_actionable_items_tests::list_actionable_items_scope_disclosure_controls",
+    "crates/ripr/src/lsp/backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_names_an_empty_scope_instead_of_generic_advice",
+    "crates/ripr/src/lsp/tests.rs::refresh_completion_log_message_names_the_analysis_outcome_kind",
+    "crates/ripr/src/analysis_outcome.rs::tests::empty_scope_cause_sentences_and_mcp_routes_are_byte_stable",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/diagnostic_origin.rs",
+  "crates/ripr/src/analysis_outcome.rs",
   "crates/ripr/src/lsp/position.rs",
   "crates/ripr/src/lsp/progress.rs",
   "crates/ripr/src/lsp/backend.rs",
@@ -17079,6 +17089,7 @@ tests = [
   "xtask/src/work_wave_identity.rs::tests::work_wave_identity_provenance_fails_closed",
   "xtask/src/work_wave_identity.rs::tests::work_wave_identity_committed_provenance_covers_every_corpus_byte",
   "xtask/src/work_wave_identity.rs::tests::work_wave_identity_command_mutate_nothing_mutation_negative",
+  "xtask/src/issue_4678_acceptance.rs::tests::issue_4678_disjoint_cross_campaign_waves_admitted",
 ]
 fixtures = [
   "fixtures/work_wave_identity",
@@ -17255,6 +17266,8 @@ tests = [
   "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_committed_provenance_covers_every_corpus_byte",
   "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_merged_item_keeps_open_acceptance_visible",
   "xtask/src/work_burndown_identity.rs::tests::work_burndown_identity_command_mutate_nothing_mutation_negative",
+  "xtask/src/issue_4678_acceptance.rs::tests::issue_4678_burndown_committed_corpus_binds_selected_work",
+  "xtask/src/issue_4678_acceptance.rs::tests::portfolio_burndown_committed_corpus_matches_work_burndown_law",
 ]
 fixtures = [
   "fixtures/work_burndown_identity",
@@ -17262,6 +17275,7 @@ fixtures = [
 code = [
   "xtask/src/work_burndown_identity.rs",
   "xtask/src/work_selection_identity.rs",
+  "xtask/src/issue_4678_acceptance.rs",
   "xtask/src/command.rs",
   "xtask/src/dispatch.rs",
 ]
@@ -17403,6 +17417,8 @@ tests = [
   "xtask/src/work_selection_identity.rs::tests::work_selection_identity_scenario_captured_resolution",
   "xtask/src/work_selection_identity.rs::tests::work_selection_identity_spec_ref_wire_shape",
   "xtask/src/work_selection_identity.rs::tests::work_selection_identity_committed_provenance_covers_every_corpus_byte",
+  "xtask/src/issue_4678_acceptance.rs::tests::issue_4678_selection_wrong_repository_fails_closed",
+  "xtask/src/issue_4678_acceptance.rs::tests::issue_4678_fresh_root_receipt_covers_burndown_domain",
 ]
 fixtures = [
   "fixtures/work_selection_identity",
@@ -18592,12 +18608,29 @@ tests = [
   "crates/ripr/src/analysis/committed_source/tests.rs::snapshot_inputs_differ_only_in_their_own_directory",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::vitest_string_values_are_not_keys_but_real_keys_still_refuse",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::snapshot_of_the_function_owner_result_confirms_the_effect_seam",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::snapshot_of_the_method_owner_result_confirms_the_effect_seam",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::snapshot_of_an_unrelated_function_subject_reads_weak",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::a_bound_local_that_is_rewritten_or_shadowed_reads_weak",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::snapshot_of_an_unrelated_method_subject_reads_weak",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::typed_locals_and_wrapped_subjects_are_deliberately_uncredited",
+  "crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs::an_unrelated_import_of_the_owner_name_does_not_inherit_the_owner_credit",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
+  "fixtures/typescript_snapshot_effect_owner_result_control",
+  "fixtures/typescript_snapshot_effect_method_owner_result_control",
+  "fixtures/typescript_snapshot_effect_unrelated_subject",
+  "fixtures/typescript_snapshot_effect_unrelated_committed",
+  "fixtures/typescript_snapshot_effect_rebound_local",
+  "fixtures/typescript_snapshot_effect_receiver_redeclared",
+  "fixtures/typescript_snapshot_effect_unrelated_import_binding",
+  "fixtures/typescript_snapshot_effect_conditional_receiver",
+  "fixtures/typescript_snapshot_effect_spy_calls_weak",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/committed_snapshot.rs",
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
   "crates/ripr/src/analysis/committed_source.rs",
   "crates/ripr/src/analysis/language/router.rs",
 ]
@@ -20107,6 +20140,7 @@ tests = [
   "xtask/src/issue_lifecycle_real_rows.rs::tests::uncovered_acceptance_row_keeps_a_merge_partial",
   "xtask/src/issue_lifecycle_real_rows.rs::tests::duplicate_import_deduplicates_by_observation_key",
   "xtask/src/issue_lifecycle_real_rows.rs::tests::synthetic_fixtures_stay_outside_the_real_count",
+  "xtask/src/issue_4678_acceptance.rs::tests::issue_4678_lifecycle_merge_without_closeout_stays_pending",
 ]
 fixtures = [
   "fixtures/issue_lifecycle_real_rows",
