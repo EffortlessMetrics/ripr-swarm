@@ -1,96 +1,96 @@
 {
   "schema_version": "ripr_verdict_corpus_report.v1",
   "spec": "RIPR-SPEC-0219",
-  "cases_total": 818,
+  "cases_total": 819,
   "by_truth": {
-    "discriminated": 420,
-    "not_discriminated": 271,
-    "partially_discriminated": 127
+    "discriminated": 418,
+    "not_discriminated": 272,
+    "partially_discriminated": 129
   },
   "by_outcome": {
     "abstained": 309,
-    "ideal": 509
+    "ideal": 510
   },
   "by_observed_verdict": {
     "credited": 256,
-    "gap": 253,
+    "gap": 254,
     "limited": 296,
     "silent": 13
   },
   "false_verdict_rate": {
     "numerator": 0,
-    "denominator": 818,
+    "denominator": 819,
     "rate": "0.0000"
   },
   "false_actionable_rate": {
     "numerator": 0,
-    "denominator": 420,
+    "denominator": 418,
     "rate": "0.0000"
   },
   "false_exposed_rate": {
     "numerator": 0,
-    "denominator": 398,
+    "denominator": 401,
     "rate": "0.0000"
   },
   "false_silent_rate": {
     "numerator": 0,
-    "denominator": 398,
+    "denominator": 401,
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 509,
-    "denominator": 818,
-    "rate": "0.6222"
+    "numerator": 510,
+    "denominator": 819,
+    "rate": "0.6227"
   },
   "abstention_rate": {
     "numerator": 309,
-    "denominator": 818,
-    "rate": "0.3778"
+    "denominator": 819,
+    "rate": "0.3773"
   },
   "contradiction_rate": {
     "numerator": 0,
-    "denominator": 1006,
+    "denominator": 1007,
     "rate": "0.0000"
   },
   "contradictions_by_code": {},
   "by_origin": {
     "authored": {
-      "cases_total": 782,
+      "cases_total": 783,
       "by_observed_verdict": {
         "credited": 254,
-        "gap": 251,
+        "gap": 252,
         "limited": 264,
         "silent": 13
       },
       "false_verdict_rate": {
         "numerator": 0,
-        "denominator": 782,
+        "denominator": 783,
         "rate": "0.0000"
       },
       "false_actionable_rate": {
         "numerator": 0,
-        "denominator": 398,
+        "denominator": 396,
         "rate": "0.0000"
       },
       "false_exposed_rate": {
         "numerator": 0,
-        "denominator": 384,
+        "denominator": 387,
         "rate": "0.0000"
       },
       "false_silent_rate": {
         "numerator": 0,
-        "denominator": 384,
+        "denominator": 387,
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 505,
-        "denominator": 782,
-        "rate": "0.6458"
+        "numerator": 506,
+        "denominator": 783,
+        "rate": "0.6462"
       },
       "abstention_rate": {
         "numerator": 277,
-        "denominator": 782,
-        "rate": "0.3542"
+        "denominator": 783,
+        "rate": "0.3538"
       }
     },
     "upstream": {
@@ -13601,6 +13601,28 @@
       "contradiction_counts": {}
     },
     {
+      "case_id": "spec0224-assert-other-value",
+      "subject_id": "authored-spec0224-1-other-value",
+      "origin": "authored",
+      "anchor": "src/lib.rs:24",
+      "behavior_family": "match_arm_pattern",
+      "test_shape": "assert_other_value_while_reaching_exact_arm",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
       "case_id": "spec0224-parse-exact-arm-unobserved",
       "subject_id": "authored-spec0224-1",
       "origin": "authored",
@@ -18649,9 +18671,9 @@
       "anchor": "src/grid_checked.rs:12",
       "behavior_family": "predicate_boundary",
       "test_shape": "should_panic_expected_message",
-      "hard_case": false,
-      "truth": "discriminated",
-      "ideal_verdict": "credited",
+      "hard_case": true,
+      "truth": "partially_discriminated",
+      "ideal_verdict": "gap",
       "observed_verdict": "limited",
       "followed_retarget": false,
       "changed_since_labeling": true,
@@ -18782,9 +18804,9 @@
       "anchor": "src/grid_reached.rs:12",
       "behavior_family": "predicate_boundary",
       "test_shape": "should_panic_reached_owner_panic",
-      "hard_case": false,
-      "truth": "discriminated",
-      "ideal_verdict": "credited",
+      "hard_case": true,
+      "truth": "partially_discriminated",
+      "ideal_verdict": "gap",
       "observed_verdict": "limited",
       "followed_retarget": false,
       "changed_since_labeling": true,
