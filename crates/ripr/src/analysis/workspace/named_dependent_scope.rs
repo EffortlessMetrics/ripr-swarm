@@ -8,17 +8,16 @@
 
 use std::path::Path;
 
-use crate::analysis::syntax::RaRustSyntaxAdapter;
-use crate::analysis::syntax::RustSyntaxAdapter;
+use crate::analysis::syntax::parse_clean_source_file;
 
 /// Whether `bytes` would land in the main index with `used_lexical_fallback`
-/// if summarized now. Invalid UTF-8 and parser rejection match [`crate::analysis::rust_index`]'s
-/// production summarize path.
-pub(crate) fn withheld_source_disables_crate_root_routing(path: &Path, bytes: &[u8]) -> bool {
+/// if summarized now. Invalid UTF-8 and parser rejection match [`crate::analysis::facts::build`]'s
+/// adapter summarize path without extracting file facts.
+pub(crate) fn withheld_source_disables_crate_root_routing(_path: &Path, bytes: &[u8]) -> bool {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return true;
     };
-    RaRustSyntaxAdapter.summarize_file(path, text).is_err()
+    parse_clean_source_file(text).is_none()
 }
 
 /// Lexical superset: `include !`, `# [ path ..]`, comments in the attribute
@@ -94,10 +93,22 @@ fn skip_gap_whitespace(bytes: &[u8], mut at: usize) -> usize {
             at += 1;
             continue;
         }
-        let Some(rest) = std::str::from_utf8(&bytes[at..]).ok() else {
-            break;
+        let limit = std::cmp::min(at + 4, bytes.len());
+        let subslice = &bytes[at..limit];
+        let valid_str = match std::str::from_utf8(subslice) {
+            Ok(text) => text,
+            Err(err) => {
+                let valid_len = err.valid_up_to();
+                if valid_len == 0 {
+                    break;
+                }
+                match std::str::from_utf8(&subslice[..valid_len]) {
+                    Ok(text) => text,
+                    Err(_) => break,
+                }
+            }
         };
-        let Some(ch) = rest.chars().next() else {
+        let Some(ch) = valid_str.chars().next() else {
             break;
         };
         if ch.is_whitespace() && !ch.is_ascii() {
