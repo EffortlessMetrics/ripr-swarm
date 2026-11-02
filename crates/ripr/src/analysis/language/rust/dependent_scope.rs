@@ -2043,9 +2043,7 @@ mod tests {
         assert!(none.admits(b"include !(\"x.rs\");"));
         assert!(none.admits(b"#[/*c*/ cfg_attr(unix, path = \"u.rs\")] mod check;"));
         assert!(none.admits(b"# /*c*/ [path = \"a.rs\"] mod a;"));
-        assert!(none.admits(
-            "#[\u{00a0}path = \"a.rs\"] mod a;".as_bytes()
-        ));
+        assert!(none.admits("#[\u{00a0}path = \"a.rs\"] mod a;".as_bytes()));
         assert!(!none.admits(b"#[derive(Debug)] struct S; fn includes() {}"));
         assert!(!none.admits(b"#![doc = include_str!(\"../README.md\")]"));
         let cargo_bin = b"let tool = env!(\"CARGO_BIN_EXE_tool\");";

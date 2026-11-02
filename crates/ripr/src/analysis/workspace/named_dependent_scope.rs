@@ -132,7 +132,9 @@ mod tests {
     fn composes_modules_reads_spaced_include_and_bracket_attributes() {
         assert!(composes_modules(b"include !(\"x.rs\");"));
         assert!(composes_modules(b"#[path = \"a.rs\"] mod a;"));
-        assert!(composes_modules(b"#[cfg_attr(unix, path = \"u.rs\")] mod check;"));
+        assert!(composes_modules(
+            b"#[cfg_attr(unix, path = \"u.rs\")] mod check;"
+        ));
         assert!(composes_modules(b"# [ path = \"a.rs\" ] mod a;"));
         assert!(!composes_modules(b"#[derive(Debug)] struct S;"));
     }
@@ -143,7 +145,9 @@ mod tests {
             b"#[/*c*/ cfg_attr(unix, path = \"u.rs\")] mod platform;"
         ));
         assert!(composes_modules(b"# /*c*/ [path = \"a.rs\"] mod a;"));
-        assert!(composes_modules("#[\u{00a0}path = \"a.rs\"] mod a;".as_bytes()));
+        assert!(composes_modules(
+            "#[\u{00a0}path = \"a.rs\"] mod a;".as_bytes()
+        ));
         assert!(composes_modules(b"#[\x0Bpath = \"a.rs\"] mod a;"));
     }
 

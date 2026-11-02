@@ -5842,8 +5842,7 @@ mod tests {
         let gauge_test = "#[test]\nfn gauge_pins_both_arms() {\n    \
                           assert_eq!(scope_a::quarble_gauge(true), true);\n    \
                           assert_eq!(scope_a::quarble_gauge(false), false);\n}\n";
-        let private_glob =
-            "use proptest::prelude::*;\n\npub fn unrelated() -> u8 {\n    1\n}\n";
+        let private_glob = "use proptest::prelude::*;\n\npub fn unrelated() -> u8 {\n    1\n}\n";
 
         let assert_named_equals_full =
             |e_source: &str, extra: &[(&str, &str)]| -> Result<(), String> {
@@ -5862,10 +5861,7 @@ mod tests {
                 Ok(())
             };
 
-        assert_named_equals_full(
-            private_glob,
-            &[("e/src/broken.rs", "fn broken( {")],
-        )?;
+        assert_named_equals_full(private_glob, &[("e/src/broken.rs", "fn broken( {")])?;
         assert_named_equals_full(
             &format!(
                 "{private_glob}\n#[/*c*/ cfg_attr(unix, path = \"unix.rs\")]\nmod platform;\n"
@@ -5873,9 +5869,7 @@ mod tests {
             &[],
         )?;
         assert_named_equals_full(
-            &format!(
-                "{private_glob}\n#[\u{00a0}path = \"unix.rs\"]\nmod platform;\n"
-            ),
+            &format!("{private_glob}\n#[\u{00a0}path = \"unix.rs\"]\nmod platform;\n"),
             &[],
         )?;
         Ok(())
