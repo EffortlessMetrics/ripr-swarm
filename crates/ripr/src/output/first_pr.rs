@@ -136,7 +136,7 @@ impl ProofPathLabels {
 }
 
 mod freshness;
-mod options;
+pub(crate) mod options;
 mod preflight;
 mod rendering;
 mod run_chain;
@@ -144,8 +144,7 @@ mod validation;
 
 use freshness::{producing_ripr_version, start_here_packet_version_freshness};
 pub(crate) use freshness::{start_here_json_version_freshness, start_here_version_stale_detail};
-pub(crate) use options::FIRST_PR_HELP;
-use options::{FirstPrOptions, parse_options, print_help};
+pub(crate) use options::{FIRST_PR_HELP, FirstPrOptions};
 use preflight::{FirstPrPreflight, first_pr_preflight};
 #[cfg(test)]
 use rendering::markdown_code_or_text;
@@ -163,13 +162,7 @@ use crate::agent::loop_commands::anchored_redirect_target;
 use validation::validate_selected_state;
 use validation::{validate_selected_command_root, validate_start_here_packet};
 
-pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-
-    let mut options = parse_options(args)?;
+pub(crate) fn first_pr_with_options(mut options: FirstPrOptions) -> Result<(), String> {
     let repo = repo_root()?;
     // A root that is not a directory cannot be analyzed: refuse (exit 2) before
     // the disclosure and before writing a recovery packet, so a mistyped path
@@ -3402,6 +3395,17 @@ fn repo_root() -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::cli::commands::first_pr_argv;
+
+    fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
+        first_pr_argv::parse_options(args)
+    }
+
+    fn first_pr(args: &[String]) -> Result<(), String> {
+        first_pr_argv::first_pr(args)
+    }
+
     #[test]
     fn a_verbatim_prefixed_root_is_the_same_root_as_its_plain_form() {
         use std::path::Path;

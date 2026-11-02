@@ -1457,12 +1457,12 @@ mod tests {
     const SWARM_INGEST_PARSER_RS: &str = include_str!("commands/swarm/ingest.rs");
     const RERUN_PARSER_RS: &str = include_str!("rerun.rs");
     const MCP_PARSER_RS: &str = include_str!("../mcp/mod.rs");
-    const PR_SUMMARY_PARSER_RS: &str = include_str!("../app/pr_summary/mod.rs");
-    const ANNOTATIONS_PARSER_RS: &str = include_str!("../app/annotations.rs");
-    const PR_EVIDENCE_PARSER_RS: &str = include_str!("../app/pr_evidence.rs");
-    const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("../app/impacted_evidence.rs");
-    const RIPR_PLUS_PARSER_RS: &str = include_str!("../app/ripr_plus.rs");
-    const FIRST_PR_PARSER_RS: &str = include_str!("../output/first_pr/options.rs");
+    const PR_SUMMARY_PARSER_RS: &str = include_str!("commands/pr_summary.rs");
+    const ANNOTATIONS_PARSER_RS: &str = include_str!("commands/annotations.rs");
+    const PR_EVIDENCE_PARSER_RS: &str = include_str!("commands/pr_evidence.rs");
+    const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("commands/impacted_evidence.rs");
+    const RIPR_PLUS_PARSER_RS: &str = include_str!("commands/ripr_plus.rs");
+    const FIRST_PR_PARSER_RS: &str = include_str!("commands/first_pr_argv.rs");
 
     /// Each registered command path and the function(s) in its parser source
     /// that accept argv flags.
@@ -1522,11 +1522,7 @@ mod tests {
             AGENT_PARSER_RS,
             &["parse_agent_verify_execute_options"],
         ),
-        (
-            "annotations",
-            ANNOTATIONS_PARSER_RS,
-            &["run_annotations", "parse_options"],
-        ),
+        ("annotations", ANNOTATIONS_PARSER_RS, &["parse_options"]),
         (
             "assistant-loop health",
             CLI_COMMANDS_RS,
@@ -1612,18 +1608,14 @@ mod tests {
         (
             "impacted-evidence",
             IMPACTED_EVIDENCE_PARSER_RS,
-            &["run_impacted_evidence", "parse_options"],
+            &["parse_options"],
         ),
         ("init", INIT_PARSER_RS, &["parse_init_options"]),
         ("lsp", CLI_COMMANDS_RS, &["lsp_with_serve"]),
         ("mcp", MCP_PARSER_RS, &["run"]),
         ("outcome", CLI_COMMANDS_RS, &["parse_outcome_options"]),
         ("pilot", PILOT_PARSER_RS, &["parse_pilot_options"]),
-        (
-            "plus",
-            RIPR_PLUS_PARSER_RS,
-            &["run_ripr_plus", "parse_options"],
-        ),
+        ("plus", RIPR_PLUS_PARSER_RS, &["parse_options"]),
         (
             "policy history",
             POLICY_PARSE_RS,
@@ -1679,11 +1671,7 @@ mod tests {
             PR_COMMENTS_GITHUB_PARSER_RS,
             &["parse_pr_comments_summary_options"],
         ),
-        (
-            "pr-evidence",
-            PR_EVIDENCE_PARSER_RS,
-            &["run_pr_evidence", "parse_options"],
-        ),
+        ("pr-evidence", PR_EVIDENCE_PARSER_RS, &["parse_options"]),
         (
             "pr-ledger record",
             CLI_COMMANDS_RS,
@@ -1694,11 +1682,7 @@ mod tests {
             CLI_COMMANDS_RS,
             &["parse_pr_review_front_panel_options"],
         ),
-        (
-            "pr-summary",
-            PR_SUMMARY_PARSER_RS,
-            &["run_pr_summary", "parse_options"],
-        ),
+        ("pr-summary", PR_SUMMARY_PARSER_RS, &["parse_options"]),
         (
             "receipt check",
             RECEIPT_PARSER_RS,

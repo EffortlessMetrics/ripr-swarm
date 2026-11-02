@@ -710,7 +710,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
 }
 
 #[cfg(unix)]
-pub(in crate::cli) fn check_with_interrupt_flags(
+pub(crate) fn check_with_interrupt_flags(
     args: &[String],
     flags: crate::cli::interrupt::InterruptFlags,
 ) -> Result<(), String> {

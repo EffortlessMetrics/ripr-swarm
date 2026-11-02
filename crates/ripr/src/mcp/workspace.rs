@@ -3,7 +3,7 @@
 //! The session is the MCP-side owner of "which snapshot is current". It does
 //! not analyze by itself: [`run_check`] delegates to the shared
 //! [`crate::app::check_workspace`] authority, and bounded selection delegates
-//! to the shared [`crate::lsp::diagnostic_budget`] evaluator. The session only
+//! to the shared [`crate::app::diagnostic_budget`] evaluator. The session only
 //! records attempt state, keeps the last completed (last-known-good) snapshot,
 //! and projects bounded, progressively disclosed documents for the tools and
 //! resources.
@@ -15,7 +15,7 @@
 
 use super::gaps::{self, GAP_LIST_SCHEMA_VERSION, GapItem};
 use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeKind};
-use crate::lsp::diagnostic_budget::{
+use crate::app::diagnostic_budget::{
     self, DiagnosticBudget, DiagnosticBudgetResult, DiagnosticOverflowReason,
     OmittedDiagnosticReason,
 };
@@ -2050,7 +2050,7 @@ pub(crate) fn run_check(
         Ok(snapshot)
     };
     #[cfg(unix)]
-    if let Some(interrupted) = crate::cli::interrupt::server_interrupt_flag() {
+    if let Some(interrupted) = crate::interrupt::server_interrupt_flag() {
         use crate::analysis::cancellation::{
             self, AnalysisAbortKind, AnalysisCancellation, AnalysisCancellationToken,
         };
@@ -2059,7 +2059,7 @@ pub(crate) fn run_check(
         // This exchange is the terminal boundary. A signal observed even after
         // the final child/checkpoint refuses success; a later signal remains
         // pending for the next attempt. Preserve a prior diagnostic on errors.
-        return crate::cli::interrupt::settle_server_attempt(&interrupted, result, || {
+        return crate::interrupt::settle_server_attempt(&interrupted, result, || {
             check_failure(
                 &AnalysisCancellation {
                     kind: AnalysisAbortKind::Cancelled,

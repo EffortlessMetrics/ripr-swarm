@@ -14,7 +14,9 @@ mod exit_kani;
 pub(crate) mod help;
 mod help_flags;
 mod help_json;
-pub(crate) mod interrupt;
+pub(crate) mod interrupt {
+    pub use crate::interrupt::*;
+}
 mod parse;
 pub(crate) mod progress;
 mod rerun;
@@ -25,6 +27,8 @@ pub(crate) use parse::expect_value;
 #[doc(hidden)]
 pub use parse::extract_global_verbose;
 pub(crate) use suggest::{unknown_argument, unknown_value};
+
+pub use commands::impacted_evidence_command::parse_impacted_evidence_options;
 
 /// The command completed. Shared by `Ok(())` paths and by the
 /// `help --json` exit contract (`docs/EXIT_CODES.md`).
@@ -113,6 +117,12 @@ pub fn run(args: Vec<String>) -> Result<(), CommandError> {
 /// process exit. Embedders retain their signal policy through [`run`].
 pub fn run_with_interrupt_handling(args: Vec<String>) -> Result<(), CommandError> {
     run_with_policy(args, true)
+}
+
+/// Direct `ripr mcp` startup route (#9867) used before the generic CLI
+/// dispatcher runs.
+pub fn run_mcp(args: &[String]) -> Result<(), String> {
+    commands::mcp(args)
 }
 
 fn run_with_policy(args: Vec<String>, interrupt_handling: bool) -> Result<(), CommandError> {

@@ -17,3 +17,21 @@ crates/ripr/src/domain/**|serde_json|domain must not know JSON rendering
 crates/ripr/src/output/**|check_workspace|output must not orchestrate analysis use cases
 crates/ripr/src/output/**|collect_context|output must not orchestrate context use cases
 crates/ripr/src/output/**|explain_finding|output must not orchestrate explain use cases
+crates/ripr/src/app/**|crate::cli|application must not import CLI adapters
+crates/ripr/src/app/**|crate::lsp|application must not import LSP adapters
+crates/ripr/src/app/**|crate::mcp|application must not import MCP adapters
+!crates/ripr/src/app/pr_evidence.rs|crate::cli|#5193: cfg(test) exercises CLI argv parsing against the app execute path without duplicating parse logic in production
+!crates/ripr/src/app/pr_summary/mod.rs|crate::cli|#5193: cfg(test) exercises CLI argv parsing against the app execute path without duplicating parse logic in production
+!crates/ripr/src/app/ripr_plus.rs|crate::cli|#5193: cfg(test) exercises CLI argv parsing against the app execute path without duplicating parse logic in production
+crates/ripr/src/output/**|crate::cli|output must not import CLI adapters
+!crates/ripr/src/output/first_pr.rs|crate::cli|#5193: cfg(test) pins first-pr argv parsing in the CLI adapter against the output execute path
+crates/ripr/src/output/**|crate::lsp|output must not import LSP adapters
+crates/ripr/src/output/**|crate::mcp|output must not import MCP adapters
+!crates/ripr/src/output/human/triage.rs|crate::mcp|#5193: cfg(test) parity tests compare human triage wording against MCP gap limitation projection
+!crates/ripr/src/output/language_view_agreement_tests.rs|crate::mcp|#5193: cross-surface agreement harness reuses the MCP gap test fixture builder
+crates/ripr/src/mcp/**|crate::lsp|MCP must not import LSP adapters
+crates/ripr/src/mcp/**|crate::cli|MCP must not import CLI adapters
+crates/ripr/src/lsp/**|crate::mcp|LSP must not import MCP adapters
+!crates/ripr/src/lsp/hover.rs|crate::mcp|#5193: cfg(test) parity tests compare LSP hover against MCP gap limitation projection
+crates/ripr/src/lsp/**|crate::cli|LSP must not import CLI adapters
+!crates/ripr/src/lsp/progress_stages.rs|crate::cli|#5193: cfg(test) compares LSP progress staging against the CLI progress sink

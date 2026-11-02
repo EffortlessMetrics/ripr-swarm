@@ -63,16 +63,7 @@ fn implements_local_version(command: &str) -> bool {
 /// as a near-miss suggestion, so the same mistake names the fix on every
 /// command instead of only where a parser happens to inline the list.
 pub(crate) fn unknown_value(label: &str, value: &str, accepted: &[&str]) -> String {
-    match closest(value, accepted.iter().copied()) {
-        Some(suggestion) => format!(
-            "unknown {label} {value:?}. Did you mean `{suggestion}`? Accepted: {}.",
-            accepted.join(", ")
-        ),
-        None => format!(
-            "unknown {label} {value:?}. Accepted: {}.",
-            accepted.join(", ")
-        ),
-    }
+    crate::accepted_value::unknown_value(label, value, accepted)
 }
 
 /// Build the error for an unrecognized `ripr check --format` value.
