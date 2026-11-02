@@ -6765,7 +6765,11 @@ fn test_imports_same_name_twin(
         .copied()
         .chain(imported.iter().copied())
         .collect();
-    if imported.is_empty()
+    // A named `use super::rows` (or `self::rows`) stores only the qualifier
+    // prefix in `module`; the leaf is `owner_name` and is not part of
+    // `imported`. An empty `imported` with a resolved `segments` path is
+    // valid (#7103 / #8059).
+    if (imported.is_empty() && segments.is_empty())
         || imported
             .iter()
             .any(|segment| matches!(*segment, "super" | "self" | "crate"))
@@ -7384,6 +7388,18 @@ mod tests {
             ],
         ));
         assert!(!undecided("/work/repo/src/lib.rs", owner, &ids));
+        // #7103 / #8059 review: `super::rows` from `inner::tests` names
+        // `inner::rows`, not the file-root owner; a named import that binds
+        // the nested twin must not withhold credit from that nested owner.
+        let rows_owner = "src/lib.rs::rows";
+        let rows_ids = ["src/lib.rs::rows", "src/lib.rs::inner::rows"];
+        let rows_named = "fn pins() {\n use super::rows;\n rows(30, 3);\n}";
+        let rows_module = vec!["inner".to_string(), "tests".to_string()];
+        let rows_twin = |body: &str, owner: &str| {
+            test_imports_same_name_twin(body, lib, &rows_module, owner, "rows", &rows_ids)
+        };
+        assert!(rows_twin(rows_named, rows_owner));
+        assert!(!rows_twin(rows_named, "src/lib.rs::inner::rows"));
         // The import resolves against the test's own module: `self` and a
         // nested `super` name modules no twin sits in (a re-export), and a
         // nested twin is reached through its parent.
