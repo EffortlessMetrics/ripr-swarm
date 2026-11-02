@@ -49,3 +49,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
+
+## Pending — rust_indirect_owner_item_scope (5)
+
+Reason:
+RIPR-SPEC-0122: follow main Evidence stage rename to assertion in the new golden
+
+Command:
+`cargo xtask goldens bless rust_indirect_owner_item_scope --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
