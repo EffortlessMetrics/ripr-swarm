@@ -6608,6 +6608,28 @@ mod tests {
             format!("{expected_base}_2"),
             "pilot must not suggest a test name that already exists in the file"
         );
+
+        entry
+            .evidence
+            .related_tests
+            .push(std::sync::Arc::new(RelatedTestGrip {
+                test_name: format!("{expected_base}_2"),
+                file: PathBuf::from("tests/pricing.rs"),
+                line: 41,
+                test_target: None,
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                evidence_summary: "second collision".to_string(),
+                relation_reason:
+                    crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
+                relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+            }));
+        let recommended = recommended_test_for(&entry);
+        assert_eq!(
+            recommended.name,
+            format!("{expected_base}_3"),
+            "must skip every taken spelling in the target file"
+        );
     }
 
     #[test]
