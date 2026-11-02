@@ -906,6 +906,7 @@ pub(super) fn collect_tests_from_statements(
     } else {
         Vec::new()
     };
+    let later_bindings = super::test_activation::LaterBindings::of(statements);
     for (index, stmt) in statements.iter().enumerate() {
         apply_definition_import(file, stmt, &mut definition_imports);
         let first_pushed = out.len();
@@ -1332,7 +1333,7 @@ pub(super) fn collect_tests_from_statements(
             _ => None,
         };
         if let Some(defined) = defined
-            && super::test_activation::rebound_later(statements, index, defined, source)
+            && later_bindings.rebound_later(statements, index, defined, source)
         {
             for test in &mut out[first_pushed..] {
                 test.activation_controls.push(

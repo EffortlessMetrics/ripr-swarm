@@ -23,3 +23,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — compile_time_assert_stop_reason (3)
+
+Reason:
+RIPR-SPEC-0122: plain wording for the Evidence stage name and the stage and state legend in the check digest (#10692)
+
+Command:
+`cargo xtask goldens bless compile_time_assert_stop_reason --reason "..."`
+
+Updated:
+- `expected/human.txt`
