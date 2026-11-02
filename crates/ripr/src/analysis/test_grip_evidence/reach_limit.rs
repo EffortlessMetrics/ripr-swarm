@@ -568,10 +568,11 @@ fn unresolved_reach_summary(
     if owner_name.is_empty() {
         return None;
     }
-    // The witness walks match by name, so every owner sharing a name shares
-    // their answer; only the trait-dispatch checks need the owner id.
-    if let Some(summary) = cached(context, format!("name:{owner_name}"), || {
-        witness_summary(owner_name, context)
+    let owner_file = owner_fn.file.display().to_string().replace('\\', "/");
+    // RIPR-SPEC-0236 rule R4: cache by owner file and name so a later
+    // path-aware witness search cannot leak one owner's answer to another.
+    if let Some(summary) = cached(context, format!("name:{owner_file}::{owner_name}"), || {
+        witness_summary(owner_fn, context)
     }) {
         return Some(summary);
     }
@@ -582,7 +583,7 @@ fn unresolved_reach_summary(
     }
     // Last: a chain past five hops never displaces a shallower or more
     // specific witness (#8047).
-    cached(context, format!("deep:{owner_name}"), || {
+    cached(context, format!("deep:{owner_file}::{owner_name}"), || {
         let witness = context
             .transitive_reach
             .deep_transitive_witness(owner_name)?;
@@ -603,12 +604,17 @@ fn cached(
     summary
 }
 
-fn witness_summary(owner_name: &str, context: &CompactGripContext<'_>) -> Option<String> {
-    if let Some(witness) = context.transitive_reach.transitive_witness(owner_name) {
-        return Some(transitive_summary(owner_name, &witness));
+fn witness_summary(owner_fn: &FunctionSummary, context: &CompactGripContext<'_>) -> Option<String> {
+    if let Some(witness) = context
+        .transitive_reach
+        .transitive_witness_for_owner(owner_fn)
+    {
+        return Some(transitive_summary(owner_fn.name.as_str(), &witness));
     }
-    let witness = context.transitive_reach.macro_reach_witness(owner_name)?;
-    Some(macro_summary(owner_name, &witness))
+    let witness = context
+        .transitive_reach
+        .macro_reach_witness_for_owner(owner_fn)?;
+    Some(macro_summary(owner_fn.name.as_str(), &witness))
 }
 
 fn trait_dispatch_reach_summary(
