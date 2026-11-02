@@ -1394,7 +1394,7 @@ pub(in crate::analysis) fn owner_call_preceded_but_rebound_before_read(
     read_line: usize,
 ) -> bool {
     !owner_call_sites_before_read(body, start_line, binding, method, read_line).is_empty()
-        && owner_calls_before_read(body, start_line, binding, method, read_line).is_empty()
+        && owner_calls_before_read(body, start_line, binding, method, read_line, None).is_empty()
 }
 
 /// The offsets in `body` of the `binding.method(..)` calls that
