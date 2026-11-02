@@ -491,13 +491,26 @@ impl ClassifiedProbeEvidence {
             assertion_macros_rebound,
         );
         // #10980: when the whole-test contradiction withheld EVERY credited
-        // activation path (the repo-seam authority's own branch condition,
-        // #7007), the stage discloses the withholding instead of reading the
-        // withheld tests' literals as if they still ran. A credited test
-        // keeps its normal infection reading even when it passes no
-        // comparable values (a zero-argument owner), so this fires only on
-        // an empty credited set, never on empty observed values.
-        let infect = if withheld_activation_tests > 0 && activation_credited.is_empty() {
+        // activation path that establishes reach (#7007), the stage
+        // discloses the withholding instead of reading the withheld tests'
+        // literals as if they still ran. Credited reach, not credited count,
+        // is the gate (#12412): proximity-only mates (`SameTestFile` and
+        // friends) keep the credited set non-empty but never run the owner,
+        // so composing unrelated same-file tests beside the contradicted
+        // test must not restore the infection stage's default yes — credit
+        // by count would promote a finding whose every reaching test fails
+        // at baseline. A credited test that establishes reach
+        // (`RelationReason::establishes_reach`, the one rule the reach stage
+        // and the advice selection read) keeps its normal infection reading
+        // even when it passes no comparable values (a zero-argument owner),
+        // so this never fires on empty observed values.
+        let activation_credited_establishes_reach = activation_credited.iter().any(|credited| {
+            context.related_tests.iter().any(|(test, reason)| {
+                std::ptr::eq(*test, *credited)
+                    && reason.establishes_reach(context.owner_fn.is_some())
+            })
+        });
+        let infect = if withheld_activation_tests > 0 && !activation_credited_establishes_reach {
             StageEvidence::new(
                 StageState::Unknown,
                 Confidence::Low,
@@ -2905,16 +2918,110 @@ mod tests {
         Ok(())
     }
 
+    /// #12412: whole-test contradiction withholding survives composition with
+    /// unrelated file-mates. The mates carry proximity credit only
+    /// (`SameTestFile`), so they keep `activation_credited` non-empty; a
+    /// credited-count gate would read that count as recovery and let the
+    /// infection stage's generic arm grant its default yes through the
+    /// unfiltered rows, promoting the return-value probe to `exposed` on the
+    /// strength of the contradicted test's own oracle rows. Credited reach is
+    /// the gate: no credited test runs the owner, so the withholding
+    /// disclosure fires and the composed shape rejoins the lone shape's
+    /// `infection_unknown`. The zero-argument control below pins the other
+    /// side: a credited test that DOES reach the owner keeps its normal
+    /// reading.
+    #[test]
+    fn file_mate_composition_cannot_restore_infection_credit_beside_a_withheld_test()
+    -> Result<(), String> {
+        use crate::domain::ExposureClass;
+
+        let source = "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n\n\
+             pub fn clamp_to_range(value: i32, low: i32, high: i32) -> i32 {\n    if value < low {\n        low\n    } else if value > high {\n        high\n    } else {\n        value\n    }\n}\n\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n\
+             #[test]\nfn adult_boundary() {\nassert!(is_adult(18));\nassert!(!is_adult(18));\n}\n\
+             #[test]\nfn clamps_above_high() {\nassert_eq!(clamp_to_range(15, 0, 10), 10);\n}\n\
+             #[test]\nfn small_order_pays_full_price() {\nassert_eq!(2 + 2, 4);\n}\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(path, facts)].into_iter().collect(),
+            ..Default::default()
+        });
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, std::path::Path::new(""));
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "is_adult")
+            .ok_or("missing owner")?;
+        let contradict = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "adult_boundary")
+            .ok_or("missing contradictory test")?;
+        let mate_one = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "clamps_above_high")
+            .ok_or("missing first file-mate")?;
+        let mate_two = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "small_order_pays_full_price")
+            .ok_or("missing second file-mate")?;
+        let tests = vec![
+            (contradict, RelationReason::DirectOwnerCall),
+            (mate_one, RelationReason::SameTestFile),
+            (mate_two, RelationReason::SameTestFile),
+        ];
+        assert_eq!(tests.len(), 3, "nonempty subject: all fixture tests parse");
+        let probe = Probe {
+            id: ProbeId("probe:composed-contradiction".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 5),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Control,
+            before: Some("age > 18".to_string()),
+            after: Some("age >= 18".to_string()),
+            expression: "age >= 18".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let context = ProbeContext::new(&probe, Some(owner), tests, false, &index, true);
+        let evidence = ClassifiedProbeEvidence::gather(
+            &context,
+            &probe.expression,
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+        );
+        assert_eq!(
+            evidence.classify(&probe),
+            ExposureClass::InfectionUnknown,
+            "file-mate proximity credit must not restore infection credit the \
+             contradiction withheld: {}",
+            evidence.infect.summary
+        );
+        assert!(
+            evidence
+                .infect
+                .summary
+                .contains("Activation credit withheld from"),
+            "the composed shape must disclose the withholding: {}",
+            evidence.infect.summary
+        );
+        Ok(())
+    }
+
     /// #10980 review control: a credited test keeps its normal infection
     /// reading when a sibling test is withheld, even when the credited test
     /// passes no comparable values (a zero-argument owner whose literal
     /// tail the equality fold reads). The sibling's stale literal
     /// contradicts BOTH the candidate fold (7) and the reconstructed
-    /// baseline fold (6), so it is genuinely withheld, and the withholding
-    /// fires only on an empty credited set, so the clean test's reach keeps
-    /// infection `yes`. The literal `7` occurs exactly once in the owner
-    /// body, so the `after`→`before` reconstruction reaches the withheld
-    /// path.
+    /// baseline fold (6), so it is genuinely withheld, and the credited
+    /// test's own reach keeps infection `yes` (#12412 keyed the disclosure
+    /// on credited reach, not credited count). The literal `7` occurs
+    /// exactly once in the owner body, so the `after`→`before`
+    /// reconstruction reaches the withheld path.
     #[test]
     fn a_credited_zero_argument_test_keeps_infection_beside_a_withheld_sibling()
     -> Result<(), String> {
