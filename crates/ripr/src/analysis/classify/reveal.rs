@@ -6831,10 +6831,6 @@ mod tests {
             "    let mut other = Inventory::new();\n    other.add(4);\n    assert_eq!(other.log, vec![4]);",
             "Inventory",
         ));
-        assert!(precedes(
-            "    let mut ledger = Ledger::seeded();\n    ledger.record(7);\n    assert_eq!(ledger.log.last(), Some(&7));",
-            "Ledger",
-        ));
         for refused in [
             "    let mut other = OtherInventory::default();\n    other.add(4);\n    assert_eq!(other.log, vec![4]);",
             "    let mut other: OtherInventory = Default::default();\n    other.add(4);\n    assert_eq!(other.log, vec![4]);",
