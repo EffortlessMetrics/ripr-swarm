@@ -653,6 +653,20 @@ pub(crate) fn callee_is_unique(callee_name: &str, index: &RustIndex) -> bool {
             == 1
 }
 
+/// [`callee_is_unique`] memoized for a fixed [`RustIndex`] within a run memo
+/// scope (#7088): `test_call_is_shadowed` asks this once per callee, not once
+/// per wrapper call.
+fn callee_is_unique_cached(callee_name: &str, index: &RustIndex) -> bool {
+    let index_id = format!("{:p}", std::ptr::from_ref(index));
+    crate::analysis::syntax::run_memo::memoize_with(
+        crate::analysis::syntax::run_memo::Product::ForeignEntryImport,
+        1,
+        callee_name,
+        &index_id,
+        || callee_is_unique(callee_name, index),
+    )
+}
+
 /// The functions that call `callee_name` directly. Recursion
 /// (`function.name == callee_name`) is excluded here and named by the
 /// resolver — a self-recursive helper is a bound, not a transfer.
@@ -1765,7 +1779,7 @@ pub(crate) fn test_call_is_shadowed(
     callee: &str,
     call_line: usize,
 ) -> bool {
-    if !callee_is_unique(callee, index) {
+    if !callee_is_unique_cached(callee, index) {
         return true;
     }
     let files = index.files();
@@ -1774,15 +1788,7 @@ pub(crate) fn test_call_is_shadowed(
         Some(facts) => &facts.source,
         None => test.body.as_str(),
     };
-    let renamed_import = super::reveal::flattened_use_paths(source)
-        .iter()
-        .any(|import| {
-            import.alias.as_deref() == Some(callee)
-                && import.path.rsplit("::").next() != Some(callee)
-        });
-    if renamed_import
-        || super::reveal::file_imports_foreign_callee_name(source, callee, &index.package_names)
-    {
+    if source_imports_foreign_entry(index, source, callee) {
         return true;
     }
     test_body_shadows_name(index, test, callee, call_line)
@@ -5449,6 +5455,79 @@ mod tests {
         )
         .into();
         assert!(!test_call_is_shadowed(&idx, &test, "order_discount", 11));
+    }
+
+    // #7088: memoized uniqueness and import defeat must match the direct
+    // checks and stay stable across call lines on the same test/callee.
+    #[test]
+    fn test_call_is_shadowed_memo_matches_uncached_uniqueness_and_import() {
+        let wrapper = function("src/lib.rs", "order_discount", &[]);
+        let idx = index(vec![wrapper.clone()]);
+        let mut test = test_summary_calling("order_discount", "order_discount(10)");
+        test.start_line = 10;
+        test.body = "{\n    assert_eq!(order_discount(9), 0);\n    let order_discount = |_: u32| 5;\n    assert_eq!(order_discount(10), 5);\n}"
+            .into();
+        let uncached = |line: usize| {
+            let source = test.body.as_str();
+            let import_defeat = {
+                let renamed_import = crate::analysis::classify::reveal::flattened_use_paths(source)
+                    .iter()
+                    .any(|import| {
+                        import.alias.as_deref() == Some("order_discount")
+                            && import.path.rsplit("::").next() != Some("order_discount")
+                    });
+                renamed_import
+                    || crate::analysis::classify::reveal::file_imports_foreign_callee_name(
+                        source,
+                        "order_discount",
+                        &idx.package_names,
+                    )
+            };
+            !callee_is_unique("order_discount", &idx)
+                || import_defeat
+                || test_body_shadows_name(&idx, &test, "order_discount", line)
+        };
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        for line in [11_usize, 13] {
+            assert_eq!(
+                test_call_is_shadowed(&idx, &test, "order_discount", line),
+                uncached(line)
+            );
+        }
+        let mut twin = wrapper;
+        twin.file = PathBuf::from("src/tests.rs");
+        let twins = index(vec![function("src/lib.rs", "order_discount", &[]), twin]);
+        assert!(test_call_is_shadowed(&twins, &test, "order_discount", 11));
+        assert!(!callee_is_unique("order_discount", &twins));
+    }
+
+    // #7088: import defeat and uniqueness are call-line-independent; only the
+    // body shadow check varies by line.
+    #[test]
+    fn test_call_is_shadowed_reuses_import_and_uniqueness_across_call_lines() {
+        let source = concat!(
+            "macro_rules! unused { () => {}; }\n",
+            "fn order_discount(x: u8) -> u8 { x }\n",
+            "fn t() {\n    order_discount(1);\n    order_discount(2);\n}\n",
+        );
+        let idx = index(vec![function("src/lib.rs", "order_discount", &[])]);
+        let mut test = test_summary_calling("order_discount", "order_discount(1)");
+        test.body = source.into();
+        assert!(idx.files().get(&test.file).is_none(), "fallback path only");
+        let scans = || super::super::macro_item_names::SCAN_COUNT.with(|count| count.get());
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        super::super::macro_item_names::SCAN_COUNT.with(|count| count.set(0));
+        assert!(!test_call_is_shadowed(&idx, &test, "order_discount", 4));
+        assert_eq!(scans(), 1, "first call pays the import scan once");
+        assert!(!test_call_is_shadowed(&idx, &test, "order_discount", 5));
+        assert_eq!(
+            scans(),
+            1,
+            "a second call line reuses the memoized import answer"
+        );
+        for _ in 0..3 {
+            assert!(callee_is_unique_cached("order_discount", &idx));
+        }
     }
 
     // #6780 review round 3: the abstention applies only when every
