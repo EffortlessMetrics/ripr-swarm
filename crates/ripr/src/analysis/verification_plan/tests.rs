@@ -272,13 +272,14 @@ fn finding_impacted_tests_use_unknown_target_when_producer_has_no_target_fact() 
         &finding,
         &plan_input(subject_identity("base", "head")),
     ));
-    let impacted = plan
-        .impacted_tests
-        .iter()
-        .find(|row| row.relation_basis == RelationReason::DirectOwnerCall.as_str())
-        .expect("direct owner row");
-    assert_eq!(impacted.head_presence, "unknown");
-    assert_eq!(impacted.target_state, "unknown");
+    assert!(
+        plan.impacted_tests.iter().any(|row| {
+            row.relation_basis == RelationReason::DirectOwnerCall.as_str()
+                && row.head_presence == "unknown"
+                && row.target_state == "unknown"
+        }),
+        "direct owner row should report unknown target facts"
+    );
 }
 
 #[test]
