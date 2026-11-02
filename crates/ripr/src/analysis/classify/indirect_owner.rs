@@ -425,6 +425,7 @@ fn names_value(
         let reference_at = code[..at].strip_suffix("r#").map_or(at, str::len);
         let before = code[..reference_at].trim_end();
         if items.declaration_at(at)
+            || items.inert_macro_at(at)
             || (!before.ends_with("::") && items.shadows_at(at))
             || (items.unreadable && use_line_mention(code, at))
         {
@@ -569,6 +570,12 @@ fn is_bound_locally(code: &str, name: &str) -> bool {
 struct ItemBindings {
     declarations: Vec<ra_ap_syntax::TextRange>,
     scopes: Vec<(ra_ap_syntax::TextRange, bool)>,
+    /// Bodies of `macro_rules!` definitions that are inert: the macro is not
+    /// exported and no `name!` invocation appears outside its own definition,
+    /// so its token tree is never expanded into the test (#12231). A macro that
+    /// is invoked, or that `#[macro_export]` may expose to another file, is
+    /// absent here and its body text keeps counting.
+    inert_macros: Vec<ra_ap_syntax::TextRange>,
     /// The shared parser refused the body, so no declaration range is known.
     /// Mentions on lexical `use` lines then keep the import exclusion instead
     /// of counting the import as the owner passed as a value (RIPR-SPEC-0240).
@@ -594,6 +601,19 @@ impl ItemBindings {
             // that identity unresolved instead of borrowing the test's.
             if ast::ItemList::can_cast(node.kind()) {
                 result.scopes.push((node.text_range(), false));
+                continue;
+            }
+            if let Some(definition) = ast::MacroRules::cast(node.clone()) {
+                let exported = definition
+                    .attrs()
+                    .any(|attr| attr.syntax().text().to_string().contains("macro_export"));
+                let range = definition.syntax().text_range();
+                if let Some(macro_name) = definition.name()
+                    && !exported
+                    && !macro_is_invoked(source, macro_name.text().trim_start_matches("r#"), range)
+                {
+                    result.inert_macros.push(range);
+                }
                 continue;
             }
             let shadow = if let Some(function) = ast::Fn::cast(node.clone()) {
@@ -647,6 +667,14 @@ impl ItemBindings {
             .any(|range| contains_offset(*range, at))
     }
 
+    /// The offset sits in the body of a macro definition that is never
+    /// expanded, so its raw token text is not a mention of the owner.
+    fn inert_macro_at(&self, at: usize) -> bool {
+        self.inert_macros
+            .iter()
+            .any(|range| contains_offset(*range, at))
+    }
+
     fn shadows_at(&self, at: usize) -> bool {
         let Some((innermost, _)) = self
             .scopes
@@ -663,6 +691,15 @@ impl ItemBindings {
             .filter(|(range, _)| range == innermost)
             .all(|(_, shadow)| *shadow)
     }
+}
+
+/// Whether `source` invokes `name!` anywhere outside the definition at
+/// `definition`. Any spelling counts, including one in a comment, a string or
+/// another macro's body: only a certain absence makes the definition inert.
+fn macro_is_invoked(source: &str, name: &str, definition: ra_ap_syntax::TextRange) -> bool {
+    identifier_offsets(source, name).any(|at| {
+        !contains_offset(definition, at) && source[at + name.len()..].trim_start().starts_with('!')
+    })
 }
 
 fn contains_offset(range: ra_ap_syntax::TextRange, at: usize) -> bool {

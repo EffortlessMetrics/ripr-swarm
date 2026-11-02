@@ -275,6 +275,45 @@ fn a_direct_weak_assertion_keeps_the_gap() -> Result<(), String> {
     keeps_gap(&lib, BEFORE, AFTER, "direct weak assertion")
 }
 
+/// A `use super::inc;` inside a `macro_rules!` body is token text. A macro that
+/// is defined but never invoked is inert, so it must not read as the owner
+/// passed as a value and withhold the direct weak test's gap (#12231).
+#[test]
+fn an_unused_macro_definition_naming_the_owner_keeps_the_gap() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        macro_rules! unused {
+            () => {
+                use super::inc;
+            };
+        }
+        assert!(inc(1) > 0);
+    }
+",
+    );
+    keeps_gap(&lib, BEFORE, AFTER, "unused macro definition")
+}
+
+/// The same definition, invoked, may expand into the test: the limit stays.
+#[test]
+fn an_invoked_macro_definition_naming_the_owner_keeps_the_limit() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        macro_rules! used {
+            () => {
+                use super::inc;
+            };
+        }
+        used!();
+        assert!(inc(1) > 0);
+    }
+",
+    );
+    withheld(&lib, BEFORE, AFTER, "invoked macro definition")
+}
+
 /// A body the shared parser refuses cannot prove a declaration range, so the
 /// bare-name fold and the mention scan must stay silent there. A parse
 /// artifact must never withdraw a real gap under the indirect-owner limit's
