@@ -973,6 +973,7 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }];
         assert!(!shape(&named)?.contains(untied));
 
