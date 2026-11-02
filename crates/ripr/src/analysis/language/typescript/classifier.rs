@@ -477,6 +477,24 @@ pub(crate) fn ts_candidate_changed_sink_observation(
             );
             continue;
         }
+        // RIPR-SPEC-0258 rule 3: a snapshot serializes only the value it names,
+        // so on an effect seam it confirms only when it names the owner
+        // call's result (or a local bound once to it). A snapshot of an
+        // unrelated value, or of an expression the allowlist does not
+        // read, neither confirms here nor falls through to the
+        // side-channel reading below.
+        if assertion.oracle_kind == OracleKind::Snapshot {
+            if ts_snapshot_subject_is_owner_result(
+                candidate,
+                assertion,
+                owner,
+                alias_map,
+                workspace_root,
+            ) {
+                return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
+            }
+            continue;
+        }
         // (1) Effect-shape oracle kinds confirm unconditionally: these ARE
         // effect observers (mock call expectation, snapshot, whole-object
         // equality capturing persisted state). This decision keys ONLY on
