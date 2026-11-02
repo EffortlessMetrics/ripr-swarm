@@ -142,8 +142,9 @@ fn is_click_decorator(decorator: &Expr, alias: &str) -> bool {
 
 /// Whether the decorator is `<alias>.group` without a replacement `cls`.
 fn is_plain_group_decorator(decorator: &Expr, alias: &str) -> bool {
-    let group = format!("{alias}.group");
-    if expr_full_name(decorator).as_deref() != Some(group.as_str()) {
+    if !expr_full_name(decorator).is_some_and(|name| {
+        super::cli_runner::alias_decorator_method(&name, alias) == Some("group")
+    }) {
         return false;
     }
     match decorator {
@@ -161,11 +162,12 @@ fn is_plain_group_decorator(decorator: &Expr, alias: &str) -> bool {
 }
 
 fn is_group_function(function: &ast::StmtFunctionDef, alias: &str) -> bool {
-    let group = format!("{alias}.group");
-    function
-        .decorator_list
-        .iter()
-        .any(|decorator| expr_full_name(decorator).as_deref() == Some(group.as_str()))
+    let is_group = |decorator: &Expr| {
+        expr_full_name(decorator).is_some_and(|name| {
+            super::cli_runner::alias_decorator_method(&name, alias) == Some("group")
+        })
+    };
+    function.decorator_list.iter().any(is_group)
         && function
             .decorator_list
             .iter()
@@ -173,7 +175,7 @@ fn is_group_function(function: &ast::StmtFunctionDef, alias: &str) -> bool {
         && function
             .decorator_list
             .iter()
-            .filter(|decorator| expr_full_name(decorator).as_deref() == Some(group.as_str()))
+            .filter(|decorator| is_group(decorator))
             .all(|decorator| is_plain_group_decorator(decorator, alias))
 }
 
@@ -203,13 +205,15 @@ pub(super) fn mark_cli_subcommands(
     imports: &[PythonImport],
     owners: &mut [PythonOwner],
 ) {
-    let Some(alias) = super::cli_runner::stdlib_click_alias(imports) else {
+    let trusted_alias = super::cli_runner::stdlib_click_alias(imports)
+        .filter(|alias| module_binding_count(statements, source, alias) == Some(1));
+    for owner in owners.iter_mut() {
+        owner.trusted_stdlib_click_alias = trusted_alias.is_some();
+    }
+    let Some(alias) = trusted_alias else {
         return;
     };
-    if module_binding_count(statements, source, &alias) != Some(1)
-        || source.contains("add_command")
-        || source.contains(".commands")
-    {
+    if source.contains("add_command") || source.contains(".commands") {
         return;
     }
     let functions: Vec<&ast::StmtFunctionDef> = statements
@@ -233,11 +237,7 @@ pub(super) fn mark_cli_subcommands(
         };
         if !function.decorator_list.iter().all(|decorator| {
             expr_full_name(decorator).is_some_and(|spelled| {
-                super::cli_runner::is_click_decorator_name(&spelled, &alias)
-                    && matches!(
-                        spelled.rsplit_once('.').map(|(_, method)| method),
-                        Some("option" | "argument")
-                    )
+                super::cli_runner::alias_decorator_is(&spelled, &alias, &["option", "argument"])
             }) || registration(decorator, function.name.as_str()).is_some()
         }) || module_binding_count(statements, source, function.name.as_str()) != Some(1)
             || !group_is_trusted(source, statements, &functions, &only.group, &alias)

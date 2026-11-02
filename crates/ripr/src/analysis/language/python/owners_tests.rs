@@ -531,9 +531,10 @@ fn owner_from_function(
         && super::cli_runner::stdlib_click_alias(context.imports).is_some_and(|alias| {
             decorator_names.iter().any(|decorator| {
                 super::cli_runner::is_click_decorator_name(decorator, &alias)
-                    && matches!(
-                        decorator.rsplit_once('.').map(|(_, method)| method),
-                        Some("command" | "group")
+                    && super::cli_runner::alias_decorator_is(
+                        decorator,
+                        &alias,
+                        &["command", "group"],
                     )
             }) && decorator_names
                 .iter()
@@ -644,6 +645,7 @@ fn owner_from_function(
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     }
 }
 
@@ -750,6 +752,7 @@ fn owner_from_class(
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     }
 }
 
@@ -791,6 +794,7 @@ pub(super) fn module_owner(
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     }
 }
 

@@ -351,10 +351,32 @@ fn a_command_decorated_through_a_click_import_alias_is_reached() -> Result<(), S
         "{:?}",
         finding.evidence
     );
+    assert_ne!(finding.class, ExposureClass::Exposed);
     assert_eq!(
         relation_evidence(&finding),
         vec!["related_test_relation: cli_runner_invoke (test_run_with_flag)"]
     );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("static_limit decorator_indirection")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn a_reassigned_click_import_alias_does_not_earn_cli_runner_invoke() -> Result<(), String> {
+    let app = "import click as c\nimport click_helpers as helpers\n\nc = helpers\n\n\n@c.command()\ndef hello():\n    pass\n";
+    let finding = finding_with_app(app, 9, "    pass", LOCAL_RUNNER)?;
+    assert!(
+        relation_evidence(&finding).is_empty(),
+        "{:?}",
+        finding.evidence
+    );
+    assert_ne!(finding.class, ExposureClass::Exposed);
     Ok(())
 }
 
