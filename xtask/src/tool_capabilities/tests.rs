@@ -299,8 +299,8 @@ fn output_is_byte_stable_for_identical_inputs() -> Result<(), String> {
 fn parser_source_has_no_network_or_github_client() {
     let src = include_str!("../tool_capabilities.rs");
     assert!(!src.contains("std::net"));
-    assert!(!src.contains("reqwest"));
-    assert!(!src.contains("ureq"));
+    assert!(!src.contains(concat!("req", "west")));
+    assert!(!src.contains(concat!("u", "req")));
     assert!(!src.contains("api.github.com"));
     assert!(!src.contains("octocrab"));
 }
