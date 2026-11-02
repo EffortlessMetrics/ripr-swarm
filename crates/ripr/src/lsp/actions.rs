@@ -676,11 +676,13 @@ fn push_seam_actions(
         }
         return;
     }
-    let instruction_summary =
-        fix_instruction_authority::summary_for_seam_action(context.snapshot, context.diagnostic);
-    let instruction_blocks_repair = instruction_summary
-        .as_ref()
-        .is_some_and(fix_instruction_authority::blocks_repair_ready_actions);
+    let instruction_summary = fix_instruction_authority::summary_for_seam_action(
+        context.snapshot,
+        context.diagnostic,
+        context.seam,
+    );
+    let instruction_blocks_repair =
+        fix_instruction_authority::blocks_repair_ready_actions(&instruction_summary);
     // The targeted-test brief is the editor's repair-packet surface, so the
     // flip routes through the single producer-owned authority
     // (`repair_packet_eligibility`, RIPR-SPEC-0087 §8) instead of hand-conjoining
@@ -689,9 +691,9 @@ fn push_seam_actions(
     // readiness predicate.
     if instruction_blocks_repair {
         if client_features.code_action_disabled
-            && let Some(summary) = instruction_summary.as_ref()
-            && let Some(reason) =
-                fix_instruction_authority::disabled_reason_for_instruction_state(summary.state)
+            && let Some(reason) = fix_instruction_authority::disabled_reason_for_instruction_state(
+                instruction_summary.state,
+            )
             && let Some(action) = disabled_action(
                 TARGETED_TEST_BRIEF_TITLE,
                 "quickfix.ripr.inspect",
@@ -1034,15 +1036,15 @@ fn push_gap_actions(
     client_features: &ClientFeatureProfile,
 ) {
     let instruction_summary = fix_instruction_authority::summary_for_gap_action(context.diagnostic);
-    let instruction_blocks_repair = instruction_summary
-        .as_ref()
-        .is_some_and(fix_instruction_authority::blocks_repair_ready_actions);
+    let instruction_blocks_repair =
+        fix_instruction_authority::blocks_repair_ready_actions(&instruction_summary);
     if !gap_cross_language_target_unresolved(context.data) {
         if instruction_blocks_repair {
             if client_features.code_action_disabled
-                && let Some(summary) = instruction_summary.as_ref()
                 && let Some(reason) =
-                    fix_instruction_authority::disabled_reason_for_instruction_state(summary.state)
+                    fix_instruction_authority::disabled_reason_for_instruction_state(
+                        instruction_summary.state,
+                    )
                 && let Some(action) = disabled_action(
                     INSPECT_GAP_PACKET_TITLE,
                     "quickfix.ripr.inspect",
