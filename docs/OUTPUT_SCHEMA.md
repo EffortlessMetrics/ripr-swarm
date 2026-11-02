@@ -1670,9 +1670,11 @@ Field contract:
 `ripr diff --json` emits one `ripr_diff` object (schema `0.1`) from
 `crates/ripr/src/output/diff_report.rs`. It is the check-family diff envelope:
 changed-surface findings plus explicit completion and full-repo-context
-limitation signals. Human `ripr diff` prose stays on stderr; this object is the
-machine-readable contract. Exit mapping matches check JSON for
-`analysis_outcome` (see the `ripr diff` note under [Check Output](#check-output)).
+limitation signals. Human and JSON `ripr diff` reports both go to stdout (see
+[Output streams by command family](#output-streams-by-command-family)); stderr
+carries warnings and diagnostics only. This section documents the JSON object.
+Exit mapping matches check JSON for `analysis_outcome` (see the `ripr diff` note
+under [Check Output](#check-output)).
 
 ```json
 {
