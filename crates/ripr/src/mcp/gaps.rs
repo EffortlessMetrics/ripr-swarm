@@ -1282,6 +1282,8 @@ mod tests {
             unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let check_json: Value = serde_json::from_str(&crate::output::json::render(&output))

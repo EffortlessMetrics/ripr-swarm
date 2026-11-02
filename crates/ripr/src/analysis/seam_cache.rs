@@ -2829,6 +2829,19 @@ impl FileFactCacheStats {
             self.hits, self.misses, self.corrupt_ignored, self.store_errors
         )
     }
+
+    /// Whether this run performed observable file-fact cache work (#4975). The
+    /// explicit [`Self::zero_work`] state and a stats object that never
+    /// touched the cache both return `false`, so verbose consumers stay silent
+    /// instead of printing misleading all-zero passes.
+    pub(crate) fn did_work(&self) -> bool {
+        self.hits > 0
+            || self.misses > 0
+            || self.corrupt_ignored > 0
+            || self.stores > 0
+            || self.store_errors > 0
+            || !self.invalidated_files.is_empty()
+    }
 }
 
 /// Layer directories whose stale schema siblings were already pruned this

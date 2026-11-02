@@ -1192,6 +1192,19 @@ that built the view, as one compact member after the other optional members:
   `language_runs` compatibility projection is derived from, and it carries no
   correctness, test-adequacy or mutation claim.
 
+`file_fact_cache` and `file_fact_cache_limitation` (additive, no
+`schema_version` bump, #4975) appear only when the caller passed
+`-v`/`--verbose`. Default `check --format json` stays byte-identical.
+Verbose JSON carries the same bounded receipt the latency trace uses
+(`schema_version` `0.1`: `hits`, `misses`, `invalidated`, `corrupt_ignored`,
+`stores`, `store_errors`, capped `store_failures`, `store_failures_dropped`).
+`hits`/`misses` are the producer's reused/recomputed file-fact counts; they do
+not claim semantic seam reuse or wall-clock speed. When the Rust index path did
+not observe cache work, `file_fact_cache` is `null` and
+`file_fact_cache_limitation` is `not_observed`; when the producer reported
+explicit zero-work, the limitation is `zero_work`. Human verbose stderr prints
+one `rust file facts: …` line plus the existing capped store-failure rows.
+
 `canonical_next_action` (additive, no `schema_version` bump, #7258) is the
 same DTO RepairCard and agent-status JSON already embed. Check JSON carries
 it only when the CLI render path has a declared diff provenance.

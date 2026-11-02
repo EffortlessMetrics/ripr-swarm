@@ -720,7 +720,7 @@ pub(crate) fn file_fact_store_failure_rows(stats: &FileFactCacheStats) -> Vec<se
 /// rows and states the remainder, so a broken cache cannot flood the terminal.
 const ORDINARY_STORE_FAILURE_LINES: usize = 5;
 
-fn file_fact_store_failure_summary(stats: &FileFactCacheStats) -> Vec<String> {
+pub(crate) fn file_fact_store_failure_summary(stats: &FileFactCacheStats) -> Vec<String> {
     if stats.store_errors == 0 {
         return Vec::new();
     }
@@ -746,7 +746,7 @@ fn file_fact_store_failure_summary(stats: &FileFactCacheStats) -> Vec<String> {
     lines
 }
 
-fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
+pub(crate) fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
     let rows = file_fact_store_failure_rows(stats);
     serde_json::json!({
         "schema_version": "0.1",

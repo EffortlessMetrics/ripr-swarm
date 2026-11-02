@@ -46,6 +46,8 @@ fn captured_server(
         unlinked_python_tests: None,
         suppression: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     };
     let snapshot = workspace::Snapshot::from_output_admitted(
