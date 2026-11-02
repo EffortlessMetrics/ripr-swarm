@@ -5666,6 +5666,40 @@ fn unchanged_index_reuse_refreshes_a_warmed_field_macro_blocker() -> Result<(), 
 }
 
 #[test]
+fn a_nested_src_bin_main_target_does_not_reach_integration_tests() {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let main = (
+        "src/bin/tool/main.rs",
+        "#[macro_use]\nextern crate bencher;\nfn main() {}\n",
+    );
+    assert_eq!(
+        weight_refusal(tests, &[main]),
+        None,
+        "a nested binary root must confine its macro site"
+    );
+    let main_with_module = (
+        "src/bin/tool/main.rs",
+        "mod cli;\n#[macro_use]\nextern crate bencher;\nfn main() {}\n",
+    );
+    let cli = ("src/bin/tool/cli.rs", "pub fn run() {}\n");
+    assert_eq!(
+        weight_refusal(tests, &[main_with_module, cli]),
+        None,
+        "sibling modules under the nested binary root must not look like roots"
+    );
+    let files = vec![(LIB, WEIGHT_LIB), (TESTS, tests), main_with_module, cli];
+    let index = index(&files);
+    assert_eq!(
+        TargetRoots::new(&index).root(Path::new("src/bin/tool/main.rs"), &index),
+        Some(PathBuf::from("src/bin/tool/main.rs"))
+    );
+    assert_eq!(
+        TargetRoots::new(&index).root(Path::new("src/bin/tool/cli.rs"), &index),
+        Some(PathBuf::from("src/bin/tool/main.rs"))
+    );
+}
+
+#[test]
 fn a_crate_local_binding_in_another_target_does_not_reach_the_test() {
     let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
     // humantime's `benches/datetime_format.rs`: a bench is its own crate.

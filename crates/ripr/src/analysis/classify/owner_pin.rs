@@ -708,8 +708,9 @@ impl WithheldMacroBindings {
 }
 
 /// A withheld file is not indexed, so its module edges are unknown; only a
-/// file that is itself a `src/lib.rs`, `src/main.rs` or `src/bin/*.rs` crate
-/// root has a root known from its path, matching [`target_root`] for it.
+/// file that is itself a `src/lib.rs`, `src/main.rs`, `src/bin/*.rs` or
+/// `src/bin/NAME/main.rs` crate root has a root known from its path, matching
+/// [`target_root`] for it.
 /// Any other withheld file keeps its sites workspace-wide (fails closed).
 fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
     let names: Vec<&str> = path
@@ -718,7 +719,9 @@ fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
         .collect();
     let recognized = matches!(
         names.as_slice(),
-        [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _]
+        [.., "src", "lib.rs" | "main.rs"]
+            | [.., "src", "bin", _]
+            | [.., "src", "bin", _, "main.rs"]
     );
     (recognized && path.extension().is_some_and(|extension| extension == "rs"))
         .then(|| path.to_path_buf())
@@ -2741,7 +2744,7 @@ impl TargetRoots {
 }
 
 /// The crate root file `file` composes under: a recognized Cargo target root
-/// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, an integration test, bench,
+/// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, `src/bin/NAME/main.rs`, an integration test, bench,
 /// example or build script), or `None` when composition is unresolved, goes
 /// through `include!`, or ends at an unrecognized file.
 pub(super) fn target_root(
@@ -2788,7 +2791,9 @@ fn recognized_target_root(root: &Path, src_dirs: &BTreeSet<PathBuf>) -> bool {
         src_dirs.contains(&prefix)
     };
     let recognized = match names.as_slice() {
-        [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _] => true,
+        [.., "src", "lib.rs" | "main.rs"]
+        | [.., "src", "bin", _]
+        | [.., "src", "bin", _, "main.rs"] => true,
         [package @ .., "tests" | "benches" | "examples", _] => package_has_src(package),
         [package @ .., "build.rs"] => package_has_src(package),
         _ => false,
