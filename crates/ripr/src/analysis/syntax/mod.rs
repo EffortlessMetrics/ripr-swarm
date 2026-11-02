@@ -1,4 +1,5 @@
 mod adapter;
+mod bolero;
 mod constant_return;
 pub(crate) mod fn_signature;
 pub(crate) mod lexical;
@@ -15,6 +16,7 @@ mod parent_module_cfg_gate;
 mod passthrough_item_macros;
 mod pattern_pin;
 mod proptest;
+pub(crate) use bolero::bolero_profiles;
 pub(crate) use proptest::proptest_expansions;
 pub(crate) mod run_memo;
 mod source_snapshot;
