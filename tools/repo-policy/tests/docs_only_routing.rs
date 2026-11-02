@@ -1115,3 +1115,80 @@ fn extension_surface_selection_selects_the_surface_labels_and_every_doubt() -> T
     );
     Ok(())
 }
+
+#[test]
+fn extension_surface_selection_sees_deletions_renames_odd_names_and_ambiguous_bases() -> TestResult
+{
+    let fixture = Fixture::new()?;
+    fixture.write("editors/vscode/src/old.ts", "export {};\n")?;
+    fixture.write("editors/vscode/odd\nname \"q\".ts", "export {};\n")?;
+    let base = fixture.commit()?;
+    // Deleting an extension file selects.
+    fs::remove_file(fixture.root.join("editors/vscode/src/old.ts"))?;
+    let deleted = fixture.commit()?;
+    assert_eq!(
+        vscode_select(&fixture, &base, &deleted, "merge-ready")?,
+        "true"
+    );
+    // Renaming an extension file out of the tree selects; without
+    // `--no-renames` only the new name outside the tree would be listed.
+    fixture.git(&["checkout", "-q", "-B", "moved", &base])?;
+    fs::create_dir_all(fixture.root.join("docs"))?;
+    fs::rename(
+        fixture.root.join("editors/vscode/src/old.ts"),
+        fixture.root.join("docs/moved.ts"),
+    )?;
+    let moved = fixture.commit()?;
+    assert_eq!(
+        vscode_select(&fixture, &base, &moved, "merge-ready")?,
+        "true"
+    );
+    // A newline-and-quote filename inside the tree stays intact and selects.
+    fixture.git(&["checkout", "-q", "-B", "odd", &base])?;
+    fs::write(
+        fixture.root.join("editors/vscode/odd\nname \"q\".ts"),
+        "export const changed = 1;\n",
+    )?;
+    let odd = fixture.commit()?;
+    assert_eq!(vscode_select(&fixture, &base, &odd, "merge-ready")?, "true");
+    // Lookalike paths outside the tree do not select.
+    fixture.git(&["checkout", "-q", "-B", "look", &base])?;
+    fixture.write("editors/vscode-notes/readme.md", "x\n")?;
+    fixture.write("docs/editors/vscode/readme.md", "x\n")?;
+    let look = fixture.commit()?;
+    assert_eq!(
+        vscode_select(&fixture, &base, &look, "merge-ready")?,
+        "false"
+    );
+    // Criss-cross history has two merge bases; a three-dot diff could hide an
+    // extension change, so the selection must not trust it.
+    let tree = fixture.git(&["rev-parse", &format!("{base}^{{tree}}")])?;
+    let left = fixture.git(&["commit-tree", &tree, "-p", &base, "-m", "left"])?;
+    let right = fixture.git(&["commit-tree", &tree, "-p", &base, "-m", "right"])?;
+    let ml = fixture.git(&["commit-tree", &tree, "-p", &left, "-p", &right, "-m", "ml"])?;
+    let mr = fixture.git(&["commit-tree", &tree, "-p", &right, "-p", &left, "-m", "mr"])?;
+    assert_eq!(
+        fixture
+            .git(&["merge-base", "--all", &ml, &mr])?
+            .lines()
+            .count(),
+        2,
+        "real criss-cross fixture"
+    );
+    assert_eq!(vscode_select(&fixture, &ml, &mr, "merge-ready")?, "true");
+    // A merge-base lookup that errors also selects.
+    let failing = fixture.wrapper("if [ \"$1\" = merge-base ]; then exit 2; fi")?;
+    let output = fixture.run(
+        &shell("vscode-select")?,
+        &[
+            ("BASE_SHA", &base),
+            ("HEAD_SHA", &look),
+            ("LABELS", "merge-ready"),
+        ],
+        Some(&failing),
+    )?;
+    assert!(output.status.success());
+    let outputs = fs::read_to_string(fixture.root.join(".git/actions-output"))?;
+    assert!(outputs.contains("selected=true"), "{outputs}");
+    Ok(())
+}

@@ -9565,6 +9565,24 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "select the extension e2e from the admitted diff and the full-ci and vscode labels",
         ),
         (
+            "the e2e job call and its selection condition",
+            "    if: ${{ !cancelled() && needs.vscode-select.result == 'success' && needs.vscode-select.outputs.selected == 'true' }}\n    uses: ./.github/workflows/vscode-e2e.yml\n",
+            "    if: ${{ !cancelled() }}\n    uses: ./.github/workflows/noop.yml\n",
+            "run the extension e2e only when selected",
+        ),
+        (
+            "the Result's reading of this run's results",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-e2e.result }}\n",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-select.result }}\n",
+            "read this run's own selection and e2e results",
+        ),
+        (
+            "the selection's admitted head and labels",
+            "          HEAD_SHA: ${{ needs.admission.outputs.head }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "          HEAD_SHA: ${{ github.sha }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "classify the admitted head and labels",
+        ),
+        (
             "the Result's dependency on the extension jobs",
             "docs-gate, vscode-select, vscode-e2e]",
             "docs-gate]",

@@ -1362,6 +1362,18 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "case \",$LABELS,\" in *,full-ci,*|*,vscode,*) return 0 ;; esac",
         ),
         (
+            "run the extension e2e only when selected, by calling the reusable workflow (#12252)",
+            "    if: ${{ !cancelled() && needs.vscode-select.result == 'success' && needs.vscode-select.outputs.selected == 'true' }}\n    uses: ./.github/workflows/vscode-e2e.yml\n",
+        ),
+        (
+            "read this run's own selection and e2e results in the Result (#12252)",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-e2e.result }}\n",
+        ),
+        (
+            "classify the admitted head and labels in the extension selection (#12252)",
+            "          HEAD_SHA: ${{ needs.admission.outputs.head }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+        ),
+        (
             "make the Result depend on the extension selection and e2e jobs (#12252)",
             "docs-gate, vscode-select, vscode-e2e]",
         ),
