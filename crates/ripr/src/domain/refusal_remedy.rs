@@ -41,7 +41,6 @@ const FLAG_VERBS: &[&str] = &[
     "repeat",
     "repeating",
     "repeated",
-    "original",
     "supply",
     "give",
     "set",
@@ -443,6 +442,18 @@ fn stated_env(prose: &str, ranges: &[(usize, usize)]) -> Vec<String> {
     out
 }
 
+/// `--flag` immediately after "the original" counts only in an instruction
+/// (`repeating` / `keep` / `keeping the original`), not in a description
+/// ("differs from the original `--base`").
+fn original_flag_instruction(before: &str) -> bool {
+    let lower = before.to_ascii_lowercase();
+    lower.ends_with("repeat the original")
+        || lower.ends_with("repeated the original")
+        || lower.ends_with("repeating the original")
+        || lower.ends_with("keep the original")
+        || lower.ends_with("keeping the original")
+}
+
 /// `--flag` tokens outside command spans. When `gated`, a flag counts only if
 /// the word right before it is an instruction verb (`pass`, `add`, `repeating
 /// the original`, ...) or a joiner continuing a list whose previous item
@@ -486,7 +497,8 @@ fn stated_flags(prose: &str, ranges: &[(usize, usize)], gated: bool) -> Vec<Stri
             .next()
             .unwrap_or("")
             .to_ascii_lowercase();
-        let verb_ok = FLAG_VERBS.contains(&word.as_str());
+        let verb_ok = FLAG_VERBS.contains(&word.as_str())
+            || (word == "original" && original_flag_instruction(before));
         let chained = FLAG_JOINERS.contains(&word.trim_end_matches(',')) || before.ends_with(',');
         let continues = chained
             && last_counted_end.is_some_and(|prev| {
@@ -758,5 +770,91 @@ mod tests {
     fn overlong_command_spans_are_not_offered() {
         let long = format!("`ripr check {}`", "x".repeat(MAX_COMMAND_LEN));
         assert_eq!(RefusalRemedy::from_prose(&long).kind, RemedyKind::None);
+    }
+
+    #[test]
+    fn original_before_a_flag_is_not_a_verb_in_a_description() {
+        let remedy = RefusalRemedy::from_prose("the base differs from the original `--base`");
+        assert_eq!(remedy.kind, RemedyKind::None);
+        assert!(remedy.flags.is_empty());
+    }
+
+    #[test]
+    fn keep_the_original_before_a_flag_is_still_an_instruction() {
+        let remedy =
+            RefusalRemedy::from_prose("keep the original `--base` and rerun with the same scope");
+        assert_eq!(remedy.kind, RemedyKind::Flags);
+        assert_eq!(remedy.flags, vec!["--base".to_string()]);
+        assert_eq!(remedy.retry_stated, Some(true));
+    }
+
+    #[test]
+    fn repeat_the_original_before_a_flag_is_still_an_instruction() {
+        let remedy = RefusalRemedy::from_prose("repeat the original `--base` and retry");
+        assert_eq!(remedy.kind, RemedyKind::Flags);
+        assert_eq!(remedy.flags, vec!["--base".to_string()]);
+        assert_eq!(remedy.retry_stated, Some(true));
+    }
+
+    #[test]
+    fn flag_list_is_capped_at_max_listed_preserving_order() {
+        let flags: Vec<String> = (1..=17).map(|n| format!("--cap-{n:02}")).collect();
+        let prose = format!(
+            "run `ripr doctor`; {}",
+            flags
+                .iter()
+                .map(|f| f.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        let remedy = RefusalRemedy::from_prose(&prose);
+        assert_eq!(remedy.kind, RemedyKind::Command);
+        assert_eq!(remedy.flags.len(), MAX_LISTED);
+        assert_eq!(
+            remedy.flags,
+            flags[..MAX_LISTED].to_vec(),
+            "order must be preserved"
+        );
+        assert!(remedy.prose_has_more, "stated step with extra prose flags");
+    }
+
+    #[test]
+    fn gated_flag_only_prose_respects_the_list_cap() {
+        let flags: Vec<String> = (1..=17).map(|n| format!("--only-{n:02}")).collect();
+        let prose = format!("pass {}", flags.join(" and "));
+        let remedy = RefusalRemedy::from_prose(&prose);
+        assert_eq!(remedy.kind, RemedyKind::Flags);
+        assert_eq!(remedy.flags.len(), MAX_LISTED);
+        assert_eq!(remedy.flags, flags[..MAX_LISTED].to_vec());
+    }
+
+    #[test]
+    fn exactly_max_listed_flags_are_all_reported() {
+        let flags: Vec<String> = (1..=MAX_LISTED).map(|n| format!("--full-{n:02}")).collect();
+        let prose = format!("run `ripr doctor`; {}", flags.join(" "));
+        let remedy = RefusalRemedy::from_prose(&prose);
+        assert_eq!(remedy.flags.len(), MAX_LISTED);
+        assert_eq!(remedy.flags, flags);
+        assert!(remedy.prose_has_more);
+    }
+
+    #[test]
+    fn duplicate_flags_do_not_consume_the_list_cap() {
+        let unique: Vec<String> = (1..=MAX_LISTED).map(|n| format!("--dup-{n:02}")).collect();
+        let mut prose = String::from("run `ripr doctor`; ");
+        for flag in &unique {
+            prose.push_str(flag);
+            prose.push(' ');
+            prose.push_str(flag);
+            prose.push(' ');
+        }
+        prose.push_str("--extra-slot");
+        let remedy = RefusalRemedy::from_prose(&prose);
+        assert_eq!(remedy.flags.len(), MAX_LISTED);
+        assert_eq!(remedy.flags, unique);
+        assert!(
+            !remedy.flags.iter().any(|f| f == "--extra-slot"),
+            "17th distinct flag must not appear when cap is full"
+        );
     }
 }

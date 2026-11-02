@@ -1,0 +1,6 @@
+[package]
+name = "match_arm_result_method_tail_not_credited"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
