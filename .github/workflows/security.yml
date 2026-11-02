@@ -24,11 +24,6 @@ jobs:
     if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # The one write is the deny-red tracking issue, and only a scheduled run
-    # touches it (pull_request runs never reach the tracker step).
-    permissions:
-      contents: read
-      issues: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -40,18 +35,27 @@ jobs:
         with:
           tool: cargo-deny
 
-      - id: deny
-        run: cargo-deny check advisories licenses bans sources
+      - run: cargo-deny check advisories licenses bans sources
 
-      # Scheduled runs on main only. A red run opens (or comments on) one
-      # `deny-red` issue; a later green run comments and closes it. Detection
-      # only: nothing here gates a PR or changes what the PR check decides.
+  # Scheduled runs on main only, in a separate job so the PR-facing cargo-deny
+  # job and its checkout never hold issue-write authority. A red run opens (or
+  # comments on) one `deny-red` issue; a later green run comments and closes it.
+  # Detection only: nothing here gates a PR or changes what the PR check decides.
+  deny-tracker:
+    name: Reconcile the deny-red tracker
+    needs: cargo-deny
+    if: always() && github.event_name == 'schedule' && github.ref == 'refs/heads/main' && github.repository == 'EffortlessMetrics/ripr-swarm' && (needs.cargo-deny.result == 'success' || needs.cargo-deny.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
       - name: Reconcile the deny-red tracker
-        if: always() && github.event_name == 'schedule' && github.ref == 'refs/heads/main' && github.repository == 'EffortlessMetrics/ripr-swarm' && (steps.deny.outcome == 'success' || steps.deny.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          OUTCOME: ${{ steps.deny.outcome }}
+          OUTCOME: ${{ needs.cargo-deny.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
