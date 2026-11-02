@@ -428,7 +428,6 @@ pub(crate) fn compile_libtest(
         .find_map(|line| line.strip_prefix("host: "))
         .ok_or_else(|| "rustc -vV did not report a host target".to_string())?
         .to_string();
-    let source_digest = source_digest(request.root, &[&target_dir])?;
     let cargo_toml_sha256 = sha256_file(&request.root.join("Cargo.toml"))?;
     let rustflags = std::env::var("RUSTFLAGS")
         .ok()
@@ -496,6 +495,7 @@ pub(crate) fn compile_libtest(
             "libtest listing is missing or truncated; empty inventory cannot succeed".to_string(),
         );
     }
+    let source_digest = source_digest(request.root, &[&target_dir])?;
     Ok(NativeLibtestReceipt {
         schema_version: RECEIPT_SCHEMA.to_string(),
         worktree: std::path::absolute(request.root)
@@ -602,12 +602,21 @@ pub(crate) fn replay_filter(
     }
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let counts = parse_libtest_result(&stdout)?;
-    let executed = counts.passed + counts.failed + counts.ignored;
+    let executed = counts.passed + counts.failed;
     if executed == 0 {
         return Err(
-            "a zero-match or empty filter cannot discharge a nonempty libtest obligation"
+            "a zero-match, ignored-only, or empty filter cannot discharge a nonempty libtest obligation"
                 .to_string(),
         );
+    }
+    if counts.failed > 0 || !output.status.is_some_and(|status| status.success()) {
+        return Err(format!(
+            "same-worker libtest replay failed: passed={} failed={} ignored={} exit={:?}",
+            counts.passed,
+            counts.failed,
+            counts.ignored,
+            output.status.and_then(|status| status.code())
+        ));
     }
     Ok(ReplayOutcome {
         argv: std::iter::once(receipt.executable.clone())
@@ -656,6 +665,30 @@ pub(crate) fn refuse_if_inputs_changed(
         .filter(|value| !value.is_empty());
     if rustflags != receipt.rustflags {
         return Err("rustflags moved after compile; replay is not admitted".to_string());
+    }
+    refuse_if_executable_replaced(receipt)
+}
+
+pub(crate) fn refuse_if_executable_replaced(receipt: &NativeLibtestReceipt) -> Result<(), String> {
+    let path = Path::new(&receipt.executable);
+    let digest = sha256_file(path)?;
+    if digest != receipt.executable_sha256 {
+        return Err(
+            "bound libtest executable was replaced after compile; replay is not admitted"
+                .to_string(),
+        );
+    }
+    let metadata = fs::metadata(path).map_err(|error| {
+        format!(
+            "stat bound libtest executable `{}`: {error}",
+            path.display()
+        )
+    })?;
+    if metadata.len() != receipt.executable_bytes {
+        return Err(
+            "bound libtest executable size diverged after compile; replay is not admitted"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -936,9 +969,9 @@ fn collect_source_files(
         let path = entry.path();
         let name = entry.file_name();
         let absolute = std::path::absolute(&path).ok();
-        if name == "target"
-            || name == ".git"
+        if name == ".git"
             || name == "Cargo.lock"
+            || (name == "target" && dir.join("Cargo.toml").is_file())
             || absolute.as_ref().is_some_and(|candidate| {
                 skip_dirs
                     .iter()
@@ -1073,6 +1106,7 @@ mod tests {
     let path = std::path::Path::new(&out).join("token.rs");
     let body = format!("pub const TOKEN: &str = {:?};\n", token.trim());
     let _ = std::fs::write(path, body);
+    let _ = std::fs::write("generated_by_build.txt", token.trim());
 }
 "#,
         )
@@ -1100,6 +1134,15 @@ mod tests {
     fn beta() {
         assert_eq!(crate::token(), "build-token");
     }
+
+    #[test]
+    fn gamma_fail() {
+        panic!("intentional native-libtest failure");
+    }
+
+    #[test]
+    #[ignore]
+    fn delta_ignored() {}
 }
 "#,
         )
@@ -1396,13 +1439,65 @@ mod tests {
             return Err(format!("unexpected zero-match refusal: {zero}"));
         }
 
+        let ignored = receipt
+            .test_inventory
+            .iter()
+            .find(|name| name.ends_with("delta_ignored"))
+            .ok_or_else(|| "ignored test missing".to_string())?;
+        let ignored_err = must_fail(
+            replay_filter(&receipt, &root, ignored),
+            "ignored-only filter",
+        )?;
+        if !ignored_err.contains("ignored-only") {
+            return Err(format!("unexpected ignored-only refusal: {ignored_err}"));
+        }
+
+        let failing = receipt
+            .test_inventory
+            .iter()
+            .find(|name| name.ends_with("gamma_fail"))
+            .ok_or_else(|| "failing test missing".to_string())?;
+        let failed_err = must_fail(replay_filter(&receipt, &root, failing), "failing filter")?;
+        if !failed_err.contains("replay failed") {
+            return Err(format!("unexpected failing-filter refusal: {failed_err}"));
+        }
+
+        let nested = root.join("harness/src/target");
+        fs::create_dir_all(&nested).map_err(|error| error.to_string())?;
+        fs::write(nested.join("mod.rs"), "pub fn nested() {}\n")
+            .map_err(|error| error.to_string())?;
+        let nested_err = must_fail(
+            refuse_if_inputs_changed(&receipt, &root),
+            "nested src/target source must be hashed",
+        )?;
+        if !(nested_err.contains("build inputs moved") || nested_err.contains("source")) {
+            return Err(format!("unexpected nested-target refusal: {nested_err}"));
+        }
+        fs::remove_dir_all(&nested).map_err(|error| error.to_string())?;
+        refuse_if_inputs_changed(&receipt, &root)?;
+
+        fs::write(&receipt.executable, b"replaced-libtest-bytes")
+            .map_err(|error| error.to_string())?;
+        let replaced = must_fail(
+            replay_list(&receipt, &root),
+            "replaced executable must refuse replay",
+        )?;
+        if !replaced.contains("replaced after compile") {
+            return Err(format!(
+                "unexpected replaced-executable refusal: {replaced}"
+            ));
+        }
+
         fs::write(root.join("harness/input.txt"), "changed-token\n")
             .map_err(|error| error.to_string())?;
         let changed = must_fail(
             refuse_if_inputs_changed(&receipt, &root),
             "changed build input must refuse replay",
         )?;
-        if !(changed.contains("build inputs moved") || changed.contains("source")) {
+        if !(changed.contains("build inputs moved")
+            || changed.contains("source")
+            || changed.contains("replaced after compile"))
+        {
             return Err(format!("unexpected changed-input refusal: {changed}"));
         }
         Ok(())
