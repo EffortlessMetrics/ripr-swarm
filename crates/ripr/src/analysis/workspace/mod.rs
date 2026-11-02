@@ -4,6 +4,7 @@ mod cargo_targets;
 mod classify;
 mod discover;
 mod module_graph;
+mod named_dependent_scope;
 mod path_dependencies;
 mod select;
 mod source_role;
@@ -37,6 +38,9 @@ pub(crate) use discover::{
     discover_python_test_files, discover_routed_language_files, discover_unanalyzed_source_files,
     has_inspectable_source_file, limitations_for_absent_changed_files,
     supplement_absent_file_limitations, worktree_contains_regular_source_file,
+};
+pub(crate) use named_dependent_scope::{
+    composes_modules, withheld_source_disables_crate_root_routing,
 };
 pub(crate) use select::{
     module_parent_candidates, select_rust_files_for_mode_with_dependent_packages,
