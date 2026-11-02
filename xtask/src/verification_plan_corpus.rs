@@ -256,10 +256,6 @@ pub(crate) fn verification_plan_row_digest(
     Ok(digest_hex(&body))
 }
 
-#[expect(
-    dead_code,
-    reason = "policy:5173-pr-b: real-corpus row identity without fixture expectations"
-)]
 pub(crate) fn verification_plan_corpus_identity(
     cases: &[VerificationPlanCaseV1],
 ) -> Result<String, String> {
@@ -632,6 +628,31 @@ mod tests {
         case.evidence_digests.clear();
         let assessment = assess_verification_plan_case(&case);
         assert!(!assessment.accepted);
+    }
+
+    #[test]
+    fn verification_plan_corpus_identity_is_order_independent() -> Result<(), String> {
+        let body = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join(DEFAULT_VERIFICATION_PLAN_CORPUS_PATH),
+        )
+        .map_err(|error| format!("read committed verification plan corpus: {error}"))?;
+        let corpus = load_verification_plan_fixture_corpus(&body)?;
+        let cases: Vec<_> = corpus
+            .scenarios
+            .iter()
+            .map(|scenario| scenario.case.clone())
+            .collect();
+        let mut reordered = cases.clone();
+        if reordered.len() >= 2 {
+            reordered.swap(0, 1);
+        }
+        assert_eq!(
+            verification_plan_corpus_identity(&cases)?,
+            verification_plan_corpus_identity(&reordered)?
+        );
+        Ok(())
     }
 
     #[test]

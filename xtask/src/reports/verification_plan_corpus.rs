@@ -11,7 +11,7 @@ use crate::verification_plan_corpus::{
     VerificationPlanFixtureCorpusV1, VerificationPlanPlannerDispositionV1,
     VerificationPlanRowAssessmentV1, assess_verification_plan_case,
     load_verification_plan_fixture_corpus, missing_verification_plan_required_scenarios,
-    verification_plan_fixture_corpus_identity,
+    verification_plan_corpus_identity, verification_plan_fixture_corpus_identity,
     verification_plan_planner_disposition_excluded_from_safety_denominator,
     verification_plan_required_rejection_scenario_invariant_violation,
     verification_plan_successor_reference_violation,
@@ -53,6 +53,7 @@ pub(crate) struct VerificationPlanCorpusReportV1 {
     pub spec: String,
     pub corpus_path: String,
     pub corpus_identity: String,
+    pub real_corpus_identity: String,
     pub synthetic_rows: Vec<VerificationPlanReportRowV1>,
     pub real_rows: Vec<VerificationPlanReportRowV1>,
     pub rejected_rows: Vec<VerificationPlanRejectedRowV1>,
@@ -143,6 +144,19 @@ fn build_report(
     corpus_path: &str,
 ) -> Result<VerificationPlanCorpusReportV1, String> {
     let corpus_identity = verification_plan_fixture_corpus_identity(corpus)?;
+    let real_case_bodies: Vec<_> = corpus
+        .scenarios
+        .iter()
+        .zip(assessments)
+        .filter_map(|(scenario, assessment)| {
+            if assessment.accepted && !assessment.synthetic {
+                Some(scenario.case.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    let real_corpus_identity = verification_plan_corpus_identity(&real_case_bodies)?;
 
     let mut synthetic_rows = Vec::new();
     let mut real_rows = Vec::new();
@@ -227,6 +241,7 @@ fn build_report(
         spec: corpus.spec.clone(),
         corpus_path: corpus_path.to_string(),
         corpus_identity,
+        real_corpus_identity,
         synthetic_rows,
         real_rows,
         rejected_rows,
@@ -257,6 +272,10 @@ pub(crate) fn verification_plan_corpus_report_markdown(
     out.push_str(&format!(
         "Corpus identity: `{}`\n\n",
         report.corpus_identity
+    ));
+    out.push_str(&format!(
+        "Real corpus identity: `{}`\n\n",
+        report.real_corpus_identity
     ));
     out.push_str(&format!("Claim boundary: {}\n\n", report.claim_boundary));
     out.push_str("## Synthetic mechanics rows\n\n");

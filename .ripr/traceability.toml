@@ -21318,6 +21318,7 @@ metrics = [
 
 [[behavior]]
 id = "RIPR-SPEC-0379"
+id = "RIPR-SPEC-0377"
 name = "Verification plan corpus PR A mechanics"
 spec = "docs/specs/RIPR-SPEC-0379-verification-plan-corpus-pr-a.md"
 tests = [
@@ -21326,6 +21327,7 @@ tests = [
   "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_zero_subject_success",
   "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_unselected_executed_subject",
   "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_removed_row_without_evidence",
+  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_corpus_identity_is_order_independent",
   "xtask/src/verification_plan_corpus.rs::tests::verification_plan_fixture_identity_changes_when_expectation_drifts",
   "xtask/src/verification_plan_corpus.rs::tests::committed_fixture_corpus_covers_required_mechanics_scenarios",
   "xtask/src/reports/verification_plan_corpus.rs::tests::verification_plan_corpus_report_json_and_markdown_agree_on_totals",
@@ -21340,8 +21342,7 @@ code = [
   "xtask/src/reports/verification_plan_corpus.rs",
 ]
 outputs = [
-  "target/ripr/reports/verification-plan-corpus.json",
-  "target/ripr/reports/verification-plan-corpus.md",
+  "docs/specs/RIPR-SPEC-0377-verification-plan-corpus-pr-a.md",
 ]
 metrics = [
   "unit_test_pass_rate",
