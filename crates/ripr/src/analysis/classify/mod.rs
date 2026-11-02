@@ -47,6 +47,7 @@ mod related_tests;
 mod reveal;
 mod scanner_transfer;
 mod slice_boundary;
+mod stop_reason_contract;
 mod targeted_calls;
 mod text;
 mod transitive_reach;
