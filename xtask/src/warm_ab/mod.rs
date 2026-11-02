@@ -42,6 +42,11 @@ pub(crate) struct Options {
     out: PathBuf,
     work: PathBuf,
     limits: Limits,
+    /// Negative-control mode (#12244): after each candidate warm check the
+    /// harness waits `(ratio - 1) x` that run's paired baseline time, so the
+    /// candidate's recorded time is `ratio x` the baseline's on every pin, large
+    /// or small, with no product code touched. Never set in a real measurement.
+    control_slowdown: Option<f64>,
     /// Present for the nightly orchestration: builds and pins are made here.
     nightly: Option<nightly::Plan>,
 }
@@ -69,6 +74,11 @@ struct Packet {
     baseline_median_ms: Option<u128>,
     candidate_median_ms: Option<u128>,
     ratio: Option<f64>,
+    /// Set only for a negative control: the candidate times were injected at
+    /// this ratio and say nothing about the candidate's real speed. Only a
+    /// failing verdict shows the gate can fail on this pin; a ratio inside the
+    /// judge's limits can still pass.
+    control_slowdown: Option<f64>,
     findings_identical: bool,
     verdict: String,
     detail: String,
@@ -131,6 +141,7 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Options, String> {
         out: PathBuf::from(DEFAULT_OUT),
         work: PathBuf::from(DEFAULT_WORK),
         limits: Limits::default(),
+        control_slowdown: None,
         nightly: None,
     };
     let mut baseline_ref = None;
@@ -165,6 +176,20 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Options, String> {
                 options.limits.max_ratio = value("--max-ratio")?
                     .parse()
                     .map_err(|_error| "--max-ratio must be a number".to_string())?;
+            }
+            "--control-slowdown" => {
+                let ratio: f64 = value("--control-slowdown")?
+                    .parse()
+                    .map_err(|_error| "--control-slowdown must be a number".to_string())?;
+                // Above 1 so the control actually slows; bounded so a typo
+                // cannot sleep past the per-run deadline.
+                if !ratio.is_finite() || ratio <= 1.0 || ratio > 10.0 {
+                    return Err(
+                        "--control-slowdown must be a finite ratio above 1.0 and at most 10.0"
+                            .to_string(),
+                    );
+                }
+                options.control_slowdown = Some(ratio);
             }
             "--ceiling-secs" => {
                 let secs: u64 = value("--ceiling-secs")?
@@ -351,6 +376,50 @@ fn check_once(
     })
 }
 
+/// The wait that makes a candidate's recorded time `ratio` times its paired
+/// baseline run, given what the candidate already took. A faster candidate needs
+/// a longer wait than a same-speed one; a slower one may need none.
+fn control_delay_ms(baseline_ms: u128, candidate_ms: u128, ratio: f64) -> u128 {
+    // Round-trip through text: a float-to-integer cast trips the sign-loss lint,
+    // and millisecond resolution is all the measurement has anyway.
+    let target = (ratio * baseline_ms as f64).max(0.0);
+    let target: u128 = format!("{target:.0}").parse().unwrap_or(0);
+    target.saturating_sub(candidate_ms)
+}
+
+/// Why a control cannot be applied to this run, if it cannot: the control must
+/// stay inside the ceiling and per-check deadline and must exceed the judge's noise floor, otherwise a
+/// pass would say nothing about the gate (#12244).
+fn control_refusal(
+    baseline_ms: u128,
+    candidate_ms: u128,
+    ratio: f64,
+    limits: &Limits,
+) -> Option<String> {
+    let target = control_delay_ms(baseline_ms, 0, ratio);
+    if candidate_ms >= target {
+        return Some(format!(
+            "the candidate already took {candidate_ms} ms, at or past the {target} ms target for a {baseline_ms} ms baseline, so nothing would be injected and the packet must not claim a control"
+        ));
+    }
+    // The injected wait sits outside `check_once`'s own deadline, so the control
+    // honours the tighter of that deadline and the configured ceiling.
+    let bound = limits.ceiling_ms.min(DEADLINE.as_millis());
+    if target > bound {
+        return Some(format!(
+            "the control needs {target} ms for a {baseline_ms} ms baseline, past the {bound} ms bound (ceiling or per-check deadline)"
+        ));
+    }
+    if target.saturating_sub(baseline_ms) <= limits.noise_floor_ms {
+        return Some(format!(
+            "inconclusive: a {ratio}x control on a {baseline_ms} ms baseline adds {} ms, within the {} ms noise floor, so a pass would not test the gate",
+            target.saturating_sub(baseline_ms),
+            limits.noise_floor_ms
+        ));
+    }
+    None
+}
+
 fn measure_pair(
     options: &Options,
     tree: &Path,
@@ -374,7 +443,21 @@ fn measure_pair(
     // Alternate sides so a drifting runner touches both alike.
     for run in 0..options.runs {
         let base = check_once(&baseline, tree, diff, &home, "baseline warm check")?;
-        let cand = check_once(&candidate, tree, diff, &home, "candidate warm check")?;
+        let mut cand = check_once(&candidate, tree, diff, &home, "candidate warm check")?;
+        if let Some(ratio) = options.control_slowdown {
+            if let Some(reason) = control_refusal(base.millis, cand.millis, ratio, &options.limits)
+            {
+                return Err(format!(
+                    "warm-ab {}: control refused: {reason}",
+                    options.pin
+                ));
+            }
+            let extra = control_delay_ms(base.millis, cand.millis, ratio);
+            std::thread::sleep(Duration::from_millis(
+                u64::try_from(extra).unwrap_or(u64::MAX),
+            ));
+            cand.millis += extra;
+        }
         eprintln!(
             "warm-ab {}: run {}: baseline {} ms, candidate {} ms",
             options.pin,
@@ -425,6 +508,7 @@ fn measure_pair(
         baseline_median_ms: judged.baseline_ms,
         candidate_median_ms: judged.candidate_ms,
         ratio: judged.ratio,
+        control_slowdown: options.control_slowdown,
         findings_identical: identical,
         verdict: verdict.as_str().to_string(),
         detail,
@@ -459,6 +543,11 @@ fn render_markdown(packet: &Packet) -> String {
         packet.verdict,
         packet.detail,
     );
+    if let Some(ratio) = packet.control_slowdown {
+        text.push_str(&format!(
+            "\n**Negative control: candidate times were injected at {ratio}x the baseline. This is not a measurement of the candidate.**\n\n"
+        ));
+    }
     for (name, side) in [
         ("baseline", &packet.baseline),
         ("candidate", &packet.candidate),
