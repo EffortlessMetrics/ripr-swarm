@@ -37,13 +37,22 @@ fn worktree_ripr() -> Command {
 }
 
 fn run_mcp(root: &Path, chunks: &[&[u8]]) -> Result<Output, String> {
-    run_mcp_with_input_custody(root, chunks, false)
+    run_mcp_with_input_custody(root, chunks, false, None)
+}
+
+fn run_mcp_with_observation_retention(
+    root: &Path,
+    chunks: &[&[u8]],
+    retention_directory: &Path,
+) -> Result<Output, String> {
+    run_mcp_with_input_custody(root, chunks, false, Some(retention_directory))
 }
 
 fn run_mcp_with_input_custody(
     root: &Path,
     chunks: &[&[u8]],
     hold_input_until_exit: bool,
+    retention_directory: Option<&Path>,
 ) -> Result<Output, String> {
     let (executable, executable_sha256) =
         Observation::executable_custody(Path::new(env!("CARGO_BIN_EXE_ripr")))?;
@@ -62,6 +71,7 @@ fn run_mcp_with_input_custody(
         executable_sha256,
         child.id(),
         hold_input_until_exit,
+        retention_directory.map(Path::to_path_buf),
     ));
     observation.record("child_spawn_returned", None, None);
     let Some(mut stdin) = child.stdin.take() else {
@@ -2153,8 +2163,7 @@ fn current_discovery_requires_metadata_and_rejects_legacy_ping() -> Result<(), S
     Ok(())
 }
 
-#[test]
-fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<(), String> {
+fn unsupported_inline_version_request_script() -> Result<Vec<u8>, String> {
     let mut unsupported = current_meta();
     unsupported
         .as_object_mut()
@@ -2163,7 +2172,7 @@ fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<
             "io.modelcontextprotocol/protocolVersion".into(),
             json!("2099-01-01"),
         );
-    let requests = [
+    Ok([
         line(
             json!({"jsonrpc":"2.0","id":"discover","method":"server/discover",
             "params":{"_meta":current_meta()}}),
@@ -2177,7 +2186,104 @@ fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<
             "params":{"_meta":current_meta()}}),
         )?,
     ]
-    .concat();
+    .concat())
+}
+
+fn load_investigation_disposition_fixture() -> Result<Value, String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/mcp_stdio_investigation_disposition.v1.json");
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("read investigation disposition fixture: {error}"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("parse investigation disposition fixture: {error}"))
+}
+
+/// Pins the committed #4914 owner disposition and runs one bounded Linux
+/// observation of the historical exact stdio case under the unchanged contract.
+#[test]
+fn mcp_stdio_investigation_disposition_records_not_established_and_stage_witness()
+-> Result<(), String> {
+    let fixture = load_investigation_disposition_fixture()?;
+    if fixture.get("governing_issue").and_then(Value::as_u64) != Some(4914) {
+        return Err("disposition fixture must name governing issue #4914".into());
+    }
+    if fixture
+        .pointer("/native_windows_historical_cause/status")
+        .and_then(Value::as_str)
+        != Some("NOT_ESTABLISHED")
+    {
+        return Err("native Windows historical cause must remain NOT_ESTABLISHED".into());
+    }
+    let owner_disposition = fixture
+        .pointer("/native_windows_historical_cause/owner_disposition")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "disposition fixture missing owner_disposition".to_string())?;
+    if !owner_disposition.contains("#3922") {
+        return Err("owner disposition must coordinate with #3922".into());
+    }
+    let contract = fixture
+        .get("stage_contract_v1")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "disposition fixture missing stage_contract_v1".to_string())?;
+    for required in process_observation::INVESTIGATION_STAGE_CONTRACT_V1 {
+        if !contract
+            .iter()
+            .any(|stage| stage.as_str() == Some(required))
+        {
+            return Err(format!(
+                "fixture stage_contract_v1 must include `{required}`"
+            ));
+        }
+    }
+
+    let temp = std::env::temp_dir().join(format!(
+        "ripr-4914-stdio-observations-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp)
+        .map_err(|error| format!("create observation directory: {error}"))?;
+    struct RemoveDir(PathBuf);
+    impl Drop for RemoveDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = RemoveDir(temp.clone());
+
+    let requests = unsupported_inline_version_request_script()?;
+    let output = run_mcp_with_observation_retention(&workspace_root()?, &[&requests], &temp)?;
+    let responses = response_lines(&output)?;
+    if responses.len() != 3 {
+        return Err("investigation attempt must produce three correlated replies".into());
+    }
+
+    let entries = std::fs::read_dir(&temp)
+        .map_err(|error| format!("list observation directory: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("read observation directory entry: {error}"))?;
+    let observation_path = entries
+        .into_iter()
+        .find_map(|entry| {
+            let path = entry.path();
+            path.extension()
+                .is_some_and(|ext| ext == "json")
+                .then_some(path)
+        })
+        .ok_or_else(|| "expected one retained MCP observation JSON file".to_string())?;
+    let observation_json = std::fs::read_to_string(&observation_path)
+        .map_err(|error| format!("read observation JSON: {error}"))?;
+    process_observation::assert_investigation_stage_contract(&observation_json)?;
+
+    Ok(())
+}
+
+#[test]
+fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<(), String> {
+    let requests = unsupported_inline_version_request_script()?;
     let output = run_mcp(&workspace_root()?, &[&requests])?;
     let responses = response_lines(&output)?;
     if responses.len() != 3 {
