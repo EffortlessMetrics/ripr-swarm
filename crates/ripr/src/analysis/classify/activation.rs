@@ -10558,13 +10558,10 @@ assert_eq!(input.amount, 100);"#
             body: body.to_string().into(),
             calls: calls
                 .iter()
-                .map(|(line, text)| {
-                    let name = text.split('(').next().unwrap_or("score").trim().to_string();
-                    CallFact {
-                        name,
-                        line: *line,
-                        text: (*text).to_string().into(),
-                    }
+                .map(|(line, text)| CallFact {
+                    name: "score".to_string(),
+                    line: *line,
+                    text: (*text).to_string().into(),
                 })
                 .collect(),
             assertions: Vec::new(),
@@ -10675,6 +10672,7 @@ assert_eq!(input.amount, 100);"#
         // activation must pair every case value with every table value.
         let body = "fn t(#[case] left: u32) {\n    for right in [99, 100] {\n        assert_eq!(eq(left, right), left == right);\n    }\n}";
         let mut test = test_with_body_calls(body, &[(13, "eq(left, right)")]);
+        test.calls[0].name = "eq".into();
         test.attrs = vec![
             "#[rstest]".to_string(),
             "#[case(100)]".to_string(),
@@ -10714,6 +10712,7 @@ assert_eq!(input.amount, 100);"#
         // together; ripr must not invent `(1, 1)` or `(2, 2)`.
         let body = "fn correlated_cases(\n    #[case] left: u32,\n    #[case] right: u32,\n    #[case] expected: bool,\n) {\n    assert_eq!(less(left, right), expected);\n}";
         let mut test = test_with_body_calls(body, &[(15, "less(left, right)")]);
+        test.calls[0].name = "less".into();
         test.attrs = vec![
             "#[rstest]".to_string(),
             "#[case(1, 2, true)]".to_string(),
@@ -10749,6 +10748,7 @@ assert_eq!(input.amount, 100);"#
         // different original case rows (#7127 / Devin review).
         let body = "fn t(#[case] left: u32, #[case] right: u32) {\n    assert_eq!(eq(left, right), left == right);\n}";
         let mut test = test_with_body_calls(body, &[(13, "eq(left, right)")]);
+        test.calls[0].name = "eq".into();
         test.attrs = vec![
             "#[rstest]".to_string(),
             "#[case(1, 2)]".to_string(),
