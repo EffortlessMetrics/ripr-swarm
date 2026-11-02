@@ -18,6 +18,8 @@ Linked issues:
 - #4957 — time-based heartbeat cadence so long walks never go silent
 - #5019 — pilot (primary first-run command) joins the same stderr stream
 - #10727 — `ripr pilot -v` prints a per-stage timing table on stderr
+- #8643 — default stderr projects honest seam `processed_<n>_of_<total>` on
+  repo-inventory walks (not only under `RIPR_REPO_EXPOSURE_LATENCY_TRACE`)
 - #2608 — parent shared progress contract (not closed here)
 - #4829 — live producer-owned progress events (PR A; this slice consumes that
   contract and does not replace it)
@@ -49,15 +51,19 @@ second stage vocabulary.
    `AnalysisProgressEvent` records at actual boundaries: `loading_input`,
    `analyzing`, `building_output`, and one terminal `completed`,
    `cancelled`, or `failed`. Counters stay `None` until the producer has an
-   honest denominator. Elapsed time is observational and is not analysis
-   identity.
+   honest denominator. A repo-inventory evidence walk that knows how many
+   seams it will evaluate reports that pair on further `analyzing` events as
+   `completed_units` / `total_units` (#8643). Elapsed time is observational
+   and is not analysis identity.
 2. The CLI projects those events onto stderr only:
    `ripr progress: <stage> [<scope>]` and, while a stage stays active,
    `ripr progress: <stage> still active after <elapsed class>`.
-   `ripr pilot` projects the same producer-owned stream at repo scope while
-   its repo inventory runs, including the cold-cache deadline extension, so the
-   primary first-run command is never minutes of unexplained silence
-   (#5019). Pilot adds no stage vocabulary of its own.
+   When both counters are present, those lines also include
+   `processed_<n>_of_<total>` (no slash, percent, or ETA). Heartbeats repeat
+   the last honest pair. `ripr pilot` projects the same producer-owned stream
+   at repo scope while its repo inventory runs, including the cold-cache
+   deadline extension, so the primary first-run command is never minutes of
+   unexplained silence (#5019). Pilot adds no stage vocabulary of its own.
 3. Non-TTY / CI lines are newline-delimited and contain no ANSI or carriage
    returns. A TTY may reuse one line, pads overwrites to the longest prior
    progress line, and stays silent below a 250ms minimum-duration threshold.
@@ -144,6 +150,10 @@ second stage vocabulary.
   heartbeats and show no 10s window of a minutes-long stage stays silent;
   isolate a broken writer; and show that omitting the producer
   sink leaves the observer empty.
+- Honest seam counters render as `processed_<n>_of_<total>` on the default
+  stderr stream and on heartbeats; an incomplete pair (count without a
+  total) stays unquantified; an oversized token is omitted rather than
+  rendered unsafe (#8643).
 
 ## Non-Goals
 
@@ -188,6 +198,12 @@ second stage vocabulary.
 - `crates/ripr/src/app/progress.rs::tests::cancelled_token_through_check_emits_cancelled_not_completed`
 - `crates/ripr/src/cli/progress.rs::tests::non_tty_stage_lines_are_newline_delimited_and_path_free`
 - `crates/ripr/src/cli/progress.rs::tests::unknown_totals_never_render_as_percentage_or_eta`
+- `crates/ripr/src/cli/progress.rs::tests::known_seam_totals_render_processed_n_of_total_without_slash_or_percent`
+- `crates/ripr/src/cli/progress.rs::tests::heartbeat_repeats_last_honest_units_without_slash`
+- `crates/ripr/src/cli/progress.rs::tests::oversized_unit_token_is_omitted_rather_than_rendered_unsafe`
+- `crates/ripr/src/app/progress.rs::tests::repo_inventory_with_progress_forwards_honest_seam_units`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::evidence_for_seams_reports_honest_units_to_the_inventory_listener`
+- `crates/ripr/src/analysis/inventory_progress.rs::tests::nested_listeners_restore_the_outer_reporter`
 - `crates/ripr/src/cli/progress.rs::tests::tty_short_run_does_not_flash_completed`
 - `crates/ripr/src/cli/progress.rs::tests::tty_short_failure_still_projects_failed`
 - `crates/ripr/src/cli/progress.rs::tests::tty_and_non_tty_share_stage_tokens`
@@ -230,6 +246,8 @@ second stage vocabulary.
 
 - `crates/ripr/src/app/progress.rs` — closed event/sink contract
 - `crates/ripr/src/app/check.rs` — producer boundaries on the check path
+- `crates/ripr/src/analysis/inventory_progress.rs` — scoped seam-count listener
+- `crates/ripr/src/analysis/test_grip_evidence.rs` — honest evidence-walk units
 - `crates/ripr/src/cli/progress.rs` — stderr projection, heartbeat, TTY policy
 - `crates/ripr/src/cli/commands/check.rs` — `--quiet` and sink wiring
 - `crates/ripr/src/cli/commands/pilot.rs` — `--quiet` and sink wiring on the
