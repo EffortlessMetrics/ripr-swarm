@@ -652,7 +652,7 @@ pub(crate) fn single_expect_statement(body: &str) -> bool {
         let byte = bytes[idx];
         match byte {
             b'/' => {
-                if let Some(next) = skip_comment(bytes, text, idx) {
+                if let Some(next) = skip_comment(bytes, idx) {
                     idx = next;
                 } else if depth > 0 {
                     idx += 1;
@@ -710,12 +710,19 @@ pub(crate) fn single_expect_statement(body: &str) -> bool {
     depth == 0 && seen_expect
 }
 
-fn skip_comment(bytes: &[u8], text: &str, idx: usize) -> Option<usize> {
+fn skip_comment(bytes: &[u8], idx: usize) -> Option<usize> {
     match bytes.get(idx + 1) {
-        Some(b'/') => Some(text[idx..].find('\n').map_or(bytes.len(), |end| idx + end)),
+        Some(b'/') => {
+            let end = bytes[idx..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .unwrap_or(bytes.len() - idx);
+            Some(idx + end)
+        }
         Some(b'*') => {
-            let rest = text.get(idx + 2..)?;
-            Some(idx + 2 + rest.find("*/")? + 2)
+            let rest = bytes.get(idx + 2..)?;
+            let end = rest.windows(2).position(|w| w == [b'*', b'/'])?;
+            Some(idx + 2 + end + 2)
         }
         _ => None,
     }
