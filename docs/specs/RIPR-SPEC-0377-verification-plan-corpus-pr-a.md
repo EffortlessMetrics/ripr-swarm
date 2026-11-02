@@ -16,6 +16,7 @@ Linked issues:
 Support-tier impact:
 
 - None. Offline typed validation over committed fixture rows only.
+  [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md)
 
 Policy impact:
 
