@@ -958,9 +958,13 @@ mod tests {
         Ok(())
     }
 
-    fn with_proposal(mut entry: ClassifiedSeam, kind: NewTestKind, file: &str) -> ClassifiedSeam {
+    fn with_proposal(
+        mut entry: ClassifiedSeam,
+        kind: crate::analysis::new_test_target::NewTestKind,
+        file: &str,
+    ) -> ClassifiedSeam {
         use crate::analysis::new_test_target::{
-            NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
+            NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
         };
         use std::path::PathBuf;
         let owner = entry.seam.owner().to_string();
