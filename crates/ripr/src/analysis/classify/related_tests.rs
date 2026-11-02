@@ -4381,12 +4381,15 @@ fn inherent_constructor_names(index: &RustIndex, ty: &str) -> Vec<String> {
 /// `ty`: positive index evidence for a free-function receiver such as
 /// `fixture().method()`. A same-named function, trait or method declaration
 /// fails closed.
-/// A module-level `fn name` exists (body or not), regardless of return type.
-fn free_function_declared(index: &RustIndex, name: &str) -> bool {
-    index
-        .functions()
-        .iter()
-        .any(|function| function.name == name && function.item.container == FunctionContainer::Free)
+/// A module-level `fn name` exists in `file` (body or not), regardless of
+/// return type. Workspace-wide names would block a file-local unit struct
+/// `name()` when an unrelated module declares the same free fn (#8917).
+fn free_function_declared(index: &RustIndex, file: &Path, name: &str) -> bool {
+    index.functions().iter().any(|function| {
+        function.file == file
+            && function.name == name
+            && function.item.container == FunctionContainer::Free
+    })
 }
 
 fn free_fn_returns_type(index: &RustIndex, name: &str, ty: &str) -> bool {
@@ -5291,7 +5294,7 @@ fn inherent_receiver_call_resolves_with(
                 if free_fn_returns_type(index, head, impl_type) {
                     return true;
                 }
-                if free_function_declared(index, head) {
+                if free_function_declared(index, &test.file, head) {
                     return false;
                 }
                 head == impl_type
@@ -5660,7 +5663,7 @@ fn scoped_receiver_names_type(
     initializer_is_one_head_expr(&text)
         && initializer_names_impl_type(&text, impl_type, &|ty, name| {
             factory(ty, name)
-                && !enclosing_fn_rebinds_type_name(call, impl_type)
+                && (ty.is_empty() || !enclosing_fn_rebinds_type_name(call, impl_type))
                 && (!ty.is_empty()
                     || (!enclosing_fn_binds(call, name) && !enclosing_module_binds(call, name)))
         })
@@ -5730,6 +5733,13 @@ fn enclosing_fn_rebinds_type_name(call: &SyntaxNode, ty: &str) -> bool {
 /// Whether the test's enclosing module (in the indexed file) imports `name`
 /// or a glob that may rebind a crate-root free function of the same name.
 fn test_module_rebinds_free_function(index: &RustIndex, test: &TestSummary, name: &str) -> bool {
+    let Some(source) = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.data().source.as_ref())
+    else {
+        return true;
+    };
     let Some(tree) = index
         .source_syntax
         .get(index, &test.file)
@@ -5737,16 +5747,24 @@ fn test_module_rebinds_free_function(index: &RustIndex, test: &TestSummary, name
     else {
         return true;
     };
-    let Some(function) = tree
+    let line_of = |offset: ra_ap_syntax::TextSize| {
+        source
+            .get(..usize::from(offset))
+            .map(|before| 1 + before.bytes().filter(|byte| *byte == b'\n').count())
+    };
+    let mut candidates = tree
         .syntax()
         .descendants()
         .filter_map(ast::Fn::cast)
-        .find(|function| {
+        .filter(|function| {
             function
                 .name()
                 .is_some_and(|bound| bound.text() == test.name)
-        })
-    else {
+                && function.fn_token().is_some_and(|token| {
+                    line_of(token.text_range().start()) == Some(test.start_line)
+                })
+        });
+    let (Some(function), None) = (candidates.next(), candidates.next()) else {
         return false;
     };
     enclosing_module_binds(function.syntax(), name)
@@ -5862,7 +5880,8 @@ fn visible_receiver_binding_names_type(
                     initializer_is_one_head_expr(&text)
                         && (initializer_names_impl_type(&text, impl_type, &|ty, name| {
                             factory(ty, name)
-                                && !enclosing_fn_rebinds_type_name(call, impl_type)
+                                && (ty.is_empty()
+                                    || !enclosing_fn_rebinds_type_name(call, impl_type))
                                 && (!ty.is_empty()
                                     || (!enclosing_fn_binds(call, name)
                                         && !enclosing_module_binds(call, name)))
@@ -13733,6 +13752,103 @@ let r = try_parse_summary(\"x\");",
                 })
                 .is_some_and(|rebinds| !rebinds)
         );
+    }
+
+    #[test]
+    fn free_function_declared_is_file_scoped_issue_8917() -> Result<(), String> {
+        let root = temp_dir("8917-free-fn-file-scope")?;
+        write_manifest(&root)?;
+        let other = write(&root, "tests/other.rs", "fn Site() {}\n")?;
+        let site = write(&root, "tests/site.rs", "struct Site;\n")?;
+        let files = vec![other.clone(), site.clone()];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        assert!(!free_function_declared(&index, &site, "Site"));
+        assert!(free_function_declared(&index, &other, "Site"));
+        Ok(())
+    }
+
+    #[test]
+    fn enclosing_fn_type_alias_does_not_block_free_fixture_head_issue_8917() -> Result<(), String> {
+        let root = temp_dir("8917-type-alias-fixture")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "pub struct Site;\n\
+                 impl Site {\n\
+                     pub fn build(&self) -> i32 { 0 }\n\
+                 }\n\
+                 pub fn fixture() -> Site { Site }\n",
+            )?,
+            write(
+                &root,
+                "tests/t.rs",
+                "#[test]\n\
+                 fn t() {\n\
+                     type Site = i32;\n\
+                     let _ = fixture().build();\n\
+                 }\n",
+            )?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "build" && function.file == Path::new("src/lib.rs"))
+            .ok_or_else(|| "missing build owner".to_string())?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "t")
+            .ok_or_else(|| "missing test".to_string())?;
+        assert!(
+            inherent_receiver_call_resolves(test, "build", "Site", Some(&index), Some(owner)),
+            "local type alias must not deny a free-function receiver head"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_module_rebinds_free_function_matches_start_line_issue_8917() -> Result<(), String> {
+        let root = temp_dir("8917-dup-test-start-line")?;
+        write_manifest(&root)?;
+        let path = write(
+            &root,
+            "tests/dup.rs",
+            "mod with_use {\n\
+             use ext::fixture;\n\
+             fn dup() { let _ = fixture(); }\n\
+             }\n\
+             fn dup() { let _ = fixture(); }\n",
+        )?;
+        let files = vec![path.clone()];
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        let second = TestSummary {
+            name: "dup".to_string(),
+            file: path.clone(),
+            start_line: 5,
+            end_line: 5,
+            body: "let _ = fixture();".into(),
+            calls: Vec::new(),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        };
+        let mut first = second.clone();
+        first.start_line = 3;
+        first.body = "let _ = fixture();".into();
+        assert!(
+            test_module_rebinds_free_function(&index, &first, "fixture"),
+            "dup inside with_use should see the module use rebind"
+        );
+        assert!(
+            !test_module_rebinds_free_function(&index, &second, "fixture"),
+            "root dup must not inherit with_use's import"
+        );
+        Ok(())
     }
 
     #[test]
