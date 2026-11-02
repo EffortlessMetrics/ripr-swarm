@@ -74,8 +74,21 @@ pub(crate) fn append_fast_check_assertions(
     if exports.is_empty() {
         return;
     }
+    collect_fast_check_from_statement_vec(statements, source, &exports, returns_to_runner, out);
+}
+
+fn collect_fast_check_from_statement_vec(
+    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    source: &SourceText<'_>,
+    exports: &FastCheckExports,
+    returns_to_runner: bool,
+    out: &mut Vec<TypeScriptAssertion>,
+) {
     for stmt in statements {
-        collect_in_statement(stmt, source, &exports, returns_to_runner, out);
+        collect_in_statement(stmt, source, exports, returns_to_runner, out);
+        if super::statement_completes_abruptly(stmt) {
+            break;
+        }
     }
 }
 
@@ -101,9 +114,13 @@ fn collect_in_statement(
 ) {
     match stmt {
         Statement::BlockStatement(block) => {
-            for inner in &block.body {
-                collect_in_statement(inner, source, exports, returns_to_runner, out);
-            }
+            collect_fast_check_from_statement_vec(
+                &block.body,
+                source,
+                exports,
+                returns_to_runner,
+                out,
+            );
         }
         Statement::ExpressionStatement(expr_stmt) => {
             if let Some(assertion) = assertion_from_assert_property_call(
@@ -117,20 +134,41 @@ fn collect_in_statement(
         }
         Statement::ReturnStatement(ret) => {
             if let Some(argument) = &ret.argument
-                && let Some(assertion) =
-                    assertion_from_assert_property_call(argument, source, exports, true)
+                && let Some(assertion) = assertion_from_assert_property_call(
+                    argument,
+                    source,
+                    exports,
+                    returns_to_runner,
+                )
             {
                 out.push(assertion);
             }
         }
-        Statement::IfStatement(if_stmt) => {
-            collect_in_statement(&if_stmt.consequent, source, exports, returns_to_runner, out);
-            if let Some(alternate) = &if_stmt.alternate {
-                collect_in_statement(alternate, source, exports, returns_to_runner, out);
+        Statement::IfStatement(if_stmt) => match super::constant_condition_value(&if_stmt.test) {
+            Some(false) => {
+                if let Some(alternate) = &if_stmt.alternate {
+                    collect_in_statement(alternate, source, exports, returns_to_runner, out);
+                }
             }
-        }
+            Some(true) => {
+                collect_in_statement(&if_stmt.consequent, source, exports, returns_to_runner, out);
+            }
+            None => {
+                collect_in_statement(&if_stmt.consequent, source, exports, returns_to_runner, out);
+                if let Some(alternate) = &if_stmt.alternate {
+                    collect_in_statement(alternate, source, exports, returns_to_runner, out);
+                }
+            }
+        },
         Statement::ForStatement(for_stmt) => {
-            collect_in_statement(&for_stmt.body, source, exports, returns_to_runner, out);
+            let constantly_dead = for_stmt
+                .test
+                .as_ref()
+                .and_then(super::constant_condition_value)
+                == Some(false);
+            if !constantly_dead {
+                collect_in_statement(&for_stmt.body, source, exports, returns_to_runner, out);
+            }
         }
         Statement::ForInStatement(for_in) => {
             collect_in_statement(&for_in.body, source, exports, returns_to_runner, out);
@@ -138,7 +176,9 @@ fn collect_in_statement(
         Statement::ForOfStatement(for_of) => {
             collect_in_statement(&for_of.body, source, exports, returns_to_runner, out);
         }
-        Statement::WhileStatement(while_stmt) => {
+        Statement::WhileStatement(while_stmt)
+            if super::constant_condition_value(&while_stmt.test) != Some(false) =>
+        {
             collect_in_statement(&while_stmt.body, source, exports, returns_to_runner, out);
         }
         Statement::DoWhileStatement(do_while) => {
@@ -303,13 +343,64 @@ fn oracle_from_block(
     rendered: &str,
 ) -> Option<TypeScriptAssertion> {
     for stmt in statements {
-        if let Statement::ReturnStatement(ret) = stmt
-            && let Some(argument) = &ret.argument
-        {
-            return oracle_from_expression(argument, source, line, rendered);
+        if let Some(assertion) = oracle_from_predicate_statement(stmt, source, line, rendered) {
+            return Some(assertion);
         }
     }
     None
+}
+
+fn oracle_from_predicate_statement(
+    stmt: &Statement<'_>,
+    source: &SourceText<'_>,
+    line: usize,
+    rendered: &str,
+) -> Option<TypeScriptAssertion> {
+    match stmt {
+        Statement::ReturnStatement(ret) => ret
+            .argument
+            .as_ref()
+            .and_then(|argument| oracle_from_expression(argument, source, line, rendered)),
+        Statement::ThrowStatement(throw_stmt) => {
+            let Expression::NewExpression(new_expr) = throw_stmt.argument.get_inner_expression()
+            else {
+                return None;
+            };
+            throws_new_error_from_new(new_expr).then(|| throw_oracle(line, rendered))
+        }
+        Statement::IfStatement(if_stmt) => {
+            oracle_from_predicate_statement(&if_stmt.consequent, source, line, rendered).or_else(
+                || {
+                    if_stmt.alternate.as_ref().and_then(|alternate| {
+                        oracle_from_predicate_statement(alternate, source, line, rendered)
+                    })
+                },
+            )
+        }
+        Statement::BlockStatement(block) => oracle_from_block(&block.body, source, line, rendered),
+        _ => None,
+    }
+}
+
+fn throw_oracle(line: usize, rendered: &str) -> TypeScriptAssertion {
+    TypeScriptAssertion {
+        matcher: "fast-check:property-throw".to_string(),
+        argument_count: 0,
+        line,
+        oracle_kind: OracleKind::BroadError,
+        oracle_strength: OracleStrength::Weak,
+        mock_payload: None,
+        error_payload: None,
+        observed_expression: None,
+        expected_value_or_variant: None,
+        has_dynamic_matcher_arg: false,
+        dynamic_expected_text: None,
+        oracle_confidence: OracleConfidence::Low,
+        rendered_call: Some(rendered.to_string()),
+        loose_number_expected: false,
+        compares_reference_identity: false,
+        expected_object_const: None,
+    }
 }
 
 fn oracle_from_expression(
@@ -372,24 +463,9 @@ fn oracle_from_expression(
         {
             oracle_from_expression(&unary.argument, source, line, rendered)
         }
-        Expression::CallExpression(call) if throws_new_error(call) => Some(TypeScriptAssertion {
-            matcher: "fast-check:property-throw".to_string(),
-            argument_count: 0,
-            line,
-            oracle_kind: OracleKind::BroadError,
-            oracle_strength: OracleStrength::Weak,
-            mock_payload: None,
-            error_payload: None,
-            observed_expression: None,
-            expected_value_or_variant: None,
-            has_dynamic_matcher_arg: false,
-            dynamic_expected_text: None,
-            oracle_confidence: OracleConfidence::Low,
-            rendered_call: Some(rendered.to_string()),
-            loose_number_expected: false,
-            compares_reference_identity: false,
-            expected_object_const: None,
-        }),
+        Expression::CallExpression(call) if throws_new_error(call) => {
+            Some(throw_oracle(line, rendered))
+        }
         _ => None,
     }
 }
@@ -397,11 +473,14 @@ fn oracle_from_expression(
 fn throws_new_error(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
     matches!(
         call.callee.get_inner_expression(),
-        Expression::NewExpression(new_expr)
-            if matches!(
-                new_expr.callee.get_inner_expression(),
-                Expression::Identifier(id) if id.name.as_str() == "Error"
-            )
+        Expression::NewExpression(new_expr) if throws_new_error_from_new(new_expr)
+    )
+}
+
+fn throws_new_error_from_new(new_expr: &oxc_ast::ast::NewExpression<'_>) -> bool {
+    matches!(
+        new_expr.callee.get_inner_expression(),
+        Expression::Identifier(id) if id.name.as_str() == "Error"
     )
 }
 

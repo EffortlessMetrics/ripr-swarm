@@ -110,6 +110,27 @@ fn shadowed_assert_import_is_not_credited() -> Result<(), String> {
 }
 
 #[test]
+fn unreachable_assert_after_return_is_not_credited() -> Result<(), String> {
+    let body = "return; fc.assert(fc.property(fc.integer(), (n) => identity(n) === n));";
+    assert_eq!(assertion_count(&fast_check_test(body)), 0);
+    Ok(())
+}
+
+#[test]
+fn foreach_discarded_async_assert_is_not_credited() -> Result<(), String> {
+    let body = "[1].forEach(() => { return fc.assert(fc.asyncProperty(fc.integer(), async (n) => identity(n) === n)); });";
+    assert_eq!(assertion_count(&fast_check_test(body)), 0);
+    Ok(())
+}
+
+#[test]
+fn block_predicate_throw_is_credited() -> Result<(), String> {
+    let body = "fc.assert(fc.property(fc.integer(), (n) => { if (identity(n) !== n) { throw new Error(\"bad\"); } return true; }));";
+    assert_eq!(assertion_count(&fast_check_test(body)), 1);
+    Ok(())
+}
+
+#[test]
 fn local_framework_lookalike_without_import_is_not_credited() -> Result<(), String> {
     let source = "import { identity } from \"../src/identity\";\nconst fc = { assert: (p: unknown) => p, property: (_a: unknown, pred: (n: number) => boolean) => pred, integer: () => 0 };\ntest(\"x\", () => { fc.assert(fc.property(fc.integer(), (n) => identity(n) === n)); });\n".to_string();
     assert_eq!(assertion_count(&source), 0);
