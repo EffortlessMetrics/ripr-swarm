@@ -435,7 +435,9 @@ pub(crate) fn arm_gate(
 
 /// A corpus without a spec-coverage ledger has no `[oracle]` gate and no
 /// spec-example check, so a label there would be scored but never gated.
-/// Refuse it until the corpus opts into a ledger.
+/// Refuse it until the corpus opts into a ledger. Production corpora require
+/// a ledger (#8775); this helper remains for unit tests of the ledgerless path.
+#[cfg(test)]
 pub(crate) fn ungated_label_violations(corpus: &Corpus, dir: &std::path::Path) -> Vec<String> {
     corpus
         .cases
