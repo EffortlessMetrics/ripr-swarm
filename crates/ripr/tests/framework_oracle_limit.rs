@@ -3,7 +3,8 @@
 //!
 //! A related test that checks the owner through an environment variable it
 //! sets, a mockall closure that reads its arguments, an expect-test debug
-//! literal, or an insta snapshot of a field no redaction names reads as
+//! literal, or an insta whole-object file snapshot (no redaction map) on a
+//! changed struct field reads as `static_unknown` under
 //! `static_unknown` under `rust_framework_oracle_unresolved`. Each control
 //! below changes one thing about the shape and keeps the gap.
 
@@ -434,6 +435,12 @@ fn an_unredacted_insta_field_is_withheld() -> Result<(), String> {
         &edit,
         9,
         "unredacted sibling beside a redacted path",
+    )?;
+    keeps_gap(
+        &insta_source("insta::assert_json_snapshot!(record, { r#\".id\"# => \"[id]\" });"),
+        &edit,
+        9,
+        "unredacted sibling beside a raw-string redaction key",
     )?;
     Ok(())
 }

@@ -265,3 +265,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_nested_literal (22)
+
+Reason:
+RIPR-SPEC-0240: insta framework withhold applies only to whole-object file snapshots without a redaction map (#6642/#12517)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_nested_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

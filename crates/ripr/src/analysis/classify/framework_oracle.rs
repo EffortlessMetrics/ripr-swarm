@@ -730,9 +730,9 @@ fn expect_debug_literal(test: &TestFact, owner: &str) -> bool {
 /// An insta snapshot macro with no inline `@` literal, on a changed struct
 /// field initializer, whose committed expectation ripr still does not read.
 /// Withhold only when the macro names no redaction map (whole-object file
-/// snapshot) or names redaction only for other fields (#6642 keeps an
-/// unredacted sibling as a gap instead of `static_unknown`). Any other changed
-/// line keeps the gap without this idiom.
+/// snapshot). If the macro carries a redaction map, any changed field—even an
+/// unredacted sibling—is kept as a gap instead of being withheld (#6642). Any
+/// other changed line keeps the gap without this idiom.
 fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &str) -> bool {
     let raw: &str = &test.body;
     let code = masked(raw);
@@ -777,14 +777,13 @@ fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &st
             // Only a struct field the snapshot serializes: a changed
             // predicate or arm shapes the whole rendering, which the
             // snapshot weakly checks as before.
-            let Some(field) = field_name(changed_text) else {
+            if field_name(changed_text).is_none() {
                 continue;
-            };
-            let selectors = redaction_selectors(&raw[from..to]);
-            if !selectors.is_empty() {
-                // A redaction map names which serialized paths are replaced;
-                // when it names the changed field, or only sibling paths, the
-                // observation boundary is field-level, not whole-file unread.
+            }
+            if insta_redaction_map(arguments).is_some() {
+                // A top-level redaction map names which serialized paths are
+                // replaced; changed fields stay gaps until snapshot identity
+                // lands (#8121), whether the map touches that field or not.
                 continue;
             }
             found = true;
@@ -824,16 +823,125 @@ fn macro_arguments(rest: &str) -> Option<&str> {
     None
 }
 
-/// String literals in the arguments that key a redaction (`".id" => ..`).
+/// Top-level braced argument of an insta macro call, if any.
+fn insta_redaction_map(arguments: &str) -> Option<&str> {
+    split_arguments(arguments)
+        .into_iter()
+        .map(|(start, end)| arguments[start..end].trim())
+        .find(|part| part.starts_with('{'))
+}
+
+/// Path literals in the macro's redaction map (`".id" => ..`), if present.
+#[cfg(test)]
 fn redaction_selectors(arguments: &str) -> Vec<&str> {
-    arguments
-        .split('"')
-        .skip(1)
-        .step_by(2)
-        .zip(arguments.split('"').skip(2).step_by(2))
-        .filter(|(_, after)| after.trim_start().starts_with("=>"))
-        .map(|(literal, _)| literal)
-        .collect()
+    let Some(map) = insta_redaction_map(arguments) else {
+        return Vec::new();
+    };
+    redaction_map_selectors(map)
+}
+
+/// Selector path literals inside a braced insta redaction map.
+#[cfg(test)]
+fn redaction_map_selectors(map: &str) -> Vec<&str> {
+    let mut selectors = Vec::new();
+    let mut offset = 0usize;
+    if map.as_bytes().get(offset) == Some(&b'{') {
+        offset += 1;
+    }
+    while offset < map.len() {
+        while map[offset..]
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_whitespace() || ch == ',')
+        {
+            offset += 1;
+        }
+        if offset >= map.len() || map.as_bytes()[offset] == b'}' {
+            break;
+        }
+        let Some((path, next)) = redaction_map_key(map, offset) else {
+            break;
+        };
+        selectors.push(path);
+        offset = next;
+    }
+    selectors
+}
+
+/// A redaction-map key and the offset after its `=>` value.
+#[cfg(test)]
+fn redaction_map_key(map: &str, start: usize) -> Option<(&str, usize)> {
+    let (path, after_key) = string_literal_in_redaction_map(map, start)?;
+    let rest = map[after_key..].trim_start();
+    if !rest.starts_with("=>") {
+        return None;
+    }
+    let after_arrow = after_key + (map[after_key..].len() - rest.len()) + "=>".len();
+    Some((path, skip_redaction_value(map, after_arrow)))
+}
+
+#[cfg(test)]
+fn string_literal_in_redaction_map(map: &str, start: usize) -> Option<(&str, usize)> {
+    let tail = &map[start..];
+    if tail.starts_with('"') {
+        return normal_string_literal(tail).map(|(content, end)| (content, start + end));
+    }
+    if tail.starts_with('r') {
+        return raw_string_literal(tail).map(|(content, end)| (content, start + end));
+    }
+    None
+}
+
+#[cfg(test)]
+fn normal_string_literal(text: &str) -> Option<(&str, usize)> {
+    let mut escaped = false;
+    for (offset, ch) in text.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' => return Some((&text[1..offset], offset + 1)),
+            _ => {}
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+fn raw_string_literal(text: &str) -> Option<(&str, usize)> {
+    let rest = text.strip_prefix('r')?;
+    let hash_count = rest.chars().take_while(|&ch| ch == '#').count();
+    let after_hashes = &rest[hash_count..];
+    let open = after_hashes.strip_prefix('"')?;
+    let close = format!("\"{}", "#".repeat(hash_count));
+    let content_end = open.find(&close)?;
+    let end = 1 + hash_count + 1 + content_end + close.len();
+    Some((&open[..content_end], end))
+}
+
+#[cfg(test)]
+fn skip_redaction_value(map: &str, start: usize) -> usize {
+    let tail = map[start..].trim_start();
+    let value_start = start + (map[start..].len() - tail.len());
+    if tail.is_empty() {
+        return value_start;
+    }
+    if let Some((_, end)) = string_literal_in_redaction_map(map, value_start) {
+        return end;
+    }
+    let ch = tail.chars().next().unwrap_or('\0');
+    if ch.is_ascii_digit() || matches!(ch, '-' | '+') {
+        return value_start + tail.chars().take_while(|c| c.is_ascii_digit()).count();
+    }
+    if tail.starts_with("true") {
+        return value_start + 4;
+    }
+    if tail.starts_with("false") {
+        return value_start + 5;
+    }
+    value_start + 1
 }
 
 /// `name` of a struct-literal field initializer line (`name: expr,`).
@@ -863,6 +971,43 @@ mod tests {
             vec![".id", ".meta.at", "[].n"]
         );
         assert!(redaction_selectors("record").is_empty());
+    }
+
+    #[test]
+    fn redaction_selectors_ignore_match_arms_in_the_snapshotted_value() {
+        assert!(
+            redaction_selectors("make_record(match kind { \"small\" => 2, _ => 3 })").is_empty()
+        );
+        assert!(
+            insta_redaction_map("make_record(match kind { \"small\" => 2, _ => 3 })").is_none()
+        );
+    }
+
+    #[test]
+    fn redaction_selectors_read_raw_string_map_keys() {
+        assert_eq!(
+            redaction_selectors("record, { r#\".id\"# => \"[id]\" }"),
+            vec![".id"]
+        );
+    }
+
+    #[test]
+    fn insta_withholds_when_operand_contains_match_but_no_redaction_map() -> Result<(), String> {
+        let owner = "make_record";
+        let items_change = "        items: items.len(),";
+        let match_operand = "#[cfg(test)]
+mod tests {
+    #[test]
+    fn snap() {
+        insta::assert_json_snapshot!(make_record(match kind { \"small\" => 2, _ => 3 }));
+    }
+}
+";
+        assert!(
+            insta_leaves_field_unredacted(&test_named(match_operand, "snap")?, items_change, owner),
+            "match arms in the operand must not masquerade as a redaction map"
+        );
+        Ok(())
     }
 
     #[test]
