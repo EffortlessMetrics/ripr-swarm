@@ -286,7 +286,9 @@ wrong credits.
    for both at once), and its arguments may only pick the runtime:
    `flavor`, `worker_threads` and `start_paused`, each `= literal`;
    `crate = ..` swaps the runtime path and `unhandled_panic = ..` changes what
-   a panic does, so they refuse. An `async` owner's return value is then read
+   a panic does, so they refuse. The same completion rule applies under
+   `#[async_std::test]` when `async_std` is the crate in the test's module and
+   the attribute carries no arguments (#5040). An `async` owner's return value is then read
    through one trailing `.await` on its call (`assert_eq!(total(&[1, 2]).await,
    3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`

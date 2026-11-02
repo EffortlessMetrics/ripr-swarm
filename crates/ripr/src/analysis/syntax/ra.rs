@@ -1327,7 +1327,9 @@ pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
             .collect::<String>();
         compact == "#[test]"
             || compact.starts_with("#[tokio::test")
+            || compact.starts_with("#[::tokio::test")
             || compact.starts_with("#[async_std::test")
+            || compact.starts_with("#[::async_std::test")
             || compact == "#[rstest]"
             || compact.starts_with("#[rstest(")
     })
