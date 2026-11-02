@@ -314,6 +314,50 @@ fn an_invoked_macro_definition_naming_the_owner_keeps_the_limit() -> Result<(), 
     withheld(&lib, BEFORE, AFTER, "invoked macro definition")
 }
 
+/// A forwarded invocation never spells `unused!`: the name is a bare token
+/// argument that `$m!()` expands, so the definition is not inert (#12231).
+#[test]
+fn a_forwarded_macro_invocation_keeps_the_limit() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        macro_rules! unused {
+            () => {
+                use super::inc;
+            };
+        }
+        macro_rules! forward {
+            ($m:ident) => {
+                $m!();
+            };
+        }
+        forward!(unused);
+        assert!(inc(1) > 0);
+    }
+",
+    );
+    withheld(&lib, BEFORE, AFTER, "forwarded macro invocation")
+}
+
+/// A comment between the name and `!` is still an invocation (#12231).
+#[test]
+fn a_comment_separated_macro_invocation_keeps_the_limit() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        macro_rules! used {
+            () => {
+                use super::inc;
+            };
+        }
+        used/*note*/!();
+        assert!(inc(1) > 0);
+    }
+",
+    );
+    withheld(&lib, BEFORE, AFTER, "comment-separated macro invocation")
+}
+
 /// A body the shared parser refuses cannot prove a declaration range, so the
 /// bare-name fold and the mention scan must stay silent there. A parse
 /// artifact must never withdraw a real gap under the indirect-owner limit's

@@ -571,10 +571,12 @@ struct ItemBindings {
     declarations: Vec<ra_ap_syntax::TextRange>,
     scopes: Vec<(ra_ap_syntax::TextRange, bool)>,
     /// Bodies of `macro_rules!` definitions that are inert: the macro is not
-    /// exported and no `name!` invocation appears outside its own definition,
-    /// so its token tree is never expanded into the test (#12231). A macro that
-    /// is invoked, or that `#[macro_export]` may expose to another file, is
-    /// absent here and its body text keeps counting.
+    /// exported and its name occurs as no identifier token outside its own
+    /// definition, so its token tree is never expanded into the test (#12231).
+    /// A macro whose name appears anywhere else (an invocation, a forwarded
+    /// `$m!()` argument, a comment-separated `name/**/!`), or that
+    /// `#[macro_export]` may expose to another file, is absent here and its
+    /// body text keeps counting.
     inert_macros: Vec<ra_ap_syntax::TextRange>,
     /// The shared parser refused the body, so no declaration range is known.
     /// Mentions on lexical `use` lines then keep the import exclusion instead
@@ -610,7 +612,11 @@ impl ItemBindings {
                 let range = definition.syntax().text_range();
                 if let Some(macro_name) = definition.name()
                     && !exported
-                    && !macro_is_invoked(source, macro_name.text().trim_start_matches("r#"), range)
+                    && !macro_is_mentioned(
+                        source,
+                        macro_name.text().trim_start_matches("r#"),
+                        range,
+                    )
                 {
                     result.inert_macros.push(range);
                 }
@@ -693,13 +699,12 @@ impl ItemBindings {
     }
 }
 
-/// Whether `source` invokes `name!` anywhere outside the definition at
-/// `definition`. Any spelling counts, including one in a comment, a string or
-/// another macro's body: only a certain absence makes the definition inert.
-fn macro_is_invoked(source: &str, name: &str, definition: ra_ap_syntax::TextRange) -> bool {
-    identifier_offsets(source, name).any(|at| {
-        !contains_offset(definition, at) && source[at + name.len()..].trim_start().starts_with('!')
-    })
+/// Whether `source` mentions `name` as an identifier token anywhere outside
+/// the definition at `definition`. Any spelling counts, including a forwarded
+/// `forward!(name)`, `name/*note*/!()`, a comment, a string or another macro's
+/// body: only a certain absence makes the definition inert (#12231).
+fn macro_is_mentioned(source: &str, name: &str, definition: ra_ap_syntax::TextRange) -> bool {
+    identifier_offsets(source, name).any(|at| !contains_offset(definition, at))
 }
 
 fn contains_offset(range: ra_ap_syntax::TextRange, at: usize) -> bool {
