@@ -1,5 +1,6 @@
 mod boolean_owner_pin;
 mod module_extraction;
+mod module_extraction_public_parent;
 mod shared_execution_context;
 mod warm_entrypoint;
 
