@@ -318,6 +318,16 @@ fn closest<'a>(input: &str, candidates: impl Iterator<Item = &'a str>) -> Option
             if distance > budget {
                 continue;
             }
+            // Compound enum values such as `gitlab-ci` are not near misses for
+            // the shorter accepted token `gitlab`; flag abbreviations like
+            // `--out-m` → `--out` must keep working.
+            if !input.starts_with('-')
+                && needle.len() > hay.len()
+                && needle.starts_with(hay)
+                && needle.as_bytes().get(hay.len()) == Some(&b'-')
+            {
+                continue;
+            }
             (1u8, distance, candidate)
         };
         if best.is_none_or(|current| ranked < current) {
@@ -511,6 +521,15 @@ mod tests {
         assert_eq!(
             message,
             "unknown format \"yaml\". Accepted: human, json, sarif."
+        );
+    }
+
+    #[test]
+    fn unknown_value_does_not_suggest_a_shorter_token_for_a_compound_spelling() {
+        let message = unknown_value("init --ci provider", "gitlab-ci", &["github", "gitlab"]);
+        assert_eq!(
+            message,
+            "unknown init --ci provider \"gitlab-ci\". Accepted: github, gitlab."
         );
     }
 

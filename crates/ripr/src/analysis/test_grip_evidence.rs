@@ -19,7 +19,9 @@ mod reach_limit;
 mod related_tests;
 pub(crate) mod shared_grips;
 mod snapshot_owner_binding;
+pub(crate) mod summary;
 pub(crate) use snapshot_owner_binding::{BindingReach, local_is_owner_result_before, text_calls};
+pub(crate) use summary::retain_test_grip_summary;
 mod value_contradiction;
 
 use boolean_boundary_pin::BooleanBoundaryPin;
@@ -433,6 +435,32 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
     evidence_for_seam_with_context(seam, &context)
 }
 
+/// Whether a test that pins another function lends this seam no oracle
+/// (#12060 match arms, #12434 predicate boundaries). Both kinds read a value
+/// another indexed function also produces, so an assertion on that function
+/// says nothing about the owner's branch.
+///
+/// A predicate boundary refuses only when some related test is tied to the
+/// owner by a relation that establishes reach. With no such test every
+/// related test is proximity-only, activation stays unknown, and stripping
+/// the lent oracle would move the seam from `activation_unknown` to
+/// `reachable_unrevealed` (rule 4 of seam classification), claiming tests run
+/// a seam nothing is seen calling. Callers pass the complete relation set,
+/// never a rank-limited or per-test slice, so every entry point agrees.
+fn refuses_other_function_oracle(
+    seam: &RepoSeam,
+    relations: impl IntoIterator<Item = RelationReason>,
+    owner_is_function: bool,
+) -> bool {
+    match seam.kind() {
+        SeamKind::MatchArm => true,
+        SeamKind::PredicateBoundary => relations
+            .into_iter()
+            .any(|reason| reason.establishes_reach(owner_is_function)),
+        _ => false,
+    }
+}
+
 /// #12060: the related tests as the stage evidence should read them. A match
 /// arm names an enum variant other functions also return, so a test related
 /// to the owner only by file or module cannot confirm the arm through an
@@ -440,15 +468,16 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
 /// owner (`assert_eq!(reduce(..), Reduction::Over(..))` for an arm of
 /// `consume`). Repo relation also ties such a test by assertion affinity,
 /// because the assertion names the arm's variant, so that tie is refused
-/// the same way. `ripr check` refuses the same assertion per assertion
-/// (RIPR-SPEC-0094, #11552); the repo seam must agree.
+/// the same way. A predicate boundary in the owner (`wait < 5` in `consume`)
+/// is refused alike (#12434). `ripr check` refuses the same assertion per
+/// assertion (RIPR-SPEC-0094, #11552); the repo seam must agree.
 fn credited_related_tests<'a>(
-    seam: &RepoSeam,
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
     related: &[(&'a TestSummary, RelationReason)],
+    refuse_other_function_oracle: bool,
 ) -> Vec<std::borrow::Cow<'a, TestSummary>> {
-    let owner_reach = (seam.kind() == SeamKind::MatchArm)
+    let owner_reach = refuse_other_function_oracle
         .then(|| owner_fn.map(|owner| context.transitive_reach.owner_reach(&owner.name)))
         .flatten();
     related
@@ -497,7 +526,12 @@ fn evidence_for_seam_with_context(
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();
-    let credited_views = credited_related_tests(seam, context, owner_fn, &related_reasons);
+    let refuse = refuses_other_function_oracle(
+        seam,
+        related_reasons.iter().map(|(_, reason)| *reason),
+        owner_fn.is_some(),
+    );
+    let credited_views = credited_related_tests(context, owner_fn, &related_reasons, refuse);
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
@@ -525,7 +559,7 @@ fn evidence_for_seam_with_context(
     // this count is the contradiction gate's completeness authority (#7007).
     let statically_contradicted_related_tests = related
         .iter()
-        .filter(|test| test_has_contradicted_assertion(test, owner_fn))
+        .filter(|test| test_has_contradicted_assertion(test, owner_fn, context.index))
         .count();
 
     // For a changed match arm: which related tests run the arm through their
@@ -2296,14 +2330,21 @@ pub(crate) fn compact_evidence_for_seam(
         .take(COMPACT_RELATED_TEST_LIMIT)
         .map(|(indexed, reason)| (indexed.test, *reason))
         .collect();
-    let credited_views = credited_related_tests(seam, context, owner_fn, &limited_reasons);
+    // The gate reads every ranked relation, not the rank-limited slice, so the
+    // compact view agrees with the full one (#12434).
+    let refuse = refuses_other_function_oracle(
+        seam,
+        related_reasons.iter().map(|(_, reason)| *reason),
+        owner_fn.is_some(),
+    );
+    let credited_views = credited_related_tests(context, owner_fn, &limited_reasons, refuse);
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
     let discriminate = discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let statically_contradicted_related_tests = related
         .iter()
-        .filter(|test| test_has_contradicted_assertion(test, owner_fn))
+        .filter(|test| test_has_contradicted_assertion(test, owner_fn, context.index))
         .count();
 
     let mut evidence = TestGripEvidence {
@@ -2438,7 +2479,7 @@ fn activate_evidence(
     let activation_credited: Vec<&CompactTest<'_>> = related
         .iter()
         .copied()
-        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn))
+        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn, context.index))
         .collect();
     let withheld_activation_tests = related.len() - activation_credited.len();
     let observed_argument_selection = owner_fn
@@ -3405,7 +3446,7 @@ fn compact_activate_evidence(
     let activation_credited: Vec<&CompactTest<'_>> = related
         .iter()
         .copied()
-        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn))
+        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn, context.index))
         .collect();
     let target_affinity_tokens =
         (!requires_concrete_activation_values(seam)).then(|| assertion_target_tokens(seam));
@@ -3888,7 +3929,7 @@ fn oracles_match_sink(
         // the mutant's value, not the owner's (#6026).
         .filter(|oracle| {
             !matches!(
-                exact_value_assertion_verdict_for_test(owner_fn, &oracle.text, test),
+                exact_value_assertion_verdict_for_test(owner_fn, &oracle.text, test, index),
                 ExactValueVerdict::Contradicted { .. }
             )
         })
@@ -4073,7 +4114,7 @@ fn effective_oracle_strength(
     index: &RustIndex,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> (OracleStrength, Option<String>) {
-    match assertion_verdict_for_test(owner_fn, &oracle.text, test) {
+    match assertion_verdict_for_test(owner_fn, &oracle.text, test, index) {
         ExactValueVerdict::Contradicted {
             expected,
             evaluated,
@@ -4097,13 +4138,14 @@ fn assertion_verdict_for_test(
     owner: Option<&FunctionSummary>,
     oracle_text: &str,
     test: &TestSummary,
+    index: &RustIndex,
 ) -> ExactValueVerdict {
     let Some(owner) = owner else {
         return ExactValueVerdict::NotEvaluable;
     };
-    match exact_value_assertion_verdict_for_test(Some(owner), oracle_text, test) {
+    match exact_value_assertion_verdict_for_test(Some(owner), oracle_text, test, index) {
         ExactValueVerdict::NotEvaluable => {
-            boolean_assertion_verdict_for_test(owner, oracle_text, test)
+            boolean_assertion_verdict_for_test(owner, oracle_text, test, index)
         }
         verdict => verdict,
     }
@@ -4125,13 +4167,14 @@ fn assertion_verdict_for_test(
 pub(in crate::analysis) fn test_has_contradicted_assertion(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
 ) -> bool {
     let Some(owner_fn) = owner_fn else {
         return false;
     };
     test.assertions.iter().any(|oracle| {
         matches!(
-            assertion_verdict_for_test(Some(owner_fn), &oracle.text, test),
+            assertion_verdict_for_test(Some(owner_fn), &oracle.text, test, index),
             ExactValueVerdict::Contradicted { .. }
         )
     })
@@ -4158,6 +4201,7 @@ pub(in crate::analysis) fn test_fails_on_both_diff_versions(
     owner: &FunctionSummary,
     before: Option<&str>,
     after: Option<&str>,
+    index: &RustIndex,
 ) -> bool {
     let (Some(before), Some(after)) = (before, after) else {
         return false;
@@ -4173,7 +4217,7 @@ pub(in crate::analysis) fn test_fails_on_both_diff_versions(
     for oracle in &test.assertions {
         if !fails_on_candidate
             && matches!(
-                assertion_verdict_for_test(Some(owner), &oracle.text, test),
+                assertion_verdict_for_test(Some(owner), &oracle.text, test, index),
                 ExactValueVerdict::Contradicted { .. }
             )
         {
@@ -4181,7 +4225,7 @@ pub(in crate::analysis) fn test_fails_on_both_diff_versions(
         }
         if !fails_on_base
             && matches!(
-                assertion_verdict_for_test(Some(&baseline_owner), &oracle.text, test),
+                assertion_verdict_for_test(Some(&baseline_owner), &oracle.text, test, index),
                 ExactValueVerdict::Contradicted { .. }
             )
         {
@@ -4213,7 +4257,7 @@ pub(in crate::analysis) fn contradicted_assertion_reading_is_established(
 ) -> bool {
     test.assertions.iter().all(|assertion| {
         let contradicted = matches!(
-            assertion_verdict_for_test(Some(owner_fn), &assertion.text, test),
+            assertion_verdict_for_test(Some(owner_fn), &assertion.text, test, index),
             ExactValueVerdict::Contradicted { .. }
         );
         !contradicted

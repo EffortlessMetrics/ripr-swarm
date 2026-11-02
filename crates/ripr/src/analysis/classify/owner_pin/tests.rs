@@ -5554,6 +5554,28 @@ fn a_withheld_crate_roots_private_glob_is_routed_by_root() {
 }
 
 #[test]
+fn a_withheld_unparsable_sibling_disables_crate_root_routing() {
+    let packages = BTreeSet::from(["core".to_string()]);
+    let mut withheld = WithheldMacroBindings::default();
+    let root = Path::new("e/src/lib.rs");
+    assert!(!withheld.absorb(
+        root,
+        "use proptest::prelude::*;",
+        &packages,
+        &Default::default()
+    ));
+    assert!(
+        withheld
+            .by_root
+            .get(root)
+            .is_some_and(|names| names.contains("assert_eq"))
+    );
+    withheld.disable_crate_root_routing();
+    assert!(withheld.by_root.is_empty());
+    assert!(withheld.trusted.contains("assert_eq"));
+}
+
+#[test]
 fn a_withheld_first_glob_cannot_certify_field_macro_safety() {
     let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
     let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);

@@ -13729,6 +13729,71 @@ fn proximity_test_pinning_another_function_cannot_grade_a_match_arm_up() -> Resu
     Ok(())
 }
 
+/// #12434: the same refusal for a predicate boundary. `wait < 5` in `consume`
+/// is read through `reduce`, so a proximity test that pins `reduce` lends it no
+/// oracle once a test that runs `consume` is related, while a test that also
+/// calls `consume` still does. With no test tied to `consume` by a relation
+/// that establishes reach, the seam is `activation_unknown` and keeps the
+/// lent oracle: refusing it would read the seam `reachable_unrevealed` and
+/// claim a test runs code nothing is seen calling. Full and compact entry
+/// points must agree on the stage they credit.
+#[test]
+fn proximity_test_pinning_another_function_lends_a_predicate_boundary_no_oracle()
+-> Result<(), String> {
+    let published_for = |extra_tests: &str| -> Result<(Vec<OracleStrength>, bool), String> {
+        let prod = format!(
+            "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
+             pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
+             pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    {extra_tests}\n}}\n"
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let boundary = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary && s.expression().contains("wait < 5")
+            })
+            .ok_or_else(|| "wait < 5 boundary seam present".to_string())?;
+        let full = evidence_for_seam(boundary, &index);
+        let context = CompactGripContext::new(&index);
+        let compact = compact_evidence_for_seam(boundary, &context);
+        let published = full
+            .related_tests
+            .iter()
+            .map(|grip| grip.oracle_strength.clone())
+            .collect();
+        let agree = full.observe.state == compact.observe.state
+            && full.discriminate.state == compact.discriminate.state;
+        Ok((published, agree))
+    };
+    let other = "#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }";
+    let (alone, alone_agree) = published_for(other)?;
+    let (with_runner, runner_agree) = published_for(&format!(
+        "{other} #[test] fn consume_runs() {{ let _ = consume(3); }}"
+    ))?;
+    let (owner_and_other, both_agree) = published_for(
+        "#[test] fn consume_and_reduce() { let _ = consume(3); assert_eq!(reduce(3), Reduction::Over(3)); }",
+    )?;
+    assert!(
+        alone_agree && runner_agree && both_agree,
+        "full and compact agree"
+    );
+    assert_eq!(
+        alone,
+        vec![OracleStrength::Strong],
+        "no runner keeps credit"
+    );
+    assert_eq!(
+        with_runner,
+        vec![OracleStrength::None, OracleStrength::None],
+        "runner without assertion: other-function lends none"
+    );
+    assert_eq!(owner_and_other, vec![OracleStrength::Strong], "owner+other");
+    Ok(())
+}
+
 /// #12053: a repo seam whose one-line arms all hold the same statement
 /// decides nothing an exact assertion can see, so it must not read propagated
 /// (and so not strongly gripped). Differing arms keep the propagated read.
@@ -18228,6 +18293,173 @@ fn seam_behind_an_unresolved_transitive_path_is_opaque_not_ungripped() -> Result
     Ok(())
 }
 
+/// #6621 / RIPR-SPEC-0236 c10: an unreferenced same-named owner must not
+/// borrow another module's unresolved-reach witness.
+#[test]
+fn same_named_unreferenced_owner_stays_ungripped_without_sharing_witness() -> Result<(), String> {
+    let files = [
+        (
+            "src/lib.rs",
+            "mod other;\n\
+             pub fn checkout(amount: u32) -> u32 { route(amount) }\n\
+             fn route(amount: u32) -> u32 { tier(amount) }\n\
+             fn tier(amount: u32) -> u32 { if amount > 100 { amount + 5 } else { amount } }\n",
+        ),
+        (
+            "src/other.rs",
+            "pub(crate) fn tier(amount: u32) -> u32 { if amount > 100 { 1 } else { 0 } }\n",
+        ),
+        (
+            "tests/checkout.rs",
+            "#[test] fn checks_out() { assert_eq!(ripr_fixture::checkout(150), 155); }\n",
+        ),
+    ];
+    let (lib_reach, lib_class) =
+        unresolved_reach_for_owner_file("src/lib.rs", "amount > 100", &files)?;
+    assert_eq!(lib_reach.state, StageState::Opaque, "{lib_reach:?}");
+    assert!(
+        lib_reach.summary.contains("`checks_out`") && lib_reach.summary.contains("checkout"),
+        "lib tier keeps the witness: {}",
+        lib_reach.summary
+    );
+    assert_eq!(lib_class, SeamGripClass::Opaque);
+
+    let (other_reach, other_class) =
+        unresolved_reach_for_owner_file("src/other.rs", "amount > 100", &files)?;
+    assert_eq!(other_reach.state, StageState::No, "{other_reach:?}");
+    assert_eq!(other_class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+/// #6621: inline sibling modules in one file keep distinct reach witnesses and
+/// evaluation order must not share the run-scoped cache entry.
+#[test]
+fn same_file_inline_sibling_owners_keep_distinct_reach_witnesses() -> Result<(), String> {
+    let files = [
+        (
+            "src/lib.rs",
+            "mod a {\n\
+             pub fn route(total: u64) -> u64 { tier(total) }\n\
+             fn tier(total: u64) -> u64 { if total >= 100 { 20 } else { 0 } }\n\
+             }\n\
+             mod b {\n\
+             fn tier(total: u64) -> u64 { if total >= 50 { 99 } else { 0 } }\n\
+             }\n\
+             pub fn run(total: u64) -> u64 { a::route(total) }\n",
+        ),
+        (
+            "tests/run.rs",
+            "#[test] fn runs_large_order() { assert_eq!(ripr_fixture::run(150), 20); }\n",
+        ),
+    ];
+    let (a_reach, a_class) = unresolved_reach_for_owner_file("src/lib.rs", "total >= 100", &files)?;
+    assert_eq!(a_reach.state, StageState::Opaque, "{a_reach:?}");
+    assert!(
+        a_reach.summary.contains("runs_large_order") && a_reach.summary.contains("tier"),
+        "a::tier keeps the transitive witness: {}",
+        a_reach.summary
+    );
+    assert_eq!(a_class, SeamGripClass::Opaque);
+
+    let (b_reach, b_class) = unresolved_reach_for_owner_file("src/lib.rs", "total >= 50", &files)?;
+    assert_eq!(b_reach.state, StageState::No, "{b_reach:?}");
+    assert_eq!(b_class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+/// RIPR-SPEC-0236 example 23: macro-blocked reach names
+/// `rust_macro_reach_unresolved` (#6621).
+#[test]
+fn seam_macro_witness_names_rust_macro_reach_unresolved() -> Result<(), String> {
+    let files = [
+        (
+            "src/lib.rs",
+            "fn tier(total: u64) -> u64 { if total >= 100 { 20 } else { 0 } }\n\
+             macro_rules! priced { ($total:expr) => { tier($total) }; }\n\
+             pub fn run(total: u64) -> u64 { priced!(total) }\n",
+        ),
+        (
+            "tests/run.rs",
+            "#[test] fn runs_large_order() { assert_eq!(ripr_fixture::run(150), 20); }\n",
+        ),
+    ];
+    let (reach, class) = unresolved_reach_for_owner_file("src/lib.rs", "total >= 100", &files)?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains("rust_macro_reach_unresolved"),
+        "macro witness kind must be named: {}",
+        reach.summary
+    );
+    assert!(
+        reach.summary.contains("`runs_large_order`") && reach.summary.contains("priced!"),
+        "macro witness must name the test and macro: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+/// RIPR-SPEC-0236 example 24: a helper chain whose test lives in `src/`
+/// names `rust_transitive_reach_unresolved` (#6621).
+#[test]
+fn seam_src_test_chain_names_rust_transitive_reach_unresolved() -> Result<(), String> {
+    let files = [
+        (
+            "src/lib.rs",
+            "fn tier(total: u64) -> u64 { if total >= 100 { 20 } else { 0 } }\n\
+             fn route(total: u64) -> u64 { tier(total) }\n\
+             pub fn checkout(total: u64) -> u64 { route(total) }\n\
+             #[cfg(test)]\n\
+             mod checkout_tests;\n",
+        ),
+        (
+            "src/checkout_tests.rs",
+            "use super::checkout;\n\
+             #[test]\n\
+             fn checks_out() { assert_eq!(checkout(150), 20); }\n",
+        ),
+    ];
+    let (reach, class) = unresolved_reach_for_owner_file("src/lib.rs", "total >= 100", &files)?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains("rust_transitive_reach_unresolved"),
+        "src-hosted test must name transitive reach: {}",
+        reach.summary
+    );
+    assert!(
+        reach.summary.contains("`checks_out`") && reach.summary.contains("checkout"),
+        "witness must name the test and entry: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+fn unresolved_reach_for_owner_file(
+    owner_file: &str,
+    predicate_fragment: &str,
+    files: &[(&str, &str)],
+) -> Result<(StageEvidence, SeamGripClass), String> {
+    let files: Vec<(PathBuf, &str)> = files
+        .iter()
+        .map(|(path, source)| (PathBuf::from(path), *source))
+        .collect();
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from(owner_file)], &index);
+    let seam = seams
+        .iter()
+        .find(|s| s.expression().contains(predicate_fragment))
+        .ok_or_else(|| format!("seam with `{predicate_fragment}` in {owner_file}: {seams:?}"))?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert!(
+        evidence.related_tests.is_empty(),
+        "fixture must leave the seam without related tests: {:?}",
+        evidence.related_tests
+    );
+    let class = crate::analysis::seam_classification::classify_seam(seam, &evidence);
+    Ok((evidence.reach, class))
+}
+
 #[test]
 fn trait_method_of_a_type_tests_use_is_opaque_not_ungripped() -> Result<(), String> {
     let (reach, class) = unresolved_reach_case(&[
@@ -21831,6 +22063,12 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
     for turbofish in [
         "Result::map_err::<_, _>(parse(\"1\"), |_| Fault::Odd)",
         "Result::<u8, Fault>::map_err(parse(\"1\"), |_| Fault::Odd)",
+        "Result::or(parse(\"1\"), Err(Fault::Odd))",
+        "(Result::or(parse(\"1\"), Err(Fault::Odd)))",
+        "parse(\"1\").or(Err(Fault::Odd))",
+        "parse(\"1\").or((Err(Fault::Odd)))",
+        "parse(\"1\").or(Err (Fault::Odd))",
+        "parse(\"1\").or(Err/* c */(Fault::Odd))",
         "((Result::map_err(parse(\"1\"), |_| Fault::Odd)))",
         "parse(\"1\").map_err::<Fault, _>(|_| Fault::Odd)",
     ] {
@@ -21841,6 +22079,18 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
             mapped_turbofish.0,
             StageState::Yes,
             "a turbofish map_err is not a pin on the owner's error: {turbofish}"
+        );
+    }
+    for spelled in [
+        "assert_eq!(parse(\"1\").or(Err (Fault::Odd)), Err(Fault::Odd));",
+        "assert_eq!(parse(\"1\").or(Err/* c */(Fault::Odd)), Err(Fault::Odd));",
+        "assert_eq!(parse(\"1\").or(Err(Fault::Odd)), Err(Fault::Odd));",
+    ] {
+        let spaced = read(&format!("#[test] fn odd() {{ {spelled} }}"))?;
+        assert_ne!(
+            spaced.0,
+            StageState::Yes,
+            "an Err constructor spelled with spacing or a comment is still the test's own error: {spelled}"
         );
     }
     let grouped =
@@ -21865,5 +22115,99 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
         StageState::Yes,
         "an opaque expected value is not a variant pin"
     );
+    Ok(())
+}
+
+/// Residual name-only false credits and missing pins tracked in #8917.
+#[test]
+#[rustfmt::skip]
+fn inherent_receiver_name_only_residual_gaps_issue_8917() -> Result<(), String> {
+    let site = site!("}");
+    let cases: Vec<(String, &str, bool)> = vec![
+        (
+            format!("{site}\nfn Site() -> Cache {{ Cache }}"),
+            "assert_eq!(Site().area(), 1);",
+            false,
+        ),
+        (
+            format!("{site}\nimpl Site {{ pub fn Make() -> Cache {{ Cache }} }}"),
+            "assert_eq!(Site::Make().area(), 1);",
+            false,
+        ),
+        (
+            format!(
+                "{site}\nfn fixture() -> Site {{ Site {{ v: 1 }} }}\n#[cfg(test)]\nmod tests {{\n    use ext::fixture;\n    #[test]\n    fn t() {{ assert_eq!(fixture().area(), 1); }}\n}}\n"
+            ),
+            "__mod_tests__",
+            false,
+        ),
+        (
+            site.to_string(),
+            "type Site = Cache;\n    assert_eq!(Site::new().area(), 1);",
+            false,
+        ),
+        (
+            "pub struct Ledger { balance: u32 }\nimpl Ledger {\n    pub fn new() -> Self { Self { balance: 0 } }\n    pub fn m09(&self) -> u32 { self.balance + 9 }\n}\n".to_string(),
+            "__ledger_m09__",
+            false,
+        ),
+        (
+            format!("{site}\nimpl Other<x::From<u8>> for Site {{ fn from(_: u8) -> Self {{ Site {{ v: 0 }} }} }}"),
+            "assert_eq!(Site::from(1).area(), 1);",
+            false,
+        ),
+        (
+            "#[cfg_attr(test, derive(Default))]\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }".to_string(),
+            "assert_eq!(Site::default().area(), 1);",
+            true,
+        ),
+        (
+            "pub struct Site { v: u32 }\nimpl From<String> for Site { fn from(_: String) -> Self { Site { v: 1 } } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }".to_string(),
+            "assert_eq!(Site::from(String::new()).area(), 1);",
+            true,
+        ),
+    ];
+    for (source, call, expected) in cases {
+        if call == "__mod_tests__" {
+            let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source.as_str())])?;
+            let owner = index
+                .functions()
+                .iter()
+                .find(|f| f.name == "area" && f.item.has_self_param)
+                .ok_or("missing owner")?;
+            let caller = index
+                .tests()
+                .iter()
+                .find(|t| t.name == "t")
+                .ok_or("missing test")?;
+            assert_eq!(
+                crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+                expected,
+                "mod tests fixture import over `{source}`"
+            );
+            continue;
+        }
+        if call == "__ledger_m09__" {
+            let call = "let book = Ledger::new();\n    let book = String::new();\n    assert_eq!(book.m09(), 9);";
+            let (index, _) = receiver_rule_parts(source.as_str(), call)?;
+            let owner = index
+                .functions()
+                .iter()
+                .find(|f| f.name == "m09" && f.item.has_self_param)
+                .ok_or("missing m09 owner")?;
+            let caller = index.tests().iter().find(|t| t.name == "t").ok_or("missing test")?;
+            assert_eq!(
+                crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+                expected,
+                "live-shadowed Ledger receiver"
+            );
+            continue;
+        }
+        assert_eq!(
+            receiver_resolves(source.as_str(), call)?,
+            expected,
+            "call `{call}` over `{source}`"
+        );
+    }
     Ok(())
 }

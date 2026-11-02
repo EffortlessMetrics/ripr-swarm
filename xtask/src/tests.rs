@@ -10,11 +10,13 @@ mod evidence_promotion_semantics;
 mod fixture_cache;
 mod fixture_variants;
 mod operand_callee_honesty;
+mod packaged_repair_receipt;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
 #[cfg(windows)]
 mod review_conversations;
 mod rust_corpus_projection;
+mod traceability_planning;
 
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
@@ -25130,6 +25132,55 @@ fn local_context_findings_are_sorted_deterministically() {
     findings.sort();
     assert_eq!(findings[0].path, "a.rs");
     assert_eq!(findings[1].path, "b.rs");
+}
+
+#[test]
+fn ripr_spec_0140_cli_smoke_trace_reference_matches_live_test_fn() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let manifest_path = root.join(".ripr/traceability.toml");
+    let (behaviors, manifest_violations) = super::load_traceability_behaviors(&manifest_path)?;
+    if !manifest_violations.is_empty() {
+        return Err(format!(
+            "manifest parse violations: {manifest_violations:?}"
+        ));
+    }
+    let behavior = behaviors
+        .iter()
+        .find(|entry| entry.id.as_deref() == Some("RIPR-SPEC-0140"))
+        .ok_or_else(|| "RIPR-SPEC-0140 missing from .ripr/traceability.toml".to_string())?;
+    if let Some(stale) = behavior.tests.iter().find(|entry| {
+        entry.contains("crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain")
+            && entry.contains("byte_identical")
+    }) {
+        return Err(format!(
+            "stale renamed test still referenced in manifest: {stale}"
+        ));
+    }
+    let reference = behavior
+        .tests
+        .iter()
+        .find(|entry| {
+            entry.contains("crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain")
+        })
+        .ok_or_else(|| {
+            "RIPR-SPEC-0140 missing cli_smoke check-artifact reuse test reference".to_string()
+        })?;
+    let (path_text, suffix) = super::split_trace_reference(reference);
+    let Some(symbol) = suffix else {
+        return Err(format!(
+            "expected `::symbol` proof reference, got `{reference}`"
+        ));
+    };
+    let path = root.join(path_text);
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| format!("read `{path_text}` for symbol audit: {error}"))?;
+    let needle = format!("fn {symbol}");
+    if !text.contains(&needle) {
+        return Err(format!(
+            "manifest references `{reference}` but `{path_text}` has no `{needle}` (#2345 live-manifest audit)"
+        ));
+    }
+    Ok(())
 }
 
 #[test]

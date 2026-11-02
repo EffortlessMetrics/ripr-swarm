@@ -36,18 +36,21 @@ The default contract is:
   conservative defaults and is reported as such by `ripr doctor`.
 - `ripr init` materializes repo policy. It does not unlock the useful
   experience.
-- `ripr init --ci` accepts only `github`. Unknown providers use the shared
+- `ripr init --ci` accepts `github` and `gitlab`. Unknown providers use the shared
   CLI value-suggestion rules: nearby values such as `githb`, `githbu`, and
-  `gitlab` name `github`; distant values such as `gitlab-ci` and
-  `zzzzzzzzzzzz` list the accepted provider without a suggestion. A hint
+  `gitlab` name the closest accepted provider; distant values such as `gitlab-ci` and
+  `zzzzzzzzzzzz` list accepted providers without a suggestion. A hint
   never accepts or executes the rejected spelling: unknown providers exit 2,
   write the error and accepted list to stderr, leave stdout empty, and create
   no files. A missing provider retains the missing-value refusal. Valid
-  `github` parsing, preview, and generated file contents remain unchanged.
+  `github` and `gitlab` parsing, preview, and generated file contents remain unchanged.
 - With a lossless root, successful `ripr init --ci github` names the generated
   workflow and tells the adopter to review and commit it, then open or update
-  a pull request and read the advisory job summary. Blocking gates remain opt-in through the
-  `RIPR_GATE_MODE` repository variable. Config-only and dry-run output must
+  a pull request and read the advisory job summary. Successful `ripr init --ci gitlab`
+  names `.gitlab-ci.yml`, states the advisory `allow_failure` posture, and tells
+  the adopter to open or update a merge request and download `target/ripr/**`
+  job artifacts. Blocking gates remain opt-in through the
+  `RIPR_GATE_MODE` repository variable on GitHub only. Config-only and dry-run output must
   not imply that a workflow was adopted.
 - Successful `ripr init` follow-up commands for `doctor` and `check` bind
   the selected root, including a relative or implicit root, so copying them
@@ -582,10 +585,10 @@ then ripr exits with an actionable message and leaves the file unchanged.
 ```text
 Given an empty selected repository,
 when a user runs ripr init --ci githb,
-then ripr exits 2 with a github suggestion and Accepted: github on stderr,
+then ripr exits 2 with a github suggestion and Accepted: github, gitlab on stderr,
 leaves stdout empty, and creates neither config nor workflow files.
-With gitlab-ci instead, the same refusal has no suggestion.
-With github, the existing preview and generated files retain their contract.
+With gitlab-ci instead, the same refusal lists both accepted providers without a suggestion.
+With github or gitlab, the existing preview and generated files retain their contract.
 ```
 
 ### Pilot points at one next action
@@ -720,16 +723,22 @@ repository as pilot's scope, and pilot-summary.json records current_change
 state no_change or unavailable.
 ```
 
-### Pilot labels an assertion with placeholders as a shape
+### Human handoff labels an assertion with placeholders as a shape
 
 A suggested assertion that carries `/* ... */` placeholders for values only the
 developer knows (for example `assert_eq!(total(/* boundary input where a >= b
-*/), /* expected */)`) is printed in the pilot human output as
+*/), /* expected */)`) is printed in human handoff output as
 `assertion shape: ...`, followed by a note to replace each `/* ... */` comment
 with a real value from the developer's test before using it. Any other
-assertion text keeps its `assertion:` label and gets no note. The structured
-pilot packets keep their existing fields; the only value that changes is the
-boundary placeholder text below (#9244, #11023).
+assertion text keeps its existing label and gets no note. The same fill-in note
+follows other human handoff lines that print the placeholder string under a
+different field name (`Focused proof intent`, Markdown `Assertion shape`,
+repair-summary `assertion shape`). Human output never labels that string an
+`assertion template`. Structured packet fields and keys stay unchanged; this
+slice does not rewrite the placeholder string itself (#9244). The
+equality-boundary placeholder wording is #11023 and is not this slice. The
+editor code-action brief's `Assertion guidance:` line is owned by the
+agent-seam-packet renderer and is not part of this handoff-note slice.
 
 The boundary placeholder describes the equality value the missing discriminator
 asks for (#11023): when the changed predicate is a simple strict comparison
@@ -828,8 +837,12 @@ baseline failure policy.
 
 Current tests and reports that support the contract:
 
-- `crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::placeholder_shape_is_labelled_a_shape_with_a_fill_in_note`
-- `crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::concrete_assertion_keeps_its_label_and_gets_no_note`
+- `crates/ripr/src/output/placeholder_assertion.rs::tests::placeholder_shape_is_labelled_a_shape_with_a_fill_in_note`
+- `crates/ripr/src/output/placeholder_assertion.rs::tests::concrete_assertion_keeps_its_label_and_gets_no_note`
+- `crates/ripr/src/output/placeholder_assertion.rs::tests::empty_and_not_applicable_text_are_not_placeholders`
+- `crates/ripr/src/output/placeholder_assertion.rs::tests::a_lone_block_comment_opener_is_enough_to_warn`
+- `crates/ripr/src/lsp/hover.rs::seam_hover_tests::given_seam_hover_when_rendered_then_suggested_test_shape_is_visible`
+- `crates/ripr/src/cli/commands/agent.rs::before_phase_stdout_tests::placeholder_assertion_in_summary_gets_a_fill_in_note`
 - `crates/ripr/src/cli/parse.rs::tests::given_format_strings_when_parse_format_then_returns_expected_result` (unknown format error names common formats and the exhaustive pointer; near miss still suggests one correction)
 - `crates/ripr/src/cli/mod.rs::tests::run_dispatches_check_parse_errors`
 - `crates/ripr/src/cli/mod.rs::tests::run_treats_a_repeated_global_verbose_as_one_enable`

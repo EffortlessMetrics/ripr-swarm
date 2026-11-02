@@ -516,6 +516,16 @@ use workspace::{line_is_in_ranges, owner_for_changed_line, visit_workspace_with_
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct PythonAdapter;
 
+/// Publish one production Python finding after the shared witness retain hook
+/// (#4790 / #6426 parity with Rust `push_retained_finding`).
+pub(in crate::analysis::language::python) fn publish_production_finding(
+    findings: &mut Vec<Finding>,
+    finding: Finding,
+) {
+    crate::analysis::witness::retain_finding_projection(&finding);
+    findings.push(finding);
+}
+
 /// Whether `text` holds `name` as a whole Python identifier.
 fn mentions_python_name(text: &str, name: &str) -> bool {
     let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
@@ -659,6 +669,11 @@ struct PythonOwner {
     /// #12182). `false` for every other owner and for any call whose value may
     /// flow on, which keeps today's reading.
     nested_result_discarded: bool,
+    /// The module's stdlib `click` import alias is bound exactly once at module
+    /// scope (`cli_subcommand.rs`, #9226). `cli_runner_invoke` and transparent
+    /// click-alias decorators require this; reassigned aliases stay fail-closed.
+    #[serde(default)]
+    trusted_stdlib_click_alias: bool,
 }
 
 /// One declared parameter of a Python function owner.
@@ -2134,7 +2149,7 @@ impl PythonAdapter {
                         reidentify_python_finding(&mut finding, &normalized);
                         value_origins.rebind_probe(&original, &finding.probe);
                     }
-                    findings.push(finding);
+                    publish_production_finding(&mut findings, finding);
                 }
             }
             classify::number_colliding_candidates(
@@ -2163,7 +2178,9 @@ impl PythonAdapter {
                 &mut value_origins,
                 &mut related_memo,
             );
-            findings.extend(deleted);
+            for finding in deleted {
+                publish_production_finding(&mut findings, finding);
+            }
         }
         // Freeing the run's facts takes ~0.3 s on one thread for a large
         // workspace (#10914: pandas, ~23k tests). Nothing in the result
@@ -2354,6 +2371,9 @@ mod route_identity_tests;
 
 #[cfg(test)]
 mod row_miss_tests;
+
+#[cfg(test)]
+pub(crate) use row_miss_tests::{python_direct_and_advisory_finding, python_miss_matrix_findings};
 
 #[cfg(test)]
 mod tests;

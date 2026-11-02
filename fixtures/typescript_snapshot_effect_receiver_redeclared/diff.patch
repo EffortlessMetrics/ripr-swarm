@@ -1,0 +1,13 @@
+diff --git a/src/lib.ts b/src/lib.ts
+index 0000000..1111111 100644
+--- a/src/lib.ts
++++ b/src/lib.ts
+@@ -2,7 +2,7 @@ export class Outbox {
+     private lines: string[] = [];
+ 
+     send(id: number): string[] {
+-        this.lines.push("sent " + id);
++        this.lines.push("shipped " + id);
+         return this.lines;
+     }
+ }
