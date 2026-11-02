@@ -21771,3 +21771,91 @@ fn given_integration_test_when_single_line_nested_module_reaches_rival_through_s
     );
     Ok(())
 }
+
+/// #12266: a direct owner test that compares the inline `.unwrap_err()` result
+/// with the seam's own variant discriminates an `ErrorVariant` seam, as the
+/// bound-variable spelling already did. A different variant, or an opaque
+/// expected value, does not. Pinned through the full and compact paths.
+#[test]
+fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<(), String> {
+    let read = |test: &str| -> Result<(StageState, StageState), String> {
+        let prod = format!(
+            "#[derive(Debug, PartialEq)]\npub enum Fault {{ Odd, Bad }}\n\
+             pub fn parse(text: &str) -> Result<u8, Fault> {{\n    if text.len() % 2 != 0 {{\n        return Err(Fault::Odd);\n    }}\n    Ok(1)\n}}\n\
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    {test}\n}}\n"
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ErrorVariant && s.expression().contains("Odd"))
+            .ok_or_else(|| "error-variant seam present".to_string())?;
+        let full = evidence_for_seam(seam, &index);
+        let compact = compact_evidence_for_seam(seam, &CompactGripContext::new(&index));
+        assert_eq!(
+            full.discriminate.state, compact.discriminate.state,
+            "full and compact agree"
+        );
+        Ok((full.discriminate.state, compact.discriminate.state))
+    };
+    let pinned = read("#[test] fn odd() { assert_eq!(parse(\"1\").unwrap_err(), Fault::Odd); }")?;
+    assert_eq!(pinned.0, StageState::Yes, "inline pin of the seam variant");
+    let reversed = read("#[test] fn odd() { assert_eq!(Fault::Odd, parse(\"1\").unwrap_err()); }")?;
+    assert_eq!(reversed.0, StageState::Yes, "operands reversed");
+    let other_variant =
+        read("#[test] fn odd() { assert_eq!(parse(\"1\").unwrap_err(), Fault::Bad); }")?;
+    assert_ne!(
+        other_variant.0,
+        StageState::Yes,
+        "a different variant does not discriminate the seam"
+    );
+    // `map_err` replaces the error, so the asserted value no longer depends on
+    // what the owner returned (Devin finding on #12290).
+    let mapped = read(
+        "#[test] fn odd() { assert_eq!(parse(\"1\").map_err(|_| Fault::Odd).unwrap_err(), Fault::Odd); }",
+    )?;
+    assert_ne!(
+        mapped.0,
+        StageState::Yes,
+        "a mapped error is not a pin on the owner's error"
+    );
+    let mapped_ufcs = read(
+        "#[test] fn odd() { assert_eq!(Result::map_err(parse(\"1\"), |_| Fault::Odd).unwrap_err(), Fault::Odd); }",
+    )?;
+    assert_ne!(
+        mapped_ufcs.0,
+        StageState::Yes,
+        "the UFCS map_err spelling is not a pin on the owner's error either"
+    );
+    for turbofish in [
+        "Result::map_err::<_, _>(parse(\"1\"), |_| Fault::Odd)",
+        "Result::<u8, Fault>::map_err(parse(\"1\"), |_| Fault::Odd)",
+        "((Result::map_err(parse(\"1\"), |_| Fault::Odd)))",
+        "parse(\"1\").map_err::<Fault, _>(|_| Fault::Odd)",
+    ] {
+        let mapped_turbofish = read(&format!(
+            "#[test] fn odd() {{ assert_eq!({turbofish}.unwrap_err(), Fault::Odd); }}"
+        ))?;
+        assert_ne!(
+            mapped_turbofish.0,
+            StageState::Yes,
+            "a turbofish map_err is not a pin on the owner's error: {turbofish}"
+        );
+    }
+    let grouped =
+        read("#[test] fn odd() { assert_eq!((parse(\"1\").unwrap_err()), Fault::Odd); }")?;
+    assert_eq!(grouped.0, StageState::Yes, "grouped error read");
+    let expected_err =
+        read("#[test] fn odd() { assert_eq!(parse(\"1\").expect_err(\"odd\"), Fault::Odd); }")?;
+    assert_eq!(expected_err.0, StageState::Yes, "expect_err spelling");
+    let opaque = read(
+        "#[test] fn odd() { let want = Fault::Odd; assert_eq!(parse(\"1\").unwrap_err(), want); }",
+    )?;
+    assert_ne!(
+        opaque.0,
+        StageState::Yes,
+        "an opaque expected value is not a variant pin"
+    );
+    Ok(())
+}

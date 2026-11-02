@@ -750,7 +750,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-release-targets",
         "package-qualification-gate --receipt <path>",
         "size-scaling --binary <path>",
-        "warm-ab --baseline <path> --candidate <path> --tree <dir> --diff <file>",
+        "warm-ab --baseline <path> --candidate <path> --tree <dir> --diff <file> [--control-slowdown <ratio>]",
         "termination-qualification --binary <path>",
         "termination-removal-builds",
         "qualify-python-wheelhouse --receipts <file-or-dir>",
@@ -2510,7 +2510,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Runs ripr check on generated Rust, Python and TypeScript files (production and test, one-line and one-item-per-line) at 1x, 2x and 4x a base size in owned disposable workspaces, and fails when wall time grows faster than the size allows, when the largest step exceeds an absolute ceiling, or when any step times out, ends on a signal or exits unexpectedly. Wall time only; peak memory is not measured. Does not change product behavior or qualify a release.",
         ),
         command_entry(
-            "warm-ab --baseline <path> --candidate <path> --tree <dir> --diff <file>",
+            "warm-ab --baseline <path> --candidate <path> --tree <dir> --diff <file> [--control-slowdown <ratio>]",
             "non_mutating_check",
             "target/ripr/reports/warm-ab-<pin>.{json,md}",
             false,

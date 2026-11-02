@@ -1,0 +1,12 @@
+diff --git a/src/tally.py b/src/tally.py
+index 0000000..1111111 100644
+--- a/src/tally.py
++++ b/src/tally.py
+@@ -1,6 +1,6 @@
+ def tally():
+     def inner(m):
+-        return m + 1
++        return m + 2
+ 
+     inner(3)
+     return 2

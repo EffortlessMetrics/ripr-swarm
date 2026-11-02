@@ -2926,3 +2926,131 @@ fn an_ancestor_package_init_binding_other_names_keeps_the_receiver_credited() ->
     }
     Ok(())
 }
+
+#[test]
+fn package_init_prefilter_skips_inert_sources_without_parsing() {
+    let init = Path::new("pkg/__init__.py");
+    let skipped = [
+        "",
+        "   \n\t\n",
+        "# just a comment\n",
+        "#!/usr/bin/env python3\n# coding: utf-8\n",
+        "    # indented comment only\n",
+        "\"\"\"package docs\"\"\"\n",
+        "'''package docs'''\n",
+        "\"docs\"\n",
+        "r\"\"\"raw docs\"\"\"\n",
+        "r\"docs \\x\"\n",
+        "# comment\n\n\"\"\"docs\"\"\"\n# trailing\n",
+    ];
+    for source in skipped {
+        let (shadows, opaque, parsed) =
+            super::module_value::package_init_submodule_facts_parsed_for_test(init, source);
+        assert!(
+            shadows.is_empty() && !opaque && !parsed,
+            "prefilter skip {source:?}: shadows={shadows:?} opaque={opaque} parsed={parsed}"
+        );
+        let parsed_facts =
+            super::module_value::package_init_submodule_facts_from_parse_for_test(init, source);
+        assert_eq!(
+            parsed_facts,
+            (shadows, opaque),
+            "prefilter skip disagrees with parse for {source:?}"
+        );
+    }
+}
+
+#[test]
+fn package_init_prefilter_parses_sources_that_may_bind() {
+    let init = Path::new("pkg/__init__.py");
+    let must_parse = [
+        "from .a import *\n",
+        "x = 1\n",
+        "def a():\n    return 1\n",
+        "from . import a as b\n",
+        "# comment\n    x = 1\n",
+        "s = \"#\"\n",
+        "\"\"\"docs \\\"\"\"\n# \"\"\"; table = 1\n",
+        "ur\"docs\"\n",
+        "\"docs \\x\"\n",
+        "\"docs\\n\"\n",
+        "\"docs \\N{NotAName}\"\n",
+    ];
+    for source in must_parse {
+        let (shadows, opaque, parsed) =
+            super::module_value::package_init_submodule_facts_parsed_for_test(init, source);
+        assert!(parsed, "must parse {source:?}");
+        let parsed_facts =
+            super::module_value::package_init_submodule_facts_from_parse_for_test(init, source);
+        assert_eq!(
+            parsed_facts,
+            (shadows, opaque),
+            "parsed facts drifted for {source:?}"
+        );
+    }
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(
+            init,
+            "from .a import *\n",
+        );
+    assert!(parsed && opaque && shadows.is_empty(), "{shadows:?}");
+    let (shadows, opaque, _) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, "x = 1\n");
+    assert!(!opaque && shadows.contains("x"), "{shadows:?}");
+    let (shadows, opaque, _) = super::module_value::package_init_submodule_facts_parsed_for_test(
+        init,
+        "def a():\n    return 1\n",
+    );
+    assert!(!opaque && shadows.contains("a"), "{shadows:?}");
+    let (shadows, opaque, _) = super::module_value::package_init_submodule_facts_parsed_for_test(
+        init,
+        "from . import a as b\n",
+    );
+    assert!(!opaque && shadows.contains("b"), "{shadows:?}");
+    let (shadows, opaque, _) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, "s = \"#\"\n");
+    assert!(!opaque && shadows.contains("s"), "{shadows:?}");
+    let escaped_doc = "\"\"\"docs \\\"\"\"\n# \"\"\"; table = 1\n";
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, escaped_doc);
+    assert!(
+        parsed && !opaque && shadows.contains("table"),
+        "{shadows:?}"
+    );
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, "ur\"docs\"\n");
+    assert!(parsed && opaque && shadows.is_empty(), "{shadows:?}");
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, "\"docs \\x\"\n");
+    assert!(parsed && opaque && shadows.is_empty(), "{shadows:?}");
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, "\"docs\\n\"\n");
+    assert!(parsed && !opaque && shadows.is_empty(), "{shadows:?}");
+}
+
+#[test]
+fn package_init_prefilter_skips_parse_across_many_inert_inits() {
+    let init = Path::new("pkg/__init__.py");
+    let mut parsed = 0usize;
+    for i in 0..400 {
+        let source = if i % 2 == 0 { "" } else { "# pkg\n" };
+        let (_, _, did_parse) =
+            super::module_value::package_init_submodule_facts_parsed_for_test(init, source);
+        if did_parse {
+            parsed += 1;
+        }
+    }
+    assert_eq!(parsed, 0, "inert package inits must not reparse");
+}
+
+#[test]
+fn package_init_prefilter_ignores_non_init_files() {
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(
+            Path::new("pkg/mod.py"),
+            "from .a import *\n",
+        );
+    assert!(shadows.is_empty(), "{shadows:?}");
+    assert!(!opaque);
+    assert!(!parsed);
+}

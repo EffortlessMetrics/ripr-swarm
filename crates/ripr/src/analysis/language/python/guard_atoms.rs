@@ -72,14 +72,17 @@ pub(super) fn guard_condition_holds(
             owner.start_line,
         );
     }
+    // One false conjunct makes the conjunction false whatever an unreadable
+    // one says (#11889), so keep reading past it.
+    let mut unreadable = false;
     for conjunct in conjuncts {
         match reader.conjunct(conjunct.trim()) {
             Some(true) => {}
             Some(false) => return Some(false),
-            None => return None,
+            None => unreadable = true,
         }
     }
-    Some(true)
+    (!unreadable).then_some(true)
 }
 
 struct Reader<'a> {

@@ -1011,6 +1011,7 @@ const SOURCE_TEXT_AFTER_COLON_PREFIXES: &[&str] = &[
     "No complete owner-bound propagation witness found for ",
     "Propagation witness is incomplete for ",
     "Related tests appear to reach ",
+    "No test is seen calling ",
     "Related tests exercise the wrapper seam's converted callee",
     "Detected test input literal matching changed boundary",
 ];
@@ -1021,7 +1022,7 @@ const SOURCE_TEXT_AFTER_COLON_PREFIXES: &[&str] = &[
 /// hover shows "check" where the producer wrote "discriminator". Whole words
 /// only, so identifiers like `missing_discriminators` are never touched.
 ///
-/// Backticked spans and the source-text tail of the known producer forms
+/// Backticked spans, bracketed literal lists and the source-text tail of the known producer forms
 /// above are never rewritten: a hover must not tell someone to look for a name
 /// their code does not contain. An unbalanced backtick means source text may
 /// hold a lone backtick, so the summary is then left verbatim.
@@ -1040,6 +1041,7 @@ fn plain_hover_summary(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut word = String::new();
     let mut in_code = false;
+    let mut bracket_depth = 0usize;
     let flush = |word: &mut String, out: &mut String, verbatim: bool| {
         match word.as_str() {
             _ if verbatim => out.push_str(word),
@@ -1058,14 +1060,26 @@ fn plain_hover_summary(text: &str) -> String {
         }
         // `word` ended just before `at`, so the tail test uses its start.
         let word_start = at - word.len();
-        flush(&mut word, &mut out, in_code || word_start >= tail_start);
-        if c == '`' {
-            in_code = !in_code;
+        flush(
+            &mut word,
+            &mut out,
+            in_code || bracket_depth > 0 || word_start >= tail_start,
+        );
+        match c {
+            '`' => in_code = !in_code,
+            // The producer lists literals as `[a, b]`; they are source text.
+            '[' if !in_code => bracket_depth += 1,
+            ']' if !in_code => bracket_depth = bracket_depth.saturating_sub(1),
+            _ => {}
         }
         out.push(c);
     }
     let word_start = text.len() - word.len();
-    flush(&mut word, &mut out, in_code || word_start >= tail_start);
+    flush(
+        &mut word,
+        &mut out,
+        in_code || bracket_depth > 0 || word_start >= tail_start,
+    );
     out
 }
 
@@ -1878,6 +1892,28 @@ mod seam_hover_tests {
             language_view: None,
             rust_diagnostic_origins: Default::default(),
         }
+    }
+
+    #[test]
+    fn gap_diagnostic_hover_renders_the_python_stop_condition_in_plain_words() -> Result<(), String>
+    {
+        // The real producer sentence (pinned against the producer in
+        // `python_repair_card`'s drift test), rendered through the hover.
+        let mut diagnostic = sample_gap_diagnostic();
+        if let Some(data) = diagnostic.data.as_mut() {
+            data["repair_route"]["stop_conditions"] = serde_json::json!([
+                "Stop if the expected value for the missing discriminator is ambiguous."
+            ]);
+        }
+        let hover = diagnostic_hover_response(&diagnostic);
+        let md = extract_markup(&hover)?;
+        if !md.contains("Stop if the expected value for the missing check is ambiguous.") {
+            return Err(format!("plain stop condition missing from hover:\n{md}"));
+        }
+        if md.contains("missing discriminator") {
+            return Err(format!("jargon stop condition reached the hover:\n{md}"));
+        }
+        Ok(())
     }
 
     #[test]
@@ -2939,6 +2975,51 @@ mod plain_hover_summary_tests {
             plain_hover_summary("no strong discriminator for `x"),
             "no strong discriminator for `x"
         );
+    }
+
+    #[test]
+    fn protects_bracketed_literals_and_name_token_tails() {
+        assert_eq!(
+            plain_hover_summary(
+                "Tests have literals [\"discriminator\", 3], but no detected value matches changed boundary [4]; no discriminator found"
+            ),
+            "Tests have literals [\"discriminator\", 3], but no detected value matches changed boundary [4]; no check found"
+        );
+        assert_eq!(
+            plain_hover_summary(
+                "No test is seen calling f; tests share only its file or a name token: discriminator_ok, discriminator"
+            ),
+            "No test is seen calling f; tests share only its file or a name token: discriminator_ok, discriminator"
+        );
+    }
+
+    #[test]
+    fn every_source_text_prefix_still_appears_in_a_producer() {
+        // The prefix list is a reviewed allowlist; if a producer rewords its
+        // summary the entry stops protecting anything, so fail loudly (#12284).
+        // Production code only: test fixtures in the same files repeat the
+        // wording and would mask a production reword.
+        let producers = [
+            include_str!("../analysis/classify/flow.rs"),
+            include_str!("../analysis/classify/reach.rs"),
+            include_str!("../analysis/classify/infection.rs"),
+            include_str!("../domain/classification.rs"),
+        ]
+        .map(|source| {
+            // Cut at the real test module: producers carry earlier item-level
+            // `#[cfg(test)]` attributes that a bare first-match cut would hit.
+            source
+                .split("#[cfg(test)]\nmod tests {")
+                .next()
+                .unwrap_or(source)
+        })
+        .join("\n");
+        for prefix in super::SOURCE_TEXT_AFTER_COLON_PREFIXES {
+            assert!(
+                producers.contains(prefix),
+                "no producer emits {prefix:?}; update SOURCE_TEXT_AFTER_COLON_PREFIXES"
+            );
+        }
     }
 
     #[test]

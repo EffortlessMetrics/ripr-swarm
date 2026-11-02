@@ -64,6 +64,11 @@ import {
   type AttemptInventoryRow,
   type AttemptStatusPresentation
 } from './attemptStatus';
+import {
+  CRASH_RECOVERY_SESSION_BUDGET,
+  CRASH_RECOVERY_STABLE_MS,
+  CrashRecoveryController
+} from './crashRecovery';
 
 // Re-export for backward compatibility: the picker test imports these symbols
 // from '../../src/client'. They now live in workspaceHelpers.ts (#2553).
@@ -137,9 +142,9 @@ const COPY_INSTALL_COMMAND_ACTION = 'Copy Install Command';
 const RETRY_ACTION = 'Retry';
 /** Action on the mid-session crash message; runs `ripr.restartServer`. */
 export const SERVER_CRASH_RESTART_ACTION = 'Restart Server';
-/** Automatic `CloseAction.Restart` budget inside `SERVER_CRASH_RESTART_WINDOW_MS`. */
-export const SERVER_CRASH_RESTART_LIMIT = 4;
-const SERVER_CRASH_RESTART_WINDOW_MS = 3 * 60 * 1000;
+/** Failed-session budget before typed `circuit_open` (#1744). */
+export const SERVER_CRASH_RESTART_LIMIT = CRASH_RECOVERY_SESSION_BUDGET;
+export { CRASH_RECOVERY_SESSION_BUDGET, CRASH_RECOVERY_BACKOFF_MS, CRASH_RECOVERY_STABLE_MS } from './crashRecovery';
 const SERVER_CRASH_MESSAGE =
   'The ripr server stopped unexpectedly and will not restart on its own. Restart the server to continue analysis.';
 
@@ -509,8 +514,10 @@ export class RiprClientController {
   private client: RiprLanguageClient | undefined;
   private server: ResolvedServer | undefined;
   private readonly notificationDisposables = new Map<RiprLanguageClient, vscode.Disposable[]>();
-  private crashRestartAtMs: number[] = [];
-  private lastCrashCloseAction: CloseAction | undefined;
+  private readonly crashRecovery: CrashRecoveryController;
+  /** Dedupes duplicate end signals for one session attempt. */
+  private crashEndChargedForAttempt = false;
+  private crashStabilityTimer: ReturnType<typeof setTimeout> | undefined;
   private stoppingClient = false;
   private receivedTypedAnalysisStatus = false;
   private typedAnalysisStatusState: RiprAnalysisStatusPayload['state'] | undefined;
@@ -584,8 +591,10 @@ export class RiprClientController {
     private readonly output: vscode.LogOutputChannel,
     private readonly runtime: RiprClientRuntime = defaultRuntime,
     private readonly statusBar?: vscode.StatusBarItem,
-    private readonly attemptStatusBar?: vscode.StatusBarItem
+    private readonly attemptStatusBar?: vscode.StatusBarItem,
+    crashRecovery?: CrashRecoveryController
   ) {
+    this.crashRecovery = crashRecovery ?? new CrashRecoveryController();
     this.updateStatus(this.status);
   }
 
@@ -929,8 +938,35 @@ export class RiprClientController {
   }
 
   async restart(): Promise<void> {
+    this.resetCrashRecoveryForExplicitRestart();
     await this.stop();
     await this.start();
+  }
+
+  /** User-initiated restart clears an open crash-recovery circuit (#1744). */
+  resetCrashRecoveryForExplicitRestart(): void {
+    this.clearCrashStabilityTimer();
+    this.crashRecovery.resetCircuit();
+  }
+
+  private clearCrashStabilityTimer(): void {
+    if (this.crashStabilityTimer !== undefined) {
+      clearTimeout(this.crashStabilityTimer);
+      this.crashStabilityTimer = undefined;
+    }
+  }
+
+  private scheduleCrashStabilityReset(): void {
+    this.clearCrashStabilityTimer();
+    this.crashStabilityTimer = setTimeout(() => {
+      this.crashStabilityTimer = undefined;
+      if (this.stoppingClient || this.crashRecovery.intentionalStopActive()) {
+        return;
+      }
+      if (this.clientIsActivelyRunning(this.client)) {
+        this.crashRecovery.noteSuccessfulSession();
+      }
+    }, CRASH_RECOVERY_STABLE_MS);
   }
 
   /**
@@ -1036,6 +1072,7 @@ export class RiprClientController {
   }
 
   private async restartThroughLifecycle(): Promise<void> {
+    this.resetCrashRecoveryForExplicitRestart();
     if (this.runtime.restartWorkspaceRoot) {
       await this.runtime.restartWorkspaceRoot();
       return;
@@ -1094,6 +1131,7 @@ export class RiprClientController {
     this.workspaceRootSelectionSuppressed = true;
     this.pendingWorkspaceRoot = undefined;
     this.selectedWorkspaceRoot = undefined;
+    this.crashRecovery.cancelPendingRetry();
     // Cancel any setup for a folder removed before it acquired a client.
     this.startGeneration++;
   }
@@ -1159,24 +1197,116 @@ export class RiprClientController {
     if (this.stoppingClient || this.client === undefined) {
       return { action: CloseAction.DoNotRestart, handled: true };
     }
-    const now = Date.now();
-    this.crashRestartAtMs = this.crashRestartAtMs.filter(
-      (stamp) => now - stamp <= SERVER_CRASH_RESTART_WINDOW_MS
-    );
-    if (this.crashRestartAtMs.length < SERVER_CRASH_RESTART_LIMIT) {
-      this.crashRestartAtMs.push(now);
-      this.lastCrashCloseAction = CloseAction.Restart;
-      this.output.appendLine('ripr server stopped unexpectedly; restarting it.');
-      return { action: CloseAction.Restart };
-    }
-    this.crashRestartAtMs = [];
-    this.lastCrashCloseAction = CloseAction.DoNotRestart;
-    this.output.appendLine(
-      'ripr server stopped unexpectedly too many times and will not restart on its own.'
-    );
-    this.markServerStoppedUnexpectedly();
-    this.offerCrashRestart();
+    this.maybeChargeUnexpectedSessionEnd();
     return { action: CloseAction.DoNotRestart, handled: true };
+  }
+
+  private serverIdentityDetail(): string | undefined {
+    const server = this.server;
+    return server ? `Server: ${server.source} (${server.detail})` : undefined;
+  }
+
+  private paintCrashRecoveryStatus(outcome: 'retry_scheduled' | 'circuit_open'): void {
+    const serverLine = this.serverIdentityDetail();
+    const snapshot = this.crashRecovery.snapshot();
+    if (outcome === 'circuit_open') {
+      this.updateStatus({
+        kind: 'circuitOpen',
+        summary: 'The ripr server stopped unexpectedly too many times.',
+        detail: serverLine ?? 'Automatic recovery is paused after repeated unexpected exits.',
+        nextStep: `Run ${SERVER_CRASH_RESTART_ACTION} to start a fresh admitted session.`
+      });
+      this.offerCrashRestart();
+      return;
+    }
+    const delayMs = snapshot.pendingRetryDelayMs ?? 0;
+    this.updateStatus({
+      kind: 'serverFailed',
+      summary: 'The ripr server stopped unexpectedly; retrying shortly.',
+      detail: [
+        serverLine,
+        `Retry ${snapshot.failedSessions} of ${CRASH_RECOVERY_SESSION_BUDGET} in ${delayMs} ms.`
+      ].filter((line): line is string => Boolean(line)).join('\n'),
+      nextStep: `Wait for automatic retry, or run ${SERVER_CRASH_RESTART_ACTION}.`
+    });
+  }
+
+  private detachStoppedClient(client: RiprLanguageClient): void {
+    if (this.client === client) {
+      this.client = undefined;
+    }
+    this.disposeNotifications(client);
+  }
+
+  private async executeCrashRecoveryRetry(capturedGeneration: number): Promise<void> {
+    if (this.startGeneration !== capturedGeneration) {
+      return;
+    }
+    if (this.crashRecovery.isCircuitOpen()) {
+      return;
+    }
+    if (!this.runtime.isWorkspaceTrusted()) {
+      this.output.appendLine('ripr crash recovery skipped: workspace is not trusted.');
+      return;
+    }
+    const staleClient = this.client;
+    if (staleClient) {
+      this.crashRecovery.beginIntentionalStop();
+      try {
+        await staleClient.stop();
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.output.appendLine(`ripr crash recovery cleanup stop failed: ${message}`);
+      } finally {
+        this.crashRecovery.endIntentionalStop();
+      }
+      this.detachStoppedClient(staleClient);
+    }
+    if (this.startGeneration !== capturedGeneration) {
+      return;
+    }
+    this.output.appendLine('ripr server retry after unexpected exit: re-resolving and restarting.');
+    try {
+      await this.start();
+      if (this.startGeneration !== capturedGeneration) {
+        return;
+      }
+      if (!this.clientIsActivelyRunning(this.client)) {
+        this.crashEndChargedForAttempt = false;
+        this.maybeChargeUnexpectedSessionEnd();
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`ripr crash recovery restart failed: ${message}`);
+      this.crashEndChargedForAttempt = false;
+      this.maybeChargeUnexpectedSessionEnd();
+    }
+  }
+
+  private maybeChargeUnexpectedSessionEnd(): void {
+    if (this.stoppingClient || this.crashRecovery.intentionalStopActive()) {
+      return;
+    }
+    if (this.crashEndChargedForAttempt) {
+      return;
+    }
+    this.crashEndChargedForAttempt = true;
+    const capturedGeneration = this.startGeneration;
+    this.clearCrashStabilityTimer();
+    const outcome = this.crashRecovery.handleUnexpectedSessionEnd({
+      startGeneration: capturedGeneration,
+      readStartGeneration: () => this.startGeneration,
+      onRetry: () => this.executeCrashRecoveryRetry(capturedGeneration)
+    });
+    if (outcome === 'ignored') {
+      return;
+    }
+    this.output.appendLine(
+      outcome === 'circuit_open'
+        ? 'ripr server stopped unexpectedly too many times; circuit is open.'
+        : 'ripr server stopped unexpectedly; scheduling bounded retry.'
+    );
+    this.paintCrashRecoveryStatus(outcome);
   }
 
   private handleClientStateChange(
@@ -1186,22 +1316,28 @@ export class RiprClientController {
     if (this.client !== client || this.stoppingClient) {
       return;
     }
+    if (event.newState === State.Starting) {
+      this.crashEndChargedForAttempt = false;
+      return;
+    }
     if (event.newState === State.Running) {
-      this.lastCrashCloseAction = undefined;
+      this.scheduleCrashStabilityReset();
+      this.crashEndChargedForAttempt = false;
       return;
     }
     if (event.newState === State.StartFailed) {
-      this.lastCrashCloseAction = undefined;
-      this.markServerStoppedUnexpectedly();
       return;
     }
     if (event.newState !== State.Stopped) {
       return;
     }
-    if (this.lastCrashCloseAction === CloseAction.Restart) {
+    if (this.crashRecovery.hasPendingRetry() || this.crashRecovery.isCircuitOpen()) {
       return;
     }
-    this.markServerStoppedUnexpectedly();
+    if (this.stoppingClient || this.crashRecovery.intentionalStopActive()) {
+      return;
+    }
+    this.maybeChargeUnexpectedSessionEnd();
   }
 
   private markServerStoppedUnexpectedly(): void {
@@ -1243,74 +1379,79 @@ export class RiprClientController {
     const client = this.client;
     const starting = this.startingPromise;
     let startupFailed = false;
-    // Bump the generation so any in-flight startOnce() detects that stop()
-    // ran during its async setup window. The captured start is awaited before
-    // the client is cleared or stopped, so a stop during startup cannot lose
-    // ownership of a client that may have started successfully. (#2822)
-    this.startGeneration++;
-
-    // Config is already the new value when onDidChangeConfiguration restarts.
-    // Hide the opt-out immediately so a stalled waitForLifecycle or
-    // client.stop() cannot keep the previous item visible. Reuse this
-    // snapshot for the final status so a disable transition never renders
-    // visible `stopped`.
-    const config = this.runtime.getConfig(
-      this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
-    );
-    if (!config.enabled) {
-      this.updateStatus(disabledStatus());
-    }
-
-    if (starting) {
-      const waitForLifecycle = this.runtime.waitForLifecycle ?? waitForLifecyclePromise;
-      await waitForLifecycle(
-        starting.catch(() => { startupFailed = true; }),
-        DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS,
-        'ripr server startup'
-      );
-    }
-
-    // The captured start's finally block clears this when it completes. A
-    // completed start has no remaining deduplication authority here.
-    if (this.startingPromise === starting) {
-      this.startingPromise = undefined;
-    }
-    if (this.client !== client) {
-      return { kind: this.client ? 'replaced' : startupFailed ? 'startupFailed' : 'cancelled' };
-    }
-    this.stoppingClient = true;
-    this.crashRestartAtMs = [];
-    this.lastCrashCloseAction = undefined;
+    this.crashRecovery.beginIntentionalStop();
+    this.crashRecovery.cancelPendingRetry();
+    this.clearCrashStabilityTimer();
     try {
-      if (client) {
-        await client.stop();
-        this.client = undefined;
-        this.disposeNotifications(client);
+      // Bump the generation so any in-flight startOnce() detects that stop()
+      // ran during its async setup window. The captured start is awaited before
+      // the client is cleared or stopped, so a stop during startup cannot lose
+      // ownership of a client that may have started successfully. (#2822)
+      this.startGeneration++;
+
+      // Config is already the new value when onDidChangeConfiguration restarts.
+      // Hide the opt-out immediately so a stalled waitForLifecycle or
+      // client.stop() cannot keep the previous item visible. Reuse this
+      // snapshot for the final status so a disable transition never renders
+      // visible `stopped`.
+      const config = this.runtime.getConfig(
+        this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
+      );
+      if (!config.enabled) {
+        this.updateStatus(disabledStatus());
       }
-    } finally {
-      this.stoppingClient = false;
-    }
-    this.server = undefined;
-    this.receivedTypedAnalysisStatus = false;
-    this.workspaceRoot = undefined;
-    this.workspaceRootState = workspaceRootStateNoWorkspace();
-    this.setupStatus = setupStatusWithoutWorkspace();
-    this.typedAnalysisStatusState = undefined;
-    this.firstUsefulAction = undefined;
-    this.dirtyRiprDocuments.clear();
-    this.lastCompletedStatus = undefined;
-    this.configurationFailurePainted = false;
-    this.configurationFailureStatus = undefined;
-    this.clearAttemptStatusBar();
-    this.updateStatus(config.enabled
-      ? {
-          kind: 'stopped',
-          summary: 'ripr server has stopped.',
-          detail: 'Run ripr: Restart Server to start analysis again.',
-          nextStep: 'Run ripr: Restart Server.'
+
+      if (starting) {
+        const waitForLifecycle = this.runtime.waitForLifecycle ?? waitForLifecyclePromise;
+        await waitForLifecycle(
+          starting.catch(() => { startupFailed = true; }),
+          DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS,
+          'ripr server startup'
+        );
+      }
+
+      // The captured start's finally block clears this when it completes. A
+      // completed start has no remaining deduplication authority here.
+      if (this.startingPromise === starting) {
+        this.startingPromise = undefined;
+      }
+      if (this.client !== client) {
+        return { kind: this.client ? 'replaced' : startupFailed ? 'startupFailed' : 'cancelled' };
+      }
+      this.stoppingClient = true;
+      try {
+        if (client) {
+          await client.stop();
+          this.client = undefined;
+          this.disposeNotifications(client);
         }
-      : disabledStatus());
-    return { kind: client ? 'stopped' : startupFailed ? 'startupFailed' : starting ? 'cancelled' : 'alreadyStopped' };
+      } finally {
+        this.stoppingClient = false;
+      }
+      this.server = undefined;
+      this.receivedTypedAnalysisStatus = false;
+      this.workspaceRoot = undefined;
+      this.workspaceRootState = workspaceRootStateNoWorkspace();
+      this.setupStatus = setupStatusWithoutWorkspace();
+      this.typedAnalysisStatusState = undefined;
+      this.firstUsefulAction = undefined;
+      this.dirtyRiprDocuments.clear();
+      this.lastCompletedStatus = undefined;
+      this.configurationFailurePainted = false;
+      this.configurationFailureStatus = undefined;
+      this.clearAttemptStatusBar();
+      this.updateStatus(config.enabled
+        ? {
+            kind: 'stopped',
+            summary: 'ripr server has stopped.',
+            detail: 'Run ripr: Restart Server to start analysis again.',
+            nextStep: 'Run ripr: Restart Server.'
+          }
+        : disabledStatus());
+      return { kind: client ? 'stopped' : startupFailed ? 'startupFailed' : starting ? 'cancelled' : 'alreadyStopped' };
+    } finally {
+      this.crashRecovery.endIntentionalStop();
+    }
   }
 
   markWorkspaceStale(document: vscode.TextDocument): void {
@@ -2409,7 +2550,7 @@ export class RiprClientController {
         resolution.attemptIds.map((attemptId) => {
           const row = rowById.get(attemptId);
           return {
-            label: row?.seamId ? `${attemptId} — seam ${row.seamId}` : attemptId,
+            label: row?.seamId ? `${attemptId} — spot ${row.seamId}` : attemptId,
             description: row?.state ?? undefined,
             attemptId
           };
@@ -3561,10 +3702,10 @@ function firstUsefulActionLines(firstAction: FirstUsefulActionStatus): string[] 
     lines.push(`Gap identity: ${firstAction.seamId}`);
   }
   if (firstAction.selectedLocation) {
-    lines.push(`Seam: ${firstAction.selectedLocation}`);
+    lines.push(`Spot: ${firstAction.selectedLocation}`);
   }
   if (firstAction.missingDiscriminator) {
-    lines.push(`Missing discriminator: ${firstAction.missingDiscriminator}`);
+    lines.push(`Missing check: ${firstAction.missingDiscriminator}`);
   }
   if (firstAction.target) {
     lines.push(`Target: ${firstAction.target}`);
@@ -3801,7 +3942,7 @@ function actionableGapQueueTopLines(queue: RiprActionableGapQueueStatus): string
     lines.push(`Why this matters: ${queue.why}`);
   }
   if (queue.missingDiscriminator) {
-    lines.push(`Missing discriminator: ${queue.missingDiscriminator}`);
+    lines.push(`Missing check: ${queue.missingDiscriminator}`);
   }
   if (queue.focusedProofIntent) {
     lines.push(`Focused proof intent: ${queue.focusedProofIntent}`);
@@ -3890,7 +4031,7 @@ function currentRepairPacket(queue: RiprActionableGapQueueStatus): string {
   pushOptionalLine(lines, 'Actionability', queue.actionability);
   pushOptionalLine(lines, 'Changed behavior', queue.changedBehavior);
   pushOptionalLine(lines, 'Why this matters', queue.why);
-  pushOptionalLine(lines, 'Missing discriminator', queue.missingDiscriminator);
+  pushOptionalLine(lines, 'Missing check', queue.missingDiscriminator);
   pushOptionalLine(lines, 'Focused proof intent', queue.focusedProofIntent);
   pushOptionalLine(lines, 'Confidence basis', queue.confidenceBasis);
   lines.push(`Related test: ${queue.relatedTest ?? 'not provided by typed queue artifact'}`);
@@ -3976,7 +4117,7 @@ function repoGapMap(
     pushOptionalLine(lines, 'Changed behavior', queue.changedBehavior);
     pushOptionalLine(lines, 'Why this matters', queue.why);
     pushOptionalLine(lines, 'Repair kind', queue.topRepair);
-    pushOptionalLine(lines, 'Missing discriminator', queue.missingDiscriminator);
+    pushOptionalLine(lines, 'Missing check', queue.missingDiscriminator);
     pushOptionalLine(lines, 'Focused proof intent', queue.focusedProofIntent);
     pushOptionalLine(lines, 'Language', queue.languageStatus ? `${queue.language ?? 'unknown'} (${queue.languageStatus})` : queue.language);
     pushOptionalLine(lines, 'Related test', queue.relatedTest);
@@ -3992,7 +4133,7 @@ function repoGapMap(
   lines.push('Receipt state');
   lines.push(`State: ${receipt.state}`);
   pushOptionalLine(lines, 'Movement', receipt.movement);
-  pushOptionalLine(lines, 'Receipt seam', receipt.seamId);
+  pushOptionalLine(lines, 'Receipt spot', receipt.seamId);
   lines.push('');
   lines.push('First PR packet state');
   lines.push(`State: ${firstPr.state}`);
@@ -4128,7 +4269,7 @@ function receiptStatusLines(
   switch (receipt.state) {
     case 'missing': {
       const lines = [
-        `Receipt status: missing; no matching receipt was found for seam ${currentSeam}.`
+        `Receipt status: missing; no matching receipt was found for spot ${currentSeam}.`
       ];
       if (firstAction?.receiptCommand) {
         lines.push(`Receipt command: ${firstAction.receiptCommand}`);
@@ -4165,36 +4306,36 @@ function receiptStatusLines(
   }
   if (!receipt.seamId) {
     return [
-      `Receipt status: malformed; ${receipt.relativePath} is missing a seam identity.`,
+      `Receipt status: malformed; ${receipt.relativePath} is missing a spot identity.`,
       'Receipt movement is not projected.'
     ];
   }
   if (receipt.seamId !== currentSeam) {
     return [
-      `Receipt status: gap mismatch; receipt seam ${receipt.seamId} does not match current seam ${currentSeam}.`,
+      `Receipt status: gap mismatch; receipt spot ${receipt.seamId} does not match current spot ${currentSeam}.`,
       'Receipt movement is not projected.'
     ];
   }
   if (receiptIsOlderThanFirstAction(receipt, firstAction)) {
     return [
-      `Receipt status: stale; receipt for seam ${currentSeam} is older than the current first useful action report.`,
+      `Receipt status: stale; receipt for spot ${currentSeam} is older than the current first useful action report.`,
       'Refresh saved-workspace evidence and rerun verify/receipt before trusting movement.'
     ];
   }
   if (receipt.movement === 'improved' || receipt.movement === 'resolved') {
     return [
-      `Receipt status: movement improved; matching receipt found for seam ${currentSeam}.`,
+      `Receipt status: movement improved; matching receipt found for spot ${currentSeam}.`,
       'Receipt records static movement only; it does not prove runtime adequacy or gate eligibility.'
     ];
   }
   if (receipt.movement === 'unchanged') {
     return [
-      `Receipt status: movement unchanged; matching receipt found for seam ${currentSeam}.`,
-      'Next safe action: inspect the focused test and missing discriminator before requesting another seam.'
+      `Receipt status: movement unchanged; matching receipt found for spot ${currentSeam}.`,
+      'Next safe action: inspect the focused test and missing check before requesting another spot.'
     ];
   }
   return [
-    `Receipt status: found; matching receipt exists for seam ${currentSeam}.`,
+    `Receipt status: found; matching receipt exists for spot ${currentSeam}.`,
     `Receipt movement: ${receipt.movement ?? 'not reported'}`,
     'Receipt records static movement only; it does not prove runtime adequacy or gate eligibility.'
   ];
@@ -4519,12 +4660,12 @@ export function statusForRunStatus(
   if (runStatus === 'seams_deferred') {
     return {
       kind: 'analysisLimited',
-      summary: 'ripr analysis completed; seam and gap evidence is deferred.',
+      summary: 'ripr analysis completed; spot and gap evidence is deferred.',
       detail: [
         input.detail,
-        'Interactive saves defer the seam inventory to keep saves fast, so seam and gap evidence is absent until a full refresh.'
+        'Interactive saves defer the spot inventory to keep saves fast, so spot and gap evidence is absent until a full refresh.'
       ].filter((line): line is string => Boolean(line)).join('\n'),
-      nextStep: `Run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE} to compute the full seam inventory.`
+      nextStep: `Run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE} to compute the full spot inventory.`
     };
   }
   // #8585: changed files of a language whose adapter is not enabled were not
@@ -4818,12 +4959,12 @@ function statusFromRefreshCompletedMessage(message: string): RiprStatusState {
   if (seamDiagnostics !== undefined && seamDiagnostics === 0) {
     return {
       kind: 'noActionableSeams',
-      summary: 'ripr analysis completed with no actionable seam diagnostics.',
+      summary: 'ripr analysis completed with no actionable spot diagnostics.',
       enabledLanguages: enabledLanguageNames,
       nextStep: 'If this is unexpected, save files, confirm the workspace root, and check ripr.toml [languages] enabled for the open file, then run ripr: Show Output.',
       detail: [
         message,
-        'No ripr seam diagnostics were published for the last saved workspace state.',
+        'No ripr spot diagnostics were published for the last saved workspace state.',
         'Enabled languages determine which saved files can produce diagnostics; disabled or unavailable preview languages stay silent.',
         routedPreviewEnablementLine(enabledLanguageNames),
         'If you expected diagnostics, confirm the file is saved, the workspace root is correct, and the language is enabled and available in this ripr build.'

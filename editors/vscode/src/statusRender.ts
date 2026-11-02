@@ -17,6 +17,7 @@ export type RiprStatusKind =
   | 'resolvingServer'
   | 'serverUnavailable'
   | 'serverFailed'
+  | 'circuitOpen'
   | 'starting'
   | 'analysisQueued'
   | 'ready'
@@ -159,6 +160,8 @@ export function statusText(kind: RiprStatusKind, firstAction?: FirstUsefulAction
       return '$(warning) ripr: server missing';
     case 'serverFailed':
       return '$(warning) ripr: server failed';
+    case 'circuitOpen':
+      return '$(error) ripr: circuit open';
     case 'starting':
       return '$(sync~spin) ripr: starting';
     case 'ready':
@@ -180,7 +183,7 @@ export function statusText(kind: RiprStatusKind, firstAction?: FirstUsefulAction
     case 'gapArtifactWarning':
       return '$(warning) ripr: gap blocked';
     case 'noActionableSeams':
-      return '$(circle-slash) ripr: no seams';
+      return '$(circle-slash) ripr: no spots';
     case 'noEnabledLanguages':
       return '$(circle-slash) ripr: languages off';
     case 'stale':
@@ -205,6 +208,7 @@ export function statusBarColors(kind: RiprStatusKind): StatusBarColors | undefin
     case 'analysisFailed':
     case 'serverUnavailable':
     case 'serverFailed':
+    case 'circuitOpen':
       return {
         background: new vscode.ThemeColor('statusBarItem.errorBackground'),
         foreground: new vscode.ThemeColor('statusBarItem.errorForeground'),
