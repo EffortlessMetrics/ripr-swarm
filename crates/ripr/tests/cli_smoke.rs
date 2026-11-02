@@ -18521,7 +18521,11 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
                 .as_object()
                 .ok_or("limitation must be an object")?
                 .len(),
-            6,
+            7,
+            "{name}: {artifact}"
+        );
+        assert_eq!(
+            limit["selection_order"], "current_change_then_inventory_order_prefix",
             "{name}: {artifact}"
         );
         assert_eq!(limit["seams_analyzed"], 1, "{name}: {artifact}");
@@ -18576,7 +18580,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let full_total = count(&full);
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked 1 of {full_total} seams;"
+            "- Seam limit reached: analyzed 1 of {full_total} seams"
         )),
         "{summary}"
     );
@@ -18592,6 +18596,10 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     assert_eq!(summary_json["seam_limit"]["analyzed"], 1, "{summary_json}");
     assert_eq!(
         summary_json["seam_limit"]["total"], full_total,
+        "{summary_json}"
+    );
+    assert_eq!(
+        summary_json["seam_limit"]["selection_order"], "current_change_then_inventory_order_prefix",
         "{summary_json}"
     );
     // When the inventory limit also cuts, the disclosed total is still the
@@ -18613,7 +18621,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked 1 of {full_total} seams;"
+            "- Seam limit reached: analyzed 1 of {full_total} seams"
         )),
         "{summary}"
     );
@@ -18688,7 +18696,11 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let limit = inventory_limit[0]
         .as_object()
         .ok_or("packet limitation must be an object")?;
-    assert_eq!(limit.len(), 6, "{inventory_packets}");
+    assert_eq!(limit.len(), 7, "{inventory_packets}");
+    assert_eq!(
+        inventory_limit[0]["selection_order"], "canonical_seam_sort_prefix",
+        "{inventory_packets}"
+    );
     assert_eq!(
         inventory_packets["run_status"], "seam_limit_applied",
         "{inventory_packets}"
@@ -21922,7 +21934,7 @@ fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), 
     // Precondition: the inventory limit fired and kept one seam, which is
     // not on the change; the changed seams it cut were classified on their
     // own and count as analyzed.
-    assert!(md.contains("- Seam limit reached: ranked "), "{md}");
+    assert!(md.contains("- Seam limit reached: analyzed "), "{md}");
     assert!(!md.contains("ranked 1 of "), "{md}");
     assert!(md.contains("ranked 4 of 6 seams"), "{md}");
     // `ripr check` never classifies the added seams, so the snapshot is not
@@ -25183,6 +25195,15 @@ fn check_repo_exposure_json_run_status_seam_limit_applied_and_complete() -> Resu
     if seams_total < 2 {
         return Err(format!(
             "expected seams_total>=2 for truncation to be real, got: {seams_total}"
+        ));
+    }
+    let selection_order = limited_json
+        .pointer("/limitations/0/selection_order")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("expected limitations[0].selection_order in:\n{limited_stdout}"))?;
+    if selection_order != "canonical_seam_sort_prefix" {
+        return Err(format!(
+            "expected selection_order=canonical_seam_sort_prefix, got: {selection_order}"
         ));
     }
     let control = limited_json

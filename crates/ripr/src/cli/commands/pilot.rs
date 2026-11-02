@@ -265,6 +265,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 language_routes: None,
                 current_change: None,
                 seam_limit: None,
+                seam_limit_selection_order: None,
                 repo_exposure_byte_bound: None,
             },
         )?;
@@ -489,6 +490,13 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         language_routes: Some(&language_routes),
         current_change: Some(&current_change),
         seam_limit: summary_limit.as_ref(),
+        seam_limit_selection_order: summary_limit.as_ref().map(|_| {
+            if pilot_budget_info.is_some() {
+                output::repo_exposure::PILOT_SEAM_BUDGET_SELECTION_ORDER
+            } else {
+                output::repo_exposure::INVENTORY_SEAM_LIMIT_SELECTION_ORDER
+            }
+        }),
         repo_exposure_byte_bound: repo_exposure_byte_bound.as_ref(),
     };
 
@@ -2011,6 +2019,7 @@ mod tests {
                 language_routes: None,
                 current_change: None,
                 seam_limit: None,
+                seam_limit_selection_order: None,
                 repo_exposure_byte_bound: None,
             },
         )?;

@@ -225,6 +225,13 @@ const REPO_EXPOSURE_PILOT_BUDGET_CATEGORY: &str = "pilot_seam_budget_applied";
 const REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
 const REPO_EXPOSURE_PILOT_BUDGET_CONTROL: &str = "RIPR_PILOT_SEAM_BUDGET";
 const REPO_EXPOSURE_SEAM_LIMIT_RUN_STATUS: &str = "seam_limit_applied";
+/// How inventory seam caps choose the analyzed set (#5371): the bounded
+/// collector keeps the canonical `(file, byte_offset, kind, owner)` prefix.
+pub(crate) const INVENTORY_SEAM_LIMIT_SELECTION_ORDER: &str = "canonical_seam_sort_prefix";
+/// How the pilot artifact budget chooses seams (#5371): current-change seams
+/// survive first, then the inventory-order prefix fills the remaining slots.
+pub(crate) const PILOT_SEAM_BUDGET_SELECTION_ORDER: &str =
+    "current_change_then_inventory_order_prefix";
 
 /// The producer that actually limited this artifact's seam population.
 /// Default/configured describes the value's source, not the cap's identity.
@@ -263,6 +270,13 @@ impl<'a> RepoExposureLimit<'a> {
         match self {
             Self::Inventory(_) => REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL,
             Self::PilotBudget(_) | Self::Both(_, _) => REPO_EXPOSURE_PILOT_BUDGET_CONTROL,
+        }
+    }
+
+    pub(crate) fn selection_order(self) -> &'static str {
+        match self {
+            Self::Inventory(_) => INVENTORY_SEAM_LIMIT_SELECTION_ORDER,
+            Self::PilotBudget(_) | Self::Both(_, _) => PILOT_SEAM_BUDGET_SELECTION_ORDER,
         }
     }
 
@@ -1012,6 +1026,11 @@ fn write_repo_exposure_json_document<W: io::Write>(
             writeln!(out, "      \"seams_total\": {},", info.total)?;
             writeln!(out, "      \"limit_source\": \"{}\",", info.source.as_str())?;
             writeln!(out, "      \"control\": \"{}\",", limit.control())?;
+            writeln!(
+                out,
+                "      \"selection_order\": \"{}\",",
+                limit.selection_order()
+            )?;
             writeln!(
                 out,
                 "      \"repair_route\": \"{}\"",
@@ -2303,6 +2322,10 @@ pub(crate) mod tests {
         assert!(
             json.contains("\"seams_total\": 10"),
             "seams_total missing in:\n{json}"
+        );
+        assert!(
+            json.contains("\"selection_order\": \"canonical_seam_sort_prefix\""),
+            "selection_order missing in:\n{json}"
         );
         assert!(
             json.contains("\"control\": \"RIPR_REPO_EXPOSURE_SEAM_LIMIT\""),
