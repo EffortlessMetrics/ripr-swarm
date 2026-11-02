@@ -28,6 +28,7 @@ mod next_action;
 mod probe;
 mod refusal_remedy;
 mod repair_card;
+mod resource_dependency;
 mod summary;
 mod support;
 mod test_evidence_identity;
@@ -148,6 +149,10 @@ pub use repair_card::{
 pub(crate) use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub(crate) use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
 pub(crate) use probe::boundary_input_observed_with_weak_oracle;
+pub(crate) use resource_dependency::{
+    ResourceAccessKindV1, ResourceCompletenessClassV1, ResourceDependencyEdgeV1, ResourceKindV1,
+    ResourcePresenceV1,
+};
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};
 pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};

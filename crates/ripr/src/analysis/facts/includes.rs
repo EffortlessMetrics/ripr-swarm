@@ -294,7 +294,7 @@ fn sort_limitations(limitations: &mut Vec<RustIncludeLimitation>) {
     limitations.dedup();
 }
 
-fn repository_relative_target(parent: &Path, literal: &Path) -> Option<PathBuf> {
+pub(crate) fn repository_relative_target(parent: &Path, literal: &Path) -> Option<PathBuf> {
     if literal.is_absolute() {
         return None;
     }
