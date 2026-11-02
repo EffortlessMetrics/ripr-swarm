@@ -143,3 +143,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_message_pin_no_exposed_credit (12)
+
+Reason:
+RIPR-SPEC-0224: #5575 row-local exact discriminator coverage surfaces missing_exact_assertion on strong related rows when match= does not pin the changed message
+
+Command:
+`cargo xtask goldens bless python_message_pin_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

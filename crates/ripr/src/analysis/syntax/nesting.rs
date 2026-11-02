@@ -89,7 +89,15 @@ pub(crate) fn parse_source_file_checked(text: &str) -> (Parse<SourceFile>, usize
 /// file (regex `64ad0b6`: 148 s, nearly all in this reparse). Parses are
 /// immutable green trees, so sharing a clone is observationally identical.
 const PARSE_CACHE_ENTRIES: usize = 4;
-const PARSE_CACHE_MAX_BYTES: usize = 512 * 1024;
+
+/// Larger inputs skip the memo, so a long-lived thread (the LSP analysis
+/// thread) holds at most [`PARSE_CACHE_ENTRIES`] trees plus this many source
+/// bytes each. 512 KiB was too small for this repository's analyzer files
+/// (`owner_pin.rs` is about 684 KiB, `related_tests.rs` about 653 KiB): every
+/// `parse_clean_source_file` call on those files skipped the memo and
+/// dominated self-check (#8629). 2 MiB matches the comment/string mask memo
+/// bound.
+const PARSE_CACHE_MAX_BYTES: usize = 2 * 1024 * 1024;
 
 type ParseCacheEntries = Vec<(String, Parse<SourceFile>, usize)>;
 
@@ -814,6 +822,74 @@ mod tests {
         let after = VALIDATION_PASSES.with(std::cell::Cell::get);
         // current + 2021 editions on the first ask (no `try!`), then memo hits.
         assert_eq!(after - before, 2, "broken source revalidated on memo hits");
+    }
+
+    /// A comment-padded function of exactly `len` bytes that still parses.
+    fn rust_source_of_len(len: usize) -> String {
+        let header = "fn analyzer_sized_probe() {\n    let _value = 1;\n    // ";
+        let footer = "\n}\n";
+        let fill = len.saturating_sub(header.len() + footer.len());
+        let mut source = String::with_capacity(header.len() + fill + footer.len());
+        source.push_str(header);
+        source.push_str(&"x".repeat(fill));
+        source.push_str(footer);
+        source
+    }
+
+    /// #8629: analyzer files such as `owner_pin.rs` (~684 KiB) sat above the
+    /// old 512 KiB cutoff, so every `parse_clean_source_file` call reparsed
+    /// them. A clean source just over that historical bound must be remembered.
+    #[test]
+    fn analyzer_sized_sources_are_remembered_by_the_parse_cache() {
+        let historic_bypass = 512 * 1024 + 256;
+        assert!(
+            historic_bypass <= PARSE_CACHE_MAX_BYTES,
+            "the memo must cover the historical 512 KiB analyzer-file cutoff"
+        );
+        let source = rust_source_of_len(historic_bypass);
+        assert_eq!(source.len(), historic_bypass);
+        let before = VALIDATION_PASSES.with(std::cell::Cell::get);
+        for _ in 0..5 {
+            assert!(
+                parse_clean_source_file(&source).is_some(),
+                "analyzer-sized fixture must parse cleanly"
+            );
+        }
+        let after = VALIDATION_PASSES.with(std::cell::Cell::get);
+        assert_eq!(
+            after - before,
+            1,
+            "a {historic_bypass}-byte source was revalidated on memo hits"
+        );
+    }
+
+    /// The memo covers `..=PARSE_CACHE_MAX_BYTES`: one byte past the bound is
+    /// parsed every time, and a source at the bound is remembered.
+    #[test]
+    fn parse_cache_bounds_are_inclusive_and_outside_texts_bypass_it() {
+        let at_bound = rust_source_of_len(PARSE_CACHE_MAX_BYTES);
+        assert_eq!(at_bound.len(), PARSE_CACHE_MAX_BYTES);
+        let before = VALIDATION_PASSES.with(std::cell::Cell::get);
+        for _ in 0..2 {
+            assert!(parse_clean_source_file(&at_bound).is_some());
+        }
+        assert_eq!(
+            VALIDATION_PASSES.with(std::cell::Cell::get) - before,
+            1,
+            "PARSE_CACHE_MAX_BYTES is remembered"
+        );
+
+        let over = rust_source_of_len(PARSE_CACHE_MAX_BYTES + 1);
+        assert_eq!(over.len(), PARSE_CACHE_MAX_BYTES + 1);
+        let before = VALIDATION_PASSES.with(std::cell::Cell::get);
+        for _ in 0..2 {
+            assert!(parse_clean_source_file(&over).is_some());
+        }
+        assert_eq!(
+            VALIDATION_PASSES.with(std::cell::Cell::get) - before,
+            2,
+            "one byte past PARSE_CACHE_MAX_BYTES must bypass the memo"
+        );
     }
 
     use super::*;
