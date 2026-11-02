@@ -6491,3 +6491,168 @@ fn perl_isnt_is_a_smoke_oracle_not_an_exact_one() -> Result<(), String> {
     assert_eq!(class, exact_class);
     Ok(())
 }
+
+/// RIPR-SPEC-0235 rule 23 (#7851): equal sink text is not observation of a
+/// changed returned-list element. The producer often copies the whole
+/// changed expression onto every strong oracle. A literal-list `is_deeply`
+/// still aligns; `is(scalar ...)` and a self-comparison do not. Packets
+/// below are edited-producer consumer evidence: they start from
+/// `EXACT_RETURN_PACKET` and are not upstream fact emission.
+fn equal_fact_list_packet(expression: &str) -> Result<String, String> {
+    edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(
+            packet,
+            "changes",
+            "changed_observable",
+            serde_json::json!("$1"),
+        )?;
+        set_first(packet, "oracles", "observed_sink", serde_json::json!("$1"))?;
+        set_first(
+            packet,
+            "oracles",
+            "expression",
+            serde_json::json!(expression),
+        )?;
+        Ok(())
+    })
+}
+
+fn first_class(packet: &str) -> Result<crate::domain::ExposureClass, String> {
+    findings_from_packet(packet)?
+        .into_iter()
+        .next()
+        .map(|finding| finding.class)
+        .ok_or_else(|| "expected one finding".to_string())
+}
+
+#[test]
+fn list_element_equal_fact_does_not_promote_scalar_or_self_comparison() -> Result<(), String> {
+    use crate::domain::ExposureClass;
+    const LIST: &str = "is_deeply([PathParts::splitpath('d1/d2/d3/file')], ['', 'd1/d2/d3/', 'file'], 'list splits volume, directory, and file')";
+    const SCALAR: &str = "is(scalar PathParts::splitpath('d1/d2/d3/file'), 'file', 'scalar context is the basename')";
+    const SELF: &str = "is_deeply([PathParts::splitpath('d1/d2/d3/file')], [PathParts::splitpath('d1/d2/d3/file')], 'list self-comparison')";
+    const QUALIFIED_SCALAR: &str =
+        "Test::More::is(scalar PathParts::splitpath('d1/d2/d3/file'), 'file', 'scalar')";
+    const QUALIFIED_SELF: &str = "Test::More::is_deeply([PathParts::splitpath('d1/d2/d3/file')], [PathParts::splitpath('d1/d2/d3/file')], 'self')";
+    const IS_SELF: &str = "is(PathParts::splitpath('d1/d2/d3/file'), PathParts::splitpath('d1/d2/d3/file'), 'is self')";
+
+    let list = findings_from_packet(&equal_fact_list_packet(LIST)?)?;
+    let list = list.first().ok_or("expected one finding")?;
+    assert_eq!(
+        list.class,
+        ExposureClass::Exposed,
+        "independent list is_deeply must keep exact alignment"
+    );
+    assert!(
+        list.evidence
+            .iter()
+            .any(|e| e.starts_with("perl_already_discriminated:")),
+        "independent list is_deeply must emit already-discriminated evidence"
+    );
+
+    for (label, expression) in [
+        ("scalar is", SCALAR),
+        ("qualified scalar is", QUALIFIED_SCALAR),
+        ("list self-comparison", SELF),
+        ("qualified list self-comparison", QUALIFIED_SELF),
+        ("is self-comparison", IS_SELF),
+    ] {
+        let findings = findings_from_packet(&equal_fact_list_packet(expression)?)?;
+        let finding = findings.first().ok_or("expected one finding")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{label} must not promote equal-fact list-element sinks: {expression}"
+        );
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|e| e.starts_with("perl_already_discriminated:")),
+            "{label} must not emit already-discriminated evidence"
+        );
+        assert!(
+            finding.canonical_gap.is_some()
+                || finding
+                    .recommended_next_step
+                    .as_deref()
+                    .is_some_and(|step| !step.is_empty()),
+            "{label} must keep advisory guidance"
+        );
+    }
+
+    // Controls: a plain `is` with independent expected text still aligns,
+    // and a name that only starts with `is_deeply` is not the matcher.
+    assert_eq!(
+        first_class(&equal_fact_list_packet(
+            "is($got, 10, 'discount threshold')",
+        )?)?,
+        ExposureClass::Exposed,
+        "plain is($got, 10) keeps exact alignment"
+    );
+    assert_eq!(
+        first_class(&equal_fact_list_packet(
+            "is_deeply_ok([PathParts::splitpath('d1/d2/d3/file')], ['', 'd1/d2/d3/', 'file'])",
+        )?)?,
+        ExposureClass::Exposed,
+        "a longer name than is_deeply is not the self-comparison matcher"
+    );
+
+    // Producer-rate preservation: perl-idiom-wantarray-exact credits
+    // is(scalar ctx_value(), 3) because the equal sink is the scalar arm.
+    let wantarray = edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(
+            packet,
+            "changes",
+            "changed_observable",
+            serde_json::json!("wantarray ? @r : scalar @r"),
+        )?;
+        set_first(
+            packet,
+            "oracles",
+            "observed_sink",
+            serde_json::json!("wantarray ? @r : scalar @r"),
+        )?;
+        set_first(
+            packet,
+            "oracles",
+            "expression",
+            serde_json::json!("is(scalar Toolkit::ctx_value(), 3, 'scalar context counts')"),
+        )?;
+        Ok(())
+    })?;
+    assert_eq!(
+        first_class(&wantarray)?,
+        ExposureClass::Exposed,
+        "is(scalar ...) still aligns when the sink names scalar/wantarray"
+    );
+
+    // Scalar-return observables are not numbered captures; scalar `is` keeps credit.
+    let scalar_return = edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(
+            packet,
+            "changes",
+            "changed_observable",
+            serde_json::json!("$result"),
+        )?;
+        set_first(
+            packet,
+            "oracles",
+            "observed_sink",
+            serde_json::json!("$result"),
+        )?;
+        set_first(
+            packet,
+            "oracles",
+            "expression",
+            serde_json::json!("is(scalar Foo::value(), 3, 'scalar return counts')"),
+        )?;
+        Ok(())
+    })?;
+    assert_eq!(
+        first_class(&scalar_return)?,
+        ExposureClass::Exposed,
+        "scalar is on a scalar-return observable must not be withheld by rule 23"
+    );
+    Ok(())
+}

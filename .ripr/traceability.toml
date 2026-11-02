@@ -1472,7 +1472,6 @@ tests = [
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::fixed_root_probe_timeout_names_only_effective_consumer_recovery",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::task_first_commands_resolve_workspace_root_from_a_member_directory",
   "crates/ripr/tests/task_first_facade.rs::member_directory_commands_use_the_resolved_workspace_root",
-  "crates/ripr/tests/task_first_facade.rs::continue_outside_any_workspace_refuses_without_scanning",
   "crates/ripr/tests/task_first_facade.rs::member_relative_selector_never_reaches_a_sibling_members_file",
   "crates/ripr/tests/task_first_facade.rs::member_directory_agent_rerun_diff_explain_use_the_resolved_workspace_root",
   "crates/ripr/tests/task_first_facade.rs::member_directory_root_resolution_failure_keeps_the_json_refusal_envelope",
@@ -8579,7 +8578,6 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::direct_collection_mutation_discriminates_actual_observer_not_sibling_collection",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_proximity_test_cannot_confirm_beside_reaching_test",
-  "crates/ripr/tests/match_arm_proximity_flip.rs::editing_from_str_fortnight_does_not_flip_the_seconds_arm",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::error_variant_proximity_test_cannot_confirm_beside_reaching_test",
   "crates/ripr/src/analysis/classify/flow.rs::tests::turbofish_err_return_sinks_to_the_error_variant",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner",
@@ -19287,6 +19285,7 @@ tests = [
   "crates/ripr/src/analysis/language/perl/tests.rs::h2_aligned_sink_on_another_tests_oracle_does_not_promote",
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_isnt_is_a_smoke_oracle_not_an_exact_one",
   "crates/ripr/src/analysis/language/perl/tests.rs::h2_changed_ordering_comparison_is_not_observed_by_equal_sink_text",
+  "crates/ripr/src/analysis/language/perl/tests.rs::list_element_equal_fact_does_not_promote_scalar_or_self_comparison",
   "crates/ripr/src/analysis/language/perl/boundary_input.rs::tests::a_call_inside_a_regex_or_heredoc_is_not_an_input",
   "crates/ripr/src/analysis/language/perl/boundary_input.rs::tests::a_call_inside_a_string_or_comment_is_not_an_input",
   "crates/ripr/src/analysis/language/perl/boundary_input.rs::tests::a_literal_inside_a_larger_operand_is_not_a_threshold",
@@ -19296,6 +19295,7 @@ tests = [
 fixtures = [
   "fixtures/perl_cpan_alpha/recommendation-controls",
   "fixtures/perl-verdict-corpus/cases/perl-0235-ex28-cross-test-oracle.json",
+  "fixtures/perl-verdict-corpus/subjects/authored-perl-testmore-pathparts",
 ]
 code = [
   "crates/ripr/src/analysis/language/perl/mod.rs",
@@ -19908,8 +19908,6 @@ tests = [
   "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::a_for_body_over_an_empty_literal_never_runs",
   "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::unreadable_guard_shapes_keep_the_credit",
   "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::a_parenthesized_scalar_is_not_a_one_element_container",
-  "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::patching_a_builtin_through_the_builtins_module_is_not_read_as_the_builtin",
-  "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin",
   "crates/ripr/src/analysis/language/python/effect_order_tests.rs",
   "fixtures/python_effect_order_guarded_before_call",
 ]
