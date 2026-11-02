@@ -910,6 +910,39 @@ pub(crate) enum TypeScriptPredicateActivation {
     Unresolved,
 }
 
+/// Whether one row's family-relevant assertion observes the changed sink,
+/// another resolved sink, or cannot be confirmed (#5528).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TypeScriptChangedSinkObservation {
+    /// A strong, family-matching assertion witnesses the changed sink.
+    ConfirmedChangedSink,
+    /// Positive evidence that the assertion observes a different sink or target.
+    AffirmativelyOtherSink,
+    /// Observation cannot be established (missing metadata, unresolved flow).
+    Unresolved,
+    /// The observation guard does not apply to this probe family.
+    NotApplicable,
+}
+
+impl TypeScriptChangedSinkObservation {
+    pub(crate) fn confirms(self) -> bool {
+        matches!(self, Self::ConfirmedChangedSink)
+    }
+
+    /// Combine assertion-level states for one candidate scan.
+    pub(crate) fn merge(self, other: Self) -> Self {
+        use TypeScriptChangedSinkObservation as S;
+        match (self, other) {
+            (S::ConfirmedChangedSink, _) | (_, S::ConfirmedChangedSink) => S::ConfirmedChangedSink,
+            (S::AffirmativelyOtherSink, _) | (_, S::AffirmativelyOtherSink) => {
+                S::AffirmativelyOtherSink
+            }
+            (S::Unresolved, _) | (_, S::Unresolved) => S::Unresolved,
+            _ => S::NotApplicable,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TypeScriptRelatedCandidate<'a> {
     pub(crate) test: &'a TypeScriptTest,
