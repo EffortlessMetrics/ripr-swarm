@@ -2829,6 +2829,39 @@ impl FileFactCacheStats {
             self.hits, self.misses, self.corrupt_ignored, self.store_errors
         )
     }
+
+    /// When a store failed during a batch, name the retained rows so a
+    /// cancellation or deadline error is not mistaken for a cache mismatch
+    /// (#6746).
+    pub(crate) fn store_failure_diagnostic(&self) -> Option<String> {
+        if self.store_errors == 0 {
+            return None;
+        }
+        let mut message = format!("file fact cache store failed {} time(s)", self.store_errors);
+        if !self.store_failures.is_empty() {
+            let rows: Vec<String> = self
+                .store_failures
+                .iter()
+                .map(|row| {
+                    format!(
+                        "{} at {} stage: {}",
+                        row.path.display(),
+                        row.stage,
+                        row.error
+                    )
+                })
+                .collect();
+            message.push_str(": ");
+            message.push_str(&rows.join("; "));
+        }
+        if self.store_failures_dropped > 0 {
+            message.push_str(&format!(
+                " ({} additional failure(s) not shown)",
+                self.store_failures_dropped
+            ));
+        }
+        Some(message)
+    }
 }
 
 /// Layer directories whose stale schema siblings were already pruned this
@@ -3182,6 +3215,61 @@ impl RepoFileFactCache {
             }
         }
         KnownFilePaths { candidates }
+    }
+
+    /// Test-only strict inventory: every header-matching entry must decode for
+    /// the current build identity, or the report names the failure (#6746).
+    #[cfg(test)]
+    pub(crate) fn test_inventory_report(&self) -> Result<(), String> {
+        let identity = crate::build_identity::cache_identity();
+        let entries = std::fs::read_dir(&self.dir).map_err(|err| {
+            format!(
+                "read file fact cache dir {} failed: {err}",
+                self.dir.display()
+            )
+        })?;
+        let mut problems = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|err| format!("read cache dir entry failed: {err}"))?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let bytes = match std::fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    problems.push(format!("{}: read failed: {err}", path.display()));
+                    continue;
+                }
+            };
+            match codec::decode_file_facts(&bytes) {
+                Ok(envelope) => {
+                    if envelope.file_fact_cache_schema_version != FILE_FACT_CACHE_SCHEMA_VERSION {
+                        problems.push(format!(
+                            "{}: schema {} (expected {})",
+                            path.display(),
+                            envelope.file_fact_cache_schema_version,
+                            FILE_FACT_CACHE_SCHEMA_VERSION
+                        ));
+                    } else if envelope.analyzer_version != identity {
+                        problems.push(format!("{}: analyzer identity mismatch", path.display()));
+                    } else if let Err(reason) = envelope.validate_integrity() {
+                        problems.push(format!(
+                            "{}: integrity check failed: {reason}",
+                            path.display()
+                        ));
+                    }
+                }
+                Err(reason) => {
+                    problems.push(format!("{}: decode failed: {reason}", path.display()));
+                }
+            }
+        }
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(problems.join("\n"))
+        }
     }
 
     pub(crate) fn store_file_facts(

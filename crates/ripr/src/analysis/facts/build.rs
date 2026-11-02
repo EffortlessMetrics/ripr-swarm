@@ -323,6 +323,13 @@ struct CacheAccounting {
     first_corrupt_reason: Option<String>,
 }
 
+fn batch_end_error(stats: &FileFactCacheStats, error: String) -> String {
+    stats
+        .store_failure_diagnostic()
+        .map(|store| format!("{store}; batch ended with: {error}"))
+        .unwrap_or(error)
+}
+
 /// Admit, parse, store, and insert one `PARSE_BATCH_FILES` slice at a time
 /// (#5029). Cache-hit facts and parsed misses live outside the canonical
 /// index only for the current batch; every batch temporary is dropped before
@@ -466,7 +473,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
                         }
                     }
                 }
-                return Err(error);
+                return Err(batch_end_error(stats, error));
             }
             for (position, result) in results {
                 parsed[position] = Some(result.map_err(WorkerError::into_message)?);
@@ -521,7 +528,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
             }
         }
         if let Some(error) = abort {
-            return Err(error);
+            return Err(batch_end_error(stats, error));
         }
     }
     Ok((index, content_hash.finish()))
@@ -968,6 +975,22 @@ mod tests {
             many.ends_with("first: (read failed: Not a directory)"),
             "{many}"
         );
+    }
+
+    #[test]
+    fn batch_end_error_prefers_store_failure_detail() {
+        use crate::analysis::seam_cache::{FileFactStoreError, FileFactStoreStage};
+        let mut stats = FileFactCacheStats::default();
+        stats.record_store_failure(
+            PathBuf::from("src/a.rs"),
+            FileFactStoreError {
+                stage: FileFactStoreStage::Write,
+                message: "disk full".to_string(),
+            },
+        );
+        let message = super::batch_end_error(&stats, "analysis cancelled: Cancelled".to_string());
+        assert!(message.contains("disk full"), "{message}");
+        assert!(message.contains("analysis cancelled"), "{message}");
     }
 
     use super::*;
