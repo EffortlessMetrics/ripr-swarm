@@ -66,7 +66,7 @@ mod verification_plan;
 mod witness;
 mod workspace;
 
-pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
+pub(crate) use diff::parse_unified_diff_bounded_with_metadata_core;
 pub(crate) use diff_scope_filter::DiffIntake;
 pub use diff_scope_filter::DiffScopeFilter;
 

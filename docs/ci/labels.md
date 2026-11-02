@@ -48,7 +48,8 @@ Current behavior:
 - `coverage` activates the advisory coverage workflow.
 - `clippy-future` activates the future-Clippy advisory workflow.
 - `vscode` activates the VS Code extension e2e; a PR that changes
-  `editors/vscode/**` or `ci.yml` runs it without the label (#12122).
+  `editors/vscode/**`, `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml` runs it
+  without the label (#12122, #12252).
 - `ci-budget-ack` and `ripr-waive` remain documented policy
   vocabulary that is not yet wired to every target planner behavior; see
   [`current-state.md`](current-state.md).

@@ -39,5 +39,6 @@ pub(crate) use discover::{
     supplement_absent_file_limitations, worktree_contains_regular_source_file,
 };
 pub(crate) use select::{
-    select_rust_files_for_mode_with_dependent_packages, with_module_context_files,
+    module_parent_candidates, select_rust_files_for_mode_with_dependent_packages,
+    with_module_context_files,
 };

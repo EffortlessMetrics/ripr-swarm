@@ -213,7 +213,10 @@ pub(crate) use assertion_selection::{
 };
 pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
-pub(crate) use boundary_selection::typescript_changed_boundary_text;
+pub(crate) use boundary_selection::{
+    typescript_changed_boundary_is_equality_negation, typescript_changed_boundary_text,
+    typescript_changed_line_is_first_body_statement,
+};
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use class_entries::*;
