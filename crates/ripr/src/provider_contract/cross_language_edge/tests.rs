@@ -460,3 +460,245 @@ fn semantic_digest_is_order_and_relocation_invariant() -> Result<(), String> {
     assert_eq!(digest, relocated_digest);
     Ok(())
 }
+
+fn currentness_corpus_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/cross-language-edge-registry-currentness-corpus/corpus.json")
+}
+
+#[derive(Debug, Deserialize)]
+struct CurrentnessCorpusFile {
+    cases: Vec<CurrentnessCorpusCase>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CurrentnessCorpusCase {
+    id: String,
+    expect: String,
+    #[serde(default)]
+    movement_kind: Option<String>,
+    #[serde(default)]
+    registry: Option<CrossLanguageEdgeRegistryV1>,
+    #[serde(default)]
+    base: Option<CrossLanguageEdgeRegistryV1>,
+    #[serde(default)]
+    head: Option<CrossLanguageEdgeRegistryV1>,
+}
+
+fn registry_json(registry: &CrossLanguageEdgeRegistryV1) -> Result<String, String> {
+    serde_json::to_string(registry).map_err(|error| error.to_string())
+}
+
+#[test]
+fn currentness_corpus_cases() -> Result<(), String> {
+    let text = std::fs::read_to_string(currentness_corpus_path())
+        .map_err(|error| format!("read currentness corpus: {error}"))?;
+    let corpus: CurrentnessCorpusFile = serde_json::from_str(&text)
+        .map_err(|error| format!("parse currentness corpus: {error}"))?;
+    assert!(
+        corpus.cases.len() >= 8,
+        "expected currentness/movement corpus matrix"
+    );
+
+    for case in corpus.cases {
+        match case.expect.as_str() {
+            "load_accept" => {
+                let registry = case
+                    .registry
+                    .as_ref()
+                    .ok_or_else(|| format!("{} missing registry", case.id))?;
+                let loaded = load_cross_language_edge_registry_from_json(&registry_json(registry)?)
+                    .map_err(|error| format!("{}: {error}", case.id))?;
+                let report = analyze_cross_language_edge_registry_currentness(&loaded)
+                    .map_err(|error| format!("{}: {error}", case.id))?;
+                assert_eq!(
+                    report.semantic_digest, loaded.semantic_digest,
+                    "{} digest mismatch",
+                    case.id
+                );
+            }
+            "load_reject" => {
+                let registry = case
+                    .registry
+                    .as_ref()
+                    .ok_or_else(|| format!("{} missing registry", case.id))?;
+                if load_cross_language_edge_registry_from_json(&registry_json(registry)?).is_ok() {
+                    return Err(format!("{} expected load rejection", case.id));
+                }
+            }
+            "effective_not_positive" => {
+                let registry = case
+                    .registry
+                    .as_ref()
+                    .ok_or_else(|| format!("{} missing registry", case.id))?;
+                let loaded = load_cross_language_edge_registry_from_json(&registry_json(registry)?)
+                    .map_err(|error| format!("{}: {error}", case.id))?;
+                let report = analyze_cross_language_edge_registry_currentness(&loaded)
+                    .map_err(|error| format!("{}: {error}", case.id))?;
+                let edge_id = case
+                    .movement_kind
+                    .as_deref()
+                    .ok_or_else(|| format!("{} missing edge id in movement_kind", case.id))?;
+                let record = report
+                    .effective_edges
+                    .iter()
+                    .find(|record| record.edge_id == edge_id)
+                    .ok_or_else(|| format!("{} missing effective record {edge_id}", case.id))?;
+                if record.positive_relation_available {
+                    return Err(format!(
+                        "{} expected no positive relation for {edge_id}",
+                        case.id
+                    ));
+                }
+            }
+            "movement" => {
+                let expected = case
+                    .movement_kind
+                    .as_deref()
+                    .ok_or_else(|| format!("{} missing movement_kind", case.id))?;
+                let base = case
+                    .base
+                    .as_ref()
+                    .ok_or_else(|| format!("{} missing base registry", case.id))?;
+                let head = case
+                    .head
+                    .as_ref()
+                    .ok_or_else(|| format!("{} missing head registry", case.id))?;
+                let base_loaded =
+                    load_cross_language_edge_registry_from_json(&registry_json(base)?)
+                        .map_err(|error| format!("{} base: {error}", case.id))?;
+                let head_loaded =
+                    load_cross_language_edge_registry_from_json(&registry_json(head)?)
+                        .map_err(|error| format!("{} head: {error}", case.id))?;
+                let report = compare_cross_language_edge_registries(&base_loaded, &head_loaded)
+                    .map_err(|error| format!("{}: {error}", case.id))?;
+                if !report
+                    .records
+                    .iter()
+                    .any(|record| record.movement_kind.as_str() == expected)
+                {
+                    return Err(format!(
+                        "{} expected movement kind {expected}, got {:?}",
+                        case.id,
+                        report
+                            .records
+                            .iter()
+                            .map(|record| record.movement_kind.as_str())
+                            .collect::<Vec<_>>()
+                    ));
+                }
+            }
+            "anomaly" => {
+                let registry = case
+                    .registry
+                    .as_ref()
+                    .ok_or_else(|| format!("{} missing registry", case.id))?;
+                let loaded = load_cross_language_edge_registry_from_json(&registry_json(registry)?)
+                    .map_err(|error| format!("{}: {error}", case.id))?;
+                let report = analyze_cross_language_edge_registry_currentness(&loaded)
+                    .map_err(|error| format!("{}: {error}", case.id))?;
+                let expected = case
+                    .movement_kind
+                    .as_deref()
+                    .ok_or_else(|| format!("{} missing anomaly kind in movement_kind", case.id))?;
+                if !report
+                    .anomalies
+                    .iter()
+                    .any(|anomaly| format!("{:?}", anomaly.kind) == expected)
+                {
+                    return Err(format!("{} expected anomaly {expected}", case.id));
+                }
+            }
+            other => return Err(format!("{} unknown expect `{other}`", case.id)),
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn missing_producer_registration_removes_positive_relation() -> Result<(), String> {
+    let mut registry = base_registry(vec![positive_edge(
+        "pos",
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    )]);
+    registry.edges[0].producer_id = "producer.missing".into();
+    registry.registered_producers.clear();
+    let digest = cross_language_edge_registry_semantic_digest(&registry)
+        .map_err(|error| error.to_string())?;
+    let loaded = LoadedCrossLanguageEdgeRegistryV1 {
+        registry,
+        semantic_digest: digest,
+    };
+    let report = analyze_cross_language_edge_registry_currentness(&loaded)
+        .map_err(|error| error.to_string())?;
+    let record = &report.effective_edges[0];
+    assert!(!record.positive_relation_available);
+    assert_eq!(
+        record.effective_disposition,
+        EdgeDispositionV1::UnresolvedLeg
+    );
+    assert_eq!(
+        record.first_unresolved_leg.as_deref(),
+        Some("missing_producer_registration")
+    );
+    Ok(())
+}
+
+#[test]
+fn producer_and_edge_reorder_preserves_semantic_digest_on_load() -> Result<(), String> {
+    let edge_a = positive_edge(
+        "a",
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    let edge_b = positive_edge(
+        "b",
+        BoundaryFamilyV1::NativeAddon,
+        CrossLanguageEdgeDirectionV1::TargetToSource,
+        EdgeStrengthV1::PropagationLimited,
+    );
+    let forward = base_registry(vec![edge_a.clone(), edge_b.clone()]);
+    let mut reversed = base_registry(vec![edge_b, edge_a]);
+    reversed.registered_producers.reverse();
+    let forward_loaded = load_cross_language_edge_registry_from_json(&registry_json(&forward)?)
+        .map_err(|error| error.to_string())?;
+    let reversed_loaded = load_cross_language_edge_registry_from_json(&registry_json(&reversed)?)
+        .map_err(|error| error.to_string())?;
+    assert_eq!(
+        forward_loaded.semantic_digest,
+        reversed_loaded.semantic_digest
+    );
+    Ok(())
+}
+
+#[test]
+fn generated_artifact_cannot_cross_bind_projects() -> Result<(), String> {
+    let mut left = positive_edge(
+        "left",
+        BoundaryFamilyV1::GeneratedBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    let mut right = positive_edge(
+        "right",
+        BoundaryFamilyV1::GeneratedBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    left.generated_artifacts[0].artifact_id = "shared.ts".into();
+    right.generated_artifacts[0].artifact_id = "shared.ts".into();
+    right.source.project = project("project.gamma", Some("pkg"));
+    right.target.project = project("project.delta", Some("pkg"));
+    let registry = base_registry(vec![left, right]);
+    let loaded = load_cross_language_edge_registry_from_json(&registry_json(&registry)?)
+        .map_err(|error| error.to_string())?;
+    let report = analyze_cross_language_edge_registry_currentness(&loaded)
+        .map_err(|error| error.to_string())?;
+    assert!(report.anomalies.iter().any(|anomaly| {
+        anomaly.kind == CrossLanguageEdgeRegistryAnomalyKindV1::ArtifactCrossBind
+    }));
+    Ok(())
+}

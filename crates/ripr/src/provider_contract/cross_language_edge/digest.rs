@@ -2,6 +2,40 @@ use sha2::{Digest, Sha256};
 
 use super::model::*;
 
+fn direction_token(direction: CrossLanguageEdgeDirectionV1) -> &'static str {
+    match direction {
+        CrossLanguageEdgeDirectionV1::SourceToTarget => "source_to_target",
+        CrossLanguageEdgeDirectionV1::TargetToSource => "target_to_source",
+        CrossLanguageEdgeDirectionV1::Bidirectional => "bidirectional",
+    }
+}
+
+/// Stable relationship slot for base/head movement and duplicate detection.
+pub fn cross_language_edge_semantic_key(edge: &CrossLanguageEdgeV1) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        edge.source.portable_identity_key(),
+        edge.target.portable_identity_key(),
+        edge.boundary_family.as_str(),
+        direction_token(edge.direction)
+    )
+}
+
+/// Content digest for an edge independent of `edge_id` and display locators.
+pub fn cross_language_edge_content_digest(
+    edge: &CrossLanguageEdgeV1,
+) -> Result<String, CrossLanguageEdgeRegistryErrorV1> {
+    let mut normalized = edge.clone();
+    normalized.source.display_name = None;
+    normalized.target.display_name = None;
+    let encoded =
+        serde_json::to_vec(&normalized).map_err(|error| CrossLanguageEdgeRegistryErrorV1 {
+            code: CrossLanguageEdgeRegistryErrorCodeV1::CompletenessConflict,
+            message: format!("edge content serialization failed: {error}"),
+        })?;
+    Ok(format!("sha256:{:x}", Sha256::digest(encoded)))
+}
+
 /// Canonical portable semantic digest for a registry document.
 ///
 /// Volatile transport fields such as `semantic_digest` and subject

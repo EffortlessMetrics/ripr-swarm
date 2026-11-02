@@ -86,9 +86,11 @@ Portable semantic identity hashes canonical registry content with edges sorted b
 
 ## Known Limits
 
-- This slice defines schema and validation only. No Bun profile migration,
-  producer loading, consumer cutover, or output/actionability behavior is
-  included.
+- This slice defines schema and validation only. Loading, currentness evaluation,
+  and base/head movement are defined in
+  [RIPR-SPEC-0379](RIPR-SPEC-0379-cross-language-edge-registry-currentness-v1.md)
+  (#6484). No Bun profile migration, producer loading, consumer cutover, or
+  output/actionability behavior is included in this spec alone.
 
 ## Non-Goals
 
