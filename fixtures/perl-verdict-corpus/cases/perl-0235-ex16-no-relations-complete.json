@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex16-no-relations-complete.json",
-    "sha256": "0b0cfa8344249680b98d075a0dcc5aee27d84695625dd2bb19764fbfd8435675",
+    "sha256": "801be6c76c9263b21276ed1055c8edad2b5c097f8407599033620db07615cdc1",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in relations remove where {\"change_id\": \"$CHANGE_ID\"}; packet_status set to complete (the real producer emits partial, which RIPR-SPEC-0235 rule 10 and example 16 read as static_unknown when no relation links the change); the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
   },

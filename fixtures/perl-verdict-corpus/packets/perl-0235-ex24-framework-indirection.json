@@ -92,13 +92,13 @@
       "evidence_refs": [],
       "kind": "partial_inference",
       "limitation_id": "change-behavior-hint-partial",
-      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped, but a die/return/comparison token inside a string literal can still be misclassified (a robust fix needs tokenization)."
+      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped and single-line \"...\" / '...' literal contents cannot drive classification, but tokens inside heredocs, multi-line strings, q{}/qq{} and other quote-like operators, regex literals, or trailing comments are still scanned as code and can be misclassified."
     },
     {
-      "limitation_id": "framework-indirection",
+      "evidence_refs": [],
       "kind": "framework_indirection",
-      "message": "assertions go through a framework wrapper",
-      "evidence_refs": []
+      "limitation_id": "framework-indirection",
+      "message": "assertions go through a framework wrapper"
     }
   ],
   "oracles": [
@@ -166,7 +166,7 @@
       "confidence": "medium",
       "expected_expression": null,
       "expression": "like(dies { Ledger::withdraw(10, 20) }, qr/insufficient funds/, 'overdrawing names the reason')",
-      "kind": "predicate_boundary_assertion",
+      "kind": "exception_observer",
       "observed_sink": null,
       "oracle_id": "oracle:t/ledger.t:like:311-406",
       "provenance_refs": [
@@ -178,27 +178,7 @@
         "start_column": 0,
         "start_line": 11
       },
-      "strength": "weak_broad",
-      "target_owner_id": null,
-      "test_id": "test:t/ledger.t"
-    },
-    {
-      "confidence": "medium",
-      "expected_expression": null,
-      "expression": "dies { Ledger::withdraw(10, 20) }, qr/insufficient funds/, 'overdrawing names the reason'",
-      "kind": "exception_observer",
-      "observed_sink": null,
-      "oracle_id": "oracle:t/ledger.t:dies:316-405",
-      "provenance_refs": [
-        "prov:oracle_extraction:file:t/ledger.t"
-      ],
-      "range": {
-        "end_column": 94,
-        "end_line": 11,
-        "start_column": 5,
-        "start_line": 11
-      },
-      "strength": "weak_broad",
+      "strength": "strong_exact",
       "target_owner_id": null,
       "test_id": "test:t/ledger.t"
     },
@@ -246,7 +226,7 @@
       "confidence": "medium",
       "expected_expression": null,
       "expression": "isnt(Ledger::fee(100), 0, 'fees are charged')",
-      "kind": "exact_return_assertion",
+      "kind": "smoke_ok",
       "observed_sink": null,
       "oracle_id": "oracle:t/ledger.t:isnt:469-514",
       "provenance_refs": [
@@ -258,7 +238,7 @@
         "start_column": 0,
         "start_line": 15
       },
-      "strength": "strong_exact",
+      "strength": "weak_smoke",
       "target_owner_id": null,
       "test_id": "test:t/ledger.t"
     },
@@ -478,7 +458,7 @@
       }
     }
   ],
-  "packet_fingerprint": "sha256:0db7cc8af0c0769135df4013fa35c6bd187b652cf7230e80c03aa2283332e4b3",
+  "packet_fingerprint": "sha256:8f3a184166907e349d720eb74943ff53e1d96d0f90725e4110ba9c04303fa6a0",
   "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
   "packet_status": "partial",
   "producer": {
@@ -493,7 +473,8 @@
       "verify_commands",
       "limitations",
       "provenance",
-      "test_facts"
+      "test_facts",
+      "oracle_matcher_grading"
     ],
     "name": "perl-lsp",
     "version": "0.17.0"
