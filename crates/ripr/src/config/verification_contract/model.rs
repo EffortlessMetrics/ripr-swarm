@@ -106,16 +106,6 @@ pub(crate) enum VerificationContractDecisionState {
     Complete,
     Partial,
     Conflicting,
-    #[expect(
-        dead_code,
-        reason = "policy:vp29a:5223: reserved for unknown-schema slices in VP29B+ (#6438)"
-    )]
-    Unsupported,
-    #[expect(
-        dead_code,
-        reason = "policy:vp29a:5223: reserved for missing-registration slices (#5178)"
-    )]
-    NotProven,
 }
 
 /// Compiled join over current declaration sources (#5223).

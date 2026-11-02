@@ -9,7 +9,9 @@ use super::model::{
     VerificationContractConflictV1, VerificationContractDecisionState,
     VerificationContractSourceClass,
 };
-use crate::config::{RiprConfig, TestHarnessRegistration};
+use crate::config::{
+    RiprConfig, TestHarnessRegistration, test_harness_registration_canonical_identity,
+};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -167,8 +169,7 @@ fn tracked_configuration_source(
     let digest = input.ripr_toml_content_digest.as_ref()?;
     let location = input
         .ripr_toml_path
-        .as_ref()
-        .map(|path| normalize_repo_relative(path))
+        .and_then(|path| workspace_relative_location(input.repository_root, path))
         .unwrap_or_else(|| "ripr.toml".to_string());
     Some(RepositoryVerificationContractSourceV1 {
         source_id: VerificationContractSourceClass::TrackedRiprConfiguration
@@ -190,26 +191,30 @@ fn tracked_configuration_source(
 }
 
 fn harness_registry_digest(config: &RiprConfig) -> String {
-    let mut lines = Vec::new();
-    for registration in config.analysis().test_harnesses() {
-        lines.push(harness_identity_line(registration));
+    let mut ordered = config
+        .analysis()
+        .test_harnesses()
+        .iter()
+        .map(test_harness_registration_canonical_identity)
+        .collect::<Vec<_>>();
+    ordered.sort();
+    let mut identity = ordered.len().to_string();
+    for encoded in ordered {
+        identity.push('\u{0}');
+        identity.push_str(&encoded);
     }
-    digest_text(&lines.join("\n"))
+    digest_text(&identity)
 }
 
 fn harness_declaration_digest(registration: &TestHarnessRegistration) -> String {
-    digest_text(&harness_identity_line(registration))
+    digest_text(&test_harness_registration_canonical_identity(registration))
 }
 
-fn harness_identity_line(registration: &TestHarnessRegistration) -> String {
-    format!(
-        "{}|{}|{}|{}|{}",
-        registration.registration_id,
-        registration.target.to_string_lossy().replace('\\', "/"),
-        registration.kind.as_str(),
-        registration.adapter.as_str(),
-        registration.marker
-    )
+fn workspace_relative_location(root: &Path, path: &Path) -> Option<String> {
+    path.strip_prefix(root)
+        .ok()
+        .map(normalize_repo_relative)
+        .filter(|location| !location.is_empty())
 }
 
 fn semantic_contract_digest(contract: &RepositoryVerificationContractV1) -> String {
@@ -355,5 +360,36 @@ mod tests {
         assert!(classes.contains(&VerificationContractSourceClass::RiprBuiltinPolicy));
         assert!(classes.contains(&VerificationContractSourceClass::TrackedRiprConfiguration));
         assert!(classes.contains(&VerificationContractSourceClass::RegisteredHarnessManifest));
+    }
+
+    #[test]
+    fn pipe_containing_registration_fields_have_distinct_digests() {
+        let first = TestHarnessRegistration {
+            registration_id: "a|b".to_string(),
+            target: PathBuf::from("c"),
+            kind: TestHarnessKind::CustomHarnessTarget,
+            adapter: TestHarnessAdapter::LibtestMimicV1,
+            marker: "libtest_mimic".to_string(),
+        };
+        let second = TestHarnessRegistration {
+            registration_id: "a".to_string(),
+            target: PathBuf::from("b|c"),
+            kind: TestHarnessKind::CustomHarnessTarget,
+            adapter: TestHarnessAdapter::LibtestMimicV1,
+            marker: "libtest_mimic".to_string(),
+        };
+        assert_ne!(
+            harness_declaration_digest(&first),
+            harness_declaration_digest(&second)
+        );
+    }
+
+    #[test]
+    fn tracked_configuration_location_is_repository_relative() {
+        let root = Path::new("/work/project");
+        assert_eq!(
+            workspace_relative_location(root, Path::new("/work/project/ripr.toml")).as_deref(),
+            Some("ripr.toml")
+        );
     }
 }

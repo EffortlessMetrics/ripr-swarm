@@ -541,6 +541,30 @@ fn canonical_test_harnesses_identity(registrations: &[TestHarnessRegistration]) 
     identity
 }
 
+/// Canonical identity for one harness registration (#3532 / #6428).
+pub(crate) fn test_harness_registration_canonical_identity(
+    registration: &TestHarnessRegistration,
+) -> String {
+    let mut encoded = String::new();
+    for field in [
+        registration.registration_id.as_str(),
+        registration
+            .target
+            .to_string_lossy()
+            .replace('\\', "/")
+            .as_str(),
+        registration.kind.as_str(),
+        registration.adapter.as_str(),
+        registration.marker.as_str(),
+    ] {
+        encoded.push_str(&field.len().to_string());
+        encoded.push(':');
+        encoded.push_str(field);
+        encoded.push('\u{0}');
+    }
+    encoded
+}
+
 /// `[perl]` repository configuration (Campaign 31 Phase D, #1407).
 ///
 /// When `producer` is set to `"perllsp"`, ripr invokes a Perl facts
