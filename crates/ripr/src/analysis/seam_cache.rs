@@ -637,9 +637,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.140`: a verified `use claims::..` `assert_ok_eq!` / `assert_some_eq!` of a
 /// literal pins an `Ok`/`Some` tail and reads `exact_value` / strong
 /// (RIPR-SPEC-0197, RIPR-SPEC-0231 rule 10, #12304). Old entries keep `unknown`.
-/// `1.141`: an assertion whose `Err(..)` constructor feeds a value-supplying
+/// `1.142`: an assertion whose `Err(..)` constructor feeds a value-supplying
 /// adapter is a relation, not an exact oracle of any kind (#12610).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.141";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.142";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -821,8 +821,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.141";
 /// `0.140`: same adapter-fed `Err(..)` refusal as full `1.138` (#12359).
 /// `0.141`: same table-row quoted-word rule as full `1.139` (#12253).
 /// `0.142`: same claims payload-equality pin as full `1.140` (#12304).
-/// `0.143`: same adapter-fed `Err(..)` relation as full `1.141` (#12610).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.143";
+/// `0.144`: same adapter-fed `Err(..)` relation as full `1.142` (#12610).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.144";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1006,8 +1006,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.143";
 /// `0.140`: same adapter-fed `Err(..)` refusal as full `1.138` (#12359).
 /// `0.141`: same table-row quoted-word rule as full `1.139` (#12253).
 /// `0.142`: same claims payload-equality pin as full `1.140` (#12304).
-/// `0.143`: same adapter-fed `Err(..)` relation as full `1.141` (#12610).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.143";
+/// `0.144`: same adapter-fed `Err(..)` relation as full `1.142` (#12610).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.144";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5764,8 +5764,8 @@ mod tests {
         // 1.137 -> 1.138: adapter-fed Err refusal (#12359).
         // 1.138 -> 1.139: table-row quoted words no longer hide the route (#12253).
         // 1.139 -> 1.140: claims payload-equality owner pin (#12304).
-        // 1.140 -> 1.141: adapter-fed Err is a relation (#12610).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.141");
+        // 1.141 -> 1.142: adapter-fed Err is a relation (#12610).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.142");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5887,9 +5887,9 @@ mod tests {
         // 0.139 -> 0.140: same adapter-fed Err refusal as full 1.138 (#12359).
         // 0.140 -> 0.141: same table-row quoted-word rule as full 1.139 (#12253).
         // 0.141 -> 0.142: same claims payload-equality pin as full 1.140 (#12304).
-        // 0.142 -> 0.143: same adapter-fed Err relation as full 1.141 (#12610).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.143");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.143");
+        // 0.143 -> 0.144: same adapter-fed Err relation as full 1.142 (#12610).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.144");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.144");
     }
 
     #[test]
