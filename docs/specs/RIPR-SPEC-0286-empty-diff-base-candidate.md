@@ -48,8 +48,12 @@ advised run would itself be analyzed:
   pipeline guards use (`language_admits_changed_path`): Python under
   `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES`, and the routed TypeScript /
   JavaScript family under `RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES`.
-  Disabled languages are not counted. An unreadable or invalid preview
-  budget yields no advice, matching the Rust fail-closed rule (#10821);
+  Numstat paths are read under `core.quotePath=true` and decoded to
+  the same native identity the unified-diff parser uses, so a
+  `handwritten_files` declaration under an excluded directory still
+  counts. Disabled languages are not counted. An unreadable or invalid
+  preview budget yields no advice, matching the Rust fail-closed rule
+  (#10821);
 - the diff's changed-file count stays within the parser guard
   (`RIPR_MAX_DIFF_INDEX_FILES`);
 - submodule state is compared with `--ignore-submodules=none`, matching
@@ -64,7 +68,8 @@ commit/`--worktree` safe action owns the empty state.
 
 - Red-to-green unit tests beside the probe for the oversized-line,
   oversized-file, rename-counting, smallest-diff, preview-language
-  budget, excluded/disabled preview, renamed-Python, and invalid
+  budget, excluded/disabled preview, renamed-Python, C-quoted
+  handwritten Python under an excluded directory, and invalid
   preview-budget cases.
 - Existing probe rejection tests unchanged (alias, descendant,
   tree-restoring range, outside-root changes).
@@ -82,6 +87,7 @@ commit/`--worktree` safe action owns the empty state.
 - `another_base_candidate_counts_javascript_against_the_typescript_budget`
 - `another_base_candidate_ignores_disabled_or_excluded_preview_python`
 - `another_base_candidate_counts_renamed_python_lines`
+- `another_base_candidate_counts_quoted_handwritten_preview_python`
 - `another_base_candidate_yields_no_advice_for_an_invalid_preview_budget`
 
 ## Acceptance Examples
@@ -100,7 +106,10 @@ commit/`--worktree` safe action owns the empty state.
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/diff/load.rs` — `another_base_candidate`,
-  `another_base_candidate_with_limits`, `numstat_new_path`.
+  `another_base_candidate_with_limits`, `numstat_new_path`,
+  `native_numstat_dest`.
+- `crates/ripr/src/analysis/diff/path.rs` — shared
+  `native_path_from_git_token` C-quote decode (#3601).
 - `crates/ripr/src/analysis/pipeline.rs` — shared
   `language_admits_changed_path`, `diff_changed_python_line_limit`,
   `diff_changed_typescript_line_limit` (visibility only).
