@@ -1,0 +1,89 @@
+{
+  "schema_version": "incomplete_diff_corpus.v1",
+  "owner_issues": [4514, 4506],
+  "check_root": "fixtures/boundary_gap/input",
+  "rows": [
+    {
+      "id": "old_side_unfinished",
+      "role": "incomplete",
+      "category": "old-side declared count unfinished",
+      "diff_path": "diffs/old_side_unfinished.patch",
+      "diff_sha256": "02f15cd1c40e27d6fa4e8c3892b2f38340d3dac621f41d503ecc04ff3d4856d0",
+      "expected_analysis_complete": false,
+      "expected_exit_code": 2,
+      "expect_malformed_diff_limitation": true
+    },
+    {
+      "id": "old_side_unfinished_crlf",
+      "role": "incomplete",
+      "category": "CRLF variant of unfinished old-side count",
+      "diff_path": "diffs/old_side_unfinished_crlf.patch",
+      "diff_sha256": "cc5ec22ecc51682b7ed0bf2d357eec037f10caf553c4b62928ff01dcb186ccc7",
+      "expected_analysis_complete": false,
+      "expected_exit_code": 2,
+      "expect_malformed_diff_limitation": true
+    },
+    {
+      "id": "body_exceeds_old_count",
+      "role": "incomplete",
+      "category": "body exceeds old-side declared count",
+      "diff_path": "diffs/body_exceeds_old_count.patch",
+      "diff_sha256": "e5a43b14fd9f34c1b4dbe1aa1baddda83d54c687a5fa7a47a1ce2229b6b15676",
+      "expected_analysis_complete": false,
+      "expected_exit_code": 2,
+      "expect_malformed_diff_limitation": true
+    },
+    {
+      "id": "eof_after_hunk_header",
+      "role": "incomplete",
+      "category": "EOF immediately after a valid @@ header",
+      "diff_path": "diffs/eof_after_hunk_header.patch",
+      "diff_sha256": "d5b586752a79a755a8b0fc277ada1d418ece059fd0870578676e6b7da865b712",
+      "expected_analysis_complete": false,
+      "expected_exit_code": 2,
+      "expect_malformed_diff_limitation": true
+    },
+    {
+      "id": "advisory_line_before_truncation",
+      "role": "incomplete",
+      "category": "incomplete hunk that already emitted valid changed lines",
+      "diff_path": "diffs/advisory_line_before_truncation.patch",
+      "diff_sha256": "5315c844d93612dcc9538ea7d9ad48e97e74abb467d784bd3c762cf94f01dc4c",
+      "expected_analysis_complete": false,
+      "expected_exit_code": 2,
+      "expect_malformed_diff_limitation": true,
+      "expect_nonzero_probe_count": true
+    },
+    {
+      "id": "multi_file_second_incomplete",
+      "role": "incomplete",
+      "category": "multi-file input where a later file is incomplete",
+      "diff_path": "diffs/multi_file_second_incomplete.patch",
+      "diff_sha256": "1f548f9062ea036505b88f4a61b19cdd8f8ec7d1e747d7520261cd0234ed24e9",
+      "expected_analysis_complete": false,
+      "expected_exit_code": 2,
+      "expect_malformed_diff_limitation": true
+    },
+    {
+      "id": "empty_input",
+      "role": "complete_control",
+      "category": "truly empty input under the documented contract",
+      "diff_path": "diffs/empty_input.patch",
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "expected_analysis_complete": true,
+      "expected_exit_code": 0,
+      "expect_malformed_diff_limitation": false
+    },
+    {
+      "id": "complete_one_file",
+      "role": "complete_control",
+      "category": "complete one-file diff",
+      "diff_path": "diffs/complete_one_file.patch",
+      "diff_sha256": "5d4572db105b9569851eb9f3a73b99059a4626019d7d43b7053c8b29c660f668",
+      "expected_analysis_complete": true,
+      "expected_exit_code": 0,
+      "expect_malformed_diff_limitation": false,
+      "expect_nonzero_probe_count": true
+    }
+  ]
+}
