@@ -124,7 +124,7 @@ fn finding_with_related(related: Vec<RelatedTest>, ripr_evidence: RiprEvidence) 
         static_limit_kind: None,
         changed_sink: Some("return_value".to_string()),
         observed_sink: None,
-        oracle_alignment: None,
+        oracle_alignment: Some("direct".to_string()),
         alignment_reason: None,
         source_currentness: SourceCurrentness::CandidateCurrent,
     }
@@ -250,9 +250,9 @@ fn wrong_sink_oracle_stays_impacted_at_most() {
         discriminate: "yes".to_string(),
     };
     assert!(!qualifies_as_validating(
-        RelationReason::WeakTokenSubstring,
+        RelationReason::DirectOwnerCall,
         &OracleStrength::Strong,
-        "return_value",
+        Some("orthogonal"),
         &stages
     ));
 }
@@ -419,6 +419,43 @@ fn removing_limitations_changes_digest_negative_control() {
     test_only_plan_without_limitations(&mut plan);
     let after = ok_digest(change_verification_plan_semantic_digest(&plan));
     assert_ne!(before, after);
+}
+
+#[test]
+fn diff_only_limitation_keeps_plan_limited() {
+    let finding = finding_with_related(
+        vec![RelatedTest {
+            name: "checks_boundary".to_string(),
+            file: PathBuf::from("tests/pricing.rs"),
+            line: 10,
+            oracle: None,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            relation_confidence: Some(RelationReason::DirectOwnerCall.confidence()),
+            relation_reason: Some(RelationReason::DirectOwnerCall),
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        }],
+        ripr(
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Yes,
+        ),
+    );
+    let plan = ok_plan(project_plan_from_finding(
+        &finding,
+        &plan_input(subject_identity("base", "head")),
+    ));
+    assert!(plan.completeness.limited);
+    assert!(plan.completeness.not_proven);
+    assert!(
+        plan.limitations
+            .iter()
+            .any(|item| item.contains("diff_only"))
+    );
 }
 
 #[test]
