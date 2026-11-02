@@ -1157,7 +1157,7 @@ fn return_value_direct_at_probe_line(
         ExpectedSink::ReturnValue,
         &crlf_pairs,
     );
-    let outcome = rust_test_stub(&seam, None, source);
+    let outcome = rust_test_stub(&seam, None, source, None);
     Some(TestStubResolution {
         seam_id: seam.id().as_str().to_string(),
         owner: seam.owner().to_string(),
