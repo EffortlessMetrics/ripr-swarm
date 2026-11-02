@@ -2453,6 +2453,24 @@ impl RustAdapter {
             oracles::PropertyMacroMentionIndex<'_>,
             classify::TransitiveReachIndex<'_>,
         )> = std::sync::OnceLock::new();
+        // #5464: two widened file-set slots (same capacity as dependent scope)
+        // reuse the Shared OnceLock pattern per slot.
+        let widened_0_files: std::sync::OnceLock<Vec<std::path::PathBuf>> =
+            std::sync::OnceLock::new();
+        let widened_0_index: std::sync::OnceLock<std::sync::Arc<RustIndex>> =
+            std::sync::OnceLock::new();
+        let widened_0_lookups: std::sync::OnceLock<(
+            oracles::PropertyMacroMentionIndex<'_>,
+            classify::TransitiveReachIndex<'_>,
+        )> = std::sync::OnceLock::new();
+        let widened_1_files: std::sync::OnceLock<Vec<std::path::PathBuf>> =
+            std::sync::OnceLock::new();
+        let widened_1_index: std::sync::OnceLock<std::sync::Arc<RustIndex>> =
+            std::sync::OnceLock::new();
+        let widened_1_lookups: std::sync::OnceLock<(
+            oracles::PropertyMacroMentionIndex<'_>,
+            classify::TransitiveReachIndex<'_>,
+        )> = std::sync::OnceLock::new();
 
         let rust_changed_for_presence = analyzable_changed_files
             .iter()
@@ -2865,17 +2883,39 @@ impl RustAdapter {
                             return Err("shared reach index reported but not held".to_string());
                         }
                     }
-                    dependent_scope::ReachIndex::Widened(reach_index) => {
-                        // A withheld file that spells the owner can hold the
-                        // unresolved property macro that mentions it.
-                        let reach_property_macro_mentions =
-                            oracles::PropertyMacroMentionIndex::new(reach_index, &options.root);
+                    dependent_scope::ReachIndex::Widened { index, files } => {
+                        let slot = if widened_0_files.get().is_some_and(|held| held == &files) {
+                            0
+                        } else if widened_1_files.get().is_some_and(|held| held == &files) {
+                            1
+                        } else if widened_0_files.get().is_none() {
+                            0
+                        } else if widened_1_files.get().is_none() {
+                            1
+                        } else {
+                            return Err(
+                                "widened reach cache full before shared index; report this as a ripr bug with the command and workspace shape".to_string(),
+                            );
+                        };
+                        let (files_lock, index_lock, lookups_lock) = if slot == 0 {
+                            (&widened_0_files, &widened_0_index, &widened_0_lookups)
+                        } else {
+                            (&widened_1_files, &widened_1_index, &widened_1_lookups)
+                        };
+                        files_lock.get_or_init(|| files);
+                        let held = index_lock.get_or_init(|| index);
+                        let (mentions, reach) = lookups_lock.get_or_init(|| {
+                            (
+                                oracles::PropertyMacroMentionIndex::new(held, &options.root),
+                                classify::TransitiveReachIndex::new(held),
+                            )
+                        });
                         apply_rust_no_static_path_limit(
                             &mut finding,
                             &probe,
-                            reach_index,
-                            &reach_property_macro_mentions,
-                            &classify::TransitiveReachIndex::new(reach_index),
+                            held,
+                            mentions,
+                            reach,
                             dependency_edges.as_ref(),
                         );
                     }
@@ -4861,6 +4901,80 @@ mod tests {
         assert_eq!(
             builds, 3,
             "two cached closure indexes plus one shared full index, not one build per owner"
+        );
+        fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    /// #5464: two `no_static_path` findings that share one widened file set
+    /// must build the reach graph once, not once per finding.
+    #[test]
+    fn widened_reach_structures_build_once_per_file_set() -> Result<(), String> {
+        use crate::analysis::classify::TransitiveReachIndex;
+        use dependent_scope::DependentScopeMode;
+        let root = temp_root("5464-widened-reach-lookups")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"a\", \"b\"]\nresolver = \"2\"\n",
+        )?;
+        write(
+            &root.join("a/Cargo.toml"),
+            "[package]\nname = \"scope_a\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write(
+            &root.join("b/Cargo.toml"),
+            "[package]\nname = \"scope_b\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [dependencies]\nscope_a = { path = \"../a\" }\n",
+        )?;
+        write(
+            &root.join("a/src/lib.rs"),
+            "pub fn gauge_one(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n\
+             pub fn gauge_two(flag: bool) -> bool {\n    if flag { false } else { true }\n}\n",
+        )?;
+        write(
+            &root.join("b/src/lib.rs"),
+            "pub fn relay_one(flag: bool) -> bool {\n    scope_a::gauge_one(flag)\n}\n\
+             pub fn relay_two(flag: bool) -> bool {\n    scope_a::gauge_two(flag)\n}\n",
+        )?;
+        write(
+            &root.join("b/tests/unrelated.rs"),
+            "#[test]\nfn unrelated_holds() {\n    assert!(scope_b::relay_one(false) && scope_b::relay_two(true));\n}\n",
+        )?;
+        let changed = diff::parse_unified_diff(
+            "diff --git a/a/src/lib.rs b/a/src/lib.rs\n\
+             --- a/a/src/lib.rs\n\
+             +++ b/a/src/lib.rs\n\
+             @@ -1,6 +1,6 @@\n\
+              pub fn gauge_one(flag: bool) -> bool {\n\
+             -    if flag { true } else { false }\n\
+             +    if flag { false } else { true }\n\
+              }\n\
+              pub fn gauge_two(flag: bool) -> bool {\n\
+             -    if flag { false } else { true }\n\
+             +    if flag { true } else { false }\n\
+              }\n",
+        );
+        let start = TransitiveReachIndex::graph_build_count();
+        let result = dependent_scope::with_forced_mode(DependentScopeMode::NameAdmitted, || {
+            RustAdapter.analyze_diff(
+                &diff_options(root.clone(), AnalysisMode::Draft),
+                &OraclePolicy::default(),
+                &changed,
+            )
+        })?;
+        let no_static = result
+            .findings
+            .iter()
+            .filter(|finding| finding.class == ExposureClass::NoStaticPath)
+            .count();
+        assert!(
+            no_static >= 2,
+            "expected at least two no_static_path findings for the changed branches, got {no_static}"
+        );
+        assert_eq!(
+            TransitiveReachIndex::graph_build_count() - start,
+            1,
+            "one widened file set must build one reach graph"
         );
         fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
