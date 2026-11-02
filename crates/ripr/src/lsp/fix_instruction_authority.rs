@@ -58,6 +58,8 @@ fn summary_from_gap_ledger_data(data: &Value) -> FixInstructionSummary {
             has_fix_site: false,
             has_suggested_assertion: false,
             limitation_kinds: vec!["snapshot_stale".to_string()],
+            instruction_semantic_id: None,
+            instruction_instance_id: None,
         };
     }
     if json_str(data, "static_limit_kind").is_some()
@@ -68,6 +70,8 @@ fn summary_from_gap_ledger_data(data: &Value) -> FixInstructionSummary {
             has_fix_site: false,
             has_suggested_assertion: false,
             limitation_kinds: vec!["static_limitation".to_string()],
+            instruction_semantic_id: None,
+            instruction_instance_id: None,
         };
     }
     if gap_state.is_some_and(EvidenceState::is_actionable_word) {
@@ -85,6 +89,8 @@ fn summary_from_gap_ledger_data(data: &Value) -> FixInstructionSummary {
             has_fix_site,
             has_suggested_assertion: false,
             limitation_kinds: Vec::new(),
+            instruction_semantic_id: None,
+            instruction_instance_id: None,
         };
     }
     FixInstructionSummary::unavailable()
@@ -97,6 +103,8 @@ fn summary_for_seam_without_witness(seam: &ClassifiedSeam) -> FixInstructionSumm
             has_fix_site: false,
             has_suggested_assertion: false,
             limitation_kinds: vec!["cross_language_target_unresolved".to_string()],
+            instruction_semantic_id: None,
+            instruction_instance_id: None,
         };
     }
     if !repair_packet_eligibility(seam).eligible() {
@@ -105,6 +113,8 @@ fn summary_for_seam_without_witness(seam: &ClassifiedSeam) -> FixInstructionSumm
             has_fix_site: false,
             has_suggested_assertion: false,
             limitation_kinds: vec!["repair_route_not_ready".to_string()],
+            instruction_semantic_id: None,
+            instruction_instance_id: None,
         };
     }
     FixInstructionSummary {
@@ -112,6 +122,8 @@ fn summary_for_seam_without_witness(seam: &ClassifiedSeam) -> FixInstructionSumm
         has_fix_site: false,
         has_suggested_assertion: false,
         limitation_kinds: Vec::new(),
+        instruction_semantic_id: None,
+        instruction_instance_id: None,
     }
 }
 
