@@ -115,6 +115,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('ripr.restartServer', async () => {
       try {
         controller?.allowWorkspaceRootRecovery();
+        controller?.resetCrashRecoveryForExplicitRestart();
         await restartServerOnce(controller);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

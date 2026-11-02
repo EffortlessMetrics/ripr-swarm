@@ -196,6 +196,21 @@ The `ripr_kani_binding.v1` reuses `RiprRepositorySnapshotV1` with
 
 Native JSON, outcomes, counts, bounds, stubs and expected-panic polarity are preserved. Successful counts cannot invent property identities or functional coverage. Empty, partial, unreachable or expected-panic results grant no functional assurance, static promotion, receipt issuance or gate authority. See [the input/output contract](../OUTPUT_SCHEMA.md#imported-kani-observation-ripr_kani_reportv1) for fields and the explicit adapter-qualification limit.
 
+### Retained Kani native conformance
+
+The #10746 subset in `crates/ripr/src/app/kani_import/fixtures/native-captures/`
+retains eight untouched exports and exact source from the pinned Kani producer.
+Offline tests preserve ordinary, vacuous, expected/missing-panic, unwind and
+partial-selection distinctions. Source/export substitution under an unchanged
+binding refuses. Newly authored portable test bindings are not captured commands.
+
+An independently authored vacuous-success report projection is compared with a
+real import and checked by the existing evidence-promotion honesty corpus.
+The complete native document remains identical in JSON and Markdown. This is
+bounded parser/import conformance, not fresh native execution, held-out accuracy,
+implementation-mutation discrimination, specification adequacy or a support claim.
+`.ripr/traceability.d/10746-kani-native-conformance.toml` maps its exact controls.
+
 ## Compatibility and migration
 
 The current `ripr agent verify` command remains a compatibility surface for

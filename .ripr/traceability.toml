@@ -5920,6 +5920,7 @@ tests = [
   "crates/ripr/src/output/json/mod.rs::tests::given_source_controls_when_rendered_then_json_round_trips_and_text_spells_controls",
   "crates/ripr/src/output/first_pr.rs::tests::preflight_recovery_commands_pair_shell_forms_for_apostrophe_root_and_refs",
   "crates/ripr/src/output/first_pr.rs::tests::preflight_diff_failure_carries_the_same_shell_recovery_steps",
+  "crates/ripr/tests/generated_review_workflow.rs::generated_first_pr_preflight_recovery_commands_quote_root_and_refs",
   "crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults",
   "crates/ripr/src/output/first_pr/preflight.rs::tests::unreadable_regular_ripr_toml_is_present_not_ok",
   "crates/ripr/src/output/first_pr/preflight.rs::tests::fifo_ripr_toml_is_present_not_ok_and_does_not_block",
@@ -9281,6 +9282,7 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_trait_path_call_then_argument_type_decides",
   "fixtures/python_effect_order_guarded_before_call",
   "fixtures/python_effect_order_module_before_call",
+  "crates/ripr/src/analysis/language/perl/tests.rs::empty_diff_with_supplied_perl_packet_reports_findings",
 ]
 fixtures = [
   "fixtures/typescript_reassigned_setup_hook",
@@ -9373,6 +9375,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/analysis/probes/path_only_argument.rs",
   "xtask/src/main.rs",

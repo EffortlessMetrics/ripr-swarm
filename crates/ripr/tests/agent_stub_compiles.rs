@@ -460,6 +460,54 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
     Ok(())
 }
 
+/// #5616: a feature gate on the parent's out-of-line `mod` declaration must
+/// refuse before writing a stub that `cargo test` would compile out.
+#[test]
+fn out_of_line_parent_mod_cfg_refuses_stub() -> Result<(), String> {
+    const LIB: &str = "#[cfg(feature = \"extra\")]\nmod extra;\n";
+    const EXTRA: &str = "pub fn f(n: u8) -> u8 {\n    if n > 5 { 1 } else { 0 }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"parent_gate5616\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[features]\nextra = []\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), LIB).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/extra.rs"), EXTRA).map_err(|error| error.to_string())?;
+    let line = EXTRA
+        .lines()
+        .position(|line| line.contains("n > 5"))
+        .map(|index| index + 1)
+        .ok_or("fixture has `n > 5`")?;
+    let output = run_bounded(
+        ripr_stub_write(&root, &format!("src/extra.rs:{line}")),
+        &root,
+        "stub",
+        Duration::from_mins(2),
+    )?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "parent mod cfg must refuse: {stdout}{stderr}"
+    );
+    let (envelope, _) = split_refusal_envelope(&stdout, &stderr)?;
+    assert_eq!(envelope["state"], "refused");
+    assert!(
+        stdout.contains("\"kind\": \"owner_unsupported\""),
+        "{stdout}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/extra.rs")).map_err(|error| error.to_string())?,
+        EXTRA,
+        "refusal must not write into the owner file"
+    );
+    scratch.cleanup()?;
+    Ok(())
+}
+
 /// The `ripr` binary under test.
 fn ripr_command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ripr"))
