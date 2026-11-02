@@ -91,6 +91,8 @@ mod rust_judged_panel;
 mod rust_region_scan;
 mod schema_cut_replay;
 mod schema_producer_sweep;
+mod verification_allocation_adapter;
+mod verification_allocation_policy;
 mod verification_contracts;
 mod verify_test_shards;
 mod version;
