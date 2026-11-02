@@ -79,9 +79,7 @@
           "line": 5,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert conn.status == \"closed\"",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "oracle": "assert conn.status == \"closed\""
         }
       ],
       "repair_placement": {

@@ -2241,6 +2241,8 @@ mod row_sink_alignment_tests {
             version_conditional: false,
             cli_subcommand: None,
             nested_called_by_parent: false,
+            nested_result_discarded: false,
+            trusted_stdlib_click_alias: false,
         }
     }
 

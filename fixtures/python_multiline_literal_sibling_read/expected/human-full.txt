@@ -43,7 +43,7 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches unknown sink: "label": "y", (line 4) — ripr could not classify where the changed value ends up; propagation confidence is limited
-  - related test tests/test_labels.py:3 test_name_is_x uses strong exact value oracle: assert labels()["name"] == "x"; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/test_labels.py:3 test_name_is_x uses strong exact value oracle: assert labels()["name"] == "x"
 
 Weakness
   - A strong Python oracle reaches `labels`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output

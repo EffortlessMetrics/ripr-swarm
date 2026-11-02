@@ -23,7 +23,7 @@ Start here:
   Missing check (1 of 2): A strong Python oracle reaches `checkout`, but its assertion does not
     observe the changed owner's output; static evidence cannot confirm the changed behavior is
     discriminated. Add an assertion on the changed owner's output
-  Related test: tests/test_route.py:4 test_checkout (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_route.py:4 test_checkout
   Suggested test file: tests/test_route.py
   Suggested test: test_checkout
   Test node: tests/test_route.py::test_checkout

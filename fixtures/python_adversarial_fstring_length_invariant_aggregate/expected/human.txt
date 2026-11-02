@@ -23,7 +23,7 @@ Start here:
   Missing check (1 of 2): A strong Python oracle reaches `status_label`, but its assertion does not
     observe the changed owner's output; static evidence cannot confirm the changed behavior is
     discriminated. Add an assertion on the changed owner's output
-  Related test: tests/test_status.py:4 test_len (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_status.py:4 test_len
   Suggested test file: tests/test_status.py
   Suggested test: test_len
   Test node: tests/test_status.py::test_len

@@ -69,9 +69,7 @@
           "line": 6,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "check_writes(b, 0)",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "oracle": "check_writes(b, 0)"
         }
       ],
       "repair_placement": {
