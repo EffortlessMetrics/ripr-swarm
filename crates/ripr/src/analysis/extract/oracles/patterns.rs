@@ -216,10 +216,17 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
 
 /// Whether the error read goes through an adapter that can replace the error
 /// the owner returned. Only named replacing adapters are refused (method or
-/// UFCS spelling): `map_err`, `and`, `or`, `ok_or`, and `ok_or_else`. Plain
-/// error reads such as `Result::expect_err(call, msg)` are not adapters (#12336).
+/// UFCS spelling): `map_err`, `and`, `or`, `ok_or`, `ok_or_else`, and `or_else`.
+/// Plain error reads such as `Result::expect_err(call, msg)` are not adapters (#12336).
 fn has_error_replacing_adapter(masked: &str) -> bool {
-    const REPLACING: &[&str] = &["map_err", "and", "or", "ok_or", "ok_or_else"];
+    const REPLACING: &[&str] = &[
+        "map_err",
+        "and",
+        "or",
+        "ok_or",
+        "ok_or_else",
+        "or_else",
+    ];
     let stripped = strip_turbofish(masked);
     let masked = stripped.as_str();
     REPLACING
@@ -2436,6 +2443,7 @@ mod spec_0106_tests {
             "assert_eq!(parse(\"x\").map_err::<ParseError, _>(|_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
             "assert_eq!(std::result::Result::map_err(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
             "assert_eq!(Result::and(parse(\"x\"), Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);",
+            "assert_eq!(Result::or_else(parse(\"x\"), |_| ParseError::Empty).unwrap_err(), ParseError::Empty);",
             "assert_eq!((Result::or(parse(\"x\"), Err(ParseError::Empty))).unwrap_err(), ParseError::Empty);",
             "assert_eq!(((Result::map_err(parse(\"x\"), |_| ParseError::Empty))).unwrap_err(), ParseError::Empty);",
             "assert_eq!((parse(\"x\").map_err(|_| ParseError::Empty)).unwrap_err(), ParseError::Empty);",
