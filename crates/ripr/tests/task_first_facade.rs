@@ -1955,6 +1955,109 @@ fn agent_card_and_packet_refuse_an_ambiguous_gap_id() -> Result<(), String> {
     Ok(())
 }
 
+/// #12420 review: a translated id is as strict as `agent repair`. A changed
+/// guard covered only by a `#[should_panic]` test is a policy-admitted seam
+/// that is not repair-eligible (a named limitation): the exact seam id is
+/// still served, while the `file:line` that resolves to it is refused in the
+/// command's own terms with the limitation, not served.
+#[test]
+fn agent_card_and_packet_refuse_an_ineligible_location_but_serve_the_exact_seam()
+-> Result<(), String> {
+    let fixture = Fixture::dir("facade-any-id-ineligible")?;
+    let root = &fixture.root;
+    populate_should_panic_fixture(root, "")?;
+    let should_panic_seam = "498b9581c66564c1";
+    for surface in ["card", "packet"] {
+        let exact = run_agent_card_or_packet(root, surface, should_panic_seam, true)?;
+        assert_exit(
+            &exact,
+            0,
+            &format!("agent {surface} serves the exact seam id"),
+        );
+        let refused = run_agent_card_or_packet(root, surface, "src/lib.rs:2", true)?;
+        assert_exit(
+            &refused,
+            3,
+            &format!("agent {surface} with an ineligible file:line"),
+        );
+        let stderr = stderr_text(&refused);
+        assert!(
+            stderr.contains(&format!("agent {surface}: repair ID `src/lib.rs:2`"))
+                && stderr.contains("should_panic")
+                && !stderr.contains("agent repair")
+                && !stderr.contains("no repair attempt was started"),
+            "ineligible refusal must name this command and the reason:\n{stderr}"
+        );
+    }
+    assert!(attempt_ids(root).is_empty());
+    Ok(())
+}
+
+/// #12420 review: a failure of the resolver itself (here a broken
+/// `ripr.toml`) says nothing about the id, so a translated id fails exactly
+/// as the exact seam id does, not as a stale or unknown id.
+#[test]
+fn agent_card_and_packet_keep_operational_failures_operational() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-any-id-broken-config")?;
+    let root = &fixture.root;
+    std::fs::write(root.join("ripr.toml"), "this is = not [valid toml\n")
+        .map_err(|e| e.to_string())?;
+    for surface in ["card", "packet"] {
+        let exact = run_agent_card_or_packet(root, surface, FIXTURE_SEAM, true)?;
+        let exact_code = exact.status.code();
+        assert_ne!(exact_code, Some(0), "a broken config must not succeed");
+        for id in [FIXTURE_GAP, "src/lib.rs:2"] {
+            let translated = run_agent_card_or_packet(root, surface, id, true)?;
+            assert_eq!(
+                translated.status.code(),
+                exact_code,
+                "agent {surface} with {id} must fail like the exact seam id:\n{}",
+                stderr_text(&translated)
+            );
+            let stderr = stderr_text(&translated);
+            assert!(
+                stderr.contains("ripr.toml")
+                    && !stderr.contains("was not found")
+                    && !stderr.contains("stale"),
+                "a broken config must be reported as a config failure ({id}):\n{stderr}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// #12420 review: the repair resolver may widen a default-cut seam cap that
+/// the packet's own inventory does not, so a capped inventory must say it was
+/// cut instead of sending the reader to a listing that cannot show the seam.
+#[test]
+fn agent_packet_names_a_truncated_inventory_instead_of_not_found() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-packet-truncated")?;
+    let root = &fixture.root;
+    populate_two_seam_fixture(root)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let output = run_ripr_env(
+        root,
+        &[
+            "agent",
+            "packet",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            "0000000000000000",
+            "--json",
+        ],
+        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
+    )?;
+    assert_exit(&output, 3, "packet with an unknown id under a seam cap");
+    let stderr = stderr_text(&output);
+    assert!(
+        stderr.contains("was not found in the truncated seam inventory")
+            && stderr.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"),
+        "a capped inventory must be named with its remedy:\n{stderr}"
+    );
+    Ok(())
+}
+
 /// #8166 review: an invented probe ordinal (`.999` on the valid fingerprint
 /// of the sole seam) and a `.2` whose second occurrence is not among the
 /// remaining seams are both stale: they refuse with no attempt instead of

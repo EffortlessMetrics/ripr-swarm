@@ -71,6 +71,12 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
             seam_id: resolved,
             ..options
         },
+        // The resolver could not run (broken config, truncated inventory,
+        // analysis error): that says nothing about the id, so it stays the
+        // operational failure (exit 2) the card always reported.
+        Err(super::SeamIdTranslateError::Operational(message)) => {
+            return Err(CommandError::Failure(message));
+        }
         Err(error) => {
             return Err(card_refusal_error(
                 &options,

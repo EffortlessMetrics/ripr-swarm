@@ -694,7 +694,34 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
     root: &Path,
     seam_id: &str,
 ) -> Result<String, crate::cli::CommandError> {
-    translate_seam_id_for(SeamIdSurface::Repair, root, seam_id)
+    translate_seam_id_for(SeamIdSurface::Repair, root, seam_id).map_err(|error| match error {
+        SeamIdTranslateError::Refused(message) => crate::cli::CommandError::Decision(message),
+        SeamIdTranslateError::Stale(message) | SeamIdTranslateError::Operational(message) => {
+            crate::cli::CommandError::Failure(message)
+        }
+    })
+}
+
+/// Why [`translate_seam_id_for`] did not produce a seam id. Only the first two
+/// are statements about the id; an operational failure (a broken `ripr.toml`,
+/// a truncated inventory, an analysis error) says nothing about the id, so a
+/// surface keeps handling it the way it did before translating.
+#[derive(Debug)]
+pub(in crate::cli) enum SeamIdTranslateError {
+    /// The id names several gaps, or a gap that is not repair-eligible.
+    Refused(String),
+    /// No current seam carries the id.
+    Stale(String),
+    /// The resolver could not run.
+    Operational(String),
+}
+
+impl SeamIdTranslateError {
+    pub(in crate::cli) fn message(&self) -> &str {
+        match self {
+            Self::Refused(message) | Self::Stale(message) | Self::Operational(message) => message,
+        }
+    }
 }
 
 /// The command that is asking the shared repair resolver to translate a
@@ -743,7 +770,7 @@ pub(in crate::cli) fn translate_seam_id_for(
     surface: SeamIdSurface,
     root: &Path,
     seam_id: &str,
-) -> Result<String, crate::cli::CommandError> {
+) -> Result<String, SeamIdTranslateError> {
     let label = surface.label();
     let cross_namespace = seam_id.starts_with("probe:")
         || seam_id.starts_with("repo-probe:")
@@ -764,7 +791,7 @@ pub(in crate::cli) fn translate_seam_id_for(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
             let note = surface.no_attempt_note();
-            Err(crate::cli::CommandError::Decision(format!(
+            Err(SeamIdTranslateError::Refused(format!(
                 "{label}: repair ID `{seam_id}` resolves to gap `{resolved}`, which is not repair-eligible: {reason}{note}. Run `ripr pilot --root {root_arg}` to list current repair IDs"
             )))
         }
@@ -791,7 +818,7 @@ pub(in crate::cli) fn translate_seam_id_for(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
             message.push_str(&format!(". Retry: `{}`", surface.retry(&root_arg)));
-            Err(crate::cli::CommandError::Decision(message))
+            Err(SeamIdTranslateError::Refused(message))
         }
         Ok(RepairSubjectOutcome::Unknown) => {
             let root_arg = crate::agent::loop_commands::shell_arg(
@@ -819,9 +846,9 @@ pub(in crate::cli) fn translate_seam_id_for(
                     "{label} --seam-id `{seam_id}` names no current seam in the selected root; run {list}"
                 )
             };
-            Err(crate::cli::CommandError::Failure(message))
+            Err(SeamIdTranslateError::Stale(message))
         }
-        Err(error) => Err(crate::cli::CommandError::Failure(error)),
+        Err(error) => Err(SeamIdTranslateError::Operational(error)),
     }
 }
 
@@ -867,8 +894,16 @@ fn render_agent_packet_with_context(
     // Any id `ripr check` or `ripr pilot` prints works: the shared repair
     // resolver maps a finding id, gap id or `file:line` to its seam, and an
     // exact seam id passes through. A refused mapping is a typed refusal.
-    let seam_id = translate_seam_id_for(SeamIdSurface::Packet, &options.root, seam_id)
-        .map_err(|error| CoreError::seam_id_unknown(error.message().to_string()))?;
+    // A broken config is the config refusal it always was, not a statement
+    // about the id, so it is read before the resolver runs.
+    load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
+    let seam_id =
+        translate_seam_id_for(SeamIdSurface::Packet, &options.root, seam_id).map_err(|error| {
+            match error {
+                SeamIdTranslateError::Operational(message) => CoreError::from(message),
+                other => CoreError::seam_id_unknown(other.message().to_string()),
+            }
+        })?;
     let seam_id = seam_id.as_str();
     let config =
         load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
@@ -894,6 +929,17 @@ fn render_agent_packet_for_seam_with_report(
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
         .ok_or_else(|| {
+            // A capped inventory can lack a seam the repair resolver found after
+            // widening its own cap, so "not found" would send the reader to a
+            // listing that cannot show it: say the inventory was cut.
+            if let Some(info) = report.limit_info.as_ref().filter(|info| info.is_truncated()) {
+                return CoreError::seam_id_unknown(format!(
+                    "agent packet seam_id {seam_id} was not found in the truncated seam inventory ({} of {} seams analyzed); {}",
+                    info.analyzed,
+                    info.total,
+                    crate::app::task_first::WIDEN_SEAM_BUDGET
+                ));
+            }
             CoreError::seam_id_unknown(format!(
                 "agent packet seam_id {seam_id} was not found. {}",
                 unknown_seam_id_hint(root, seam_id)
