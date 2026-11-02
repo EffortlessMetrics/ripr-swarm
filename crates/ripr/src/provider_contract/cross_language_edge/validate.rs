@@ -428,10 +428,10 @@ fn identity_sha256_component(value: &str) -> String {
 
 fn canonical_sha256_digest(value: &str) -> Result<String, String> {
     let Some(digest) = value.strip_prefix("sha256:") else {
-        return Err("must use sha256:<64-hex>".into());
+        return Err("use sha256: followed by 64 hexadecimal digits".into());
     };
     if digest.len() != 64 || !is_hex(digest) {
-        return Err("must use sha256:<64-hex>".into());
+        return Err("use sha256: followed by 64 hexadecimal digits".into());
     }
     Ok(format!("sha256:{}", digest.to_ascii_lowercase()))
 }
