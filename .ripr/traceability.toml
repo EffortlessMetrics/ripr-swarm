@@ -19434,6 +19434,8 @@ tests = [
   "crates/ripr/tests/indirect_owner_limit.rs::an_invoked_macro_definition_naming_the_owner_keeps_the_limit",
   "crates/ripr/tests/indirect_owner_limit.rs::a_forwarded_macro_invocation_keeps_the_limit",
   "crates/ripr/tests/indirect_owner_limit.rs::a_comment_separated_macro_invocation_keeps_the_limit",
+  "crates/ripr/tests/indirect_owner_limit.rs::an_include_expansion_keeps_a_local_macro_live",
+  "crates/ripr/tests/indirect_owner_limit.rs::a_path_module_keeps_a_local_macro_live",
   "crates/ripr/tests/operator_call_credit.rs::block_statements_followed_by_minus_stay_unrelated",
   "crates/ripr/tests/operator_call_credit.rs::standalone_add_assign_keeps_typed_operand_and_unique_impl_gates",
   "crates/ripr/tests/proximity_oracle_credit.rs::unrelated_same_file_assertion_cannot_supply_the_oracle",

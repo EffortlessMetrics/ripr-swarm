@@ -597,6 +597,15 @@ impl ItemBindings {
             result.unreadable = true;
             return result;
         };
+        // `include!` expands code this scan never sees, and a `#[path]` module
+        // reads another file; either can invoke a local macro. Keep every
+        // macro definition live when one is present rather than prove a
+        // negative about unseen text (#12231 review).
+        let expansion_unknown = identifier_offsets(source, "include").next().is_some()
+            || source
+                .split_whitespace()
+                .collect::<String>()
+                .contains("#[path=");
         for node in parse.tree().syntax().descendants() {
             // An item scope cannot inherit the surrounding function's local
             // shadow. Its imports also need their own module context; leave
@@ -612,6 +621,7 @@ impl ItemBindings {
                 let range = definition.syntax().text_range();
                 if let Some(macro_name) = definition.name()
                     && !exported
+                    && !expansion_unknown
                     && !macro_is_mentioned(
                         source,
                         macro_name.text().trim_start_matches("r#"),

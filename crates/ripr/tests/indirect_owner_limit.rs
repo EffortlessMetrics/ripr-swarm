@@ -358,6 +358,45 @@ fn a_comment_separated_macro_invocation_keeps_the_limit() -> Result<(), String> 
     withheld(&lib, BEFORE, AFTER, "comment-separated macro invocation")
 }
 
+/// `include!` can expand an invocation this scan never sees (#12231 review).
+#[test]
+fn an_include_expansion_keeps_a_local_macro_live() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        macro_rules! unused {
+            () => {
+                use super::inc;
+            };
+        }
+        include!(\"invocation.rs\");
+        assert!(inc(1) > 0);
+    }
+",
+    );
+    withheld(&lib, BEFORE, AFTER, "include expansion")
+}
+
+/// An out-of-line `#[path]` module can invoke a local macro (#12231 review).
+#[test]
+fn a_path_module_keeps_a_local_macro_live() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        macro_rules! unused {
+            () => {
+                use super::inc;
+            };
+        }
+        #[path = \"child.rs\"]
+        mod child;
+        assert!(inc(1) > 0);
+    }
+",
+    );
+    withheld(&lib, BEFORE, AFTER, "path module")
+}
+
 /// A body the shared parser refuses cannot prove a declaration range, so the
 /// bare-name fold and the mention scan must stay silent there. A parse
 /// artifact must never withdraw a real gap under the indirect-owner limit's
