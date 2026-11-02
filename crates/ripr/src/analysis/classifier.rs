@@ -728,14 +728,17 @@ pub(in crate::analysis) fn withhold_unindexed_test_reach_as_unknown(
     finding.stop_reasons.retain(|reason| {
         !matches!(
             reason,
-            StopReason::TransitiveReachUnresolved | StopReason::MacroReachUnresolved
+            StopReason::StaticProbeUnknown | StopReason::MacroReachUnresolved
         )
     });
+    finding.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
     if !finding
         .stop_reasons
-        .contains(&StopReason::StaticProbeUnknown)
+        .contains(&StopReason::TransitiveReachUnresolved)
     {
-        finding.stop_reasons.push(StopReason::StaticProbeUnknown);
+        finding
+            .stop_reasons
+            .push(StopReason::TransitiveReachUnresolved);
     }
     finding.missing = vec![format!(
         "partial index reach abstains: {scope_note}; unchanged test files were not searched"
@@ -759,7 +762,6 @@ pub(in crate::analysis) fn withhold_unindexed_test_reach_as_unknown(
             "{LIMITATION_NON_CLAIM_PREFIX}no missing test is established; reach in excluded test files is not searched"
         ),
     ]);
-    finding.canonical_gap = None;
     for test in &mut finding.related_tests {
         test.miss = test
             .miss
@@ -4025,7 +4027,11 @@ fn far_above_threshold_discounts() {
         assert!(
             finding
                 .stop_reasons
-                .contains(&StopReason::StaticProbeUnknown)
+                .contains(&StopReason::TransitiveReachUnresolved)
+        );
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::RustTransitiveReachUnresolved)
         );
         assert!(finding.canonical_gap.is_none());
         assert!(

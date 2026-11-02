@@ -830,6 +830,22 @@ pub(crate) fn is_test_file(path: &Path) -> bool {
     normalized == "tests" || normalized.starts_with("tests/") || normalized.contains("/tests/")
 }
 
+/// Paths that may hold Rust test functions the index did not load (#5316).
+pub(crate) fn path_may_hold_unindexed_rust_tests(path: &Path) -> bool {
+    if is_test_file(path) {
+        return true;
+    }
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name == "tests.rs"
+                || name.ends_with("_tests.rs")
+                || name.ends_with("_test.rs")
+                || (name.starts_with("test_") && name.ends_with(".rs"))
+                || name == "integration_tests.rs"
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -930,6 +946,20 @@ mod tests {
         assert!(!is_test_file(Path::new("src\\pricing.rs")));
         // A `tests`-prefixed sibling directory name stays production.
         assert!(!is_test_file(Path::new("testing\\pricing.rs")));
+    }
+
+    #[test]
+    fn path_may_hold_unindexed_rust_tests_covers_inline_test_modules() {
+        assert!(path_may_hold_unindexed_rust_tests(Path::new(
+            "tests/pricing.rs"
+        )));
+        assert!(path_may_hold_unindexed_rust_tests(Path::new(
+            "src/tests.rs"
+        )));
+        assert!(path_may_hold_unindexed_rust_tests(Path::new(
+            "src/foo_test.rs"
+        )));
+        assert!(!path_may_hold_unindexed_rust_tests(Path::new("src/lib.rs")));
     }
 
     #[test]

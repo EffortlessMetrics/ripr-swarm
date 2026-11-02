@@ -1796,7 +1796,7 @@ fn partial_index_reach_scope_note(
     include_unchanged_tests: bool,
 ) -> &'static str {
     if matches!(mode, AnalysisMode::Instant) {
-        "instant mode indexes changed Rust files only"
+        "instant mode indexes the changed diff's Rust files (plus module context), not unchanged test files"
     } else if !include_unchanged_tests {
         "unchanged test files are excluded from the index (--no-unchanged-tests or [analysis] include_unchanged_tests = false)"
     } else {
@@ -2515,9 +2515,10 @@ impl RustAdapter {
         let workspace_index_complete = index_files.len() == analyzable_rust_files.len();
         let index_file_set: std::collections::BTreeSet<&PathBuf> = index_files.iter().collect();
         let unindexed_test_reach_abstains = !workspace_index_complete
-            && analyzable_rust_files
-                .iter()
-                .any(|path| rust_index::is_test_file(path) && !index_file_set.contains(path));
+            && analyzable_rust_files.iter().any(|path| {
+                !index_file_set.contains(path)
+                    && rust_index::path_may_hold_unindexed_rust_tests(path)
+            });
         let partial_index_reach_scope_note =
             partial_index_reach_scope_note(options.mode, options.include_unchanged_tests);
 
