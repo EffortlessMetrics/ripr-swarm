@@ -5204,6 +5204,7 @@ fn an_expected_partial_limit_must_be_a_snake_case_name() -> Result<(), String> {
 
 /// An expected partial outcome is a measured speed value that stays visibly
 /// partial, and its document never feeds the contradiction scan (#12052).
+#[cfg(unix)]
 #[test]
 fn an_expected_partial_warm_check_is_a_value_that_trust_does_not_scan() -> Result<(), String> {
     use std::os::unix::process::ExitStatusExt;
