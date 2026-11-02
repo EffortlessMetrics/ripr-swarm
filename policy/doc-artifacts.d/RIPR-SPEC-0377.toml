@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0377"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0377-tool-capability-authority-registry.md"
+status = "proposed"
+owner = "repository-policy"
+standalone_reason = "Bootstrap slice for the capability-authority registry: versioned schema and report-only parser (#2355) with no CI enforcement and no full command inventory."

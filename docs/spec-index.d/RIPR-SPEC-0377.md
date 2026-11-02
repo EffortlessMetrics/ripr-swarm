@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0377](../specs/RIPR-SPEC-0377-tool-capability-authority-registry.md) | proposed | Versioned `.ripr/tool-capabilities.toml` schema and report-only parser for capability/claim authority (#2355) |
