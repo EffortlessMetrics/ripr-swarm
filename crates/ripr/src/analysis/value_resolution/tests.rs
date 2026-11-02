@@ -788,13 +788,17 @@ fn mutable_borrow_before_assignment_does_not_invalidate_the_later_value() -> Res
         interned("file"),
         vec![SourcePosition { line: 2, column: 0 }],
     );
-    facts.field_assignments.insert(
-        ("file".to_string(), "body_model_version".to_string()),
-        vec![FieldAssignmentBinding {
-            position: SourcePosition { line: 3, column: 0 },
-            values: vec![interned("SUPPORTED_VERSION")],
-        }],
-    );
+    facts
+        .field_assignments
+        .entry(interned("file"))
+        .or_default()
+        .insert(
+            interned("body_model_version"),
+            vec![FieldAssignmentBinding {
+                position: SourcePosition { line: 3, column: 0 },
+                values: vec![interned("SUPPORTED_VERSION")],
+            }],
+        );
     let seam = predicate_seam();
     let env = ValueEnv::new(&seam, &facts);
     let actual = env.resolve_at("file.body_model_version", 4);
@@ -824,13 +828,17 @@ fn invalidated_field_assignment_does_not_fall_back_to_a_stale_struct_value() -> 
             fields: interned_pairs([("body_model_version", "0")]),
         },
     );
-    facts.field_assignments.insert(
-        ("file".to_string(), "body_model_version".to_string()),
-        vec![FieldAssignmentBinding {
-            position: SourcePosition { line: 2, column: 0 },
-            values: vec![interned("SUPPORTED_VERSION")],
-        }],
-    );
+    facts
+        .field_assignments
+        .entry(interned("file"))
+        .or_default()
+        .insert(
+            interned("body_model_version"),
+            vec![FieldAssignmentBinding {
+                position: SourcePosition { line: 2, column: 0 },
+                values: vec![interned("SUPPORTED_VERSION")],
+            }],
+        );
     facts.field_assignment_invalidations.insert(
         interned("file"),
         vec![SourcePosition { line: 3, column: 0 }],
@@ -1268,5 +1276,24 @@ fn many_same_file_tests_pay_once_per_distinct_binding_string() {
     assert!(
         facts[0].shares_let_binding_value_with(&facts[63], "threshold"),
         "the last test must still share the first test's interned threshold literal"
+    );
+}
+
+#[test]
+fn same_file_tests_share_interned_field_assignment_keys() {
+    let index = RustIndex::default();
+    let scan = FileValueScan::default();
+    let mut facts = Vec::new();
+    for index_in_file in 0..8 {
+        let test = facts_test(
+            &format!("case_{index_in_file}"),
+            "src/lib.rs",
+            "fn case() { let file = File::default(); file.body_model_version = SUPPORTED_VERSION; discounted_total(file.body_model_version); }",
+        );
+        facts.push(ValueEnvFacts::build(&test, &scan, &index));
+    }
+    assert!(
+        facts[0].shares_field_assignment_keys_with(&facts[7], "file", "body_model_version"),
+        "repeated field-assignment keys in one file must share interned object and field names"
     );
 }

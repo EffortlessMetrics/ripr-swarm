@@ -81,7 +81,7 @@ pub(crate) struct ValueEnvFacts {
     /// Direct `IDENT.field = VALUE` writes in the same test. The
     /// binding and write positions keep these facts local to the
     /// exact object, field, and owner-call ordering.
-    field_assignments: BTreeMap<(String, String), Vec<FieldAssignmentBinding>>,
+    field_assignments: BTreeMap<Arc<str>, BTreeMap<Arc<str>, Vec<FieldAssignmentBinding>>>,
     local_binding_positions: BTreeMap<Arc<str>, Vec<SourcePosition>>,
     field_assignment_invalidations: BTreeMap<Arc<str>, Vec<SourcePosition>>,
     /// Bare `Path::new(...)` / `PathBuf::from(...)` only count when
@@ -189,26 +189,26 @@ impl InternPool {
     fn intern_field_assignments(
         &mut self,
         assignments: BTreeMap<(String, String), Vec<FieldAssignmentBinding>>,
-    ) -> BTreeMap<(String, String), Vec<FieldAssignmentBinding>> {
-        assignments
-            .into_iter()
-            .map(|(key, bindings)| {
-                (
-                    key,
-                    bindings
+    ) -> BTreeMap<Arc<str>, BTreeMap<Arc<str>, Vec<FieldAssignmentBinding>>> {
+        let mut out: BTreeMap<Arc<str>, BTreeMap<Arc<str>, Vec<FieldAssignmentBinding>>> =
+            BTreeMap::new();
+        for ((object, field), bindings) in assignments {
+            let interned_bindings = bindings
+                .into_iter()
+                .map(|binding| FieldAssignmentBinding {
+                    position: binding.position,
+                    values: binding
+                        .values
                         .into_iter()
-                        .map(|binding| FieldAssignmentBinding {
-                            position: binding.position,
-                            values: binding
-                                .values
-                                .into_iter()
-                                .map(|value| self.intern(&value))
-                                .collect(),
-                        })
+                        .map(|value| self.intern(&value))
                         .collect(),
-                )
-            })
-            .collect()
+                })
+                .collect();
+            out.entry(self.intern(&object))
+                .or_default()
+                .insert(self.intern(&field), interned_bindings);
+        }
+        out
     }
 }
 
@@ -257,47 +257,82 @@ impl ValueEnvFacts {
         }
     }
 
+    /// Whether both facts share the same interned object/field names for one
+    /// field-assignment key.
+    #[cfg(test)]
+    pub(crate) fn shares_field_assignment_keys_with(
+        &self,
+        other: &Self,
+        object: &str,
+        field: &str,
+    ) -> bool {
+        match (
+            self.field_assignments.get_key_value(object),
+            other.field_assignments.get_key_value(object),
+        ) {
+            (Some((left_object, left_fields)), Some((right_object, right_fields))) => {
+                if !Arc::ptr_eq(left_object, right_object) {
+                    return false;
+                }
+                match (
+                    left_fields.get_key_value(field),
+                    right_fields.get_key_value(field),
+                ) {
+                    (Some((left_field, _)), Some((right_field, _))) => {
+                        Arc::ptr_eq(left_field, right_field)
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn build(test: &TestSummary, file_scan: &FileValueScan, index: &RustIndex) -> Self {
         let body_clean = strip_comments_and_strings(&test.body);
+        let raw_let_bindings = extract_let_bindings(&body_clean);
+        let proptest_singleton = index.proptest_singleton_value(test);
+        let (raw_rstest_cases, raw_case_param_names) = extract_rstest_cases(test);
+        let test_param_names = extract_fn_param_names(&body_clean);
+        let raw_table_bindings = extract_table_bindings(&body_clean);
+        let module_constants = Arc::clone(&file_scan.module_constants);
+        let path_constructor_imports = file_scan.path_constructor_imports;
+        let (raw_struct_field_bindings, raw_struct_field_invalidations) =
+            extract_struct_field_bindings(&body_clean, test.start_line, &test_param_names);
+        let raw_local_binding_positions =
+            extract_local_binding_positions(&body_clean, test.start_line);
+        let raw_field_assignment_invalidations = field_assignment_invalidations(
+            &body_clean,
+            test.start_line,
+            &test_param_names,
+            &raw_local_binding_positions,
+        );
+        let raw_field_assignments =
+            extract_field_assignments(&body_clean, test.start_line, &module_constants);
+
         let mut intern = file_scan.intern_lock();
-        let mut let_bindings = intern.intern_string_map(extract_let_bindings(&body_clean));
-        if let Some((name, value)) = index.proptest_singleton_value(test) {
+        let mut let_bindings = intern.intern_string_map(raw_let_bindings);
+        if let Some((name, value)) = proptest_singleton {
             // The closed property profile preserves the typed String binding
             // and admits no write/rebinding. Do not teach ordinary lexical
             // scans that a same-spelled String::new is necessarily standard.
             let_bindings.insert(intern.intern(name), intern.intern(value));
         }
-        let (rstest_cases, case_param_names) = extract_rstest_cases(test);
-        let rstest_cases = rstest_cases
+        let rstest_cases = raw_rstest_cases
             .into_iter()
             .map(|row| intern.intern_vec(row))
             .collect();
-        let case_param_names = intern.intern_vec(case_param_names);
-        let test_param_names = extract_fn_param_names(&body_clean);
-        let table_bindings = extract_table_bindings(&body_clean)
+        let case_param_names = intern.intern_vec(raw_case_param_names);
+        let table_bindings = raw_table_bindings
             .into_iter()
             .map(|(key, values)| (intern.intern(&key), intern.intern_vec(values)))
             .collect();
-        let module_constants = Arc::clone(&file_scan.module_constants);
-        let path_constructor_imports = file_scan.path_constructor_imports;
-        let (struct_field_bindings, struct_field_invalidations) =
-            extract_struct_field_bindings(&body_clean, test.start_line, &test_param_names);
-        let struct_field_bindings = intern.intern_struct_bindings(struct_field_bindings);
-        let struct_field_invalidations = intern.intern_string_keys(struct_field_invalidations);
-        let local_binding_positions = extract_local_binding_positions(&body_clean, test.start_line);
+        let struct_field_bindings = intern.intern_struct_bindings(raw_struct_field_bindings);
+        let struct_field_invalidations = intern.intern_string_keys(raw_struct_field_invalidations);
         let field_assignment_invalidations =
-            intern.intern_string_keys(field_assignment_invalidations(
-                &body_clean,
-                test.start_line,
-                &test_param_names,
-                &local_binding_positions,
-            ));
-        let local_binding_positions = intern.intern_string_keys(local_binding_positions);
-        let field_assignments = intern.intern_field_assignments(extract_field_assignments(
-            &body_clean,
-            test.start_line,
-            &module_constants,
-        ));
+            intern.intern_string_keys(raw_field_assignment_invalidations);
+        let local_binding_positions = intern.intern_string_keys(raw_local_binding_positions);
+        let field_assignments = intern.intern_field_assignments(raw_field_assignments);
         Self {
             let_bindings,
             rstest_cases,
@@ -513,7 +548,8 @@ impl<'a> ValueEnv<'a> {
         let assignment = self
             .facts
             .field_assignments
-            .get(&(object.to_string(), field.to_string()))?
+            .get(object)?
+            .get(field)?
             .iter()
             .filter(|assignment| {
                 local_binding.at_or_before(assignment.position)
