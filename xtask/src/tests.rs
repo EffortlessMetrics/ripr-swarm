@@ -49257,7 +49257,7 @@ fn vscode_job_block(workflow: &str) -> Result<&str, String> {
     const HEADER: &str = "\n  vscode:\n";
     let start = workflow
         .find(HEADER)
-        .ok_or_else(|| "ci.yml is missing the vscode job".to_string())?;
+        .ok_or_else(|| "vscode-e2e.yml is missing the vscode job".to_string())?;
     let mut offset = start + HEADER.len();
     while offset < workflow.len() {
         let rest = &workflow[offset..];
@@ -49403,8 +49403,10 @@ fn vscode_host_diagnostics_contract_rejects_success_uploads_and_exit_laundering(
 #[test]
 fn vscode_host_diagnostics_ci_job_retains_failure_only() -> Result<(), String> {
     let root = repo_root()?;
-    let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
-        .map_err(|err| format!("read ci.yml: {err}"))?;
+    // #12252: the e2e job lives in the reusable workflow both ci.yml and the
+    // routed run call.
+    let workflow = fs::read_to_string(root.join(".github/workflows/vscode-e2e.yml"))
+        .map_err(|err| format!("read vscode-e2e.yml: {err}"))?;
     let job = vscode_job_block(&workflow)?;
     let violations = vscode_host_diagnostics_contract_violations(job);
     assert!(
