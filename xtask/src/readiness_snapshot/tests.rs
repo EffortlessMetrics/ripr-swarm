@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::build::{BuildInput, build_snapshot};
-use super::identity::{collect_identity_inputs, semantic_identity_digest};
+use super::identity::{collect_identity_inputs_for_commit, semantic_identity_digest};
 use super::model::{
     REHEARSAL_RECEIPT_KIND, REHEARSAL_RECEIPT_SCHEMA_VERSION, ReadinessDimension,
     ReadinessDimensionId, ReadinessDimensionState, RehearsalComponent, RehearsalReceipt,
@@ -37,7 +37,7 @@ fn readiness_snapshot_artifacts_populates_only_proven_dimensions() -> Result<(),
     let receipt_text = fs::read_to_string(fixture("rehearsal-receipt.complete.json"))
         .map_err(|err| format!("read complete fixture: {err}"))?;
     let receipt = parse_rehearsal_receipt(&receipt_text)?;
-    let identity = collect_identity_inputs(&root)?;
+    let identity = collect_identity_inputs_for_commit(&root, &receipt.source_sha)?;
     if !super::identity::identities_compatible(&identity, &receipt.identity) {
         return Err(
             "fixture identity no longer matches workspace; refresh fixtures/readiness-snapshot"
@@ -152,6 +152,22 @@ fn readiness_snapshot_artifacts_keeps_supply_chain_records_distinct() -> Result<
 }
 
 #[test]
+fn readiness_snapshot_artifacts_partial_package_receipt_is_limited() -> Result<(), String> {
+    let mut receipt: RehearsalReceipt = serde_json::from_str(
+        &fs::read_to_string(fixture("rehearsal-receipt.complete.json"))
+            .map_err(|err| format!("read complete fixture: {err}"))?,
+    )
+    .map_err(|err| format!("parse fixture json: {err}"))?;
+    receipt.installed_binary = None;
+    receipt.vsix = None;
+    let state = super::build::package_dimension_state(&receipt);
+    if state != ReadinessDimensionState::Limited {
+        return Err(format!("expected limited package state, got {state:?}"));
+    }
+    Ok(())
+}
+
+#[test]
 fn readiness_snapshot_json_and_markdown_agree() -> Result<(), String> {
     let root = repo_root();
     let snapshot = build_snapshot(&BuildInput {
@@ -209,7 +225,7 @@ fn readiness_snapshot_fixture_receipt_matches_current_identity_or_skips() -> Res
             receipt.schema_version
         ));
     }
-    let identity = collect_identity_inputs(&root)?;
+    let identity = collect_identity_inputs_for_commit(&root, &receipt.source_sha)?;
     if !super::identity::identities_compatible(&identity, &receipt.identity) {
         eprintln!(
             "skipping identity-bound snapshot assertion: refresh fixtures/readiness-snapshot/rehearsal-receipt.complete.json"

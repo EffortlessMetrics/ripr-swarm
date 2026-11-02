@@ -32,6 +32,162 @@ pub(crate) fn git_worktree_clean() -> Result<bool, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().is_empty())
 }
 
+pub(crate) fn git_toplevel() -> Result<PathBuf, String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .map_err(|err| format!("failed to run git rev-parse --show-toplevel: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git rev-parse --show-toplevel failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(PathBuf::from(
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
+}
+
+pub(crate) fn tree_clean_for_subject(source_sha: &str) -> Result<bool, String> {
+    let head = git_rev_parse("HEAD")?;
+    if head != source_sha {
+        return Ok(false);
+    }
+    git_worktree_clean()
+}
+
+pub(crate) fn collect_identity_inputs_for_commit(
+    root: &Path,
+    commit: &str,
+) -> Result<IdentityInputs, String> {
+    let head = git_rev_parse("HEAD")?;
+    if head == commit {
+        return collect_identity_inputs(root);
+    }
+    let workspace_toml = git_blob_text(commit, "Cargo.toml")?;
+    Ok(IdentityInputs {
+        cargo_lock_digest: git_blob_digest_optional(commit, "Cargo.lock")?,
+        package_lock_digest: git_blob_digest_optional(commit, "editors/vscode/package-lock.json")?,
+        rust_toolchain_digest: git_blob_digest_optional(commit, "rust-toolchain.toml")?,
+        crate_version: read_crate_version_from_commit(commit, workspace_toml.as_deref())?,
+        extension_version: git_blob_text(commit, "editors/vscode/package.json")
+            .ok()
+            .flatten()
+            .and_then(|text| read_json_version_from_text(&text).ok())
+            .flatten(),
+    })
+}
+
+fn git_blob_text(rev: &str, path: &str) -> Result<Option<String>, String> {
+    git_blob_bytes(rev, path).map(|bytes| bytes.map(|b| String::from_utf8_lossy(&b).into_owned()))
+}
+
+fn git_blob_bytes(rev: &str, path: &str) -> Result<Option<Vec<u8>>, String> {
+    let spec = format!("{rev}:{path}");
+    let output = Command::new("git")
+        .args(["show", &spec])
+        .output()
+        .map_err(|err| format!("failed to run git show {spec}: {err}"))?;
+    if output.status.success() {
+        return Ok(Some(output.stdout));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("does not exist") || stderr.contains("exists on disk, but not in") {
+        return Ok(None);
+    }
+    Err(format!("git show {spec} failed: {stderr}"))
+}
+
+fn git_blob_digest_optional(rev: &str, path: &str) -> Result<Option<String>, String> {
+    git_blob_bytes(rev, path).map(|opt| opt.map(|bytes| format!("sha256:{}", sha256_hex(&bytes))))
+}
+
+fn read_crate_version_from_commit(
+    commit: &str,
+    workspace_toml: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(ripr_manifest) = git_blob_text(commit, "crates/ripr/Cargo.toml")? else {
+        return Ok(None);
+    };
+    read_toml_version_from_text(&ripr_manifest, workspace_toml)
+}
+
+fn read_toml_version_from_text(
+    manifest: &str,
+    workspace_manifest: Option<&str>,
+) -> Result<Option<String>, String> {
+    for line in manifest.lines() {
+        let trimmed = line.trim();
+        if trimmed == "version.workspace = true" || trimmed.contains("version.workspace = true") {
+            if let Some(workspace) = workspace_manifest {
+                return workspace_package_version_from_text(workspace);
+            }
+            return Ok(None);
+        }
+        if trimmed.starts_with("version = ") {
+            let value = trimmed
+                .trim_start_matches("version = ")
+                .trim()
+                .trim_matches('"');
+            if value.contains("workspace = true") {
+                if let Some(workspace) = workspace_manifest {
+                    return workspace_package_version_from_text(workspace);
+                }
+                return Ok(None);
+            }
+            if !value.is_empty() {
+                return Ok(Some(value.to_string()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn workspace_package_version_from_text(text: &str) -> Result<Option<String>, String> {
+    let mut in_workspace_package = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed == "[workspace.package]" {
+            in_workspace_package = true;
+            continue;
+        }
+        if trimmed.starts_with('[') {
+            in_workspace_package = false;
+        }
+        if in_workspace_package && trimmed.starts_with("version = ") {
+            let value = trimmed
+                .trim_start_matches("version = ")
+                .trim()
+                .trim_matches('"');
+            if !value.is_empty() {
+                return Ok(Some(value.to_string()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn read_json_version_from_text(text: &str) -> Result<Option<String>, String> {
+    let value: serde_json::Value = serde_json::from_str(text)
+        .map_err(|err| format!("failed to parse extension package.json: {err}"))?;
+    Ok(value
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string))
+}
+
+pub(crate) fn supply_chain_report_status(path: &Path) -> Result<Option<String>, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("Status:") {
+            return Ok(Some(rest.trim().to_string()));
+        }
+    }
+    Ok(None)
+}
+
 pub(crate) fn digest_file(path: &Path) -> Result<String, String> {
     let bytes =
         fs::read(path).map_err(|err| format!("failed to read {}: {err}", path.display()))?;
@@ -74,82 +230,14 @@ fn read_toml_version(path: &Path) -> Result<Option<String>, String> {
     }
     let text = fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed == "version.workspace = true" || trimmed.contains("version.workspace = true") {
-            return workspace_package_version(path);
-        }
-        if trimmed.starts_with("version = ") {
-            let value = trimmed
-                .trim_start_matches("version = ")
-                .trim()
-                .trim_matches('"');
-            if value.contains("workspace = true") {
-                return workspace_package_version(path);
-            }
-            if !value.is_empty() {
-                return Ok(Some(value.to_string()));
-            }
-        }
-    }
-    Ok(None)
-}
-
-fn workspace_package_version(crate_manifest: &Path) -> Result<Option<String>, String> {
-    let workspace_manifest = crate_manifest
+    let workspace_text = path
         .parent()
         .and_then(|p| p.parent())
         .and_then(|p| p.parent())
-        .map(|p| p.join("Cargo.toml"));
-    let Some(workspace_manifest) = workspace_manifest else {
-        return Ok(None);
-    };
-    if !workspace_manifest.is_file() {
-        return Ok(None);
-    }
-    let text = fs::read_to_string(&workspace_manifest)
-        .map_err(|err| format!("failed to read {}: {err}", workspace_manifest.display()))?;
-    let mut in_workspace_package = false;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed == "[workspace.package]" {
-            in_workspace_package = true;
-            continue;
-        }
-        if trimmed.starts_with('[') {
-            in_workspace_package = false;
-        }
-        if in_workspace_package && trimmed.starts_with("version = ") {
-            let value = trimmed
-                .trim_start_matches("version = ")
-                .trim()
-                .trim_matches('"');
-            if !value.is_empty() {
-                return Ok(Some(value.to_string()));
-            }
-        }
-    }
-    let mut in_package = false;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed == "[package]" {
-            in_package = true;
-            continue;
-        }
-        if trimmed.starts_with('[') {
-            in_package = false;
-        }
-        if in_package && trimmed.starts_with("version = ") {
-            let value = trimmed
-                .trim_start_matches("version = ")
-                .trim()
-                .trim_matches('"');
-            if !value.is_empty() {
-                return Ok(Some(value.to_string()));
-            }
-        }
-    }
-    Ok(None)
+        .map(|p| p.join("Cargo.toml"))
+        .filter(|p| p.is_file())
+        .and_then(|p| fs::read_to_string(p).ok());
+    read_toml_version_from_text(&text, workspace_text.as_deref())
 }
 
 fn read_json_version(path: &Path) -> Result<Option<String>, String> {
@@ -158,12 +246,7 @@ fn read_json_version(path: &Path) -> Result<Option<String>, String> {
     }
     let text = fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-    let value: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|err| format!("failed to parse {}: {err}", path.display()))?;
-    Ok(value
-        .get("version")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string))
+    read_json_version_from_text(&text)
 }
 
 pub(crate) fn rehearsal_receipt_path(root: &Path, override_path: Option<&Path>) -> PathBuf {
@@ -189,6 +272,21 @@ pub(crate) fn identities_compatible(
             == Some(rehearsal.rust_toolchain_digest.as_str())
         && snapshot.crate_version.as_deref() == Some(rehearsal.crate_version.as_str())
         && package_lock_matches(snapshot, rehearsal)
+        && extension_version_matches(snapshot, rehearsal)
+}
+
+fn extension_version_matches(
+    snapshot: &IdentityInputs,
+    rehearsal: &super::model::RehearsalIdentity,
+) -> bool {
+    match (
+        snapshot.extension_version.as_deref(),
+        rehearsal.extension_version.as_deref(),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 fn package_lock_matches(

@@ -1,4 +1,3 @@
-use std::env;
 use std::path::PathBuf;
 
 use super::build::{BuildInput, build_snapshot};
@@ -9,7 +8,7 @@ const MD_NAME: &str = "readiness-snapshot.md";
 
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let options = parse_args(args)?;
-    let root = env::current_dir().map_err(|err| format!("failed to read cwd: {err}"))?;
+    let root = super::identity::git_toplevel()?;
     let snapshot = build_snapshot(&BuildInput {
         root: &root,
         sha: &options.sha,

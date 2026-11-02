@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::identity::{
-    collect_identity_inputs, digest_file, git_rev_parse, git_worktree_clean, identities_compatible,
-    package_qualification_receipt_path, rehearsal_receipt_path, semantic_identity_digest,
-    supply_chain_report_path,
+    digest_file, git_rev_parse, identities_compatible, package_qualification_receipt_path,
+    rehearsal_receipt_path, semantic_identity_digest, supply_chain_report_path,
+    supply_chain_report_status,
 };
 use super::model::{
     IdentityInputs, NON_CLAIMS, ReadinessDimension, ReadinessDimensionId, ReadinessDimensionState,
@@ -21,8 +21,9 @@ pub(crate) struct BuildInput<'a> {
 
 pub(crate) fn build_snapshot(input: &BuildInput<'_>) -> Result<ReadinessSnapshot, String> {
     let source_sha = git_rev_parse(input.sha)?;
-    let tree_clean = git_worktree_clean()?;
-    let identity_inputs = collect_identity_inputs(input.root)?;
+    let tree_clean = super::identity::tree_clean_for_subject(&source_sha)?;
+    let identity_inputs =
+        super::identity::collect_identity_inputs_for_commit(input.root, &source_sha)?;
     let mut dimensions = default_dimensions(&source_sha, tree_clean);
 
     let rehearsal_path = rehearsal_receipt_path(input.root, input.rehearsal_receipt);
@@ -196,29 +197,44 @@ fn apply_rehearsal_adapters(
 pub(crate) fn package_dimension_state(
     receipt: &super::model::RehearsalReceipt,
 ) -> ReadinessDimensionState {
-    let required = [
+    if receipt
+        .install_smokes
+        .iter()
+        .any(|component| component.status == "failed")
+    {
+        return ReadinessDimensionState::Limited;
+    }
+    let slots = [
         receipt.crate_package.as_ref(),
         receipt.installed_binary.as_ref(),
         receipt.vsix.as_ref(),
     ];
+    let missing_slots = slots.iter().filter(|slot| slot.is_none()).count();
     let mut any_pass = false;
     let mut any_failed = false;
-    let mut any_missing = false;
-    for component in required.into_iter().flatten() {
+    let mut any_non_pass = false;
+    for component in slots.into_iter().flatten() {
         if component_pass(component) {
-            any_pass = true;
+            if component.sha256.as_deref().unwrap_or("").is_empty() {
+                any_failed = true;
+            } else {
+                any_pass = true;
+            }
         } else if component.status == "failed" {
             any_failed = true;
         } else {
-            any_missing = true;
-        }
-        if component.sha256.as_deref().unwrap_or("").is_empty() && component_pass(component) {
-            any_failed = true;
+            any_non_pass = true;
         }
     }
     if any_failed {
         ReadinessDimensionState::Limited
-    } else if any_pass && !any_missing {
+    } else if missing_slots > 0 {
+        if any_pass {
+            ReadinessDimensionState::Limited
+        } else {
+            ReadinessDimensionState::NotProven
+        }
+    } else if any_pass && !any_non_pass {
         ReadinessDimensionState::Pass
     } else if any_pass {
         ReadinessDimensionState::Limited
@@ -284,8 +300,13 @@ fn merge_supply_chain_from_rehearsal(
     if evidence.is_empty() {
         return;
     }
+    let all_present = receipt.dependency_policy.is_some()
+        && receipt.sbom.is_some()
+        && receipt.provenance_plan.is_some();
     let all_pass = evidence.iter().all(|record| record.stale_reason.is_none());
-    let state = if all_pass {
+    let state = if !all_present {
+        ReadinessDimensionState::Limited
+    } else if all_pass {
         ReadinessDimensionState::Pass
     } else {
         ReadinessDimensionState::Limited
@@ -344,6 +365,16 @@ fn apply_supply_chain_adapter(
     let mut evidence = Vec::new();
 
     if supply_chain.is_file() {
+        let stale_reason = supply_chain_report_status(&supply_chain)
+            .ok()
+            .flatten()
+            .and_then(|status| {
+                if status.eq_ignore_ascii_case("pass") {
+                    None
+                } else {
+                    Some(format!("report_status_{status}"))
+                }
+            });
         evidence.push(ReadinessEvidenceRecord {
             producer: "cargo_deny_supply_chain".to_string(),
             schema_version: "advisory".to_string(),
@@ -351,7 +382,7 @@ fn apply_supply_chain_adapter(
             artifact: supply_chain.display().to_string(),
             artifact_digest: digest_file(&supply_chain).ok(),
             freshness_policy: "stale when Cargo.lock or deny.toml changes".to_string(),
-            stale_reason: None,
+            stale_reason,
         });
     }
 
@@ -383,8 +414,11 @@ fn apply_supply_chain_adapter(
             "cargo xtask check-supply-chain",
         )
     });
+    let preserved_pass = merged.state == ReadinessDimensionState::Pass;
     merged.evidence.extend(evidence);
-    merged.state = ReadinessDimensionState::Limited;
+    if !preserved_pass {
+        merged.state = ReadinessDimensionState::Limited;
+    }
     merged.limitations.push(
         "supply-chain dimension keeps dependency, package-qualification and SBOM records separate"
             .to_string(),
