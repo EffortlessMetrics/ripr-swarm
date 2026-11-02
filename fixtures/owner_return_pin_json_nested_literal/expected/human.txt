@@ -2,26 +2,30 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/owner_return_pin_json_nested_literal/input
 
-Summary: 3 changed behaviors checked: 0 appear noticed by tests, 3 partly noticed, 0 reached but not noticed, 0 no test path. 3 found, 0 suppressed by your settings (2 base-side evidence, not candidate edit targets)
+Summary: 3 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 3 unclear. 3 found, 0 suppressed by your settings (2 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
 
 Start here:
-  State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
   File: ./src/lib.rs:5
-  Static exposure: weak (severity: warning, confidence 0.92)
-  Why weak: a related test reaches this change but does not observe the exact changed value
-  Gap ID (for scripts): gap:rust:src/lib.rs:did_save_params:return_value:return_value:ok
+  Static exposure: unknown (severity: note, confidence 0.64)
+  Why unknown: the analysis could not determine a static exposure state
+  Not credited: `assert_eq!` in checks at tests/save.rs:4: tests/save.rs:2 imports `json` from
+    `serde_json`, and no Cargo.toml ripr read declares `serde_json` as the plain registry package;
+    declare it by version only (no `package`, `path`, `git`, `registry` or `[patch]`)
   Changed behavior: Ok(())
-  Missing check: No strong assertion was detected
-  Related test: tests/save.rs:4 checks (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: The related test `checks` already has an exact assertion; this does not establish
-    observation of the returned value. Check whether the change can affect the returned value. If it
-    can, add a separating input and assert the exact returned value. If it cannot, test the changed
-    effect separately; another input cannot distinguish unchanged returns
-  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
+  Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs
+    as the standard macro on the path that reaches this change (for example the file did not parse,
+    the test carries a feature `cfg`, or a glob import may rebind the macro). ripr does not claim a
+    gap; this is a named limitation, not a coverage claim
+  Related test: tests/save.rs:4 checks (assertion not credited: ripr could not establish that this assertion counts here)
+  Next step: ripr could not read whether the assertions in `checks` (tests/save.rs:4) run as the
+    standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed
+    value; add a test only if none does
+  Evidence: reach yes · infection yes · propagation yes · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior
@@ -39,15 +43,13 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_json_nested_literal/input --diff <cwd>/fixtures/owner_return_pin_json_nested_literal/diff.patch --mode fast probe:src_lib.rs:return_value:9659b9fa
   ripr context --root <cwd>/fixtures/owner_return_pin_json_nested_literal/input --diff <cwd>/fixtures/owner_return_pin_json_nested_literal/diff.patch --mode fast --at probe:src_lib.rs:return_value:9659b9fa
-  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
-Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/owner_return_pin_json_nested_literal/input --at src/lib.rs:5 --kind return_value
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:5 (weak); kind: error_path; reason: No exact error variant discriminator was detected
-    - ./src/lib.rs:5 (weak); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:5 (unknown: static analysis limited); kind: error_path; reason: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse,…
+    - ./src/lib.rs:5 (unknown: static analysis limited); kind: return_value; reason: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse,…
   Hidden classes:
-    weak = tests reach it but check it only loosely
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
