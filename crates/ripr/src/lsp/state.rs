@@ -174,6 +174,7 @@ pub(super) enum WorkspaceFolderEventRejectionKind {
     DuplicateAddition,
     UnknownRemoval,
     ContradictoryEvent,
+    MembershipCapacityExceeded,
 }
 
 impl WorkspaceFolderEventRejectionKind {
@@ -183,7 +184,29 @@ impl WorkspaceFolderEventRejectionKind {
             Self::DuplicateAddition => "duplicate_addition",
             Self::UnknownRemoval => "unknown_removal",
             Self::ContradictoryEvent => "contradictory_event",
+            Self::MembershipCapacityExceeded => "membership_capacity_exceeded",
         }
+    }
+}
+
+fn membership_capacity_rejection() -> WorkspaceFolderEventRejection {
+    WorkspaceFolderEventRejection {
+        kind: WorkspaceFolderEventRejectionKind::MembershipCapacityExceeded,
+        detail: super::workspace_folder_bounds::membership_capacity_detail(),
+    }
+}
+
+fn check_membership_capacity(
+    entries: &[WorkspaceFolderEntry],
+) -> Result<(), WorkspaceFolderEventRejection> {
+    if super::workspace_folder_bounds::membership_within_capacity(
+        entries
+            .iter()
+            .map(|entry| (entry.uri.as_str(), entry.path.as_path())),
+    ) {
+        Ok(())
+    } else {
+        Err(membership_capacity_rejection())
     }
 }
 
@@ -258,6 +281,7 @@ fn canonical_folder_entries(
         entries.push(entry);
     }
     entries.sort_by(|left, right| left.path.cmp(&right.path));
+    check_membership_capacity(&entries)?;
     Ok(entries)
 }
 
@@ -379,17 +403,19 @@ impl WorkspaceFolderSet {
                 });
             }
         }
+        let mut tentative = self.entries.clone();
+        tentative.retain(|stored| {
+            !removed_entries
+                .iter()
+                .any(|removed| removed.path == stored.path)
+        });
+        tentative.extend(added_entries.clone());
+        tentative.sort_by(|left, right| left.path.cmp(&right.path));
+        check_membership_capacity(&tentative)?;
         self.last_applied_event = Some(event_id);
         let changed = !added_entries.is_empty() || !removed_entries.is_empty();
         if changed {
-            self.entries.retain(|stored| {
-                !removed_entries
-                    .iter()
-                    .any(|removed| removed.path == stored.path)
-            });
-            self.entries.extend(added_entries);
-            self.entries
-                .sort_by(|left, right| left.path.cmp(&right.path));
+            self.entries = tentative;
             self.folder_set_epoch = self.folder_set_epoch.saturating_add(1);
         }
         Ok(WorkspaceFolderEventOutcome {
@@ -4417,6 +4443,82 @@ mod tests {
             || set.last_applied_event().is_some()
         {
             return Err("a rejected event must not mutate the stored set".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_folder_set_rejects_membership_capacity_at_exact_limit_plus_one()
+    -> Result<(), String> {
+        let folders: Vec<WorkspaceFolder> = (0
+            ..=super::super::workspace_folder_bounds::MAX_WORKSPACE_FOLDER_ENTRIES)
+            .map(|index| folder(&format!("file:///workspace/f{index}")))
+            .collect::<Result<Vec<_>, _>>()?;
+        let rejection = WorkspaceFolderSet::from_folder_list(&folders)
+            .err()
+            .ok_or_else(|| "one over the entry limit must be rejected".to_string())?;
+        if rejection.kind != WorkspaceFolderEventRejectionKind::MembershipCapacityExceeded {
+            return Err("expected membership_capacity_exceeded".to_string());
+        }
+        if rejection.detail.contains("file:///") {
+            return Err("rejection detail must not echo folder URIs".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_folder_set_apply_event_rejects_cumulative_growth() -> Result<(), String> {
+        let limit = super::super::workspace_folder_bounds::MAX_WORKSPACE_FOLDER_ENTRIES;
+        let mut set = WorkspaceFolderSet::default();
+        for index in 0..limit {
+            set.apply_event(&[folder(&format!("file:///workspace/f{index}"))?], &[])
+                .map_err(|rejection| format!("unexpected rejection at {index}: {rejection:?}"))?;
+        }
+        if set.entries().len() != limit {
+            return Err("exact limit must be retained".to_string());
+        }
+        let rejection = set
+            .apply_event(&[folder(&format!("file:///workspace/extra"))?], &[])
+            .err()
+            .ok_or_else(|| "cumulative growth past the cap must be rejected".to_string())?;
+        if rejection.kind != WorkspaceFolderEventRejectionKind::MembershipCapacityExceeded {
+            return Err("expected membership_capacity_exceeded".to_string());
+        }
+        if set.entries().len() != limit {
+            return Err("a rejected event must not mutate membership".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_folder_set_removal_allows_addition_after_capacity_rejection() -> Result<(), String>
+    {
+        let limit = super::super::workspace_folder_bounds::MAX_WORKSPACE_FOLDER_ENTRIES;
+        let mut set = WorkspaceFolderSet::default();
+        for index in 0..limit {
+            set.apply_event(&[folder(&format!("file:///workspace/f{index}"))?], &[])
+                .map_err(|rejection| format!("unexpected rejection: {rejection:?}"))?;
+        }
+        set.apply_event(&[folder("file:///workspace/extra")?], &[])
+            .err()
+            .ok_or_else(|| "expected capacity rejection".to_string())?;
+        set.apply_event(&[], &[folder("file:///workspace/f0")?])
+            .map_err(|rejection| format!("removal must succeed: {rejection:?}"))?;
+        set.apply_event(&[folder("file:///workspace/recovered")?], &[])
+            .map_err(|rejection| format!("addition after removal must succeed: {rejection:?}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_folder_set_rejects_oversized_single_uri() -> Result<(), String> {
+        let long =
+            "a".repeat(super::super::workspace_folder_bounds::MAX_WORKSPACE_FOLDER_URI_BYTES + 1);
+        let rejection =
+            WorkspaceFolderSet::from_folder_list(&[folder(&format!("file:///workspace/{long}"))?])
+                .err()
+                .ok_or_else(|| "oversized URI must be rejected".to_string())?;
+        if rejection.kind != WorkspaceFolderEventRejectionKind::MembershipCapacityExceeded {
+            return Err("expected membership_capacity_exceeded for oversized URI".to_string());
         }
         Ok(())
     }
