@@ -209,6 +209,43 @@ jobs:
             echo "::notice::merge-base $base_sha cannot judge another tree yet; matcher pin only"
             exit 0
           fi
+          # A known mainline compiler arity break prevents the *base-owned*
+          # matcher from building while the repair PR is being qualified.
+          # Recover only that exact file blob in this disposable base worktree.
+          # The matcher, glossary, ceilings, and candidate tree remain untouched.
+          old_stub_blob="$(git -C "$base_tree" rev-parse "HEAD:crates/ripr/src/app/test_stub.rs")"
+          if test "$old_stub_blob" = "41ce81981802365b31e5182b7a7a51540ff8d7be"; then
+            python3 - "$base_tree/crates/ripr/src/app/test_stub.rs" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          source = path.read_text(encoding="utf-8")
+          replacements = [
+              (
+                  "fn return_value_direct_at_probe_line(\n",
+                  "fn return_value_direct_at_probe_line(\n    root: &Path,\n",
+              ),
+              (
+                  "rust_test_stub(&seam, None, source);",
+                  "rust_test_stub(&seam, None, source, Some(root));",
+              ),
+              (
+                  "return_value_direct_at_probe_line(&in_file, file, line, &source)",
+                  "return_value_direct_at_probe_line(root, &in_file, file, line, &source)",
+              ),
+          ]
+          for before, after in replacements:
+              if source.count(before) != 1:
+                  raise SystemExit("pinned base compiler recovery has an unexpected source shape")
+              source = source.replace(before, after, 1)
+          path.write_text(source, encoding="utf-8")
+          PY
+            fixed_stub_blob="$(git -C "$base_tree" hash-object crates/ripr/src/app/test_stub.rs)"
+            test "$fixed_stub_blob" = "e934320980555de2d431b2aa8482a6059e9cf7f7"
+            test "$(git -C "$base_tree" diff --name-only)" = "crates/ripr/src/app/test_stub.rs"
+            echo "::notice::base $base_sha recovered only the exact #12466 compiler-arity source blob ($old_stub_blob -> $fixed_stub_blob); base-owned user-text matcher still executes"
+          fi
           cd "$base_tree"
           cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
 
