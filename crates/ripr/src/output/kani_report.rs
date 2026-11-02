@@ -124,4 +124,53 @@ mod tests {
         std::fs::remove_dir_all(root).map_err(|err| format!("remove Kani output test: {err}"))?;
         Ok(())
     }
+
+    #[test]
+    fn captured_vacuous_success_matches_honesty_projection_and_complete_markdown()
+    -> Result<(), String> {
+        let root = crate::app::kani_import::tests_root("captured-vacuous-output")?;
+        let (native, binding) = crate::app::kani_import::captured_test_inputs(&root, "vacuous")?;
+        let report = crate::app::kani_import::import_kani_report(&root, native, &binding)?;
+        let json = render_json(&report)?;
+        let markdown = render_markdown(&report)?;
+        let embedded = markdown
+            .lines()
+            .filter_map(|line| line.strip_prefix("    "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(embedded, json.trim_end());
+        assert!(markdown.contains("external, unattested"));
+        assert!(markdown.contains("c_vacuous.assertion.1"));
+        assert!(markdown.contains("c_vacuous.cover.1"));
+        assert!(
+            markdown
+                .lines()
+                .any(|line| line.contains("proof::c_vacuous")
+                    && line.contains("SUCCESS")
+                    && line.ends_with("| false | 0 | 1 | 1 |"))
+        );
+        let mut actual: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        // The same six permitted masks as the contract-fixture oracle above.
+        // Every other owned field remains observable, including new fields.
+        for (pointer, marker) in [
+            ("/adapter_version", "<normalized>"),
+            ("/checked_root", "<normalized>"),
+            ("/artifact_sha256", "<normalized>"),
+            ("/binding_sha256", "<normalized>"),
+            ("/binding", "<external payload>"),
+            ("/native/document", "<external payload>"),
+        ] {
+            *actual
+                .pointer_mut(pointer)
+                .ok_or_else(|| format!("missing Kani field {pointer}"))? = marker.into();
+        }
+        let expected: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/evidence-promotion-honesty-corpus/reports/kani-vacuous-capture-unattested.json"
+        ))
+        .map_err(|err| err.to_string())?;
+        assert_eq!(actual, expected);
+        std::fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        Ok(())
+    }
 }

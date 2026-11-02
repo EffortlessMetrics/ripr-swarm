@@ -1,4 +1,4 @@
-//! Published schema fixtures and deliberate mutations, never purported verifier runs.
+//! Published contract fixtures, authored mutations and separately retained native captures.
 
 use super::*;
 use serde_json::json;
@@ -406,5 +406,245 @@ fn empty_property_results_are_observations_and_additive_fields_are_preserved() -
         run.harnesses.first().ok_or("harness")?.checks_total,
         Some(0)
     );
+    Ok(())
+}
+
+#[test]
+fn captured_ordinary_success_and_failure_retain_native_polarity() -> TestResult {
+    let success = parse_native(include_str!(
+        "../fixtures/native-captures/success.native.json"
+    ))?;
+    let failure = parse_native(include_str!(
+        "../fixtures/native-captures/failure.native.json"
+    ))?;
+    for (run, name, verdict, kind, successful, covers) in [
+        (
+            &success.run,
+            "b_success",
+            NativeVerdict::Success,
+            NativeFailureKind::None,
+            2,
+            1,
+        ),
+        (
+            &failure.run,
+            "a_failure",
+            NativeVerdict::Failure,
+            NativeFailureKind::PanicsOnly,
+            1,
+            0,
+        ),
+    ] {
+        assert_eq!(run.run_state, NativeRunState::Complete);
+        assert_eq!(
+            (run.matched_count, run.missing_count, run.harnesses.len()),
+            (1, 0, 1)
+        );
+        let harness = run.harnesses.first().ok_or("captured harness")?;
+        assert_eq!(
+            (
+                harness.crate_name.as_str(),
+                harness.file.as_str(),
+                harness.name.as_str()
+            ),
+            ("proof", "proof.rs", name)
+        );
+        assert!(!harness.should_panic);
+        assert_eq!(
+            harness.outcome,
+            NativeOutcome::Completed {
+                verdict,
+                failure_kind: kind
+            }
+        );
+        assert_eq!(
+            (
+                harness.checks_total,
+                harness.checks_success,
+                harness.covers_total
+            ),
+            (Some(2), Some(successful), Some(covers))
+        );
+    }
+    assert_eq!(
+        success.document["harnesses"][0]["covers"]["satisfied"],
+        json!(["b_success.cover.1"])
+    );
+    assert_eq!(
+        failure.document["harnesses"][0]["checks"]["failure"],
+        json!(["a_failure.assertion.1"])
+    );
+    Ok(())
+}
+
+#[test]
+fn captured_vacuous_success_keeps_unreachable_assertion_and_cover() -> TestResult {
+    let native = parse_native(include_str!(
+        "../fixtures/native-captures/vacuous.native.json"
+    ))?;
+    assert_eq!(native.run.harnesses.len(), 1);
+    let harness = native.run.harnesses.first().ok_or("vacuous harness")?;
+    assert_eq!(harness.name, "c_vacuous");
+    assert_eq!(
+        harness.outcome,
+        NativeOutcome::Completed {
+            verdict: NativeVerdict::Success,
+            failure_kind: NativeFailureKind::None,
+        }
+    );
+    assert_eq!(
+        (
+            harness.checks_total,
+            harness.checks_success,
+            harness.covers_total
+        ),
+        (Some(1), Some(0), Some(1))
+    );
+    let h = &native.document["harnesses"][0];
+    assert_eq!(h["checks"]["unreachable"], json!(["c_vacuous.assertion.1"]));
+    assert_eq!(h["covers"]["unreachable"], json!(["c_vacuous.cover.1"]));
+    assert_eq!(h["covers"]["satisfied"], json!([]));
+    Ok(())
+}
+
+#[test]
+fn captured_expected_and_missing_panic_keep_opposite_native_verdicts() -> TestResult {
+    for (text, name, verdict, kind, successes, failures) in [
+        (
+            include_str!("../fixtures/native-captures/expected-panic.native.json"),
+            "d_expected_panic",
+            NativeVerdict::Success,
+            NativeFailureKind::PanicsOnly,
+            0,
+            1,
+        ),
+        (
+            include_str!("../fixtures/native-captures/missing-expected-panic.native.json"),
+            "e_missing_expected_panic",
+            NativeVerdict::Failure,
+            NativeFailureKind::None,
+            1,
+            0,
+        ),
+    ] {
+        let native = parse_native(text)?;
+        assert_eq!(native.run.harnesses.len(), 1);
+        let harness = native.run.harnesses.first().ok_or("panic harness")?;
+        assert_eq!(harness.name, name);
+        assert!(harness.should_panic);
+        assert_eq!(
+            harness.outcome,
+            NativeOutcome::Completed {
+                verdict,
+                failure_kind: kind
+            }
+        );
+        assert_eq!(
+            (harness.checks_total, harness.checks_success),
+            (Some(1), Some(successes))
+        );
+        assert_eq!(native.document["harnesses"][0]["n_failed"], failures);
+    }
+    Ok(())
+}
+
+#[test]
+fn captured_unwind_results_preserve_undetermined_and_successful_unsupported_checks() -> TestResult {
+    let sufficient = parse_native(include_str!(
+        "../fixtures/native-captures/bounded-success.native.json"
+    ))?;
+    let insufficient = parse_native(include_str!(
+        "../fixtures/native-captures/insufficient-bound.native.json"
+    ))?;
+    for native in [&sufficient, &insufficient] {
+        assert_eq!(native.run.harnesses.len(), 1);
+        assert_eq!(native.document["harnesses"][0]["resolved_unwind"], 3);
+        // is_bounded describes automatic argument generation, not loop unwinding.
+        assert_eq!(native.document["harnesses"][0]["is_bounded"], false);
+    }
+    let good = sufficient
+        .run
+        .harnesses
+        .first()
+        .ok_or("sufficient-bound harness")?;
+    assert_eq!(
+        good.outcome,
+        NativeOutcome::Completed {
+            verdict: NativeVerdict::Success,
+            failure_kind: NativeFailureKind::None,
+        }
+    );
+    assert_eq!(
+        (good.checks_total, good.checks_success),
+        (Some(32), Some(31))
+    );
+    let unsupported = sufficient.document["harnesses"][0]["unsupported_constructs"]
+        .as_array()
+        .ok_or("unsupported records")?;
+    assert_eq!(unsupported.len(), 2);
+    assert_eq!(
+        unsupported[0]["id"],
+        "std::panic::Location::<'_>::caller.unsupported_construct.1"
+    );
+    assert_eq!(
+        unsupported[1]["id"],
+        "core::panicking::panic_nounwind_fmt::runtime.unsupported_construct.1"
+    );
+    assert!(
+        unsupported
+            .iter()
+            .all(|property| property["status"] == "SUCCESS")
+    );
+    let bad = insufficient
+        .run
+        .harnesses
+        .first()
+        .ok_or("insufficient-bound harness")?;
+    assert_eq!(
+        bad.outcome,
+        NativeOutcome::Completed {
+            verdict: NativeVerdict::Failure,
+            failure_kind: NativeFailureKind::Other,
+        }
+    );
+    assert_eq!((bad.checks_total, bad.checks_success), (Some(32), Some(0)));
+    let checks = &insufficient.document["harnesses"][0]["checks"];
+    assert_eq!(checks["failure"], json!(["g_insufficient_bound.unwind.0"]));
+    let undetermined = checks["undetermined"]
+        .as_array()
+        .ok_or("undetermined checks")?;
+    assert_eq!(undetermined.len(), 31);
+    assert!(undetermined.contains(&json!("g_insufficient_bound.assertion.2")));
+    Ok(())
+}
+
+#[test]
+fn captured_fail_fast_partial_does_not_invent_the_missing_harness() -> TestResult {
+    let native = parse_native(include_str!(
+        "../fixtures/native-captures/partial.native.json"
+    ))?;
+    assert_eq!(native.run.run_state, NativeRunState::Partial);
+    assert_eq!(
+        (
+            native.run.matched_count,
+            native.run.missing_count,
+            native.run.harnesses.len()
+        ),
+        (2, 1, 1)
+    );
+    let harness = native.run.harnesses.first().ok_or("partial harness")?;
+    assert_eq!(harness.name, "g_insufficient_bound");
+    assert_eq!(
+        harness.outcome,
+        NativeOutcome::Completed {
+            verdict: NativeVerdict::Failure,
+            failure_kind: NativeFailureKind::Other,
+        }
+    );
+    assert_eq!(
+        native.document["harness_selection"]["requested_filters"],
+        json!(["g_insufficient_bound", "b_success"])
+    );
+    assert_eq!(native.document["summary"]["successful"], 0);
     Ok(())
 }

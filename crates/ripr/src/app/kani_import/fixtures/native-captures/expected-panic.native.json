@@ -1,0 +1,122 @@
+{
+  "schema_version": "0.1.0",
+  "kani_commit": "744b3e84d6eb68fd5456826997568666791bd355",
+  "kani_commit_dirty": false,
+  "tools": {
+    "kani": "0.68.0",
+    "rustc": "1.101.0-nightly (7189d39d9 2026-10-22)",
+    "cbmc": "6.11.0 (cbmc-6.11.0)"
+  },
+  "enabled_unstable_features": [
+    "export-json"
+  ],
+  "harness_selection": {
+    "requested_filters": [
+      "d_expected_panic"
+    ],
+    "exact": true,
+    "unmatched_filters": [],
+    "matched_count": 1
+  },
+  "harness_timeout_s": null,
+  "configuration": {
+    "checks": {
+      "memory_safety": true,
+      "overflow": true,
+      "unwinding": true,
+      "undefined_function": true,
+      "assertion_reach_checks": true,
+      "ignore_global_asm": false,
+      "extra_pointer_checks": false,
+      "assert_contracts": true,
+      "prove_safety_only": false
+    },
+    "cbmc_args": [],
+    "coverage_enabled": false
+  },
+  "outcome": {
+    "kind": "COMPLETED"
+  },
+  "run_state": "COMPLETE",
+  "target": "x86_64-unknown-linux-gnu",
+  "started_at": "2026-10-31T05:19:42Z",
+  "wall_time_s": 0.08658684,
+  "harnesses": [
+    {
+      "name": "d_expected_panic",
+      "crate_name": "proof",
+      "file": "proof.rs",
+      "line": 34,
+      "contract": null,
+      "is_automatically_generated": false,
+      "has_loop_contracts": false,
+      "is_bounded": false,
+      "attributes": {
+        "kind": "Proof",
+        "should_panic": true,
+        "solver": null,
+        "unwind_value": null,
+        "stubs": [],
+        "verified_stubs": []
+      },
+      "outcome": {
+        "kind": "COMPLETED",
+        "verdict": "SUCCESS"
+      },
+      "resolved_solver": "cadical",
+      "resolved_unwind": null,
+      "generated_concrete_test": false,
+      "resources": {
+        "verification_time_s": 0.019230993
+      },
+      "n_properties": 1,
+      "n_failed": 1,
+      "failure_kind": "PANICS_ONLY",
+      "failed_properties": [
+        {
+          "id": "d_expected_panic.assertion.1",
+          "description": "deliberate expected panic",
+          "class": "assertion",
+          "file": "proof.rs",
+          "line": "35",
+          "trace_available": true,
+          "status": "FAILURE"
+        }
+      ],
+      "unsupported_constructs": [],
+      "warnings": [],
+      "warnings_truncated": 0,
+      "checks": {
+        "total": 1,
+        "success": 0,
+        "failure": [
+          "d_expected_panic.assertion.1"
+        ],
+        "unreachable": [],
+        "undetermined": [],
+        "error": [],
+        "unknown": [],
+        "other": []
+      },
+      "covers": {
+        "total": 0,
+        "satisfied": [],
+        "unsatisfiable": [],
+        "unreachable": [],
+        "undetermined": [],
+        "error": [],
+        "unknown": [],
+        "other": []
+      }
+    }
+  ],
+  "summary": {
+    "total": 1,
+    "successful": 1,
+    "failed": 0,
+    "checks_total": 1,
+    "checks_success": 0,
+    "covers_total": 0,
+    "covers_satisfied": 0
+  }
+}

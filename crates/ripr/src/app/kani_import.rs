@@ -331,4 +331,4 @@ fn sha256(bytes: &[u8]) -> String {
 mod tests;
 
 #[cfg(test)]
-pub(crate) use tests::{test_inputs, tests_root};
+pub(crate) use tests::{captured_test_inputs, test_inputs, tests_root};
