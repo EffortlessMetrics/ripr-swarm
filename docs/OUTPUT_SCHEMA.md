@@ -20555,6 +20555,7 @@ measured values.
 ```text
 target/ripr/reports/lsp-performance.json
 target/ripr/reports/lsp-performance.md
+target/ripr/reports/lsp-performance-measurement.json
 ```
 
 The JSON schema is `ripr-lsp-saved-edit-sequence-v1`. It is an identity-bound
@@ -20568,6 +20569,14 @@ remain `proposal`. A stale cached answer cannot satisfy a speed target. Complete
 semantic parity fails independently of elapsed time. A
 fast elapsed time cannot hide a redundant full rescan or duplicate diagnostic
 publication.
+
+`lsp-performance-measurement.json` uses schema `ripr-lsp-saved-edit-measurement-v1`
+(#4863). It retains separate `subjects` rows for the deterministic fixture,
+`ripr-swarm` self-dogfood identity, and honestly `not_authorized` governed
+external trials. Each executed row records cold/warm populations, separate
+first-health/first-useful/complete endpoints, a semantic `packet_digest`, and
+a dominant observed phase or an explicit `not_established` reason. Host-local
+wall times are observations only; they are not gates.
 
 ```json
 {

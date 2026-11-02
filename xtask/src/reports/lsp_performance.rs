@@ -8,11 +8,13 @@
 //! full-workspace job.
 
 use crate::run::{capture_output_with_timeout, run_output};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::time::Duration;
 
 const SCHEMA_VERSION: &str = "ripr-lsp-saved-edit-sequence-v1";
+const MEASUREMENT_SCHEMA: &str = "ripr-lsp-saved-edit-measurement-v1";
 const REPORT_ENV: &str = "RIPR_LSP_PERFORMANCE_REPORT";
 const HARNESS_FILTER: &str = "saved_edit_sequence";
 const DEFAULT_TIMEOUT: Duration = Duration::from_mins(3);
@@ -69,6 +71,23 @@ pub(crate) fn lsp_performance_report() -> Result<(), String> {
     overlay_identity(&mut receipt)?;
     reject_promoted_proposals(&receipt)?;
 
+    let reports = crate::reports_dir();
+    let measurement_path = reports.join("lsp-performance-measurement.json");
+    if measurement_path.is_file() {
+        let measurement_raw = fs::read_to_string(&measurement_path)
+            .map_err(|err| format!("read {}: {err}", measurement_path.display()))?;
+        let mut measurement: Value = serde_json::from_str(&measurement_raw)
+            .map_err(|err| format!("parse {}: {err}", measurement_path.display()))?;
+        overlay_measurement_identity(&mut measurement)?;
+        let json_text = serde_json::to_string_pretty(&measurement)
+            .map_err(|err| format!("serialize lsp-performance measurement packet: {err}"))?;
+        crate::write_report(
+            "lsp-performance-measurement.json",
+            &format!("{json_text}\n"),
+        )?;
+        println!("Wrote target/ripr/reports/lsp-performance-measurement.json");
+    }
+
     let json_text = serde_json::to_string_pretty(&receipt)
         .map_err(|err| format!("serialize lsp-performance receipt: {err}"))?;
     crate::write_report("lsp-performance.json", &format!("{json_text}\n"))?;
@@ -109,6 +128,122 @@ pub(crate) fn overlay_identity(receipt: &mut Value) -> Result<(), String> {
     identity.insert("binary_digest".to_string(), json!("not_measured"));
     identity.insert("host_class".to_string(), json!(host_class()));
     Ok(())
+}
+
+pub(crate) fn recompute_measurement_packet_digest(packet: &mut Value) -> Result<(), String> {
+    let digest = measurement_packet_digest_semantic(packet)?;
+    if let Some(object) = packet.as_object_mut() {
+        object.insert("packet_digest".to_string(), json!(digest));
+    }
+    Ok(())
+}
+
+fn measurement_packet_digest_semantic(packet: &Value) -> Result<String, String> {
+    let mut normalized = packet.clone();
+    if let Some(object) = normalized.as_object_mut() {
+        object.remove("packet_digest");
+        scrub_measurement_host_local(object);
+        normalize_measurement_subject_order(object);
+    }
+    let text = serde_json::to_string(&normalized)
+        .map_err(|err| format!("serialize measurement packet for digest: {err}"))?;
+    Ok(format!("sha256:{:x}", Sha256::digest(text.as_bytes())))
+}
+
+fn scrub_measurement_host_local(object: &mut Map<String, Value>) {
+    if let Some(subjects) = object.get_mut("subjects").and_then(Value::as_array_mut) {
+        for subject in subjects {
+            if let Some(identity) = subject.get_mut("identity").and_then(Value::as_object_mut) {
+                identity.remove("binary_path");
+            }
+            if let Some(cold_warm) = subject.get_mut("cold_warm").and_then(Value::as_object_mut) {
+                for population in ["cold", "warm"] {
+                    if let Some(entry) =
+                        cold_warm.get_mut(population).and_then(Value::as_object_mut)
+                    {
+                        entry.remove("distribution");
+                    }
+                }
+            }
+            if let Some(receipt) = subject
+                .get_mut("sequence_receipt")
+                .and_then(Value::as_object_mut)
+            {
+                if let Some(identity) = receipt.get_mut("identity").and_then(Value::as_object_mut) {
+                    identity.remove("binary_path");
+                }
+                if let Some(steps) = receipt.get_mut("steps").and_then(Value::as_array_mut) {
+                    for step in steps {
+                        if let Some(step_object) = step.as_object_mut() {
+                            step_object.remove("elapsed_ms");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn normalize_measurement_subject_order(object: &mut Map<String, Value>) {
+    let Some(subjects) = object.get_mut("subjects").and_then(Value::as_array_mut) else {
+        return;
+    };
+    subjects.sort_by(|left, right| {
+        let left_tier = left.get("tier").and_then(Value::as_str).unwrap_or("");
+        let right_tier = right.get("tier").and_then(Value::as_str).unwrap_or("");
+        left_tier.cmp(right_tier)
+    });
+}
+
+pub(crate) fn overlay_measurement_identity(measurement: &mut Value) -> Result<(), String> {
+    let schema = measurement
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if schema != MEASUREMENT_SCHEMA {
+        return Err(format!(
+            "lsp-performance-report: expected measurement schema `{MEASUREMENT_SCHEMA}`, got `{schema}`"
+        ));
+    }
+    let Some(subjects) = measurement
+        .get_mut("subjects")
+        .and_then(Value::as_array_mut)
+    else {
+        return Err("lsp-performance-report: measurement packet is missing subjects".to_string());
+    };
+    let head = git_revision();
+    for subject in subjects {
+        if subject.get("run_state").and_then(Value::as_str) != Some("executed") {
+            continue;
+        }
+        let Some(identity) = subject.get_mut("identity").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        identity.insert("host_class".to_string(), json!(host_class()));
+        identity.insert("source_sha".to_string(), json!(head.clone()));
+        identity.insert(
+            "binary_path".to_string(),
+            json!("ripr --lib saved_edit_sequence"),
+        );
+        identity.insert("binary_digest".to_string(), json!("not_measured"));
+        if let Some(receipt) = subject
+            .get_mut("sequence_receipt")
+            .and_then(Value::as_object_mut)
+        {
+            if let Some(receipt_identity) =
+                receipt.get_mut("identity").and_then(Value::as_object_mut)
+            {
+                receipt_identity.insert("source_sha".to_string(), json!(head.clone()));
+                receipt_identity.insert("host_class".to_string(), json!(host_class()));
+                receipt_identity.insert(
+                    "binary_path".to_string(),
+                    json!("ripr --lib saved_edit_sequence"),
+                );
+                receipt_identity.insert("binary_digest".to_string(), json!("not_measured"));
+            }
+        }
+    }
+    recompute_measurement_packet_digest(measurement)
 }
 
 pub(crate) fn reject_promoted_proposals(receipt: &Value) -> Result<(), String> {
