@@ -315,7 +315,7 @@ impl<'a> AtCandidate<'a> {
     fn resolution(self, root: &Path, config: &RiprConfig, source: String) -> TestStubResolution {
         match self {
             Self::Shape(seam) => {
-                let outcome = rust_test_stub(seam, None, &source);
+                let outcome = rust_test_stub(seam, None, &source, Some(root));
                 TestStubResolution {
                     seam_id: seam.id().as_str().to_string(),
                     owner: seam.owner().to_string(),
