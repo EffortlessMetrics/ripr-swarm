@@ -8716,6 +8716,39 @@ fn ava_not_assertion_extracts_relational_oracle() {
     assert!(!assertion.has_dynamic_matcher_arg);
 }
 
+/// Mocha passes a `done` callback, not an AVA `t` context; rendered oracle
+/// text must use the parameter name (#6594).
+#[test]
+fn execution_context_oracle_text_uses_the_callback_parameter_name() {
+    let source = "test('p', (done) => { done.is(price(150), 130); });";
+    let allocator = Allocator::default();
+    let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+    let call = parse_result
+        .program
+        .body
+        .iter()
+        .find_map(|stmt| match stmt {
+            Statement::ExpressionStatement(stmt) => match &stmt.expression {
+                Expression::CallExpression(call) => Some(call),
+                _ => None,
+            },
+            _ => None,
+        });
+    assert!(call.is_some(), "expected a test() call expression");
+    let Some(call) = call else { return };
+    let result = test_name_and_assertions_from_call(
+        call,
+        &SourceText::new(source),
+        &TypeScriptAssertionBindings::default(),
+    );
+    assert!(result.is_some(), "should recognize the test call");
+    let Some((_, assertions)) = result else {
+        return;
+    };
+    assert_eq!(assertions.len(), 1);
+    assert_eq!(assertion_oracle_text(&assertions[0]), "done.is(...)");
+}
+
 /// End-to-end: a full AVA `test('name', t => { t.is(...) })` call has its
 /// callback receiver (`t`) extracted and threaded so the inner `t.is(...)` is
 /// credited as an exact-value oracle.
