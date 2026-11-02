@@ -662,6 +662,74 @@ thread_local! {
         const { std::cell::Cell::new(0) };
 }
 
+fn field_initializer_is_plain(initializer: Option<ast::Expr>) -> bool {
+    match initializer {
+        // Shorthand `Row { total }` reads the plain path.
+        None => true,
+        Some(expr) => {
+            integer_literal(&expr).is_some()
+                || matches!(
+                    unwrap_parens(expr),
+                    ast::Expr::Literal(_) | ast::Expr::PathExpr(_)
+                )
+        }
+    }
+}
+
+/// #8084: whether every field initializer in the owner's single array
+/// return uses only a literal or plain path, so constructing the return
+/// cannot leave the process before the owner returns. Owners that are not
+/// that shape are treated as plain (no demotion).
+pub(in crate::analysis) fn returned_array_construction_plain(owner: &FunctionSummary) -> bool {
+    let source = owner.body.as_str();
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return true;
+    };
+    let Some(body) = function.body() else {
+        return true;
+    };
+    let Some(statements) = body.stmt_list() else {
+        return true;
+    };
+    if statements.statements().next().is_some() {
+        return true;
+    }
+    let Some(tail) = statements.tail_expr() else {
+        return true;
+    };
+    let ast::Expr::ArrayExpr(array) = unwrap_parens(tail) else {
+        return true;
+    };
+    if array.semicolon_token().is_some()
+        || array
+            .syntax()
+            .descendants()
+            .any(|node| node.kind() == SyntaxKind::ATTR)
+    {
+        return true;
+    }
+    for element in array.exprs() {
+        let ast::Expr::RecordExpr(record) = element else {
+            return true;
+        };
+        let Some(list) = record.record_expr_field_list() else {
+            return true;
+        };
+        if list.spread().is_some() || list.dotdot_token().is_some() {
+            return true;
+        }
+        for initializer in list.fields() {
+            if !field_initializer_is_plain(initializer.expr()) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// The owner's whole body is one array of struct literals, and the probe
 /// constructs `field` in exactly one of them.
 #[derive(Debug)]
@@ -776,17 +844,7 @@ impl ReturnedArray {
                             .field_name()
                             .is_some_and(|name| name.text() == field.as_str())
                     })
-                    .is_some_and(|initializer| match initializer.expr() {
-                        // Shorthand `Row { total }` reads the plain path.
-                        None => true,
-                        Some(expr) => {
-                            integer_literal(&expr).is_some()
-                                || matches!(
-                                    unwrap_parens(expr),
-                                    ast::Expr::Literal(_) | ast::Expr::PathExpr(_)
-                                )
-                        }
-                    })
+                    .is_some_and(|initializer| field_initializer_is_plain(initializer.expr()))
         });
         Some(Self {
             type_name,
@@ -1189,6 +1247,7 @@ fn squeeze(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::facts::FunctionSummary;
     use crate::domain::{DeltaKind, ProbeFamily, ProbeId, SourceLocation};
     use std::path::PathBuf;
 
@@ -1351,6 +1410,33 @@ mod tests {
             return Err("a sibling of the opposite sign refused the pin".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn returned_array_construction_plain_reads_every_field_initializer() -> Result<(), String> {
+        let plain = |array: &str| {
+            let owner = summarize_owner(&format!(
+                "pub fn rows(a: u32, b: u32) -> [Row; 2] {{\n    {array}\n}}"
+            ));
+            returned_array_construction_plain(&owner)
+        };
+        assert!(plain("[Row { total: 0 }, Row { total: a + b }]"));
+        assert!(!plain(
+            "[Row { total: { std::process::exit(0) } }, Row { total: a + b }]"
+        ));
+        assert!(plain(
+            "std::process::exit(0);\n    [Row { total: 0 }, Row { total: a + b }]"
+        ));
+        Ok(())
+    }
+
+    fn summarize_owner(body: &str) -> FunctionSummary {
+        let source = format!("pub struct Row {{ pub total: u32, }}\n\n{body}\n");
+        crate::analysis::rust_index::summarize_file(PathBuf::from("src/lib.rs"), source)
+            .functions
+            .into_iter()
+            .find(|function| function.name == "rows")
+            .expect("owner indexed")
     }
 
     #[test]
