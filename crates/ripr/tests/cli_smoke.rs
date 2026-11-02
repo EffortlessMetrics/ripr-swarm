@@ -74,6 +74,8 @@ mod javascript_awaited_roots;
 mod leftover_check_honesty;
 #[path = "cli_smoke/leftover_hints.rs"]
 mod leftover_hints;
+#[path = "cli_smoke/leftover_status.rs"]
+mod leftover_status;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/legend_first_run.rs"]
 mod legend_first_run;

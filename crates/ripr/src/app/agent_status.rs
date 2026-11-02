@@ -27,7 +27,9 @@ use crate::domain::{
     select_canonical_next_action,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
-use crate::output::markdown::{PowershellForm, command_shell_disclosure, powershell_form};
+use crate::output::markdown::{
+    PowershellForm, command_shell_disclosure, powershell_form, short_command_shell_note,
+};
 use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -2496,11 +2498,18 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         if next.runs_after_test_edit() {
             rendered.push_str(&format!("{AFTER_TEST_EDIT_NOTE}\n\n"));
         }
-        rendered.push_str(command_shell_disclosure());
+        // A command that runs unchanged in PowerShell needs only the short note;
+        // the full quoting paragraph is for commands that have a second form.
+        let form = powershell_form(&next.command);
+        if matches!(form, PowershellForm::SameAsBash) {
+            rendered.push_str(short_command_shell_note());
+        } else {
+            rendered.push_str(command_shell_disclosure());
+        }
         rendered.push_str("```bash\n");
         rendered.push_str(&next.command);
         rendered.push_str("\n```\n");
-        match powershell_form(&next.command) {
+        match form {
             PowershellForm::Translated(line) => {
                 rendered.push_str("\n```powershell\n");
                 rendered.push_str(&line);
