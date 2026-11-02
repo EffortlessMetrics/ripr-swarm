@@ -584,24 +584,16 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.119`: a direct bare boolean assertion can grip its whole primitive
 /// integer boundary after owner admission, consistency and exact-call pairing
 /// (#8610). Old entries retain the missed weak repair result.
-/// `1.124`: item declarations no longer read as function-value uses; bare
-/// references follow the innermost item scope while qualified owner values,
-/// owner-preserving imports and unresolved reexports keep the indirect-owner
-/// safeguard (RIPR-SPEC-0240, #10162).
-/// `1.123`: return/error matches! assertions require shared test execution
-/// admission. Older entries may credit ignored or broad expected-panic tests.
-/// `1.122`: a pushed element embedding a type from outside the scanned workspace
-/// no longer reads as comparing by its fields (#10684).
-/// `1.121`: a Display `write!` tail whose format template changed beyond
-/// fixed text no longer borrows an exact output pin (#9836).
 /// `1.120`: a literal-only integer expression that folds exactly adds its value
 /// as an owner-scoped probe token, and the sole glob of the owner's declared
 /// dependency reaches a `T::name(..)` owner (RIPR-SPEC-0158, RIPR-SPEC-0172,
 /// #10479). Old entries keep the missed observation and the abstain.
-/// `1.125`: item declarations no longer read as function-value uses; bare
-/// references follow the innermost item scope while qualified owner values,
-/// owner-preserving imports and unresolved reexports keep the indirect-owner
-/// safeguard (RIPR-SPEC-0240, #10162).
+/// `1.121`: a Display `write!` tail whose format template changed beyond
+/// fixed text no longer borrows an exact output pin (#9836).
+/// `1.122`: a pushed element embedding a type from outside the scanned workspace
+/// no longer reads as comparing by its fields (#10684).
+/// `1.123`: return/error matches! assertions require shared test execution
+/// admission. Older entries may credit ignored or broad expected-panic tests.
 /// `1.124`: retain the opaque assertion-macro limit beside nested expected
 /// macros when a bare owner call sits outside their inputs (#9644). The same
 /// version also covers a Kani proof harness getting its own source role
@@ -627,12 +619,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.133`: a proximity-only or assertion-affinity test whose assertion pins
 /// another function no longer lends a match-arm seam its propagation, activation
 /// or discrimination credit (#12060).
-/// `1.136`: indirect-owner item scope decisions: item declarations and a known
-/// different same-name item no longer read as owner-value uses (#10162).
 /// `1.134`: a proximity test assertion that pins another function through a
 /// local it reads no longer confirms the changed arm (#12056).
 /// `1.135`: a changed match arm whose `match` value is consumed before the
 /// owner returns it (method call, or a used `let`) is not confirmed (#12143).
+/// `1.136`: indirect-owner item scope decisions: item declarations and a known
+/// different same-name item no longer read as owner-value uses (#10162).
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.136";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
@@ -5563,8 +5555,6 @@ mod tests {
         // 1.104 -> 1.106: table-driven loop-accumulator pin (#6485).
         // 1.106 -> 1.108: literal-row `#[test_case]` bodies (#10190); 1.107 is #10298's.
         // 1.108 -> 1.109: indirect-owner limit and `cfg_attr` test (RIPR-SPEC-0240).
-        // 1.120 -> 1.121: item-scope and import-identity reading (#10162).
-
         // 1.110 -> 1.111: polling-helper owner pin (RIPR-SPEC-0197, #9478).
         // 1.111 -> 1.112: arrow-separated macro table rows (#10298).
         // 1.112 -> 1.113: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
@@ -5693,8 +5683,6 @@ mod tests {
         // 0.111 -> 0.113: same table-driven loop-accumulator pin as full 1.106.
         // 0.113 -> 0.115: same `#[test_case]` transition as the outer cache.
         // 0.115 -> 0.116: same indirect-owner limit and `cfg_attr` test as full 1.109.
-        // 0.127 -> 0.128: same item-scope transition as full 1.121.
-
         // 0.117 -> 0.118: same polling-helper owner pin as full 1.111.
         // 0.118 -> 0.119: same arrow-row transition as full 1.112.
         // 0.119 -> 0.120: same arrow-row oracle as full 1.113.
