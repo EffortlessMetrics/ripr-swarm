@@ -1,0 +1,10 @@
+# This extends the existing file-local Kani profile; no native execution claim.
+[[extend]]
+id = "RIPR-SPEC-0153"
+code = ["crates/ripr/src/analysis/facts/kani.rs"]
+tests = [
+  "crates/ripr/src/analysis/facts/kani/parent_context_tests.rs::out_of_line_kani_context_never_claims_file_local_enablement",
+  "crates/ripr/src/analysis/facts/kani/parent_context_tests.rs::inline_kani_context_keeps_its_declared_applicability",
+  "crates/ripr/src/analysis/facts/kani/parent_context_tests.rs::absent_ancestry_is_unknown_but_local_false_cfg_still_disables",
+  "crates/ripr/src/analysis/facts/kani/parent_context_tests.rs::parent_only_edit_rebuilds_without_changing_the_child_digest",
+]

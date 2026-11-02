@@ -29,6 +29,7 @@ pub struct KaniHarnessSource {
     pub module_path: Vec<String>,
     pub start_line: usize,
     pub end_line: usize,
+    /// File-local cfg cannot affirm enablement when parent context is unmodeled.
     pub applicability: KaniApplicability,
     /// Source-preserving attributes from the file, enclosing inline modules
     /// and function. No cfg expansion or host environment is inferred.
@@ -201,6 +202,14 @@ fn collect(
         inventory.limit(None, "included_source_unit_unsupported");
         return Ok(Vec::new());
     }
+    // This profile evaluates file-local attributes only. Approved execution
+    // ancestry tells us whether a declaration depends on an external module;
+    // it does not itself evaluate that parent's native cfg or macro context.
+    // Missing ancestry and files outside the module tree cannot affirm enablement.
+    let file_local_context = !file.role_provenance.outside_module_tree
+        && index
+            .execution_context(&path)
+            .is_some_and(|context| context.edges.is_empty());
     let tree = parse.tree();
     let lines = LineIndex::new(source);
     for module in tree.syntax().descendants().filter_map(ast::Module::cast) {
@@ -324,6 +333,9 @@ fn collect(
             continue;
         }
         let mut limitations = Vec::new();
+        if !file_local_context {
+            limitations.push("native_parent_context_unmodeled".into());
+        }
         if attributes.iter().any(|attr| {
             let text = compact(attr);
             text.starts_with("#[cfg_attr(") || text.starts_with("#![cfg_attr(")
@@ -355,7 +367,7 @@ fn collect(
             .collect();
         let applicability = if values.contains(&Some(false)) {
             KaniApplicability::Disabled
-        } else if values.iter().all(|value| *value == Some(true)) {
+        } else if file_local_context && values.iter().all(|value| *value == Some(true)) {
             KaniApplicability::Enabled
         } else {
             KaniApplicability::Unknown
@@ -448,3 +460,7 @@ fn opaque_scope(node: &SyntaxNode) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "kani/parent_context_tests.rs"]
+mod parent_context_tests;
