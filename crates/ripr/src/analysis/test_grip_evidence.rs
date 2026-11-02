@@ -44,9 +44,8 @@ use related_tests::{
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
     call_text_may_call_free_function, direct_collection_mutation_receiver, is_ignored,
-    owner_call_text, predicate_branch_side_effect_only, predicate_line_arms_all_agree,
-    reach_evidence as classify_reach_evidence, related_tests_reach_owner_indirectly,
-    relation_establishes_reach, test_calls_free_function,
+    owner_call_text, predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
+    related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -3821,15 +3820,6 @@ fn propagate_evidence(
             StageState::Unknown,
             Confidence::Low,
             "The predicate's one-line arms hold the same statement, so no sink value depends on it",
-        );
-    }
-    if seam.kind() == SeamKind::PredicateBoundary
-        && predicate_branch_side_effect_only(owner_fn, seam.display_line())
-    {
-        return StageEvidence::new(
-            StageState::Unknown,
-            Confidence::Low,
-            "The predicate branch only runs side effects, so no return-value sink depends on it",
         );
     }
     // Static heuristic: if any related test contains an oracle that

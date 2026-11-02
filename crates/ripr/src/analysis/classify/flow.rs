@@ -245,9 +245,6 @@ fn predicate_flow_sinks(
     if statement_if_arms_repeat(owner_fn, probe.location.line) {
         return Vec::new();
     }
-    if predicate_branch_side_effect_only(owner_fn, probe.location.line) {
-        return Vec::new();
-    }
     // RIPR-SPEC-0265 rule 3: a comparison that is the whole closure body of
     // an admitted iterator-adaptor tail decides, per element, what the tail
     // (the owner's whole body) returns.
@@ -278,6 +275,9 @@ fn predicate_flow_sinks(
             branch.line,
             owner,
         )];
+    }
+    if predicate_branch_side_effect_only(owner_fn, probe.location.line) {
+        return Vec::new();
     }
     if let Some(return_fact) = nearest_return(owner_fn, probe.location.line) {
         return vec![flow_sink(
@@ -1146,7 +1146,7 @@ fn if_statement_arms_in_body(
         cursor = masked.len() - after_else.len();
         let after_else = after_else.trim_start();
         if !after_else.starts_with('{') {
-            break;
+            return None;
         }
     }
     (!arms.is_empty()).then_some(arms)
@@ -1156,6 +1156,10 @@ fn arm_is_side_effect_only(arm: &str) -> bool {
     let arm = arm.trim();
     if arm.is_empty() {
         return true;
+    }
+    // A block tail expression (`{ one() }`) carries a value, not a discarded call.
+    if !arm.contains(';') {
+        return false;
     }
     arm.split(';').all(|stmt| {
         let stmt = stmt.trim();
@@ -1175,6 +1179,11 @@ fn statement_is_unit_side_effect(stmt: &str) -> bool {
         || lower.starts_with("loop ")
     {
         return false;
+    }
+    for method in [".push(", ".insert(", ".extend(", ".remove("] {
+        if lower.contains(method) {
+            return false;
+        }
     }
     if stmt.contains('=') {
         let collapsed = stmt
@@ -2304,6 +2313,34 @@ mod tests {
                 "`{body}` must not produce a return-value sink: {sinks:?}"
             );
         }
+    }
+
+    #[test]
+    fn returned_call_branch_if_keeps_return_value_sink() {
+        let body = "pub fn pick(flag: bool) -> i32 {\n    if flag { one() } else { two() }\n}";
+        let owner = tail_owner(body);
+        let probe = probe(ProbeFamily::Predicate, "flag", 2);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+            "returned call branches must keep a return-value sink: {sinks:?}"
+        );
+    }
+
+    #[test]
+    fn local_push_before_return_keeps_return_value_sink() {
+        let body = "pub fn count(flag: bool) -> usize {\n    let mut items = vec![];\n    if flag { items.push(1); }\n    items.len()\n}";
+        let owner = tail_owner(body);
+        let probe = probe(ProbeFamily::Predicate, "flag", 3);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+            "mutating branch calls must not suppress the return sink: {sinks:?}"
+        );
     }
 
     #[test]

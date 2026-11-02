@@ -101,8 +101,8 @@ pub(in crate::analysis) use facade_reach::{
     facade_reach_witness, facade_reach_witness_pointer,
 };
 pub(in crate::analysis) use flow::{
-    local_flow_sinks, predicate_branch_side_effect_only, predicate_branch_side_effect_only_in_body,
-    predicate_line_arms_all_agree, propagation_evidence_with_witness,
+    local_flow_sinks, predicate_branch_side_effect_only_in_body, predicate_line_arms_all_agree,
+    propagation_evidence_with_witness,
 };
 pub(in crate::analysis) use framework_oracle::withhold_framework_oracle_gap;
 pub(in crate::analysis) use gap_admission::{
