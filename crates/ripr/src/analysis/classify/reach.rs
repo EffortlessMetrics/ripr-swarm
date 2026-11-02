@@ -1035,6 +1035,7 @@ mod tests {
             owner.item.container = FunctionContainer::TraitImpl {
                 trait_path: trait_path.to_string(),
                 self_ty: "Inc".to_string(),
+                impl_generics: None,
             };
             owner
         };
@@ -1122,6 +1123,7 @@ mod tests {
             owner.item.container = FunctionContainer::TraitImpl {
                 trait_path: trait_path.to_string(),
                 self_ty: "Num".to_string(),
+                impl_generics: None,
             };
             owner
         };
@@ -1212,6 +1214,7 @@ mod tests {
             owner.item.container = FunctionContainer::TraitImpl {
                 trait_path: trait_path.to_string(),
                 self_ty: "Take".to_string(),
+                impl_generics: None,
             };
             owner
         };
@@ -1395,6 +1398,7 @@ mod tests {
             owner.item.container = FunctionContainer::TraitImpl {
                 trait_path: "Add".to_string(),
                 self_ty: "Num".to_string(),
+                impl_generics: None,
             };
             let index = RustIndex::from_owned(OwnedRustIndex {
                 files: BTreeMap::from([(
@@ -1432,6 +1436,7 @@ mod tests {
         owner.item.container = FunctionContainer::TraitImpl {
             trait_path: "Step".to_string(),
             self_ty: "Inc".to_string(),
+            impl_generics: None,
         };
         let index_for = |source: &str, functions: Vec<FunctionSummary>| {
             RustIndex::from_owned(OwnedRustIndex {

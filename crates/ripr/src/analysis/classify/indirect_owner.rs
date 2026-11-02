@@ -470,6 +470,7 @@ fn owner_path_names(owner: &FunctionFact) -> Vec<String> {
         FunctionContainer::TraitImpl {
             trait_path,
             self_ty,
+            ..
         } => {
             add_path(trait_path);
             add_path(self_ty);

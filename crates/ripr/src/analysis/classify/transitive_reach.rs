@@ -25,7 +25,7 @@ use crate::analysis::classify::call_identity::{
 };
 use crate::analysis::facts::{CallFact, FunctionContainer, FunctionSummary, RustIndex, TestFact};
 use crate::domain::StaticLimitKind;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
@@ -881,23 +881,25 @@ impl<'a> ReachGraph<'a> {
             if !reaches {
                 continue;
             }
-            if let Some(header) = impl_method_header(&function.id.0) {
-                if blanket_impl_type_param(header).is_some()
-                    && blanket_impl_body_calls_self_method(function, owner_name)
-                {
-                    for bound in blanket_impl_bound_traits(header) {
-                        for owner_fn in self.by_name.get(owner_name).into_iter().flatten() {
-                            if super::related_tests::impl_trait_name(&owner_fn.id.0).as_deref()
-                                == Some(bound.as_str())
-                                && let Some(ty) =
-                                    super::related_tests::impl_self_type_name(&owner_fn.id.0)
-                            {
-                                self_types.push(ty);
-                            }
+            if let Some(header) = blanket_impl_header(function)
+                && let Some(param) = blanket_impl_type_param(&header)
+                && blanket_impl_body_calls_self_method(function, owner_name)
+            {
+                for bound in blanket_impl_bound_traits(&header, &param) {
+                    for owner_fn in self.by_name.get(owner_name).into_iter().flatten() {
+                        let owner_trait = super::related_tests::impl_trait_name(&owner_fn.id.0);
+                        let owner_trait_short = owner_trait
+                            .as_deref()
+                            .map(|t| t.rsplit("::").next().unwrap_or(t).trim());
+                        if owner_trait_short == Some(bound.as_str())
+                            && let Some(ty) =
+                                super::related_tests::impl_self_type_name(&owner_fn.id.0)
+                        {
+                            self_types.push(ty);
                         }
                     }
-                    continue;
                 }
+                continue;
             }
             self_types.push(super::related_tests::impl_self_type_name(&function.id.0)?);
         }
@@ -1411,6 +1413,7 @@ impl<'a> TransitiveReachIndex<'a> {
                 FunctionContainer::TraitImpl {
                     trait_path,
                     self_ty,
+                    ..
                 } => Some((trait_path.as_str(), self_ty.as_str())),
                 _ => None,
             })
@@ -3300,6 +3303,25 @@ fn is_ascii_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
+/// Trait-impl header from parser-backed container facts, falling back to the
+/// symbol id when the container is unknown (unit tests).
+fn blanket_impl_header(function: &FunctionSummary) -> Option<String> {
+    match &function.item.container {
+        FunctionContainer::TraitImpl {
+            trait_path,
+            self_ty,
+            impl_generics,
+        } => {
+            let generic = impl_generics
+                .as_deref()
+                .map(|params| format!("{params} "))
+                .unwrap_or_default();
+            Some(format!("{generic}{trait_path} for {self_ty}"))
+        }
+        _ => impl_method_header(&function.id.0).map(str::to_string),
+    }
+}
+
 /// Trait-impl header from a parser-backed symbol id
 /// (`src/lib.rs::impl <T: Render> ToText for T::to_text` → `<T: Render> ToText for T`).
 fn impl_method_header(owner_id: &str) -> Option<&str> {
@@ -3316,10 +3338,14 @@ fn blanket_impl_type_param(header: &str) -> Option<String> {
     let (_, self_ty) = header.rsplit_once(" for ")?;
     let mut self_ty = self_ty.trim();
     self_ty = self_ty.strip_prefix('&').unwrap_or(self_ty).trim();
-    self_ty = self_ty.strip_prefix("mut ").unwrap_or(self_ty).trim();
     if self_ty.starts_with('\'') {
-        self_ty = self_ty.split_whitespace().nth(1)?;
+        self_ty = self_ty
+            .split_once(char::is_whitespace)
+            .map(|(_, rest)| rest)
+            .unwrap_or(self_ty)
+            .trim();
     }
+    self_ty = self_ty.strip_prefix("mut ").unwrap_or(self_ty).trim();
     let param = self_ty.split('<').next()?.trim();
     if param.is_empty() || !param.bytes().all(is_ascii_ident_byte) {
         return None;
@@ -3336,7 +3362,7 @@ fn blanket_impl_type_param(header: &str) -> Option<String> {
 }
 
 /// Trait names bound on the blanket impl's type parameter (`<T: Render + Clone>`).
-fn blanket_impl_bound_traits(header: &str) -> Vec<String> {
+fn blanket_impl_bound_traits(header: &str, param: &str) -> Vec<String> {
     let trait_part = header
         .rsplit_once(" for ")
         .map(|(left, _)| left)
@@ -3345,7 +3371,15 @@ fn blanket_impl_bound_traits(header: &str) -> Vec<String> {
         return Vec::new();
     };
     let generic = generic.split('>').next().unwrap_or("");
-    let Some((_, bounds)) = generic.split_once(':') else {
+    let Some(param_chunk) = generic.split(',').find(|chunk| {
+        chunk
+            .split(':')
+            .next()
+            .is_some_and(|name| name.trim() == param)
+    }) else {
+        return Vec::new();
+    };
+    let Some((_, bounds)) = param_chunk.split_once(':') else {
         return Vec::new();
     };
     bounds
@@ -3376,19 +3410,45 @@ fn blanket_impl_entry_reaches_owner(
     owner_name: &str,
     owner_trait: &str,
 ) -> bool {
-    let Some(header) = impl_method_header(&entry.id.0) else {
+    let Some(header) = blanket_impl_header(entry) else {
         return false;
     };
-    if blanket_impl_type_param(header).is_none() {
+    let Some(param) = blanket_impl_type_param(&header) else {
         return false;
-    }
-    if !blanket_impl_bound_traits(header)
+    };
+    let owner_trait_short = owner_trait
+        .rsplit("::")
+        .next()
+        .unwrap_or(owner_trait)
+        .trim();
+    if !blanket_impl_bound_traits(&header, &param)
         .iter()
-        .any(|bound| bound == owner_trait)
+        .any(|bound| bound == owner_trait_short)
     {
         return false;
     }
     blanket_impl_body_calls_self_method(entry, owner_name)
+}
+
+/// Call names of blanket trait impl entries whose body calls `owner_name` on
+/// `self`. Used only as a conservative related-test candidate prefilter.
+pub(in crate::analysis) fn blanket_proxy_call_names_for_owner(
+    index: &RustIndex,
+    owner_name: &str,
+) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    for entry in index.functions() {
+        let Some(header) = blanket_impl_header(entry) else {
+            continue;
+        };
+        if blanket_impl_type_param(&header).is_none() {
+            continue;
+        }
+        if blanket_impl_body_calls_self_method(entry, owner_name) {
+            names.insert(entry.name.clone());
+        }
+    }
+    names.into_iter().collect()
 }
 
 /// #6732: the test calls a blanket trait impl method on a receiver that resolves
@@ -3406,6 +3466,9 @@ pub(in crate::analysis) fn test_reaches_trait_owner_through_blanket_impl(
     let Some(owner_impl_type) = super::related_tests::impl_self_type_name(&owner.id.0) else {
         return false;
     };
+    if super::related_tests::owner_impl_identity_shadowed(test, owner, index) {
+        return false;
+    }
     index.functions().iter().any(|entry| {
         entry.id != owner.id
             && blanket_impl_entry_reaches_owner(entry, owner_name, &owner_trait)
@@ -3751,6 +3814,7 @@ mod tests {
         tests: Vec<TestFact>,
         source: String,
     ) -> RustIndex {
+        let functions = fns.clone();
         let mut files: BTreeMap<std::path::PathBuf, FileFacts> = BTreeMap::new();
         let path = PathBuf::from("src/lib.rs");
         files.insert(
@@ -3774,7 +3838,7 @@ mod tests {
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             files,
             tests,
-            functions: Vec::new(),
+            functions,
             workspace_authority: None,
             ..Default::default()
         })
@@ -5366,6 +5430,7 @@ mod tests {
         trait_fmt.item.container = FunctionContainer::TraitImpl {
             trait_path: "fmt::Display".to_string(),
             self_ty: "Unit".to_string(),
+            impl_generics: None,
         };
         let trait_only = index_with(vec![make_fn("seconds", vec![]), trait_fmt], Vec::new());
         assert!(
@@ -5389,6 +5454,7 @@ mod tests {
         next.item.container = FunctionContainer::TraitImpl {
             trait_path: "Iterator".to_string(),
             self_ty: "Counter".to_string(),
+            impl_generics: None,
         };
         let owner = make_fn("record", vec![]);
         let index = index_with(vec![owner.clone(), next.clone()], Vec::new());
@@ -6071,10 +6137,26 @@ fn real() {}
         let header = "<T: Render + Clone> ToText for T";
         assert_eq!(blanket_impl_type_param(header).as_deref(), Some("T"));
         assert_eq!(
-            blanket_impl_bound_traits(header),
+            blanket_impl_bound_traits(header, "T"),
             vec!["Render".to_string(), "Clone".to_string()]
         );
         assert!(blanket_impl_type_param("impl Render for f64").is_none());
+
+        let blanket_id = "src/lib.rs::impl <T: Render> ToText for T::to_text";
+        assert_eq!(
+            impl_method_header(blanket_id),
+            Some("<T: Render> ToText for T")
+        );
+
+        let complex_header = "<'a, T: Render, U: Clone> ToText for &'a mut T";
+        assert_eq!(
+            blanket_impl_type_param(complex_header).as_deref(),
+            Some("T")
+        );
+        assert_eq!(
+            blanket_impl_bound_traits(complex_header, "T"),
+            vec!["Render".to_string()]
+        );
     }
 
     #[test]

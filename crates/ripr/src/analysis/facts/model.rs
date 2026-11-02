@@ -1103,7 +1103,13 @@ pub enum FunctionContainer {
     /// A `fn` in an inherent `impl <self_ty>` block.
     Inherent { self_ty: String },
     /// A `fn` in an `impl <trait_path> for <self_ty>` block.
-    TraitImpl { trait_path: String, self_ty: String },
+    TraitImpl {
+        trait_path: String,
+        self_ty: String,
+        /// Generic parameters on the impl block (`<T: Render>`), when present.
+        #[serde(default)]
+        impl_generics: Option<String>,
+    },
     /// A `fn` in a `trait <trait_name>` block: a default method when it has
     /// a body, a required-method declaration when it does not.
     Trait { trait_name: String },

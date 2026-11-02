@@ -2202,6 +2202,7 @@ mod tests {
         make.item.container = crate::analysis::facts::FunctionContainer::TraitImpl {
             trait_path: "Make".to_string(),
             self_ty: "DecodeError".to_string(),
+            impl_generics: None,
         };
         let body = "let e = DecodeError::make(3);\nformat!(\"{:?}\", e);";
         let related = reasons_full(

@@ -308,6 +308,7 @@ fn test_asserts_captured_log(
             FunctionContainer::TraitImpl {
                 trait_path,
                 self_ty,
+                ..
             } if matches!(trait_path.as_str(), "log::Log" | "Log") => Some(self_ty.as_str()),
             _ => None,
         })

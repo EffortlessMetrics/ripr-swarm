@@ -1204,6 +1204,9 @@ fn function_item_fact(function: &ast::Fn) -> FunctionItemFact {
                     (Some(trait_ty), Some(self_ty)) => FunctionContainer::TraitImpl {
                         trait_path: compact_syntax_text(trait_ty.syntax().text().to_string()),
                         self_ty,
+                        impl_generics: impl_block
+                            .generic_param_list()
+                            .map(|list| compact_syntax_text(list.syntax().text().to_string())),
                     },
                 });
             }
