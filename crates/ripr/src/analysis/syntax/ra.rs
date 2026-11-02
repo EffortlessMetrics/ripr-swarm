@@ -2629,7 +2629,7 @@ fn extract_parser_oracles(
         };
         let macro_name = path.syntax().text().to_string().replace(' ', "");
         if !is_assertion_macro(&macro_name)
-            || drop_in_root_may_be_rebound(&macro_name, function.syntax(), drop_in_scope)
+            || qualified_drop_in_parser_rebound(&macro_name, function.syntax(), drop_in_scope)
         {
             continue;
         }
@@ -3089,6 +3089,22 @@ pub(crate) fn assertion_root_is_available(path: &str, node: &ra_ap_syntax::Synta
                 }))
 }
 
+/// Parser oracle admission for qualified drop-in assertion paths. Shares the
+/// whole-file glob refusal in [`assertion_root_binding_is_unrebound`], which
+/// closes the out-of-line-module glob gap (#7641).
+fn qualified_drop_in_parser_rebound(
+    macro_name: &str,
+    node: &ra_ap_syntax::SyntaxNode,
+    scope: DropInScope,
+) -> bool {
+    if drop_in_root_may_be_rebound(macro_name, node, scope) {
+        return true;
+    }
+    drop_in_assertion_leaf(macro_name).is_some()
+        && matches!(scope, DropInScope::WholeFile)
+        && !assertion_root_binding_is_unrebound(macro_name, node)
+}
+
 /// Whether a crate-qualified drop-in assertion (`pretty_assertions::assert_eq!`)
 /// may name something other than the crate. It may when the file declares a
 /// module or an `extern crate` rename with the root's name, imports another
@@ -3097,8 +3113,9 @@ pub(crate) fn assertion_root_is_available(path: &str, node: &ra_ap_syntax::Synta
 /// anywhere in the file refuses, without resolving which module it sits in,
 /// so a local module that re-exports a non-checking `assert_eq` gains no
 /// assertion authority. A binding in another file reached through a glob
-/// import (`use super::*` in an out-of-line test module), and a Cargo package
-/// rename, are not visible here.
+/// import is refused at parser admission via
+/// [`qualified_drop_in_parser_rebound`]; a Cargo package rename is not visible
+/// here.
 fn drop_in_root_may_be_rebound(
     macro_name: &str,
     node: &ra_ap_syntax::SyntaxNode,
