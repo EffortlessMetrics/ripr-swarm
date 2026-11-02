@@ -5,6 +5,7 @@
 
 use super::super::boundary_input::BoundaryInput;
 use super::super::identity;
+use super::super::row_miss;
 use super::super::static_limit;
 use super::super::*;
 use super::dispositions::{
@@ -549,9 +550,25 @@ pub(crate) fn packet_to_findings_with_currentness(
         let packet_admitted = packet.packet_status == PacketStatus::Complete
             && !class_blocked
             && !actionability_blocked;
+        let packet_has_v2 = row_miss::packet_has_v2_row_miss_evidence(packet);
+        if packet_has_v2 {
+            row_miss::assign_perl_v2_row_misses(
+                packet,
+                change,
+                &class,
+                class_blocked,
+                actionability_blocked,
+                packet_admitted,
+                &mut related,
+                &related_evidence,
+            );
+        }
         if class == ExposureClass::WeaklyExposed && packet_admitted {
             for (row, ev) in related.iter_mut().zip(&related_evidence) {
-                if perl_row_observation_unconfirmed(packet, change, ev) {
+                if packet_has_v2 && row_miss::row_has_v2_miss_evidence(packet, ev) {
+                    continue;
+                }
+                if row.miss.is_none() && perl_row_observation_unconfirmed(packet, change, ev) {
                     row.miss = Some(crate::domain::RelatedTestMiss::ObservationUnconfirmed);
                 }
             }

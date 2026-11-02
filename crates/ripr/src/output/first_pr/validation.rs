@@ -66,7 +66,12 @@ pub(super) fn validate_selected_command_root(packet: &Value, root: &Path) -> Res
     let carried = carried_root
         .canonicalize()
         .map_err(|error| format!("selected command context directory is unavailable: {error}; regenerate the input with the command that wrote it, then rerun"))?;
-    if !carried.is_dir() || carried != current {
+    if !carried.is_dir() {
+        return Err(
+            "selected command context directory is unavailable; regenerate the input with the command that wrote it, then rerun".to_string(),
+        );
+    }
+    if carried != current && !carried.starts_with(&current) {
         return Err(
             "selected command context targets a different repository directory".to_string(),
         );

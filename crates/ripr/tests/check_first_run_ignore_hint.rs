@@ -110,3 +110,107 @@ fn quiet_and_a_covering_entry_silence_the_hint() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// A Cargo project with ripr's cache committed into the index — the exact
+/// `git add -A` trap of #12432: the ignore advice alone cannot cure it, and
+/// the tracked-cache advisory repeats once per index build. One boundary
+/// edit on a feature branch drives the multi-build diff flow.
+fn cargo_project_with_committed_cache(label: &str) -> Result<Scratch, String> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-first-check-hint-{label}-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let scratch = Scratch(root.clone());
+    let excludes = root.join("empty-excludes");
+    std::fs::write(&excludes, "").map_err(|error| error.to_string())?;
+    git(&root, &["init", "-q", "-b", "main"])?;
+    git(&root, &["config", "user.email", "ripr@example.invalid"])?;
+    git(&root, &["config", "user.name", "ripr tests"])?;
+    git(
+        &root,
+        &[
+            "config",
+            "core.excludesFile",
+            excludes.to_str().ok_or("non-utf8 excludes path")?,
+        ],
+    )?;
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"witness\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn clamp(a: u32, hi: u32) -> u32 {\n    if a > hi { hi } else { a }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    // The trap: cache contents committed into the index by a routine
+    // `git add -A` (force-add is the deliberate author state; a later
+    // `.gitignore` cannot untrack what the index already holds). The entry
+    // sits in a registered cache layer so the advisory's exact untrack
+    // command owns every indexed path it names.
+    std::fs::create_dir_all(root.join("target/ripr/cache/repo-file-facts/v1"))
+        .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("target/ripr/cache/repo-file-facts/v1/committed-entry.json"),
+        "{}",
+    )
+    .map_err(|error| error.to_string())?;
+    git(&root, &["add", "Cargo.toml", "src/lib.rs"])?;
+    git(&root, &["add", "-f", "--", "target"])?;
+    git(&root, &["commit", "-q", "-m", "base"])?;
+    git(&root, &["checkout", "-q", "-b", "feat"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn clamp(a: u32, hi: u32) -> u32 {\n    if a >= hi { hi } else { a }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    git(&root, &["commit", "-q", "-am", "change"])?;
+    Ok(scratch)
+}
+
+/// #12432 smoke: the committed-cache trap gets the ignore note WITH the
+/// exact untrack command, and the tracked-cache advisory reports once per
+/// run — not once per index build. stdout stays free of both, and every run
+/// is a fresh `ripr` process, so a per-run guard is what keeps the count at
+/// one across repeated runs.
+#[test]
+fn committed_cache_trap_names_the_untrack_cure_and_advises_once_per_run() -> Result<(), String> {
+    let scratch = cargo_project_with_committed_cache("cargo-trap")?;
+    for run in 1..=2 {
+        let out = check(&scratch.0, &[])?;
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stderr.contains("Add this line to .gitignore: /target/"),
+            "run {run} must keep the entry advice: {stderr}"
+        );
+        assert!(
+            stderr.contains("--literal-pathspecs rm --cached -r -- target"),
+            "run {run} must name the untrack cure: {stderr}"
+        );
+        let advisories = stderr.matches("repo file fact cache entr").count();
+        assert_eq!(
+            advisories, 1,
+            "run {run} must advise once per run, got {advisories}: {stderr}"
+        );
+        assert!(
+            stderr.contains("exact untrack command: git -C"),
+            "run {run} advisory must carry the bound cure: {stderr}"
+        );
+        assert!(!stdout.contains(".gitignore"), "run {run}: {stdout}");
+        assert!(
+            !stdout.contains("rm --cached"),
+            "stdout must stay free of the cure, run {run}: {stdout}"
+        );
+        assert!(
+            !stdout.contains("repo file fact cache entr"),
+            "stdout must stay free of the advisory, run {run}: {stdout}"
+        );
+    }
+    Ok(())
+}

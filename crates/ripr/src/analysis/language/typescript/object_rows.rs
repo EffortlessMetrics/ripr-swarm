@@ -635,7 +635,8 @@ fn ident_part(byte: u8) -> bool {
 /// `true` when `body` (a callback body, braces optional) is exactly one
 /// `expect(..).matcher(..)` chain: at bracket depth zero only the `expect`
 /// identifier (optionally after `await`/`return`) and `.member` names, no
-/// string, comment, second statement or `;` before the end.
+/// string literal, second statement or `;` before the end. Line and block
+/// comments are skipped; they must not demote an otherwise direct read.
 pub(crate) fn single_expect_statement(body: &str) -> bool {
     let mut text = body.trim();
     if let Some(inner) = text.strip_prefix('{').and_then(|t| t.strip_suffix('}')) {
@@ -650,6 +651,15 @@ pub(crate) fn single_expect_statement(body: &str) -> bool {
     while idx < bytes.len() {
         let byte = bytes[idx];
         match byte {
+            b'/' => {
+                if let Some(next) = skip_comment(bytes, idx) {
+                    idx = next;
+                } else if depth > 0 {
+                    idx += 1;
+                } else {
+                    return false;
+                }
+            }
             b'(' | b'[' | b'{' => {
                 depth += 1;
                 idx += 1;
@@ -666,7 +676,6 @@ pub(crate) fn single_expect_statement(body: &str) -> bool {
                     Some(next) => idx = next,
                     None => return false,
                 },
-                b'/' if matches!(bytes.get(idx + 1), Some(b'/' | b'*')) => return false,
                 _ => idx += 1,
             },
             b'.' => {
@@ -699,6 +708,24 @@ pub(crate) fn single_expect_statement(body: &str) -> bool {
         }
     }
     depth == 0 && seen_expect
+}
+
+fn skip_comment(bytes: &[u8], idx: usize) -> Option<usize> {
+    match bytes.get(idx + 1) {
+        Some(b'/') => {
+            let end = bytes[idx..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .unwrap_or(bytes.len() - idx);
+            Some(idx + end)
+        }
+        Some(b'*') => {
+            let rest = bytes.get(idx + 2..)?;
+            let end = rest.windows(2).position(|w| w == [b'*', b'/'])?;
+            Some(idx + 2 + end + 2)
+        }
+        _ => None,
+    }
 }
 
 /// A container read is direct when it is an argument of the call that is
@@ -759,6 +786,9 @@ mod tests {
             "expect(f(x)).toEqual(y)",
             "{ await expect(f(x)).resolves.toBe(y) }",
             "{ return expect(f(x)).not.toBe(y); }",
+            "{ // a plain note\n expect(f(x)).toBe(y); }",
+            "{ /* a plain note */ expect(f(x)).toBe(y); }",
+            "{ expect(f(a)).toBe(y) // note\n }",
         ] {
             assert!(single_expect_statement(body), "{body}");
         }
@@ -768,7 +798,6 @@ mod tests {
             "{ expect(f(a)).toBe(y); expect(g(a)).toBe(y); }",
             "{ const z = 1; expect(f(a)).toBe(z); }",
             "{ if (a) expect(f(a)).toBe(y); }",
-            "{ expect(f(a)).toBe(y) // note\n }",
             "{ \"s\"; expect(f(a)).toBe(y); }",
             "{ }",
             "{ foo(expect(f(a)).toBe(y)); }",
