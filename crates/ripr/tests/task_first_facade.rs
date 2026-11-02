@@ -880,19 +880,38 @@ fn member_directory_commands_use_the_resolved_workspace_root() -> Result<(), Str
 #[cfg(unix)]
 #[test]
 fn continue_outside_any_workspace_refuses_without_scanning() -> Result<(), String> {
-    let fixture = Fixture::dir("facade-unanchored")?;
-    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
-    // The claim needs a directory no project encloses. A temp dir inside a
-    // checkout (TMPDIR under `target/`) is anchored by that checkout, and the
-    // refusal would then be the ordinary scan; hosted runners keep temp outside.
-    if outer.ancestors().any(|dir| {
-        dir.join("Cargo.toml").is_file()
-            || dir.join(".git").exists()
-            || dir.join("package.json").is_file()
-            || dir.join("pyproject.toml").is_file()
-    }) {
-        return Ok(());
-    }
+    // The claim needs a directory no project encloses. `TMPDIR` can sit inside
+    // a checkout (an anchored root, where the refusal is the ordinary scan), so
+    // fall back to `/tmp` and fail loudly if neither is free of markers: a
+    // silent early return would leave the refusal unchecked.
+    let anchored = |dir: &Path| {
+        dir.ancestors().any(|ancestor| {
+            [
+                "Cargo.toml",
+                ".git",
+                "package.json",
+                "pyproject.toml",
+                "setup.py",
+                "setup.cfg",
+            ]
+            .iter()
+            .any(|name| ancestor.join(name).exists())
+        })
+    };
+    let base = [std::env::temp_dir(), PathBuf::from("/tmp")]
+        .into_iter()
+        .filter_map(|dir| dir.canonicalize().ok())
+        .find(|dir| !anchored(dir))
+        .ok_or("no temp directory outside every project was found for the unanchored control")?;
+    let outer = base.join(format!(
+        "ripr-facade-unanchored-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&outer).map_err(|e| e.to_string())?;
+    let _cleanup = Fixture {
+        root: outer.clone(),
+    };
     std::fs::write(outer.join("loose.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
     let output = run_ripr(&outer, &["continue"])?;
     assert_exit(&output, 3, "continue outside any workspace");
@@ -909,6 +928,17 @@ fn continue_outside_any_workspace_refuses_without_scanning() -> Result<(), Strin
     assert!(
         stdout_text(&output).is_empty(),
         "typed refusal keeps stdout empty"
+    );
+
+    // A plain package manifest is a project even without a workspace marker:
+    // it keeps the ordinary explanation.
+    std::fs::write(outer.join("package.json"), "{\"name\":\"shop\"}").map_err(|e| e.to_string())?;
+    let packaged = run_ripr(&outer, &["continue"])?;
+    assert_exit(&packaged, 3, "continue in a plain package");
+    assert!(
+        !stderr_text(&packaged).contains("no workspace, package or Git repository was found"),
+        "a plain package must not be called unanchored:\n{}",
+        stderr_text(&packaged)
     );
     Ok(())
 }

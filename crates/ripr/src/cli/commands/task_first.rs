@@ -552,7 +552,8 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
         && matches!(
             super::check::resolve_project_root(std::path::Path::new(".")),
             Ok(None)
-        );
+        )
+        && !package_manifest_above_current_dir();
     match select_continue_attempt(&options.root, options.attempt_id.as_deref()).map_err(
         |error| {
             CommandError::from(super::agent::repair_attempt_input_error(
@@ -730,6 +731,20 @@ fn start_fresh_clause(
         ),
         None => start.to_string(),
     }
+}
+
+/// An ordinary package or project manifest at or above the current directory.
+/// `resolve_project_root` anchors on workspaces, Cargo packages and Git top
+/// levels only, so a standalone npm or Python project without Git still reads
+/// as unanchored there; it is a project, and keeps the full explanation.
+fn package_manifest_above_current_dir() -> bool {
+    const MANIFESTS: [&str; 4] = ["package.json", "pyproject.toml", "setup.py", "setup.cfg"];
+    let Ok(start) = std::fs::canonicalize(".") else {
+        return true;
+    };
+    start
+        .ancestors()
+        .any(|dir| MANIFESTS.iter().any(|name| dir.join(name).is_file()))
 }
 
 /// The start tail when an implicit root found no workspace to anchor on
