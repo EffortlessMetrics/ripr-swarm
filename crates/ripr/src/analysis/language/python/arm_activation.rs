@@ -488,10 +488,14 @@ fn closes_cleanly(text: &str) -> bool {
 
 /// `text` up to the first `#` outside a string.
 fn strip_comment(text: &str) -> &str {
-    let mut quote = 0u8;
+    let (mut quote, mut escaped) = (0u8, false);
     for (index, byte) in text.bytes().enumerate() {
         if quote != 0 {
-            if byte == quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote {
                 quote = 0;
             }
         } else if byte == b'"' || byte == b'\'' {
@@ -524,10 +528,15 @@ fn split_assignments(text: &str) -> Vec<&str> {
 fn split_where(text: &str, splits: impl Fn(&[u8], usize) -> bool) -> Vec<&str> {
     let bytes = text.as_bytes();
     let (mut depth, mut quote, mut from) = (0usize, 0u8, 0usize);
+    let mut escaped = false;
     let mut parts = Vec::new();
     for (index, &byte) in bytes.iter().enumerate() {
         if quote != 0 {
-            if byte == quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote {
                 quote = 0;
             }
             continue;

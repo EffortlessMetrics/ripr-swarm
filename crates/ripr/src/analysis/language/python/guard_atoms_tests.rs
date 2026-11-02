@@ -376,6 +376,9 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "import builtins as b\n*b.isinstance, other = [checker, None]\n\n\n",
         "import builtins as b\nvalue = 1; b.isinstance, other = checker, None\n\n\n",
         "import builtins as b\nb['isinstance'], other = checker, None\n\n\n",
+        // An escaped quote inside a string must not hide a later statement.
+        "import builtins as b\nlabel = \"say \\\"hi\\\"\"; b.isinstance = checker\n\n\n",
+        "import builtins as b\nlabel = 'it\\'s'; b.isinstance, other = checker, None\n\n\n",
     ];
     for patch in patches {
         let owner = format!("{patch}{arm}");
@@ -403,6 +406,7 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "import builtins as b\ncheck(b.isinstance, 3)  # n=1\n\n\n",
         "import builtins as b\nb.isinstance: object  # a=b\n\n\n",
         "import builtins as b\nb.isinstance, other; value = 1\n\n\n",
+        "import builtins as b\nlabel = \"say \\\"b.isinstance = 1\\\"\"\n\n\n",
         "import builtins as b\nfor name in [b.isinstance, b.len]: count = 1\n\n\n",
     ] {
         let owner = format!("{harmless}{arm}");
