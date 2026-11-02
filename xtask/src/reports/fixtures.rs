@@ -4291,6 +4291,39 @@ mod tests {
 
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// #4974: eval-sweep refresh cold checkout must resolve an explicit
+    /// workspace target path instead of `ripr_debug_binary()`'s CWD-relative path.
+    #[test]
+    fn ripr_fixture_binary_at_honors_explicit_workspace_path() -> Result<(), String> {
+        let root = unique_temp_path("4974-workspace-anchor");
+        fs::create_dir_all(&root).map_err(|err| format!("create {}: {err}", root.display()))?;
+        let binary = root
+            .join("workspace-target")
+            .join("debug")
+            .join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
+        let parent = binary
+            .parent()
+            .ok_or_else(|| "missing workspace binary parent".to_string())?;
+        fs::create_dir_all(parent).map_err(|err| format!("create {}: {err}", parent.display()))?;
+        fs::write(&binary, b"stub").map_err(|err| format!("write {}: {err}", binary.display()))?;
+
+        let cell = OnceLock::new();
+        let build = || Ok(());
+        let resolved = ripr_fixture_binary_built_by(binary.clone(), &cell, &build)?;
+        assert_eq!(
+            resolved,
+            std::path::absolute(&binary)
+                .map_err(|err| err.to_string())?
+                .to_string_lossy()
+        );
+        assert_ne!(
+            PathBuf::from(resolved),
+            ripr_debug_binary(),
+            "explicit path must not fall back to CWD-relative resolution"
+        );
+        fs::remove_dir_all(&root).map_err(|err| format!("cleanup {}: {err}", root.display()))
+    }
+
     /// #3054 root cause: the previous guard was `if !binary.exists()`, so a
     /// `target/debug/ripr` left by an earlier build was reused and the golden
     /// gates validated previous code. The binary existing must not skip the
