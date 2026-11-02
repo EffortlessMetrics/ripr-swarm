@@ -36,7 +36,7 @@ fn actual_deep_headers_still_refuse_after_hunk_payload() {
     ] {
         assert!(
             matches!(parse_bounded_lines(input.lines(), 2), Err(error)
-                if error.starts_with("diff_path_too_deep:")),
+                if error.to_string().starts_with("diff_path_too_deep:")),
             "actual path headers must retain depth admission"
         );
     }

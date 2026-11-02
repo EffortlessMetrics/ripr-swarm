@@ -939,11 +939,21 @@ fn push_gap_actions(
                 client_features,
             ));
         }
-        let verify_command = first_safe_command_at(
-            context.snapshot.root.as_path(),
-            context.data,
-            &["verification_commands"],
-        );
+        let verify_command = string_at(context.data, &["verify_command_clipboard"])
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                if string_at(context.data, &["typescript_package_root"]).is_some() {
+                    None
+                } else {
+                    first_safe_command_at(
+                        context.snapshot.root.as_path(),
+                        context.data,
+                        &["verification_commands"],
+                    )
+                }
+            });
         match &verify_command {
             Some(command) => actions.push(copy_agent_loop_command_action(
                 AGENT_VERIFY_COMMAND_TITLE,
@@ -2923,6 +2933,43 @@ mod tests {
             if text.contains("missing discriminator is ambiguous") {
                 return Err(format!("{name} kept the jargon stop condition:\n{text}"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_repair_card_renders_the_stop_condition_in_plain_words() -> Result<(), String> {
+        // The fourth render site wired in #12250: the repair-card action.
+        let data = serde_json::json!({
+            "language": "python",
+            "canonical_gap_id": "gap:python:pricing",
+            "missing_discriminator": "amount == DISCOUNT_THRESHOLD",
+            "repair_route": {
+                "route_kind": "existing_test_strengthening",
+                "target_file": "tests/test_pricing.py",
+                "assertion_shape": "assert result == expected",
+                "stop_conditions": [
+                    "Stop if the expected value for the missing discriminator is ambiguous."
+                ]
+            },
+            "verification_commands": ["python -m pytest tests/test_pricing.py::test_boundary"]
+        });
+        let card = python_repair_card_text(
+            &data,
+            &data["repair_route"],
+            "python -m pytest tests/test_pricing.py::test_boundary",
+            Some("ripr agent receipt"),
+        )
+        .ok_or_else(|| "repair card text was omitted".to_string())?;
+        if !card.contains("Stop if the expected value for the missing check is ambiguous.") {
+            return Err(format!(
+                "repair card lacks the plain stop condition:\n{card}"
+            ));
+        }
+        if card.contains("missing discriminator is ambiguous") {
+            return Err(format!(
+                "repair card kept the jargon stop condition:\n{card}"
+            ));
         }
         Ok(())
     }

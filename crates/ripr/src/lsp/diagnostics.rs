@@ -3404,6 +3404,28 @@ fn gap_record_diagnostic_data_with_causal(
         "receipt": record.receipt,
         "authority_boundary": record.authority_boundary,
     });
+    if let Some(package_root) = record.typescript_package_root.as_deref()
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert(
+            "typescript_package_root".to_string(),
+            serde_json::Value::String(package_root.to_string()),
+        );
+        if let Some(verify) = record.verification_commands.first()
+            && let Some(clipboard) = crate::output::markdown::verify_command_clipboard_for_record(
+                root,
+                &serde_json::json!({
+                    "typescript_package_root": package_root,
+                }),
+                verify,
+            )
+        {
+            object.insert(
+                "verify_command_clipboard".to_string(),
+                serde_json::Value::String(clipboard),
+            );
+        }
+    }
     if let Some(error) = regeneration_command_specs_error
         && let Some(object) = data.as_object_mut()
     {
@@ -3599,13 +3621,23 @@ fn lsp_seam_message(entry: &ClassifiedSeam) -> String {
     // internal kind. The seam kind and grip class stay machine-side in the
     // diagnostic code and `data`.
     let head = seam_class_phrase(entry.class);
-    format!(
+    let mut message = format!(
         "{head}: {}",
         seam.expression()
             .lines()
             .next()
             .unwrap_or(seam.expression())
-    )
+    );
+    // #6621: name the unresolved-reach witness in the Problems row, not only
+    // in hover evidence.
+    if entry.class == SeamGripClass::Opaque
+        && entry.evidence.reach.state == crate::domain::StageState::Opaque
+        && !entry.evidence.reach.summary.is_empty()
+    {
+        message.push(' ');
+        message.push_str(entry.evidence.reach.summary.as_str());
+    }
+    message
 }
 
 fn absolute_seam_path(root: &Path, seam: &crate::analysis::seams::RepoSeam) -> PathBuf {
@@ -3733,7 +3765,20 @@ fn diagnostic_for_finding_with_causal(
                 *slot = serde_json::json!(crate::domain::contract_confidence(confidence));
             }
             obj.insert("witness".to_string(), value);
-            let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
+            let mut summary = crate::domain::FixInstructionSummary::from_witness(&witness);
+            if let Some(gap) = &finding.canonical_gap
+                && let Ok(canonical_item) =
+                    crate::domain::CanonicalItemId::from_canonical_gap_id(&gap.id)
+            {
+                let context = crate::domain::FixInstructionIdentityContext {
+                    canonical_item: Some(&canonical_item),
+                    workspace_identity: None,
+                    repository_head: None,
+                    snapshot_currentness: None,
+                    witness: Some(&witness),
+                };
+                summary.attach_identities(&context);
+            }
             if let Ok(summary_value) = serde_json::to_value(&summary) {
                 obj.insert("fix_instruction".to_string(), summary_value);
             }
@@ -4459,6 +4504,23 @@ mod seam_diagnostic_tests {
             .ok_or_else(|| "expected diagnostic for opaque".to_string())?;
         if diag.severity != Some(DiagnosticSeverity::INFORMATION) {
             return Err(format!("expected INFORMATION, got {:?}", diag.severity));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn opaque_seam_message_includes_reach_witness_summary() -> Result<(), String> {
+        let mut entry = classified(SeamGripClass::Opaque);
+        entry.evidence.reach = StageEvidence::new(
+            StageState::Opaque,
+            Confidence::Low,
+            "Reach unresolved (rust_integration_public_api_path_unresolved): `checks_out` (tests/checkout.rs:1) calls `checkout`".to_string(),
+        );
+        let message = lsp_seam_message(&entry);
+        if !message.contains("`checks_out`") || !message.contains("calls `checkout`") {
+            return Err(format!(
+                "expected reach witness in Problems message: {message}"
+            ));
         }
         Ok(())
     }
@@ -5354,6 +5416,7 @@ mod seam_diagnostic_tests {
                 missing_discriminator: Some("amount == threshold".to_string()),
                 changed_behavior: Some("amount >= threshold".to_string()),
                 inspection_command: None,
+                proposed_target: None,
                 stop_conditions: vec!["Stop if the target owner moved.".to_string()],
             }),
             static_limit_kind: None,
@@ -5376,6 +5439,7 @@ mod seam_diagnostic_tests {
             receipt: None,
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
+            typescript_package_root: None,
         }
     }
 
@@ -6088,6 +6152,7 @@ mod diagnostic_policy_tests {
                 missing_discriminator: None,
                 changed_behavior: Some("amount >= threshold".to_string()),
                 inspection_command: None,
+                proposed_target: None,
                 stop_conditions: Vec::new(),
             }),
             static_limit_kind: None,
@@ -6111,6 +6176,7 @@ mod diagnostic_policy_tests {
             receipt: None,
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
+            typescript_package_root: None,
         }
     }
 
