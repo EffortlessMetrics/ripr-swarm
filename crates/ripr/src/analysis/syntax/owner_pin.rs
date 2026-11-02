@@ -5908,10 +5908,10 @@ fn variant_path(path: &ast::Path) -> bool {
     }
 }
 
-/// A closure that takes no arguments and is not `async`, `const`, `gen` or
+/// A closure that takes at most one argument and is not `async`, `const`, `gen` or
 /// attributed, so calling it runs its body once.
 fn plain_closure(closure: &ast::ClosureExpr) -> bool {
-    closure_parameters(closure) == Some(0)
+    matches!(closure_parameters(closure), Some(0) | Some(1))
 }
 
 /// The parameter count of a closure that is not `async`, `const`, `gen` or
@@ -6458,13 +6458,14 @@ fn closure_invocation(
     function: &ast::Fn,
     first_return: Option<TextSize>,
 ) -> Option<ast::CallExpr> {
-    if !plain_closure(closure) {
+    let params = closure_parameters(closure)?;
+    if params > 1 {
         return None;
     }
     let expression = unparenthesized(closure);
     if let Some(call) = expression.parent().and_then(ast::CallExpr::cast) {
         return (call.expr().is_some_and(|expr| expr.syntax() == &expression)
-            && no_arguments(&call))
+            && call_argument_count(&call) == Some(params))
         .then_some(call);
     }
     let binding = expression.parent().and_then(ast::LetStmt::cast)?;
@@ -6524,7 +6525,7 @@ fn closure_invocation(
                     .find(|node| ast::StmtList::can_cast(node.kind()))
                     .as_ref()
                     == Some(&scope)
-                && no_arguments(call)
+                && call_argument_count(call) == Some(params)
                 && call.expr().is_some_and(|expr| {
                     matches!(expr, ast::Expr::PathExpr(_))
                         && expr.syntax().text().to_string() == name
@@ -6532,9 +6533,8 @@ fn closure_invocation(
         })
 }
 
-fn no_arguments(call: &ast::CallExpr) -> bool {
-    call.arg_list()
-        .is_some_and(|args| args.args().next().is_none())
+fn call_argument_count(call: &ast::CallExpr) -> Option<usize> {
+    call.arg_list().map(|args| args.args().count())
 }
 
 #[cfg(test)]

@@ -339,6 +339,39 @@ fn an_uninvoked_generator_adds_no_test() -> Result<(), String> {
 }
 
 #[test]
+fn a_macro_generated_closure_callback_test_is_credited() -> Result<(), String> {
+    let hand_written = TempRepo::create(
+        "    #[test]\n    fn ten_is_open() {\n        let check = |open: bool| assert_eq!(open, true);\n        check(gate(10));\n    }\n",
+    )?
+    .predicate()?;
+    assert_ne!(
+        state(&hand_written.ripr.reach.state),
+        "No",
+        "premise: the hand-written twin reaches gate: {hand_written:?}"
+    );
+
+    let generated = TempRepo::create(&format!(
+        "{GENERATOR}    macro_rules! boundary_case {{\n        ($name:ident, $input:expr, |$open:ident| $body:block) => {{\n            #[test]\n            fn $name() {{\n                let check = |$open: bool| $body;\n                check(gate($input));\n            }}\n        }};\n    }}\n\n    boundary_case!(ten_is_open, 10, |open| {{\n        assert_eq!(open, true);\n    }});\n"
+    ))?
+    .predicate()?;
+    assert_eq!(generated.class, hand_written.class, "{generated:?}");
+    assert_eq!(
+        state(&generated.ripr.reach.state),
+        state(&hand_written.ripr.reach.state),
+        "{generated:?}"
+    );
+    assert!(
+        generated
+            .related_tests
+            .iter()
+            .any(|test| test.name == "ten_is_open"),
+        "{generated:?}"
+    );
+    assert_eq!(generated.static_limit_kind, None, "{generated:?}");
+    Ok(())
+}
+
+#[test]
 fn a_deferred_assertion_in_a_generated_test_is_refused_like_a_hand_written_one()
 -> Result<(), String> {
     // The closure is never called, so its assertion never runs.

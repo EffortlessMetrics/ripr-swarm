@@ -428,6 +428,11 @@ impl<'a> ReachGraph<'a> {
             .files()
             .iter()
             .flat_map(|(path, file)| generated_test_sites(path, &file.data().source))
+            .filter(|site| {
+                !all_tests
+                    .iter()
+                    .any(|test| test.file == site.file && test.start_line == site.invocation_line)
+            })
             .collect();
         let masked_test_bodies = all_tests.iter().map(|_| OnceLock::new()).collect();
         let test_identifiers = all_tests.iter().map(|_| OnceLock::new()).collect();

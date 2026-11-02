@@ -23,10 +23,11 @@
 //!   invocation, which sits in the same scope or a nested one;
 //! - the invocation is at item position;
 //! - every arm up to the selected one has a matcher of comma-separated
-//!   `$name:fragment` metavariables only, and the selected arm is the first
-//!   whose metavariable count matches the invocation's top-level arguments
-//!   (an `ident`, `literal`, `block` or `tt` argument must also have that
-//!   shape);
+//!   `$name:fragment` metavariables only, or the closure-callback shape
+//!   `$name:ident, [$input:expr,] |$param:ident| $body:block` (#6649);
+//!   the selected arm is the first whose metavariable count matches the
+//!   invocation's top-level arguments (an `ident`, `literal`, `block` or `tt`
+//!   argument must also have that shape);
 //! - the selected transcriber contains `#[test]`; its only repetition is
 //!   the table form below;
 //! - no `use` in the file imports the generator's name, and the expansion
@@ -311,6 +312,7 @@ pub(super) fn inner_elements(tree: &SyntaxNode) -> Vec<NodeOrToken<SyntaxNode, S
 
 /// One invocation argument: its source text and the kinds of its
 /// top-level elements.
+#[derive(Clone)]
 struct Argument {
     text: String,
     kinds: Vec<SyntaxKind>,
@@ -371,6 +373,184 @@ fn invocation_ends_with_comma(invocation: &ast::TokenTree) -> bool {
     inner_elements(invocation.syntax())
         .last()
         .is_some_and(|element| element.kind() == SyntaxKind::COMMA)
+}
+
+/// A matcher `$name:ident, [$input:expr,] |$param:ident| $body:block` for
+/// test generators that run asserts inside a closure the generated test
+/// always calls (#6649).
+struct ClosureCallbackMatcher {
+    variables: Vec<(String, String)>,
+    param: String,
+    body: String,
+}
+
+fn closure_callback_matcher(matcher: &SyntaxNode) -> Option<ClosureCallbackMatcher> {
+    let elements = inner_elements(matcher);
+    let mut index = 0;
+    let mut variables = Vec::new();
+    while index < elements.len() {
+        let dollar = elements.get(index)?;
+        if dollar.kind() != SyntaxKind::DOLLAR {
+            return None;
+        }
+        let name = elements.get(index + 1)?;
+        let colon = elements.get(index + 2)?;
+        let fragment = elements.get(index + 3)?;
+        if !is_identifier(name.kind())
+            || colon.kind() != SyntaxKind::COLON
+            || !is_identifier(fragment.kind())
+        {
+            return None;
+        }
+        let fragment = element_text(fragment);
+        if !matches!(fragment.as_str(), "ident" | "expr" | "block") {
+            return None;
+        }
+        variables.push((element_text(name), fragment));
+        index += 4;
+        if index >= elements.len() {
+            break;
+        }
+        if elements.get(index)?.kind() == SyntaxKind::PIPE {
+            break;
+        }
+        if elements.get(index)?.kind() != SyntaxKind::COMMA {
+            return None;
+        }
+        index += 1;
+        if index >= elements.len() {
+            return None;
+        }
+        if elements.get(index)?.kind() == SyntaxKind::PIPE {
+            break;
+        }
+    }
+    if variables.is_empty()
+        || variables.first()?.1 != "ident"
+        || variables.len() > 3
+        || (variables.len() == 3 && variables.get(1)?.1 != "expr")
+    {
+        return None;
+    }
+    if elements.get(index)?.kind() != SyntaxKind::PIPE {
+        return None;
+    }
+    index += 1;
+    let param = parse_metavariable(&elements, &mut index, "ident")?;
+    if elements.get(index)?.kind() != SyntaxKind::PIPE {
+        return None;
+    }
+    index += 1;
+    let body = parse_metavariable(&elements, &mut index, "block")?;
+    if index != elements.len() {
+        return None;
+    }
+    Some(ClosureCallbackMatcher {
+        variables,
+        param,
+        body,
+    })
+}
+
+fn parse_metavariable(
+    elements: &[NodeOrToken<SyntaxNode, SyntaxToken>],
+    index: &mut usize,
+    fragment: &str,
+) -> Option<String> {
+    let dollar = elements.get(*index)?;
+    let name = elements.get(*index + 1)?;
+    let colon = elements.get(*index + 2)?;
+    let kind = elements.get(*index + 3)?;
+    if dollar.kind() != SyntaxKind::DOLLAR
+        || !is_identifier(name.kind())
+        || colon.kind() != SyntaxKind::COLON
+        || !is_identifier(kind.kind())
+        || element_text(kind) != fragment
+    {
+        return None;
+    }
+    let name = element_text(name);
+    *index += 4;
+    Some(name)
+}
+
+/// Parses `|ident| { .. }` from one invocation argument.
+fn closure_callback_tail(text: &str) -> Option<(String, Argument)> {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+        index += 1;
+    }
+    if bytes.get(index) != Some(&b'|') {
+        return None;
+    }
+    index += 1;
+    let start = index;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte.is_ascii_alphanumeric() || byte == b'_' {
+            index += 1;
+            continue;
+        }
+        break;
+    }
+    let param = text.get(start..index)?.trim();
+    if param.is_empty()
+        || !param
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+        index += 1;
+    }
+    if bytes.get(index) != Some(&b'|') {
+        return None;
+    }
+    index += 1;
+    let body_text = text.get(index..)?.trim();
+    if !body_text.starts_with('{') {
+        return None;
+    }
+    let body = Argument {
+        text: body_text.to_string(),
+        kinds: vec![SyntaxKind::TOKEN_TREE],
+    };
+    Some((param.to_string(), body))
+}
+
+fn closure_callback_bindings(
+    matcher: &ClosureCallbackMatcher,
+    arguments: &[Argument],
+) -> Option<BTreeMap<String, (String, Argument)>> {
+    let expected = matcher.variables.len() + 1;
+    if arguments.len() != expected {
+        return None;
+    }
+    let (param, body) = closure_callback_tail(&arguments[matcher.variables.len()].text)?;
+    if param != matcher.param {
+        return None;
+    }
+    let mut bindings = BTreeMap::new();
+    for ((name, fragment), argument) in matcher.variables.iter().zip(arguments) {
+        if !argument_fits(fragment, argument)? {
+            return None;
+        }
+        bindings.insert(name.clone(), (fragment.clone(), argument.clone()));
+    }
+    bindings.insert(
+        matcher.param.clone(),
+        (
+            "ident".to_string(),
+            Argument {
+                text: param,
+                kinds: vec![SyntaxKind::IDENT],
+            },
+        ),
+    );
+    bindings.insert(matcher.body.clone(), ("block".to_string(), body));
+    Some(bindings)
 }
 
 /// A matcher of comma-separated `$name:fragment` metavariables, as
@@ -490,6 +670,25 @@ fn expand(
                 .iter()
                 .any(|item| matches!(item, RowItem::Separator(RowSeparator::FatArrow)));
             return expand_rows(&transcriber, &rows, local_macros, arrow_rows);
+        }
+        if let Some(callback) = closure_callback_matcher(&matcher) {
+            let arguments = arguments?;
+            if invocation_ends_with_comma(invocation) {
+                return None;
+            }
+            let bindings = closure_callback_bindings(&callback, arguments)?;
+            let tree = ast::TokenTree::cast(transcriber.clone())?;
+            if !has_test_attribute(&tree) || invokes_local_macro(&tree, local_macros) {
+                return None;
+            }
+            let text = substitute(&transcriber, |name| {
+                bindings
+                    .get(name)
+                    .map(|(fragment, argument)| (fragment.as_str(), argument))
+            })?;
+            return (!text_invokes_local_macro(&text, local_macros)
+                && !text_has_conditional_attribute(&text))
+            .then_some(text);
         }
         let variables = simple_matcher(&matcher)?;
         // `top_level_arguments` drops a trailing comma, which a matcher
@@ -1244,6 +1443,29 @@ mod tests {
         );
         assert_eq!(expanded[1].start_line, 11);
         assert!(expanded[1].text.contains("is_adult((18 + 0))"));
+    }
+
+    const HEADER_CASE: &str = "macro_rules! header_case {\n    ($name:ident, $input:expr, |$status:ident| $body:block) => {\n        #[test]\n        fn $name() {\n            let check = |$status: Status| $body;\n            check(header($input));\n        }\n    };\n}\n\nheader_case!(version_one, &[1, 3, 0, 0, 0], |status| {\n    assert_eq!(status, Status::Complete(5));\n});\n";
+
+    #[test]
+    fn expands_closure_callback_test_generators() {
+        let expanded = expand_local_test_macros(HEADER_CASE);
+        assert_eq!(expanded.len(), 1, "{expanded:?}");
+        assert!(expanded[0].text.contains("fn version_one()"));
+        assert!(expanded[0].text.contains("check(header"));
+        assert!(
+            expanded[0]
+                .text
+                .contains("assert_eq!(status, Status::Complete(5));")
+        );
+    }
+
+    #[test]
+    fn expands_two_argument_closure_callback_generators() {
+        let source = "macro_rules! case {\n    ($name:ident, |$v:ident| $body:block) => {\n        #[test]\n        fn $name() { let check = |$v: u32| $body; check(1); }\n    };\n}\ncase!(one, |v| { assert_eq!(v, 1); });\n";
+        let expanded = expand_local_test_macros(source);
+        assert_eq!(expanded.len(), 1, "{expanded:?}");
+        assert!(expanded[0].text.contains("check(1);"));
     }
 
     #[test]
