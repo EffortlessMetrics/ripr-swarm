@@ -93,6 +93,7 @@ export { validatedAgentLoopCommand };
 export { uriFromTarget, lineFromTarget };
 import {
   buildAgentRepairAfterArgs,
+  liveRepairAttemptRows,
   parseAfterPhaseRepairFinish,
   resolveLiveAttemptForFinish,
 } from './repairFinish';
@@ -5627,12 +5628,21 @@ function execRiprProcess(
         reject(error);
         return;
       }
-      const exitCode =
-        error && typeof (error as cp.ExecFileException).code === 'number'
-          ? ((error as cp.ExecFileException).code as number)
-          : 0;
+      if (error) {
+        const code = (error as cp.ExecFileException).code;
+        if (typeof code !== 'number') {
+          reject(error);
+          return;
+        }
+        resolve({
+          exitCode: code,
+          stdout: typeof stdout === 'string' ? stdout : String(stdout),
+          stderr: typeof stderr === 'string' ? stderr : String(stderr),
+        });
+        return;
+      }
       resolve({
-        exitCode,
+        exitCode: 0,
         stdout: typeof stdout === 'string' ? stdout : String(stdout),
         stderr: typeof stderr === 'string' ? stderr : String(stderr),
       });

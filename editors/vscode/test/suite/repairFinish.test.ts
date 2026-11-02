@@ -33,13 +33,15 @@ suite('Repair finish helpers (#4647)', () => {
     );
   });
 
-  test('live rows filter to awaiting_edit and prepared only', async () => {
+  test('live rows filter to resumable awaiting_edit with an after command', async () => {
     const inventory = await loadInventory();
     assert.ok(inventory);
     const live = liveRepairAttemptRows(inventory);
     assert.ok(live.length >= 1);
     for (const row of live) {
       assert.ok(row.state === 'awaiting_edit' || row.state === 'prepared');
+      assert.strictEqual(row.disposition, 'resumable');
+      assert.ok(row.command?.includes('--phase after'));
     }
   });
 

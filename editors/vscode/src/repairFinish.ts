@@ -51,7 +51,12 @@ export function liveRepairAttemptRows(
   rows: readonly AttemptInventoryRow[]
 ): AttemptInventoryRow[] {
   return rows.filter(
-    (row) => row.state !== null && LIVE_REPAIR_ATTEMPT_STATES.has(row.state)
+    (row) =>
+      row.state !== null &&
+      LIVE_REPAIR_ATTEMPT_STATES.has(row.state) &&
+      row.disposition === 'resumable' &&
+      typeof row.command === 'string' &&
+      row.command.includes('--phase after')
   );
 }
 
