@@ -472,8 +472,8 @@ family = "static_facts"
 support_state = "not_proven"
 
 [[cell]]
-id = "dotnet/any/repo/project_facts"
-language = "dotnet"
+id = "project_facts/any/repo"
+scope = "substrate"
 framework = "any"
 mode = "repo"
 family = "project_facts"
@@ -481,8 +481,9 @@ support_state = "not_proven"
 note = "Substrate-only cell; never emits semantic C#/F#/VB owner findings."
 ```
 
-The substrate row uses `language = dotnet` **only** for project-fact exports, not for
-semantic findings. Semantic cells remain `csharp`, `fsharp`, and `visualbasic`.
+The substrate row is identified by `scope = substrate`, not by a language code. It is
+used only for project-fact exports. Semantic capability cells remain `csharp`, `fsharp`,
+and `visualbasic` only.
 
 ## Required Evidence
 
