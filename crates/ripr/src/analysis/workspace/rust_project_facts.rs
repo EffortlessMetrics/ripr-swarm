@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::analysis::workspace::{
     SourceRole, SourceRoleContext, classify_with, context_for_files, normalize_path,
+    seal_project_facts,
 };
 use crate::config::RiprConfig;
 use crate::domain::{
@@ -67,7 +68,7 @@ pub(crate) fn project_rust_cargo_facts(
         });
     }
     let test_environments = build_test_environments(workspace_root, &package_dirs)?;
-    ProjectFactsV1::seal(ProjectFactsV1 {
+    seal_project_facts(ProjectFactsV1 {
         schema_version: PROJECT_FACTS_SCHEMA_VERSION.to_string(),
         language: "rust".to_string(),
         repository_identity,
