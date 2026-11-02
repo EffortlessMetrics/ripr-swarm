@@ -121,49 +121,101 @@ pub(super) fn is_exact_error_variant_assertion(line: &str) -> bool {
     (line.contains("assert_matches!") || line.contains("matches!") || line.contains("assert_eq!"))
         && line.contains("Err(")
         && !line.contains("Err(_")
-        && !err_constructor_feeds_value_adapter(line)
+        && !err_constructor_is_not_directly_credited(line)
 }
 
-/// Value-supplying adapters: each returns its argument when the receiver does
-/// not already hold the success or error the caller wants. An `Err(V)` handed
-/// to one of them is written by the test itself, so equality with `V` can pass
-/// whatever the owner returns (#12359).
-const VALUE_SUPPLYING_ADAPTERS: &[&str] = &[
-    "or",
-    "or_else",
-    "and",
-    "and_then",
-    "ok_or",
-    "ok_or_else",
-    "unwrap_or",
-    "unwrap_or_else",
-    "map_err",
-    "map_or",
-    "map_or_else",
+/// Callee names that may enclose an `Err(..)` constructor on the way to the
+/// assertion. Every other enclosing call means the test wrote or adapted the
+/// error value itself (#12359, positive rule #12474).
+const ALLOWED_ERR_ENCLOSING_CALLEES: &[&str] = &[
+    "assert_eq!",
+    "assert_eq",
+    "assert_matches!",
+    "assert_matches",
+    "assert!",
+    "matches!",
+    "matches",
+    "Some",
+    "Ok",
+    "eq",
 ];
 
-/// True when an `Err(..)` constructor is an argument of a value-supplying
-/// adapter call, in method or UFCS spelling, grouped or not. Other enclosing
-/// calls (`Some(..)`, `Result::eq(..)`, the assertion macro) keep their reading.
-pub(super) fn err_constructor_feeds_value_adapter(line: &str) -> bool {
+/// True when an `Err(..)` on the line must not count as an exact error-variant
+/// pin: disallowed enclosing calls, a test-built `Some`/`Ok` wrapper followed by
+/// a method call, or an `Err(..)` read through `.unwrap_err()` / `.expect_err`.
+pub(super) fn err_constructor_is_not_directly_credited(line: &str) -> bool {
     let masked = strip_turbofish(&mask_comments_and_strings(line));
     masked.match_indices("Err").any(|(index, _)| {
-        let is_token =
-            |ch: Option<char>| ch.is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
-        let before_ok = is_token(masked[..index].chars().next_back());
-        // `Err (..)` and a constructor separated from its `(` by a comment
-        // (blanked by the mask) are the same constructor as `Err(..)`.
-        let after = &masked[index + "Err".len()..];
-        before_ok
-            && after.trim_start().starts_with('(')
-            && enclosing_callee(&masked[..index])
-                .is_some_and(|name| VALUE_SUPPLYING_ADAPTERS.contains(&name))
+        if !is_err_constructor_token(&masked, index) {
+            return false;
+        }
+        if err_constructor_is_immediate_error_read(&masked, index) {
+            return true;
+        }
+        if !err_constructor_enclosing_chain_is_allowed(&masked, index) {
+            return true;
+        }
+        err_in_some_or_ok_is_followed_by_method_call(&masked, index)
     })
 }
 
-/// The last path segment of the call whose argument list contains the end of
-/// `prefix`, looking through grouping parentheses, or `None` at top level.
-fn enclosing_callee(prefix: &str) -> Option<&str> {
+fn is_err_constructor_token(masked: &str, index: usize) -> bool {
+    let is_token =
+        |ch: Option<char>| ch.is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
+    let before_ok = is_token(masked[..index].chars().next_back());
+    let after = &masked[index + "Err".len()..];
+    before_ok && after.trim_start().starts_with('(')
+}
+
+/// Whether every enclosing call from this `Err` up to the assertion macro is
+/// on the allowlist.
+fn err_constructor_enclosing_chain_is_allowed(masked: &str, err_index: usize) -> bool {
+    let mut scan_end = err_index;
+    while let Some((callee, open_paren)) = enclosing_call_site(&masked[..scan_end]) {
+        if !is_allowed_err_enclosing_callee(callee) {
+            return false;
+        }
+        scan_end = open_paren;
+    }
+    true
+}
+
+fn is_allowed_err_enclosing_callee(name: &str) -> bool {
+    ALLOWED_ERR_ENCLOSING_CALLEES.contains(&name)
+}
+
+/// `Err(V).unwrap_err()` (or `.expect_err`) compares a value the test built in
+/// the receiver position, not an error returned from the owner (#12474 item 4).
+fn err_constructor_is_immediate_error_read(masked: &str, err_index: usize) -> bool {
+    let open = err_index + "Err".len();
+    let Some(close_rel) = group_end(&masked[open..], 0) else {
+        return false;
+    };
+    let rest = masked[open + close_rel + 1..].trim_start();
+    rest.starts_with(".unwrap_err(")
+        || rest.starts_with(".expect_err(")
+        || rest.starts_with("::unwrap_err(")
+        || rest.starts_with("::expect_err(")
+}
+
+/// When `Err` sits under `Some`/`Ok`, a method call on that wrapper still lets
+/// the test supply its own error (`Some(Err(V)).unwrap().unwrap_err()`, #12474).
+fn err_in_some_or_ok_is_followed_by_method_call(masked: &str, err_index: usize) -> bool {
+    let Some((callee, open_paren)) = enclosing_call_site(&masked[..err_index]) else {
+        return false;
+    };
+    if callee != "Some" && callee != "Ok" {
+        return false;
+    }
+    let Some(close) = group_end(masked, open_paren) else {
+        return false;
+    };
+    masked[close + 1..].trim_start().starts_with('.')
+}
+
+/// Returns the callee name and `(` index for the call whose argument list
+/// contains the end of `prefix`, looking through grouping parentheses.
+fn enclosing_call_site(prefix: &str) -> Option<(&str, usize)> {
     let mut depth = 0usize;
     for (offset, ch) in prefix.char_indices().rev() {
         match ch {
@@ -180,7 +232,7 @@ fn enclosing_callee(prefix: &str) -> Option<&str> {
                 // A grouping parenthesis has no callee: keep walking outward to
                 // the real call whose argument list holds it.
                 if !name.is_empty() {
-                    return Some(name);
+                    return Some((name, offset));
                 }
             }
             _ => {}
@@ -265,6 +317,10 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
             operand = operand[1..operand.len() - 1].trim();
         }
         let masked = mask_comments_and_strings(operand);
+        let synthetic = format!(r#"assert_eq!({operand}, E::V);"#);
+        if synthetic.contains("Err(") && err_constructor_is_not_directly_credited(&synthetic) {
+            return false;
+        }
         // `map_err` keeps an `Ok` an `Ok` (so the uncompared-error reader
         // accepts it, method or UFCS form) but replaces the error, which is
         // what this pin reads.
@@ -2813,6 +2869,12 @@ mod issue_12359_tests {
             r#"assert_eq!(parse("x").or /* c */ (Err(ParseError::Empty)).unwrap_err(), ParseError::Empty);"#,
             r#"assert_eq!(parse("x").or(((Err(ParseError::Empty)))).unwrap_err(), ParseError::Empty);"#,
             r#"assert_eq!(parse("x"), Err(_));"#,
+            // Positive-rule refusals (#12474).
+            r#"assert_eq!(parse("x").or(Some(Err(E::Bad))).unwrap_err(), E::Bad);"#,
+            r#"assert_eq!(Result::or(parse("x"), id(Err(E::Bad))).unwrap_err(), E::Bad);"#,
+            r#"assert_eq!(std::mem::replace(&mut parse("x"), Err(E::Bad)), Err(E::Bad));"#,
+            r#"assert_eq!(Err(E::Bad).unwrap_err(), E::Bad);"#,
+            r#"assert_eq!(Some(Err(E::Bad)).unwrap().unwrap_err(), E::Bad);"#,
         ] {
             assert!(!is_exact_error_variant_assertion(line), "{line}");
         }

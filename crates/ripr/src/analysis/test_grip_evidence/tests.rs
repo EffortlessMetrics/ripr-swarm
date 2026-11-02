@@ -22200,6 +22200,7 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
         let prod = format!(
             "#[derive(Debug, PartialEq)]\npub enum Fault {{ Odd, Bad }}\n\
              pub fn parse(text: &str) -> Result<u8, Fault> {{\n    if text.len() % 2 != 0 {{\n        return Err(Fault::Odd);\n    }}\n    Ok(1)\n}}\n\
+             fn id<T>(v: T) -> T {{ v }}\n\
              #[cfg(test)]\nmod tests {{\n    use super::*;\n    {test}\n}}\n"
         );
         let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
@@ -22277,6 +22278,19 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
             spaced.0,
             StageState::Yes,
             "an Err constructor spelled with spacing or a comment is still the test's own error: {spelled}"
+        );
+    }
+    for wrapper in [
+        "assert_eq!(parse(\"1\").or(Some(Err(Fault::Odd))).unwrap_err(), Fault::Odd);",
+        "assert_eq!(Result::or(parse(\"1\"), id(Err(Fault::Odd))).unwrap_err(), Fault::Odd);",
+        "assert_eq!(Err(Fault::Odd).unwrap_err(), Fault::Odd);",
+        "assert_eq!(Some(Err(Fault::Odd)).unwrap().unwrap_err(), Fault::Odd);",
+    ] {
+        let wrapped = read(&format!("#[test] fn odd() {{ {wrapper} }}"))?;
+        assert_ne!(
+            wrapped.0,
+            StageState::Yes,
+            "a test-written Err wrapper must not discriminate the seam (#12474): {wrapper}"
         );
     }
     let grouped =
