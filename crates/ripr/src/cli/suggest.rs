@@ -318,10 +318,11 @@ fn closest<'a>(input: &str, candidates: impl Iterator<Item = &'a str>) -> Option
             if distance > budget {
                 continue;
             }
-            // Compound spellings such as `gitlab-ci` are not near misses for
-            // the shorter accepted token `gitlab`; the extra `-…` segment is
-            // a different mistake than a transposition or missing letter.
-            if needle.len() > hay.len()
+            // Compound enum values such as `gitlab-ci` are not near misses for
+            // the shorter accepted token `gitlab`; flag abbreviations like
+            // `--out-m` → `--out` must keep working.
+            if !input.starts_with('-')
+                && needle.len() > hay.len()
                 && needle.starts_with(hay)
                 && needle.as_bytes().get(hay.len()) == Some(&b'-')
             {
