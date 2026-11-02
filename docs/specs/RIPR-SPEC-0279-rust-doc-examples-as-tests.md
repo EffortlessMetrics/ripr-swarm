@@ -194,11 +194,44 @@ package (`[lib] name`, else the package name with `-` read as `_`):
   same-named rivals.
 - A runtime claim: a registered example is static evidence that a test
   appears to discriminate, not a claim that it compiles or passes.
-- Resolving a cfg gate: any `#[cfg(..)]` or `#[cfg_attr(..)]` between the
-  comment and the item other than `#[cfg(doctest)]`, and any inner
-  `#![cfg(..)]` (or `#![cfg_attr(.., cfg(..))]`) on the file, refuses the
-  example instead of guessing whether default `cargo test` enables the gate
-  (#8639). Feature, target and custom `--cfg` values are not evaluated.
+- Resolving a cfg gate beyond the default-feature rule below: any
+  `#[cfg(..)]` or `#[cfg_attr(..)]` between the comment and the item other
+  than `#[cfg(doctest)]` and a gate that is provably true under the package's
+  default features, and any inner `#![cfg(..)]` (or
+  `#![cfg_attr(.., cfg(..))]`) on the file that is not, refuses the example
+  instead of guessing whether default `cargo test` enables the gate (#8639).
+  Target, custom `--cfg` and non-default feature values are not evaluated.
+
+### Default-feature cfg gates (#12230)
+
+A `cfg` gate on the documented item, or an inner `#![cfg(..)]` on its file,
+does not refuse the example when the predicate is provably true in a plain
+`cargo test` of the package, that is, with exactly the package's default
+features. The answer is three-valued and only "provably true" admits:
+
+- `feature = "name"` is true when `name` is in the closure of the package
+  manifest's `[features] default = [..]`. Closure follows plain feature
+  names through `[features]`; a `dep:name` or `name/feature` entry does not
+  add a feature name.
+- `all(..)` is true when it has at least one operand and every operand is
+  true. `any(..)` is true when at least one operand is true.
+- `doctest` is true; it is the one non-feature name rustdoc sets.
+- `not(..)` is never true: a feature absent from the default set can be
+  switched on by a sibling workspace member or `--features`, and a feature
+  in the set can be switched off by `--no-default-features`, so no negation
+  is resolved. Every other name, key-value, target predicate, custom `--cfg`
+  value and any text this resolver cannot parse is not true.
+- A feature absent from the default closure is not true, even when the
+  manifest declares it.
+- Without a readable manifest `[features]` table (missing manifest authority,
+  a `default` or feature entry that is not an array of strings), no feature
+  is true.
+- `#[cfg_attr(..)]` between the comment and the item still refuses. An
+  inner `#![cfg_attr(.., cfg(..))]` still gates the file.
+
+This assumes the plain command rustdoc is run with. A repository whose CI runs
+doctests with `--no-default-features` or a custom feature set is outside it,
+exactly as an ungated example is read as running under the default command.
 
 ## Acceptance Examples
 
@@ -232,7 +265,8 @@ package (`[lib] name`, else the package name with `-` read as `_`):
 - `crates/ripr/src/analysis/facts/doctests.rs`: `register_doctests`,
   `doc_examples`, `DocExample::synthetic_source`.
 - `crates/ripr/src/analysis/facts/member_crates.rs`:
-  `MemberCrates::runs_library_doctests`.
+  `MemberCrates::runs_library_doctests`, `MemberCrates::default_library_features`.
+- `crates/ripr/src/analysis/facts/doctests.rs`: `gate_is_provably_true`.
 - `crates/ripr/src/analysis/facts/index.rs`: `RustIndex::doctest_source`.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
   `OwnerPinSyntax::doctest_refusal`, `OwnerReturnPin::admits`,
