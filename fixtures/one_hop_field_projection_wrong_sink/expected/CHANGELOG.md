@@ -221,3 +221,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — one_hop_field_projection_wrong_sink (18)
+
+Reason:
+RIPR-SPEC-0236/#12257: name activation in repair still-missing whenever activation stage is unknown, including reachable_unrevealed seams
+
+Command:
+`cargo xtask goldens bless one_hop_field_projection_wrong_sink --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

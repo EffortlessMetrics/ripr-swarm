@@ -163,3 +163,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_glob_shadow (14)
+
+Reason:
+RIPR-SPEC-0236/#12257: name activation in repair still-missing whenever activation stage is unknown, including reachable_unrevealed seams
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_glob_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

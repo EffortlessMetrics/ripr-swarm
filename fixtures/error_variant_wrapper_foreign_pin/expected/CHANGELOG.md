@@ -564,3 +564,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_foreign_pin (43)
+
+Reason:
+RIPR-SPEC-0236/#12257: name activation in repair still-missing whenever activation stage is unknown, including reachable_unrevealed seams
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_foreign_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

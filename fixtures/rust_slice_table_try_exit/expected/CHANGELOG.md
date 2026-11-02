@@ -350,3 +350,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_slice_table_try_exit (28)
+
+Reason:
+RIPR-SPEC-0236/#12257: name activation in repair still-missing whenever activation stage is unknown, including reachable_unrevealed seams
+
+Command:
+`cargo xtask goldens bless rust_slice_table_try_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
