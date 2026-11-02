@@ -90,7 +90,7 @@ pub(super) fn select_repo_input(
     root: &Path,
     limit: usize,
     walk_limit: usize,
-    handwritten: &[String],
+    typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> RepoInput {
     if !root.is_dir() || std::fs::read_dir(root).is_err() {
         return RepoInput {
@@ -98,7 +98,12 @@ pub(super) fn select_repo_input(
             ..RepoInput::default()
         };
     }
-    let scan = visit_workspace_with_handwritten(root, walk_limit, handwritten);
+    let scan = visit_workspace_with_handwritten(
+        root,
+        walk_limit,
+        &typescript_config.handwritten_files,
+        &typescript_config.excluded_file_patterns,
+    );
     let mut files: Vec<PathBuf> = scan.files;
     files.sort();
     files.dedup();
@@ -178,7 +183,7 @@ pub(super) fn analyze_repo_with_limit(
     walk_limit: usize,
     file_read_limit: u64,
     workspace_read_budget: u64,
-    handwritten: &[String],
+    typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageRepoResult, String> {
     let selection = select_and_analyze(
         options,
@@ -186,7 +191,7 @@ pub(super) fn analyze_repo_with_limit(
         walk_limit,
         file_read_limit,
         workspace_read_budget,
-        handwritten,
+        typescript_config,
     )?;
     Ok(LanguageRepoResult {
         value_origins: Default::default(),
@@ -203,7 +208,7 @@ pub(super) fn analyze_repo_with_limit(
 
 pub(super) fn analyze_repo(
     options: &AnalysisOptions,
-    handwritten: &[String],
+    typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageRepoResult, String> {
     let limit = resolve_repo_working_set_limit(std::env::var(TS_REPO_FILE_LIMIT_ENV))?;
     analyze_repo_with_limit(
@@ -212,7 +217,7 @@ pub(super) fn analyze_repo(
         ts_workspace_file_limit(),
         ts_file_read_limit(),
         ts_workspace_read_budget(),
-        handwritten,
+        typescript_config,
     )
 }
 
@@ -222,9 +227,9 @@ fn select_and_analyze(
     walk_limit: usize,
     file_read_limit: u64,
     workspace_read_budget: u64,
-    handwritten: &[String],
+    typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<RepoSelection, String> {
-    let input = select_repo_input(&options.root, limit, walk_limit, handwritten);
+    let input = select_repo_input(&options.root, limit, walk_limit, typescript_config);
     let mut reasons: Vec<String> = Vec::new();
     if input.root_unreadable {
         reasons.push("typescript_repo_root_unreadable: workspace root could not be read, so TypeScript/JavaScript source absence is unestablished".to_string());
@@ -323,7 +328,7 @@ fn select_and_analyze(
         &changed,
         file_read_limit,
         workspace_read_budget,
-        handwritten,
+        typescript_config,
     )?;
     if !diff.limitations.is_empty() {
         let mut details: Vec<String> = diff
