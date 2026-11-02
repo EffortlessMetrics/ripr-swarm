@@ -642,6 +642,131 @@ pub(in crate::analysis) fn withhold_property_macro_no_path_as_unknown(finding: &
     }
 }
 
+/// #5316: a definite `no_static_path` claims the indexed related-test search
+/// found no path. When unchanged test files were excluded from the index,
+/// that search never ran there, so the honest class is `static_unknown` with
+/// reach abstention. Only bare `no_static_path` without a witness limitation
+/// is rewritten; a named transitive, macro or facade limit keeps its class.
+pub(in crate::analysis) fn withhold_unindexed_test_reach_as_unknown(
+    finding: &mut Finding,
+    scope_note: &str,
+) {
+    if finding.class != ExposureClass::NoStaticPath
+        || finding.static_limit_kind.is_some()
+        || finding.oracle_related_tests().next().is_some()
+    {
+        return;
+    }
+    finding.class = ExposureClass::StaticUnknown;
+    let unknown = |summary: &str| StageEvidence::new(StageState::Unknown, Confidence::Low, summary);
+    let reach_summary = format!(
+        "ripr did not search unchanged test files for a path to the changed owner ({scope_note}), so reach is not established"
+    );
+    let mut stale: Vec<String> = Vec::new();
+    if finding
+        .ripr
+        .infect
+        .summary
+        .starts_with("No tests were found")
+        || finding
+            .ripr
+            .infect
+            .summary
+            .starts_with("No statically reachable test path was found")
+    {
+        stale.push(finding.ripr.infect.summary.clone());
+        finding.ripr.infect =
+            unknown("Not established: tests in unindexed files may exercise this change");
+    }
+    let ruled_out = |stage: &StageEvidence| {
+        stage.state == StageState::No
+            && (stage
+                .summary
+                .starts_with("No test reaches the changed owner, so no test can ")
+                || stage.summary.starts_with("reach no:")
+                || stage.summary.contains("No static test path")
+                || stage.summary == NO_REACHABLE_TEST_OBSERVE_SUMMARY
+                || stage.summary == NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY)
+    };
+    stale.extend(
+        [
+            &finding.ripr.infect,
+            &finding.ripr.reveal.observe,
+            &finding.ripr.reveal.discriminate,
+        ]
+        .into_iter()
+        .filter(|stage| ruled_out(stage))
+        .map(|stage| stage.summary.clone()),
+    );
+    for (stage, summary) in [
+        (
+            &mut finding.ripr.reveal.observe,
+            "Not established: whether a test in an unindexed file observes this change",
+        ),
+        (
+            &mut finding.ripr.reveal.discriminate,
+            "Not established: whether a test in an unindexed file discriminates this change",
+        ),
+    ] {
+        if ruled_out(stage) {
+            *stage = unknown(summary);
+        }
+    }
+    finding
+        .evidence
+        .retain(|line| !stale.contains(line) && !line.contains("No static test path"));
+    finding.ripr.reach = unknown(&reach_summary);
+    let ripr = &finding.ripr;
+    finding.confidence = finding.confidence.min(confidence_score(
+        &ripr.reach,
+        &ripr.infect,
+        &ripr.propagate,
+        &ripr.reveal.observe,
+        &ripr.reveal.discriminate,
+        &finding.class,
+    ));
+    finding.stop_reasons.retain(|reason| {
+        !matches!(
+            reason,
+            StopReason::TransitiveReachUnresolved | StopReason::MacroReachUnresolved
+        )
+    });
+    if !finding
+        .stop_reasons
+        .contains(&StopReason::StaticProbeUnknown)
+    {
+        finding.stop_reasons.push(StopReason::StaticProbeUnknown);
+    }
+    finding.missing = vec![format!(
+        "partial index reach abstains: {scope_note}; unchanged test files were not searched"
+    )];
+    finding.activation.missing_discriminators.clear();
+    finding.recommended_next_step = Some(format!(
+        "This run did not index every test file ({scope_note}). Inspect tests in unindexed files, or rerun with a broader mode or with default test recall, before treating this as a missing test."
+    ));
+    finding
+        .evidence
+        .push(format!("partial_index_reach: {scope_note}"));
+    finding.evidence.extend([
+        format!(
+            "{LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX}changed owner in an indexed production file"
+        ),
+        format!(
+            "{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}tests in unindexed files that were not searched"
+        ),
+        format!("{LIMITATION_ANALYZER_ROUTE_PREFIX}analysis/workspace/select"),
+        format!(
+            "{LIMITATION_NON_CLAIM_PREFIX}no missing test is established; reach in excluded test files is not searched"
+        ),
+    ]);
+    finding.canonical_gap = None;
+    for test in &mut finding.related_tests {
+        test.miss = test
+            .miss
+            .filter(|miss| *miss != RelatedTestMiss::NoCallPath);
+    }
+}
+
 /// #7080: a helper chain refused only because an entry name is not unique
 /// is not "no test reaches the owner". Relation stays refused (fail closed);
 /// when a test actually calls that ambiguous name, the finding abstains as
@@ -3845,6 +3970,88 @@ fn far_above_threshold_discounts() {
         assert!(finding.activation.missing_discriminators.is_empty());
         assert_eq!(finding.missing.len(), 1);
         assert!(!finding.missing[0].contains("No detected boundary"));
+    }
+
+    #[test]
+    fn unindexed_test_reach_withholds_definite_no_path_as_static_unknown() {
+        let probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
+        let reach_no = StageEvidence::new(
+            StageState::No,
+            Confidence::High,
+            "reach no: No static test path found for the changed owner",
+        );
+        let mut finding = Finding {
+            analysis_scope: AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
+            id: probe.id.0.clone(),
+            canonical_gap: None,
+            probe: probe.clone(),
+            class: ExposureClass::NoStaticPath,
+            ripr: RiprEvidence {
+                reach: reach_no.clone(),
+                infect: reach_no.clone(),
+                propagate: reach_no.clone(),
+                reveal: RevealEvidence {
+                    observe: reach_no.clone(),
+                    discriminate: reach_no,
+                },
+            },
+            confidence: 0.2,
+            evidence: vec!["reach no: No static test path found for the changed owner".to_string()],
+            missing: vec!["No static test path found".to_string()],
+            flow_sinks: Vec::new(),
+            activation: ActivationEvidence::default(),
+            stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
+            related_tests: Vec::new(),
+            recommended_next_step: None,
+            language: None,
+            language_status: None,
+            owner_kind: None,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+            source_currentness: SourceCurrentness::CandidateCurrent,
+        };
+
+        withhold_unindexed_test_reach_as_unknown(
+            &mut finding,
+            "instant mode indexes changed Rust files only",
+        );
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(finding.ripr.reach.state, StageState::Unknown);
+        assert!(
+            finding
+                .stop_reasons
+                .contains(&StopReason::StaticProbeUnknown)
+        );
+        assert!(finding.canonical_gap.is_none());
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("partial_index_reach:"))
+        );
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("No static test path"))
+        );
+
+        finding.class = ExposureClass::NoStaticPath;
+        finding.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+        withhold_unindexed_test_reach_as_unknown(
+            &mut finding,
+            "instant mode indexes changed Rust files only",
+        );
+        assert_eq!(
+            finding.class,
+            ExposureClass::NoStaticPath,
+            "a named reach limitation keeps the class"
+        );
     }
 
     const PROC_MACRO_MANIFEST: &str =

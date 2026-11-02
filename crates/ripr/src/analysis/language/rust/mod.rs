@@ -1790,6 +1790,20 @@ fn unsearched_reach_next_step(finding: &mut Finding) {
     );
 }
 
+/// Plain-language index-scope disclosure for #5316 reach abstention.
+fn partial_index_reach_scope_note(
+    mode: AnalysisMode,
+    include_unchanged_tests: bool,
+) -> &'static str {
+    if matches!(mode, AnalysisMode::Instant) {
+        "instant mode indexes changed Rust files only"
+    } else if !include_unchanged_tests {
+        "unchanged test files are excluded from the index (--no-unchanged-tests or [analysis] include_unchanged_tests = false)"
+    } else {
+        "the diff-scoped index did not include every analyzable Rust file"
+    }
+}
+
 fn replace_unresolved_reach_advice(finding: &mut Finding, next_step: String) {
     finding.recommended_next_step = Some(next_step);
     if let Some(limit) = finding.static_limit_kind {
@@ -2499,6 +2513,13 @@ impl RustAdapter {
         // the index really does span the workspace; when an unrelated crate
         // stays out, the index stays partial and the bypass stays off.
         let workspace_index_complete = index_files.len() == analyzable_rust_files.len();
+        let index_file_set: std::collections::BTreeSet<&PathBuf> = index_files.iter().collect();
+        let unindexed_test_reach_abstains = !workspace_index_complete
+            && analyzable_rust_files
+                .iter()
+                .any(|path| rust_index::is_test_file(path) && !index_file_set.contains(path));
+        let partial_index_reach_scope_note =
+            partial_index_reach_scope_note(options.mode, options.include_unchanged_tests);
 
         // #2972: one path-dependency edge context per classification pass,
         // consumed by the cross-crate owner-call admit in
@@ -2908,6 +2929,12 @@ impl RustAdapter {
                 // #8999: after the witness searches, so a concrete pointer
                 // they found stays; proc-macro `no_static_path` is unknown.
                 classifier::withhold_proc_macro_no_path_as_unknown(&mut finding, &index);
+                if unindexed_test_reach_abstains {
+                    classifier::withhold_unindexed_test_reach_as_unknown(
+                        &mut finding,
+                        partial_index_reach_scope_note,
+                    );
+                }
                 // Name unresolved custom assertion macros only after reach has
                 // already been established and no recognized oracle observes
                 // the seam. This is an oracle limitation, not macro expansion
