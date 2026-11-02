@@ -20,7 +20,7 @@
       "worktree": "dirty"
     },
     "canonicalization": "raw_json_placeholder_v1",
-    "content_sha256": "sha256:6d7c7effe8174e6b46ff4f27ea12f5327dc6985a6e891a4c22df79ab207c91bf",
+    "content_sha256": "sha256:69543341a9997761c93b36b671b73dd662065584ce0eb8b74dc9e5da0c92ec1f",
     "kind": "repo_exposure",
     "producer": {
       "tool": "ripr",
