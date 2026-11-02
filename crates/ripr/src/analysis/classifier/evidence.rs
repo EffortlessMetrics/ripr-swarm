@@ -357,6 +357,7 @@ impl ClassifiedProbeEvidence {
                             owner,
                             context.probe.before.as_deref(),
                             context.probe.after.as_deref(),
+                            context.index,
                         ) || !contradicted_assertion_reading_is_established(
                             test,
                             owner,
