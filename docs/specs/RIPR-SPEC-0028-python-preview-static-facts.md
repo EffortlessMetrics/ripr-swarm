@@ -1632,6 +1632,28 @@ elsewhere, a later write to the attribute, a falsy constructor argument that
 separates the two tests (`Addr("h", 0)`), and every other shape the #9186 rule
 already refused. `setattr` and `__dict__` writes are not read (a known limit).
 
+## Deleted Guarded Line Amendment (2026-10-31, #11889)
+
+A deleted behavior line (a removed-only record, RIPR-SPEC-0156) inside a
+guarding `if`/`elif`/`else`/`while` arm is `weakly_exposed`, not `exposed`,
+when every strong related call provably fails the guard that enclosed the line
+in the old file: the line ran under no observed input, so no strong oracle can
+notice its removal. The guarded-arm reader is the one used for live lines
+(#7392); it is handed the old file text, the owner re-spanned there and the
+old line number. A removed block header is read at its first removed body line
+so its own condition is among the guards walked. The rule is a closed
+allow-list that keeps the existing verdict on anything unrecognized: the owner
+must be a single-line `def` whose header reads the same in the old and the new
+file, the nearest enclosing scope above the line in the old file must be that
+header, and the guard conditions must be comparisons over call arguments
+(`and` conjunctions only; `or`, `not`, bare names, `is None` operands, computed
+operands, rebound parameters and calls no row binds all fail open). A removed block whose body is only partly deleted (a kept line dedented out of the guard), and any diff that adds or removes a module-level assignment, also fail open.
+
+A conjunction is false when any conjunct is false, so a conjunct this reader
+cannot evaluate no longer hides a false one (`vip and total > 1000`); this
+also applies to live guarded lines and only moves a verdict from `exposed` to
+`weakly_exposed`.
+
 ## Metrics
 
 In addition to the cross-language metrics in RIPR-SPEC-0026, the Python

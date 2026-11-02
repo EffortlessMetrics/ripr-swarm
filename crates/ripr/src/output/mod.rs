@@ -36,6 +36,7 @@ pub mod github;
 pub mod human;
 pub(crate) mod intervention_study;
 pub mod json;
+pub(crate) mod kani_report;
 pub(crate) mod language_capabilities;
 #[cfg(test)]
 pub(crate) mod language_view_agreement_tests;
