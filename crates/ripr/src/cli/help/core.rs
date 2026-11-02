@@ -1,6 +1,6 @@
-pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file (ripr.toml) and, with --ci github, a non-blocking advisory workflow.
+pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file (ripr.toml) and, with --ci, a non-blocking advisory CI preset.
 
-Usage: ripr init [--root PATH] [--ci github] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
+Usage: ripr init [--root PATH] [--ci github|gitlab] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
 
 `ripr init` is optional. It writes the built-in defaults to a repo-local
 ripr.toml so teams can commit, review, and tune policy. Missing ripr.toml is
@@ -9,7 +9,8 @@ not unlock basic CLI, editor, or pilot usefulness.
 
 Options:
   --root PATH      Workspace root where ripr.toml should be written. Defaults to current directory.
-  --ci github      Also write .github/workflows/ripr.yml with advisory reports and optional SARIF rendering/upload.
+  --ci PROVIDER    Also write an advisory CI preset: github writes .github/workflows/ripr.yml;
+                   gitlab writes .gitlab-ci.yml with a merge-request check and review-comments flow.
   --mcp            Also add the ripr MCP server to .mcp.json (Claude Code project config).
                    Other servers in an existing file are kept; an existing
                    `ripr` entry is kept unless --force; a symlink or a file
@@ -44,13 +45,18 @@ Generated config:
   - records the built-in saved-workspace LSP seam diagnostic default
   - remains advisory and does not configure CI blocking or mutation execution
 
-Generated GitHub workflow:
+Generated GitHub workflow (--ci github):
   - installs ripr and runs `ripr reports ci-packet` for the PR evidence packet
   - uploads report artifacts and writes a reviewer-oriented advisory summary
   - optionally renders inline review comments (RIPR_COMMENT_MODE=inline)
   - renders and uploads diff/repo SARIF only while RIPR_UPLOAD_SARIF is true
   - uses continue-on-error for advisory RIPR work and upload steps
   - does not enable baseline failure policy by default
+
+Generated GitLab pipeline (--ci gitlab):
+  - runs on merge-request pipelines only with allow_failure: true
+  - installs the pinned ripr release, runs `ripr check` and `ripr review-comments`
+  - uploads target/ripr/** artifacts for review (no SARIF or MR comment publishing)
 "#;
 pub(super) const CONFIG_HELP: &str = r#"Validate the repository's ripr.toml without running workspace probes.
 

@@ -17208,6 +17208,30 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
 }
 
 #[test]
+fn init_ci_gitlab_writes_advisory_merge_request_pipeline() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["init", "--root", &root, "--ci", "gitlab"]);
+    assert_success(&output);
+
+    let pipeline_path = workspace.join(".gitlab-ci.yml");
+    let pipeline = std::fs::read_to_string(&pipeline_path)
+        .map_err(|e| format!("read generated pipeline: {e}"))?;
+    assert!(workspace.join("ripr.toml").exists());
+    assert!(pipeline.contains("allow_failure: true"));
+    assert!(pipeline.contains(r#"$CI_PIPELINE_SOURCE == "merge_request_event""#));
+    assert!(pipeline.contains("ripr check --root ."));
+    assert!(pipeline.contains("ripr review-comments --root ."));
+    assert!(pipeline.contains("target/ripr/"));
+    assert!(!pipeline.contains("RIPR_GATE_MODE"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("merge request"), "{stdout}");
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
 fn init_ci_github_refuses_existing_workflow_without_force() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let workflow_dir = workspace.join(".github/workflows");
