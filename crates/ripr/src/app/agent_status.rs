@@ -389,11 +389,20 @@ pub(crate) fn build_agent_status_report_from(
     let gate = RepairStartGate::new(root);
     let repair_attempts =
         inspect_repair_attempts(root, &command_root, &receipt, &mut warnings, store, &gate);
-    let store_flag = quoted_store_flag(store);
-    let store_locator = store
-        .map(|path| path.to_string_lossy().replace("\\", "/"))
-        .filter(|locator| !locator.is_empty())
-        .unwrap_or_else(|| REPAIR_ATTEMPT_DIRECTORY.to_string());
+    let (store_flag, store_locator) = match resolve_store(
+        root,
+        store,
+        crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
+    ) {
+        Ok(resolved) => (resolved.quoted_store_flag(), resolved.locator().to_string()),
+        Err(_) => (
+            quoted_store_flag(store),
+            store
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .filter(|locator| !locator.is_empty())
+                .unwrap_or_else(|| REPAIR_ATTEMPT_DIRECTORY.to_string()),
+        ),
+    };
     let next_command = select_next_command(
         &command_root,
         seam.as_ref(),

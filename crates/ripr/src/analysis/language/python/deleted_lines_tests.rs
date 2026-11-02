@@ -178,6 +178,31 @@ fn pure_deletion_inside_a_body_is_base_side_evidence() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn base_deleted_findings_retain_witness_projection_on_production_path() -> Result<(), String> {
+    use crate::analysis::witness::{from_finding, retain_finding_projection};
+    use crate::domain::LanguageId;
+
+    let source =
+        "CAP = 100\n\n\ndef capped_total(items):\n    total = sum(items)\n    return total\n";
+    let findings = analyze(
+        "witness-retain-deleted",
+        source,
+        &[],
+        vec![line(6, 6, "    total = min(total, CAP)")],
+    )?;
+    let deleted = findings
+        .iter()
+        .filter(|finding| finding.source_currentness == SourceCurrentness::BaseDeleted)
+        .collect::<Vec<_>>();
+    assert_eq!(deleted.len(), 1, "{findings:?}");
+    let finding = deleted[0];
+    assert_eq!(finding.language, Some(LanguageId::Python));
+    retain_finding_projection(finding);
+    assert!(from_finding(finding).digest_matches());
+    Ok(())
+}
+
 /// The diff parser records a line deleted from the end of a body at the
 /// line after the owner; the owner is the one that ends on the line before.
 #[test]
