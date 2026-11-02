@@ -1708,6 +1708,10 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 &missing_discriminators,
                 &ProbeFamily::Predicate,
             ),
+            exact_discriminator_fact: crate::domain::exact_assertion_fact(
+                &missing_discriminators,
+                &family,
+            ),
         },
         alignment_prep,
     );
