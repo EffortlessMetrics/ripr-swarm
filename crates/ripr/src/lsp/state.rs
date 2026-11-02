@@ -13,9 +13,10 @@ use crate::app::Mode;
 use crate::config::LspDiagnosticProfile;
 use crate::domain::{Finding, LanguageId};
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use tower_lsp_server::ls_types::{
     Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
@@ -824,6 +825,229 @@ impl DiagnosticUriIndex {
     }
 }
 
+/// Immutable diagnostic payload for one refresh generation (#4998).
+///
+/// Clone copies the `Arc`, not the map or the diagnostic values. Construction
+/// and identity binding may copy-on-write through [`Self::to_mut`]; after a
+/// generation is shared, quarantine and last-known-good mutation go through
+/// [`CommittedDiagnostics`]'s sparse overlay instead of cloning the map.
+///
+/// Retained generations:
+/// 1. **steady state:** one current generation, shared by the committed
+///    snapshot and the committed view;
+/// 2. **refresh in flight:** that previous generation plus the candidate next;
+/// 3. **successful commit:** next becomes current; previous is released when
+///    no in-flight delivery still holds it;
+/// 4. **failure / cancellation / supersession:** the candidate is dropped and
+///    previous remains authoritative;
+/// 5. **shutdown / workspace reset:** [`CommittedDiagnostics::clear`] releases
+///    the retained generation.
+#[derive(Clone, Debug)]
+pub(super) struct DiagnosticsGeneration {
+    by_uri: Arc<BTreeMap<Uri, Vec<Diagnostic>>>,
+    #[cfg(test)]
+    id: u64,
+}
+
+#[cfg(test)]
+thread_local! {
+    static DIAGNOSTIC_MAP_CONSTRUCTIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static DIAGNOSTIC_MAP_DEEP_CLONES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+static NEXT_DIAGNOSTIC_GENERATION_ID: AtomicU64 = AtomicU64::new(1);
+
+impl DiagnosticsGeneration {
+    pub(super) fn empty() -> Self {
+        Self::from_map(BTreeMap::new())
+    }
+
+    pub(super) fn from_map(by_uri: BTreeMap<Uri, Vec<Diagnostic>>) -> Self {
+        #[cfg(test)]
+        DIAGNOSTIC_MAP_CONSTRUCTIONS.with(|count| count.set(count.get().saturating_add(1)));
+        Self {
+            by_uri: Arc::new(by_uri),
+            #[cfg(test)]
+            id: NEXT_DIAGNOSTIC_GENERATION_ID.fetch_add(1, Ordering::Relaxed),
+        }
+    }
+
+    pub(super) fn as_map(&self) -> &BTreeMap<Uri, Vec<Diagnostic>> {
+        self.by_uri.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(super) fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.by_uri, &other.by_uri)
+    }
+
+    /// Construction-time mutation. Copy-on-write clones the map only when
+    /// another handle already shares this generation.
+    pub(super) fn to_mut(&mut self) -> &mut BTreeMap<Uri, Vec<Diagnostic>> {
+        let shared = Arc::strong_count(&self.by_uri) > 1;
+        let map = Arc::make_mut(&mut self.by_uri);
+        if shared {
+            #[cfg(test)]
+            {
+                DIAGNOSTIC_MAP_DEEP_CLONES.with(|count| count.set(count.get().saturating_add(1)));
+                self.id = NEXT_DIAGNOSTIC_GENERATION_ID.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        map
+    }
+
+    #[cfg(test)]
+    pub(super) fn generation_id(&self) -> u64 {
+        self.id
+    }
+
+    #[cfg(test)]
+    pub(super) fn map_construction_count() -> u64 {
+        DIAGNOSTIC_MAP_CONSTRUCTIONS.with(std::cell::Cell::get)
+    }
+
+    #[cfg(test)]
+    pub(super) fn deep_clone_count() -> u64 {
+        DIAGNOSTIC_MAP_DEEP_CLONES.with(std::cell::Cell::get)
+    }
+
+    /// Discriminating negative: an owned map clone is a full-map construction
+    /// the refresh path must not take.
+    #[cfg(test)]
+    pub(super) fn deep_clone_map(&self) -> BTreeMap<Uri, Vec<Diagnostic>> {
+        DIAGNOSTIC_MAP_DEEP_CLONES.with(|count| count.set(count.get().saturating_add(1)));
+        (*self.by_uri).clone()
+    }
+}
+
+impl Default for DiagnosticsGeneration {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl From<BTreeMap<Uri, Vec<Diagnostic>>> for DiagnosticsGeneration {
+    fn from(by_uri: BTreeMap<Uri, Vec<Diagnostic>>) -> Self {
+        Self::from_map(by_uri)
+    }
+}
+
+impl Deref for DiagnosticsGeneration {
+    type Target = BTreeMap<Uri, Vec<Diagnostic>>;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_map()
+    }
+}
+
+impl DerefMut for DiagnosticsGeneration {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.to_mut()
+    }
+}
+
+impl<'a> IntoIterator for &'a DiagnosticsGeneration {
+    type Item = (&'a Uri, &'a Vec<Diagnostic>);
+    type IntoIter = std::collections::btree_map::Iter<'a, Uri, Vec<Diagnostic>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.as_map().iter()
+    }
+}
+
+impl PartialEq for DiagnosticsGeneration {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_map() == other.as_map()
+    }
+}
+
+impl Eq for DiagnosticsGeneration {}
+
+impl PartialEq<BTreeMap<Uri, Vec<Diagnostic>>> for DiagnosticsGeneration {
+    fn eq(&self, other: &BTreeMap<Uri, Vec<Diagnostic>>) -> bool {
+        self.as_map() == other
+    }
+}
+
+impl serde::Serialize for DiagnosticsGeneration {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.by_uri.serialize(serializer)
+    }
+}
+
+/// Committed diagnostic baseline: one shared generation plus a sparse overlay
+/// for quarantine/suppression (#4998). Overlay entries replace the generation
+/// for that URI (empty list = cleared baseline) without cloning the map.
+#[derive(Clone, Debug, Default)]
+pub(super) struct CommittedDiagnostics {
+    generation: DiagnosticsGeneration,
+    overlay: BTreeMap<Uri, Arc<[Diagnostic]>>,
+}
+
+impl CommittedDiagnostics {
+    #[cfg(test)]
+    pub(super) fn from_generation(generation: DiagnosticsGeneration) -> Self {
+        Self {
+            generation,
+            overlay: BTreeMap::new(),
+        }
+    }
+
+    pub(super) fn from_generation_with_cleared(
+        generation: DiagnosticsGeneration,
+        cleared: impl IntoIterator<Item = Uri>,
+    ) -> Self {
+        let overlay = cleared
+            .into_iter()
+            .map(|uri| (uri, Arc::<[Diagnostic]>::from(Vec::new())))
+            .collect();
+        Self {
+            generation,
+            overlay,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn generation(&self) -> &DiagnosticsGeneration {
+        &self.generation
+    }
+
+    pub(super) fn get(&self, uri: &Uri) -> Option<&[Diagnostic]> {
+        if let Some(overlaid) = self.overlay.get(uri) {
+            Some(overlaid.as_ref())
+        } else {
+            self.generation.get(uri).map(Vec::as_slice)
+        }
+    }
+
+    pub(super) fn insert(&mut self, uri: Uri, diagnostics: Vec<Diagnostic>) {
+        self.overlay.insert(uri, Arc::from(diagnostics));
+    }
+
+    pub(super) fn uris(&self) -> BTreeSet<Uri> {
+        let mut uris = self.generation.keys().cloned().collect::<BTreeSet<_>>();
+        uris.extend(self.overlay.keys().cloned());
+        uris
+    }
+
+    pub(super) fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    #[cfg(test)]
+    pub(super) fn overlay_uris(&self) -> Vec<Uri> {
+        self.overlay.keys().cloned().collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn overlay_contains_empty(&self, uri: &Uri) -> bool {
+        self.overlay
+            .get(uri)
+            .is_some_and(|diagnostics| diagnostics.is_empty())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct AnalysisSnapshot {
     pub(super) root: PathBuf,
@@ -870,7 +1094,7 @@ pub(super) struct AnalysisSnapshot {
     /// empty list; `Complete` carries the registered facts the editor
     /// surface reads. Never a claim that harness subjects were executed.
     pub(super) harness_facts: HarnessFactsOnSnapshot,
-    pub(super) diagnostics_by_uri: BTreeMap<Uri, Vec<Diagnostic>>,
+    pub(super) diagnostics_by_uri: DiagnosticsGeneration,
     /// Admitted root-relative keys prepared once for this immutable snapshot.
     /// `None` is unprepared; duplicate stored keys retain `None` values so an
     /// alias lookup refuses ambiguity instead of choosing an arbitrary URI.
@@ -1472,7 +1696,7 @@ pub(super) struct QuarantineLedger {
     /// produced; the revision lets a failed refresh drop only the digests no
     /// successful snapshot has covered yet.
     saved_content_digests: Mutex<BTreeMap<Uri, (String, u64)>>,
-    pub(super) last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
+    pub(super) last_diagnostics: Mutex<CommittedDiagnostics>,
 }
 
 impl QuarantineLedger {
@@ -3709,7 +3933,7 @@ mod tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -3747,7 +3971,7 @@ mod tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -3795,7 +4019,7 @@ mod tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -3818,7 +4042,7 @@ mod tests {
         let mut lookalike_by_uri = BTreeMap::new();
         lookalike_by_uri.insert(uri, vec![lookalike]);
         let lookalike_snapshot = AnalysisSnapshot {
-            diagnostics_by_uri: lookalike_by_uri,
+            diagnostics_by_uri: lookalike_by_uri.into(),
             ..snapshot
         };
 
@@ -3851,7 +4075,7 @@ mod tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,

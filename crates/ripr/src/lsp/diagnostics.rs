@@ -5,8 +5,8 @@ use super::gap_artifacts::{
     validate_gap_artifact, validate_workspace_gap_artifact_report, workspace_path_is_safe,
 };
 use super::state::{
-    AnalysisFailureKind, AnalysisSnapshot, DocumentStalenessReason, HarnessFactsOnSnapshot,
-    RefreshMetadata,
+    AnalysisFailureKind, AnalysisSnapshot, CommittedDiagnostics, DocumentStalenessReason,
+    HarnessFactsOnSnapshot, RefreshMetadata,
 };
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, path_from_file_uri,
@@ -64,7 +64,7 @@ pub(super) struct DiagnosticRefreshPlan {
 }
 
 pub(super) fn diagnostic_refresh_plan(
-    previous: &BTreeMap<Uri, Vec<Diagnostic>>,
+    previous: &CommittedDiagnostics,
     batches: Vec<DiagnosticBatch>,
 ) -> DiagnosticRefreshPlan {
     let batches = canonicalize_diagnostic_batches(batches);
@@ -73,7 +73,7 @@ pub(super) fn diagnostic_refresh_plan(
         .map(|batch| (batch.uri.clone(), batch.diagnostics.clone()))
         .collect::<BTreeMap<_, _>>();
     let current_uris = current.keys().cloned().collect::<BTreeSet<_>>();
-    let previous_uris = previous.keys().cloned().collect::<BTreeSet<_>>();
+    let previous_uris = previous.uris();
     let clear_uris = previous_uris
         .difference(&current_uris)
         .cloned()
@@ -84,7 +84,7 @@ pub(super) fn diagnostic_refresh_plan(
     let mut suppressed_payload_bytes: usize = 0;
     for batch in batches {
         let payload_bytes = diagnostic_payload_bytes(&batch.diagnostics);
-        if previous.get(&batch.uri) == Some(&batch.diagnostics) {
+        if previous.get(&batch.uri) == Some(batch.diagnostics.as_slice()) {
             unchanged_uri_count += 1;
             suppressed_payload_bytes = suppressed_payload_bytes.saturating_add(payload_bytes);
         } else {
@@ -1706,7 +1706,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             .map(|(uri, diagnostics)| DiagnosticBatch { uri, diagnostics })
             .collect(),
     );
-    let diagnostics_by_uri = batches
+    let diagnostics_by_uri: BTreeMap<Uri, Vec<Diagnostic>> = batches
         .iter()
         .map(|batch| (batch.uri.clone(), batch.diagnostics.clone()))
         .collect();
@@ -1725,7 +1725,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         gap_artifacts: gap_artifact_report.artifacts,
         gap_artifact_rejections: gap_artifact_report.rejections,
         harness_facts,
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -2166,7 +2166,7 @@ fn git_timeout_limited_diagnostics(
         } else {
             HarnessFactsOnSnapshot::UnavailableLimitedRun
         },
-        diagnostics_by_uri: BTreeMap::new(),
+        diagnostics_by_uri: BTreeMap::new().into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -2246,7 +2246,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         }
         Err(_) => Vec::new(),
     };
-    let diagnostics_by_uri = batches
+    let diagnostics_by_uri: BTreeMap<Uri, Vec<Diagnostic>> = batches
         .iter()
         .map(|batch| (batch.uri.clone(), batch.diagnostics.clone()))
         .collect();
@@ -2273,7 +2273,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         } else {
             HarnessFactsOnSnapshot::UnavailableLimitedRun
         },
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -8217,7 +8217,7 @@ mod delivery_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
