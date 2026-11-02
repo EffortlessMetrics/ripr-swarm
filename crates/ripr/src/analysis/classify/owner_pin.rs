@@ -2916,11 +2916,46 @@ impl SiteCoverBytes {
         test: &TestSummary,
         assertion_line: usize,
     ) -> Self {
+        let needs = syntax
+            .scoped_macro_bindings
+            .borrow()
+            .as_ref()
+            .and_then(|scoped| {
+                scoped.get(&test.file).map(|sites| {
+                    sites.iter().any(|(_, site)| {
+                        site_cover_needs_test_fn_bytes(site, test)
+                            || site_cover_needs_assertion_bytes(site, assertion_line)
+                    })
+                })
+            });
+        let needs = needs.unwrap_or(false);
+        if !needs {
+            return Self {
+                test: None,
+                assertion: None,
+            };
+        }
         Self {
             test: test_fn_byte_range(syntax, index, test),
             assertion: assertion_byte_range(index, test, assertion_line),
         }
     }
+}
+
+/// Byte containment is required only when a scoped site records `scope_bytes`
+/// and the same-line disambiguation path applies (#5695).
+fn site_cover_needs_test_fn_bytes(site: &MacroBindingSite, test: &TestSummary) -> bool {
+    site.scope_bytes.is_some()
+        && site.scope.is_some_and(|(start, end)| {
+            start == end && test.start_line == test.end_line && test.start_line == start
+        })
+}
+
+fn site_cover_needs_assertion_bytes(site: &MacroBindingSite, assertion_line: usize) -> bool {
+    site.scope_bytes.is_some()
+        && site
+            .scope
+            .is_some_and(|(start, end)| start == end && assertion_line == start)
 }
 
 fn site_covers_assertion(
@@ -2991,7 +3026,7 @@ fn test_fn_byte_range(
     index: &RustIndex,
     test: &TestSummary,
 ) -> Option<(u32, u32)> {
-    let facts = index.files().get(&test.file)?;
+    index.files().get(&test.file)?;
     let name = test.name.trim_start_matches("r#");
     if let Some(scopes) = syntax.file_scopes(index, &test.file)
         && let Some(function) = scopes
@@ -3001,7 +3036,7 @@ fn test_fn_byte_range(
     {
         return Some((function.start, function.end));
     }
-    let tree = crate::analysis::syntax::parse_clean_source_file(&facts.source)?.tree();
+    let tree = index.source_syntax.get(index, &test.file)?.tree()?;
     build_file_scopes(&tree)
         .fns
         .into_iter()
@@ -3015,7 +3050,7 @@ fn assertion_byte_range(index: &RustIndex, test: &TestSummary, line: usize) -> O
         .assertions
         .iter()
         .find(|assertion| assertion.line == line)?;
-    let tree = crate::analysis::syntax::parse_clean_source_file(&facts.source)?.tree();
+    let tree = index.source_syntax.get(index, &test.file)?.tree()?;
     let lines = LineIndex::new(&facts.source);
     // The oracle text keeps its statement terminator while the `MacroCall`
     // node's text stops before it; strip one trailing `;` so the test's own
