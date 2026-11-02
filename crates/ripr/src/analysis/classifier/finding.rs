@@ -360,7 +360,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
         changed_sink: None,
         observed_sink: None,
         oracle_alignment: None,
-        alignment_reason: None,
+        alignment_reason: None,        superseded_alignment_reason: None,
         // Source currentness is resolved by the producer that observed the diff
         // evidence; this constructor has none, so the disposition stays the
         // explicit unknown (#3280).

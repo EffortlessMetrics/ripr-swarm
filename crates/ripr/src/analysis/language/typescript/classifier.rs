@@ -8139,7 +8139,7 @@ pub(crate) fn classify_resolved_owner(
         changed_sink: None,
         observed_sink: None,
         oracle_alignment: None,
-        alignment_reason: None,
+        alignment_reason: None,        superseded_alignment_reason: None,
         // Resolved above, before the probe moved into the finding (#3281).
         source_currentness,
     })

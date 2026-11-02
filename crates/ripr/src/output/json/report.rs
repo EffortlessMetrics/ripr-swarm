@@ -1141,6 +1141,15 @@ fn finding_json_with_config_and_counts(
     if let Some(alignment_reason) = &finding.alignment_reason {
         field(out, indent + 1, "alignment_reason", alignment_reason, true);
     }
+    if let Some(superseded_alignment_reason) = &finding.superseded_alignment_reason {
+        field(
+            out,
+            indent + 1,
+            "superseded_alignment_reason",
+            superseded_alignment_reason,
+            true,
+        );
+    }
     // Producer-owned source-currentness disposition (#3280): always
     // emitted, with `unresolved_subject` as the explicit unknown for
     // producers that do not resolve it.
@@ -2177,7 +2186,7 @@ mod evidence_path_separator_tests {
             changed_sink: None,
             observed_sink: None,
             oracle_alignment: None,
-            alignment_reason: None,
+            alignment_reason: None,        superseded_alignment_reason: None,
             source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }

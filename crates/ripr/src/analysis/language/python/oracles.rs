@@ -1008,6 +1008,8 @@ fn oracle_for_compare(
         PythonOracleShape::OutputAssertion
     } else if compare_observes_status_code(compare) {
         PythonOracleShape::StatusCodeAssertion
+    } else if compare_observes_exception_value(compare) {
+        PythonOracleShape::ExceptionAssertion
     } else if compare_observes_field(compare) {
         PythonOracleShape::FieldAssertion
     } else if compare.ops.iter().any(|op| {
@@ -1037,7 +1039,34 @@ fn compare_observes_status_code(compare: &ast::ExprCompare) -> bool {
 
 fn compare_observes_field(compare: &ast::ExprCompare) -> bool {
     expr_observes_field(compare.left.as_ref())
-        || compare.comparators.iter().any(expr_observes_field)
+        || compare
+            .comparators
+            .iter()
+            .any(expr_observes_field)
+}
+
+fn compare_observes_exception_value(compare: &ast::ExprCompare) -> bool {
+    expr_observes_exception_value(compare.left.as_ref())
+        || compare
+            .comparators
+            .iter()
+            .any(expr_observes_exception_value)
+}
+
+fn expr_observes_exception_value(expr: &Expr) -> bool {
+    expr_full_name(expr).is_some_and(|name| {
+        name == "excinfo.value" || name.starts_with("excinfo.value.")
+    }) || match expr {
+        Expr::Attribute(attribute) => {
+            expr_full_name(attribute.value.as_ref()).is_some_and(|base| base == "excinfo")
+                && attribute.attr.as_str() == "value"
+        }
+        Expr::Subscript(subscript) => {
+            expr_observes_exception_value(subscript.value.as_ref())
+                || expr_observes_exception_value(subscript.slice.as_ref())
+        }
+        _ => false,
+    }
 }
 
 fn expr_observes_output(expr: &Expr) -> bool {
@@ -1080,6 +1109,9 @@ fn expr_observes_status_code(expr: &Expr) -> bool {
 }
 
 fn expr_observes_field(expr: &Expr) -> bool {
+    if expr_observes_exception_value(expr) {
+        return false;
+    }
     match expr {
         Expr::Attribute(attribute) => {
             !expr_observes_status_code(expr)

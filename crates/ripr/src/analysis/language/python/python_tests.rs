@@ -1025,6 +1025,31 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
 }
 
 #[test]
+fn excinfo_value_field_read_uses_exception_assertion_shape() -> Result<(), String> {
+    let source = r#"
+import pytest
+
+from src.app import parse
+
+
+def test_parse_error():
+    with pytest.raises(ValueError) as excinfo:
+        parse("")
+    assert excinfo.value.args[0] == "empty"
+"#;
+    let shapes: BTreeSet<_> = assertion_shapes(source).into_iter().collect();
+    if !shapes.contains(&PythonOracleShape::ExceptionAssertion)
+        || shapes.contains(&PythonOracleShape::FieldAssertion)
+    {
+        return Err(format!(
+            "excinfo.value assertion must be exception-shaped, not field-shaped: {:?}",
+            shapes
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn unittest_oracle_shapes_use_assertion_arguments() -> Result<(), String> {
     let source = r#"
 import unittest

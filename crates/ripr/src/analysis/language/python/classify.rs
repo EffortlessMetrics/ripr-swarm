@@ -591,7 +591,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             changed_sink: alignment.changed_sink,
             observed_sink: Some(credit.assertion.text.clone()),
             oracle_alignment: "direct".to_string(),
-            alignment_reason: "strong_oracle_observes_module_value".to_string(),
+            alignment_reason: "strong_oracle_observes_module_value".to_string(),        superseded_alignment_reason: None,
             credited: Some(CreditedAssertion {
                 test_name: credit.test.name.clone(),
                 test_file: credit.test.file.clone(),
@@ -604,7 +604,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 changed_sink: alignment.changed_sink,
                 observed_sink: Some(credit.assertion.text.clone()),
                 oracle_alignment: "direct".to_string(),
-                alignment_reason: crate::domain::LIVE_PYTHON_TRUTHINESS_ALIGNMENT.to_string(),
+                alignment_reason: crate::domain::LIVE_PYTHON_TRUTHINESS_ALIGNMENT.to_string(),        superseded_alignment_reason: None,
                 credited: Some(CreditedAssertion {
                     test_name: credit.test.name.clone(),
                     test_file: credit.test.file.clone(),
@@ -633,7 +633,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             changed_sink: alignment.changed_sink,
             observed_sink: Some(credit.assertion.text.clone()),
             oracle_alignment: "direct".to_string(),
-            alignment_reason: "strong_oracle_observes_removed_type_guard".to_string(),
+            alignment_reason: "strong_oracle_observes_removed_type_guard".to_string(),        superseded_alignment_reason: None,
             credited: Some(CreditedAssertion {
                 test_name: credit.test.name.clone(),
                 test_file: credit.test.file.clone(),
@@ -1334,12 +1334,45 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // family-relevant assertion, or whose row now shows a different assertion
     // than the strength-only pick, gets a reason the gap ledger never
     // delegates. `oracle_alignment` keeps what the selected assertions show.
+    let family_selection_superseded = if matches!(class, ExposureClass::WeaklyExposed)
+        && (other_family_kind.is_some() || selection_moved)
+    {
+        let strength_only_related = related_tests_for_candidates(&related_candidates, None);
+        let strength_only = classify_sink_alignment_prepared(
+            owner,
+            line_text,
+            old_line_text,
+            &strength_only_related,
+            alignment_prep,
+            guard_entered,
+            literal_pair.as_ref(),
+        );
+        let reason = strength_only.alignment_reason;
+        if reason == "no_strong_oracle"
+            || matches!(
+                reason.as_str(),
+                "no_family_relevant_assertion" | "other_behavior_assertion_passed_over"
+            )
+        {
+            None
+        } else {
+            Some(reason)
+        }
+    } else {
+        None
+    };
     let surfaced_alignment = if !matches!(class, ExposureClass::WeaklyExposed) {
         surfaced_alignment
     } else if other_family_kind.is_some() {
-        surfaced_alignment.with_reason("no_family_relevant_assertion")
+        surfaced_alignment.with_family_selection_reason(
+            "no_family_relevant_assertion",
+            family_selection_superseded.clone(),
+        )
     } else if selection_moved {
-        surfaced_alignment.with_reason("other_behavior_assertion_passed_over")
+        surfaced_alignment.with_family_selection_reason(
+            "other_behavior_assertion_passed_over",
+            family_selection_superseded,
+        )
     } else {
         surfaced_alignment
     };
@@ -1907,6 +1940,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         observed_sink: surfaced_alignment.observed_sink,
         oracle_alignment: Some(surfaced_alignment.oracle_alignment),
         alignment_reason: Some(surfaced_alignment.alignment_reason),
+        superseded_alignment_reason: surfaced_alignment.superseded_alignment_reason,
         // Resolved above, before the probe moved into the finding (#3281).
         source_currentness,
     };

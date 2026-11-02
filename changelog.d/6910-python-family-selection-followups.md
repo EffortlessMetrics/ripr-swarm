@@ -1,0 +1,1 @@
+Python family-selection follow-ups (#6910): retain strength-only `alignment_reason` in `superseded_alignment_reason`, pin `other_behavior_assertion_passed_over` in the gap-ledger repair-card inventory, and classify `excinfo.value` reads as exception observers.

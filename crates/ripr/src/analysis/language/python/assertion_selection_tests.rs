@@ -71,6 +71,14 @@ fn family(family: ProbeFamily) -> PythonAssertionFocus {
 fn cases() -> Vec<Case> {
     vec![
         Case {
+            name: "error path: excinfo.value field read observes the raised exception",
+            focus: family(ProbeFamily::ErrorPath),
+            body: "    with pytest.raises(ValueError) as excinfo:\n        f(-1)\n    assert excinfo.value.args[0] == \"neg\"\n",
+            inventory: vec![(EXC, STRONG), (EXC, STRONG)],
+            expected: Some("assert excinfo.value.args[0] == \"neg\""),
+            old_differs: false,
+        },
+        Case {
             name: "return value: strong exception + weaker value observer -> value",
             focus: family(ProbeFamily::ReturnValue),
             body: "    with pytest.raises(ValueError, match=\"neg\"):\n        f(-1)\n    assert f(2) > 0\n",
@@ -827,4 +835,33 @@ fn changed_dict_key_limit_suppression_uses_the_classifier_focus() {
         static_limit_for_change(new, &owners[0], &candidates).map(|limit| limit.kind),
         None
     );
+}
+
+/// When family selection passes over a stronger wrong-family assertion, the
+/// finding keeps the strength-only alignment reason in a secondary field (#6910).
+#[test]
+fn family_selection_override_preserves_strength_only_alignment_reason() -> Result<(), String> {
+    let source = "def scale(x):\n    if x < 0:\n        raise ValueError(\"neg\")\n    return x * 3\n";
+    let owners = extract_owners(Path::new("src/app.py"), source);
+    let body = "    with pytest.raises(ValueError, match=\"neg\"):\n        scale(-1)\n    assert scale(2) > 0\n";
+    let tests = vec![parse_test(body)];
+    let finding = classify_change_with_old(
+        Path::new("src/app.py"),
+        4,
+        "    return x * 3",
+        Some("    return x * 2"),
+        &owners,
+        &tests,
+    )
+    .ok_or("return change must classify")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        finding.alignment_reason.as_deref(),
+        Some("other_behavior_assertion_passed_over")
+    );
+    assert_eq!(
+        finding.superseded_alignment_reason.as_deref(),
+        Some("strong_oracle_observes_different_sink")
+    );
+    Ok(())
 }

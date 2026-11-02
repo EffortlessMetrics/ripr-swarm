@@ -40,6 +40,10 @@ pub(super) struct SinkAlignment {
     /// One of `direct | alias | changed_sink_token | orthogonal | unknown`.
     pub(super) oracle_alignment: String,
     pub(super) alignment_reason: String,
+    /// When family selection replaces `alignment_reason`, the strength-only
+    /// sink-alignment reason that would have surfaced before the override
+    /// (#6910 item 1).
+    pub(super) superseded_alignment_reason: Option<String>,
     /// The assertion that credited the alignment, when one did. The finding
     /// reports it as its related test's oracle (RIPR-SPEC-0238 rule 4).
     pub(super) credited: Option<CreditedAssertion>,
@@ -72,7 +76,12 @@ impl SinkAlignment {
     /// (`other_behavior_assertion_passed_over`), #5572. Only the surfaced
     /// finding fields use it; the classifier decided from `observes()` first,
     /// and the gap ledger never delegates either reason.
-    pub(super) fn with_reason(mut self, reason: &str) -> Self {
+    pub(super) fn with_family_selection_reason(
+        mut self,
+        reason: &str,
+        superseded_alignment_reason: Option<String>,
+    ) -> Self {
+        self.superseded_alignment_reason = superseded_alignment_reason;
         self.alignment_reason = reason.to_string();
         self
     }
@@ -86,7 +95,7 @@ impl SinkAlignment {
             changed_sink,
             observed_sink: None,
             oracle_alignment: "unknown".to_string(),
-            alignment_reason: "no_strong_oracle".to_string(),
+            alignment_reason: "no_strong_oracle".to_string(),        superseded_alignment_reason: None,
             credited: None,
         }
     }
@@ -888,7 +897,7 @@ pub(super) fn classify_sink_alignment_prepared(
             changed_sink,
             observed_sink,
             oracle_alignment: "orthogonal".to_string(),
-            alignment_reason: "strong_oracle_observes_different_sink".to_string(),
+            alignment_reason: "strong_oracle_observes_different_sink".to_string(),        superseded_alignment_reason: None,
             credited: None,
         };
     }
@@ -1361,7 +1370,7 @@ pub(super) fn classify_sink_alignment_prepared(
         changed_sink,
         observed_sink,
         oracle_alignment: oracle_alignment.to_string(),
-        alignment_reason: alignment_reason.to_string(),
+        alignment_reason: alignment_reason.to_string(),        superseded_alignment_reason: None,
         credited,
     }
 }
