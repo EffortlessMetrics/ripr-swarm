@@ -42,7 +42,9 @@ pub(crate) use changelog_fragments::{
 };
 pub(crate) use ci_lane_whitelist::check_ci_lane_whitelist;
 pub(crate) use covered_by::check_covered_by;
-pub(crate) use dependency_expiry::check_dependency_suppression_expiry;
+pub(crate) use dependency_expiry::{
+    check_dependency_suppression_expiry, check_post_0_11_dependency_defer_tracking,
+};
 pub(crate) use doc_roles::check_doc_roles;
 pub(crate) use droid_review::check_droid_review_config;
 pub(crate) use executable_files::check_executable_files;
