@@ -6221,6 +6221,7 @@ name = "Editor adoption assurance"
 spec = "docs/specs/RIPR-SPEC-0054-editor-adoption-assurance.md"
 tests = [
   "editors/vscode/test/suite/extension.test.ts",
+  "editors/vscode/test/suite/repairStart.test.ts",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -6228,6 +6229,7 @@ fixtures = [
 ]
 code = [
   "editors/vscode/src/client.ts",
+  "editors/vscode/src/repairStart.ts",
   "xtask/src/main.rs",
 ]
 outputs = [
@@ -7155,6 +7157,16 @@ tests = [
   "crates/ripr/src/output/gate/repair_route.rs::tests::same_line_seams_keep_distinct_producer_owned_inspection_commands",
   "crates/ripr/src/output/gate/repair_route.rs::tests::generic_gap_record_evidence_ids_do_not_become_seam_identity",
   "crates/ripr/src/output/gate/repair_route.rs::tests::blank_gap_record_commands_render_as_null_and_remain_missing",
+  "crates/ripr/src/output/gate/repair_route.rs::tests::proposed_inline_unit_target_projects_as_proposed_kind",
+  "crates/ripr/src/output/gate/repair_route.rs::tests::proposed_integration_target_projects_as_proposed_kind",
+  "crates/ripr/src/output/gate/repair_route.rs::tests::no_proposal_stays_missing_repair_target",
+  "crates/ripr/src/output/gate/repair_route.rs::tests::existing_related_test_wins_over_proposed_target",
+  "crates/ripr/src/output/gate/repair_route.rs::tests::proposed_target_fail_closed_without_governed_proposal",
+  "crates/ripr/src/output/gate/repair_route.rs::tests::gap_record_proposed_target_projects_when_no_existing_test",
+  "crates/ripr/src/output/gate/repair_route.rs::tests::gap_record_existing_test_wins_over_proposed_target",
+  "crates/ripr/src/output/gate/repair_route.rs::tests::gap_record_no_proposal_stays_missing_repair_target",
+  "crates/ripr/src/output/gate/repair_route.rs::tests::gap_record_proposed_target_fail_closed_without_governed_proposal",
+  "crates/ripr/src/output/gate/presentation.rs::tests::proposed_target_markdown_names_kind_file_and_owner",
   "crates/ripr/src/output/gate/repair_route.rs::tests::incomplete_route_is_advisory_only_and_renders_named_limitation",
   "crates/ripr/src/output/gate/tests.rs::gate_acknowledgeable_blocks_complete_gap_ledger_route_with_typed_seam_identity",
   "crates/ripr/tests/cli_smoke.rs::gate_evaluate_complete_gap_ledger_blocks_only_in_explicit_blocking_mode",
@@ -7267,6 +7279,10 @@ tests = [
   "crates/ripr/src/output/review_comments/mod.rs::tests::spec0068_card_carries_structured_related_test",
   "crates/ripr/src/output/review_comments/mod.rs::tests::gap_record_related_test_projects_object_or_null",
   "crates/ripr/src/output/review_comments/mod.rs::tests::working_set_card_emits_null_related_test_without_strong_test",
+  "crates/ripr/src/output/review_comments/mod.rs::tests::working_set_card_emits_proposed_inline_unit_target",
+  "crates/ripr/src/output/review_comments/mod.rs::tests::working_set_card_emits_proposed_integration_target",
+  "crates/ripr/src/output/review_comments/mod.rs::tests::working_set_card_keeps_related_test_when_a_proposal_is_also_present",
+  "crates/ripr/src/output/review_comments/mod.rs::tests::gap_record_proposed_target_projects_object_or_null",
   "crates/ripr/src/output/review_comments/mod.rs::tests::spec0068_card_carries_oracle_kind_and_strength",
   "crates/ripr/src/output/review_comments/mod.rs::tests::spec0068_working_set_card_projects_domain_canonical_gap_id",
   "crates/ripr/src/output/review_comments/mod.rs::tests::working_set_card_names_missing_domain_canonical_gap_id_as_null",
@@ -20084,6 +20100,27 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0278-issue-lifecycle-real-closeout-rows.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0377"
+name = "Repair attempt closeout matrix (R3 slice 1)"
+spec = "docs/specs/RIPR-SPEC-0377-repair-attempt-closeout-matrix.md"
+tests = [
+  "crates/ripr/src/app/repair_attempt_closeout_matrix.rs::tests::repair_attempt_closeout_matrix_catalog_has_twenty_five_scenarios",
+  "crates/ripr/src/app/repair_attempt_closeout_matrix.rs::tests::repair_attempt_closeout_matrix_slice_one_exercises_normal_use_rows",
+  "crates/ripr/src/app/repair_attempt_closeout_matrix.rs::tests::repair_attempt_closeout_matrix_json_and_markdown_agree_on_aggregate",
+  "crates/ripr/src/app/repair_attempt_closeout_matrix.rs::tests::repair_attempt_closeout_matrix_unexercised_rows_stay_missing_evidence",
+  "crates/ripr/src/app/repair_attempt_closeout_matrix.rs::tests::explicit_store_resolver_matches_manifest_store",
+]
+code = [
+  "crates/ripr/src/app/repair_attempt_closeout_matrix.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0377-repair-attempt-closeout-matrix.md",
 ]
 metrics = [
   "unit_test_pass_rate",
