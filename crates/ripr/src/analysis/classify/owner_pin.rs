@@ -88,6 +88,7 @@ use crate::analysis::syntax::{
     returns_leave_the_function, source_binds_value_name, source_declares_value_name,
     source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
 };
+use crate::analysis::workspace::declared_crate_root_paths_from_manifest;
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
@@ -2665,9 +2666,21 @@ const UNINDEXED_MEMBER_SOURCE_BYTES: usize = 256 * 1024;
 /// mount, so a namesake dependency of an indexed test crate does not
 /// disable placement.
 fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
+    let mut candidates: BTreeSet<PathBuf> = UNINDEXED_MEMBER_ROOTS
+        .iter()
+        .map(|candidate| member_dir.join(candidate))
+        .collect();
+    match std::fs::read_to_string(member_dir.join("Cargo.toml")) {
+        Ok(manifest) => {
+            for relative in declared_crate_root_paths_from_manifest(&manifest, member_dir) {
+                candidates.insert(member_dir.join(relative));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return true,
+    }
     let mut inspected = false;
-    for candidate in UNINDEXED_MEMBER_ROOTS {
-        let path = member_dir.join(candidate);
+    for path in candidates {
         match std::fs::read(&path) {
             Ok(bytes) => {
                 if bytes.len() > UNINDEXED_MEMBER_SOURCE_BYTES {
