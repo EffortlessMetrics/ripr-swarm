@@ -335,15 +335,25 @@ fn admit_expected_partial(
             "no typed cause is known for static limit `{limit}`"
         ));
     };
-    let cause_present = outcome
+    let limitation_kinds: Vec<Option<&str>> = outcome
         .get("limitations")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .any(|limitation| limitation.get("kind").and_then(Value::as_str) == Some(cause));
-    if !cause_present {
+        .map(|limitation| limitation.get("kind").and_then(Value::as_str))
+        .collect();
+    if !limitation_kinds.contains(&Some(cause)) {
         return rejected(&format!(
             "partial outcome carries no `{cause}` limitation for static limit `{limit}`"
+        ));
+    }
+    // The row pins one partial outcome. Any further limitation (unreadable
+    // files, skipped tests, unsupported scope) means the run did less work
+    // than the pinned outcome, so it is not a speed measurement (#12052).
+    if let Some(extra) = limitation_kinds.iter().find(|kind| **kind != Some(cause)) {
+        return rejected(&format!(
+            "partial outcome carries a limitation beyond `{cause}` ({}); the row expects only `{limit}`",
+            extra.unwrap_or("unnamed")
         ));
     }
     let names_limit = object
@@ -1433,6 +1443,18 @@ mod tests {
         assert!(!admission.is_admitted());
         assert!(
             admission.reason().contains("diff_scope_oversized"),
+            "{admission:?}"
+        );
+        // The declared cause plus a further limitation is a degraded run.
+        let mut extra_cause = partial_document(Some(TS_LIMIT));
+        extra_cause["analysis_outcome"]["outcome"]["limitations"] = json!([
+            { "kind": "diff_scope_oversized" },
+            { "kind": "language_scope_unsupported" }
+        ]);
+        let admission = admit_check_document(&extra_cause, &subject);
+        assert!(!admission.is_admitted(), "{admission:?}");
+        assert!(
+            admission.reason().contains("language_scope_unsupported"),
             "{admission:?}"
         );
         let mut no_limitations = partial_document(Some(TS_LIMIT));
