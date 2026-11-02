@@ -13,6 +13,8 @@
 //! group) are **context-only** — they may be returned for navigation
 //! but must never be preferred as evidence.
 
+use crate::domain::RelationReason;
+
 /// The closed candidate-relation vocabulary.
 #[derive(
     Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
@@ -79,6 +81,12 @@ impl CandidateRelation {
         )
     }
 
+    /// Map an existing related-test [`RelationReason`] onto this discovery
+    /// vocabulary without changing evidence classification (#1664 / #1784).
+    pub fn from_relation_reason(reason: RelationReason) -> Self {
+        reason.candidate_relation()
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             CandidateRelation::DirectOwnerCall => "direct_owner_call",
@@ -95,6 +103,32 @@ impl CandidateRelation {
             CandidateRelation::TokenCoincidenceOnly => "token_coincidence_only",
             CandidateRelation::OpaqueHelperOrMacro => "opaque_helper_or_macro",
             CandidateRelation::Unknown => "unknown",
+        }
+    }
+}
+
+impl RelationReason {
+    /// Project this evidence relation onto the requirement-aware candidate
+    /// discovery channel. Proximity and coincidence reasons stay context-only.
+    pub fn candidate_relation(self) -> CandidateRelation {
+        match self {
+            RelationReason::DirectOwnerCall => CandidateRelation::DirectOwnerCall,
+            RelationReason::HelperOwnerCall => CandidateRelation::EstablishedOneHopHelperChain,
+            RelationReason::ReExportChainFollowed => {
+                CandidateRelation::EstablishedEntrypointRelation
+            }
+            RelationReason::FixtureOwnerAffinity => {
+                CandidateRelation::EstablishedFixtureOrGoldenOwner
+            }
+            RelationReason::SameTestFile | RelationReason::SameModule => {
+                CandidateRelation::FileProximityOnly
+            }
+            RelationReason::WeakTokenSubstring | RelationReason::OwnerNamedTest => {
+                CandidateRelation::TokenCoincidenceOnly
+            }
+            RelationReason::ImportPathAffinity => CandidateRelation::FileProximityOnly,
+            RelationReason::AssertionTargetAffinity => CandidateRelation::Unknown,
+            RelationReason::SeamCalleeCall => CandidateRelation::OpaqueHelperOrMacro,
         }
     }
 }
@@ -150,6 +184,42 @@ mod tests {
             let wire = relation.as_str();
             assert!(!wire.is_empty());
             assert!(wire.chars().all(|c| c.is_ascii_lowercase() || c == '_'));
+        }
+    }
+
+    #[test]
+    fn relation_reason_maps_producer_backed_to_eligible_channels() {
+        assert_eq!(
+            RelationReason::DirectOwnerCall.candidate_relation(),
+            CandidateRelation::DirectOwnerCall
+        );
+        assert!(
+            RelationReason::DirectOwnerCall
+                .candidate_relation()
+                .is_producer_backed()
+        );
+        assert_eq!(
+            RelationReason::HelperOwnerCall.candidate_relation(),
+            CandidateRelation::EstablishedOneHopHelperChain
+        );
+        assert_eq!(
+            RelationReason::FixtureOwnerAffinity.candidate_relation(),
+            CandidateRelation::EstablishedFixtureOrGoldenOwner
+        );
+    }
+
+    #[test]
+    fn relation_reason_maps_proximity_to_context_only() {
+        for reason in [
+            RelationReason::SameTestFile,
+            RelationReason::SameModule,
+            RelationReason::WeakTokenSubstring,
+            RelationReason::OwnerNamedTest,
+        ] {
+            assert!(
+                reason.candidate_relation().is_context_only(),
+                "{reason:?} must stay context-only for candidate discovery"
+            );
         }
     }
 }
