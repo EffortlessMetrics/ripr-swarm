@@ -1263,12 +1263,12 @@ fn push_test_shape(lines: &mut Vec<String>, entry: &ClassifiedSeam) {
     // label reads as unfilled template text; the outline already carries the
     // shape, and a distinct suggested assertion is still a shape, not a
     // paste-ready template.
-    if let Some(assertion) = suggested_assertion_for_classified_seam(entry) {
-        if assertion != outline.assertion_shape {
-            lines.push(format!("- assertion shape: `{assertion}`"));
-            if let Some(note) = fill_in_note_line("  ", &assertion) {
-                lines.push(note);
-            }
+    if let Some(assertion) = suggested_assertion_for_classified_seam(entry)
+        && assertion != outline.assertion_shape
+    {
+        lines.push(format!("- assertion shape: `{assertion}`"));
+        if let Some(note) = fill_in_note_line("  ", &assertion) {
+            lines.push(note);
         }
     }
 }
