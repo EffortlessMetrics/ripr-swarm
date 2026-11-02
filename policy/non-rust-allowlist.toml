@@ -843,6 +843,7 @@ classification = "fixture"
 reason = "Committed #4914 NOT_ESTABLISHED owner disposition and stage contract for the historical native Windows MCP stdio first-reply investigation."
 covered_by = [
     "cargo test -p ripr --test mcp_stdio mcp_stdio_investigation_disposition_records_not_established_and_stage_witness",
+    "cargo test -p ripr --test mcp_stdio unsupported_inline_version_is_rejected_and_next_request_recovers",
     "cargo xtask check-file-policy",
 ]
 

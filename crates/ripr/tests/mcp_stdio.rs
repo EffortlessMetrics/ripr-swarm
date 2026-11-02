@@ -2189,6 +2189,36 @@ fn unsupported_inline_version_request_script() -> Result<Vec<u8>, String> {
     .concat())
 }
 
+fn assert_unsupported_inline_version_protocol_outcome(responses: &[Value]) -> Result<(), String> {
+    if responses.len() != 3 {
+        return Err("inline version control did not produce three correlated replies".into());
+    }
+    let refused = responses
+        .get(1)
+        .ok_or_else(|| "version refusal missing".to_string())?;
+    let expected = serde_json::to_value(rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION)
+        .map_err(|error| error.to_string())?;
+    if refused.get("id") != Some(&json!("unsupported"))
+        || refused.pointer("/error/code") != Some(&expected)
+    {
+        return Err(
+            "unsupported inline version was not rejected with its correlated SDK code".into(),
+        );
+    }
+    let recovered = responses
+        .get(2)
+        .ok_or_else(|| "recovered response missing".to_string())?;
+    if recovered.get("id") != Some(&json!("recovered"))
+        || recovered
+            .pointer("/result/tools")
+            .and_then(Value::as_array)
+            .is_none_or(|tools| tools.len() != 10)
+    {
+        return Err("valid inline request did not recover the ten-tool slice surface".into());
+    }
+    Ok(())
+}
+
 fn load_investigation_disposition_fixture() -> Result<Value, String> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/mcp_stdio_investigation_disposition.v1.json");
@@ -2257,9 +2287,7 @@ fn mcp_stdio_investigation_disposition_records_not_established_and_stage_witness
     let requests = unsupported_inline_version_request_script()?;
     let output = run_mcp_with_observation_retention(&workspace_root()?, &[&requests], &temp)?;
     let responses = response_lines(&output)?;
-    if responses.len() != 3 {
-        return Err("investigation attempt must produce three correlated replies".into());
-    }
+    assert_unsupported_inline_version_protocol_outcome(&responses)?;
 
     let entries = std::fs::read_dir(&temp)
         .map_err(|error| format!("list observation directory: {error}"))?
@@ -2286,32 +2314,7 @@ fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<
     let requests = unsupported_inline_version_request_script()?;
     let output = run_mcp(&workspace_root()?, &[&requests])?;
     let responses = response_lines(&output)?;
-    if responses.len() != 3 {
-        return Err("inline version control did not produce three correlated replies".into());
-    }
-    let refused = responses
-        .get(1)
-        .ok_or_else(|| "version refusal missing".to_string())?;
-    let expected = serde_json::to_value(rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION)
-        .map_err(|error| error.to_string())?;
-    if refused.get("id") != Some(&json!("unsupported"))
-        || refused.pointer("/error/code") != Some(&expected)
-    {
-        return Err(
-            "unsupported inline version was not rejected with its correlated SDK code".into(),
-        );
-    }
-    let recovered = responses
-        .get(2)
-        .ok_or_else(|| "recovered response missing".to_string())?;
-    if recovered.get("id") != Some(&json!("recovered"))
-        || recovered
-            .pointer("/result/tools")
-            .and_then(Value::as_array)
-            .is_none_or(|tools| tools.len() != 10)
-    {
-        return Err("valid inline request did not recover the ten-tool slice surface".into());
-    }
+    assert_unsupported_inline_version_protocol_outcome(&responses)?;
     Ok(())
 }
 
