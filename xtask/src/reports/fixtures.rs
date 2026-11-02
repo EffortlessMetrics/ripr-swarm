@@ -1170,6 +1170,20 @@ static RIPR_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 /// function — the single place every fixture, golden, drift, and dogfood spawn
 /// reaches the binary through — rather than to individual command entry points,
 /// where a newly added entry point (as `golden-drift` was) silently opts out.
+/// Build `ripr` once and resolve an explicit workspace-anchored debug binary
+/// path. Used when the caller already knows the workspace target layout but
+/// must not resolve through process CWD (#4974).
+pub(crate) fn ripr_fixture_binary_at(binary: PathBuf) -> Result<String, String> {
+    ripr_fixture_binary_built_by(binary, &RIPR_BINARY_BUILD, &|| {
+        // The build output goes straight to the console here, so the retry
+        // cannot read why it failed; it is Windows-only and bounded.
+        crate::run::retry_while_binary_busy(
+            |_| true,
+            || preparation::build(&["build", "-p", "ripr"]),
+        )
+    })
+}
+
 pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     if isolate_fixture_binary() {
         let target = isolated_default_target_dir(&ripr_debug_binary())?;
@@ -1180,14 +1194,7 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     }
     // ripr_debug_binary() honors CARGO_TARGET_DIR (#2176 review): the
     // routed CI jobs set it, so `cargo build` writes there.
-    ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_BINARY_BUILD, &|| {
-        // The build output goes straight to the console here, so the retry
-        // cannot read why it failed; it is Windows-only and bounded.
-        crate::run::retry_while_binary_busy(
-            |_| true,
-            || preparation::build(&["build", "-p", "ripr"]),
-        )
-    })
+    ripr_fixture_binary_at(ripr_debug_binary())
 }
 
 /// Set by a lane whose test run is itself built with a different feature set

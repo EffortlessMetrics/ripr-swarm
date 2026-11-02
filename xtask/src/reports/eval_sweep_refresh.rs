@@ -2560,8 +2560,9 @@ mod python_eval_sweep_refresh {
         };
         let binary = target_dir.join("debug").join(binary_name);
         if !binary.is_file() {
-            // Cold checkout: build through the shared fixture builder.
-            return crate::ripr_fixture_binary();
+            // Cold checkout: build once, but resolve the workspace target path
+            // above — not `ripr_fixture_binary()`'s CWD-relative path (#4974).
+            return super::super::fixtures::ripr_fixture_binary_at(binary);
         }
         std::path::absolute(&binary)
             .map(|path| path.to_string_lossy().to_string())
@@ -2602,6 +2603,30 @@ mod python_eval_sweep_refresh {
             ));
         }
         Ok(staged.to_string_lossy().to_string())
+    }
+
+    #[test]
+    fn built_ripr_binary_cold_path_anchors_at_workspace_target_not_cwd() -> Result<(), String> {
+        let binary_name = format!("ripr{}", std::env::consts::EXE_SUFFIX);
+        let workspace_binary = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default()
+            .join("target")
+            .join("debug")
+            .join(&binary_name);
+        let cwd_relative = crate::ripr_debug_binary();
+        assert_ne!(
+            workspace_binary, cwd_relative,
+            "cargo test -p xtask runs with CWD at the xtask package; the workspace \
+             binary must not equal the CWD-relative path (#4974)"
+        );
+        assert_eq!(
+            cwd_relative,
+            PathBuf::from("target").join("debug").join(&binary_name),
+            "test premise: ripr_debug_binary is CWD-relative"
+        );
+        Ok(())
     }
 
     #[test]
