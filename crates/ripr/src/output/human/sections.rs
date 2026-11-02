@@ -155,6 +155,10 @@ pub(crate) fn render_finding_digest_with_config(
     // WHY the finding is at this class without reading the full form.
     let refused_macro = refused_assertion_macro(finding);
     if let Some(hint) = unresolved_fixture_hint(finding)
+        .or_else(|| {
+            crate::domain::assertion_not_credited_reason(&finding.evidence)
+                .and_then(crate::domain::guard_refusal_classification_hint)
+        })
         .or_else(|| classification_hint(&finding.class, &finding.ripr, refused_macro))
     {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
@@ -281,11 +285,24 @@ pub(crate) fn render_finding_digest_with_config(
             "Related test".to_string()
         };
         // #5344: say why the named test misses, so the reader can open it
-        // and disagree without re-deriving the analysis.
-        let why =
-            crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family)
+        // and disagree without re-deriving the analysis. Prefer the typed
+        // refusal on the finding when it is present (#6541).
+        let why = finding
+            .evidence
+            .iter()
+            .find_map(|entry| {
+                entry
+                    .strip_prefix(crate::domain::ASSERTION_NOT_CREDITED_PREFIX)
+                    .map(|_| format!(" ({entry})"))
+            })
+            .or_else(|| {
+                crate::output::related_test_miss::related_test_miss_reason(
+                    test,
+                    &finding.probe.family,
+                )
                 .map(|why| format!(" ({why})"))
-                .unwrap_or_default();
+            })
+            .unwrap_or_default();
         out.push_str(&format!(
             "  {label}: {}:{} {}{why}\n",
             display_path(&test.file),
