@@ -139,8 +139,8 @@ Dialect resolution is evidence-first:
    interpreter token and admitted version features are explicit.
 2. `.bats` files are Bats test subjects executed under Bash dialect for test semantics; they
    are not generic `.sh` files.
-3. `.sh` defaults to POSIX `sh` unless repository configuration or an explicit project cell
-   selects Bash for that path/root.
+3. `.sh` without a recognized shebang requires explicit repository configuration or an
+   admitted project cell to select POSIX `sh` or Bash; otherwise `dialect_cell = unknown`.
 4. `.bash` selects Bash only when the path is admitted; it does not imply Bats.
 5. Extensionless executable scripts require positive shebang or project evidence; path
    proximity alone is insufficient.
@@ -289,10 +289,18 @@ Map admitted Bats versions/syntax into shared activation vocabulary:
 | `setup`/`teardown`, `setup_file`/`teardown_file` | Lifecycle scope distinct from production reach |
 | tags/filters/skip | Selected vs skipped vs unknown remain distinct |
 | helper loading / `bats_load_library` | Helper-bound vs active test execution distinct |
-| `run` and captures | `status`, `output`, `lines`, stderr-capable captures by version |
+| `run` and captures | `status`, merged `$output`, `$lines`, and when admitted `--separate-stderr` also `$stderr`; merged output is not stdout-only |
 | literal vs generated tests/helpers | Known static registration vs dynamic limitation |
 | platform/dialect/interpreter prerequisites | Explicit prerequisite cells or limitations |
 | mocks/stubs/wrappers | Mapped only through stub semantics; refute real external execution |
+
+`run` capture law:
+
+- Default Bats `run` merges stdout and stderr into `$output`. Assertions on `$output` prove
+  only merged-stream oracles unless the admitted Bats version/options record
+  `--separate-stderr` (or equivalent) on an exact span, in which case `$output` is stdout-only
+  and `$stderr` is a separate oracle subject.
+- `$lines` inherits the same stream binding as `$output` for the active capture mode.
 
 States that must not collapse:
 
@@ -409,9 +417,10 @@ Positive (admissible static claims when future producers implement this contract
 2. A POSIX `#!/bin/sh` script using only `[` tests and literal quotes registers
    `shell/posix/sh/source`; a nested Bash `[[` test in the same file without Bash evidence
    emits `unsupported_in_dialect`, not POSIX credit.
-3. A `.bats` `@test` block with `run ./bin/tool` registers the test as `selected`/`active`
-   only when filters/tags permit; `$output` assertions map to stdout oracle subjects without
-   crediting `$status` unless a status assertion exists.
+3. A `.bats` `@test` block with `run --separate-stderr ./bin/tool` registers the test as
+   `selected`/`active` only when filters/tags permit; `$output` assertions map to stdout
+   oracle subjects only under separate-stream capture, without crediting `$status` unless a
+   status assertion exists.
 4. A test that defines a function named `curl` before `run curl …` maps stub interaction and
    refutes real external `curl` execution (#5546 mock law).
 5. An owned-fixture assertion `[ -f "$BATS_TEST_TMPDIR/out" ]` may state a filesystem
@@ -424,6 +433,8 @@ Negative (required refusals):
    dialect limitation, not Bash parsing.
 2. `echo $(cmd)` stdout capture in a test → `$output` oracle does not prove `cmd`'s exit
    status without a separate status assertion.
+2b. Default Bats `run` with stderr-only text in `$output` → no stdout oracle credit unless
+   separate-stream capture or an explicit stderr oracle subject is admitted.
 3. Pipeline `a | b | c` with default POSIX aggregate rule → stage failures hidden from
    aggregate status unless `pipefail` cell is positively enabled in subject context.
 4. `source ../lib/helper.sh` with unresolved caller cwd → no reach to helpers inside the
@@ -445,6 +456,7 @@ Planned tests:
 - `shell_pipeline_stage_and_aggregate_status_remain_distinct`
 - `shell_pipefail_changes_aggregate_without_collapsing_stages`
 - `shell_output_oracle_does_not_imply_status_oracle`
+- `shell_bats_merged_output_does_not_credit_stdout_oracle`
 - `shell_bats_run_active_test_required_before_oracle_credit`
 - `shell_bats_setup_hook_does_not_prove_test_body_command_reach`
 - `shell_function_stub_refutes_external_command_execution`
