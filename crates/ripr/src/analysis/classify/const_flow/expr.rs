@@ -634,7 +634,8 @@ impl Reader {
         params: Vec<(String, Ty)>,
         body: Expr,
     ) -> Option<Self> {
-        body.is_value_closed().then(|| Self { name, params, body })
+        body.is_value_closed()
+            .then_some(Self { name, params, body })
     }
 
     pub(in crate::analysis::classify) fn is_value_closed(&self) -> bool {
@@ -746,7 +747,7 @@ fn parse_reader_in(text: &str, trait_body: bool) -> Option<Reader> {
         return None;
     }
     let body = parse_tokens_in(body, trait_body)?;
-    body.is_closed().then(|| Reader {
+    body.is_closed().then_some(Reader {
         name: sig.name,
         params: sig.params,
         body,
