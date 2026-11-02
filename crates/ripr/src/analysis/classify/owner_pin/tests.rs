@@ -676,6 +676,9 @@ fn unit_struct_value_admits_only_spellings_nothing_else_can_bind() {
         // #7083 round 5: one spelling in a macro body declares a struct per
         // invocation.
         "macro_rules! unit { () => { pub struct Other; }; }\nfn n() -> u32 {\n    Unit.advance()\n}\n",
+        // #7160: an out-of-workspace item macro may emit a rival value without
+        // naming it in the invocation arguments.
+        "other::make_unit!();\n",
     ] {
         assert!(!decide(rival), "{rival}");
     }
