@@ -10,6 +10,7 @@ mod evidence_promotion_semantics;
 mod fixture_cache;
 mod fixture_variants;
 mod operand_callee_honesty;
+mod packaged_repair_receipt;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
 #[cfg(windows)]
