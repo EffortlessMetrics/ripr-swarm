@@ -70,6 +70,7 @@ mod targeted_test;
 mod test_oracles;
 mod verdict_corpus;
 mod verdict_corpus_relabel;
+mod verification_plan_corpus;
 
 pub(crate) use agentic_bench::agentic_bench;
 pub(crate) use annotations::ripr_annotations;
@@ -209,6 +210,7 @@ pub(crate) use verdict_corpus::{
     expected_report as verdict_corpus_expected_report,
     render_report_json as render_verdict_corpus_report, verdict_corpus,
 };
+pub(crate) use verification_plan_corpus::verification_plan_corpus_command;
 
 fn ensure_parent_dir(path: &std::path::Path, label: &str) -> Result<(), String> {
     let Some(parent) = path.parent() else {

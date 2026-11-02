@@ -21127,3 +21127,29 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0377"
+name = "Verification plan corpus PR A mechanics"
+spec = "docs/specs/RIPR-SPEC-0377-verification-plan-corpus-pr-a.md"
+tests = [
+  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_row_digest_is_stable",
+  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_wrong_plan_digest",
+  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_zero_subject_success",
+  "xtask/src/verification_plan_corpus.rs::tests::committed_fixture_corpus_covers_required_mechanics_scenarios",
+  "xtask/src/reports/verification_plan_corpus.rs::tests::verification_plan_corpus_report_json_and_markdown_agree_on_totals",
+]
+fixtures = [
+  "fixtures/verification-plan-corpus/corpus.json",
+]
+code = [
+  "xtask/src/verification_plan_corpus.rs",
+  "xtask/src/reports/verification_plan_corpus.rs",
+]
+outputs = [
+  "target/ripr/reports/verification-plan-corpus.json",
+  "target/ripr/reports/verification-plan-corpus.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

@@ -1,0 +1,1150 @@
+{
+  "schema_version": "verification_plan_fixture_corpus.v1",
+  "spec": "RIPR-SPEC-0377",
+  "scenarios": [
+    {
+      "id": "mechanics_plan_committed_before_outcomes",
+      "expected": {
+        "accepted": true,
+        "disposition": "correct_fallback_or_refusal"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_plan_committed_before_outcomes",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_plan_committed_before_outcomes",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_plan_committed_before_outcomes"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_plan_committed_before_outcomes"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_plan_committed_before_outcomes",
+          "plan_digest": "sha256:f20a775b9862c7c8eee7c8cb3b5fa157838bc217a55eb4ef0e867fded690bfc9",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_plan_committed_before_outcomes",
+          "complete_command_identity": "cmd:complete:mechanics_plan_committed_before_outcomes",
+          "full_command_identity": "cmd:full:mechanics_plan_committed_before_outcomes"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_plan_committed_before_outcomes"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_plan_committed_before_outcomes"
+          ],
+          "executed_subjects": [
+            "test::mechanics_plan_committed_before_outcomes"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_plan_committed_before_outcomes-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "correct_fallback_or_refusal"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_would_miss_remains_visible",
+      "expected": {
+        "accepted": true,
+        "disposition": "would_miss_material_outcome"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_would_miss_remains_visible",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_would_miss_remains_visible",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_would_miss_remains_visible"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_would_miss_remains_visible"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_would_miss_remains_visible",
+          "plan_digest": "sha256:4e958378b286ed51092b79225d34ebb2ff2d9702cafd76b2650333a5081babb0",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_would_miss_remains_visible",
+          "complete_command_identity": "cmd:complete:mechanics_would_miss_remains_visible",
+          "full_command_identity": "cmd:full:mechanics_would_miss_remains_visible"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_would_miss_remains_visible"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_would_miss_remains_visible"
+          ],
+          "executed_subjects": [
+            "test::mechanics_would_miss_remains_visible"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_would_miss_remains_visible-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "would_miss_material_outcome"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_would_delay_not_miss",
+      "expected": {
+        "accepted": true,
+        "disposition": "plan_delayed_material_outcome"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_would_delay_not_miss",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_would_delay_not_miss",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_would_delay_not_miss"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_would_delay_not_miss"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_would_delay_not_miss",
+          "plan_digest": "sha256:b3d7aa322005b2882009a3e24a99f2f4017508664fc0e2dee4e4bac3c818de5f",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_would_delay_not_miss",
+          "complete_command_identity": "cmd:complete:mechanics_would_delay_not_miss",
+          "full_command_identity": "cmd:full:mechanics_would_delay_not_miss"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_would_delay_not_miss"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_would_delay_not_miss"
+          ],
+          "executed_subjects": [
+            "test::mechanics_would_delay_not_miss"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_would_delay_not_miss-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "plan_delayed_material_outcome"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_correct_fallback",
+      "expected": {
+        "accepted": true,
+        "disposition": "correct_fallback_or_refusal"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_correct_fallback",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_correct_fallback",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_correct_fallback"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_correct_fallback"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_correct_fallback",
+          "plan_digest": "sha256:87547561fffe7724aa8e05befa37bcba1b7c48f4426c5f3d2cc9c4785a36d576",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_correct_fallback",
+          "complete_command_identity": "cmd:complete:mechanics_correct_fallback",
+          "full_command_identity": "cmd:full:mechanics_correct_fallback"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_correct_fallback"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_correct_fallback"
+          ],
+          "executed_subjects": [
+            "test::mechanics_correct_fallback"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_correct_fallback-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "correct_fallback_or_refusal"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_over_widen",
+      "expected": {
+        "accepted": true,
+        "disposition": "over_widen_beyond_justified_scope"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_over_widen",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_over_widen",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_over_widen"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_over_widen"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_over_widen",
+          "plan_digest": "sha256:2073adaafe354d3b61d3be3db91b7f01c96c7e737dc8a9b9a10e4f1eeb7dae8f",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_over_widen",
+          "complete_command_identity": "cmd:complete:mechanics_over_widen",
+          "full_command_identity": "cmd:full:mechanics_over_widen"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_over_widen"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_over_widen"
+          ],
+          "executed_subjects": [
+            "test::mechanics_over_widen"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_over_widen-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "over_widen_beyond_justified_scope"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_infrastructure_inconclusive",
+      "expected": {
+        "accepted": true,
+        "disposition": "infrastructure_limited"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_infrastructure_inconclusive",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_infrastructure_inconclusive",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_infrastructure_inconclusive"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_infrastructure_inconclusive"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_infrastructure_inconclusive",
+          "plan_digest": "sha256:9509efac81ca93e62293338b491a749ee0bdb1ca8b6481ed1ba6c19cb408dfda",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_infrastructure_inconclusive",
+          "complete_command_identity": "cmd:complete:mechanics_infrastructure_inconclusive",
+          "full_command_identity": "cmd:full:mechanics_infrastructure_inconclusive"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_infrastructure_inconclusive"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_infrastructure_inconclusive"
+          ],
+          "executed_subjects": [
+            "test::mechanics_infrastructure_inconclusive"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_infrastructure_inconclusive-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "infrastructure_limited"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_equivalent_not_selector_miss",
+      "expected": {
+        "accepted": true,
+        "disposition": "outcome_not_measurable"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_equivalent_not_selector_miss",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_equivalent_not_selector_miss",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_equivalent_not_selector_miss"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_equivalent_not_selector_miss"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_equivalent_not_selector_miss",
+          "plan_digest": "sha256:6ffa16000ddbe5af2cbc6c8a40b373ef973d1a836c76bc0a023af8cc9fd47008",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_equivalent_not_selector_miss",
+          "complete_command_identity": "cmd:complete:mechanics_equivalent_not_selector_miss",
+          "full_command_identity": "cmd:full:mechanics_equivalent_not_selector_miss"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_equivalent_not_selector_miss"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_equivalent_not_selector_miss"
+          ],
+          "executed_subjects": [
+            "test::mechanics_equivalent_not_selector_miss"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_equivalent_not_selector_miss-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "outcome_not_measurable"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_synthetic_not_real_evidence",
+      "expected": {
+        "accepted": true,
+        "disposition": "correct_fallback_or_refusal"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_synthetic_not_real_evidence",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_synthetic_not_real_evidence",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_synthetic_not_real_evidence"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_synthetic_not_real_evidence"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_synthetic_not_real_evidence",
+          "plan_digest": "sha256:3a34c28b7fe595fde488429b64df2cdb02eb9258c0837e8150ffb7cd39d48ab3",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_synthetic_not_real_evidence",
+          "complete_command_identity": "cmd:complete:mechanics_synthetic_not_real_evidence",
+          "full_command_identity": "cmd:full:mechanics_synthetic_not_real_evidence"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_synthetic_not_real_evidence"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_synthetic_not_real_evidence"
+          ],
+          "executed_subjects": [
+            "test::mechanics_synthetic_not_real_evidence"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_synthetic_not_real_evidence-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "correct_fallback_or_refusal"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_deterministic_identity",
+      "expected": {
+        "accepted": true,
+        "disposition": "plan_selected_material_outcome"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_deterministic_identity",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_deterministic_identity",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_deterministic_identity"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_deterministic_identity"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_deterministic_identity",
+          "plan_digest": "sha256:11b06b5e6f5c75c3e59f0fc3d9f1a70c549894f408b107fa8d624cc72767e38b",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_deterministic_identity",
+          "complete_command_identity": "cmd:complete:mechanics_deterministic_identity",
+          "full_command_identity": "cmd:full:mechanics_deterministic_identity"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_deterministic_identity"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_deterministic_identity"
+          ],
+          "executed_subjects": [
+            "test::mechanics_deterministic_identity"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_deterministic_identity-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "plan_selected_material_outcome"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_judgment_generation_bound",
+      "expected": {
+        "accepted": true,
+        "disposition": "correct_fallback_or_refusal"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_judgment_generation_bound",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_judgment_generation_bound",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_judgment_generation_bound"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_judgment_generation_bound"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_judgment_generation_bound",
+          "plan_digest": "sha256:c3452e1874edb9ef9fa366ba24e714e6881fa3c4d2406d419cb49141f91784d4",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_judgment_generation_bound",
+          "complete_command_identity": "cmd:complete:mechanics_judgment_generation_bound",
+          "full_command_identity": "cmd:full:mechanics_judgment_generation_bound"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_judgment_generation_bound"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_judgment_generation_bound"
+          ],
+          "executed_subjects": [
+            "test::mechanics_judgment_generation_bound"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-gen-bound-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "correct_fallback_or_refusal"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_zero_subjects_not_success",
+      "expected": {
+        "accepted": false,
+        "disposition": "would_miss_material_outcome"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_zero_subjects_not_success",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_zero_subjects_not_success",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_zero_subjects_not_success"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_zero_subjects_not_success"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_zero_subjects_not_success",
+          "plan_digest": "sha256:898f3f863e0b975e9f8cef5b02d29d5b3caf2e305a7a4408b17b23e11d6bad6d",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_zero_subjects_not_success",
+          "complete_command_identity": "cmd:complete:mechanics_zero_subjects_not_success",
+          "full_command_identity": "cmd:full:mechanics_zero_subjects_not_success"
+        },
+        "execution": {
+          "selected_subjects": [],
+          "discovered_subjects": [],
+          "executed_subjects": [],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_zero_subjects_not_success-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "would_miss_material_outcome"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_missing_artifact_incomplete",
+      "expected": {
+        "accepted": false,
+        "disposition": "outcome_not_measurable"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_missing_artifact_incomplete",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_missing_artifact_incomplete",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_missing_artifact_incomplete"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_missing_artifact_incomplete"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_missing_artifact_incomplete",
+          "plan_digest": "sha256:fad346f38051eaeb895e7e1f6359618b5f87e0dd3dee4d62f481304cbba430c7",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_missing_artifact_incomplete",
+          "complete_command_identity": "cmd:complete:mechanics_missing_artifact_incomplete",
+          "full_command_identity": "cmd:full:mechanics_missing_artifact_incomplete"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_missing_artifact_incomplete"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_missing_artifact_incomplete"
+          ],
+          "executed_subjects": [
+            "test::mechanics_missing_artifact_incomplete"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_missing_artifact_incomplete-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "outcome_not_measurable"
+        },
+        "evidence_digests": [],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_wrong_plan_identity_rejected",
+      "expected": {
+        "accepted": false,
+        "disposition": "would_miss_material_outcome"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_wrong_plan_identity_rejected",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_wrong_plan_identity_rejected",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_wrong_plan_identity_rejected"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_wrong_plan_identity_rejected"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_wrong",
+          "plan_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_wrong_plan_identity_rejected",
+          "complete_command_identity": "cmd:complete:mechanics_wrong_plan_identity_rejected",
+          "full_command_identity": "cmd:full:mechanics_wrong_plan_identity_rejected"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_wrong_plan_identity_rejected"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_wrong_plan_identity_rejected"
+          ],
+          "executed_subjects": [
+            "test::mechanics_wrong_plan_identity_rejected"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_wrong_plan_identity_rejected-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "would_miss_material_outcome"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_stale_plan_identity_rejected",
+      "expected": {
+        "accepted": false,
+        "disposition": "would_miss_material_outcome"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_stale_plan_identity_rejected",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_stale_plan_identity_rejected",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_stale_plan_identity_rejected"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_stale_plan_identity_rejected"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-stale",
+          "plan_digest": "sha256:865172fcef5e6959a1cceb70fbbd170a376f1a20d85a1d6a633e5d7cc1e22a95",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_stale_plan_identity_rejected",
+          "complete_command_identity": "cmd:complete:mechanics_stale_plan_identity_rejected",
+          "full_command_identity": "cmd:full:mechanics_stale_plan_identity_rejected"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_stale_plan_identity_rejected"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_stale_plan_identity_rejected"
+          ],
+          "executed_subjects": [
+            "test::mechanics_stale_plan_identity_rejected"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_stale_plan_identity_rejected-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "would_miss_material_outcome"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": null
+      }
+    },
+    {
+      "id": "mechanics_removed_row_stays_denominator",
+      "expected": {
+        "accepted": true,
+        "disposition": "would_miss_material_outcome"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_removed_row_stays_denominator",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_removed_row_stays_denominator",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_removed_row_stays_denominator"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_removed_row_stays_denominator"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_removed_row_stays_denominator",
+          "plan_digest": "sha256:517169dea0d74b47ddab3d777737179b9858b9310f6225998ffb0550886a1a11",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_removed_row_stays_denominator",
+          "complete_command_identity": "cmd:complete:mechanics_removed_row_stays_denominator",
+          "full_command_identity": "cmd:full:mechanics_removed_row_stays_denominator"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_removed_row_stays_denominator"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_removed_row_stays_denominator"
+          ],
+          "executed_subjects": [
+            "test::mechanics_removed_row_stays_denominator"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_removed_row_stays_denominator-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "would_miss_material_outcome"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": true,
+        "successor_of": "mechanics_would_miss_remains_visible"
+      }
+    },
+    {
+      "id": "mechanics_successor_preserves_miss",
+      "expected": {
+        "accepted": true,
+        "disposition": "would_miss_material_outcome"
+      },
+      "case": {
+        "schema_version": "verification_plan_case.v1",
+        "case_id": "mechanics_successor_preserves_miss",
+        "generation": "gen-pr-a-1",
+        "case_class": "synthetic_mechanics",
+        "synthetic": true,
+        "selection_stratum": "synthetic_mechanics",
+        "selection_rationale": "PR A mechanics control for mechanics_successor_preserves_miss",
+        "selection_frozen_before_outcomes": true,
+        "provenance": {
+          "source": "fixtures/verification-plan-corpus",
+          "license": "MIT",
+          "retention_class": "committed_fixture"
+        },
+        "change": {
+          "repository": "EffortlessMetrics/ripr-swarm",
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tree": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "patch_identity": "patch:mechanics_successor_preserves_miss"
+        },
+        "changed_subject_denominator": [
+          "subject:mechanics_successor_preserves_miss"
+        ],
+        "expected_obligation_families": [
+          "test_execution"
+        ],
+        "plan": {
+          "plan_identity": "plan-mechanics_successor_preserves_miss",
+          "plan_digest": "sha256:4c17a74f70f38b464adbfa459dbd9a6b620c8d468e8f565f63b7da357c5006e3",
+          "committed_before_outcomes": true
+        },
+        "routes": {
+          "fast_command_identity": "cmd:fast:mechanics_successor_preserves_miss",
+          "complete_command_identity": "cmd:complete:mechanics_successor_preserves_miss",
+          "full_command_identity": "cmd:full:mechanics_successor_preserves_miss"
+        },
+        "execution": {
+          "selected_subjects": [
+            "test::mechanics_successor_preserves_miss"
+          ],
+          "discovered_subjects": [
+            "test::mechanics_successor_preserves_miss"
+          ],
+          "executed_subjects": [
+            "test::mechanics_successor_preserves_miss"
+          ],
+          "targeted_observation_succeeded": true
+        },
+        "judgment": {
+          "judgment_generation": "judgment-mechanics_successor_preserves_miss-1",
+          "independent_reviewer": "reviewer:fixture",
+          "material_outcome": "observed",
+          "disposition": "would_miss_material_outcome"
+        },
+        "evidence_digests": [
+          "evidence:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        "non_claims": [
+          "Synthetic mechanics only; not real repository safety evidence."
+        ],
+        "limitations": [],
+        "removed_from_manifest": false,
+        "successor_of": "mechanics_removed_row_stays_denominator"
+      }
+    }
+  ]
+}

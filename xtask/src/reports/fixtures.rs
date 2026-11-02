@@ -765,6 +765,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "source_promotion"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
+                    | "verification-plan-corpus"
                     | "work_portfolio"
                     | "work_selection_identity"
                     | "work_result_identity"
