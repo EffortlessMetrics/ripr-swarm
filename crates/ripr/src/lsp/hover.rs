@@ -3005,7 +3005,14 @@ mod plain_hover_summary_tests {
             include_str!("../analysis/classify/infection.rs"),
             include_str!("../domain/classification.rs"),
         ]
-        .map(|source| source.split("#[cfg(test)]").next().unwrap_or(source))
+        .map(|source| {
+            // Cut at the real test module: producers carry earlier item-level
+            // `#[cfg(test)]` attributes that a bare first-match cut would hit.
+            source
+                .split("#[cfg(test)]\nmod tests {")
+                .next()
+                .unwrap_or(source)
+        })
         .join("\n");
         for prefix in super::SOURCE_TEXT_AFTER_COLON_PREFIXES {
             assert!(
