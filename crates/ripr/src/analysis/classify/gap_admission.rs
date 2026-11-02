@@ -116,9 +116,13 @@ pub(in crate::analysis) fn withhold_dependent_crate_reach_gap(
     finding: &mut Finding,
     dependents_host_indexed_tests: bool,
 ) -> bool {
+    // An FFI owner already names the other-language oracle (#910). That
+    // kind must not be overwritten by a sibling-crate Rust-test search.
     if !dependents_host_indexed_tests
         || finding.class != ExposureClass::NoStaticPath
         || !finding.related_tests.is_empty()
+        || finding.static_limit_kind
+            == Some(StaticLimitKind::CrossLanguageOracleVisibilityUnresolved)
     {
         return false;
     }
@@ -137,6 +141,8 @@ pub(in crate::analysis) fn withhold_dependent_crate_reach_gap(
             && !line.starts_with(LIMITATION_HELPER_BOUNDARY_PREFIX)
             && !line.contains("No static test path")
             && !line.starts_with("No test reaches the changed owner")
+            && !line.starts_with("No statically reachable test path")
+            && !line.starts_with("No tests were found, so activation/infection")
     });
     finding.stop_reasons.retain(|reason| {
         !matches!(
@@ -1582,6 +1588,10 @@ mod tests {
         finding
             .stop_reasons
             .push(StopReason::TransitiveReachUnresolved);
+        finding.evidence.push(
+            "No statically reachable test path was found, so activation/infection cannot be estimated"
+                .to_string(),
+        );
         finding.evidence.extend([
             format!(
                 "{LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX}entry `serialize` in tests/api.rs"
@@ -1641,10 +1651,10 @@ mod tests {
                 .contains(&StopReason::GapEvidenceUnresolved)
         );
         assert!(
-            finding
-                .evidence
-                .iter()
-                .all(|line| !line.contains("No static test path")),
+            finding.evidence.iter().all(|line| {
+                !line.contains("No static test path")
+                    && !line.starts_with("No statically reachable test path")
+            }),
             "{:?}",
             finding.evidence
         );
@@ -1674,6 +1684,15 @@ mod tests {
         weakly.class = ExposureClass::WeaklyExposed;
         assert!(!withhold_dependent_crate_reach_gap(&mut weakly, true));
         assert_eq!(weakly.class, ExposureClass::WeaklyExposed);
+
+        let mut ffi = no_path();
+        ffi.static_limit_kind = Some(StaticLimitKind::CrossLanguageOracleVisibilityUnresolved);
+        assert!(!withhold_dependent_crate_reach_gap(&mut ffi, true));
+        assert_eq!(ffi.class, ExposureClass::NoStaticPath);
+        assert_eq!(
+            ffi.static_limit_kind,
+            Some(StaticLimitKind::CrossLanguageOracleVisibilityUnresolved)
+        );
     }
 
     const LOG_SOURCE: &str = r##"

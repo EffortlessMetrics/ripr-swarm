@@ -1112,6 +1112,7 @@ fn return_value_direct_at_probe_line(
     file: &str,
     line: usize,
     source: &str,
+    root: &Path,
 ) -> Option<TestStubResolution> {
     let (fn_start, fn_end) = owner_fn_line_span(source, line)?;
     let owner = candidates.iter().find_map(|candidate| {
@@ -1157,7 +1158,7 @@ fn return_value_direct_at_probe_line(
         ExpectedSink::ReturnValue,
         &crlf_pairs,
     );
-    let outcome = rust_test_stub(&seam, None, source, None);
+    let outcome = rust_test_stub(&seam, None, source, Some(root));
     Some(TestStubResolution {
         seam_id: seam.id().as_str().to_string(),
         owner: seam.owner().to_string(),
@@ -1320,7 +1321,7 @@ fn resolve_at(
         let on_line_return_value = !candidates.is_empty();
         if !on_line_return_value
             && let Some(resolution) =
-                return_value_direct_at_probe_line(&in_file, file, line, &source)
+                return_value_direct_at_probe_line(&in_file, file, line, &source, root)
         {
             return Ok(resolution);
         }
