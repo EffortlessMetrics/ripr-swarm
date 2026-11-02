@@ -16,6 +16,7 @@ const SCRIPT_OBSERVATION_UNCONFIRMED: &str =
 ///
 /// TypeScript/JavaScript preview surfaces must use
 /// [`typescript_script_preview_related_test`] instead (#5505).
+#[cfg(test)]
 pub(crate) fn strongest_related_test(tests: &[RelatedTest]) -> Option<&RelatedTest> {
     let mut best: Option<&RelatedTest> = None;
     for test in tests {
@@ -41,6 +42,7 @@ pub(crate) fn headline_related_test_for_finding(finding: &Finding) -> Option<&Re
 ///
 /// Script findings should prefer [`headline_related_test_for_finding`] or
 /// [`typescript_script_preview_related_test`].
+#[cfg(test)]
 pub(crate) fn headline_related_test(
     language: Option<LanguageId>,
     tests: &[RelatedTest],
