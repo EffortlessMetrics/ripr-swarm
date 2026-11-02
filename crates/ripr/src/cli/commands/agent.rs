@@ -751,7 +751,10 @@ impl SeamIdSurface {
                 format!("ripr agent repair --seam-id <seam-id> --root {root_arg} --phase before")
             }
             Self::Card => format!("ripr agent card --seam-id <seam-id> --root {root_arg}"),
-            Self::Packet => format!("ripr agent packet --seam-id <seam-id> --root {root_arg}"),
+            // `agent packet` refuses to parse without `--json`.
+            Self::Packet => {
+                format!("ripr agent packet --seam-id <seam-id> --root {root_arg} --json")
+            }
         }
     }
 
@@ -764,6 +767,25 @@ impl SeamIdSurface {
     }
 }
 
+/// Whether `--seam-id` has a shape the shared repair resolver translates: a
+/// `probe:`/`repo-probe:` finding ID, a `gap:` ID, or a `file:line` location
+/// (a non-empty file, then `:`, then a positive decimal line, as the resolver's
+/// `selector_matches_file_line` reads it). Any other id, even one containing a
+/// colon, goes to normal seam lookup untouched.
+fn names_cross_namespace_id(seam_id: &str) -> bool {
+    if seam_id.starts_with("probe:")
+        || seam_id.starts_with("repo-probe:")
+        || seam_id.starts_with("gap:")
+    {
+        return true;
+    }
+    seam_id.rsplit_once(':').is_some_and(|(file, line)| {
+        !file.is_empty()
+            && line.bytes().all(|byte| byte.is_ascii_digit())
+            && line.bytes().any(|byte| byte != b'0')
+    })
+}
+
 /// [`translate_agent_repair_seam_id`] for any surface that accepts the same id
 /// shapes. An exact seam id (and any other shape) passes through untouched.
 pub(in crate::cli) fn translate_seam_id_for(
@@ -772,11 +794,7 @@ pub(in crate::cli) fn translate_seam_id_for(
     seam_id: &str,
 ) -> Result<String, SeamIdTranslateError> {
     let label = surface.label();
-    let cross_namespace = seam_id.starts_with("probe:")
-        || seam_id.starts_with("repo-probe:")
-        || seam_id.starts_with("gap:")
-        || seam_id.contains(':');
-    if !cross_namespace {
+    if !names_cross_namespace_id(seam_id) {
         return Ok(seam_id.to_string());
     }
     use crate::app::task_first::RepairSubjectOutcome;

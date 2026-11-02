@@ -1915,6 +1915,21 @@ fn agent_card_and_packet_accept_any_id_check_prints() -> Result<(), String> {
     }
     let stale_card =
         run_agent_card_or_packet(root, "card", "probe:src_lib.rs:predicate:00000000", true)?;
+    // A colon alone does not make an id a location: it goes to normal seam
+    // lookup and gets the exact-id not-found wording, not a stale-id refusal.
+    for surface in ["card", "packet"] {
+        for odd in ["seam:sample", "src/lib.rs:", "src/lib.rs:0", "src/lib.rs:x"] {
+            let output = run_agent_card_or_packet(root, surface, odd, true)?;
+            assert_exit(&output, 3, &format!("agent {surface} with {odd}"));
+            let stderr = stderr_text(&output);
+            assert!(
+                stderr.contains(&format!("agent {surface} seam_id {odd} was not found"))
+                    && !stderr.contains("stale")
+                    && !stderr.contains("names no current seam"),
+                "{odd} must take the normal lookup path:\n{stderr}"
+            );
+        }
+    }
     let envelope: serde_json::Value = serde_json::from_slice(&stale_card.stdout)
         .map_err(|err| format!("stale card must print the typed envelope: {err}"))?;
     assert_eq!(envelope["error"]["kind"], "seam_not_found");
@@ -1950,6 +1965,31 @@ fn agent_card_and_packet_refuse_an_ambiguous_gap_id() -> Result<(), String> {
             stderr.contains("names 2 gaps; select one explicitly")
                 && stderr.contains(&format!("Retry: `ripr agent {surface} --seam-id <seam-id>")),
             "ambiguous refusal must list the gaps and name this command's retry:\n{stderr}"
+        );
+        // The printed retry must itself parse and run: paste it with a listed
+        // seam id in place of the placeholder.
+        let retry = stderr
+            .split("Retry: `")
+            .nth(1)
+            .and_then(|rest| rest.split('`').next())
+            .ok_or_else(|| format!("no retry command in:\n{stderr}"))?;
+        let listed = stderr
+            .split("select one explicitly: ")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .ok_or_else(|| format!("no listed seam in:\n{stderr}"))?;
+        let words: Vec<String> = retry
+            .replace("<seam-id>", listed)
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(words.first().map(String::as_str), Some("ripr"), "{retry}");
+        let args: Vec<&str> = words[1..].iter().map(String::as_str).collect();
+        let pasted = run_ripr(root, &args)?;
+        assert_exit(
+            &pasted,
+            0,
+            &format!("pasted agent {surface} retry `{retry}`"),
         );
     }
     Ok(())
