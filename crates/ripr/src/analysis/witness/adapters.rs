@@ -7,7 +7,7 @@ use super::{
 use crate::analysis::canonical_gap::canonical_gap_identity;
 use crate::analysis::seam_classification::ClassifiedSeam;
 use crate::analysis::seams::RequiredDiscriminator;
-use crate::analysis::test_grip_evidence::RelatedTestGrip;
+use crate::analysis::test_grip_evidence::{RelatedTestGrip, retain_test_grip_summary};
 use crate::domain::{
     Finding, LanguageId, LanguageStatus, ProbeFamily, RelatedTest, RelationReason,
     SourceCurrentness, StopReason,
@@ -80,6 +80,7 @@ pub(crate) fn retain_classified_seams(seams: &[ClassifiedSeam], input: AdapterIn
             valid,
             "behavior evidence witness digest must match canonical bytes"
         );
+        retain_test_grip_summary(&seam.evidence);
         let _ = valid;
     });
 }

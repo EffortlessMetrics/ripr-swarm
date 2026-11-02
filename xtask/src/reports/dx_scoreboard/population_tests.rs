@@ -561,11 +561,34 @@ fn perl_row_provenance_must_match_the_packet_definition() -> Result<(), String> 
             .is_err_and(|err| err.contains("disagrees with its scoring definition"))
     );
     fixture_json(&row_path, &original)?;
+    let base_case = corpus
+        .cases
+        .iter()
+        .find(|candidate| {
+            candidate.case_id != case.case_id
+                && candidate.perl_facts.as_ref().is_some_and(|facts| {
+                    facts.provenance == super::super::verdict_corpus::PacketProvenance::Producer
+                })
+        })
+        .ok_or("second producer case missing")?;
+    let base_facts = base_case
+        .perl_facts
+        .as_ref()
+        .ok_or("base producer missing perl_facts")?;
+    let case_facts = case.perl_facts.as_ref().ok_or("case missing perl_facts")?;
     let before = population::Records::load(&dir)?.population("abstention_rate")?;
     let case_path = dir.join("cases").join(format!("{}.json", case.case_id));
+    let case_packet_path = dir.join(&case_facts.packet);
+    let base_packet_path = dir.join(&base_facts.packet);
+    let copied = fs::read(&base_packet_path).map_err(|err| err.to_string())?;
+    fs::write(&case_packet_path, &copied).map_err(|err| err.to_string())?;
     let mut changed = read_json(&case_path)?;
+    changed["perl_facts"]["sha256"] = json!(super::super::verdict_corpus::sha256_hex(&copied));
     changed["perl_facts"]["provenance"] = json!("edited_producer");
-    changed["perl_facts"]["edits"] = json!("provenance changed for the identity control");
+    changed["perl_facts"]["edits"] = json!(format!(
+        "Started from the producer packet of {}, then the packet fingerprint was recomputed.",
+        base_case.case_id
+    ));
     fixture_json(&case_path, &changed)?;
     fixture_json(&row_path, &wrong)?;
     let after = population::Records::load(&dir)?.population("abstention_rate")?;
