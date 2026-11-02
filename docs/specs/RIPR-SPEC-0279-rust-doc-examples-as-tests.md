@@ -212,7 +212,11 @@ features. The answer is three-valued and only "provably true" admits:
 - `feature = "name"` is true when `name` is in the closure of the package
   manifest's `[features] default = [..]`. Closure follows plain feature
   names through `[features]`; a `dep:name` or `name/feature` entry does not
-  add a feature name.
+  add a feature name. A name with no `[features]` entry counts only as an
+  optional dependency's implicit feature: an `optional = true` entry of the
+  package's `[dependencies]` or `[build-dependencies]` (target tables
+  included) that no `[features]` list spells as `dep:name`. Anything else
+  names nothing Cargo would enable.
 - `all(..)` is true when it has at least one operand and every operand is
   true. `any(..)` is true when at least one operand is true.
 - `doctest` is true; it is the one non-feature name rustdoc sets.

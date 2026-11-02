@@ -613,6 +613,41 @@ fn only_the_manifest_default_closure_counts_as_enabled() -> Result<(), Box<dyn E
     ] {
         assert_eq!(registered_with_manifest(manifest, &gate)?, 0, "{manifest}");
     }
+    // An undeclared default entry is credited only as an optional
+    // dependency's implicit feature (review bot, #12368); `dep:` removes it.
+    let gate_serde = gated_item("#[cfg(feature = \"serde\")]");
+    for (manifest, expected) in [
+        (
+            "\n[features]\ndefault = [\"serde\"]\n\n[dependencies]\nserde = { version = \"1\", optional = true }\n",
+            1,
+        ),
+        (
+            "\n[features]\ndefault = [\"serde\"]\n\n[target.'cfg(unix)'.dependencies]\nserde = { version = \"1\", optional = true }\n",
+            1,
+        ),
+        // Not optional, not a dependency at all: Cargo would reject this.
+        (
+            "\n[features]\ndefault = [\"serde\"]\n\n[dependencies]\nserde = \"1\"\n",
+            0,
+        ),
+        ("\n[features]\ndefault = [\"serde\"]\n", 0),
+        // `dep:serde` anywhere switches the implicit feature off.
+        (
+            "\n[features]\ndefault = [\"serde\"]\njson = [\"dep:serde\"]\n\n[dependencies]\nserde = { version = \"1\", optional = true }\n",
+            0,
+        ),
+        // A dev-dependency never makes an implicit feature.
+        (
+            "\n[features]\ndefault = [\"serde\"]\n\n[dev-dependencies]\nserde = { version = \"1\", optional = true }\n",
+            0,
+        ),
+    ] {
+        assert_eq!(
+            registered_with_manifest(manifest, &gate_serde)?,
+            expected,
+            "{manifest}"
+        );
+    }
     // `default` named in its own list, directly or through a cycle, must
     // terminate: the walk never credits `default` as a feature (review of
     // da949b6ea). Entries beside the cycle still resolve.

@@ -800,6 +800,7 @@ impl MemberCrates {
         // They differ only by the distinguished `default` name, which is
         // walked but never credited as a feature, so a list that names
         // `default` (directly or through a cycle) still terminates.
+        let implicit = implicit_dependency_features(&package.manifest, table);
         let mut enabled = std::collections::BTreeSet::new();
         let mut visited = std::collections::BTreeSet::new();
         let mut pending = vec!["default".to_string()];
@@ -807,14 +808,19 @@ impl MemberCrates {
             if !visited.insert(name.clone()) {
                 continue;
             }
+            // A name with no `[features]` entry is credited only as an
+            // optional dependency's implicit feature (Cargo has no other
+            // such feature, and drops the implicit one once any feature
+            // list spells `dep:name`); it walks no further.
+            let Some(entry) = table.get(&name) else {
+                if implicit.contains(&name) {
+                    enabled.insert(name);
+                }
+                continue;
+            };
             if name != "default" {
                 enabled.insert(name.clone());
             }
-            // A name with no `[features]` entry is an optional dependency's
-            // implicit feature; it is on when listed and walks no further.
-            let Some(entry) = table.get(&name) else {
-                continue;
-            };
             for member in entry.as_array()? {
                 let member = member.as_str()?;
                 if member.starts_with("dep:") || member.contains('/') {
@@ -990,6 +996,51 @@ fn committed_package(
 }
 
 /// One package manifest: its directory and parsed table.
+/// The implicit features Cargo creates for the package's optional
+/// dependencies: one per `optional = true` entry of `[dependencies]` and
+/// `[build-dependencies]` (target tables included), minus any name some
+/// `[features]` list spells as `dep:name`, which turns the implicit feature
+/// off. A default-feature name outside this set and the `[features]` table
+/// names nothing Cargo would enable, so it is not credited.
+fn implicit_dependency_features(
+    manifest: &toml::Table,
+    features: &toml::Table,
+) -> std::collections::BTreeSet<String> {
+    const SECTIONS: [&str; 2] = ["dependencies", "build-dependencies"];
+    let mut tables: Vec<&toml::Table> = SECTIONS
+        .iter()
+        .filter_map(|section| manifest.get(*section).and_then(toml::Value::as_table))
+        .collect();
+    if let Some(targets) = manifest.get("target").and_then(toml::Value::as_table) {
+        for target in targets.values().filter_map(toml::Value::as_table) {
+            tables.extend(
+                SECTIONS
+                    .iter()
+                    .filter_map(|section| target.get(*section).and_then(toml::Value::as_table)),
+            );
+        }
+    }
+    let mut names: std::collections::BTreeSet<String> = tables
+        .into_iter()
+        .flat_map(|table| table.iter())
+        .filter(|(_, spec)| {
+            spec.as_table()
+                .and_then(|spec| spec.get("optional"))
+                .and_then(toml::Value::as_bool)
+                == Some(true)
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    for entries in features.values().filter_map(toml::Value::as_array) {
+        for entry in entries.iter().filter_map(toml::Value::as_str) {
+            if let Some(suppressed) = entry.strip_prefix("dep:") {
+                names.remove(suppressed);
+            }
+        }
+    }
+    names
+}
+
 struct Package {
     directory: PathBuf,
     manifest: toml::Table,
