@@ -1,0 +1,41 @@
+# Pins whole-binding let-return value-flow evaluation (#9871) under RIPR-SPEC-0096 and RIPR-SPEC-0357.
+[[extend]]
+id = "RIPR-SPEC-0096"
+tests = [
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_reassigned_binding_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_shadowed_binding_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_partially_used_binding_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_transformed_return_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::an_early_return_before_the_binding_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_foreign_same_name_import_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_renamed_binding_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_named_binding_returned_bare_is_discriminated_by_the_pin",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::an_unpinned_literal_is_indistinguishable",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_self_computed_expected_value_is_unreadable",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_duplicate_owner_name_is_unreadable",
+  "crates/ripr/src/analysis/language/rust/probes.rs::tests::credited_whole_binding_return_does_not_claim_unread_value",
+]
+code = [
+  "crates/ripr/src/analysis/classify/binding_return_flow.rs",
+]
+fixtures = [
+  "fixtures/rust-verdict-corpus/cases/spec0096-named-binding-used.json",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0357"
+tests = [
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_reassigned_binding_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_shadowed_binding_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_partially_used_binding_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_transformed_return_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::an_early_return_before_the_binding_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_foreign_same_name_import_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_renamed_binding_is_not_evaluated",
+  "crates/ripr/src/analysis/classify/binding_return_flow/tests.rs::a_named_binding_returned_bare_is_discriminated_by_the_pin",
+  "crates/ripr/src/analysis/language/rust/probes.rs::tests::credited_whole_binding_return_does_not_claim_unread_value",
+]
+code = [
+  "crates/ripr/src/analysis/classify/binding_return_flow.rs",
+  "crates/ripr/src/analysis/language/rust/probes.rs",
+]
