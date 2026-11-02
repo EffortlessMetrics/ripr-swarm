@@ -223,15 +223,15 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
     if !cached.index.proptest_receipts.is_empty()
         || !cached.index.bolero_receipts.is_empty()
         || cached.index.files().iter().any(|(_, file)| {
-            !file.used_lexical_fallback
-                && ((file.source.contains("bolero")
-                    && !crate::analysis::syntax::bolero_profiles(&file.source).is_empty())
-                    || file.unresolved_property_macros.iter().any(|property| {
-                        matches!(
-                            property.name.as_str(),
-                            "proptest" | "proptest::proptest" | "::proptest::proptest"
-                        )
-                    }))
+            (!file.used_lexical_fallback
+                && file.source.contains("bolero")
+                && !crate::analysis::syntax::bolero_profiles(&file.source).is_empty())
+                || file.unresolved_property_macros.iter().any(|property| {
+                    matches!(
+                        property.name.as_str(),
+                        "proptest" | "proptest::proptest" | "::proptest::proptest"
+                    )
+                })
         })
     {
         return build_cached_index_with_test_harnesses(
