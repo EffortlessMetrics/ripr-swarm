@@ -1318,6 +1318,14 @@ pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
         if cfg_predicates::attribute_introduces_only_test(&attr.syntax().text().to_string()) {
             return true;
         }
+        if let Some(path) = attribute_harness_path(attr) {
+            if names_exact_harness_path(&path, "test")
+                || names_exact_harness_path(&path, "tokio::test")
+                || names_exact_harness_path(&path, "async_std::test")
+            {
+                return true;
+            }
+        }
         let compact = attr
             .syntax()
             .text()
@@ -1325,19 +1333,23 @@ pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
             .chars()
             .filter(|ch| !ch.is_whitespace())
             .collect::<String>();
-        compact == "#[test]"
-            || compact_names_exact_attribute_path(&compact, "tokio::test")
-            || compact_names_exact_attribute_path(&compact, "async_std::test")
-            || compact == "#[rstest]"
-            || compact.starts_with("#[rstest(")
+        compact == "#[rstest]" || compact.starts_with("#[rstest(")
     })
 }
 
-fn compact_names_exact_attribute_path(compact: &str, path: &str) -> bool {
-    ["#[", "#[::"].into_iter().any(|prefix| {
-        let head = format!("{prefix}{path}]");
-        compact == head || compact.starts_with(&format!("{prefix}{path}("))
+fn attribute_harness_path(attr: &ast::Attr) -> Option<String> {
+    attr.path().map(|path| {
+        path.syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
     })
+}
+
+fn names_exact_harness_path(path: &str, harness: &str) -> bool {
+    path.strip_prefix("::").unwrap_or(path) == harness
 }
 
 /// Returns whether a function is nested in a module gated by a test-only cfg.

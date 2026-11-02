@@ -3402,6 +3402,18 @@ fn an_async_std_test_runtime_runs_an_async_test_body_and_other_async_tests_refus
         );
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
     }
+    let lib = "pub async fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let tests = "use demo::weight;\n#[async_std::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n}\n";
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(pin.is_some(), "async_std must run the async body for an async owner");
+    let Some(pin) = pin else {
+        return;
+    };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(weight(4).await, 12);".to_string()]
+    );
 }
 
 #[test]

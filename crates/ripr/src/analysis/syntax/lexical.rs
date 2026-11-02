@@ -309,11 +309,39 @@ fn ranges_overlap(
 }
 
 fn trimmed_declares_test_attribute(trimmed: &str, path: &str) -> bool {
-    let trimmed = trimmed.trim();
+    let compact = attribute_source_compact(trimmed.trim());
     ["#[", "#[::"].into_iter().any(|prefix| {
         let head = format!("{prefix}{path}]");
-        trimmed == head || trimmed.starts_with(&format!("{prefix}{path}("))
+        compact == head || compact.starts_with(&format!("{prefix}{path}("))
     })
+}
+
+fn attribute_source_compact(source: &str) -> String {
+    let mut compact = String::new();
+    let mut chars = source.chars().peekable();
+    let mut in_block = false;
+    while let Some(ch) = chars.next() {
+        if in_block {
+            if ch == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                in_block = false;
+            }
+            continue;
+        }
+        if ch.is_whitespace() {
+            continue;
+        }
+        if ch == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            in_block = true;
+            continue;
+        }
+        if ch == '/' && chars.peek() == Some(&'/') {
+            break;
+        }
+        compact.push(ch);
+    }
+    compact
 }
 
 fn function_name(trimmed: &str) -> Option<String> {
@@ -539,6 +567,23 @@ fn checks_value() {
             Some("src/lib.rs::checks_value")
         );
         Ok(())
+    }
+
+    #[test]
+    fn lexical_test_attributes_tolerate_whitespace_and_trailing_comments() {
+        assert!(trimmed_declares_test_attribute("#[tokio::test ]", "tokio::test"));
+        assert!(trimmed_declares_test_attribute(
+            "#[async_std::test /* note */]",
+            "async_std::test"
+        ));
+        assert!(trimmed_declares_test_attribute(
+            "#[tokio::test (flavor = \"multi_thread\")]",
+            "tokio::test"
+        ));
+        assert!(!trimmed_declares_test_attribute(
+            "#[async_std::test_support]",
+            "async_std::test"
+        ));
     }
 
     #[test]
