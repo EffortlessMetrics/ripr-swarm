@@ -502,9 +502,7 @@ pub(crate) fn verify_command_clipboard_for_record(
     record: &serde_json::Value,
     verify: &str,
 ) -> Option<String> {
-    if typescript_package_root_from_gap_record(record).is_none() {
-        return None;
-    }
+    typescript_package_root_from_gap_record(record)?;
     let directory = command_context_directory(workspace_root, record);
     let context = selected_command_context(&directory, verify, verify);
     let bash = context
@@ -533,7 +531,7 @@ pub(crate) fn selected_nested_verify_command_context(
             receipt_context
                 .get("receipt")
                 .cloned()
-                .unwrap_or_else(|| serde_json::Value::Null),
+                .unwrap_or(serde_json::Value::Null),
         );
     }
     context
