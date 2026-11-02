@@ -731,6 +731,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "convergence"
                     | "cross-language-oracle-graph-corpus"
                     | "cross-language-edge-registry-corpus"
+                    | "adapter-substrate-qualification-corpus"
                     | "editor_gap_cockpit"
                     | "editor_first_run_usability"
                     | "editor_first_pr_bridge"

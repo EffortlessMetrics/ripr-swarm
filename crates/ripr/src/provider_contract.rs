@@ -18,9 +18,22 @@
 //! additive change mints a new `ripr_*_v1` schema version. Old readers
 //! reject new writers loudly rather than misreading them.
 
+mod adapter_substrate;
 mod cross_language_edge;
 mod model;
 mod validate;
+
+pub use adapter_substrate::{
+    AdapterSubstrateAuthorityRefKindV1, AdapterSubstrateAuthorityRefV1, AdapterSubstrateClassV1,
+    AdapterSubstrateDependencyRefV1, AdapterSubstrateLayerClassV1, AdapterSubstrateLayerV1,
+    AdapterSubstrateQualificationErrorCodeV1, AdapterSubstrateQualificationErrorV1,
+    AdapterSubstrateQualificationV1, AdapterSubstrateSafetyRefV1, AuthorityCurrentnessV1,
+    PackageInclusionDispositionV1, RIPR_ADAPTER_SUBSTRATE_QUALIFICATION_SCHEMA_VERSION,
+    SemanticClaimCeilingV1, SubstrateClaimCeilingV1, SubstrateInputBehaviorProfileV1,
+    SubstrateLimitationV1, SubstrateNonClaimV1, SubstratePackagingImplicationsV1,
+    SubstrateSupersessionRecordV1, adapter_substrate_qualification_semantic_digest,
+    substrate_classes_compatible,
+};
 
 pub use cross_language_edge::{
     BoundaryFamilyV1, CrossLanguageEdgeDirectionV1, CrossLanguageEdgeRegistryErrorCodeV1,
