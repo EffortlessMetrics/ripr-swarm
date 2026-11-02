@@ -7,11 +7,19 @@ use std::fmt;
 
 /// Producer-defined semantic repair/gap identity. Not a seam location, probe
 /// transport id, or session action id.
-#[derive(
-    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize)]
 #[serde(transparent)]
 pub struct CanonicalItemId(pub String);
+
+impl<'de> serde::Deserialize<'de> for CanonicalItemId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::from_canonical_gap_id(&value).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CanonicalItemParseError {
@@ -109,6 +117,11 @@ mod tests {
         assert!(CanonicalItemId::from_canonical_gap_id("probe:demo").is_err());
         assert!(CanonicalItemId::from_gap_id_alias("action:demo").is_err());
         assert!(CanonicalItemId::from_canonical_gap_id("seam:demo").is_err());
+    }
+
+    #[test]
+    fn json_deserialize_rejects_wrong_class() {
+        assert!(serde_json::from_str::<CanonicalItemId>("\"probe:demo\"").is_err());
     }
 
     #[test]

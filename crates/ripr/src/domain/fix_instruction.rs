@@ -42,18 +42,34 @@ pub enum FixInstructionState {
 }
 
 /// Portable instruction meaning for one canonical item (#4805).
-#[derive(
-    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize)]
 #[serde(transparent)]
 pub struct InstructionSemanticId(pub String);
 
 /// One semantic instruction bound to a completed snapshot and source facts.
-#[derive(
-    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize)]
 #[serde(transparent)]
 pub struct InstructionInstanceId(pub String);
+
+impl<'de> serde::Deserialize<'de> for InstructionSemanticId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(&value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for InstructionInstanceId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(&value).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InstructionIdentityParseError {
@@ -219,6 +235,12 @@ impl FixInstructionSummary {
         if self.state == FixInstructionState::Stale {
             return false;
         }
+        if context.workspace_identity.is_none()
+            || context.repository_head.is_none()
+            || context.snapshot_currentness.is_none()
+        {
+            return false;
+        }
         let Some(expected) =
             mint_instruction_instance_id(self.instruction_semantic_id.as_ref(), context)
         else {
@@ -253,14 +275,6 @@ fn mint_instruction_semantic_id(
         ("canonical_item", canonical_item.as_str()),
         ("state", state_token(summary.state)),
         ("has_fix_site", if summary.has_fix_site { "1" } else { "0" }),
-        (
-            "has_suggested_assertion",
-            if summary.has_suggested_assertion {
-                "1"
-            } else {
-                "0"
-            },
-        ),
         ("limitation_kinds", &kinds.join("|")),
         ("witness_kind", witness_kind),
     ]);
@@ -272,6 +286,12 @@ fn mint_instruction_instance_id(
     context: &FixInstructionIdentityContext<'_>,
 ) -> Option<InstructionInstanceId> {
     let semantic = semantic?;
+    if context.workspace_identity.is_none()
+        || context.repository_head.is_none()
+        || context.snapshot_currentness.is_none()
+    {
+        return None;
+    }
     let workspace = context.workspace_identity.unwrap_or("");
     let head = context.repository_head.unwrap_or("");
     let currentness = match context.snapshot_currentness {
@@ -493,5 +513,35 @@ mod tests {
         assert!(InstructionSemanticId::parse("instruction-instance:deadbeef").is_err());
         assert!(InstructionInstanceId::parse("instruction-semantic:deadbeef").is_err());
         assert!(InstructionSemanticId::parse("gap:67f9714ba37b3967").is_err());
+    }
+
+    #[test]
+    fn json_deserialize_rejects_cross_class_instruction_ids() {
+        assert!(
+            serde_json::from_str::<InstructionSemanticId>("\"instruction-instance:abc\"").is_err()
+        );
+        assert!(
+            serde_json::from_str::<InstructionInstanceId>("\"instruction-semantic:abc\"").is_err()
+        );
+    }
+
+    #[test]
+    fn instance_id_requires_completed_snapshot_fields() -> Result<(), String> {
+        let witness = witness_with_fix_site();
+        let canonical = CanonicalItemId::from_canonical_gap_id("gap:67f9714ba37b3967")
+            .map_err(|error| error.to_string())?;
+        let mut summary = FixInstructionSummary::from_witness(&witness);
+        let partial = FixInstructionIdentityContext {
+            canonical_item: Some(&canonical),
+            workspace_identity: None,
+            repository_head: None,
+            snapshot_currentness: None,
+            witness: Some(&witness),
+        };
+        summary.attach_identities(&partial);
+        assert!(summary.instruction_semantic_id.is_some());
+        assert!(summary.instruction_instance_id.is_none());
+        assert!(!summary.instance_authorizes_current_operation(&partial));
+        Ok(())
     }
 }
