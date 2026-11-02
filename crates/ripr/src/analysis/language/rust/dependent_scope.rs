@@ -65,7 +65,7 @@ use std::path::{Path, PathBuf};
 /// Widened reach indexes retained at once. Owners alternate among a few
 /// closures, so two slots remove the rebuilds while bounding the memory
 /// the retained indexes hold (#5363; the 512 MB peak-RSS target stays).
-const REACH_INDEX_CAPACITY: usize = 2;
+pub(super) const REACH_INDEX_CAPACITY: usize = 2;
 
 /// The cached value for `key`, built by `build` on a miss. `cache` holds at
 /// most `capacity` entries, most recently used last, so a miss evicts the
@@ -537,7 +537,7 @@ pub(super) struct NarrowedScope {
     /// holds; owners whose closure selects the same files reuse one.
     /// Owners alternate between a few closures, so a single slot rebuilt
     /// the same index repeatedly (#5363).
-    reach_index: Vec<(Vec<PathBuf>, RustIndex)>,
+    reach_index: Vec<(Vec<PathBuf>, std::sync::Arc<RustIndex>)>,
     /// Closure-specific index builds so far (cache misses). Past
     /// [`REACH_INDEX_CAPACITY`] builds the run is alternating among more
     /// owners than the cache holds, and narrowing costs more than it saves
@@ -902,11 +902,14 @@ enum Closure {
 }
 
 /// The witness index outcome for one owner.
-pub(super) enum ReachIndex<'a> {
+pub(super) enum ReachIndex {
     /// The main index already holds every file the owner's reach can touch.
     Main,
     /// A wider index holding the owner's caller closure.
-    Widened(&'a RustIndex),
+    Widened {
+        index: std::sync::Arc<RustIndex>,
+        files: Vec<PathBuf>,
+    },
     /// The scope's one full-selection index ([`NarrowedScope::shared_reach`]).
     /// It carries no borrow so the caller can derive per-index lookups from
     /// it once and reuse them for every finding.
@@ -934,7 +937,7 @@ impl NarrowedScope {
         main_index: &RustIndex,
         limit: usize,
         hard_limit: usize,
-    ) -> Result<ReachIndex<'_>, String> {
+    ) -> Result<ReachIndex, String> {
         if !self.widen {
             return Ok(ReachIndex::Main);
         }
@@ -1024,18 +1027,22 @@ impl NarrowedScope {
         let consumed = &mut self.consumed;
         let builds = &mut self.widened_builds;
         let (root, harnesses) = (&self.root, &self.test_harnesses);
-        let index = most_recent_or_build(
+        let arc = most_recent_or_build(
             &mut self.reach_index,
             REACH_INDEX_CAPACITY,
-            files,
+            files.clone(),
             |files| {
                 *builds += 1;
                 #[cfg(test)]
                 OBSERVED_REACH_BUILDS.with(|count| count.set(count.get() + 1));
-                build_index(root, files, harnesses, consumed).map(|cached| cached.index)
+                build_index(root, files, harnesses, consumed)
+                    .map(|cached| std::sync::Arc::new(cached.index))
             },
         )?;
-        Ok(ReachIndex::Widened(index))
+        Ok(ReachIndex::Widened {
+            index: arc.clone(),
+            files,
+        })
     }
 
     /// The pre-#5320 selection: the main files and every withheld dependent,
