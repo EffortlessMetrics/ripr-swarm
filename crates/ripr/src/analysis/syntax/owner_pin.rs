@@ -3952,35 +3952,6 @@ fn is_tokio_test_path(path: &str) -> bool {
 /// pick the runtime and its clock: `crate = ..` swaps the macro's runtime
 /// path and `unhandled_panic = ..` changes what a panic does, so any other
 /// argument refuses. A sync `fn` under it does not compile, so it refuses.
-/// `async_std::test`, rooted or not. Same shadowing rule as `tokio::test`.
-fn is_async_std_test_path(path: &str) -> bool {
-    path.strip_prefix("::").unwrap_or(path) == "async_std::test"
-}
-
-/// Whether `attr` is `#[async_std::test]` on an `async fn` and runs the body to
-/// completion on the async_std runtime. `async_std` must be the crate in the
-/// test's module under the same rule as `tokio`. Any attribute argument refuses:
-/// the macro accepts configuration that can change what runs.
-fn async_std_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
-    if attr.excl_token().is_some() {
-        return false;
-    }
-    if ast::Fn::cast(test.clone()).is_none_or(|function| function.async_token().is_none()) {
-        return false;
-    }
-    let Some(path) = attr.path() else {
-        return false;
-    };
-    if !is_async_std_test_path(&path.syntax().text().to_string().replace(' ', "")) {
-        return false;
-    }
-    let Some(module) = test.parent() else {
-        return false;
-    };
-    extern_crate_path_holds(&module, "async_std")
-        && matches!(attr.meta(), Some(ast::Meta::PathMeta(_)))
-}
-
 fn tokio_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if attr.excl_token().is_some() {
         return false;
@@ -4037,6 +4008,53 @@ fn tokio_test_arguments_pick_runtime(attr: &ast::Attr) -> bool {
             }
             _ => false,
         })
+}
+
+/// `async_std::test`, rooted or not. Same shadowing rule as `tokio::test`.
+fn is_async_std_test_path(path: &str) -> bool {
+    path.strip_prefix("::").unwrap_or(path) == "async_std::test"
+}
+
+/// Whether `attr` is `#[async_std::test]` on an `async fn` and runs the body to
+/// completion on the async_std runtime. `async_std` must be the crate in the
+/// test's module under the same rule as `tokio`. Only a bare attribute or empty
+/// `()` is admitted; any other argument refuses.
+fn async_std_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
+    if attr.excl_token().is_some() {
+        return false;
+    }
+    if ast::Fn::cast(test.clone()).is_none_or(|function| function.async_token().is_none()) {
+        return false;
+    }
+    let Some(path) = attr.path() else {
+        return false;
+    };
+    if !is_async_std_test_path(&path.syntax().text().to_string().replace(' ', "")) {
+        return false;
+    }
+    let Some(module) = test.parent() else {
+        return false;
+    };
+    extern_crate_path_holds(&module, "async_std") && async_std_test_has_no_arguments(attr)
+}
+
+fn async_std_test_has_no_arguments(attr: &ast::Attr) -> bool {
+    match attr.meta() {
+        Some(ast::Meta::PathMeta(_)) => true,
+        Some(ast::Meta::TokenTreeMeta(meta)) => match meta.token_tree() {
+            Some(tree) => {
+                let tokens: Vec<_> = tree
+                    .syntax()
+                    .descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .filter(|token| !token.kind().is_trivia())
+                    .collect();
+                matches!(tokens.as_slice(), [open, close] if open.text() == "(" && close.text() == ")")
+            }
+            None => false,
+        },
+        _ => false,
+    }
 }
 
 /// An rstest attribute on a test function.

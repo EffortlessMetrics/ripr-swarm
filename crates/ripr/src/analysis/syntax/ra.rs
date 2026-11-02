@@ -1326,12 +1326,17 @@ pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
             .filter(|ch| !ch.is_whitespace())
             .collect::<String>();
         compact == "#[test]"
-            || compact.starts_with("#[tokio::test")
-            || compact.starts_with("#[::tokio::test")
-            || compact.starts_with("#[async_std::test")
-            || compact.starts_with("#[::async_std::test")
+            || compact_names_exact_attribute_path(&compact, "tokio::test")
+            || compact_names_exact_attribute_path(&compact, "async_std::test")
             || compact == "#[rstest]"
             || compact.starts_with("#[rstest(")
+    })
+}
+
+fn compact_names_exact_attribute_path(compact: &str, path: &str) -> bool {
+    ["#[", "#[::"].into_iter().any(|prefix| {
+        let head = format!("{prefix}{path}]");
+        compact == head || compact.starts_with(&format!("{prefix}{path}("))
     })
 }
 

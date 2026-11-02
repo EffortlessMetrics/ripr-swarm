@@ -3382,7 +3382,11 @@ fn a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it() {
 
 #[test]
 fn an_async_std_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
-    for attributes in ["#[async_std::test]", "#[::async_std::test]"] {
+    for attributes in [
+        "#[async_std::test]",
+        "#[::async_std::test]",
+        "#[async_std::test()]",
+    ] {
         let tests = format!(
             "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
         );

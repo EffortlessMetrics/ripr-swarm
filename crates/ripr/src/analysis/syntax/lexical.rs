@@ -80,11 +80,9 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
             i += 1;
             continue;
         }
-        if trimmed.starts_with("#[test]")
-            || trimmed.starts_with("#[tokio::test")
-            || trimmed.starts_with("#[::tokio::test")
-            || trimmed.starts_with("#[async_std::test")
-            || trimmed.starts_with("#[::async_std::test")
+        if trimmed_declares_test_attribute(trimmed, "test")
+            || trimmed_declares_test_attribute(trimmed, "tokio::test")
+            || trimmed_declares_test_attribute(trimmed, "async_std::test")
             || trimmed.starts_with("#[rstest")
         {
             pending_test = true;
@@ -308,6 +306,14 @@ fn ranges_overlap(
     right_end: usize,
 ) -> bool {
     left_start <= right_end && right_start <= left_end
+}
+
+fn trimmed_declares_test_attribute(trimmed: &str, path: &str) -> bool {
+    let trimmed = trimmed.trim();
+    ["#[", "#[::"].into_iter().any(|prefix| {
+        let head = format!("{prefix}{path}]");
+        trimmed == head || trimmed.starts_with(&format!("{prefix}{path}("))
+    })
 }
 
 fn function_name(trimmed: &str) -> Option<String> {
