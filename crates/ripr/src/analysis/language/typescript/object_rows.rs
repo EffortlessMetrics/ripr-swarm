@@ -814,6 +814,8 @@ mod tests {
             "{ expect(f(/* note */ a)).toBe(y); }",
             "{ expect(f(a)).toBe(y); // note\n g(a); }",
             "{ \"s\"; expect(f(a)).toBe(y); }",
+            "{ \"//x\"; expect(f(a)).toBe(y); }",
+            "{ expect(f(a)).toBe(y) // note\n g(a) }",
             "{ }",
             "{ foo(expect(f(a)).toBe(y)); }",
         ] {
