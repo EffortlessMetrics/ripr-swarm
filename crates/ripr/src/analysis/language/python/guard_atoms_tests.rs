@@ -389,6 +389,11 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "import builtins as b\nchecks = (b.isinstance, b.len)\n\n\n",
         "import builtins as b\nchecks = dict(first=b.isinstance, second=b.len)\n\n\n",
         "import builtins as b\nsame, other = b.isinstance == checker, 1\n\n\n",
+        // A subscript key, a call, a string or a comment before a later `=`.
+        "import builtins as b\nregistry = {}\nregistry[b.isinstance] = 1\n\n\n",
+        "import builtins as b\nassert check(b.isinstance, 3), \"mode=strict\"\n\n\n",
+        "import builtins as b\ncheck(b.isinstance, 3)  # n=1\n\n\n",
+        "import builtins as b\nb.isinstance: object  # a=b\n\n\n",
     ] {
         let owner = format!("{harmless}{arm}");
         assert_eq!(

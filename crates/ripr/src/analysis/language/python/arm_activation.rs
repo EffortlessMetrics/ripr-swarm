@@ -425,26 +425,43 @@ fn patches_builtin(lines: &[&str], index: usize, name: &str, modules: &[String])
                     .next_back()
                     .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
                 let rest = &compact[start + target.len()..];
-                boundary && rebinds_target(&compact, start, rest)
+                boundary && rebinds_target(&compact, start, target.len(), rest)
             })
         })
     })
 }
 
-/// Whether the target at `start` (followed by `rest`, whitespace removed) is
-/// rebound by an assignment on its line (#12222): a plain or chained `= f`, an
-/// annotated `: object = f`, or a slot in a tuple, list or multi-target list
-/// left of the first `=`. A comparison (`==`), a read on the right-hand side
-/// and a bare annotation without a value bind nothing.
-fn rebinds_target(compact: &str, start: usize, rest: &str) -> bool {
+/// Whether the target at `start` (`len` bytes, followed by `rest`, whitespace
+/// removed) is rebound by an assignment on its line (#12222): a plain or
+/// chained `= f`, an annotated `: object = f`, or a slot in a tuple, list or
+/// multi-target list left of the first `=`. A comparison (`==`), a read on the
+/// right-hand side, a bare annotation and a use inside a call, a subscript or
+/// a comment or string that merely precedes a later `=` bind nothing.
+fn rebinds_target(compact: &str, start: usize, len: usize, rest: &str) -> bool {
     if rest.starts_with('=') {
         return !rest.starts_with("==");
     }
-    let assignment = first_assignment(compact);
-    if start == 0 && rest.starts_with(':') {
-        return assignment.is_some_and(|eq| eq > start);
+    let Some(eq) = first_assignment(compact) else {
+        return false;
+    };
+    let annotated = start == 0 && rest.starts_with(':');
+    if eq < start + len || !(annotated || rest.starts_with([',', ')', ']'])) {
+        return false;
     }
-    assignment.is_some_and(|eq| start < eq && rest.starts_with([',', ')', ']']))
+    // What stands left of the `=` besides the target must be a plain target
+    // list: no comment or string, and no bracket that calls or subscripts.
+    let others = format!("{}{}", &compact[..start], &compact[start + len..eq]);
+    let bytes = others.as_bytes();
+    !others.contains(['#', '"', '\''])
+        && bytes.iter().enumerate().all(|(index, &byte)| {
+            !matches!(byte, b'(' | b'[')
+                || index
+                    .checked_sub(1)
+                    .map(|at| bytes[at])
+                    .is_none_or(|before| {
+                        !(before.is_ascii_alphanumeric() || matches!(before, b'_' | b')' | b']'))
+                    })
+        })
 }
 
 /// Byte index of the first `=` that assigns: not part of `==`, `!=`, `<=`,
