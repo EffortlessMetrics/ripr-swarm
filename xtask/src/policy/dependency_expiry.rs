@@ -4,6 +4,42 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const EXPIRY_MARKER: &str = "expires:";
 
+const POST_0_11_DEFER_OWNER: &str = "#5084";
+const POST_0_11_DEFER_LINKED_REVISIT: &str = "#3811";
+const POST_0_11_DEFER_SECTION_MARKER: &str = "Post-0.11 dependency refresh tracker";
+
+pub(crate) fn check_post_0_11_dependency_defer_tracking(path: &Path) -> Result<(), String> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    check_post_0_11_dependency_defer_tracking_text(&text, path)
+}
+
+fn check_post_0_11_dependency_defer_tracking_text(text: &str, path: &Path) -> Result<(), String> {
+    let path_label = path.display();
+    if !text.contains(POST_0_11_DEFER_SECTION_MARKER) {
+        return Err(format!(
+            "{path_label}: missing `{POST_0_11_DEFER_SECTION_MARKER}` section for post-0.11 `oxc_*`/`sha2` deferrals"
+        ));
+    }
+    for required in [
+        "Owner issue:",
+        POST_0_11_DEFER_OWNER,
+        "Linked revisit:",
+        POST_0_11_DEFER_LINKED_REVISIT,
+        "Revisit trigger:",
+        "`oxc_*`",
+        "`sha2`",
+        "safe_defer_post_0_11",
+    ] {
+        if !text.contains(required) {
+            return Err(format!(
+                "{path_label}: post-0.11 defer tracker is missing required marker `{required}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn check_dependency_suppression_expiry(path: &Path) -> Result<(), String> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
@@ -170,7 +206,10 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use super::{check_dependency_suppression_expiry, check_dependency_suppression_expiry_text};
+    use super::{
+        check_dependency_suppression_expiry, check_dependency_suppression_expiry_text,
+        check_post_0_11_dependency_defer_tracking, check_post_0_11_dependency_defer_tracking_text,
+    };
 
     #[test]
     fn checks_a_real_policy_file_using_the_current_utc_date() {
@@ -330,5 +369,25 @@ mod tests {
                 .err()
                 .is_some_and(|message| message.contains("not after today"))
         );
+    }
+
+    #[test]
+    fn post_0_11_defer_tracker_is_present_in_the_release_receipt() {
+        let receipt = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("docs/releases/0.11.0-dependency-graphs.md");
+        let result = check_post_0_11_dependency_defer_tracking(&receipt);
+        assert!(
+            result.is_ok(),
+            "post-0.11 defer tracker check failed: {result:?}"
+        );
+    }
+
+    #[test]
+    fn post_0_11_defer_tracker_requires_owner_and_linked_revisit() {
+        let text =
+            "safe_defer_post_0_11\nPost-0.11 dependency refresh tracker\nOwner issue: #9999\n";
+        let result = check_post_0_11_dependency_defer_tracking_text(text, Path::new("fixture.md"));
+        assert!(result.is_err());
     }
 }
