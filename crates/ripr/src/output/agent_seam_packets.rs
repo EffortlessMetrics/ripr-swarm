@@ -3357,15 +3357,13 @@ fn assertion_guidance_for(
                 let trimmed = suggestion.trim_start();
                 !trimmed.starts_with("//") && trimmed.contains("assert")
             });
-    let basis = if assertion_template_uses_required_discriminator(kind, required) {
-        Some(AssertionBasis::SeamRequiredDiscriminator)
-    } else if matches!(kind, SeamKind::FieldConstruction)
-        && field_write.is_some()
-        && matches!(
-            required,
-            Some(RequiredDiscriminator::FieldValue { field }) if !field.trim().is_empty()
-        )
-    {
+    let basis = if assertion_template_uses_required_discriminator(kind, required)
+        || (matches!(kind, SeamKind::FieldConstruction)
+            && field_write.is_some()
+            && matches!(
+                required,
+                Some(RequiredDiscriminator::FieldValue { field }) if !field.trim().is_empty()
+            )) {
         Some(AssertionBasis::SeamRequiredDiscriminator)
     } else if required.is_none() && !evidence.observed_values.is_empty() {
         Some(AssertionBasis::ObservedValueFact)
