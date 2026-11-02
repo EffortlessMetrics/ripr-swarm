@@ -321,12 +321,17 @@ impl MemberCrates {
                         .is_some_and(|path| path == file)
                 })
             });
+        let autodiscovered_bin = |path: &Path| {
+            path.extension().is_some_and(|extension| extension == "rs")
+                && (path.parent() == Some(directory.join("src/bin").as_path())
+                    || path.file_name().is_some_and(|name| name == "main.rs")
+                        && path.parent().and_then(|parent| parent.parent())
+                            == Some(directory.join("src/bin").as_path()))
+        };
         let automatic = package
             .get("autobins")
             .is_none_or(|value| value.as_bool() == Some(true))
-            && (file == directory.join("src/main.rs")
-                || (file.parent() == Some(directory.join("src/bin").as_path())
-                    && file.extension().is_some_and(|extension| extension == "rs")));
+            && (file == directory.join("src/main.rs") || autodiscovered_bin(&file));
         explicit || automatic
     }
 
@@ -1763,6 +1768,7 @@ mod tests {
             (format!("{binary}[lib]\npath='lib.rs'\n"), "parse.rs", true),
             (PRICING.to_string(), "src/main.rs", true),
             (PRICING.to_string(), "src/bin/tool.rs", true),
+            (PRICING.to_string(), "src/bin/tool/main.rs", true),
             (PRICING.to_string(), "parse.rs", false),
             (PRICING.to_string(), "src/lib.rs", false),
             (format!("{PRICING}autobins=false\n"), "src/main.rs", false),

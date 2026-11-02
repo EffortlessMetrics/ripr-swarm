@@ -3438,6 +3438,8 @@ tests = [
   "crates/ripr/src/domain/language.rs::tests::language_feature_availability_matches_build",
   "crates/ripr/src/analysis/pipeline.rs::tests::diff_pipeline_dispatches_enabled_preview_feature_adapters",
   "crates/ripr/src/analysis/pipeline.rs::tests::repo_pipeline_dispatches_enabled_preview_feature_adapters",
+  "crates/ripr/src/analysis/pipeline.rs::tests::repo_pipeline_aggregate_keeps_python_evidence_when_rust_errors",
+  "crates/ripr/src/analysis/pipeline.rs::tests::rust_repo_hard_refusals_stay_non_recoverable",
   "crates/ripr/src/config.rs::tests::languages_section",
   "crates/ripr/src/config.rs::tests::languages_section_rejects_unavailable_perl_adapter",
   "crates/ripr/src/analysis/language/router.rs::tests::ts_js_extension_authority_classifies_exactly_the_routed_surface",
@@ -14649,6 +14651,7 @@ tests = [
   "crates/ripr/src/analysis/facts/member_crates.rs::tests::an_unrelated_external_library_root_does_not_hide_a_local_macro_export",
   "crates/ripr/src/analysis/facts/member_crates.rs::tests::unchanged_index_reuse_refreshes_warmed_auxiliary_macro_export_witnesses",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::unchanged_index_reuse_refreshes_a_warmed_field_macro_blocker",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_nested_src_bin_main_target_does_not_reach_integration_tests",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_withheld_first_glob_cannot_certify_field_macro_safety",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_withheld_unparsable_sibling_disables_crate_root_routing",
   "crates/ripr/src/analysis/workspace/named_dependent_scope.rs::tests::withheld_unparsable_source_disables_crate_root_routing",
@@ -21095,6 +21098,26 @@ tests = [
   "crates/ripr/tests/out_parameter_oracle.rs::a_constant_conditional_sign_row_does_not_come_from_the_out_parameter_route",
   "crates/ripr/tests/out_parameter_oracle.rs::a_fmt_write_owner_and_a_non_empty_initial_local_behave_as_specified",
   "crates/ripr/tests/out_parameter_oracle.rs::a_same_named_method_on_another_or_unresolved_receiver_is_not_credited",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::count_read_of_the_passed_vector_is_followed_in_both_commands",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::emptiness_read_of_the_passed_vector_is_followed_in_both_commands",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::reading_a_different_binding_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::reading_the_pushed_item_is_not_this_rules_to_grade",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::reborrowed_vector_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::vector_used_before_the_call_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::vector_aliased_after_the_call_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::namesake_in_another_module_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::conditional_push_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::second_push_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::ignored_test_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::should_panic_test_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::string_count_read_is_followed_in_both_commands",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::push_argument_that_may_return_first_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::exactly_checked_vector_is_already_noticed_not_a_contents_gap",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::async_owner_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::final_contents_check_without_semicolon_is_not_this_rules_to_grade",
+  "crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs::tests::count_reads_of_a_fresh_vector_or_string_are_followed",
+  "crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs::tests::reads_calls_and_statements_that_break_the_straight_line_are_refused",
+  "crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs::tests::gated_tests_shadowed_buffers_and_skippable_pushes_are_refused",
 ]
 fixtures = [
   "fixtures/out_parameter_unrelated_write_no_promote",
@@ -21103,6 +21126,8 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/out_parameter.rs",
+  "crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs",
+  "crates/ripr/src/analysis/repair_route.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md",

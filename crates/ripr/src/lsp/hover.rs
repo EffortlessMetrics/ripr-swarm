@@ -1043,7 +1043,7 @@ const SOURCE_TEXT_AFTER_COLON_PREFIXES: &[&str] = &[
     "Propagation witness is incomplete for ",
     "Related tests appear to reach ",
     "No test is seen calling ",
-    "Related tests exercise the wrapper seam's converted callee",
+    "Related tests exercise the wrapper seam's converted callee", // user-text-exempt: matches producer text
     "Detected test input literal matching changed boundary",
 ];
 
@@ -1076,10 +1076,14 @@ fn plain_hover_summary(text: &str) -> String {
     let flush = |word: &mut String, out: &mut String, verbatim: bool| {
         match word.as_str() {
             _ if verbatim => out.push_str(word),
-            "discriminator" => out.push_str("check"),
-            "Discriminator" => out.push_str("Check"),
-            "discriminators" => out.push_str("checks"),
-            "Discriminators" => out.push_str("Checks"),
+            "discriminator" => out.push_str("check"), // user-text-exempt: rewrites the producer word
+            "Discriminator" => out.push_str("Check"), // user-text-exempt: rewrites the producer word
+            "discriminators" => out.push_str("checks"), // user-text-exempt: rewrites the producer word
+            "Discriminators" => out.push_str("Checks"), // user-text-exempt: rewrites the producer word
+            "seam" => out.push_str("spot"), // user-text-exempt: rewrites the producer word
+            "Seam" => out.push_str("Spot"), // user-text-exempt: rewrites the producer word
+            "seams" => out.push_str("spots"), // user-text-exempt: rewrites the producer word
+            "Seams" => out.push_str("Spots"), // user-text-exempt: rewrites the producer word
             _ => out.push_str(word),
         }
         word.clear();
@@ -1123,7 +1127,7 @@ fn plain_hover_summary(text: &str) -> String {
 fn discriminator_stage_line(finding: &Finding) -> String {
     let stage = &finding.ripr.reveal.discriminate;
     if finding.class == ExposureClass::Exposed || stage.state != StageState::Yes {
-        return stage_line("discriminator", stage);
+        return stage_line("discriminator", stage); // user-text-exempt: glossed stage label kept by design
     }
     let missing = finding
         .activation
@@ -3022,6 +3026,20 @@ mod plain_hover_summary_tests {
         assert_eq!(
             plain_hover_summary("no strong discriminator for `x"),
             "no strong discriminator for `x"
+        );
+    }
+
+    #[test]
+    fn says_spot_where_the_producer_says_seam() {
+        assert_eq!(
+            plain_hover_summary(
+                "Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): seam_helper, seam"
+            ),
+            "Related tests exercise the wrapper spot's converted callee (the changed owner is not invoked by them): seam_helper, seam"
+        );
+        assert_eq!(
+            plain_hover_summary("no test reaches this seam; other seams are fine"),
+            "no test reaches this spot; other spots are fine"
         );
     }
 

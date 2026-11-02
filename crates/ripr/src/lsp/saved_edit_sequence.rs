@@ -666,7 +666,7 @@ fn honest_step(step: SequenceStep) -> StepReceipt {
         run_status: run_status.to_string(),
         cache_load_status: cache,
         full_scan_fallback_reason: (step == SequenceStep::CorruptCache).then(|| {
-            "corrupt_ignored: fixture cache bytes were not a classified-seam entry".to_string()
+            "corrupt_ignored: fixture cache bytes were not a classified-gap entry".to_string()
         }),
         full_rescan,
         input_identity_unchanged: input_unchanged,
@@ -930,7 +930,7 @@ pub(super) fn drive_saved_edit_sequence(
         return Err("cold start must not leave a queued refresh".to_string());
     }
     if !cold.3 {
-        return Err("cold interactive analysis must defer seam inventory".to_string());
+        return Err("cold interactive analysis must defer the full gap list".to_string());
     }
     steps.push(StepReceipt {
         step: SequenceStep::ColdStart,
@@ -1307,7 +1307,7 @@ pub(super) fn drive_saved_edit_sequence(
 
     let (full, full_elapsed) = timed_step(|| observe_diagnostics(root, &config, false))?;
     if full.3 {
-        return Err("explicit full refresh must not leave seams deferred".to_string());
+        return Err("explicit full refresh must not leave gaps deferred".to_string());
     }
     steps.push(StepReceipt {
         step: SequenceStep::ExplicitFullRefresh,
