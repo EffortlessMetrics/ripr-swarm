@@ -220,6 +220,43 @@ fn is_unsafe_obligation(probe: &Probe) -> bool {
             || probe.expression == crate::analysis::syntax::ra::UNCHECKED_ASSUMPTION_LABEL)
 }
 
+/// Typed spellings of the substring heuristics that mark related-test bodies or
+/// probe expressions as opaque before any value on them is read as an input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AssertKind {
+    FixtureMention,
+    BuilderMention,
+    ArbGeneratorMention,
+    AsyncKeyword,
+    SpawnKeyword,
+    AwaitKeyword,
+}
+
+impl AssertKind {
+    const TEST_BODY_SIGNALS: &'static [(Self, &'static str)] = &[
+        (Self::FixtureMention, "fixture"),
+        (Self::BuilderMention, "builder"),
+        (Self::ArbGeneratorMention, "arb_"),
+    ];
+    const EXPRESSION_SIGNALS: &'static [(Self, &'static str)] = &[
+        (Self::AsyncKeyword, "async"),
+        (Self::SpawnKeyword, "spawn"),
+        (Self::AwaitKeyword, "await"),
+    ];
+
+    fn matches_in_test_body(body: &str) -> bool {
+        Self::TEST_BODY_SIGNALS
+            .iter()
+            .any(|(_, needle)| body.contains(needle))
+    }
+
+    fn matches_in_expression(expression: &str) -> bool {
+        Self::EXPRESSION_SIGNALS
+            .iter()
+            .any(|(_, needle)| expression.contains(needle))
+    }
+}
+
 pub(in crate::analysis) fn stop_reasons(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -236,15 +273,13 @@ pub(in crate::analysis) fn stop_reasons(
     if is_unsafe_obligation(probe) {
         reasons.push(StopReason::UnsafeObligation);
     }
-    if related_tests.iter().any(|test| {
-        test.body.contains("fixture") || test.body.contains("builder") || test.body.contains("arb_")
-    }) {
+    if related_tests
+        .iter()
+        .any(|test| AssertKind::matches_in_test_body(&test.body))
+    {
         reasons.push(StopReason::FixtureOpaque);
     }
-    if probe.expression.contains("async")
-        || probe.expression.contains("spawn")
-        || probe.expression.contains("await")
-    {
+    if AssertKind::matches_in_expression(&probe.expression) {
         reasons.push(StopReason::AsyncBoundaryOpaque);
     }
     if contains_macro_invocation(&probe.expression) {
@@ -1512,6 +1547,47 @@ mod tests {
             ProbeFamily::StaticUnknown,
             "unsafe block",
         )));
+    }
+
+    #[test]
+    fn assert_kind_matches_exactly_the_former_body_and_expression_predicates() {
+        fn legacy_test_body(body: &str) -> bool {
+            body.contains("fixture") || body.contains("builder") || body.contains("arb_")
+        }
+        fn legacy_expression(expression: &str) -> bool {
+            expression.contains("async")
+                || expression.contains("spawn")
+                || expression.contains("await")
+        }
+        let bodies = [
+            "let input = load_fixture();",
+            "Request::builder().build()",
+            "let n = arb_u32();",
+            "plain test",
+            "async fn helper() {}",
+            "fixture_builder_arb_",
+        ];
+        for body in bodies {
+            assert_eq!(
+                super::AssertKind::matches_in_test_body(body),
+                legacy_test_body(body),
+                "body: {body}"
+            );
+        }
+        let expressions = [
+            "async fn run() {}",
+            "task::spawn(future)",
+            "value.await",
+            "plain expression",
+            "async spawn await",
+        ];
+        for expression in expressions {
+            assert_eq!(
+                super::AssertKind::matches_in_expression(expression),
+                legacy_expression(expression),
+                "expression: {expression}"
+            );
+        }
     }
 
     // #11547: a changed compile-time assertion names its own stop reason;
