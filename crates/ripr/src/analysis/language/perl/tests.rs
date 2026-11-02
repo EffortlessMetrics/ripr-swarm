@@ -4836,6 +4836,38 @@ fn perl_finding_lines_need_one_basis_across_the_packet() -> Result<(), String> {
     Ok(())
 }
 
+/// Declared zero-based coordinates settle on the one-based diff line without
+/// treating the raw packet line as one-based when only that lower line is added.
+#[test]
+fn perl_declared_zero_based_basis_governs_diff_settlement() -> Result<(), String> {
+    let mut packet = real_producer_packet()?;
+    packet.coordinate_line_basis = CoordinateLineBasis::ZeroBased;
+    let change_id = "change:file:lib/App/Discount.pm:8:8";
+
+    assert!(
+        change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[8])]).is_empty(),
+        "zero-based start 8 maps to diff line 9, not 8"
+    );
+    let lines = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[9])]);
+    assert_eq!(lines.get(change_id), Some(&9));
+    Ok(())
+}
+
+/// Declared one-based coordinates settle on the packet line number in the diff.
+#[test]
+fn perl_declared_one_based_basis_governs_diff_settlement() -> Result<(), String> {
+    let mut packet = real_producer_packet()?;
+    packet.coordinate_line_basis = CoordinateLineBasis::OneBased;
+    let change_id = "change:file:lib/App/Discount.pm:8:8";
+
+    let lines = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[8])]);
+    assert_eq!(lines.get(change_id), Some(&8));
+    assert!(
+        change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[9])]).is_empty()
+    );
+    Ok(())
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // #5498 — current-v1 Perl related-test misses (RIPR-SPEC-0224).
 //

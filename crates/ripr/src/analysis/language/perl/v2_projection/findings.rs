@@ -24,17 +24,59 @@ pub(crate) fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::
 /// The one-based new-file line of each packet change, settled against the
 /// diff ripr itself parsed.
 ///
-/// SPEC-0064 says packet ranges are one-based, but the real `perl-ripr-facts`
-/// producer emits zero-based lines (`zero_based_coordinates` in
-/// `fixtures/perl_packet_contract_migration`; #3221 owns making the basis
-/// explicit). The packet does not declare which it used, so each change's
-/// first line is read both ways against the diff, and a reading counts only
-/// when exactly one of the two is an added line. One producer writes the whole
-/// packet, so every settled change must agree on the basis: if two disagree,
-/// no change gets a line. A change left out keeps its finding on the owner's
-/// declaration, as before. This only places the finding; named-owner probe
-/// identity and canonical gap identity do not use it.
+/// When `coordinate_line_basis` is declared, packet range lines are converted
+/// to one-based diff coordinates before matching added lines. When it is
+/// `unspecified`, each change's first line is read both ways against the diff,
+/// and a reading counts only when exactly one of the two is an added line. One
+/// producer writes the whole packet, so every settled change must agree on the
+/// basis: if two disagree, no change gets a line. A change left out keeps its
+/// finding on the owner's declaration, as before. This only places the finding;
+/// named-owner probe identity and canonical gap identity do not use it.
 pub(crate) fn change_lines_from_diff(
+    packet: &PerlFactPacket,
+    changed_files: &[ChangedFile],
+) -> BTreeMap<String, usize> {
+    match packet.coordinate_line_basis {
+        CoordinateLineBasis::Unspecified => {
+            change_lines_from_diff_unspecified(packet, changed_files)
+        }
+        CoordinateLineBasis::ZeroBased | CoordinateLineBasis::OneBased => {
+            change_lines_from_diff_declared(packet, changed_files)
+        }
+    }
+}
+
+fn change_lines_from_diff_declared(
+    packet: &PerlFactPacket,
+    changed_files: &[ChangedFile],
+) -> BTreeMap<String, usize> {
+    let mut lines = BTreeMap::new();
+    for change in &packet.changes {
+        let Some(file) = packet.file(&change.file_id) else {
+            continue;
+        };
+        let path = normalize_repo_relative(&file.path);
+        let Some(diff_file) = changed_files
+            .iter()
+            .find(|diff_file| normalize_repo_relative(&diff_file.path.to_string_lossy()) == path)
+        else {
+            continue;
+        };
+        let added: BTreeSet<usize> = diff_file.added_lines.iter().map(|l| l.line).collect();
+        let Some(one_based) = packet_line_to_one_based_diff_line(
+            packet.coordinate_line_basis,
+            change.range.start_line,
+        ) else {
+            continue;
+        };
+        if added.contains(&one_based) {
+            lines.insert(change.change_id.clone(), one_based);
+        }
+    }
+    lines
+}
+
+fn change_lines_from_diff_unspecified(
     packet: &PerlFactPacket,
     changed_files: &[ChangedFile],
 ) -> BTreeMap<String, usize> {
@@ -72,6 +114,49 @@ pub(crate) fn change_lines_from_diff(
         .collect()
 }
 
+fn packet_line_to_one_based_diff_line(
+    basis: CoordinateLineBasis,
+    packet_line: usize,
+) -> Option<usize> {
+    match basis {
+        CoordinateLineBasis::OneBased => Some(packet_line),
+        CoordinateLineBasis::ZeroBased => packet_line.checked_add(1),
+        CoordinateLineBasis::Unspecified => None,
+    }
+}
+
+fn one_based_range_inclusive(
+    basis: CoordinateLineBasis,
+    range: &RangeFact,
+) -> std::ops::RangeInclusive<usize> {
+    let end_packet = range.end_line.max(range.start_line);
+    match basis {
+        CoordinateLineBasis::OneBased | CoordinateLineBasis::Unspecified => {
+            range.start_line..=end_packet
+        }
+        CoordinateLineBasis::ZeroBased => {
+            let start = range.start_line.saturating_add(1);
+            let end = end_packet.saturating_add(1);
+            start..=end
+        }
+    }
+}
+
+fn diff_line_covered_by_packet_range(
+    basis: CoordinateLineBasis,
+    range: &RangeFact,
+    diff_line_one_based: usize,
+) -> bool {
+    match basis {
+        CoordinateLineBasis::Unspecified => {
+            let end_packet = range.end_line.max(range.start_line);
+            range.start_line <= diff_line_one_based
+                && diff_line_one_based <= end_packet.saturating_add(1)
+        }
+        _ => one_based_range_inclusive(basis, range).contains(&diff_line_one_based),
+    }
+}
+
 /// #6586: a Perl change is candidate-current only when the consumer observed
 /// it: the file is on disk under the analysis root after resolving symlinks
 /// (so ingestion verified its digest against the packet) and the diff adds a
@@ -83,8 +168,9 @@ pub(crate) fn perl_change_currentness(
     changed_files: &[ChangedFile],
     file: &FileFact,
     change: &ChangeFact,
+    coordinate_line_basis: CoordinateLineBasis,
 ) -> crate::domain::SourceCurrentness {
-    let lines = change.range.start_line..=change.range.end_line.max(change.range.start_line);
+    let lines = one_based_range_inclusive(coordinate_line_basis, &change.range);
     perl_lines_currentness(root, changed_files, file, lines)
 }
 
@@ -173,10 +259,8 @@ pub(crate) fn unowned_change_findings(
                 continue;
             }
             let line = added.line;
-            // The producer wrote zero-based lines (#3221) and SPEC-0064 reads
-            // one-based ones, so a range covers both readings of its lines.
             let covers = |range: &RangeFact| {
-                range.start_line <= line && line <= range.end_line.saturating_add(1)
+                diff_line_covered_by_packet_range(packet.coordinate_line_basis, range, line)
             };
             let covered = packet
                 .changes

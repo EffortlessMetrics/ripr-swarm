@@ -7,7 +7,8 @@ use super::{
     },
 };
 use crate::domain::{
-    OracleKind as DomainOracleKind, OracleStrength as DomainOracleStrength, RelationReason,
+    OracleKind as DomainOracleKind, OracleStrength as DomainOracleStrength, RelationConfidence,
+    RelationReason,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -28,6 +29,7 @@ struct MatrixRow {
     variant: String,
     disposition: String,
     target: String,
+    confidence: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for MatrixRow {
@@ -39,6 +41,8 @@ impl<'de> Deserialize<'de> for MatrixRow {
             variant: String,
             disposition: String,
             target: String,
+            #[serde(default)]
+            confidence: Option<String>,
         }
         let raw = Raw::deserialize(deserializer)?;
         Ok(Self {
@@ -46,6 +50,7 @@ impl<'de> Deserialize<'de> for MatrixRow {
             variant: raw.variant,
             disposition: raw.disposition,
             target: raw.target,
+            confidence: raw.confidence,
         })
     }
 }
@@ -173,7 +178,18 @@ fn projection_matrix_matches_production_dispositions() -> Result<(), String> {
         (RelationKind::Unknown, "unknown"),
     ] {
         let matrix_row = row(&by_key, "RelationKind", variant)?;
-        let (reason, _confidence) = perl_relation_to_domain(kind);
+        let (reason, confidence) = perl_relation_to_domain(kind);
+        let expected_confidence = matrix_row
+            .confidence
+            .as_deref()
+            .map(relation_confidence_from_matrix_label)
+            .transpose()?;
+        if confidence != expected_confidence {
+            return Err(format!(
+                "RelationKind {variant} matrix confidence {:?} vs mapped {confidence:?}",
+                matrix_row.confidence
+            ));
+        }
         let ok = match matrix_row.target.as_str() {
             "advisory_null_reason" => reason.is_none(),
             "DirectOwnerCall" => reason == Some(RelationReason::DirectOwnerCall),
@@ -209,6 +225,15 @@ fn strength_target_label(target: &str) -> String {
         "Weak" => format!("{:?}", DomainOracleStrength::Weak),
         "Unknown" => format!("{:?}", DomainOracleStrength::Unknown),
         other => other.to_string(),
+    }
+}
+
+fn relation_confidence_from_matrix_label(label: &str) -> Result<RelationConfidence, String> {
+    match label {
+        "High" => Ok(RelationConfidence::High),
+        "Medium" => Ok(RelationConfidence::Medium),
+        "Low" => Ok(RelationConfidence::Low),
+        other => Err(format!("unexpected relation confidence label {other}")),
     }
 }
 

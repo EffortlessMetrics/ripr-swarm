@@ -255,7 +255,13 @@ impl LanguageAdapter for PerlAdapter {
         let change_lines = change_lines_from_diff(&packet, changed_files);
         let mut findings =
             packet_to_findings_with_currentness(&packet, &change_lines, |file, change| {
-                perl_change_currentness(&options.root, changed_files, file, change)
+                perl_change_currentness(
+                    &options.root,
+                    changed_files,
+                    file,
+                    change,
+                    packet.coordinate_line_basis,
+                )
             });
         findings.extend(unowned_change_findings(
             &packet,

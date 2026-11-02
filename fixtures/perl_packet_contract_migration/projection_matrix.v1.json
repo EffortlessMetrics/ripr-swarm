@@ -116,31 +116,36 @@
       "enum": "RelationKind",
       "variant": "direct_owner_call",
       "disposition": "exact_canonical_mapping",
-      "target": "DirectOwnerCall"
+      "target": "DirectOwnerCall",
+      "confidence": "High"
     },
     {
       "enum": "RelationKind",
       "variant": "helper_call",
       "disposition": "exact_canonical_mapping",
-      "target": "HelperOwnerCall"
+      "target": "HelperOwnerCall",
+      "confidence": "High"
     },
     {
       "enum": "RelationKind",
       "variant": "method_receiver",
       "disposition": "bounded_preview_mapping",
-      "target": "DirectOwnerCall"
+      "target": "DirectOwnerCall",
+      "confidence": "High"
     },
     {
       "enum": "RelationKind",
       "variant": "package_reference",
       "disposition": "bounded_preview_mapping",
-      "target": "ImportPathAffinity"
+      "target": "ImportPathAffinity",
+      "confidence": "Medium"
     },
     {
       "enum": "RelationKind",
       "variant": "test_name_match",
       "disposition": "bounded_preview_mapping",
-      "target": "OwnerNamedTest"
+      "target": "OwnerNamedTest",
+      "confidence": "Medium"
     },
     {
       "enum": "RelationKind",
