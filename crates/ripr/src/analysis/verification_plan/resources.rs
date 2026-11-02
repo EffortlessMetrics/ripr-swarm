@@ -1,8 +1,4 @@
 //! Project resource dependency edges into verification-plan obligations (#5171).
-#![expect(
-    dead_code,
-    reason = "policy:5171-vp3r-slice-a: plan projection awaits ChangeVerificationPlanV1 consumer (#5163)"
-)]
 
 use crate::domain::{
     ResourceAccessKindV1, ResourceCompletenessClassV1, ResourceDependencyEdgeV1, ResourceKindV1,
