@@ -5428,6 +5428,73 @@ fn supplied_partial_packet_with_findings_does_not_hide_a_malformed_diff() -> Res
     Ok(())
 }
 
+/// #6606: on an empty git diff, a supplied complete Perl packet must still
+/// project findings and must not fail `NoScope` outcome validation.
+#[test]
+fn empty_diff_with_supplied_perl_packet_reports_findings() -> Result<(), String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("system time: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-perl-empty-diff-6606-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(root.join("src")).map_err(|error| format!("create src: {error}"))?;
+    let proof = (|| -> Result<(), String> {
+        std::fs::write(root.join("src/lib.rs"), "pub fn placeholder() {}\n")
+            .map_err(|error| error.to_string())?;
+        let facts = root.join("facts.json");
+        std::fs::write(&facts, bless_fingerprint(EXACT_RETURN_PACKET))
+            .map_err(|error| error.to_string())?;
+        let diff = root.join("empty.diff");
+        std::fs::write(&diff, "").map_err(|error| error.to_string())?;
+        let config =
+            crate::config::tests_only_parse("[languages]\nenabled = [\"rust\", \"perl\"]\n")?;
+        let output = crate::app::check_workspace_with_config(
+            crate::CheckInput {
+                root: root.clone(),
+                base: Some("origin/main".to_string()),
+                diff_file: Some(diff),
+                mode: crate::Mode::Draft,
+                format: crate::OutputFormat::Json,
+                include_unchanged_tests: false,
+                perl_facts_path: Some(facts),
+                suppression_policy: None,
+                git_timeout: None,
+                git_candidate: None,
+                scope: Default::default(),
+            },
+            &config,
+        )?;
+        assert!(
+            !output.findings.is_empty(),
+            "expected Perl findings on an empty diff with a supplied packet"
+        );
+        let outcome = output
+            .analysis_outcome
+            .as_ref()
+            .ok_or_else(|| "expected analysis_outcome on successful check".to_string())?;
+        assert_eq!(
+            outcome.kind,
+            crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings,
+            "empty diff with Perl findings must not read as NoScope"
+        );
+        let finding = output
+            .findings
+            .first()
+            .ok_or_else(|| "expected at least one finding".to_string())?;
+        assert_eq!(
+            finding.source_currentness,
+            crate::domain::SourceCurrentness::UnresolvedSubject,
+            "empty diff does not establish candidate-current Perl lines"
+        );
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    proof
+}
+
 /// A partial, finding-free Perl fact packet: it changes and tests nothing.
 const PARTIAL_EMPTY_PACKET: &str = r#"{
   "schema_version": "ripr-perl-facts-v1",

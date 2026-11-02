@@ -2247,7 +2247,14 @@ fn run_pipeline_for_diff_text_with_language_config(
         // partial; see the limitation push above.
         AnalysisOutcomeKind::PartialWithLimitations
     } else if changed_files.is_empty() {
-        AnalysisOutcomeKind::NoScope
+        // #6606: a supplied Perl (or other supplied-evidence) finding can
+        // survive an empty Rust diff. NoScope requires zero counts; findings
+        // must not be dropped behind that validation failure.
+        if findings.is_empty() {
+            AnalysisOutcomeKind::NoScope
+        } else {
+            AnalysisOutcomeKind::CompleteWithFindings
+        }
     } else if changed_line_count == 0 {
         AnalysisOutcomeKind::NoChangedLines
     } else if findings.is_empty() && candidate_line_count == 0 {

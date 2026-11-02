@@ -9274,6 +9274,7 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_trait_path_call_then_argument_type_decides",
   "fixtures/python_effect_order_guarded_before_call",
   "fixtures/python_effect_order_module_before_call",
+  "crates/ripr/src/analysis/language/perl/tests.rs::empty_diff_with_supplied_perl_packet_reports_findings",
 ]
 fixtures = [
   "fixtures/typescript_reassigned_setup_hook",
@@ -9366,6 +9367,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/analysis/probes/path_only_argument.rs",
   "xtask/src/main.rs",
