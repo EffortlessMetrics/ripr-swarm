@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/currentness_matrix_tail/input
 
-Summary: 3 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 3 no test path. 3 found, 0 suppressed by your settings (3 base-side evidence, not candidate edit targets)
+Summary: 3 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 1 no test path, 2 unclear. 3 found, 0 suppressed by your settings (3 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 5 changed line(s), 1 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
@@ -14,16 +14,18 @@ Start here:
 Hidden:
   All 3 finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence.
     - ./src/lib.rs:13 (no path); kind: predicate; reason: No detected boundary input for the changed predicate
-    - ./src/lib.rs:13 (no path); kind: unclear; reason: No relevant oracle was detected
-    - ./src/lib.rs:13 (no path); kind: unclear; reason: No relevant oracle was detected
+    - ./src/lib.rs:13 (unknown: static analysis limited); kind: unclear; reason: No relevant oracle was detected
+    - ./src/lib.rs:13 (unknown: static analysis limited); kind: unclear; reason: No relevant oracle was detected
   Hidden classes:
     no path = no test path was found
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
 
-Note: ripr found no static test path for any of the 3 changed expression(s) in this diff. Scope
-  analyzed: 1 changed Rust file(s), 3 changed expression(s), and 0 statically linked related
-  test(s). This is not a coverage assessment. A test may already exercise these changes through
-  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
-  none does, add co-located tests that observe the changed behavior.
+Note: ripr established no static test path for any of the 3 changed expression(s) in this diff (1
+  found no path, 2 could not be classified). Scope analyzed: 1 changed Rust file(s), 3 changed
+  expression(s), and 0 statically linked related test(s). This is not a coverage assessment. A test
+  may already exercise these changes through macros, helper-call chains, or integration tests that
+  ripr's static model does not yet trace; if none does, add co-located tests that observe the
+  changed behavior.

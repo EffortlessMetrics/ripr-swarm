@@ -240,3 +240,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_uncalled_closure (20)
+
+Reason:
+RIPR-SPEC-0151: #9168 wholly deleted Rust functions no longer borrow a neighbour as probe owner
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_uncalled_closure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

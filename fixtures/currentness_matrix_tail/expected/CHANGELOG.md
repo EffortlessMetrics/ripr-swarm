@@ -300,3 +300,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_tail (23)
+
+Reason:
+RIPR-SPEC-0151: #9168 wholly deleted Rust functions no longer borrow a neighbour as probe owner
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
