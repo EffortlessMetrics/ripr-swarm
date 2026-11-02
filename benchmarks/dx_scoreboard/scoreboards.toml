@@ -266,9 +266,12 @@ ceilings = { "speed.warm_check_ms" = 90000, "speed.warm_check_peak_rss_mb" = 102
 # is admitted only from a complete analysis, so both hosted nightlies of
 # 2026-11-01 recorded this row's `speed.warm_check_*` as `incomplete`
 # ("analysis is not complete"). `expected_partial` declares the intended
-# outcome: the sample is admitted only when the analysis is that typed partial
-# outcome and a finding names the limit, and a complete result or any other
-# limit fails the row. The ceilings stay (#12052).
+# outcome: the sample is admitted only when the analysis is the typed partial
+# outcome, its typed cause (`diff_scope_oversized` for this walk cap) is
+# present and a finding names the limit. A complete result, a partial outcome
+# without that cause or without a finding naming the limit fails the row. The
+# admitted row stays visibly partial and is never scanned for contradictions.
+# The ceilings stay (#12052).
 [[corpus]]
 id = "typescript-compiler"
 url = "https://github.com/microsoft/TypeScript"
