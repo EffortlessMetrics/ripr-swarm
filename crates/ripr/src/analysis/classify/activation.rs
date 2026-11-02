@@ -7643,7 +7643,18 @@ fn scalar_values(text: &str) -> Vec<String> {
                     break;
                 }
             }
-            if let Some(value) = text.get(byte_idx..end) {
+            // A float exponent (`1e5`, `1E-5f64`, `2.5e3`) is part of the
+            // literal. Stopping at the `e` read `1e5` as the value `1` and
+            // `1E-5f64` as `-5` and `1`, inputs the test never passes (#6912).
+            // The spelled value is not folded here, so the literal yields no
+            // exact value (fail closed).
+            if let Some(exponent_end) = float_exponent_end(&chars, cursor) {
+                idx = exponent_end;
+                continue;
+            }
+            if let Some(value) = text.get(byte_idx..end)
+                && !is_truncated_by_cast(value, text.get(end..).unwrap_or(""))
+            {
                 values.push(value.to_string());
             }
             idx = cursor;
@@ -7654,6 +7665,72 @@ fn scalar_values(text: &str) -> Vec<String> {
     values.sort();
     values.dedup();
     values
+}
+
+/// The index one past a float exponent (`e5`, `E-5`, `e+3`, with `_`
+/// separators) that starts at `cursor`, or `None` when the text there is not
+/// one. A type suffix (`f64`) is left for the caller's identifier-digit guard.
+fn float_exponent_end(chars: &[(usize, char)], cursor: usize) -> Option<usize> {
+    if !matches!(chars.get(cursor).map(|(_, ch)| *ch), Some('e' | 'E')) {
+        return None;
+    }
+    let mut digits_at = cursor + 1;
+    if matches!(chars.get(digits_at).map(|(_, ch)| *ch), Some('+' | '-')) {
+        digits_at += 1;
+    }
+    if !chars
+        .get(digits_at)
+        .is_some_and(|(_, ch)| ch.is_ascii_digit())
+    {
+        return None;
+    }
+    let mut end = digits_at;
+    while chars
+        .get(end)
+        .is_some_and(|(_, ch)| ch.is_ascii_digit() || *ch == '_')
+    {
+        end += 1;
+    }
+    Some(end)
+}
+
+/// Whether `literal` is followed by an `as` cast to an integer type that
+/// changes its value: a fractional literal truncates, and an integer outside
+/// the target's range wraps (`300 as u8` is 44). Such a literal is not the
+/// value it is spelled as, so it yields no exact value (#6912). A cast that
+/// keeps the value, or a cast to a type this does not know, is left alone.
+fn is_truncated_by_cast(literal: &str, rest: &str) -> bool {
+    let Some(after_as) = rest.trim_start().strip_prefix("as") else {
+        return false;
+    };
+    if !after_as.starts_with(char::is_whitespace) {
+        return false;
+    }
+    let target: String = after_as
+        .trim_start()
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .collect();
+    let (min, max): (i128, i128) = match target.as_str() {
+        "u8" => (0, i128::from(u8::MAX)),
+        "i8" => (i128::from(i8::MIN), i128::from(i8::MAX)),
+        "u16" => (0, i128::from(u16::MAX)),
+        "i16" => (i128::from(i16::MIN), i128::from(i16::MAX)),
+        "u32" => (0, i128::from(u32::MAX)),
+        "i32" => (i128::from(i32::MIN), i128::from(i32::MAX)),
+        "u64" => (0, i128::from(u64::MAX)),
+        "i64" => (i128::from(i64::MIN), i128::from(i64::MAX)),
+        "usize" => (0, i128::from(u64::MAX)),
+        "isize" => (i128::from(i64::MIN), i128::from(i64::MAX)),
+        _ => return false,
+    };
+    if literal.contains('.') {
+        return true;
+    }
+    match literal.replace('_', "").parse::<i128>() {
+        Ok(value) => value < min || value > max,
+        Err(_) => true,
+    }
 }
 
 /// The index one past a radix-prefixed integer literal (`0x1F`, `-0b101`,
@@ -10072,6 +10149,53 @@ assert_eq!(input.amount, 100);"#
     }
 
     #[test]
+    fn scalar_values_read_a_float_exponent_as_no_exact_value() {
+        // #6912: `1e5` was read as `1` and `1E-5f64` as `-5` and `1`, inputs the
+        // test never passes. The exponent form yields no exact value.
+        for spelled in [
+            "score(1e5)",
+            "score(1E-5f64)",
+            "score(2.5e3)",
+            "score(1e+5)",
+            "score(1e5_f32)",
+            "score(1_0e1_0)",
+        ] {
+            assert!(scalar_values(spelled).is_empty(), "{spelled}");
+        }
+        // Another argument beside the exponent literal is still read.
+        assert_eq!(scalar_values("f(1e5, 7)"), vec!["7".to_string()]);
+        // Controls: no exponent keeps its reading, and an `e` that is part of
+        // an identifier or not followed by a digit is not an exponent.
+        assert_eq!(scalar_values("f(1.5)"), vec!["1.5".to_string()]);
+        assert_eq!(scalar_values("f(1_000)"), vec!["1_000".to_string()]);
+        assert_eq!(scalar_values("f(1.5f64)"), vec!["1.5".to_string()]);
+        assert_eq!(scalar_values("f(2e)"), vec!["2".to_string()]);
+        assert!(scalar_values("f(x1e5)").is_empty());
+        assert_eq!(scalar_values("f(0xE5)"), vec!["0xE5".to_string()]);
+    }
+
+    #[test]
+    fn scalar_values_read_a_value_changing_cast_as_no_exact_value() {
+        // #6912: `300 as u8` is 44, not 300.
+        for spelled in [
+            "score(300 as u8)",
+            "score(-1 as u32)",
+            "score(128 as i8)",
+            "score(1.5 as u8)",
+            "score(70_000 as u16)",
+        ] {
+            assert!(scalar_values(spelled).is_empty(), "{spelled}");
+        }
+        // Controls: a cast that keeps the value, a widening cast, a float
+        // target and a non-cast `as`-prefixed word keep the reading.
+        assert_eq!(scalar_values("score(255 as u8)"), vec!["255".to_string()]);
+        assert_eq!(scalar_values("score(300 as u64)"), vec!["300".to_string()]);
+        assert_eq!(scalar_values("score(-1 as i32)"), vec!["-1".to_string()]);
+        assert_eq!(scalar_values("score(3 as f64)"), vec!["3".to_string()]);
+        assert_eq!(scalar_values("score(300 assert)"), vec!["300".to_string()]);
+    }
+
+    #[test]
     fn scalar_values_read_a_radix_prefixed_integer_as_one_literal() {
         // #9164: `0xFF` was read as `0` (the leading digit), so `is_big(0x10)`
         // against a `0xFF` boundary compared equal and read as the boundary.
@@ -10131,12 +10255,13 @@ assert_eq!(input.amount, 100);"#
         assert!(!scalar_values("f(0xFFu8)").contains(&"8".to_string()));
         // Distinct spellings stay distinct.
         assert_ne!(scalar_values("f(0b1010)"), scalar_values("f(0b1011)"));
-        // Decimal, float and exponent reading is unchanged.
+        // Decimal and float reading is unchanged; an exponent literal yields no
+        // exact value (#6912, it was read as its mantissa digits).
         assert_eq!(scalar_values("f(100)"), vec!["100".to_string()]);
         assert_eq!(scalar_values("f(1_000)"), vec!["1_000".to_string()]);
         assert_eq!(scalar_values("f(-5)"), vec!["-5".to_string()]);
         assert_eq!(scalar_values("f(0.5f32)"), vec!["0.5".to_string()]);
-        assert_eq!(scalar_values("f(1e5)"), vec!["1".to_string()]);
+        assert!(scalar_values("f(1e5)").is_empty());
         assert_eq!(scalar_values("f(99u32)"), vec!["99".to_string()]);
         assert!(scalar_values("f(a0, b1x, c0o7)").is_empty());
         // Non-radix letter after a zero is not a radix literal.
