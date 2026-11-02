@@ -3139,6 +3139,10 @@ fn hops_forward_owner_result_with(
                 // user macro may expand to an early `return` the textual
                 // return scan cannot see.
                 && !caller_rebinds_parameter(&hop.caller.body, callee)
+                // #10357 item 2: nested items, `const`/`static`, or a `use`
+                // of the same bare name must not forward through a wrapper
+                // (`caller_rebinds_parameter` covers `let` only).
+                && caller_names_callee_only_as_a_call(&hop.caller.body, callee)
                 && !caller_invokes_opaque_macro(&hop.caller.body, hop.transparent_macros_rebound)
                 && hop.arguments.iter().all(|argument| {
                     !is_identifier(argument.trim())
@@ -5310,6 +5314,10 @@ mod tests {
             "pub fn w(mut qty: u32) -> u32 {\n    qty <<= 1;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
             "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { qty / 2 } else { 5 }\n}",
             "pub fn w(qty: u32) -> u32 {\n    if is_bulk(qty) { FIVE } else { 0 }\n}",
+            // #10357 item 2: non-`let` callee shadowing inside the wrapper.
+            "pub fn w(qty: u32) -> u32 {\n    fn is_bulk(_: u32) -> bool { true }\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    static is_bulk: fn(u32) -> bool = |_| true;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
+            "pub fn w(qty: u32) -> u32 {\n    use other::is_bulk;\n    if is_bulk(qty) { 5 } else { 0 }\n}",
         ] {
             assert!(
                 !chain_forwards_owner_result("is_bulk", &chain_with_args(body)),
