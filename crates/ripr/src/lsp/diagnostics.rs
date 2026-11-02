@@ -312,7 +312,7 @@ fn overlap_signature(finding: &Finding) -> Option<String> {
     let object = value.as_object_mut()?;
     object.remove("id");
     object.remove("canonical_gap");
-    let probe = object.get_mut("probe")?.as_object_mut()?;
+    let probe = object.get_mut("probe")?.as_object_mut()?; // user-text-exempt: JSON key of the finding, not shown
     for field in [
         "id",
         "family",
@@ -3533,6 +3533,7 @@ fn diagnostic_for_classified_seam_with_causal(
     let line = seam.display_line().saturating_sub(1) as u32;
     let range = crate::lsp::position::line_span_range(line);
     let diagnostic_id = stable_diagnostic_id(
+        // user-text-exempt: machine id seed hashed into the diagnostic id, never shown
         "seam",
         [
             seam.owner(),
