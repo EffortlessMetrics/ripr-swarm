@@ -6511,19 +6511,6 @@ impl FreeOwnerBinding<'_> {
                 self.resolve_module_path(index, syntax, scope, &root, &[], segments, reexport_hops)
             }
             _ => {
-                if let Some((file, stack)) =
-                    Self::local_module_child(scope.file, scope.stack, first, index, syntax)
-                {
-                    return self.resolve_module_path(
-                        index,
-                        syntax,
-                        scope,
-                        &file,
-                        &stack,
-                        segments,
-                        reexport_hops,
-                    );
-                }
                 if !self.krate_root_names_owner_crate(first, scope.file, scope.source, index) {
                     return None;
                 }
@@ -6606,6 +6593,19 @@ impl FreeOwnerBinding<'_> {
         let [first, rest @ ..] = module_segments.as_slice() else {
             return None;
         };
+        if let Some((file, stack)) =
+            Self::local_module_child(parent_scope.file, parent_scope.stack, first, index, syntax)
+        {
+            return self.resolve_module_path(
+                index,
+                syntax,
+                parent_scope,
+                &file,
+                &stack,
+                rest,
+                reexport_hops,
+            );
+        }
         self.resolve_use_prefix(first, rest, parent_scope, index, syntax, reexport_hops)
     }
 
