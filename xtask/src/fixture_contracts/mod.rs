@@ -94,6 +94,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_release_scope_fixture_corpus(&mut violations)?;
     validate_intervention_study_fixture_corpus(&mut violations)?;
     validate_blind_journey_contract_fixture_corpus(&mut violations)?;
+    validate_cache_payload_tamper_recovery_fixture_corpus(&mut violations)?;
     validate_orchestration_attempt_receipts_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_attempts_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_intake_fixture_corpus(&mut violations)?;
@@ -1898,6 +1899,14 @@ pub(crate) const TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES: &[(&str, &str)] 
     (
         "javascript_already_observed_unchanged",
         "unanchored_relation_holds_advisory",
+    ),
+    (
+        "typescript_load_profile_already_observed_unchanged",
+        "already_observed_unchanged",
+    ),
+    (
+        "typescript_dynamic_oracle_spurious_already_observed_guard",
+        "intentionally_skipped",
     ),
     ("typescript_complete_boundary_packet_closed", "resolved"),
 ];

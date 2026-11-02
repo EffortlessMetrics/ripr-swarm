@@ -140,6 +140,11 @@ pub(in crate::analysis) fn unresolved_parameter_field_selector(
 mod field_selector;
 use field_selector::FieldSelector;
 
+mod witness;
+pub(in crate::analysis) use witness::{
+    match_arm_selection_witness_linkage, match_arm_selection_witness_schema_version,
+};
+
 mod guard_entry;
 pub(in crate::analysis) use guard_entry::{GuardEntry, named_integer_bound};
 

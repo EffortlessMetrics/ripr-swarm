@@ -290,7 +290,7 @@ impl<'a> RelativeKeyProjector<'a> {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn directory_resolutions(&self) -> usize {
         self.directory_resolutions
     }
@@ -311,7 +311,7 @@ impl<'a> RelativeKeyProjector<'a> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) fn file_uris_relative_to_root<'a>(
     root: &Path,
     uris: impl IntoIterator<Item = &'a Uri>,
