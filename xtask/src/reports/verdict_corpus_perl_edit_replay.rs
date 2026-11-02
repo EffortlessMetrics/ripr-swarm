@@ -503,8 +503,7 @@ fn read_json_object(text: &str) -> Result<(Map<String, Value>, usize), String> {
     let mut in_string = false;
     let mut escape = false;
     let mut depth = 0usize;
-    for offset in start..bytes.len() {
-        let byte = bytes[offset];
+    for (offset, &byte) in bytes.iter().enumerate().skip(start) {
         if in_string {
             if escape {
                 escape = false;
@@ -731,9 +730,12 @@ mod parse_tests {
     use super::parse_edit_provenance;
 
     #[test]
-    fn trailing_edits_after_fingerprint_marker_are_refused() {
+    fn trailing_edits_after_fingerprint_marker_are_refused() -> Result<(), String> {
         let edits = "Started from the producer packet of perl-testmore-tier-far-from-boundary, then in oracles where {\"oracle_id\": \"oracle:t/qualified.t:is:130-198\"} set {\"observed_sink\": null}; the packet fingerprint was recomputed.; in oracles where {\"oracle_id\": \"oracle:t/other.t:is:1-2\"} set {\"observed_sink\": null}";
-        assert!(parse_edit_provenance(edits).is_err());
+        if parse_edit_provenance(edits).is_ok() {
+            return Err("expected trailing edits to be refused".to_string());
+        }
+        Ok(())
     }
 
     #[test]
