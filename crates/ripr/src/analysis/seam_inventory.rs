@@ -2587,7 +2587,7 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
         );
     }
     let reuse_requested = stages.and_then(|stages| stages.reuse).is_some() && consumer.is_none();
-    let mut state = if reuse_requested {
+    let state = if reuse_requested {
         if let Some(paths) = generated_context {
             let (corpus, _) =
                 discover_analyzable_rust_corpus_for_changed_paths(root, config, paths)?;
@@ -2606,7 +2606,7 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
     let reuse_identity = stages
         .and_then(|stages| stages.reuse)
         .filter(|_| consumer.is_none());
-    let (reuse_identity, mut workspace_cache_key) = if reuse_requested {
+    let (reuse_identity, workspace_cache_key) = if reuse_requested {
         let key = state.cache_key();
         (reuse_identity.filter(|_| key.is_reusable()), Some(key))
     } else {
