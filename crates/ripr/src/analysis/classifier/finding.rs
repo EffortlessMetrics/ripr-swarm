@@ -81,7 +81,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
     }
     // RIPR-SPEC-0048: a constant decided by evaluation has a reader and tests
     // the evaluation read, so "no changed Rust line" no longer describes it.
-    if context.const_flow.is_some() {
+    if context.const_flow.is_some() || context.binding_return_flow.is_some() {
         stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
     }
     ensure_unknown_stop_reason(&class, &mut stop_reasons);

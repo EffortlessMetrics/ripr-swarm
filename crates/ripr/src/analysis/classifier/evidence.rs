@@ -1,8 +1,8 @@
 use crate::analysis::classify::{
-    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, ConstFlow, EffectStateCarrier,
-    HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
-    PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
-    activation_and_boundary_input, assertion_compares_hand_built_field,
+    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, BindingReturnFlow, ConstFlow,
+    EffectStateCarrier, HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin,
+    ProbeContext, PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex,
+    WrapperEntryPairing, activation_and_boundary_input, assertion_compares_hand_built_field,
     assertion_observes_collection_argument, assertion_observes_scope_end, assertion_out_parameter,
     body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
@@ -1920,6 +1920,99 @@ impl ClassifiedProbeEvidence {
                 format!(
                     "No related assertion fails when `{}` changes from {} to {}",
                     detail.constant, detail.old_value, detail.new_value
+                ),
+            );
+        }
+        self.ripr = RiprEvidence {
+            reach: self.reach.clone(),
+            infect: self.infect.clone(),
+            propagate: self.propagate.clone(),
+            reveal: RevealEvidence {
+                observe: self.observe.clone(),
+                discriminate: self.discriminate.clone(),
+            },
+        };
+        self.evidence = evidence_summaries([
+            &self.reach,
+            &self.infect,
+            &self.propagate,
+            &self.observe,
+            &self.discriminate,
+        ]);
+        self.assertion_refusal = None;
+        if discriminated {
+            ExposureClass::Exposed
+        } else {
+            ExposureClass::WeaklyExposed
+        }
+    }
+
+    /// RIPR-SPEC-0096: replace the stage evidence of a changed `let` returned
+    /// unmodified with what evaluating it showed. Only called with a flow the
+    /// evaluator fully decided.
+    pub(in crate::analysis) fn apply_binding_return_flow(
+        &mut self,
+        flow: &BindingReturnFlow,
+    ) -> ExposureClass {
+        let (detail, discriminated) = match flow {
+            BindingReturnFlow::Discriminated(detail) => (detail, true),
+            BindingReturnFlow::Indistinguishable(detail) => (detail, false),
+        };
+        let stage = |state, summary: String| StageEvidence::new(state, Confidence::Medium, summary);
+        let call = format!("`{}`", detail.assertion);
+        self.reach = stage(
+            StageState::Yes,
+            format!(
+                "`{}` calls `{}`, which returns the changed binding `{}`: {}",
+                detail.test, detail.owner, detail.binding, call
+            ),
+        );
+        self.infect = stage(
+            StageState::Yes,
+            format!(
+                "`{}` initializer changes from `{}` to `{}`",
+                detail.binding, detail.old_init, detail.new_init
+            ),
+        );
+        self.observe = stage(
+            StageState::Yes,
+            format!(
+                "{} compares the result of `{}` to a literal",
+                call, detail.owner
+            ),
+        );
+        if discriminated {
+            self.propagate = stage(
+                StageState::Yes,
+                format!(
+                    "`{}` returns {} instead of {} when `{}` is `{}`",
+                    detail.owner,
+                    detail.new_result,
+                    detail.old_result,
+                    detail.binding,
+                    detail.new_init
+                ),
+            );
+            self.discriminate = stage(
+                StageState::Yes,
+                format!(
+                    "{} holds with `{}` = `{}` and fails with `{}`",
+                    call, detail.binding, detail.old_init, detail.new_init
+                ),
+            );
+        } else {
+            self.propagate = stage(
+                StageState::Weak,
+                format!(
+                    "Each of the {} related test(s) gives the same assertion outcome under both initializers; for the cited assertion `{}` returns {} before and {} after",
+                    detail.tests_evaluated, detail.owner, detail.old_result, detail.new_result
+                ),
+            );
+            self.discriminate = stage(
+                StageState::No,
+                format!(
+                    "No related assertion fails when `{}` changes from `{}` to `{}`",
+                    detail.binding, detail.old_init, detail.new_init
                 ),
             );
         }
