@@ -15,6 +15,7 @@ mod precommit_source_oracle;
 #[cfg(windows)]
 mod review_conversations;
 mod rust_corpus_projection;
+mod traceability_planning;
 
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
