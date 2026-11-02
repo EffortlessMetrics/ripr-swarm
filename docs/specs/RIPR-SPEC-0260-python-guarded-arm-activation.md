@@ -100,7 +100,12 @@ an `and` chain (split outside quotes and brackets) may be:
   display is a list, set or multi-element tuple of scalar literals;
 - `isinstance(NAME, C)` where `C` is `int`, `float`, `str`, `bool` or a tuple
   of them and none of those builtins is rebound (`isinstance(True, int)`
-  holds);
+  holds). A rebinding includes a module-level shadow and a patch through the
+  builtins module or an alias (`builtins.isinstance = f`, an annotated
+  `b.isinstance: object = f`, a tuple, list or chained target
+  `b.isinstance, other = f, g`, `setattr`, `vars(builtins)[..]`); a bare
+  annotation, a use inside a call or subscript key, a comparison and a
+  right-hand-side read are not rebindings (#12183, #12206, #12222);
 - a `for TARGET in NAME:` header, read as `len(NAME) > 0` over a literal
   display or string, so a loop body never runs for `total([])`.
 

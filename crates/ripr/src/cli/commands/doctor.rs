@@ -3452,7 +3452,8 @@ fn generated_workflow_line(root: &Path, workflow: &str, current_version: &str) -
                 .iter()
                 .find_map(|word| word.strip_prefix("--version="))
         });
-    let refresh = super::init::workflow_refresh_guidance(root);
+    let refresh =
+        super::init::workflow_refresh_guidance(root, crate::cli::commands_options::InitCi::Github);
     match pinned {
         None => Some(format!(
             "{GENERATED_WORKFLOW_PATH} installs ripr without a version (the ripr 0.10-and-earlier template), so CI runs whatever release is newest against these steps; {refresh}"

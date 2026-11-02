@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex15-package-reference.json",
-    "sha256": "b2ecb1df77adca8006fbd646d0ae1941110dd430014d50242ef39eeaaf0a7fc8",
+    "sha256": "6b1fd075d3429b1fed2f4d13fc142b4efcdbc60e53b79c3e46a7c972be8c334b",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"relation_kind\": \"package_reference\"}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
   },

@@ -97,6 +97,8 @@ mod rust_judged_panel;
 mod rust_region_scan;
 mod schema_cut_replay;
 mod schema_producer_sweep;
+mod verification_allocation_adapter;
+mod verification_allocation_policy;
 mod verification_contracts;
 mod verify_test_shards;
 mod version;
@@ -14585,22 +14587,22 @@ fn check_rust_source_role_authority() -> Result<(), String> {
             "#5563 source-text guard strips test modules from production text it scans for miss-based eligibility; it decides no analysis role",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/placement.rs",
             "starts_with(\"tests",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/placement.rs",
             "contains(\"/tests/\")",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/placement.rs",
             "ends_with(\"_test.rs\")",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/placement.rs",
             "ends_with(\"_tests.rs\")",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),

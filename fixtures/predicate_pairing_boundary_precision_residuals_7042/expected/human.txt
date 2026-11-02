@@ -1,0 +1,44 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/predicate_pairing_boundary_precision_residuals_7042/input
+
+Summary: 2 changed behaviors checked: 2 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Start here:
+  State: no gap selected for repair
+  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
+  File: ./src/lib.rs:2
+  Static exposure: exposed (severity: info, confidence 1.00)
+  Gap ID (for scripts): gap:rust:src/lib.rs:gate:predicate_boundary:predicate:input==10
+  Changed behavior: input >= 10
+  Related test (1 of 3 matched rows): tests/post_assertion.rs:4 after_assert
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach gate: after_assert, commented, nested
+    - infection yes: Detected related test input at the changed boundary
+    - 16 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/predicate_pairing_boundary_precision_residuals_7042/input --diff <cwd>/fixtures/predicate_pairing_boundary_precision_residuals_7042/diff.patch --mode fast probe:src_lib.rs:predicate:fa1d51d0
+  ripr context --root <cwd>/fixtures/predicate_pairing_boundary_precision_residuals_7042/input --diff <cwd>/fixtures/predicate_pairing_boundary_precision_residuals_7042/diff.patch --mode fast --at probe:src_lib.rs:predicate:fa1d51d0
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:2 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
+  Hidden classes:
+    exposed = tests appear to notice the change
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

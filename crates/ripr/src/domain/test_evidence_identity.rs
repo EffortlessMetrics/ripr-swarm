@@ -5,6 +5,13 @@
 //! behavior. Keep that distinction local to the producer instead of asking
 //! renderers or cross-tool consumers to reconstruct it.
 
+/// Normalize a transport path for portable summaries: forward slashes and no
+/// leading `./` prefix. Relative `../` segments are preserved.
+pub(crate) fn normalize_transport_path(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    normalized.trim_start_matches("./").to_string()
+}
+
 /// Normalize, order, and deduplicate producer-owned discriminator identities.
 pub(super) fn canonicalize_missing_discriminators(values: &[String]) -> Vec<String> {
     let mut canonical = values
