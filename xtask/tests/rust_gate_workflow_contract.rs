@@ -412,7 +412,7 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     for required in [
         "      test-shards: 4\n",
         "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [rust-github]\n    if: ${{ !cancelled() && needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml\n",
-        "rust-github, rust-github-tests, docs-gate]",
+        "rust-github, rust-github-tests, docs-gate,",
         "GITHUB_TESTS_RESULT: ${{ needs.rust-github-tests.result }}",
         "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
     ] {
@@ -512,8 +512,8 @@ fn routed_result_cannot_pass_without_the_hosted_shards() {
             "elif false; then status=fail",
         ),
         (
-            "rust-github, rust-github-tests, docs-gate]",
-            "rust-github, docs-gate]",
+            "rust-github, rust-github-tests, docs-gate,",
+            "rust-github, docs-gate,",
         ),
         (
             "needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml",

@@ -9541,10 +9541,10 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
     for (what, from, to, needle) in [
         (
-            "the extension e2e step",
-            "      - name: Read the extension e2e check for the admitted head\n        id: vscode\n",
+            "the extension e2e result step",
+            "      - name: Require the extension e2e result for the admitted head\n        id: vscode\n",
             "      - name: Read something else\n        id: other\n",
-            "read the extension e2e check for the admitted head",
+            "require the extension e2e result for the admitted head",
         ),
         (
             "the summary branch that fails the Result",
@@ -9553,22 +9553,52 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "fail the Result when the selected extension e2e did not succeed",
         ),
         (
-            "the check-run read permission",
-            "  checks: read\n",
-            "",
-            "grant the Result's check-run read",
+            "the e2e job of this run",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: [vscode-select]\n",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: []\n",
+            "run the extension e2e as a job of this run",
         ),
         (
-            "the same-suite binding of the skip",
-            "((.check_suite.id | tostring) == $suite)",
-            "true",
-            "bind the extension e2e verdict to this request's own successful",
+            "the label selection",
+            "case \",$LABELS,\" in *,full-ci,*|*,vscode,*) return 0 ;; esac",
+            "case \",$LABELS,\" in *,never,*) return 0 ;; esac",
+            "select the extension e2e from the admitted diff and the full-ci and vscode labels",
         ),
         (
-            "the skipped-check exclusion from the verdict",
-            "[.[] | select(.conclusion != \"skipped\")] | last // {}",
-            "[.[]] | last // {}",
-            "decide the extension e2e verdict by the newest executed check",
+            "the e2e job call and its selection condition",
+            "    if: ${{ !cancelled() && needs.vscode-select.result == 'success' && needs.vscode-select.outputs.selected == 'true' }}\n    uses: ./.github/workflows/vscode-e2e.yml\n",
+            "    if: ${{ !cancelled() }}\n    uses: ./.github/workflows/noop.yml\n",
+            "run the extension e2e only when selected",
+        ),
+        (
+            "the Result's reading of this run's results",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-e2e.result }}\n",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-select.result }}\n",
+            "read this run's own selection and e2e results",
+        ),
+        (
+            "the selection's admitted head and labels",
+            "          HEAD_SHA: ${{ needs.admission.outputs.head }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "          HEAD_SHA: ${{ github.sha }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "classify the admitted head and labels",
+        ),
+        (
+            "the Result's dependency on the extension jobs",
+            "docs-gate, vscode-select, vscode-e2e]",
+            "docs-gate]",
+            "make the Result depend on the extension selection and e2e jobs",
+        ),
+        (
+            "the selected-and-succeeded pass",
+            "true:success)",
+            "true:never)",
+            "pass a selected extension e2e only when it succeeded",
+        ),
+        (
+            "the unselected-and-skipped pass",
+            "false:skipped)",
+            "false:never)",
+            "pass an unselected extension e2e only when it was skipped",
         ),
     ] {
         let mutated = workflow.replacen(from, to, 1);
@@ -49227,7 +49257,7 @@ fn vscode_job_block(workflow: &str) -> Result<&str, String> {
     const HEADER: &str = "\n  vscode:\n";
     let start = workflow
         .find(HEADER)
-        .ok_or_else(|| "ci.yml is missing the vscode job".to_string())?;
+        .ok_or_else(|| "vscode-e2e.yml is missing the vscode job".to_string())?;
     let mut offset = start + HEADER.len();
     while offset < workflow.len() {
         let rest = &workflow[offset..];
@@ -49373,8 +49403,10 @@ fn vscode_host_diagnostics_contract_rejects_success_uploads_and_exit_laundering(
 #[test]
 fn vscode_host_diagnostics_ci_job_retains_failure_only() -> Result<(), String> {
     let root = repo_root()?;
-    let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
-        .map_err(|err| format!("read ci.yml: {err}"))?;
+    // #12252: the e2e job lives in the reusable workflow both ci.yml and the
+    // routed run call.
+    let workflow = fs::read_to_string(root.join(".github/workflows/vscode-e2e.yml"))
+        .map_err(|err| format!("read vscode-e2e.yml: {err}"))?;
     let job = vscode_job_block(&workflow)?;
     let violations = vscode_host_diagnostics_contract_violations(job);
     assert!(
