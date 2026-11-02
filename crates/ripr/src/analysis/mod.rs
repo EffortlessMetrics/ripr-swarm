@@ -37,6 +37,11 @@ pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
 };
+/// Honest seam-count reports for repo-scope inventory progress (#8643).
+/// Installed by the app progress owner for the duration of one walk; the
+/// evidence pass reports `processed`/`total` here instead of inventing a
+/// second stage vocabulary.
+pub(crate) mod inventory_progress;
 mod probe_read_trace;
 mod probes;
 pub(crate) mod repair_route;

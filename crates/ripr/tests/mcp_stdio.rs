@@ -4778,10 +4778,18 @@ fn refresh_base_argument_recovers_a_repository_without_a_main_default_branch() -
     {
         return Err(format!("status must name the explicit base: {desired}"));
     }
-    // The committed snapshot itself names the base it analyzed, so a clean
-    // worktree (null scope disclosure) still leaves nothing implicit.
+    // The committed snapshot itself names the base it analyzed, and refresh
+    // scope carries the same fact when the worktree is clean (#9190).
     if status.pointer("/session/analysis_outcome/identity/base_revision") != Some(&json!("trunk")) {
         return Err(format!("snapshot outcome must name its base: {status}"));
+    }
+    let scope = refreshed
+        .pointer("/scope")
+        .ok_or_else(|| format!("refresh lost scope on explicit base: {refreshed}"))?;
+    if scope.get("analyzed_base") != Some(&json!("trunk")) {
+        return Err(format!(
+            "refresh scope must name the analyzed base on a clean worktree: {scope}"
+        ));
     }
 
     // An unresolvable base fails the attempt closed and keeps the snapshot.

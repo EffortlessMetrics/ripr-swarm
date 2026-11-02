@@ -741,7 +741,14 @@ under `rust_indirect_owner_call_unresolved`:
   different same-name definition; unresolved reexports and aliases retain the
   limit. A test body the shared parser refuses proves no declaration range, so
   a single-line `use` mention keeps its lexical exclusion there and the body's
-  remaining declarations stay unproven. This is not general name resolution or
+  remaining declarations stay unproven. The body of a `macro_rules!` definition
+  is token text, not a mention: it is inert only when the macro has no
+  `#[macro_export]` and its name occurs as no identifier token (comments and
+  strings counted) outside its own definition, so an unused macro cannot
+  withhold the gap (#12231). Any other occurrence, including a forwarded
+  `forward!(name)` that expands `$m!()` and a comment-separated `name/**/!()`,
+  keeps the limit, as does any scan containing `include!` or a `#[path]` module,
+  whose unseen text may invoke the macro. This is not general name resolution or
   macro expansion (#10162).
 - **generated owner**: the changed line lies in no function of its file and the
   changed expression is an item-position macro invocation
@@ -1243,8 +1250,8 @@ Integration: `crates/ripr/tests/owner_pin_execution.rs`
 `gap_admission.rs::tests::a_related_test_line_at_the_call_budget_withholds_a_gap_and_names_an_unknown`.
 
 `crates/ripr/tests/indirect_owner_limit.rs` (function value, pointer binding,
-local and known executors, item macro, `cfg_attr` and trailing-comment
-controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
+local and known executors, item macro, inert-macro, `cfg_attr` and
+trailing-comment controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
 
 Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 

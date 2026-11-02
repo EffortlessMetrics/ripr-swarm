@@ -79,6 +79,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_surface_projection_alignment_fixture_corpus(&mut violations)?;
     validate_typescript_bun_ub_calibration_fixture_corpus(&mut violations)?;
     validate_cross_language_oracle_graph_fixture_corpus(&mut violations)?;
+    validate_dotnet_evidence_contract_fixture_corpus(&mut violations)?;
     validate_bun_ub_cross_language_dogfood_fixture_corpus(&mut violations)?;
     validate_typescript_preview_repair_loop_fixture_corpus(&mut violations)?;
     validate_typescript_preview_false_actionable_audit_fixture_corpus(&mut violations)?;
