@@ -101,16 +101,22 @@ and the check stays weak. The shape holds only when every link is exact:
 
 - the owner is a free function (not async, `const`, generic or a method)
   whose only statement is one unconditional `receiver.push(..)` into a
-  `&mut Vec<..>` or `&mut String` parameter, and neither the owner's file nor
+  `&mut Vec<..>` or `&mut String` parameter, and the pushed argument always
+  reaches the push: it holds no `return`, `?`, `break`, `continue`,
+  `.await`, `yield` or `let`, and no macro, closure, block, `if`, `match`
+  or loop, and neither the owner's file nor
   the test's file shadows `Vec` or `String`;
-- the test is not `#[ignore]` or `#[should_panic]`; at its top level it binds
+- the test carries only the plain `#[test]` attribute (no `#[ignore]`,
+  `#[should_panic]` or `cfg`); at its top level it binds
   `let mut b = Vec::new();` (or `String::new()`, or a `default()`), with no
   type, pattern or `else`, and calls the owner exactly once, resolved to the
   owner and not a namesake, with `&mut b` at the pushed parameter's position
   and no other argument naming `b`;
-- no other statement names `b` before the call, and after the call every
-  statement that names `b` is a recorded `assert!`, `assert_eq!` or
-  `assert_ne!` whose every mention of `b` is `b.len()` or `b.is_empty()`.
+- up to the last read of `b`, the test's top-level statements are only the
+  definition, the call and the reads, so no `return`, `?`, branch or other
+  statement can end the test early; every read is a recorded `assert!`,
+  `assert_eq!` or `assert_ne!` with no attribute, whose every mention of `b`
+  is `b.len()` or `b.is_empty()`.
 
 Anything else leaves propagation as it was: a reborrow (`let r = &mut b;`), a
 use before the call, an alias after it (`let c = &b;`), a different binding, a
@@ -122,11 +128,22 @@ Once the value is followed, the effect repair route would otherwise propose a
 mock expectation, which is the wrong check for a vector the test holds. For
 any push into a plain collection receiver whose value is followed, the route
 therefore requires `collection contents check proposal`, which it cannot
-supply yet, so `ripr check` and bare `ripr repair` both refuse to start and
-both name the same reason: "an exact check of what the test's vector holds
-after the call, which ripr cannot write yet". Both read the same repository
-evidence and the same `repair_packet_eligibility` decision, in every check
-mode. Writing that contents check, and grading the deletion of the push the
+supply yet, and proposes no mock. `ripr check` and bare `ripr repair` read
+the same repository evidence and the same `repair_packet_eligibility`
+decision, so neither starts, in the default check and with `--mode instant`
+or `--no-unchanged-tests`. In the default check, where the unchanged test is
+indexed, both name the same reason: "an exact check of the full contents the
+test reads back after the call, which ripr cannot write yet". The diff-side
+next-step text for a changed side effect still suggests a mock expectation
+among other checks; aligning it is #12456.
+
+Before this rule, a push into a plain collection receiver was followed only
+by an assertion that already discriminates it: an exact read of the receiver
+by name, or the `&mut s.items` field-projection observer. Such an assertion
+grades the check strong, and a strongly checked spot is already reported as
+checked before the route's evidence is read. So the gate only changes the
+answer for a push this rule follows; an exactly checked vector still reads as
+already noticed. Writing that contents check, and grading the deletion of the push the
 same way on both sides, is the next slice of #11402.
 
 ## Required Evidence

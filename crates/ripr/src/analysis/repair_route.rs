@@ -48,7 +48,7 @@ pub(crate) fn humanize_evidence(evidence: &str) -> String {
     // #11402: the value is followed to a vector the test holds, but ripr
     // cannot yet write the exact check of its contents.
     if evidence == COLLECTION_CONTENTS_CHECK_EVIDENCE {
-        return "an exact check of what the test's vector holds after the call, which ripr cannot write yet"
+        return "an exact check of the full contents the test reads back after the call, which ripr cannot write yet"
             .to_string();
     }
     // #11025: the stage the static chain stopped at, in plain words. The
@@ -506,10 +506,10 @@ fn effect_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repai
     // comparing that collection's exact contents, not by a mock expectation,
     // and this route cannot propose that check yet. Fail closed once the
     // value is followed, so no start proposes the wrong kind of check.
-    if stages_localize_sink
+    let contents_check_needed = stages_localize_sink
         && crate::analysis::classify::direct_collection_mutation_receiver(seam.expression())
-            .is_some()
-    {
+            .is_some();
+    if contents_check_needed {
         required_evidence.push(COLLECTION_CONTENTS_CHECK_EVIDENCE.to_string());
         missing_evidence.push(COLLECTION_CONTENTS_CHECK_EVIDENCE.to_string());
     }
@@ -546,7 +546,8 @@ fn effect_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repai
             .map(RepairTargetSelection::Existing)
             .unwrap_or(RepairTargetSelection::Missing),
         test_target,
-        proposed_oracle: Some(OracleKind::MockExpectation),
+        // No mock is proposed where the needed check is a contents check.
+        proposed_oracle: (!contents_check_needed).then_some(OracleKind::MockExpectation),
         current_oracle: current,
         authority_boundary: REPAIR_ROUTE_AUTHORITY_BOUNDARY,
     }
@@ -1116,7 +1117,7 @@ mod tests {
             // #11402: the contents check the route cannot propose yet.
             (
                 COLLECTION_CONTENTS_CHECK_EVIDENCE,
-                "an exact check of what the test's vector holds after the call, which ripr cannot write yet",
+                "an exact check of the full contents the test reads back after the call, which ripr cannot write yet",
             ),
         ];
         for (internal, plain) in cases {
