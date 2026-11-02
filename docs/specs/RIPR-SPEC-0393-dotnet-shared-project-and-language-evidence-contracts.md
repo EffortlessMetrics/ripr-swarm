@@ -30,7 +30,8 @@ Support-tier impact:
 - **No tier change.** C#, F#, and Visual Basic remain **preview/advisory** per
   language, framework, and analysis mode until separate eval and support PRs
   cite proof. This spec defines contracts only; it does not default-enable any
-  adapter, gate, badge, baseline, or release authority.
+  adapter, gate, badge, baseline, or release authority. The canonical boundary
+  remains [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
