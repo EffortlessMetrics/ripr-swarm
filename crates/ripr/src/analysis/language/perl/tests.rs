@@ -4434,7 +4434,8 @@ const PARTIAL_DYNAMIC_BOUNDARY_PACKET: &str = r#"{
 #[test]
 fn perl_to_domain_oracle_mapping_preserves_signal_kinds() -> Result<(), String> {
     use super::{
-        OracleKind, OracleStrength, perl_oracle_kind_to_domain, perl_oracle_strength_to_domain,
+        OracleKind, OracleStrength,
+        v2_projection::{perl_oracle_kind_to_domain, perl_oracle_strength_to_domain},
     };
     use crate::domain::{OracleKind as DomainOracleKind, OracleStrength as DomainOracleStrength};
 

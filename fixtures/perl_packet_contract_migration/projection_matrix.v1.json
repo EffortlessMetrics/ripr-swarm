@@ -1,0 +1,218 @@
+{
+  "kind": "perl_v2_projection_matrix",
+  "schema_version": "1",
+  "issue": "#3221",
+  "authority_module": "crates/ripr/src/analysis/language/perl/v2_projection/dispositions.rs",
+  "variants": [
+    {
+      "enum": "OracleKind",
+      "variant": "exact_return_assertion",
+      "disposition": "exact_canonical_mapping",
+      "target": "ExactValue"
+    },
+    {
+      "enum": "OracleKind",
+      "variant": "predicate_boundary_assertion",
+      "disposition": "exact_canonical_mapping",
+      "target": "RelationalCheck"
+    },
+    {
+      "enum": "OracleKind",
+      "variant": "smoke_ok",
+      "disposition": "exact_canonical_mapping",
+      "target": "SmokeOnly"
+    },
+    {
+      "enum": "OracleKind",
+      "variant": "exception_observer",
+      "disposition": "preserved_typed_unknown",
+      "target": "Unknown"
+    },
+    {
+      "enum": "OracleKind",
+      "variant": "hash_or_object_field_assertion",
+      "disposition": "preserved_typed_unknown",
+      "target": "Unknown"
+    },
+    {
+      "enum": "OracleKind",
+      "variant": "output_observer",
+      "disposition": "preserved_typed_unknown",
+      "target": "Unknown"
+    },
+    {
+      "enum": "OracleKind",
+      "variant": "warn_observer",
+      "disposition": "preserved_typed_unknown",
+      "target": "Unknown"
+    },
+    {
+      "enum": "OracleKind",
+      "variant": "log_observer",
+      "disposition": "preserved_typed_unknown",
+      "target": "Unknown"
+    },
+    {
+      "enum": "OracleKind",
+      "variant": "mention_only",
+      "disposition": "preserved_typed_unknown",
+      "target": "Unknown"
+    },
+    {
+      "enum": "OracleKind",
+      "variant": "dies_only",
+      "disposition": "preserved_typed_unknown",
+      "target": "Unknown"
+    },
+    {
+      "enum": "OracleKind",
+      "variant": "unknown_helper",
+      "disposition": "preserved_typed_unknown",
+      "target": "Unknown"
+    },
+    {
+      "enum": "OracleKind",
+      "variant": "dynamic_framework_indirection",
+      "disposition": "preserved_typed_unknown",
+      "target": "Unknown"
+    },
+    {
+      "enum": "OracleKind",
+      "variant": "unknown",
+      "disposition": "preserved_typed_unknown",
+      "target": "Unknown"
+    },
+    {
+      "enum": "OracleStrength",
+      "variant": "strong_exact",
+      "disposition": "exact_canonical_mapping",
+      "target": "Strong"
+    },
+    {
+      "enum": "OracleStrength",
+      "variant": "weak_smoke",
+      "disposition": "exact_canonical_mapping",
+      "target": "Smoke"
+    },
+    {
+      "enum": "OracleStrength",
+      "variant": "weak_broad",
+      "disposition": "exact_canonical_mapping",
+      "target": "Weak"
+    },
+    {
+      "enum": "OracleStrength",
+      "variant": "mention_only",
+      "disposition": "preserved_typed_unknown",
+      "target": "Unknown"
+    },
+    {
+      "enum": "OracleStrength",
+      "variant": "unknown",
+      "disposition": "preserved_typed_unknown",
+      "target": "Unknown"
+    },
+    {
+      "enum": "RelationKind",
+      "variant": "direct_owner_call",
+      "disposition": "exact_canonical_mapping",
+      "target": "DirectOwnerCall"
+    },
+    {
+      "enum": "RelationKind",
+      "variant": "helper_call",
+      "disposition": "exact_canonical_mapping",
+      "target": "HelperOwnerCall"
+    },
+    {
+      "enum": "RelationKind",
+      "variant": "method_receiver",
+      "disposition": "bounded_preview_mapping",
+      "target": "DirectOwnerCall"
+    },
+    {
+      "enum": "RelationKind",
+      "variant": "package_reference",
+      "disposition": "bounded_preview_mapping",
+      "target": "ImportPathAffinity"
+    },
+    {
+      "enum": "RelationKind",
+      "variant": "test_name_match",
+      "disposition": "bounded_preview_mapping",
+      "target": "OwnerNamedTest"
+    },
+    {
+      "enum": "RelationKind",
+      "variant": "file_proximity",
+      "disposition": "bounded_preview_mapping",
+      "target": "advisory_null_reason"
+    },
+    {
+      "enum": "RelationKind",
+      "variant": "fixture_setup",
+      "disposition": "bounded_preview_mapping",
+      "target": "advisory_null_reason"
+    },
+    {
+      "enum": "RelationKind",
+      "variant": "unknown",
+      "disposition": "preserved_typed_unknown",
+      "target": "advisory_null_reason"
+    },
+    {
+      "enum": "BehaviorHint",
+      "variant": "predicate_boundary",
+      "disposition": "exact_canonical_mapping",
+      "target": "Predicate"
+    },
+    {
+      "enum": "BehaviorHint",
+      "variant": "return_value",
+      "disposition": "exact_canonical_mapping",
+      "target": "ReturnValue"
+    },
+    {
+      "enum": "BehaviorHint",
+      "variant": "exception_path",
+      "disposition": "exact_canonical_mapping",
+      "target": "ErrorPath"
+    },
+    {
+      "enum": "BehaviorHint",
+      "variant": "hash_or_object_field",
+      "disposition": "preserved_typed_unknown",
+      "target": "StaticUnknown"
+    },
+    {
+      "enum": "BehaviorHint",
+      "variant": "output_observer",
+      "disposition": "preserved_typed_unknown",
+      "target": "StaticUnknown"
+    },
+    {
+      "enum": "BehaviorHint",
+      "variant": "warn_observer",
+      "disposition": "preserved_typed_unknown",
+      "target": "StaticUnknown"
+    },
+    {
+      "enum": "BehaviorHint",
+      "variant": "log_observer",
+      "disposition": "preserved_typed_unknown",
+      "target": "StaticUnknown"
+    },
+    {
+      "enum": "BehaviorHint",
+      "variant": "call_effect",
+      "disposition": "preserved_typed_unknown",
+      "target": "StaticUnknown"
+    },
+    {
+      "enum": "BehaviorHint",
+      "variant": "unknown",
+      "disposition": "preserved_typed_unknown",
+      "target": "StaticUnknown"
+    }
+  ]
+}
