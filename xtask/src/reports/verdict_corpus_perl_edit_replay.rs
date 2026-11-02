@@ -466,7 +466,30 @@ fn parse_edit_ops(tail: &str) -> Result<Vec<EditOp>, String> {
         }
         return Err(format!(
             "unrecognized edit step: {}",
-            &rest[..rest.len().min(80)]
+            rest.chars().take(80).collect::<String>()
+        ));
+    }
+    if !rest.starts_with("the packet fingerprint") {
+        return Err("edits must include `the packet fingerprint was recomputed.`".to_string());
+    }
+    rest = rest
+        .strip_prefix("the packet fingerprint")
+        .unwrap_or(rest)
+        .trim_start();
+    if !rest.starts_with("was recomputed") {
+        return Err("edits must end with `the packet fingerprint was recomputed.`".to_string());
+    }
+    rest = rest
+        .strip_prefix("was recomputed")
+        .unwrap_or(rest)
+        .trim_start();
+    if rest.starts_with('.') {
+        rest = rest[1..].trim_start();
+    }
+    if !rest.is_empty() {
+        return Err(format!(
+            "trailing edit text after fingerprint marker: {}",
+            rest.chars().take(80).collect::<String>()
         ));
     }
     Ok(ops)
@@ -476,22 +499,43 @@ fn read_json_object(text: &str) -> Result<(Map<String, Value>, usize), String> {
     let start = text
         .find('{')
         .ok_or_else(|| "expected `{` starting a JSON object".to_string())?;
+    let bytes = text.as_bytes();
+    let mut in_string = false;
+    let mut escape = false;
     let mut depth = 0usize;
-    for (offset, ch) in text[start..].char_indices() {
-        if ch == '{' {
-            depth += 1;
-        } else if ch == '}' {
-            depth -= 1;
-            if depth == 0 {
-                let end = start + offset + 1;
-                let value: Value = serde_json::from_str(&text[start..end])
-                    .map_err(|err| format!("invalid JSON object in edits: {err}"))?;
-                let obj = value
-                    .as_object()
-                    .ok_or_else(|| "edit JSON must be an object".to_string())?
-                    .clone();
-                return Ok((obj, end));
+    for offset in start..bytes.len() {
+        let byte = bytes[offset];
+        if in_string {
+            if escape {
+                escape = false;
+                continue;
             }
+            if byte == b'\\' {
+                escape = true;
+                continue;
+            }
+            if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let end = offset + 1;
+                    let value: Value = serde_json::from_str(&text[start..end])
+                        .map_err(|err| format!("invalid JSON object in edits: {err}"))?;
+                    let obj = value
+                        .as_object()
+                        .cloned()
+                        .ok_or_else(|| "edit JSON must be an object".to_string())?;
+                    return Ok((obj, end));
+                }
+            }
+            _ => {}
         }
     }
     Err("unterminated JSON object in edits".to_string())
@@ -679,6 +723,28 @@ fn substitute_text_in_value(value: Value, old: &str, new: &str) -> Value {
                 .collect(),
         ),
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod parse_tests {
+    use super::parse_edit_provenance;
+
+    #[test]
+    fn trailing_edits_after_fingerprint_marker_are_refused() {
+        let edits = "Started from the producer packet of perl-testmore-tier-far-from-boundary, then in oracles where {\"oracle_id\": \"oracle:t/qualified.t:is:130-198\"} set {\"observed_sink\": null}; the packet fingerprint was recomputed.; in oracles where {\"oracle_id\": \"oracle:t/other.t:is:1-2\"} set {\"observed_sink\": null}";
+        assert!(parse_edit_provenance(edits).is_err());
+    }
+
+    #[test]
+    fn json_object_with_brace_inside_string_value_parses() {
+        let tail =
+            r#"{"changed_observable": "return \"}\""}; the packet fingerprint was recomputed."#;
+        let ops = super::parse_edit_ops(&format!(
+            "in changes where {{\"change_id\": \"$CHANGE_ID\"}} set {tail}"
+        ))
+        .expect("parse");
+        assert_eq!(ops.len(), 1);
     }
 }
 
