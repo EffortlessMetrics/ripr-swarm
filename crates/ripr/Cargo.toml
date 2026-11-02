@@ -163,6 +163,7 @@ lang-rust = ["dep:ra_ap_syntax", "dep:unicode-ident", "dep:unicode-properties"]
 lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span"]
 lang-python = ["dep:rustpython-parser", "dep:unicode-ident"]
 lang-perl = []
+lang-go = []
 
 [dev-dependencies]
 proptest = "1"

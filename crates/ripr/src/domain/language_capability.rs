@@ -152,12 +152,15 @@ const TS_REPAIR_LIMIT: &str = "advisory preview actionability only; repair_packe
 const PERL_LIMIT: &str = "requires a ripr build with Cargo feature lang-perl plus a compatible fact exporter; default builds report changed Perl files as not analyzed and no released ripr plus exporter combination analyzes Perl yet";
 const PERL_REPAIR_LIMIT: &str =
     "blocked on real-repository producer proof and real Perl repository receipts";
+const GO_LIMIT: &str = "Go analysis is not available from this ripr binary; it needs a ripr build with Cargo feature `lang-go`, and no released ripr setup analyzes Go yet";
+const GO_REPAIR_LIMIT: &str = "blocked until a Go adapter and producer proof exist";
 
 const SPEC_RUST: &[&str] = &["RIPR-SPEC-0001", "RIPR-SPEC-0117", "RIPR-SPEC-0197"];
 const SPEC_RUST_REPAIR: &[&str] = &["RIPR-SPEC-0001", "RIPR-SPEC-0057"];
 const SPEC_PYTHON: &[&str] = &["RIPR-SPEC-0026", "RIPR-SPEC-0028"];
 const SPEC_TS: &[&str] = &["RIPR-SPEC-0026", "RIPR-SPEC-0027"];
 const SPEC_PERL: &[&str] = &["RIPR-SPEC-0026", "RIPR-SPEC-0064"];
+const SPEC_GO: &[&str] = &["RIPR-SPEC-0026"];
 
 macro_rules! cell {
     ($language:expr, $framework:expr, $mode:expr, $family:expr, $state:expr, $tier:expr, $limit:expr, $proof:expr $(,)?) => {
@@ -339,6 +342,36 @@ pub(crate) const CAPABILITY_CELLS: &[CapabilityCell] = &[
         Preview,
         Some(PERL_REPAIR_LIMIT),
         SPEC_PERL,
+    ),
+    cell!(
+        LanguageId::Go,
+        FRAMEWORK_ANY,
+        Diff,
+        StaticFacts,
+        NotProven,
+        Preview,
+        Some(GO_LIMIT),
+        SPEC_GO,
+    ),
+    cell!(
+        LanguageId::Go,
+        FRAMEWORK_ANY,
+        Repo,
+        StaticFacts,
+        NotProven,
+        Preview,
+        Some(GO_LIMIT),
+        SPEC_GO,
+    ),
+    cell!(
+        LanguageId::Go,
+        FRAMEWORK_ANY,
+        Diff,
+        RepairRouting,
+        NotProven,
+        Preview,
+        Some(GO_REPAIR_LIMIT),
+        SPEC_GO,
     ),
 ];
 
@@ -645,7 +678,7 @@ mod tests {
     #[test]
     fn table_matches_the_documented_support_statement() {
         const FALLBACK: &str = "supported_with_required_fallback";
-        let expected: [(&str, &str, &str); 16] = [
+        let expected: [(&str, &str, &str); 19] = [
             ("rust/any/diff/static_facts", FALLBACK, "usable_alpha"),
             ("rust/any/repo/static_facts", FALLBACK, "usable_alpha"),
             ("rust/any/diff/repair_routing", FALLBACK, "usable_alpha"),
@@ -670,6 +703,9 @@ mod tests {
             ("perl/any/diff/static_facts", "not_proven", "preview"),
             ("perl/any/repo/static_facts", "not_proven", "preview"),
             ("perl/any/diff/repair_routing", "not_proven", "preview"),
+            ("go/any/diff/static_facts", "not_proven", "preview"),
+            ("go/any/repo/static_facts", "not_proven", "preview"),
+            ("go/any/diff/repair_routing", "not_proven", "preview"),
         ];
         let mut actual: Vec<(String, &str, &str)> = CAPABILITY_CELLS
             .iter()

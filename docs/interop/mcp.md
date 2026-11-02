@@ -742,7 +742,7 @@ object. Null, arrays and scalar values receive a correlated Invalid Params
 the no-argument status tool. Unknown
 methods use Method Not Found (`Method not found: <method>`). `ripr_list_gaps`
 rejects a `language` filter that is not a language wire string (`rust`,
-`typescript`, `javascript`, `python`, `perl`) with an `invalid_argument` failure listing the
+`typescript`, `javascript`, `python`, `perl`, `go`) with an `invalid_argument` failure listing the
 allowed values, instead of returning an indistinguishable empty page.
 
 ### Argument errors are tool results
