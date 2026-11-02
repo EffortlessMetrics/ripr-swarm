@@ -876,3 +876,106 @@ fn non_utf8_path_refusal_names_recovery_without_claiming_tracked() -> Result<(),
     );
     Ok(())
 }
+
+/// #7708 item 11: end-to-end `probe` on a repo where only a snapshot input
+/// (or `package.json`) differs from `HEAD`.
+#[test]
+fn probe_records_snapshot_inputs_without_routed_dirty_paths() -> Result<(), String> {
+    let repo = fixture_root("probe-snapshot-only")?;
+    write(
+        &repo.0,
+        "test/price.test.ts",
+        "test('price', () => { expect(1).toMatchSnapshot(); });\n",
+    )?;
+    write(
+        &repo.0,
+        "test/__snapshots__/price.test.ts.snap",
+        "// Jest Snapshot v1\n\nexports[`price 1`] = `1`;\n",
+    )?;
+    write(
+        &repo.0,
+        "test/package.json",
+        "{ \"scripts\": { \"test\": \"jest --ci\" } }\n",
+    )?;
+    commit_all(&repo.0, "base")?;
+    write(
+        &repo.0,
+        "test/__snapshots__/price.test.ts.snap",
+        "// Jest Snapshot v1\n\nexports[`price 1`] = `2`;\n",
+    )?;
+
+    let snap_overlay = probe(&repo.0, DEADLINE)?
+        .ok_or("a dirty `.snap` alone must install a committed-source overlay")?;
+    assert!(
+        snap_overlay.dirty_paths().next().is_none(),
+        "the `.snap` is not routed"
+    );
+    with_overlay(Some(Arc::new(snap_overlay)), || {
+        assert!(
+            snapshot_inputs_differ_in(&repo.0, Path::new("test/__snapshots__")),
+            "the edited snap must demote tests under its snapshot directory"
+        );
+        assert!(!snapshot_inputs_differ_in(&repo.0, Path::new("src")));
+    });
+
+    git(
+        &repo.0,
+        &["checkout", "--", "test/__snapshots__/price.test.ts.snap"],
+    )?;
+    write(
+        &repo.0,
+        "test/package.json",
+        "{ \"scripts\": { \"test\": \"jest -u\" } }\n",
+    )?;
+    let config_overlay = probe(&repo.0, DEADLINE)?
+        .ok_or("a dirty runner `package.json` alone must install an overlay")?;
+    assert!(config_overlay.dirty_paths().next().is_none());
+    with_overlay(Some(Arc::new(config_overlay)), || {
+        assert!(snapshot_inputs_differ_in(&repo.0, Path::new("test")));
+    });
+    Ok(())
+}
+
+/// #7708 item 12: ignored and deleted snapshot inputs are recorded on a
+/// committed-history probe, not only edited or untracked ones.
+#[test]
+fn probe_records_ignored_and_deleted_snapshot_inputs() -> Result<(), String> {
+    let repo = fixture_root("probe-snapshot-ignored-deleted")?;
+    write(&repo.0, ".gitignore", "test/__snapshots__/\n")?;
+    write(
+        &repo.0,
+        "test/price.test.ts",
+        "test('price', () => { expect(1).toMatchSnapshot(); });\n",
+    )?;
+    write(
+        &repo.0,
+        "test/__snapshots__/price.test.ts.snap",
+        "// Jest Snapshot v1\n\nexports[`price 1`] = `1`;\n",
+    )?;
+    commit_all(&repo.0, "tracked snap")?;
+    write(
+        &repo.0,
+        "test/__snapshots__/local.snap",
+        "// Jest Snapshot v1\n\nexports[`local 1`] = `9`;\n",
+    )?;
+
+    let ignored_overlay =
+        probe(&repo.0, DEADLINE)?.ok_or("ignored snapshot input must produce an overlay")?;
+    with_overlay(Some(Arc::new(ignored_overlay)), || {
+        assert!(snapshot_inputs_differ_in(
+            &repo.0,
+            Path::new("test/__snapshots__")
+        ));
+    });
+
+    git(&repo.0, &["rm", "test/__snapshots__/price.test.ts.snap"])?;
+    let deleted_overlay =
+        probe(&repo.0, DEADLINE)?.ok_or("deleted snapshot input must produce an overlay")?;
+    with_overlay(Some(Arc::new(deleted_overlay)), || {
+        assert!(snapshot_inputs_differ_in(
+            &repo.0,
+            Path::new("test/__snapshots__")
+        ));
+    });
+    Ok(())
+}
