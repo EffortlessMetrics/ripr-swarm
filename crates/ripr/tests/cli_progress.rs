@@ -1388,7 +1388,6 @@ const NO_NARRATION: &[&str] = &[
     "reports ci-summary",
     "reports gap-ledger",
     "reports index",
-    "reports kani",
     "reports ts-false-actionable",
     "reports ts-limitations",
     "rerun",
