@@ -2354,22 +2354,35 @@ fn run_agent_repair_phase(
                 let base = base
                     .as_deref()
                     .ok_or_else(|| "agent repair --gap-id lost its parsed --base".to_string())?;
-                return run_gap_bound_before_phase(&root, gap_id, base, store_ref, quiet, refusal);
+                let identity = identity.ok_or_else(|| {
+                    "repair before requires its identity from the locked CLI publication driver"
+                        .to_string()
+                })?;
+                return run_gap_bound_before_phase(
+                    &root, gap_id, base, store_ref, quiet, refusal, identity,
+                );
             }
             let seam_id = seam_id.ok_or_else(|| {
                 "agent repair --phase before lost its parsed seam identity".to_string()
             })?;
             ensure_command_root(&root, "agent repair --phase before")?;
+            let identity = identity.ok_or_else(|| {
+                "repair before requires its identity from the locked CLI publication driver"
+                    .to_string()
+            })?;
             // #11458: policy-free dirty-premise preflight. An obviously
             // production dirty file refuses here in git time, before the
             // seam inventory below; any doubt falls through to the exact
             // policy check, which refuses late with the same text.
             if let Ok(preflight_head) = crate::agent::artifact::current_git_head(&root)
+                && let Ok(preflight_attempt) =
+                    crate::app::repair_attempt::RepairAttemptId::parse(identity.attempt_id())
                 && let Ok(preflight_violations) =
                     crate::app::repair_attempt::conservative_dirty_premise_violations(
                         &root,
                         &preflight_head,
                         store_ref,
+                        Some(&preflight_attempt),
                     )
                 && !preflight_violations.is_empty()
             {
@@ -2380,10 +2393,6 @@ fn run_agent_repair_phase(
                     &preflight_violations,
                 ));
             }
-            let identity = identity.ok_or_else(|| {
-                "repair before requires its identity from the locked CLI publication driver"
-                    .to_string()
-            })?;
             if !quiet {
                 eprintln!(
                     "{}",
@@ -2480,10 +2489,14 @@ fn run_agent_repair_phase(
                         );
                         format!("{plain} (Detail: {error})")
                     })?;
-            crate::app::repair_attempt::include_explicit_store_operational_write(
+            crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
                 &mut policy,
                 &root,
                 store_ref,
+                Some(&crate::app::repair_attempt::RepairAttemptId::parse(
+                    identity.attempt_id(),
+                )?),
+                crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
             )?;
             crate::edit_cage::validate_build_output_precondition(&root, &policy)
                 .map_err(|error| format!("{error} Nothing was started."))?;
@@ -2724,10 +2737,12 @@ fn run_agent_repair_phase(
                 &packet_text,
                 &attempt.seam_id,
             )?;
-            crate::app::repair_attempt::include_explicit_store_operational_write(
+            crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
                 &mut cage_policy,
                 &root,
                 store_ref,
+                Some(&attempt.attempt_id),
+                crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
             )?;
 
             // The trust binding, when the attempt carries one, is re-verified
@@ -4003,6 +4018,7 @@ fn run_gap_bound_before_phase(
     store_ref: Option<&Path>,
     quiet: bool,
     refusal: &mut AfterPhaseRefusalContext,
+    identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
 ) -> Result<(), String> {
     use crate::agent::loop_commands::{bound_root, shell_arg};
     use crate::app::gap_bound_repair::{
@@ -4026,11 +4042,14 @@ fn run_gap_bound_before_phase(
     // refuse an obviously production dirty file before the gap snapshot;
     // any doubt falls through to the exact policy check below.
     if let Ok(preflight_head) = crate::agent::artifact::current_git_head(root)
+        && let Ok(preflight_attempt) =
+            crate::app::repair_attempt::RepairAttemptId::parse(identity.attempt_id())
         && let Ok(preflight_violations) =
             crate::app::repair_attempt::conservative_dirty_premise_violations(
                 root,
                 &preflight_head,
                 store_ref,
+                Some(&preflight_attempt),
             )
         && !preflight_violations.is_empty()
     {
@@ -4110,10 +4129,14 @@ fn run_gap_bound_before_phase(
                 "gap `{gap_id}` has no test file ripr can route a repair to, so no repair attempt was started. Cause: {error}"
             )
         })?;
-    crate::app::repair_attempt::include_explicit_store_operational_write(
+    crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
         &mut policy,
         root,
         store_ref,
+        Some(&crate::app::repair_attempt::RepairAttemptId::parse(
+            identity.attempt_id(),
+        )?),
+        crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
     )?;
     crate::edit_cage::validate_build_output_precondition(root, &policy)
         .map_err(|error| format!("{error} Nothing was started."))?;
@@ -4321,6 +4344,11 @@ fn before_phase_summary(packet: &str, packet_path: &str, edit_directive: bool) -
     ));
     if let Some(assertion) = text("/suggested_assertions/0") {
         lines.push(format!("  assertion shape: {assertion}"));
+        if let Some(note) =
+            crate::output::placeholder_assertion::fill_in_note_line("    ", assertion)
+        {
+            lines.push(note);
+        }
     }
     lines.push(format!(
         "  full repair packet (JSON): {packet_path}; add --json to print it here"
@@ -6342,6 +6370,40 @@ mod before_phase_stdout_tests {
                 "missing `{expected}` in:\n{summary}"
             );
         }
+        Ok(())
+    }
+
+    /// #9244 item 3: a remaining handoff line that still carries `/* ... */`
+    /// placeholders names them a shape and says to fill them in, instead of
+    /// reading as unfilled template text.
+    #[test]
+    fn placeholder_assertion_in_summary_gets_a_fill_in_note() -> Result<(), String> {
+        let packet = PACKET.replace(
+            "assert_eq!(discounted_total(10_000), 9_000)",
+            "assert_eq!(discounted_total(/* boundary */), /* expected */)",
+        );
+        let summary = before_phase_stdout(
+            &packet,
+            "target/ripr/workflow/agent-packet.json",
+            false,
+            &continuation(),
+        )?;
+        assert!(
+            summary.contains(
+                "  assertion shape: assert_eq!(discounted_total(/* boundary */), /* expected */)"
+            ),
+            "{summary}"
+        );
+        assert!(
+            summary.contains(
+                "    (replace each /* ... */ comment with a real value from your test before using it)"
+            ),
+            "{summary}"
+        );
+        assert!(
+            !summary.contains("assertion template"),
+            "placeholder assertion must not be labelled a template:\n{summary}"
+        );
         Ok(())
     }
 

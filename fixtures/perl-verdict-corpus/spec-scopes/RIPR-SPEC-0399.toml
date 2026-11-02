@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0399"
+scope = "out"
+reason = "Native-family evidence contract is spec-only (#5696); no runtime-mutant verdict corpus case until native adapters and fixtures/native-evidence-contract-corpus land"

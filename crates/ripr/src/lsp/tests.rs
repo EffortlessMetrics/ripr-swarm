@@ -3674,7 +3674,7 @@ fn refresh_completion_log_message_includes_duration_and_counts() -> Result<(), S
     snapshot.classified_seams = vec![seam];
     snapshot.refresh.record_duration(Duration::from_millis(17));
 
-    let summary = RefreshLogSummary::from_snapshot(7, &snapshot);
+    let summary = RefreshLogSummary::from_snapshot(7, &snapshot, None);
     let message = refresh_completed_log_message(&summary, 1, 2);
 
     assert!(message.contains("ripr analysis refresh completed in 17 ms"));
@@ -3717,7 +3717,7 @@ fn refresh_completion_log_message_counts_profile_withheld_unknown_findings() -> 
     snapshot.refresh.record_duration(Duration::from_millis(5));
 
     snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
-    let summary = RefreshLogSummary::from_snapshot(9, &snapshot);
+    let summary = RefreshLogSummary::from_snapshot(9, &snapshot, None);
     let message = refresh_completed_log_message(&summary, 0, 0);
     assert!(
         message.contains("withheld_unknown=1"),
@@ -3725,7 +3725,7 @@ fn refresh_completion_log_message_counts_profile_withheld_unknown_findings() -> 
     );
 
     snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Full;
-    let summary = RefreshLogSummary::from_snapshot(9, &snapshot);
+    let summary = RefreshLogSummary::from_snapshot(9, &snapshot, None);
     let message = refresh_completed_log_message(&summary, 0, 0);
     assert!(
         message.contains("withheld_unknown=0"),
@@ -3752,12 +3752,12 @@ fn refresh_completion_log_message_counts_profile_withheld_preview_findings() -> 
 
     snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
     let message =
-        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot, None), 0, 0);
     assert!(message.contains("withheld_preview=1"), "{message}");
 
     snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Full;
     let message =
-        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot, None), 0, 0);
     assert!(message.contains("withheld_preview=0"), "{message}");
 
     // Negative control: a non-preview hidden gap is not a preview withholding.
@@ -3766,8 +3766,66 @@ fn refresh_completion_log_message_counts_profile_withheld_preview_findings() -> 
     snapshot.findings = vec![rust];
     snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
     let message =
-        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot, None), 0, 0);
     assert!(message.contains("withheld_preview=0"), "{message}");
+    Ok(())
+}
+
+/// #12416: the completion line names the producer outcome kind, so a
+/// no-scope refresh never reads as a clean ordinary run. The many
+/// `.contains("ripr analysis refresh completed in")` assertions tolerate
+/// the appended token; a snapshot without an outcome adds none.
+#[test]
+fn refresh_completion_log_message_names_the_analysis_outcome_kind() -> Result<(), String> {
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot =
+        sample_analysis_snapshot(PathBuf::from("/workspace"), uri, Vec::new(), Vec::new());
+
+    snapshot.analysis_outcome = Some(crate::analysis_outcome::AnalysisOutcome::new(
+        crate::analysis_outcome::AnalysisOutcomeKind::NoScope,
+        Default::default(),
+        crate::analysis_outcome::AnalysisOutcomeCounts::default(),
+        Vec::new(),
+    )?);
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot, None), 0, 0);
+    assert!(
+        message.contains("ripr analysis refresh completed in"),
+        "the prefix stays stable: {message}"
+    );
+    assert!(
+        message.contains("analysis_outcome=no_scope"),
+        "the completion line must name the outcome kind: {message}"
+    );
+
+    // A complete outcome names its own kind.
+    snapshot.analysis_outcome = Some(crate::analysis_outcome::AnalysisOutcome::new(
+        crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings,
+        Default::default(),
+        crate::analysis_outcome::AnalysisOutcomeCounts {
+            changed_file_count: 1,
+            changed_line_count: 1,
+            candidate_line_count: 1,
+            probe_count: 1,
+            finding_count: 0,
+        },
+        Vec::new(),
+    )?);
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot, None), 0, 0);
+    assert!(
+        message.contains("analysis_outcome=complete_no_findings"),
+        "{message}"
+    );
+
+    // A snapshot without a typed outcome adds no invented token.
+    snapshot.analysis_outcome = None;
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot, None), 0, 0);
+    assert!(
+        !message.contains("analysis_outcome="),
+        "no outcome means no token: {message}"
+    );
     Ok(())
 }
 
@@ -3786,7 +3844,7 @@ fn refresh_completion_log_message_counts_preview_findings_and_limits() -> Result
         vec![finding],
     );
 
-    let summary = RefreshLogSummary::from_snapshot(8, &snapshot);
+    let summary = RefreshLogSummary::from_snapshot(8, &snapshot, None);
     let message = refresh_completed_log_message(&summary, 1, 0);
 
     assert!(message.contains("preview_findings=1"));
@@ -3830,7 +3888,7 @@ fn refresh_completion_log_message_counts_gap_artifact_state() -> Result<(), Stri
             "/other/workspace".to_string(),
         ));
 
-    let summary = RefreshLogSummary::from_snapshot(9, &snapshot);
+    let summary = RefreshLogSummary::from_snapshot(9, &snapshot, None);
     let message = refresh_completed_log_message(&summary, 1, 0);
 
     assert!(message.contains("gap_artifacts=1"));
@@ -3855,7 +3913,7 @@ fn refresh_completion_log_message_defaults_missing_duration_to_zero() -> Result<
         vec![finding],
     );
 
-    let summary = RefreshLogSummary::from_snapshot(3, &snapshot);
+    let summary = RefreshLogSummary::from_snapshot(3, &snapshot, None);
     let message = refresh_completed_log_message(&summary, 1, 0);
 
     assert!(message.contains("ripr analysis refresh completed in 0 ms"));
@@ -6405,6 +6463,139 @@ fn code_action_response_every_advertised_kind_is_emitted() -> Result<(), String>
         "advertised code-action kinds must equal the emitted set (no reserved-only kinds)"
     );
     Ok(())
+}
+
+#[test]
+fn code_action_response_unknown_only_kind_returns_empty() -> Result<(), String> {
+    // #1891 / RIPR-SPEC-0129: an unsupported or unknown `only` kind must not
+    // leak unrelated actions. `refactor.extract` is a standard LSP kind the
+    // server never emits; `source.ripr.does-not-exist` is a RIPR-looking
+    // kind with no advertised subtree.
+    let vscode = vscode_client_features()?;
+    let (mut params, snapshot) = seam_code_action_request()?;
+    let unfiltered = code_action_response(&params, Some(&snapshot), &vscode);
+    if unfiltered.is_empty() {
+        return Err("seam scenario must emit actions before the unknown-kind filter".to_string());
+    }
+
+    params.context.only = Some(vec![CodeActionKind::new("refactor.extract")]);
+    let refactor_only = code_action_response(&params, Some(&snapshot), &vscode);
+    assert_eq!(
+        refactor_only.len(),
+        0,
+        "only: [refactor.extract] must return an empty list, got {:?}",
+        code_action_kinds(&refactor_only)?
+    );
+
+    params.context.only = Some(vec![CodeActionKind::new("source.ripr.does-not-exist")]);
+    let unknown_ripr = code_action_response(&params, Some(&snapshot), &vscode);
+    assert_eq!(
+        unknown_ripr.len(),
+        0,
+        "only: [source.ripr.does-not-exist] must return an empty list, got {:?}",
+        code_action_kinds(&unknown_ripr)?
+    );
+    Ok(())
+}
+
+#[test]
+fn code_action_response_reserved_verify_only_kinds_return_empty() -> Result<(), String> {
+    // #1891 original proof asked `only: [source.ripr.verify]` to keep verify
+    // actions. #4419/#7773 reserved verify (`quickfix.ripr.verify`) until an
+    // emitter lands, and no action emits `source.ripr.verify`. Both requests
+    // must fail closed to empty rather than returning inspect/navigate/refresh.
+    let vscode = vscode_client_features()?;
+    let (mut params, snapshot) = seam_code_action_request()?;
+    let unfiltered = code_action_response(&params, Some(&snapshot), &vscode);
+    if unfiltered.len() < 2 {
+        return Err(format!(
+            "seam scenario must emit actions beyond refresh, got {}",
+            unfiltered.len()
+        ));
+    }
+
+    for kind in ["source.ripr.verify", "quickfix.ripr.verify"] {
+        params.context.only = Some(vec![CodeActionKind::new(kind)]);
+        let filtered = code_action_response(&params, Some(&snapshot), &vscode);
+        assert_eq!(
+            filtered.len(),
+            0,
+            "only: [{kind}] must return empty while verify stays unemitted, got {:?}",
+            code_action_kinds(&filtered)?
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn code_action_response_only_source_ripr_keeps_only_refresh() -> Result<(), String> {
+    // #1891 / LSP 3.17 parent-kind semantics: `source.ripr` matches the
+    // advertised RIPR source subtree. After #4419 that subtree is only
+    // `source.ripr.refresh`; inspect/navigate live under `quickfix.ripr.*`.
+    let vscode = vscode_client_features()?;
+    let (mut params, snapshot) = seam_code_action_request()?;
+    params.context.only = Some(vec![CodeActionKind::new("source.ripr")]);
+    let filtered = code_action_response(&params, Some(&snapshot), &vscode);
+    assert_eq!(
+        code_action_kinds(&filtered)?,
+        vec!["source.ripr.refresh".to_string()],
+        "only: [source.ripr] must keep only the workspace refresh action"
+    );
+    Ok(())
+}
+
+#[test]
+fn code_action_response_unknown_only_kind_does_not_poison_a_matching_kind() -> Result<(), String> {
+    // `only` is a disjunction: an unknown kind beside a matching kind must
+    // keep the matching actions, not empty the list.
+    let vscode = vscode_client_features()?;
+    let (mut params, snapshot) = seam_code_action_request()?;
+    params.context.only = Some(vec![
+        CodeActionKind::new("refactor.extract"),
+        CodeActionKind::new("source.ripr.refresh"),
+    ]);
+    let filtered = code_action_response(&params, Some(&snapshot), &vscode);
+    assert_eq!(
+        code_action_kinds(&filtered)?,
+        vec!["source.ripr.refresh".to_string()],
+        "only: [refactor.extract, source.ripr.refresh] must keep refresh"
+    );
+    Ok(())
+}
+
+#[test]
+fn code_action_response_identical_requests_keep_stable_serialized_order() -> Result<(), String> {
+    // #1891: identical snapshot/request inputs must keep byte-stable action
+    // order. Two independent producer calls are compared on the full
+    // serialized `CodeAction` (title, kind, command, arguments, data,
+    // diagnostics, disabled, preferred) so a reorder or a drift in wire
+    // fields cannot hide behind equal lengths.
+    let vscode = vscode_client_features()?;
+    let (params, snapshot) = seam_code_action_request()?;
+    let first = code_action_response(&params, Some(&snapshot), &vscode);
+    let second = code_action_response(&params, Some(&snapshot), &vscode);
+    if first.len() < 2 {
+        return Err(format!(
+            "seam scenario must emit several actions, got {}",
+            first.len()
+        ));
+    }
+    assert_eq!(
+        serialize_code_action_list(&first)?,
+        serialize_code_action_list(&second)?,
+        "identical code-action requests must serialize in the same order"
+    );
+    Ok(())
+}
+
+fn serialize_code_action_list(actions: &[CodeActionOrCommand]) -> Result<String, String> {
+    let mut rows = Vec::new();
+    for (index, action) in code_action_literals(actions)?.into_iter().enumerate() {
+        let encoded = serde_json::to_string(action)
+            .map_err(|err| format!("serialize code action {index}: {err}"))?;
+        rows.push(encoded);
+    }
+    Ok(rows.join("\n"))
 }
 
 /// Collect the kind string of every action, failing when an action carries
@@ -14812,7 +15003,7 @@ enabled = []
         diagnostics.snapshot.classified_seams.is_empty(),
         "empty [languages] must not retain seam diagnostics in the LSP snapshot"
     );
-    let summary = RefreshLogSummary::from_snapshot(1, &diagnostics.snapshot)
+    let summary = RefreshLogSummary::from_snapshot(1, &diagnostics.snapshot, None)
         .with_enabled_languages(config.repo_config().languages().enabled());
     let message = refresh_completed_log_message(&summary, 0, 1);
     assert!(
@@ -15863,7 +16054,7 @@ fn workspace_projection_contract(
         Some(&diagnostics.snapshot),
         &vscode_client_features()?,
     );
-    let summary = RefreshLogSummary::from_snapshot(1, &diagnostics.snapshot)
+    let summary = RefreshLogSummary::from_snapshot(1, &diagnostics.snapshot, None)
         .with_enabled_languages(config.repo_config().languages().enabled());
     let status = refresh_completed_log_message(&summary, diagnostics.batches.len(), 0);
 

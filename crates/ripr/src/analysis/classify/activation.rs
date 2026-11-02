@@ -4161,11 +4161,17 @@ fn missing_field_value_discriminator(
                                     qualifier.iter().all(|segment| {
                                         matches!(segment.as_str(), "crate" | "self" | "super")
                                     }) && !index.files().get(&test.file).is_some_and(|facts| {
+                                        let source = &facts.data().source;
                                         super::reveal::file_imports_foreign_callee_name(
-                                            &facts.data().source,
+                                            source,
                                             &owner.name,
                                             &index.package_names,
-                                        )
+                                        ) || (qualifier.is_empty()
+                                            && super::reveal::file_foreign_glob_defeats_bare_callee_name(
+                                                source,
+                                                &owner.name,
+                                                &index.package_names,
+                                            ))
                                     }) && index
                                         .functions()
                                         .iter()
