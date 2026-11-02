@@ -3052,7 +3052,17 @@ function statusContextLines(status: RiprStatusState, context: RiprStatusContext)
   } else {
     lines.push('Enabled languages: not reported yet; read from ripr.toml by the server refresh.');
   }
-  lines.push('Available languages: not reported by server; editor selectors can route enabled stable and preview languages.');
+  if (status.unavailableLanguages && status.unavailableLanguages.length > 0) {
+    for (const row of status.unavailableLanguages) {
+      const state = row.availability_state ?? 'unknown';
+      const steps = row.remediation && row.remediation.length > 0
+        ? row.remediation.join('; ')
+        : (row.recovery ?? 'see server recovery');
+      lines.push(`Language availability (${row.language}): ${state}; ${steps}`);
+    }
+  } else {
+    lines.push('Available languages: not reported by server; editor selectors can route enabled stable and preview languages.');
+  }
   lines.push(`Editor selectors: ${context.documentLanguages.join(', ')}`);
   lines.push(`Evidence freshness: ${evidenceFreshnessSummary(status.kind)}`);
   for (const artifact of context.setupStatus.artifacts) {
@@ -3875,11 +3885,13 @@ interface RiprAnalysisStatusPayload {
   unavailable_languages?: AnalysisStatusUnavailableLanguage[];
 }
 
-/** One typed `unavailable_languages` row from `ripr/analysisStatus` (#8585). */
+/** One typed `unavailable_languages` row from `ripr/analysisStatus` (#8585, #2962). */
 export interface AnalysisStatusUnavailableLanguage {
   language: string;
   file_count?: number;
   recovery?: string | null;
+  availability_state?: string | null;
+  remediation?: string[];
 }
 
 function analysisStatusPayload(params: unknown): RiprAnalysisStatusPayload | undefined {
@@ -4178,7 +4190,15 @@ function validUnavailableLanguages(
   }
   return rows.filter(
     (row) => typeof row?.language === 'string' && row.language.trim().length > 0
-  );
+  ).map((row) => ({
+    language: row.language,
+    file_count: row.file_count,
+    recovery: row.recovery,
+    availability_state: typeof row.availability_state === 'string' ? row.availability_state : null,
+    remediation: Array.isArray(row.remediation)
+      ? row.remediation.filter((step: unknown): step is string => typeof step === 'string' && step.trim().length > 0)
+      : undefined
+  }));
 }
 
 function statusForUnavailableLanguages(
@@ -4191,9 +4211,15 @@ function statusForUnavailableLanguages(
       : row.language
   );
   const recoveries = uniqueStrings(
-    rows
-      .map((row) => row.recovery)
-      .filter((recovery): recovery is string => typeof recovery === 'string' && recovery.trim().length > 0)
+    rows.flatMap((row) => {
+      const fromRecovery = typeof row.recovery === 'string' && row.recovery.trim().length > 0
+        ? [row.recovery]
+        : [];
+      if (fromRecovery.length > 0) {
+        return fromRecovery;
+      }
+      return Array.isArray(row.remediation) ? row.remediation : [];
+    })
   );
   const languageStep = recoveries.length > 0
     ? recoveries.map(capitalizeFirst).join('; ')
@@ -4204,6 +4230,7 @@ function statusForUnavailableLanguages(
   return {
     kind: 'languageNotEnabled',
     summary: `ripr did not analyze changed ${described.join(', ')}: the language adapter is not enabled.`,
+    unavailableLanguages: rows.map((row) => ({ ...row })),
     detail: [
       base.detail,
       'Changed files of these languages produce no diagnostics, so a quiet editor is not an all-clear for them.'
