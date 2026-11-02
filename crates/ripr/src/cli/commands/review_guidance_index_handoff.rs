@@ -36,16 +36,16 @@ pub(crate) fn resolve_review_guidance_prepared_workspace<'a>(
             reason: "no_check_output_handoff_requested",
         });
     }
-    let path = check_output.ok_or("internal: missing check-output path")?;
+    let path = check_output.expect("check_output presence checked above");
     let text = crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
-            "review-comments --check-output {} is unreadable while resolving index handoff: {err}",
+            "review-comments --check-output {} is invalid: read failed: {err}",
             crate::output::pr_inline_comment_publish_plan::display_path(path)
         )
     })?;
     let value: serde_json::Value = serde_json::from_str(&text).map_err(|err| {
         format!(
-            "review-comments --check-output {} is invalid JSON while resolving index handoff: {err}",
+            "review-comments --check-output {} is invalid: JSON parse failed: {err}",
             crate::output::pr_inline_comment_publish_plan::display_path(path)
         )
     })?;
