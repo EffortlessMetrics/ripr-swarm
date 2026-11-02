@@ -8,10 +8,13 @@ use serde::Serialize;
 use crate::verification_plan_corpus::{
     DEFAULT_VERIFICATION_PLAN_CORPUS_PATH, VERIFICATION_PLAN_CLAIM_BOUNDARY,
     VERIFICATION_PLAN_CORPUS_REPORT_SCHEMA_VERSION, VERIFICATION_PLAN_CORPUS_SCHEMA_VERSION,
-    VerificationPlanCaseV1, VerificationPlanFixtureCorpusV1, VerificationPlanPlannerDispositionV1,
+    VerificationPlanFixtureCorpusV1, VerificationPlanPlannerDispositionV1,
     VerificationPlanRowAssessmentV1, assess_verification_plan_case,
     load_verification_plan_fixture_corpus, missing_verification_plan_required_scenarios,
-    verification_plan_corpus_identity,
+    verification_plan_fixture_corpus_identity,
+    verification_plan_planner_disposition_excluded_from_safety_denominator,
+    verification_plan_required_rejection_scenario_invariant_violation,
+    verification_plan_successor_reference_violation,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -86,6 +89,19 @@ fn assess_fixture_corpus(
             missing.join(", ")
         ));
     }
+    if let Some(violation) = verification_plan_successor_reference_violation(corpus) {
+        return Err(violation);
+    }
+    for scenario in &corpus.scenarios {
+        if let Some(violation) =
+            verification_plan_required_rejection_scenario_invariant_violation(scenario)
+        {
+            return Err(format!(
+                "verification plan fixture scenario `{}`: {violation}",
+                scenario.id
+            ));
+        }
+    }
     let mut assessments = Vec::with_capacity(corpus.scenarios.len());
     for scenario in &corpus.scenarios {
         let live = assess_verification_plan_case(&scenario.case);
@@ -126,12 +142,7 @@ fn build_report(
     assessments: &[VerificationPlanRowAssessmentV1],
     corpus_path: &str,
 ) -> Result<VerificationPlanCorpusReportV1, String> {
-    let cases: Vec<VerificationPlanCaseV1> = corpus
-        .scenarios
-        .iter()
-        .map(|scenario| scenario.case.clone())
-        .collect();
-    let corpus_identity = verification_plan_corpus_identity(&cases)?;
+    let corpus_identity = verification_plan_fixture_corpus_identity(corpus)?;
 
     let mut synthetic_rows = Vec::new();
     let mut real_rows = Vec::new();
@@ -142,7 +153,8 @@ fn build_report(
     let mut correct_fallback = 0usize;
     let mut over_widen = 0usize;
     let mut real_judged = 0usize;
-    let mut real_completed = 0usize;
+    let mut real_safety_measurable = 0usize;
+    let mut any_real_accepted = false;
 
     for assessment in assessments {
         if !assessment.accepted {
@@ -161,21 +173,28 @@ fn build_report(
         if assessment.synthetic {
             synthetic_rows.push(row);
         } else {
-            real_completed += 1;
+            any_real_accepted = true;
             real_judged += 1;
             real_rows.push(row);
-            match assessment.disposition {
-                VerificationPlanPlannerDispositionV1::WouldMissMaterialOutcome => would_miss += 1,
-                VerificationPlanPlannerDispositionV1::PlanDelayedMaterialOutcome => {
-                    would_delay += 1
+            if !verification_plan_planner_disposition_excluded_from_safety_denominator(
+                assessment.disposition,
+            ) {
+                real_safety_measurable += 1;
+                match assessment.disposition {
+                    VerificationPlanPlannerDispositionV1::WouldMissMaterialOutcome => {
+                        would_miss += 1
+                    }
+                    VerificationPlanPlannerDispositionV1::PlanDelayedMaterialOutcome => {
+                        would_delay += 1
+                    }
+                    VerificationPlanPlannerDispositionV1::CorrectFallbackOrRefusal => {
+                        correct_fallback += 1
+                    }
+                    VerificationPlanPlannerDispositionV1::OverWidenBeyondJustifiedScope => {
+                        over_widen += 1
+                    }
+                    _ => {}
                 }
-                VerificationPlanPlannerDispositionV1::CorrectFallbackOrRefusal => {
-                    correct_fallback += 1
-                }
-                VerificationPlanPlannerDispositionV1::OverWidenBeyondJustifiedScope => {
-                    over_widen += 1
-                }
-                _ => {}
             }
         }
     }
@@ -190,6 +209,16 @@ fn build_report(
     } else {
         VerificationPlanRateStateV1::Measured
     };
+    let real_safety_rate_state = if real_safety_measurable == 0 {
+        VerificationPlanRateStateV1::NotMeasured
+    } else {
+        VerificationPlanRateStateV1::Measured
+    };
+    let selected_completed_state = if any_real_accepted {
+        VerificationPlanRateStateV1::Measured
+    } else {
+        VerificationPlanRateStateV1::NotMeasured
+    };
 
     Ok(VerificationPlanCorpusReportV1 {
         schema_version: VERIFICATION_PLAN_CORPUS_REPORT_SCHEMA_VERSION.to_string(),
@@ -202,11 +231,7 @@ fn build_report(
         real_rows,
         rejected_rows,
         selected_completed_judged: rate(
-            if assessments.is_empty() {
-                VerificationPlanRateStateV1::NotMeasured
-            } else {
-                VerificationPlanRateStateV1::Measured
-            },
+            selected_completed_state,
             assessments.iter().filter(|row| row.accepted).count(),
             assessments.len(),
         ),
@@ -215,9 +240,9 @@ fn build_report(
         correct_fallback_rate: rate(real_rate_state, correct_fallback, real_denominator),
         over_widen_rate: rate(real_rate_state, over_widen, real_denominator),
         real_case_safe_rate: rate(
-            real_rate_state,
-            real_completed.saturating_sub(would_miss),
-            real_denominator,
+            real_safety_rate_state,
+            real_safety_measurable.saturating_sub(would_miss),
+            real_safety_measurable,
         ),
     })
 }
@@ -358,9 +383,57 @@ mod tests {
         assert!(markdown.contains("not measured") || !report.real_rows.is_empty());
         assert_eq!(report.real_rows.len(), 0);
         assert_eq!(
+            report.selected_completed_judged.state,
+            VerificationPlanRateStateV1::NotMeasured
+        );
+        assert_eq!(
             report.would_miss_rate.state,
             VerificationPlanRateStateV1::NotMeasured
         );
+        assert_eq!(
+            report.real_case_safe_rate.state,
+            VerificationPlanRateStateV1::NotMeasured
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn verification_plan_real_case_safe_rate_excludes_inconclusive_dispositions()
+    -> Result<(), String> {
+        let corpus = load_committed_corpus()?;
+        let mut assessments = assess_fixture_corpus(&corpus)?;
+        assessments.push(VerificationPlanRowAssessmentV1 {
+            case_id: "real_inconclusive".to_string(),
+            synthetic: false,
+            case_class:
+                crate::verification_plan_corpus::VerificationPlanCaseClassV1::HistoricalFailure,
+            accepted: true,
+            disposition: VerificationPlanPlannerDispositionV1::OutcomeNotMeasurable,
+            reasons: Vec::new(),
+        });
+        let report = build_report(&corpus, &assessments, DEFAULT_VERIFICATION_PLAN_CORPUS_PATH)?;
+        assert_eq!(report.real_rows.len(), 1);
+        assert_eq!(
+            report.real_case_safe_rate.state,
+            VerificationPlanRateStateV1::NotMeasured
+        );
+        assert_eq!(report.real_case_safe_rate.denominator, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn verification_plan_negative_control_mutation_fails_check() -> Result<(), String> {
+        let corpus = load_committed_corpus()?;
+        let mut mutated = corpus.clone();
+        let scenario = mutated
+            .scenarios
+            .iter_mut()
+            .find(|scenario| scenario.id == "mechanics_zero_subjects_not_success")
+            .ok_or_else(|| "missing zero-subjects scenario".to_string())?;
+        scenario.case.execution.executed_subjects = vec!["test::sample".to_string()];
+        scenario.case.execution.selected_subjects = vec!["test::sample".to_string()];
+        scenario.case.execution.discovered_subjects = vec!["test::sample".to_string()];
+        assert!(assess_fixture_corpus(&mutated).is_err());
         Ok(())
     }
 }

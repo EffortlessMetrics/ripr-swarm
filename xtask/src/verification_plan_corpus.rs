@@ -256,6 +256,10 @@ pub(crate) fn verification_plan_row_digest(
     Ok(digest_hex(&body))
 }
 
+#[expect(
+    dead_code,
+    reason = "policy:5173-pr-b: real-corpus row identity without fixture expectations"
+)]
 pub(crate) fn verification_plan_corpus_identity(
     cases: &[VerificationPlanCaseV1],
 ) -> Result<String, String> {
@@ -265,6 +269,105 @@ pub(crate) fn verification_plan_corpus_identity(
     }
     digests.sort();
     Ok(digest_hex(&digests.join("\n")))
+}
+
+/// Fixture check contract identity: row bodies plus pinned expectations (#5173).
+pub(crate) fn verification_plan_fixture_corpus_identity(
+    corpus: &VerificationPlanFixtureCorpusV1,
+) -> Result<String, String> {
+    let mut parts = Vec::with_capacity(corpus.scenarios.len());
+    for scenario in &corpus.scenarios {
+        let case_digest = verification_plan_row_digest(&scenario.case)?;
+        let expected = serde_json::to_string(&scenario.expected).map_err(|error| {
+            format!(
+                "serialize verification plan expectation for `{}`: {error}",
+                scenario.id
+            )
+        })?;
+        parts.push(format!("{}\n{case_digest}\n{expected}", scenario.id));
+    }
+    parts.sort();
+    Ok(digest_hex(&parts.join("\n---\n")))
+}
+
+pub(crate) fn verification_plan_planner_disposition_excluded_from_safety_denominator(
+    disposition: VerificationPlanPlannerDispositionV1,
+) -> bool {
+    matches!(
+        disposition,
+        VerificationPlanPlannerDispositionV1::OutcomeNotMeasurable
+            | VerificationPlanPlannerDispositionV1::InfrastructureLimited
+    )
+}
+
+pub(crate) fn verification_plan_successor_reference_violation(
+    corpus: &VerificationPlanFixtureCorpusV1,
+) -> Option<String> {
+    let case_ids: BTreeSet<&str> = corpus
+        .scenarios
+        .iter()
+        .map(|scenario| scenario.case.case_id.as_str())
+        .collect();
+    for scenario in &corpus.scenarios {
+        if let Some(successor) = scenario.case.successor_of.as_deref() {
+            if !case_ids.contains(successor) {
+                return Some(format!(
+                    "case `{}` successor_of `{successor}` is not present in the corpus",
+                    scenario.case.case_id
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Independent negative-control invariants for required rejection scenarios.
+pub(crate) fn verification_plan_required_rejection_scenario_invariant_violation(
+    scenario: &VerificationPlanFixtureScenarioV1,
+) -> Option<&'static str> {
+    if scenario.expected.accepted {
+        return None;
+    }
+    match scenario.id.as_str() {
+        "mechanics_zero_subjects_not_success" => {
+            if scenario.case.execution.targeted_observation_succeeded
+                && scenario.case.execution.executed_subjects.is_empty()
+            {
+                None
+            } else {
+                Some(
+                    "zero-subjects negative control must claim targeted success with zero executed subjects",
+                )
+            }
+        }
+        "mechanics_missing_artifact_incomplete" => {
+            if scenario.case.evidence_digests.is_empty() {
+                None
+            } else {
+                Some("missing-artifact negative control must keep evidence_digests empty")
+            }
+        }
+        "mechanics_wrong_plan_identity_rejected" => {
+            if expected_plan_digest(&scenario.case.plan.plan_identity)
+                != scenario.case.plan.plan_digest
+            {
+                None
+            } else {
+                Some(
+                    "wrong-plan negative control must keep plan_digest mismatched to plan_identity",
+                )
+            }
+        }
+        "mechanics_stale_plan_identity_rejected" => {
+            let bound = format!("plan-{}", scenario.case.case_id);
+            if scenario.case.plan.plan_identity != bound {
+                None
+            } else {
+                Some("stale-plan negative control must keep plan_identity unbound from case_id")
+            }
+        }
+        _ => None,
+    }
 }
 
 fn expected_plan_digest(plan_identity: &str) -> String {
@@ -321,15 +424,55 @@ pub(crate) fn assess_verification_plan_case(
             "plan_digest must match plan_identity (anti-hardcode control)".to_string(),
         );
     }
-    if case.execution.targeted_observation_succeeded && case.execution.executed_subjects.is_empty()
-    {
+    let bound_plan_identity = format!("plan-{}", case.case_id);
+    if case.plan.plan_identity != bound_plan_identity {
         push(
             &mut reasons,
             &mut accepted,
-            "zero executed subjects cannot be a successful targeted observation".to_string(),
+            format!(
+                "plan_identity must bind to case_id (`{bound_plan_identity}`), got `{}`",
+                case.plan.plan_identity
+            ),
         );
     }
-    if case.evidence_digests.is_empty() && !case.removed_from_manifest {
+    if case.execution.targeted_observation_succeeded {
+        if case.execution.executed_subjects.is_empty() {
+            push(
+                &mut reasons,
+                &mut accepted,
+                "zero executed subjects cannot be a successful targeted observation".to_string(),
+            );
+        }
+        if case.execution.selected_subjects.is_empty() {
+            push(
+                &mut reasons,
+                &mut accepted,
+                "successful targeted observation requires selected subjects".to_string(),
+            );
+        }
+        for subject in &case.execution.executed_subjects {
+            if subject.trim().is_empty() {
+                push(
+                    &mut reasons,
+                    &mut accepted,
+                    "executed subject identity must be nonblank".to_string(),
+                );
+            } else if !case.execution.selected_subjects.contains(subject) {
+                push(
+                    &mut reasons,
+                    &mut accepted,
+                    format!("executed subject `{subject}` was not selected"),
+                );
+            } else if !case.execution.discovered_subjects.contains(subject) {
+                push(
+                    &mut reasons,
+                    &mut accepted,
+                    format!("executed subject `{subject}` was not discovered"),
+                );
+            }
+        }
+    }
+    if case.evidence_digests.is_empty() {
         push(
             &mut reasons,
             &mut accepted,
@@ -378,10 +521,11 @@ mod tests {
     }
 
     fn sample_case(disposition: VerificationPlanPlannerDispositionV1) -> VerificationPlanCaseV1 {
-        let plan_identity = "plan-mechanics-sample";
+        let case_id = "mechanics_sample";
+        let plan_identity = format!("plan-{case_id}");
         VerificationPlanCaseV1 {
             schema_version: VERIFICATION_PLAN_CASE_SCHEMA_VERSION.to_string(),
-            case_id: "mechanics_sample".to_string(),
+            case_id: case_id.to_string(),
             generation: "gen-1".to_string(),
             case_class: VerificationPlanCaseClassV1::SyntheticMechanics,
             synthetic: true,
@@ -403,8 +547,8 @@ mod tests {
             changed_subject_denominator: vec!["subject:sample".to_string()],
             expected_obligation_families: vec!["test_execution".to_string()],
             plan: VerificationPlanCommitmentV1 {
-                plan_identity: plan_identity.to_string(),
-                plan_digest: expected_plan_digest(plan_identity),
+                plan_identity,
+                plan_digest: expected_plan_digest(&format!("plan-{case_id}")),
                 committed_before_outcomes: true,
             },
             routes: VerificationPlanRouteIdentitiesV1 {
@@ -462,6 +606,49 @@ mod tests {
         case.execution.targeted_observation_succeeded = true;
         let assessment = assess_verification_plan_case(&case);
         assert!(!assessment.accepted);
+    }
+
+    #[test]
+    fn verification_plan_validator_rejects_unselected_executed_subject() {
+        let mut case = sample_case(VerificationPlanPlannerDispositionV1::WouldMissMaterialOutcome);
+        case.execution.selected_subjects.clear();
+        case.execution.discovered_subjects.clear();
+        case.execution.executed_subjects = vec!["test::other".to_string()];
+        let assessment = assess_verification_plan_case(&case);
+        assert!(!assessment.accepted);
+        assert!(
+            assessment
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("was not selected"))
+        );
+    }
+
+    #[test]
+    fn verification_plan_validator_rejects_removed_row_without_evidence() {
+        let mut case = sample_case(VerificationPlanPlannerDispositionV1::WouldMissMaterialOutcome);
+        case.removed_from_manifest = true;
+        case.successor_of = Some("mechanics_sample".to_string());
+        case.evidence_digests.clear();
+        let assessment = assess_verification_plan_case(&case);
+        assert!(!assessment.accepted);
+    }
+
+    #[test]
+    fn verification_plan_fixture_identity_changes_when_expectation_drifts() -> Result<(), String> {
+        let body = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join(DEFAULT_VERIFICATION_PLAN_CORPUS_PATH),
+        )
+        .map_err(|error| format!("read committed verification plan corpus: {error}"))?;
+        let corpus = load_verification_plan_fixture_corpus(&body)?;
+        let baseline = verification_plan_fixture_corpus_identity(&corpus)?;
+        let mut mutated = corpus.clone();
+        mutated.scenarios[0].expected.accepted = !mutated.scenarios[0].expected.accepted;
+        let drifted = verification_plan_fixture_corpus_identity(&mutated)?;
+        assert_ne!(baseline, drifted);
+        Ok(())
     }
 
     #[test]
