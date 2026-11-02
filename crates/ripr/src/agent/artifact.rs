@@ -549,10 +549,15 @@ fn foreign_producer_refusal_with_schema(
 /// Peek `schema_version` and `artifact.producer.version` from the JSON
 /// object before the full typed shape is deserialized. A missing envelope
 /// (released 0.10) or an older/foreign version fails closed here so a later
-/// field cannot surface as serde `missing field` (#5115). A matching current
-/// version is not this gate: present-but-invalid envelopes keep canonical
-/// parse errors.
+/// field cannot surface as serde `missing field` (#5115). Substitution is
+/// only this format: string `schema_version`, scope `repo`, seams array, and
+/// either no envelope or an explicit `producer.tool = "ripr"`. Matching
+/// current version, empty version, foreign tool, and unrelated JSON stay on
+/// the canonical/identity gates.
 fn producer_stamp_mismatch(document: &Value) -> Option<ProducerStampMismatch> {
+    if !repo_exposure_shape_markers(document) {
+        return None;
+    }
     if is_unversioned_repo_exposure_value(document) {
         return Some(ProducerStampMismatch {
             produced_by: None,
@@ -564,19 +569,13 @@ fn producer_stamp_mismatch(document: &Value) -> Option<ProducerStampMismatch> {
         });
     }
     let producer = document.get("artifact")?.get("producer")?;
+    if producer.get("tool").and_then(Value::as_str) != Some("ripr") {
+        return None;
+    }
     let version = producer.get("version")?.as_str()?;
-    // Empty version and a non-ripr tool stay on the identity-shape gate
-    // (#9665): they are present-but-invalid envelopes, not a PATH
-    // substitution diagnosis.
-    if version.trim().is_empty() {
-        return None;
-    }
-    if let Some(tool) = producer.get("tool").and_then(Value::as_str)
-        && tool != "ripr"
-    {
-        return None;
-    }
-    if version == env!("CARGO_PKG_VERSION") {
+    // Empty version stays on the identity-shape gate (#9665): it is a
+    // present-but-invalid envelope, not a PATH substitution diagnosis.
+    if version.trim().is_empty() || version == env!("CARGO_PKG_VERSION") {
         return None;
     }
     Some(ProducerStampMismatch {
@@ -603,28 +602,41 @@ fn producer_stamp_refusal(root: &Path, subject: &str, mismatch: &ProducerStampMi
     }
 }
 
+fn repo_exposure_cut_refusal(subject: &str, document: &Value) -> Option<String> {
+    let cut = crate::output::repo_exposure::seam_limit_cut_controls(document);
+    if crate::output::repo_exposure::is_byte_bounded_repo_exposure(document) {
+        return Some(byte_bounded_repo_exposure_refusal(subject, &cut));
+    }
+    if !cut.is_empty() {
+        return Some(seam_limited_repo_exposure_refusal(subject, &cut));
+    }
+    None
+}
+
 pub(crate) fn validate_repo_exposure_artifact(
     root: &Path,
     raw: &str,
     label: &str,
 ) -> Result<ValidatedArtifact, String> {
     let subject = format!("agent verify {label} artifact");
-    let parsed_value = serde_json::from_str::<Value>(raw).ok();
-    if let Some(document) = parsed_value.as_ref()
-        && let Some(mismatch) = producer_stamp_mismatch(document)
-    {
+    // One JSON lexer pass: peek identity/cuts on the Value, then type it.
+    // Byte/seam cuts outrank producer-stamp substitution so a pilot-limited
+    // file without an envelope keeps the control-specific recovery (#12108).
+    let parsed_value = match serde_json::from_str::<Value>(raw) {
+        Ok(document) => document,
+        Err(err) => {
+            return Err(format!(
+                "agent verify {label} artifact is not a canonical repo-exposure artifact: {err}"
+            ));
+        }
+    };
+    if let Some(refusal) = repo_exposure_cut_refusal(&subject, &parsed_value) {
+        return Err(refusal);
+    }
+    if let Some(mismatch) = producer_stamp_mismatch(&parsed_value) {
         return Err(producer_stamp_refusal(root, &subject, &mismatch));
     }
-    let document: RepoExposureDocument = serde_json::from_str(raw).map_err(|err| {
-        if let Some(document) = parsed_value.as_ref() {
-            let cut = crate::output::repo_exposure::seam_limit_cut_controls(document);
-            if crate::output::repo_exposure::is_byte_bounded_repo_exposure(document) {
-                return byte_bounded_repo_exposure_refusal(&subject, &cut);
-            }
-            if !cut.is_empty() {
-                return seam_limited_repo_exposure_refusal(&subject, &cut);
-            }
-        }
+    let document: RepoExposureDocument = serde_json::from_value(parsed_value).map_err(|err| {
         format!("agent verify {label} artifact is not a canonical repo-exposure artifact: {err}")
     })?;
     let RepoExposureDocument {
@@ -1251,17 +1263,22 @@ fn byte_bounded_repo_exposure_refusal(subject: &str, seam_cut: &[&'static str]) 
     )
 }
 
+/// Top-level markers of a repo-exposure document, with or without a producer
+/// envelope. Substitution never uses these alone as authentication.
+fn repo_exposure_shape_markers(document: &Value) -> bool {
+    document.get("schema_version").is_some_and(Value::is_string)
+        && document.get("scope").and_then(Value::as_str) == Some("repo")
+        && document.get("seams").is_some_and(Value::is_array)
+}
+
 /// Classify only the old repo-exposure shape (released 0.10: schema, scope,
 /// seams, and no producer envelope). This diagnosis never admits an artifact
 /// or authenticates a producer version.
 fn is_unversioned_repo_exposure_value(document: &Value) -> bool {
-    let Value::Object(document) = document else {
+    let Value::Object(map) = document else {
         return false;
     };
-    !document.contains_key("artifact")
-        && document.get("schema_version").is_some_and(Value::is_string)
-        && document.get("scope").and_then(Value::as_str) == Some("repo")
-        && document.get("seams").is_some_and(Value::is_array)
+    !map.contains_key("artifact") && repo_exposure_shape_markers(document)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2233,6 +2250,11 @@ mod tests {
             "{refusal}"
         );
         assert!(refusal.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{refusal}");
+        if refusal.contains("legacy or unknown producer") || refusal.contains("PATH resolution") {
+            return Err(format!(
+                "both-cuts file was misclassified as producer substitution: {refusal}"
+            ));
+        }
         // Negative: byte-only names no seam control; seam-only names no byte control.
         let byte_only = serde_json::json!({
             "schema_version": "0.5", "scope": "repo",
@@ -2247,6 +2269,11 @@ mod tests {
             "{refusal}"
         );
         assert!(!refusal.contains("RIPR_PILOT_SEAM_BUDGET"), "{refusal}");
+        if refusal.contains("legacy or unknown producer") || refusal.contains("PATH resolution") {
+            return Err(format!(
+                "byte-only cut was misclassified as producer substitution: {refusal}"
+            ));
+        }
         let seam_only = serde_json::json!({
             "schema_version": "0.5", "scope": "repo",
             "run_status": "seam_limit_applied",
@@ -2288,6 +2315,11 @@ mod tests {
             refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
             "{refusal}"
         );
+        if refusal.contains("legacy or unknown producer") || refusal.contains("PATH resolution") {
+            return Err(format!(
+                "byte-bounded cut was misclassified as producer substitution: {refusal}"
+            ));
+        }
         // Both limits applied: run_status is the seam cap's, the byte bound is a
         // limitations[] entry, and the file is still refused by name.
         let both = serde_json::json!({
@@ -3142,12 +3174,17 @@ mod tests {
             r#"{"schema_version":"1","scope":"repo","seams":{}}"#,
             r#"{"schema_version":"1","scope":"repo","seams":[],"artifact":null}"#,
             r#"{"schema_version":"1","scope":"repo","seams":[],"artifact":{}}"#,
+            // Foreign version without repo-exposure markers or producer.tool
+            // is canonical shape, not PATH substitution.
+            r#"{"artifact":{"producer":{"version":"0.10.0"}}}"#,
+            r#"{"schema_version":"0.3","scope":"repo","seams":[],"artifact":{"producer":{"version":"0.10.0"}}}"#,
         ] {
             let error = validate_repo_exposure_artifact(Path::new("."), raw, "after")
                 .err()
                 .ok_or("invalid artifact was accepted")?;
             if !error.contains("not a canonical repo-exposure artifact")
                 || error.contains("legacy or unknown producer")
+                || error.contains("PATH resolution")
             {
                 return Err(format!("unrelated/enveloped JSON misclassified: {error}"));
             }

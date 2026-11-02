@@ -874,18 +874,23 @@ it does not execute the command or grant edit authority.
 
 Producer identity is read from the JSON object (`schema_version` and
 `artifact.producer.version`) before the full typed repo-exposure shape is
-deserialized. A missing producer envelope (released 0.10: string
+deserialized. The document is parsed to `Value` once; typed admission uses
+that value. Byte-bounded and seam-limited pilot files are classified from
+`run_status` / `limitations` before producer-stamp substitution, so a cut
+file without an envelope keeps the control-specific recovery rather than a
+legacy-binary diagnosis. A missing producer envelope (released 0.10: string
 `schema_version`, scope `repo`, seams array, no `artifact` object) or an
-older/foreign `artifact.producer.version` fails closed with an actionable
+older/foreign `artifact.producer.version` on a document with those markers
+and `artifact.producer.tool = "ripr"` fails closed with an actionable
 substitution diagnostic: it names the producer and schema the artifact
 carries, the consuming RIPR version and expected schema, that a different
 `ripr` binary likely won `PATH` resolution, and `ripr --version` / use the
 same binary. That diagnosis is the first useful failure; it is not a serde
 `missing field` error. The diagnostic does not embed an absolute executable
 path. A matching current `producer.version` is unchanged: present-but-invalid
-envelopes, malformed JSON, and unrelated documents keep canonical parsing
-errors, and current artifacts continue through existing commitment and
-root/currentness validation.
+envelopes, missing `producer.tool`, malformed JSON, and unrelated documents
+keep canonical parsing errors, and current artifacts continue through
+existing commitment and root/currentness validation.
 
 The missing-envelope refusal still names the current RIPR contract and a
 selected-root regeneration command, writing `recovered.repo-exposure.json`
