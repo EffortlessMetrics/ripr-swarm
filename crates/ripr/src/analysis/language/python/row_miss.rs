@@ -41,11 +41,9 @@
 //!   fixtures or conftest declarations can still reach it (callbacks and
 //!   aliases, parametrize and fixture `params`, `usefixtures`, module
 //!   `pytestmark`, plugins), so the claim is withheld rather than guessed.
-//! - `assertion_not_observing`: alignment cannot tell an affirmative sibling
-//!   sink from an unresolved one. Row eligibility is the explicit
-//!   `RelatedTest::role` (#5563), not this value, so emitting it no longer
-//!   moves decisions; the value stays withheld here until alignment can make
-//!   the affirmative claim.
+//! - `assertion_not_observing`: withheld until row sink alignment can name an
+//!   affirmative sibling sink (`AffirmativelyOtherSink`, #5574); those rows
+//!   stay `miss: None` here until #5491 assigns the miss.
 //! - `assertion_not_credited`: no typed established refusal exists (#5446);
 //!   skip / xfail rows stay `activation_limited` with no oracle credit.
 //! - `missing_exact_assertion`: no row-owned exact-discriminator fact exists;
@@ -62,7 +60,10 @@ use super::assertion_selection::PythonAssertionFocus;
 use super::boundary::python_row_boundary_omission;
 use super::related_tests::{PythonRelatedCandidate, PythonRelationKind};
 use super::row_reach::row_cannot_reach_owner;
-use super::sink_alignment::{AlignmentPrep, classify_sink_alignment_prepared};
+use super::sink_alignment::{
+    AlignmentPrep, PythonRowSinkAlignmentState, classify_sink_alignment_prepared,
+    row_sink_alignments_prepared,
+};
 use super::{PythonOwner, PythonTest};
 use crate::domain::{
     ExposureClass, MissingDiscriminatorFact, OracleStrength, ProbeFamily, RelatedTest,
@@ -217,5 +218,20 @@ fn strong_row_miss(
         change.guard_entered,
         change.literal_pair,
     );
-    (!alignment.observes()).then_some(RelatedTestMiss::ObservationUnconfirmed)
+    if alignment.observes() {
+        return None;
+    }
+    let row_states = row_sink_alignments_prepared(
+        change.owner,
+        change.line_text,
+        change.old_line_text,
+        std::slice::from_ref(row),
+        prep,
+        change.guard_entered,
+        change.literal_pair,
+    );
+    match row_states.first().map(|state| state.state) {
+        Some(PythonRowSinkAlignmentState::AffirmativelyOtherSink) => None,
+        _ => Some(RelatedTestMiss::ObservationUnconfirmed),
+    }
 }
