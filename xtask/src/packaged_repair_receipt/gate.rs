@@ -212,26 +212,26 @@ fn validate_semantic_against_fixture(
     channel: &str,
 ) -> Vec<String> {
     let mut failures = Vec::new();
-    if let Some(gap) = expected.canonical_gap_id.as_deref() {
-        if semantic.canonical_gap_id != gap {
-            failures.push(format!(
-                "channel `{channel}` semantic canonical_gap_id must match fixture ({gap})"
-            ));
-        }
+    if let Some(gap) = expected.canonical_gap_id.as_deref()
+        && semantic.canonical_gap_id != gap
+    {
+        failures.push(format!(
+            "channel `{channel}` semantic canonical_gap_id must match fixture ({gap})"
+        ));
     }
-    if let Some(surface) = expected.allowed_edit_surface.as_ref() {
-        if &semantic.allowed_edit_surface != surface {
-            failures.push(format!(
-                "channel `{channel}` semantic allowed_edit_surface must match fixture contract"
-            ));
-        }
+    if let Some(surface) = expected.allowed_edit_surface.as_ref()
+        && &semantic.allowed_edit_surface != surface
+    {
+        failures.push(format!(
+            "channel `{channel}` semantic allowed_edit_surface must match fixture contract"
+        ));
     }
-    if let Some(forbidden) = expected.must_not_change.as_ref() {
-        if &semantic.must_not_change != forbidden {
-            failures.push(format!(
-                "channel `{channel}` semantic must_not_change must match fixture contract"
-            ));
-        }
+    if let Some(forbidden) = expected.must_not_change.as_ref()
+        && &semantic.must_not_change != forbidden
+    {
+        failures.push(format!(
+            "channel `{channel}` semantic must_not_change must match fixture contract"
+        ));
     }
     failures
 }
