@@ -28,7 +28,10 @@ pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
 const PRODUCER_DISCRIMINATOR_EVIDENCE: &str = "producer-owned missing discriminator fact";
 pub(crate) const SAFE_TEST_TARGET_EVIDENCE: &str = "safe test target";
 /// #11402: the route's proposed check for a push into a collection the test
-/// holds would be an exact contents comparison, which it cannot propose yet.
+/// holds is an exact contents comparison. It is present only for the shape
+/// the route can propose and the stub can write: the changed push is
+/// followed to a fresh local the test reads back only by a count that pins
+/// the single push.
 pub(crate) const COLLECTION_CONTENTS_CHECK_EVIDENCE: &str = "collection contents check proposal";
 
 /// Plain-language rendering of one readiness-evidence string for human
@@ -45,10 +48,11 @@ pub(crate) fn humanize_evidence(evidence: &str) -> String {
     if evidence == "observable sink localization" {
         return "a way to follow the changed value to something a test can check".to_string();
     }
-    // #11402: the value is followed to a vector the test holds, but ripr
-    // cannot yet write the exact check of its contents.
+    // #11402: the value is followed to a vector the test holds, but no count
+    // read pins the single push, so the contents-check start is withheld;
+    // name the read that would admit it and the by-hand route meanwhile.
     if evidence == COLLECTION_CONTENTS_CHECK_EVIDENCE {
-        return "an exact check of the full contents the test reads back after the call, which ripr cannot write yet"
+        return "an exact count the test checks after the call, such as `assert_eq!(v.len(), 1)`, that would fail if nothing were pushed; until then, check the full contents by hand"
             .to_string();
     }
     // #11025: the stage the static chain stopped at, in plain words. The
@@ -503,15 +507,24 @@ fn effect_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repai
         missing_evidence.push("observable sink localization".to_string());
     }
     // #11402: a push into a plain collection the test holds is checked by
-    // comparing that collection's exact contents, not by a mock expectation,
-    // and this route cannot propose that check yet. Fail closed once the
-    // value is followed, so no start proposes the wrong kind of check.
+    // comparing that collection's exact contents, not by a mock expectation.
+    // The route proposes that check only for a changed pushed value (the
+    // side-effect seam) followed to a fresh local the test reads back by a
+    // count that pins the single push; every other followed push fails
+    // closed, so no start proposes the wrong kind of check.
     let contents_check_needed = stages_localize_sink
         && crate::analysis::classify::direct_collection_mutation_receiver(seam.expression())
             .is_some();
+    let contents_check_proposed = contents_check_needed
+        && seam.kind() == SeamKind::SideEffect
+        && evidence.follows_push_to_counted_local();
     if contents_check_needed {
         required_evidence.push(COLLECTION_CONTENTS_CHECK_EVIDENCE.to_string());
-        missing_evidence.push(COLLECTION_CONTENTS_CHECK_EVIDENCE.to_string());
+        if contents_check_proposed {
+            present_evidence.push(COLLECTION_CONTENTS_CHECK_EVIDENCE.to_string());
+        } else {
+            missing_evidence.push(COLLECTION_CONTENTS_CHECK_EVIDENCE.to_string());
+        }
     }
 
     let current_mock_is_strong = current.as_ref() == Some(&OracleKind::MockExpectation)
@@ -546,8 +559,13 @@ fn effect_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repai
             .map(RepairTargetSelection::Existing)
             .unwrap_or(RepairTargetSelection::Missing),
         test_target,
-        // No mock is proposed where the needed check is a contents check.
-        proposed_oracle: (!contents_check_needed).then_some(OracleKind::MockExpectation),
+        // No mock is proposed where the needed check is a contents check;
+        // the contents check itself is proposed only where it is present.
+        proposed_oracle: if contents_check_needed {
+            contents_check_proposed.then_some(OracleKind::WholeObjectEquality)
+        } else {
+            Some(OracleKind::MockExpectation)
+        },
         current_oracle: current,
         authority_boundary: REPAIR_ROUTE_AUTHORITY_BOUNDARY,
     }
@@ -1078,6 +1096,78 @@ mod tests {
         }
     }
 
+    /// #11402: a push seam whose stages localize the sink, with or without
+    /// the propagation marker for a local read back by a pinning count.
+    fn push_seam(kind: SeamKind, marked: bool) -> ClassifiedSeam {
+        let seam = RepoSeam::new(
+            "src/lib.rs",
+            "log_line",
+            kind,
+            2,
+            40,
+            "buf.push(msg.to_uppercase())",
+            RequiredDiscriminator::Effect {
+                sink: "buf.push(msg.to_uppercase())".to_string(),
+            },
+            ExpectedSink::SideEffect,
+        );
+        let mut entry = classified_with(
+            seam,
+            SeamGripClass::WeaklyGripped,
+            vec![rust_related_test(RelationReason::DirectOwnerCall)],
+        );
+        entry.evidence.missing_discriminators.clear();
+        entry.evidence.discriminate = stage(StageState::Weak);
+        entry.evidence.propagate = StageEvidence::new(
+            StageState::Yes,
+            Confidence::Low,
+            if marked {
+                format!(
+                    "Static propagation to `side_effect` sink is yes; {}",
+                    crate::analysis::test_grip_evidence::PUSHED_COLLECTION_COUNT_PINNED
+                )
+            } else {
+                "Static propagation to `side_effect` sink is yes".to_string()
+            },
+        );
+        entry
+    }
+
+    #[test]
+    fn contents_check_is_proposed_only_for_a_marked_side_effect_push() -> Result<(), String> {
+        let ready = repair_packet_eligibility(&push_seam(SeamKind::SideEffect, true));
+        if !ready.eligible()
+            || ready.readiness.proposed_oracle != Some(OracleKind::WholeObjectEquality)
+            || !ready
+                .readiness
+                .present_evidence
+                .iter()
+                .any(|fact| fact == COLLECTION_CONTENTS_CHECK_EVIDENCE)
+        {
+            return Err(format!("marked side-effect push must start: {ready:?}"));
+        }
+        for (kind, marked) in [
+            (SeamKind::SideEffect, false),
+            (SeamKind::CallPresence, true),
+            (SeamKind::CallPresence, false),
+        ] {
+            let refused = repair_packet_eligibility(&push_seam(kind, marked));
+            if refused.eligible()
+                || refused.readiness.proposed_oracle.is_some()
+                || !refused
+                    .readiness
+                    .missing_evidence
+                    .iter()
+                    .any(|fact| fact == COLLECTION_CONTENTS_CHECK_EVIDENCE)
+            {
+                return Err(format!(
+                    "{kind:?} marked={marked} must miss the contents check: {refused:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn humanize_evidence_maps_each_discriminator_kind_to_plain_words() -> Result<(), String> {
         let cases = [
@@ -1117,7 +1207,7 @@ mod tests {
             // #11402: the contents check the route cannot propose yet.
             (
                 COLLECTION_CONTENTS_CHECK_EVIDENCE,
-                "an exact check of the full contents the test reads back after the call, which ripr cannot write yet",
+                "an exact count the test checks after the call, such as `assert_eq!(v.len(), 1)`, that would fail if nothing were pushed; until then, check the full contents by hand",
             ),
         ];
         for (internal, plain) in cases {

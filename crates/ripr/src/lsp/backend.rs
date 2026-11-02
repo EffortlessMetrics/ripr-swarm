@@ -8275,7 +8275,9 @@ fn withheld_static_gap_summary(snapshot: &AnalysisSnapshot) -> (usize, Vec<&'sta
     let withheld =
         super::diagnostics::withheld_gap_findings(snapshot.diagnostic_profile, &snapshot.findings)
             .into_iter()
-            .filter(|finding| !super::diagnostics::finding_is_withheld_preview_gap(finding))
+            .filter(|finding| {
+                !super::diagnostics::finding_is_withheld_preview_profile_finding(finding)
+            })
             .collect::<Vec<_>>();
     let classes = withheld
         .iter()

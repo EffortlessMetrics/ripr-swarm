@@ -1052,8 +1052,20 @@ renderer consumes. The generic JSON renderer and unbounded `pr-evidence`
 path omit it because they lack navigation/provenance context and must not
 invent a committed-source default or executable route. Per-finding
 `suggested_next_action` advice stays compatible and is not this object.
-Unknown top-level fields are rejected by the verification contract. Nested
-finding and seam details may grow additively within the pinned version.
+Internal schema validation (`cargo xtask check-verification-contracts`)
+strictly verifies that ripr's emitted output conforms to the same-commit
+declared schema. That gate is repository-internal. External consumers (CI, editor integrations, and coding agents) must tolerate unknown top-level and nested fields within a pinned `schema_version`, because schema `0.2` grows
+additively without bumping `schema_version` (see the bump rule above).
+Strict JSON Schema validation is only sound when the schema file matches the
+ripr binary commit; a schema vendored at adoption time may reject legitimate
+additive output. The published `check.schema.json` sets
+`additionalProperties: false` for exhaustiveness at a pinned commit; it does
+not require consumers to hard-fail on unknown fields at runtime. Conditional
+top-level members already ship under `0.2` without a version bump, including
+`suppression_policy`, `language_runs`, `analysis_scope`, `scope_disclosures`,
+`unanalyzed_working_tree`, `preview_languages`, `finding_alignment`, and
+`test_harnesses`; nested `finding` and seam detail may grow additively within
+the pinned version the same way.
 
 Top-level `config_path` (RIPR-SPEC-0255, #7536) names the `ripr.toml` that
 governed the run, in the lossless stable path spelling used for `root`. It
@@ -19609,7 +19621,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.141",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.142",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20394,7 +20406,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.141",
+      "schema_version": "1.142",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
