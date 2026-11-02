@@ -125,30 +125,48 @@ Parsing `DESCRIPTION` for Version/Maintainer is optional metadata only. Depends,
 Imports, Suggests, and LinkingTo entries do **not** establish reach, observation,
 or cross-language proof.
 
-### Capability cells (contractual identities)
+### Capability cells (registry identities)
 
 Until R cells are registered in `domain::language_capability::CAPABILITY_CELLS`,
-each combination below is **`not_proven`** in `ripr capabilities --json`. This
-table is normative for later registration; no neighboring language cell implies
-R support.
+each combination below is **`not_proven`** in `ripr capabilities --json`. Cell
+ids use the closed axes from `cell_id()` — language, framework, mode (`diff` or
+`repo` only), and family (`static_facts` or `repair_routing` only). Finer
+package/script/oracle distinctions are **facets** (next subsection), not
+separate registry ids unless a future registry extension adds axes under #5531.
 
 | Cell id | Language | Framework | Mode | Family | Intended state at first implementation |
 | --- | --- | --- | --- | --- | --- |
-| `r/any/diff/static_facts` | `r` | `any` | `diff` | `static_facts` | `preview` / syntax-first |
+| `r/any/diff/static_facts` | `r` | `any` | `diff` | `static_facts` | `preview` / syntax-first diff facts |
 | `r/any/repo/static_facts` | `r` | `any` | `repo` | `static_facts` | `preview` / bounded repo scan |
-| `r/package/any/discovery` | `r` | `package` | `any` | `static_facts` | `preview` / DESCRIPTION–NAMESPACE–R layout |
-| `r/script/any/discovery` | `r` | `script` | `any` | `static_facts` | `preview` / non-package scripts |
-| `r/testthat/any/registration` | `r` | `testthat` | `any` | `static_facts` | `preview` / test index without execution |
-| `r/testthat/diff/numerical_oracle` | `r` | `testthat` | `diff` | `static_facts` | `preview` / tolerance-aware numerics |
-| `r/testthat/diff/data_oracle` | `r` | `testthat` | `diff` | `static_facts` | `preview` / shape/value/order/class facts |
-| `r/testthat/diff/condition_oracle` | `r` | `testthat` | `diff` | `static_facts` | `preview` / errors/warnings/messages |
-| `r/testthat/diff/snapshot_oracle` | `r` | `testthat` | `diff` | `static_facts` | `preview` / snapshot presence ≠ sink reach |
-| `r/testthat/diff/side_effect_oracle` | `r` | `testthat` | `diff` | `static_facts` | `preview` / files, options, mocks, state |
+| `r/testthat/diff/static_facts` | `r` | `testthat` | `diff` | `static_facts` | `preview` / testthat registration and oracles |
+| `r/testthat/repo/static_facts` | `r` | `testthat` | `repo` | `static_facts` | `preview` / repo-mode testthat inventory |
 | `r/any/diff/repair_routing` | `r` | `any` | `diff` | `repair_routing` | `not_proven` until repair cards are specified |
 
+### Capability facets (independent within static facts)
+
+Issue #5850 requires explicit, independent **facets** inside the static-facts
+cells above. Facets are recorded on findings and capability evidence lines; they
+do not mint alternate `cell_id()` values.
+
+| Facet | Scope | Independent from |
+| --- | --- | --- |
+| `package_script` | DESCRIPTION/NAMESPACE/R layout vs script owners | `testthat` framework facet |
+| `testthat_edition` | edition 2 vs 3 markers | numerical/data oracle facets |
+| `numerical_oracle` | tolerance + observed quantity | data-frame facets |
+| `data_oracle` | shape, value, order, class, attribute, name, missingness | numerical facet |
+| `condition_oracle` | errors, warnings, messages | snapshot facet |
+| `snapshot_oracle` | snapshot files and helpers | side-effect facet |
+| `side_effect_oracle` | state, files, mocks, options | return-value/data facets |
+| `relation` | owner↔test reach | oracle strength |
+| `repo_mode` | diff vs repo disposition (#5531) | diff-only facets |
+| `actionability` | repair readiness | oracle registration |
+| `native_edge` | #5559 provenance | ordinary R reach |
+| `verification` | external proof hooks (#5162) | static oracle credit |
+
 Package/script, testthat edition, numerical oracle, data oracle, relation,
-repo mode, actionability, native edge, and verification cells remain **independent**.
-A strong numerical oracle does not repair a missing package discovery cell.
+repo mode, actionability, native edge, and verification facets remain
+**independent**. A strong numerical facet does not repair a missing package
+discovery facet.
 
 ### Owner facts and stable probe identity
 
@@ -225,15 +243,19 @@ Merging families into a single "object exists" check is forbidden.
 
 #### Numerical oracles
 
-- **Exact equality**: `expect_equal(x, y)`, `expect_identical(x, y)` without
-  tolerance arguments — records compared **expressions** and literal expected
-  values when syntactically visible.
-- **Approximate equality**: `expect_equal(x, y, tolerance = t)`, `expect_lt`,
-  `expect_gt`, `expect_true`/`expect_false` on numeric comparisons — must record:
-  - `tolerance` literal or named `tolerance=` binding when visible
-  - **observed quantity** (which subexpression is compared, e.g. `sqrt(x)` vs
-    `y`, not merely "numeric test present")
-  - discriminator class: approximate numeric, not generic strong equality
+- **Exact equality**: `expect_identical(x, y)` and other comparators whose
+  testthat semantics are exact by definition — records compared **expressions**
+  and literal expected values when syntactically visible.
+- **Approximate equality (default for `expect_equal`)**: `expect_equal(x, y)`
+  with or without an explicit `tolerance=` argument. testthat applies a default
+  tolerance when the argument is omitted; static analysis must treat omitted
+  tolerance as **approximate**, recording `tolerance = default` (or the literal
+  when visible) and the **observed quantity** (which subexpression is compared).
+  An approximate oracle must not read as exact `exposed` merely because the
+  assertion omits `tolerance=`.
+- **Other numeric comparisons**: `expect_lt`, `expect_gt`, `expect_true`/`expect_false`
+  on numeric comparisons — must record observed quantity and discriminator class
+  (approximate numeric or broad smoke), not generic strong equality.
 - **Forbidden promotion**: tolerance wording must not read as exact `exposed`
   without an exact comparator; `expect_true(is.numeric(x))` remains broad smoke.
 
@@ -377,10 +399,16 @@ acceptance.
 
    Expected contract behavior:
 
-   - numerical oracle kind: approximate with recorded `tolerance = 0.01`
+   - numerical oracle facet: approximate with recorded `tolerance = 0.01`
    - observed quantity: `sqrt(2)` compared to `expected`, not a generic numeric flag
    - classification cannot read as exact equality merely because `expect_equal`
      appears
+
+1b. **Default-tolerance `expect_equal`**
+
+   Test contains `expect_equal(actual, expected)` with no `tolerance=` argument.
+
+   Expected: approximate numeric facet with `tolerance = default`; not exact equality.
 
 2. **Data shape vs value**
 
