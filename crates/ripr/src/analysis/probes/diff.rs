@@ -95,6 +95,16 @@ pub(crate) fn probes_for_file_with_relations(
         .map(|facts| prose_lines(&facts.source))
         .unwrap_or_default();
     let removed_prose = old_source.map(prose_lines).unwrap_or_default();
+    let added_position = find_file_facts(index, &changed.path)
+        .map(|facts| position_macro_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_position = old_source.map(position_macro_lines).unwrap_or_default();
+    let added_string_continuations = find_file_facts(index, &changed.path)
+        .map(|facts| crate::analysis::syntax::string_literal_continuation_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_string_continuations = old_source
+        .map(crate::analysis::syntax::string_literal_continuation_lines)
+        .unwrap_or_default();
     // RIPR-SPEC-0368: contract attributes and ghost/logic items are read by a
     // verifier, never by a test; the run discloses them as a typed limitation
     // instead of probing them.
@@ -137,7 +147,11 @@ pub(crate) fn probes_for_file_with_relations(
         // rustfmt spacing there is still behavior-neutral when normalization
         // agrees.
         let whitespace_only =
-            is_whitespace_or_comment_spacing_only_change(added_text, removed_text);
+            is_whitespace_or_comment_spacing_only_change(added_text, removed_text)
+                && !added_position.contains(&new_side_line)
+                && !removed_position.contains(&removed.line)
+                && !added_string_continuations.contains(&new_side_line)
+                && !removed_string_continuations.contains(&removed.line);
         if respelling || whitespace_only {
             skip_added[added_index] = true;
             skip_removed[removed_index] = true;
@@ -196,12 +210,6 @@ pub(crate) fn probes_for_file_with_relations(
         .unwrap_or_default();
     let removed_block_comments = old_source
         .map(crate::analysis::syntax::block_comment_only_lines)
-        .unwrap_or_default();
-    let added_string_continuations = find_file_facts(index, &changed.path)
-        .map(|facts| crate::analysis::syntax::string_literal_continuation_lines(&facts.source))
-        .unwrap_or_default();
-    let removed_string_continuations = old_source
-        .map(crate::analysis::syntax::string_literal_continuation_lines)
         .unwrap_or_default();
     // #10089: the entries of a multi-line `#![allow(..)]`/`#[derive(..)]` sit
     // on lines that do not start with `#`, but they are attribute text, like
@@ -1044,8 +1052,8 @@ fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
 /// or in spacing before a trailing line comment, so the active tokens are
 /// unchanged (#9166). Uses the same Rust expression normalization as finding
 /// ids. Fails closed when indentation changes, the texts are identical, or
-/// either side sits in multi-line literal prose (the caller's `prose_lines`
-/// guard).
+/// either side sits on a position-observing macro line or a multi-line string
+/// literal continuation (the caller's guards).
 fn is_whitespace_or_comment_spacing_only_change(after: &str, before: &str) -> bool {
     if after == before {
         return false;
@@ -3888,6 +3896,22 @@ mod tests {
             &[(2, 2, "    'a' => f()?,  // ESC")],
         );
         assert!(probes.is_empty(), "{probes:?}");
+        let column_shift = block_probes(
+            "fn f() {\n    let c = column!();\n}\n",
+            &[(2, "    let c = column!();")],
+            &[(2, 2, "    let c  = column!();")],
+        );
+        assert!(
+            !column_shift.is_empty(),
+            "column!() column move keeps its probe: {column_shift:?}"
+        );
+        let multiline = "fn f() -> String {\n    format!(\"a\n        b c\n        end\")\n}\n";
+        let string_interior =
+            block_probes(multiline, &[(3, "        b c")], &[(3, 3, "        b  c")]);
+        assert!(
+            !string_interior.is_empty(),
+            "multiline literal interior whitespace keeps its probe: {string_interior:?}"
+        );
     }
 
     #[test]
