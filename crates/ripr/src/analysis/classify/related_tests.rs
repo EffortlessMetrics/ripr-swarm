@@ -4133,6 +4133,158 @@ fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
     last
 }
 
+/// Innermost `{ .. }` block containing byte `pos`, as `(open, close)` indices.
+fn block_enclosing(body: &str, pos: usize) -> Option<(usize, usize)> {
+    let bytes = body.as_bytes();
+    let mut stack = Vec::new();
+    for (index, &byte) in bytes.iter().enumerate().take(pos) {
+        match byte {
+            b'{' => stack.push(index),
+            b'}' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    let open = *stack.last()?;
+    let mut depth = 0i32;
+    for (index, &byte) in bytes.iter().enumerate().skip(open) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((open, index));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn let_binding_in_scope_at(full_body: &str, let_at: usize, call_at: usize) -> bool {
+    match block_enclosing(full_body, let_at) {
+        Some((_, close)) => close >= call_at,
+        None => true,
+    }
+}
+
+fn ident_pat_binds_name(pattern: Option<ast::Pat>, name: &str) -> bool {
+    let raw = name.trim_start_matches("r#");
+    pattern.is_some_and(|pattern| {
+        pattern
+            .syntax()
+            .descendants()
+            .filter_map(ast::IdentPat::cast)
+            .any(|pattern| {
+                pattern
+                    .name()
+                    .is_some_and(|bound| bound.text().trim_start_matches("r#") == raw)
+            })
+    })
+}
+
+/// Whether a closure/`for`/`match` binding or `if let` guard shadows `name`
+/// at the call site used by the text receiver matcher (#6858).
+fn receiver_binding_shadowed_at(body: &str, name: &str, call_at: usize) -> bool {
+    const WRAPPER: &str = "fn ripr_receiver_scope() {\n";
+    let source = format!("{WRAPPER}{body}\n}}");
+    let offset = WRAPPER.len() + call_at.min(body.len());
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return false;
+    };
+    let syntax = parse.tree().syntax().clone();
+    let token = syntax
+        .token_at_offset((offset as u32).into())
+        .right_biased()
+        .or_else(|| syntax.token_at_offset((offset as u32).into()).left_biased());
+    let Some(token) = token else {
+        return false;
+    };
+    for ancestor in token
+        .parent()
+        .into_iter()
+        .flat_map(|node| node.ancestors().skip(1))
+    {
+        if ast::ClosureExpr::cast(ancestor.clone()).is_some_and(|closure| {
+            closure.param_list().is_some_and(|list| {
+                list.params()
+                    .any(|param| ident_pat_binds_name(param.pat(), name))
+            })
+        }) || ast::ForExpr::cast(ancestor.clone())
+            .is_some_and(|for_loop| ident_pat_binds_name(for_loop.pat(), name))
+            || ast::MatchArm::cast(ancestor.clone())
+                .is_some_and(|arm| ident_pat_binds_name(arm.pat(), name))
+        {
+            return true;
+        }
+        let condition = ast::IfExpr::cast(ancestor.clone())
+            .and_then(|node| node.condition())
+            .or_else(|| ast::WhileExpr::cast(ancestor.clone()).and_then(|node| node.condition()));
+        if condition.is_some_and(|condition| {
+            condition
+                .syntax()
+                .descendants()
+                .filter_map(ast::LetExpr::cast)
+                .any(|binding| ident_pat_binds_name(binding.pat(), name))
+        }) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The `let` binding of `name` live at `call_at`, scanning only `prefix`.
+fn live_let_statement_before<'a>(
+    prefix: &'a str,
+    full_body: &'a str,
+    name: &str,
+    call_at: usize,
+) -> Option<&'a str> {
+    if name.is_empty() || call_at == 0 || prefix.is_empty() {
+        return None;
+    }
+    let bytes = prefix.as_bytes();
+    let before = prefix.len().min(full_body.len());
+    let mut last = None;
+    let mut search = 0usize;
+    while let Some(relative) = prefix[search..before].find("let ") {
+        let let_at = search + relative;
+        let mut i = let_at + 4;
+        while i < before && i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= before {
+            break;
+        }
+        if prefix[i..before].starts_with("mut") && ident_boundary(prefix, i, i + 3) {
+            i += 3;
+            while i < before && i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+        }
+        if i >= before {
+            break;
+        }
+        if prefix[i..before].starts_with(name) && ident_boundary(prefix, i, i + name.len()) {
+            let stmt_end = prefix[i..before]
+                .find(';')
+                .map(|offset| i + offset)
+                .unwrap_or(before);
+            if stmt_end >= before || !let_binding_in_scope_at(full_body, let_at, call_at) {
+                search = let_at + 1;
+                continue;
+            }
+            let stmt = &prefix[let_at..stmt_end];
+            let typed = stmt.find('=').is_some_and(|eq| stmt[..eq].contains(':'));
+            last = Some(if typed { &prefix[let_at..before] } else { stmt });
+        }
+        search = let_at + 1;
+    }
+    last
+}
+
 /// The type a `let` binding certainly has: its annotation, or a constructor
 /// written as one segment (`Tile(1)`, `Tile { .. }`). Unlike
 /// [`let_binding_type_head`] an associated call (`Factory::new()`) is not
@@ -4183,7 +4335,20 @@ pub(in crate::analysis) fn let_binding_mentions_type(
     binding: &str,
     type_name: &str,
 ) -> bool {
-    last_let_statement(body, binding)
+    let_binding_mentions_type_at(body, body, body.len(), binding, type_name)
+}
+
+fn let_binding_mentions_type_at(
+    prefix: &str,
+    full_body: &str,
+    call_at: usize,
+    binding: &str,
+    type_name: &str,
+) -> bool {
+    if receiver_binding_shadowed_at(full_body, binding, call_at.saturating_sub(1)) {
+        return false;
+    }
+    live_let_statement_before(prefix, full_body, binding, call_at)
         .and_then(let_statement_type_head)
         .is_some_and(|head| head == type_name)
 }
@@ -4305,7 +4470,7 @@ fn initializer_type_head(expr: &str) -> Option<&str> {
             (is_constructor_name(call) || is_variant_name(call)).then_some(*ty)
         }
         ([last], Some(b'(') | Some(b'{')) => Some(last),
-        ([ty, _assoc], None) => Some(ty),
+        ([ty, assoc], None) => is_variant_name(assoc).then_some(*ty),
         _ => None,
     }
 }
@@ -4640,7 +4805,14 @@ fn text_resolves_method_to_type(
                 if whole_body
                     && (qualified_self_type_matches(text, at - 2, impl_type, impl_trait)
                         || (impl_trait.is_some_and(|tr| qualifier == Some(tr))
-                            && first_argument_has_type(text, after, impl_type, body_for_lets)))
+                            && first_argument_has_type(
+                                text,
+                                after,
+                                impl_type,
+                                body_for_lets,
+                                text,
+                                at,
+                            )))
                 {
                     return true;
                 }
@@ -4652,7 +4824,7 @@ fn text_resolves_method_to_type(
                         // A raw call line is unmasked, so a literal quoted in
                         // a string or comment there must not type a receiver.
                         || (whole_body && suffixed_numeric_literal_type(recv) == Some(impl_type))
-                        || let_binding_mentions_type(body_for_lets, recv, impl_type)
+                        || let_binding_mentions_type_at(body_for_lets, text, at, recv, impl_type)
                     {
                         return true;
                     }
@@ -4713,6 +4885,8 @@ fn first_argument_has_type(
     after_name: usize,
     impl_type: &str,
     body_for_lets: &str,
+    full_body: &str,
+    call_at: usize,
 ) -> bool {
     let bytes = text.as_bytes();
     let mut open = after_name;
@@ -4752,15 +4926,7 @@ fn first_argument_has_type(
     if !arg.is_empty() && arg.bytes().all(is_ident_byte) {
         // A binding is typed by its annotation or, as an argument is, by a
         // literal initializer; `let s = Site::new();` names no type.
-        return last_let_statement(body_for_lets, arg).is_some_and(|stmt| {
-            let Some(eq) = stmt.find('=') else {
-                return false;
-            };
-            match stmt[..eq].find(':') {
-                Some(_) => let_statement_type_head(stmt) == Some(impl_type),
-                None => literal_type_head(&stmt[eq + 1..]) == Some(impl_type),
-            }
-        });
+        return let_binding_mentions_type_at(body_for_lets, full_body, call_at, arg, impl_type);
     }
     literal_type_head(arg) == Some(impl_type)
 }
@@ -13905,6 +14071,41 @@ let r = try_parse_summary(\"x\");",
     // or line break between the callee and `(` must not turn the call's
     // argument into the receiver.
     #[test]
+    fn receiver_binding_respects_block_scope_closure_for_and_assoc_consts() {
+        for (body, expected) in [
+            (
+                "let s = Cache::new(); { let s = Site::new(); } s.build();",
+                false,
+            ),
+            ("let s = Site::new(); xs.iter().map(|s| s.build());", false),
+            ("let s = Site::new(); for s in caches { s.build(); }", false),
+            ("let s = Site::DEFAULT_CACHE; s.build();", false),
+            ("let s = Site::new(); s.build();", true),
+            (
+                "let s = Cache::new(); let s = Site::new(); s.build();",
+                true,
+            ),
+        ] {
+            let summary = test("tests/site.rs", "t", body);
+            assert_eq!(
+                method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                expected,
+                "{body}"
+            );
+        }
+        let body = "let x: f64 = 0.0; { let x: u8 = 0; } Render::render(&x);";
+        let summary = test("tests/render.rs", "t", body);
+        assert!(
+            method_call_resolves_to_impl(&summary, "render", "f64", Some("Render")),
+            "{body}"
+        );
+        assert!(
+            !method_call_resolves_to_impl(&summary, "render", "u8", Some("Render")),
+            "{body}"
+        );
+    }
+
+    #[test]
     fn bracketed_receiver_is_not_read_from_a_raw_call_line() {
         let cases = [
             (
@@ -13980,6 +14181,7 @@ let r = try_parse_summary(\"x\");",
             ("let x = Vec::with_capacity(4)", None),
             ("let x = Shape::Circle", Some("Shape")),
             ("let x = Shape::Circle(1.0)", Some("Shape")),
+            ("let x = Site::DEFAULT_CACHE", None),
             // Prefixes are a convention, not a return type (#8782 item 2).
             ("let x = Site::with_cache()", None),
             ("let x = Site::FACTORY()", None),
