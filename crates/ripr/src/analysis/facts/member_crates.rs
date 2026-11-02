@@ -732,25 +732,9 @@ impl MemberCrates {
     /// `proc-macro`, or no `crate-type`). Without manifest authority, or with
     /// any value it cannot read, the answer is no.
     pub(crate) fn runs_library_doctests(&self, crate_root: &Path) -> bool {
-        let Some(root) = &self.root else {
+        let Some(package) = self.default_library_package(crate_root) else {
             return false;
         };
-        if !crate_root.ends_with(Path::new("src").join("lib.rs"))
-            || !self.is_default_target_root(crate_root)
-        {
-            return false;
-        }
-        let root = lexical(root);
-        let crate_root = lexical(&root.join(crate_root));
-        let Some(directory) = crate_root.parent().and_then(Path::parent) else {
-            return false;
-        };
-        let Some((package, _)) = nearest_package(&root, directory) else {
-            return false;
-        };
-        if package.directory != directory || !is_default_library_root(&package, &crate_root) {
-            return false;
-        }
         let Some(lib) = package.manifest.get("lib") else {
             return true;
         };
@@ -771,6 +755,72 @@ impl MemberCrates {
             .get("proc-macro")
             .is_none_or(|value| value.as_bool() == Some(false));
         doctest_on && linkable && not_proc_macro
+    }
+}
+
+impl MemberCrates {
+    /// The package whose default library root is `crate_root`, a
+    /// root-relative `src/lib.rs`, or `None` without manifest authority, for
+    /// a moved or non-default root, or for any manifest value it cannot read.
+    fn default_library_package(&self, crate_root: &Path) -> Option<Package> {
+        let root = self.root.as_ref()?;
+        if !crate_root.ends_with(Path::new("src").join("lib.rs"))
+            || !self.is_default_target_root(crate_root)
+        {
+            return None;
+        }
+        let root = lexical(root);
+        let crate_root = lexical(&root.join(crate_root));
+        let directory = crate_root.parent().and_then(Path::parent)?;
+        let (package, _) = nearest_package(&root, directory)?;
+        if package.directory != directory || !is_default_library_root(&package, &crate_root) {
+            return None;
+        }
+        Some(package)
+    }
+
+    /// The cargo features a plain `cargo test` of the library rooted at
+    /// `crate_root` enables: the closure of the manifest's `[features]
+    /// default = [..]` over plain feature names (RIPR-SPEC-0279, #12230).
+    /// A `dep:name` or `name/feature` entry names a dependency, not a
+    /// feature of this package, so it adds nothing; leaving it out can only
+    /// shrink the set. `None` when the package cannot be read, or its
+    /// `default` or a followed feature entry is not an array of strings:
+    /// the caller then resolves no feature gate.
+    pub(crate) fn default_library_features(
+        &self,
+        crate_root: &Path,
+    ) -> Option<std::collections::BTreeSet<String>> {
+        let package = self.default_library_package(crate_root)?;
+        let Some(table) = package.manifest.get("features") else {
+            return Some(std::collections::BTreeSet::new());
+        };
+        let table = table.as_table()?;
+        let mut enabled = std::collections::BTreeSet::new();
+        let mut pending = vec!["default".to_string()];
+        while let Some(name) = pending.pop() {
+            let Some(entry) = table.get(&name) else {
+                // A name with no `[features]` entry is an optional
+                // dependency's implicit feature; it is on when listed.
+                if name != "default" {
+                    enabled.insert(name);
+                }
+                continue;
+            };
+            if name != "default" && !enabled.insert(name.clone()) {
+                continue;
+            }
+            for member in entry.as_array()? {
+                let member = member.as_str()?;
+                if member.starts_with("dep:") || member.contains('/') {
+                    continue;
+                }
+                if !enabled.contains(member) {
+                    pending.push(member.to_string());
+                }
+            }
+        }
+        Some(enabled)
     }
 }
 
