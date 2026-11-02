@@ -67,6 +67,7 @@ pub(crate) fn append_fast_check_assertions(
     statements: &oxc_allocator::Vec<'_, Statement<'_>>,
     source: &SourceText<'_>,
     bindings: &TypeScriptAssertionBindings,
+    returns_to_runner: bool,
     out: &mut Vec<TypeScriptAssertion>,
 ) {
     let exports = FastCheckExports::from_bindings(bindings);
@@ -74,26 +75,43 @@ pub(crate) fn append_fast_check_assertions(
         return;
     }
     for stmt in statements {
-        collect_in_statement(stmt, source, &exports, out);
+        collect_in_statement(stmt, source, &exports, returns_to_runner, out);
     }
+}
+
+pub(crate) fn assertions_from_expression(
+    expr: &Expression<'_>,
+    source: &SourceText<'_>,
+    bindings: &TypeScriptAssertionBindings,
+    returns_to_runner: bool,
+) -> Option<TypeScriptAssertion> {
+    let exports = FastCheckExports::from_bindings(bindings);
+    if exports.is_empty() {
+        return None;
+    }
+    assertion_from_assert_property_call(expr, source, &exports, returns_to_runner)
 }
 
 fn collect_in_statement(
     stmt: &Statement<'_>,
     source: &SourceText<'_>,
     exports: &FastCheckExports,
+    returns_to_runner: bool,
     out: &mut Vec<TypeScriptAssertion>,
 ) {
     match stmt {
         Statement::BlockStatement(block) => {
             for inner in &block.body {
-                collect_in_statement(inner, source, exports, out);
+                collect_in_statement(inner, source, exports, returns_to_runner, out);
             }
         }
         Statement::ExpressionStatement(expr_stmt) => {
-            if let Some(assertion) =
-                assertion_from_assert_property_call(&expr_stmt.expression, source, exports, false)
-            {
+            if let Some(assertion) = assertion_from_assert_property_call(
+                &expr_stmt.expression,
+                source,
+                exports,
+                returns_to_runner,
+            ) {
                 out.push(assertion);
             }
         }
@@ -106,45 +124,45 @@ fn collect_in_statement(
             }
         }
         Statement::IfStatement(if_stmt) => {
-            collect_in_statement(&if_stmt.consequent, source, exports, out);
+            collect_in_statement(&if_stmt.consequent, source, exports, returns_to_runner, out);
             if let Some(alternate) = &if_stmt.alternate {
-                collect_in_statement(alternate, source, exports, out);
+                collect_in_statement(alternate, source, exports, returns_to_runner, out);
             }
         }
         Statement::ForStatement(for_stmt) => {
-            collect_in_statement(&for_stmt.body, source, exports, out);
+            collect_in_statement(&for_stmt.body, source, exports, returns_to_runner, out);
         }
         Statement::ForInStatement(for_in) => {
-            collect_in_statement(&for_in.body, source, exports, out);
+            collect_in_statement(&for_in.body, source, exports, returns_to_runner, out);
         }
         Statement::ForOfStatement(for_of) => {
-            collect_in_statement(&for_of.body, source, exports, out);
+            collect_in_statement(&for_of.body, source, exports, returns_to_runner, out);
         }
         Statement::WhileStatement(while_stmt) => {
-            collect_in_statement(&while_stmt.body, source, exports, out);
+            collect_in_statement(&while_stmt.body, source, exports, returns_to_runner, out);
         }
         Statement::DoWhileStatement(do_while) => {
-            collect_in_statement(&do_while.body, source, exports, out);
+            collect_in_statement(&do_while.body, source, exports, returns_to_runner, out);
         }
         Statement::SwitchStatement(switch_stmt) => {
             for case in &switch_stmt.cases {
                 for inner in &case.consequent {
-                    collect_in_statement(inner, source, exports, out);
+                    collect_in_statement(inner, source, exports, returns_to_runner, out);
                 }
             }
         }
         Statement::TryStatement(try_stmt) => {
             for inner in &try_stmt.block.body {
-                collect_in_statement(inner, source, exports, out);
+                collect_in_statement(inner, source, exports, returns_to_runner, out);
             }
             if let Some(handler) = &try_stmt.handler {
                 for inner in &handler.body.body {
-                    collect_in_statement(inner, source, exports, out);
+                    collect_in_statement(inner, source, exports, returns_to_runner, out);
                 }
             }
             if let Some(finalizer) = &try_stmt.finalizer {
                 for inner in &finalizer.body {
-                    collect_in_statement(inner, source, exports, out);
+                    collect_in_statement(inner, source, exports, returns_to_runner, out);
                 }
             }
         }
@@ -158,7 +176,12 @@ fn assertion_from_assert_property_call(
     exports: &FastCheckExports,
     returned_to_runner: bool,
 ) -> Option<TypeScriptAssertion> {
-    let call = expr.as_call_expression()?;
+    let awaited = call_is_awaited(expr);
+    let call_expr = match expr.get_inner_expression() {
+        Expression::AwaitExpression(await_expr) => &await_expr.argument,
+        _ => expr,
+    };
+    let call = call_expr.as_call_expression()?;
     if !callee_is_fast_check_assert(&call.callee, exports) {
         return None;
     }
@@ -172,7 +195,7 @@ fn assertion_from_assert_property_call(
     let line = source.line_for_offset(call.span.start as usize);
     let rendered = source_text_span(source, call.span.start as usize, call.span.end as usize)
         .unwrap_or_default();
-    if async_property && !returned_to_runner && !call_is_awaited(expr) {
+    if async_property && !returned_to_runner && !awaited {
         return None;
     }
     predicate_oracle(predicate, source, line, &rendered, async_property)

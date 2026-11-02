@@ -52,6 +52,20 @@ fn finding_class(body: &str) -> Result<ExposureClass, String> {
 }
 
 #[test]
+fn concise_arrow_test_body_credits_assert_property() -> Result<(), String> {
+    let source = "import fc from \"fast-check\";\nimport { identity } from \"../src/identity\";\ntest(\"identity property\", () => fc.assert(fc.property(fc.integer(), (n) => identity(n) === n)));\n";
+    assert_eq!(assertion_count(source), 1);
+    Ok(())
+}
+
+#[test]
+fn awaited_async_property_is_credited() -> Result<(), String> {
+    let source = "import fc from \"fast-check\";\nimport { identity } from \"../src/identity\";\ntest(\"identity property\", async () => { await fc.assert(fc.asyncProperty(fc.integer(), async (n) => identity(n) === n)); });\n";
+    assert_eq!(assertion_count(source), 1);
+    Ok(())
+}
+
+#[test]
 fn assert_property_with_returned_equality_is_credited() -> Result<(), String> {
     let body = "fc.assert(fc.property(fc.integer(), (n) => identity(n) === n));";
     let source = fast_check_test(body);

@@ -215,6 +215,11 @@ pub(crate) fn collect_test_arrow_expression_assertions(
     };
     let mut out = Vec::new();
     collect_assertions_in_expression(&statement.expression, true, source, &context, &mut out);
+    if let Some(assertion) =
+        super::fast_check::assertions_from_expression(&statement.expression, source, bindings, true)
+    {
+        out.push(assertion);
+    }
     Some(out)
 }
 
@@ -257,7 +262,13 @@ pub(crate) fn collect_callback_assertions(
             break;
         }
     }
-    super::fast_check::append_fast_check_assertions(statements, source, bindings, &mut out);
+    super::fast_check::append_fast_check_assertions(
+        statements,
+        source,
+        bindings,
+        returns_to_runner,
+        &mut out,
+    );
     out
 }
 
