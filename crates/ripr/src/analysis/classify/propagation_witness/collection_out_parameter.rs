@@ -9,18 +9,20 @@
 //! This module only says the value is followed. It grants no assertion
 //! strength: a count read stays a weak check. Every link must be exact, and
 //! anything else fails closed:
-//! - the owner is a plain free function (not async, generic or a method)
+//! - the owner is a plain free function (not async, const, unsafe, generic
+//!   or a method, read from its full declaration)
 //!   whose only statement is one unconditional `receiver.push(..)` into a
 //!   `&mut Vec<..>` or `&mut String` parameter;
-//! - the test is not `#[ignore]` or `#[should_panic]`, and at its top level
+//! - the test's only attribute is a plain `#[test]`, and at its top level
 //!   binds `let mut b = Vec::new();` (or `String::new()`, or a `default()`),
 //!   then calls the owner exactly once, resolved to the owner and not a
 //!   namesake, with `&mut b` at the pushed parameter's position;
 //! - no other statement mentions `b` before the call, no other argument
 //!   mentions it, and after the call every statement that mentions `b` is a
 //!   recorded `assert!`, `assert_eq!` or `assert_ne!` whose every mention of
-//!   `b` is `b.len()` or `b.is_empty()`. Any other read may already check
-//!   the contents, so it is not this module's to grade.
+//!   `b` is `b.len()` or `b.is_empty()`, and the body's tail expression
+//!   does not mention `b`. Any other read may already check the contents,
+//!   so it is not this module's to grade.
 
 use crate::analysis::classify::OwnerPinSyntax;
 use crate::analysis::classify::call_identity::{CallTarget, shared_owner_call_identity};
@@ -56,11 +58,11 @@ fn followed_by_count(
         || !owner.body.contains("&mut")
         || !test.body.contains("&mut")
         || test.assertions.is_empty()
-        || test_may_skip(test)
+        || !only_plain_test_attribute(test)
     {
         return None;
     }
-    let parameter = sole_pushed_parameter(receiver, owner)?;
+    let parameter = sole_pushed_parameter(receiver, owner, index)?;
     if [&owner.file, &test.file].into_iter().any(|file| {
         index.files().get(file).is_none_or(|facts| {
             crate::analysis::classify::out_parameter::file_shadows_buffer_types(&facts.source)
@@ -70,16 +72,8 @@ fn followed_by_count(
     }
     let tree = parse_clean_source_file(&test.body)?.tree();
     let function = tree.syntax().descendants().find_map(ast::Fn::cast)?;
-    // Only the plain `#[test]` attribute: a `cfg`-gated, ignored or
-    // panic-expecting test may never run the read.
-    if function.async_token().is_some()
-        || function
-            .attrs()
-            .any(|attribute| compact(&attribute.syntax().text().to_string()) != "#[test]")
-    {
-        return None;
-    }
-    let statements: Vec<ast::Stmt> = function.body()?.stmt_list()?.statements().collect();
+    let body = function.body()?.stmt_list()?;
+    let statements: Vec<ast::Stmt> = body.statements().collect();
     // The one top-level call of the owner, with `&mut <local>` at the pushed
     // parameter's position.
     let calls: Vec<(usize, ast::CallExpr)> = statements
@@ -135,6 +129,14 @@ fn followed_by_count(
         return None;
     }
     // After the call, every mention is a count read inside a recorded check.
+    // A final check written without `;` is the block's tail, not a
+    // statement, so it is refused rather than left unread.
+    if body
+        .tail_expr()
+        .is_some_and(|tail| mentions_word(tail.syntax(), &local) > 0)
+    {
+        return None;
+    }
     let mut reads = 0;
     let mut last_read = *call_at;
     for (at, statement) in statements.iter().enumerate().skip(call_at + 1) {
@@ -171,10 +173,19 @@ struct PushedParameter {
     string: bool,
 }
 
-fn sole_pushed_parameter(receiver: &str, owner: &FunctionSummary) -> Option<PushedParameter> {
-    let tree = parse_clean_source_file(&owner.body)?.tree();
-    let function = tree.syntax().descendants().find_map(ast::Fn::cast)?;
+fn sole_pushed_parameter(
+    receiver: &str,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Option<PushedParameter> {
+    // The full source declaration: the indexed body slice starts at `fn`
+    // and drops qualifiers such as `async` or `const`.
+    let function = index
+        .source_syntax
+        .get(index, &owner.file)?
+        .declaration(owner)?;
     if function.async_token().is_some()
+        || function.unsafe_token().is_some()
         || function.gen_token().is_some()
         || function.const_token().is_some()
         || function.generic_param_list().is_some()
@@ -269,13 +280,13 @@ fn straight_line_argument(argument: &ast::Expr) -> bool {
         })
 }
 
-fn test_may_skip(test: &TestSummary) -> bool {
-    test.attrs.iter().any(|attribute| {
-        let attribute = compact(attribute);
-        attribute.contains("ignore")
-            || attribute.contains("should_panic")
-            || attribute.contains("cfg")
-    })
+/// The test's own attributes, read from the full declaration, are exactly
+/// one plain `#[test]`: a `cfg`-gated, ignored, panic-expecting or
+/// otherwise wrapped test may never run the read, and an `async` test needs
+/// another harness attribute. No recorded attribute (the lexical fallback)
+/// is refused too.
+fn only_plain_test_attribute(test: &TestSummary) -> bool {
+    matches!(test.attrs.as_slice(), [only] if compact(only) == "#[test]")
 }
 
 fn call_last_segment(call: &ast::CallExpr) -> Option<String> {
@@ -527,6 +538,8 @@ mod tests {
             // A read of the contents is not this rule's to grade.
             format!("{CALL}        assert_eq!(b.len(), 1);\n        assert_eq!(b[0], \"HI\");\n"),
             format!("{CALL}        assert_eq!(b, vec![\"HI\".to_string()]);\n"),
+            // A final contents check written without `;` is the tail.
+            format!("{CALL}        assert_eq!(b.len(), 1);\n        assert_eq!(b[0], \"HI\")\n"),
             // An attribute may remove the check.
             format!("{CALL}        #[cfg(any())]\n        assert_eq!(b.len(), 1);\n"),
             // A return or branch between the definition and the read.
@@ -541,8 +554,12 @@ mod tests {
             // The namesake in another module.
             "        let mut b = Vec::new();\n        other::log_line(&mut b, \"hi\");\n        assert_eq!(b.len(), 1);\n".to_string(),
         ] {
+            // The namesake module only where the body names it: its mere
+            // presence already refuses the bare call, which would make every
+            // other case here pass for the wrong reason.
             let other = "\npub mod other {\n    pub fn log_line(buf: &mut Vec<String>, msg: &str) {\n        let _ = (buf, msg);\n    }\n}\n";
-            if follows(OWNER, other, TEST, &body)? {
+            let extra = if body.contains("other::") { other } else { "" };
+            if follows(OWNER, extra, TEST, &body)? {
                 return Err(format!("must refuse:\n{body}"));
             }
         }
@@ -556,6 +573,10 @@ mod tests {
             "    #[test]\n    #[ignore]",
             "    #[test]\n    #[should_panic]",
             "    #[test]\n    #[cfg(unix)]",
+            // An attribute macro may replace the body; an async test needs
+            // another harness.
+            "    #[test]\n    #[skip_me]",
+            "    #[tokio::test]\n    async",
         ] {
             if follows(OWNER, "", header, &read)? {
                 return Err(format!("must refuse the test header:\n{header}"));
@@ -569,6 +590,8 @@ mod tests {
             "pub fn log_line(buf: &mut Vec<String>, msg: &str, skip: bool) {\n    buf.push(if skip { return } else { msg.to_uppercase() });\n}\n",
             "pub fn log_line(buf: &mut Vec<String>, msg: &str) {\n    buf.push(format!(\"{msg}\"));\n}\n",
             "pub fn log_line(buf: &mut Vec<String>, msg: &str) {\n    buf.push({ msg.to_uppercase() });\n}\n",
+            // Never polled by the test, so nothing is pushed.
+            "pub async fn log_line(buf: &mut Vec<String>, msg: &str) {\n    buf.push(msg.to_uppercase());\n}\n",
         ] {
             if follows(owner, "", TEST, &read)? {
                 return Err(format!("must refuse the owner:\n{owner}"));

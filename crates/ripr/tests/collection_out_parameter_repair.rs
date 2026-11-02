@@ -370,3 +370,42 @@ fn exactly_checked_vector_is_already_noticed_not_a_contents_gap() -> Result<(), 
     }
     Ok(())
 }
+
+/// Neither command starts and neither names the contents check: the
+/// count-only rule does not apply.
+fn assert_rule_does_not_apply(case: &str, repo: &Repo) -> Result<(), String> {
+    let (check, started, repair) = repo.answers(&[])?;
+    if started || check_start_id(&check).is_some() {
+        return Err(format!("{case}: neither may start:\n{check}\n{repair}"));
+    }
+    if check.contains(CONTENTS_CHECK) || repair.contains(CONTENTS_CHECK) {
+        return Err(format!(
+            "{case}: the count-only rule must not apply:\n{check}\n{repair}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn async_owner_is_not_followed() -> Result<(), String> {
+    // The test never polls the returned future, so nothing is pushed.
+    let repo = Repo::create(
+        &OLD.replace("pub fn", "pub async fn"),
+        &NEW.replace("pub fn", "pub async fn"),
+        &test_file(COUNT_BODY),
+    )?;
+    assert_rule_does_not_apply("async owner", &repo)
+}
+
+#[test]
+fn final_contents_check_without_semicolon_is_not_this_rules_to_grade() -> Result<(), String> {
+    // The last check is the body's tail expression and reads the contents.
+    let repo = Repo::create(
+        OLD,
+        NEW,
+        &test_file(
+            "    let mut b = Vec::new();\n    log_line(&mut b, \"hi\");\n    assert_eq!(b.len(), 1);\n    assert_eq!(b[0], \"HI\")\n",
+        ),
+    )?;
+    assert_rule_does_not_apply("tail contents check", &repo)
+}

@@ -99,15 +99,17 @@ test holds: the repository evidence reads propagation `yes`. The count read
 cannot tell a changed pushed value apart, so it grants no assertion strength
 and the check stays weak. The shape holds only when every link is exact:
 
-- the owner is a free function (not async, `const`, generic or a method)
-  whose only statement is one unconditional `receiver.push(..)` into a
+- the owner is a free function (not async, `const`, `unsafe`, generic or a
+  method, read from its full source declaration, since the indexed body
+  starts at `fn` and drops those qualifiers) whose only statement is one unconditional `receiver.push(..)` into a
   `&mut Vec<..>` or `&mut String` parameter, and the pushed argument always
   reaches the push: it holds no `return`, `?`, `break`, `continue`,
   `.await`, `yield` or `let`, and no macro, closure, block, `if`, `match`
   or loop, and neither the owner's file nor
   the test's file shadows `Vec` or `String`;
-- the test carries only the plain `#[test]` attribute (no `#[ignore]`,
-  `#[should_panic]` or `cfg`); at its top level it binds
+- the test's recorded attributes are exactly one plain `#[test]` (so no
+  `#[ignore]`, `#[should_panic]`, `cfg`, attribute macro or async harness;
+  no recorded attribute is refused too); at its top level it binds
   `let mut b = Vec::new();` (or `String::new()`, or a `default()`), with no
   type, pattern or `else`, and calls the owner exactly once, resolved to the
   owner and not a namesake, with `&mut b` at the pushed parameter's position
@@ -116,11 +118,13 @@ and the check stays weak. The shape holds only when every link is exact:
   definition, the call and the reads, so no `return`, `?`, branch or other
   statement can end the test early; every read is a recorded `assert!`,
   `assert_eq!` or `assert_ne!` with no attribute, whose every mention of `b`
-  is `b.len()` or `b.is_empty()`.
+  is `b.len()` or `b.is_empty()`; and the body's tail expression (a final
+  check written without `;`) does not mention `b`.
 
 Anything else leaves propagation as it was: a reborrow (`let r = &mut b;`), a
 use before the call, an alias after it (`let c = &b;`), a different binding, a
-namesake owner in another module, a conditional or second push, and a read of
+namesake owner in another module, a conditional or second push, an `async`
+owner the test never polls, and a read of
 the contents (`b[0]`, `assert_eq!(b, ..)`), which may already check the pushed
 value and is not this rule's to grade.
 
