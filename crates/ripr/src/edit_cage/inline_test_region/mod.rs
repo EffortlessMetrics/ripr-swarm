@@ -23,6 +23,8 @@ pub(crate) use attempt::{
     capture_attempt_inline_region, observe_attempt_inline_region, read_attempt_inline_target,
     uncommitted_target_refusal,
 };
+pub(crate) use observe::source_file_body;
+pub(crate) use validate::validate_external_test_file_edit;
 #[cfg(test)]
 pub(crate) use validate::validate_inline_test_region_edit;
 

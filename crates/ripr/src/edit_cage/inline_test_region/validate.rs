@@ -12,6 +12,46 @@ use super::{
 /// before body survives in order, and the inserted spans hold only new test
 /// functions (with optional helper `fn` and `use` companions), comments, and
 /// whitespace.
+/// Validate that `after` is a pure insertion of test-role items relative to
+/// `before` for an entire external Rust test file (#8710).
+pub(crate) fn validate_external_test_file_edit(
+    before: &str,
+    after: &str,
+) -> InlineTestRegionVerdict {
+    let before_body = match observe::source_file_body(before) {
+        Ok(body) => body,
+        Err(error) => {
+            return InlineTestRegionVerdict::rejected(
+                error
+                    .reason()
+                    .unwrap_or(InlineTestRegionRejectReason::Unparseable),
+                None,
+            );
+        }
+    };
+    let after_body = match observe::source_file_body(after) {
+        Ok(body) => body,
+        Err(error) => {
+            let range = first_changed_range(before, after);
+            return InlineTestRegionVerdict::rejected(
+                error
+                    .reason()
+                    .unwrap_or(InlineTestRegionRejectReason::Unparseable),
+                range,
+            );
+        }
+    };
+    match classify_body_delta(&before_body, &after_body) {
+        ItemDelta::Admitted => InlineTestRegionVerdict::admitted(),
+        ItemDelta::NotARepair => {
+            InlineTestRegionVerdict::not_a_repair(InlineTestRegionRejectReason::NonTestSubject)
+        }
+        ItemDelta::Rejected(reason) => {
+            InlineTestRegionVerdict::rejected(reason, first_changed_range(before, after))
+        }
+    }
+}
+
 pub(crate) fn validate_inline_test_region_edit(
     before: &str,
     authority: &InlineTestRegionAuthority,

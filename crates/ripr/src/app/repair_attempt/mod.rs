@@ -2886,6 +2886,8 @@ pub(crate) fn edit_cage_policy_from_packet(
     // verdict admits only a pure insertion of test functions into it.
     let inline_test_module_target = !is_test_surface_path(selected_target_text)
         && is_inline_test_module_candidate(selected_target_text);
+    let external_test_file_target = is_test_surface_path(selected_target_text)
+        && Path::new(selected_target_text).extension() == Some(std::ffi::OsStr::new("rs"));
     if !is_test_surface_path(selected_target_text) && !inline_test_module_target {
         return Err(format!(
             "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never the test to edit, so no allowed-files list is built",
@@ -2988,6 +2990,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         ignored_build_output,
         untracked_build_lockfile,
         inline_test_module_target,
+        external_test_file_target,
     })
 }
 

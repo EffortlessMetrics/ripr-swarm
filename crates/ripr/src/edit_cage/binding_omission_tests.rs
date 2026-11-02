@@ -18,10 +18,12 @@ fn baseline(store: &str) -> Result<AttemptBaseline, String> {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            external_test_file_target: false,
         },
         paths: BTreeMap::new(),
         ambiguous: false,
         inline_test_region: None,
+        external_test_file_region: None,
         #[cfg(windows)]
         _unknown_ignored_write_guards: Vec::new(),
         #[cfg(windows)]
@@ -51,6 +53,7 @@ fn captured_delta(changes: Vec<AttemptPathChange>) -> AttemptDelta {
         comparable: true,
         changes,
         inline_test_region: None,
+        external_test_file_region: None,
     }
 }
 
