@@ -403,3 +403,41 @@ fn complete_guidance_cancellation_at_a_reuse_hit_returns_no_result() -> Result<(
     );
     Ok(())
 }
+
+/// Native spelling, rather than display/scope normalization, owns cache identity.
+#[test]
+fn complete_guidance_native_spellings_do_not_alias() {
+    assert_ne!(
+        file_guidance_reuse_identity(Path::new(r"src/a\b.rs")),
+        file_guidance_reuse_identity(Path::new("src/a/b.rs")),
+        "distinct native path spellings must not alias"
+    );
+    assert_eq!(
+        file_guidance_reuse_identity(Path::new("src/lib.rs")),
+        b"file-guidance-v2-native\0src/lib.rs".to_vec(),
+        "pin the domain and single-path encoding independently of the producer"
+    );
+    assert_ne!(
+        file_guidance_reuse_identity(Path::new("./src/lib.rs")),
+        file_guidance_reuse_identity(Path::new("src/lib.rs")),
+        "conservative spelling differences are safe cache misses"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn complete_guidance_native_identity_preserves_non_utf8_bytes() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let first = Path::new(OsStr::from_bytes(b"src/\xff.rs"));
+    let second = Path::new(OsStr::from_bytes(b"src/\xfe.rs"));
+    assert_eq!(first.to_string_lossy(), second.to_string_lossy());
+    assert_ne!(
+        file_guidance_reuse_identity(first),
+        file_guidance_reuse_identity(second)
+    );
+    assert_eq!(
+        file_guidance_reuse_identity(first),
+        b"file-guidance-v2-native\0src/\xff.rs".to_vec()
+    );
+}

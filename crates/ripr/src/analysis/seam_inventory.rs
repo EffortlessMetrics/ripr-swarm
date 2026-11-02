@@ -1818,12 +1818,14 @@ pub(crate) fn inventory_file_guidance_at_with_config(
     )
 }
 
-/// Disjoint from staged/bound identities. The one path uses the same lossless
-/// normalization as canonical scope selection; no delimiter-separated path
-/// list or display-string conversion can alias a different selection.
+/// Disjoint from staged/bound identities. Preserve the exact native path
+/// spelling: a literal backslash on Unix must not alias a directory separator.
+/// Equivalent spellings may conservatively miss; neither scope normalization
+/// nor lossy display text owns this cache key. The workspace key separately
+/// binds the root, analyzer, configuration and complete consumed corpus.
 fn file_guidance_reuse_identity(file: &Path) -> Vec<u8> {
-    let mut identity = b"file-guidance-v1-complete\0".to_vec();
-    identity.extend(inventory_scope_key(file));
+    let mut identity = b"file-guidance-v2-native\0".to_vec();
+    identity.extend_from_slice(file.as_os_str().as_encoded_bytes());
     identity
 }
 
