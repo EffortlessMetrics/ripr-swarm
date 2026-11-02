@@ -15177,6 +15177,7 @@ fn check_output_contracts() -> Result<(), String> {
                     "python_repair_verification_check_report" => {
                         "xtask/src/reports/python_repair_verification.rs"
                     }
+                    "ripr_diff" => "crates/ripr/src/output/diff_report.rs",
                     other => {
                         violations.push(format!("unrecognized output kind `{other}`"));
                         continue;
@@ -15220,6 +15221,7 @@ fn check_output_contracts() -> Result<(), String> {
         "python_repair_driver_binding",
         "python_repair_verification_check_report",
         "python_repair_verification_receipt",
+        "ripr_diff",
     ] {
         if !seen.contains(&format!("kind|{value}")) {
             violations.push(format!("missing output contract entry: kind|{value}"));
