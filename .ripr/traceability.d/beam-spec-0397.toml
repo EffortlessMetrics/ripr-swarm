@@ -1,0 +1,13 @@
+[[behavior]]
+id = "RIPR-SPEC-0397"
+name = "BEAM shared application facts and Elixir/Erlang actor-test contracts"
+spec = "docs/specs/RIPR-SPEC-0397-beam-shared-application-facts-and-actor-test-contracts.md"
+outputs = [
+  "docs/specs/RIPR-SPEC-0397-beam-shared-application-facts-and-actor-test-contracts.md",
+  "docs/spec-index.d/RIPR-SPEC-0397.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0397.toml",
+]
+metrics = [
+  "spec_format_pass_rate",
+  "traceability_registration_completeness",
+]
