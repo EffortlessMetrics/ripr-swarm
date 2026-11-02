@@ -30303,6 +30303,95 @@ fn perl_packet_backed_rows_agree_in_hover_related_information_and_data() -> Resu
     Ok(())
 }
 
+/// #5496: the production-classified Python finding's rows reach hover,
+/// related information and the diagnostic data with the shared sentence on
+/// the explained row only.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_production_rows_agree_in_hover_related_information_and_data() -> Result<(), String> {
+    use crate::output::related_test_miss::{related_test_miss_label, related_test_miss_reason};
+    let finding = crate::analysis::python_direct_and_advisory_finding()?;
+    let explained = finding
+        .related_tests
+        .iter()
+        .find(|row| row.miss.is_some())
+        .ok_or("expected one explained row")?;
+    let withheld = finding
+        .related_tests
+        .iter()
+        .find(|row| row.miss.is_none())
+        .ok_or("expected one withheld row")?;
+    let why = related_test_miss_reason(explained, &finding.probe.family)
+        .ok_or("the explained row should have a reason")?;
+    let label = related_test_miss_label(explained);
+    let explained_text = format!("{label}: {why}");
+
+    let hover = finding_hover_markdown_for(&finding)?;
+    let hover_row = |name: &str| {
+        hover
+            .lines()
+            .find(|line| line.starts_with("- `") && line.contains(&format!("`{name}`")))
+            .ok_or_else(|| format!("no hover row for `{name}`:\n{hover}"))
+    };
+    assert!(
+        hover_row(&explained.name)?.contains(&explained_text),
+        "{hover}"
+    );
+    let withheld_row = hover_row(&withheld.name)?;
+    assert!(
+        !withheld_row.contains(&why) && !withheld_row.contains(&format!("{label}:")),
+        "{withheld_row}"
+    );
+
+    let mut diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let examined = diagnostic
+        .related_information
+        .iter()
+        .flatten()
+        .filter(|row| row.message.contains(&why))
+        .collect::<Vec<_>>();
+    let [examined_row] = examined.as_slice() else {
+        return Err(format!("expected one explained row: {examined:?}"));
+    };
+    assert!(
+        examined_row
+            .message
+            .contains(&format!("`{}`", explained.name))
+            && examined_row.message.ends_with(&explained_text),
+        "{}",
+        examined_row.message
+    );
+
+    add_canonical_group_data(
+        Path::new("/workspace"),
+        &mut diagnostic,
+        &finding,
+        std::slice::from_ref(&finding),
+    );
+    let data = diagnostic.data.as_ref().ok_or("expected diagnostic data")?;
+    for rows in [
+        &data["related_tests"],
+        &data["raw_findings"][0]["related_tests"],
+    ] {
+        let row = |name: &str| {
+            rows.as_array()
+                .into_iter()
+                .flatten()
+                .find(|row| row["name"] == name)
+                .ok_or_else(|| format!("no data row for `{name}`: {rows}"))
+        };
+        let explained_row = row(&explained.name)?;
+        assert_eq!(
+            explained_row["miss"].as_str(),
+            explained.miss.map(|miss| miss.as_str())
+        );
+        assert_eq!(explained_row["why"], why.as_str());
+        let withheld_row = row(&withheld.name)?;
+        assert!(withheld_row["miss"].is_null() && withheld_row["why"].is_null());
+    }
+    Ok(())
+}
+
 /// A real git fixture with Python and Rust both changed, refreshed through
 /// the real analysis path under the default Rust-only language set.
 fn real_refresh_with_python_changed() -> Result<(TempLspRoot, WorkspaceDiagnostics), String> {

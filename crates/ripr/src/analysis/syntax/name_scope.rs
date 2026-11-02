@@ -466,6 +466,16 @@ pub(crate) fn path_segments(path: &ast::Path) -> Option<Vec<String>> {
     (!segments.is_empty()).then_some(segments)
 }
 
+/// Import leaves of one use item, sharing the same grouped-path reading as
+/// function name scopes. The caller supplies the item's lexical scope.
+pub(crate) fn use_item_bindings(item: &ast::Use) -> NameScope {
+    let mut scope = NameScope::default();
+    if let Some(tree) = item.use_tree() {
+        flatten_use_tree(&tree, Some(Vec::new()), &mut scope);
+    }
+    scope
+}
+
 /// `prefix` is `None` once an enclosing tree's path could not be read: its
 /// leaves still bind their names, but opaquely.
 fn flatten_use_tree(tree: &ast::UseTree, prefix: Option<Vec<String>>, scope: &mut NameScope) {

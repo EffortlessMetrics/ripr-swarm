@@ -265,7 +265,8 @@ arguments (`!x`, `a != b`) do not change this grade.
   | Payload extraction, payload discarded | `let v = assert_ok!(..); let _ = v;` | relational / weak | none |
   | Tolerance equality | `approx::assert_relative_eq!`, `assert_abs_diff_eq!`, `assert_ulps_eq!`, `float_cmp::assert_approx_eq!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
   | Tolerance inequality | `approx::assert_relative_ne!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
-  | Debug-only | `debug_assert_eq!` | unknown / none | none named |
+  | Debug-only, pin the `assert_eq!` twin would credit | `debug_assert_eq!(owner(..), Ok(3))` | unknown / none | `rust_debug_assertion_profile_unresolved` (RIPR-SPEC-0240; the gap is withheld) |
+  | Debug-only, pin the twin would not credit | `debug_assert_eq!` off the changed boundary | unknown / none | none named; the gap stays by design |
   | Local macro with a provider's name | `macro_rules! assert_some` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
 
   No provider macro other than the payload-extraction chain earns credit. The
