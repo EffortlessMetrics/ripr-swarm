@@ -136,6 +136,49 @@ pub(super) fn packet_has_v2_row_miss_evidence(packet: &PerlFactPacket) -> bool {
         || !packet.oracle_scope_coverage.is_empty()
 }
 
+pub(super) fn row_has_v2_miss_evidence(
+    packet: &PerlFactPacket,
+    ev: &PerlRelatedTestEvidence,
+) -> bool {
+    let key = PerlRowJoinKey::from_evidence(ev);
+    packet.predicate_participations.iter().any(|fact| {
+        join_key_from_ids(
+            &fact.change_id,
+            &fact.test_id,
+            &fact.relation_id,
+            fact.callsite_id.as_deref(),
+            fact.oracle_id.as_deref(),
+        ) == key
+    }) || packet.oracle_relevances.iter().any(|fact| {
+        join_key_from_ids(
+            &fact.change_id,
+            &fact.test_id,
+            &fact.relation_id,
+            fact.callsite_id.as_deref(),
+            fact.oracle_id.as_deref(),
+        ) == key
+    }) || packet
+        .activation_framework
+        .iter()
+        .any(|fact| fact.relation_id == ev.relation_id)
+        || packet
+            .relation_reach
+            .iter()
+            .any(|fact| fact.relation_id == ev.relation_id)
+        || packet
+            .oracle_scope_coverage
+            .iter()
+            .any(|fact| fact.test_id == ev.test_id)
+}
+
+fn row_has_v2_miss_facts(facts: &RowMissFacts<'_>) -> bool {
+    facts.participation.is_some()
+        || facts.relevance.is_some()
+        || facts.activation.is_some()
+        || facts.reach.is_some()
+        || facts.scope.is_some()
+}
+
 pub(super) fn assign_perl_v2_row_misses(
     packet: &PerlFactPacket,
     change: &ChangeFact,
@@ -160,7 +203,7 @@ pub(super) fn assign_perl_v2_row_misses(
     for (row, ev) in related.iter_mut().zip(related_evidence) {
         let key = PerlRowJoinKey::from_evidence(ev);
         let facts = index.for_row(&key);
-        row.miss = perl_v2_row_miss(class, ev, change, &facts);
+        row.miss = perl_v2_row_miss(packet, class, ev, change, &facts);
         row.miss_support = match row.miss {
             Some(RelatedTestMiss::MissingInput) => facts.participation.and_then(|p| {
                 p.support_value
@@ -184,6 +227,7 @@ pub(super) fn assign_perl_v2_row_misses(
 }
 
 fn perl_v2_row_miss(
+    packet: &PerlFactPacket,
     class: &ExposureClass,
     ev: &PerlRelatedTestEvidence,
     change: &ChangeFact,
@@ -192,75 +236,70 @@ fn perl_v2_row_miss(
     if activation_withholds_miss(facts.activation) {
         return None;
     }
-    if let Some(participation) = facts.participation
-        && participation.participation == PredicateParticipation::Distinguishes
-    {
-        return None;
-    }
-    if let Some(ScopeAdmission::Unresolved) = scope_admission(facts.scope, ev) {
-        return None;
-    }
+    if row_has_v2_miss_facts(facts) {
+        if let Some(ScopeAdmission::Unresolved) = scope_admission(facts.scope, ev) {
+            return None;
+        }
 
-    if matches!(class, ExposureClass::NoStaticPath)
-        && heuristic_relation(ev.relation_kind)
-        && !admitted_exact_or_bounded_reach(facts.reach, ev)
-    {
-        return Some(RelatedTestMiss::NoCallPath);
+        if heuristic_relation(ev.relation_kind) && !admitted_exact_or_bounded_reach(facts.reach, ev)
+        {
+            return Some(RelatedTestMiss::NoCallPath);
+        }
+
+        if admitted_call_relation(ev)
+            && matches!(
+                scope_admission(facts.scope, ev),
+                Some(ScopeAdmission::CompleteEmpty)
+            )
+        {
+            return Some(RelatedTestMiss::NoAssertion);
+        }
+
+        if admitted_call_relation(ev)
+            && same_outcome_participation(facts.participation)
+            && !activation_withholds_miss(facts.activation)
+        {
+            return Some(RelatedTestMiss::MissingInput);
+        }
+
+        if admitted_call_relation(ev)
+            && matches!(
+                facts.relevance.map(|r| r.state),
+                Some(OracleRelevanceState::AffirmativeOtherSink)
+            )
+        {
+            return Some(RelatedTestMiss::AssertionNotObserving);
+        }
+
+        if admitted_call_relation(ev)
+            && matches!(
+                facts.relevance.map(|r| r.state),
+                Some(OracleRelevanceState::ExactSinkBroadAssertion)
+            )
+        {
+            return Some(RelatedTestMiss::MissingExactAssertion);
+        }
+
+        if admitted_call_relation(ev)
+            && ev.oracle_id.is_some()
+            && matches!(
+                facts.relevance.map(|r| r.state),
+                Some(
+                    OracleRelevanceState::CandidateSink
+                        | OracleRelevanceState::Bounded
+                        | OracleRelevanceState::Unlinked
+                )
+            )
+        {
+            return Some(RelatedTestMiss::ObservationUnconfirmed);
+        }
     }
 
     if admitted_call_relation(ev)
-        && matches!(
-            scope_admission(facts.scope, ev),
-            Some(ScopeAdmission::CompleteEmpty)
-        )
-    {
-        return Some(RelatedTestMiss::NoAssertion);
-    }
-
-    if admitted_call_relation(ev)
-        && weak_oracle_decisive(ev)
+        && weak_oracle_decisive(packet, ev, change)
         && !same_outcome_participation(facts.participation)
     {
         return Some(RelatedTestMiss::WeakAssertion);
-    }
-
-    if admitted_call_relation(ev)
-        && same_outcome_participation(facts.participation)
-        && !activation_withholds_miss(facts.activation)
-    {
-        return Some(RelatedTestMiss::MissingInput);
-    }
-
-    if admitted_call_relation(ev)
-        && matches!(
-            facts.relevance.map(|r| r.state),
-            Some(OracleRelevanceState::AffirmativeOtherSink)
-        )
-    {
-        return Some(RelatedTestMiss::AssertionNotObserving);
-    }
-
-    if admitted_call_relation(ev)
-        && matches!(
-            facts.relevance.map(|r| r.state),
-            Some(OracleRelevanceState::ExactSinkBroadAssertion)
-        )
-    {
-        return Some(RelatedTestMiss::MissingExactAssertion);
-    }
-
-    if admitted_call_relation(ev)
-        && ev.oracle_id.is_some()
-        && matches!(
-            facts.relevance.map(|r| r.state),
-            Some(
-                OracleRelevanceState::CandidateSink
-                    | OracleRelevanceState::Bounded
-                    | OracleRelevanceState::Unlinked
-            )
-        )
-    {
-        return Some(RelatedTestMiss::ObservationUnconfirmed);
     }
 
     if admitted_call_relation(ev)
@@ -268,12 +307,13 @@ fn perl_v2_row_miss(
         && ev.relation_kind == RelationKind::DirectOwnerCall
         && ev.reachability_hint == ReachabilityHint::Reachable
         && ev.oracle_strength == Some(OracleStrength::StrongExact)
-        && change.changed_observable.as_deref().is_some()
         && facts.relevance.is_none()
+        && !row_has_v2_miss_facts(facts)
     {
         return Some(RelatedTestMiss::ObservationUnconfirmed);
     }
 
+    let _ = class;
     None
 }
 
@@ -329,11 +369,20 @@ fn admitted_exact_or_bounded_reach(
     })
 }
 
-fn weak_oracle_decisive(ev: &PerlRelatedTestEvidence) -> bool {
+fn weak_oracle_decisive(
+    packet: &PerlFactPacket,
+    ev: &PerlRelatedTestEvidence,
+    change: &ChangeFact,
+) -> bool {
     matches!(
         ev.oracle_strength,
         Some(OracleStrength::WeakSmoke | OracleStrength::WeakBroad)
-    )
+    ) && ev.oracle_id.as_ref().is_some_and(|oracle_id| {
+        packet.oracle(oracle_id).is_some_and(|oracle| {
+            oracle.test_id == ev.test_id
+                && oracle.target_owner_id.as_deref() == Some(change.owner_id.as_str())
+        })
+    })
 }
 
 fn same_outcome_participation(participation: Option<&PredicateParticipationFact>) -> bool {

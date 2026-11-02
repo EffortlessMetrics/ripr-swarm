@@ -307,7 +307,10 @@ fn v2_heuristic_relation_keeps_no_miss_on_reachable_unrevealed() -> Result<(), S
     })?)?;
     let finding = only_finding(&packet)?;
     assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
-    assert_eq!(finding.related_tests[0].miss, None);
+    assert_eq!(
+        finding.related_tests[0].miss,
+        Some(RelatedTestMiss::NoCallPath)
+    );
     Ok(())
 }
 
@@ -397,5 +400,32 @@ fn v2_miss_annotation_leaves_class_unchanged() -> Result<(), String> {
     assert_eq!(baseline.class, annotated.class);
     assert_eq!(baseline.id, annotated.id);
     assert_eq!(baseline.canonical_gap, annotated.canonical_gap);
+    Ok(())
+}
+
+#[test]
+fn v2_unrelated_row_facts_preserve_legacy_observation_unconfirmed() -> Result<(), String> {
+    let packet = v2_packet(&edited_packet(EXACT_RETURN_PACKET, |packet| {
+        add_activation(packet, WRAPPER_RELATION, "possible", "executes")
+    })?)?;
+    let finding = only_finding(&packet)?;
+    assert_eq!(
+        finding.related_tests[0].miss,
+        Some(RelatedTestMiss::ObservationUnconfirmed)
+    );
+    Ok(())
+}
+
+#[test]
+fn v2_distinguishes_input_still_allows_assertion_not_observing() -> Result<(), String> {
+    let packet = v2_packet(&edited_packet(EXACT_RETURN_PACKET, |packet| {
+        add_participation(packet, PRIMARY_RELATION, "distinguishes", None)?;
+        add_relevance(packet, PRIMARY_RELATION, "affirmative_other_sink", None)
+    })?)?;
+    let finding = only_finding(&packet)?;
+    assert_eq!(
+        finding.related_tests[0].miss,
+        Some(RelatedTestMiss::AssertionNotObserving)
+    );
     Ok(())
 }

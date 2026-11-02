@@ -894,7 +894,8 @@ fn packet_to_findings_with_currentness(
         let packet_admitted = packet.packet_status == PacketStatus::Complete
             && !class_blocked
             && !actionability_blocked;
-        if row_miss::packet_has_v2_row_miss_evidence(packet) {
+        let packet_has_v2 = row_miss::packet_has_v2_row_miss_evidence(packet);
+        if packet_has_v2 {
             row_miss::assign_perl_v2_row_misses(
                 packet,
                 change,
@@ -905,9 +906,13 @@ fn packet_to_findings_with_currentness(
                 &mut related,
                 &related_evidence,
             );
-        } else if class == ExposureClass::WeaklyExposed && packet_admitted {
+        }
+        if class == ExposureClass::WeaklyExposed && packet_admitted {
             for (row, ev) in related.iter_mut().zip(&related_evidence) {
-                if perl_row_observation_unconfirmed(packet, change, ev) {
+                if packet_has_v2 && row_miss::row_has_v2_miss_evidence(packet, ev) {
+                    continue;
+                }
+                if row.miss.is_none() && perl_row_observation_unconfirmed(packet, change, ev) {
                     row.miss = Some(crate::domain::RelatedTestMiss::ObservationUnconfirmed);
                 }
             }
@@ -1578,6 +1583,14 @@ impl PerlFactPacket {
             ("tests", self.tests.len()),
             ("oracles", self.oracles.len()),
             ("relations", self.relations.len()),
+            (
+                "predicate_participations",
+                self.predicate_participations.len(),
+            ),
+            ("oracle_relevances", self.oracle_relevances.len()),
+            ("activation_framework", self.activation_framework.len()),
+            ("relation_reach", self.relation_reach.len()),
+            ("oracle_scope_coverage", self.oracle_scope_coverage.len()),
         ] {
             if count > MAX_FACTS_PER_ARRAY {
                 return Err(format!(
