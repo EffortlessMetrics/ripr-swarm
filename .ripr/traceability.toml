@@ -1492,6 +1492,9 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_rejects_unknown_arguments",
   "crates/ripr/tests/cli_help_hierarchy.rs::init_ci_provider_errors_recover_near_misses",
   "crates/ripr/tests/cli_help_hierarchy.rs::init_ci_provider_valid_preview_keeps_workflow_contract",
+  "crates/ripr/src/cli/commands/init.rs::tests::plan_adds_gitlab_ci_for_ci_gitlab",
+  "crates/ripr/src/cli/commands/init_workflow/gitlab_ci.rs::tests::generated_gitlab_ci_is_advisory_merge_request_only",
+  "crates/ripr/src/cli/commands.rs::tests::init_generated_gitlab_ci_is_advisory_merge_request_flow",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_is_advisory",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional",
   "crates/ripr/src/cli/commands.rs::tests::init_ci_github_writes_workflow_and_preserves_existing_config",
@@ -1512,6 +1515,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::init_dry_run_prints_config_without_writing",
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_dry_run_prints_config_and_workflow_without_writing",
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_writes_non_blocking_report_workflow",
+  "crates/ripr/tests/cli_smoke.rs::init_ci_gitlab_writes_advisory_merge_request_pipeline",
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_refuses_existing_workflow_without_force",
   "crates/ripr/tests/cli_smoke.rs::init_refuses_existing_config_without_force",
   "crates/ripr/tests/cli_smoke.rs::init_force_overwrites_existing_config",
@@ -9294,6 +9298,9 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_function_owner_when_receiver_dot_is_spaced_then_name_only_relation",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_function_owner_when_turbofish_is_uncalled_then_name_only_relation",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_function_owner_when_match_is_only_a_nested_fn_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_function_owner_when_match_is_raw_ident_nested_fn_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_function_owner_when_receiver_uses_unicode_prefix_name_then_name_only_relation",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_function_owner_when_test_calls_type_qualified_then_name_only_relation",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_two_impls_when_test_calls_through_trait_path_then_argument_type_decides",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_trait_path_call_to_a_function_without_self_then_name_only_relation",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::given_two_impls_when_compact_grip_sees_trait_path_call_then_argument_type_decides",
@@ -10418,6 +10425,7 @@ tests = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_entry_path_stops_at_owner_macro_then_macro_witness_is_captured",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_macro_definition_does_not_name_owner_then_macro_witness_is_none",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_test_invokes_owner_macro_directly_then_macro_witness_is_captured",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_edge_candidates_are_reaching_callers_and_direct_invokers",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_reach_limitation_detail_names_edges_route_and_non_claim",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_witness_pointer_uses_may_language_and_no_coverage_claim",
   "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_macro_names_the_macro_limit",
@@ -12726,6 +12734,8 @@ tests = [
   "crates/ripr/tests/crate_qualified_entry_reach.rs::conditional_remapped_and_duplicate_chains_keep_a_relative_import_refused",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::an_in_file_test_module_import_resolves_from_its_own_scope",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::an_in_file_relative_import_of_another_scope_stays_refused",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::test_crate_reexport_module_routes_link_through_self",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::test_crate_reexport_module_routes_refuse_shadow_and_cycle",
   "crates/ripr/src/analysis/facts/build.rs::tests::root_library_name_reads_lib_name_then_package_and_refuses_moved_roots",
 ]
 fixtures = [
@@ -13965,7 +13975,8 @@ fixtures = [
   "fixtures/predicate_pairing_reassigned_binding",
   "fixtures/predicate_pairing_compound_assigned_binding",
   "fixtures/predicate_pairing_mutably_borrowed_binding",
-  "fixtures/predicate_pairing_newline_split_reassigned_binding"
+  "fixtures/predicate_pairing_newline_split_reassigned_binding",
+  "fixtures/predicate_pairing_boundary_precision_residuals_7042"
 ]
 code = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs",
@@ -19730,6 +19741,7 @@ tests = [
   "crates/ripr/src/analysis/seam_cache/export.rs::tests::snapshot_refuses_missing_corrupt_wrong_key_and_escaping_shards",
   "crates/ripr/src/analysis/seam_cache/export.rs::tests::snapshot_counts_missing_optional_facts_and_refuses_corrupt_present_facts",
   "crates/ripr/src/analysis/seam_cache/export.rs::tests::normalized_source_layout_preserves_relative_and_parent_component_spellings",
+  "crates/ripr/src/analysis/seam_cache/export.rs::tests::changed_inputs_names_only_the_inputs_that_moved",
   "crates/ripr/src/cli/command_metadata.rs::tests::production_table_is_complete_and_consistent",
   "crates/ripr/src/cli/help_json.rs::tests::production_document_is_valid_and_nonempty",
 ]
@@ -21166,6 +21178,41 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0348-pure-reformats-seed-no-probes.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0378"
+name = "Cross-language edge registry v1"
+spec = "docs/specs/RIPR-SPEC-0378-cross-language-edge-registry-v1.md"
+tests = [
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::corpus_cases_cover_registry_acceptance_matrix",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::same_display_name_without_edge_is_unrelated",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::registered_edge_connects_exact_subjects",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::config_digest_is_load_bearing_for_subject_identity",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::duplicate_edge_ids_fail_precisely",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::incompatible_family_strength_fails_precisely",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::unknown_fields_are_rejected_at_deserialize",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::semantic_digest_is_order_and_relocation_invariant",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::every_boundary_family_has_a_constructible_edge_shape",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::colon_in_project_ids_do_not_collide_identities",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::uppercase_hex_digests_match_lowercase_identities",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::positive_edge_with_unresolved_leg_is_rejected",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::same_language_positive_edge_is_rejected",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::duplicate_producer_ids_are_rejected",
+]
+fixtures = [
+  "fixtures/cross-language-edge-registry-corpus/corpus.json",
+]
+code = [
+  "crates/ripr/src/provider_contract/cross_language_edge/model.rs",
+  "crates/ripr/src/provider_contract/cross_language_edge/validate.rs",
+  "crates/ripr/src/provider_contract/cross_language_edge/digest.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0378-cross-language-edge-registry-v1.md",
 ]
 metrics = [
   "unit_test_pass_rate",

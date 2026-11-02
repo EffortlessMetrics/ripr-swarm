@@ -436,12 +436,13 @@ const METADATA: &[CommandMetadata] = &[
             default: Some("ripr.toml"),
             optional: &[
                 ".github/workflows/ripr.yml with --ci github",
+                ".gitlab-ci.yml with --ci gitlab",
                 ".mcp.json with --mcp",
                 "CLAUDE.md, AGENTS.md and .cursor/rules/ripr.mdc (marked ripr section) with --agents; .cursor/mcp.json with --agents cursor --mcp",
             ],
         },
         state_target: Some(
-            "ripr.toml, plus the repository's GitHub Actions workflow set with --ci, .mcp.json with --mcp, and a marked ripr section in the agent instruction files with --agents",
+            "ripr.toml, plus the repository's advisory CI preset with --ci, .mcp.json with --mcp, and a marked ripr section in the agent instruction files with --agents",
         ),
         accepts_json_flag: JsonFlag::None,
         writes_json_artifacts: true,
@@ -452,7 +453,7 @@ const METADATA: &[CommandMetadata] = &[
             "existing workflow kept when writing cannot finish",
         ],
         exit: EXIT_COMPLETED_OR_FAILED,
-        limitations: "writes ripr.toml by default and an advisory, non-blocking workflow only with --ci github; never edits source, gates merges, or contacts the network.",
+        limitations: "writes ripr.toml by default and an advisory, non-blocking CI preset only with --ci github or --ci gitlab; never edits source, gates merges, or contacts the network.",
         not_applicable_reason: None,
     },
     CommandMetadata {
