@@ -128,8 +128,7 @@ pub(crate) use next_action::{
 };
 pub(crate) use probe::{
     ARM_UNSELECTED_REASON_PREFIX, GUARD_UNENTERED_REASON_PREFIX, exact_assertion_fact,
-    row_exact_discriminator_fact,
-    input_boundary_fact, is_unselected_input_reason,
+    input_boundary_fact, is_unselected_input_reason, row_exact_discriminator_fact,
 };
 pub use probe::{
     ActivationEvidence, AnalysisScope, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact,
