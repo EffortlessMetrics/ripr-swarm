@@ -8,7 +8,7 @@
 
 use super::tests::ts_unique_tempdir;
 use super::*;
-use crate::domain::RelatedTestMiss;
+use crate::domain::{ExposureClass, RelatedTestMiss};
 
 const OWNER_FILE: &str = "src/pricing.ts";
 const TEST_FILE: &str = "tests/pricing.test.ts";
@@ -671,7 +671,7 @@ fn mock_and_spy_rows_are_never_no_call_path_or_not_observing() -> Result<(), Str
     // assertion whose observation of the owner is unconfirmed.
     for (source, expected) in [
         (mock, None),
-        (spy, Some(RelatedTestMiss::ObservationUnconfirmed)),
+        (spy, Some(RelatedTestMiss::AssertionNotObserving)),
     ] {
         let finding = classify(&RETURN_CHANGE, &source)?;
         weakly(&finding);
@@ -806,5 +806,32 @@ fn negated_t_oracle_fixture_pins_row_misses() -> Result<(), String> {
         .filter_map(|rest| rest.split('"').next())
         .collect();
     assert!(misses.is_empty(), "{text}");
+    Ok(())
+}
+
+// ── #5528 changed-sink observation ─────────────────────────────────────────
+
+#[test]
+fn sibling_calc_assertion_on_discount_change_is_not_observing() -> Result<(), String> {
+    let source = rejected_source(
+        "test('bad', () => {\n  applyDiscount(100);\n  expect(calc(1)).toBe(2);\n});\n",
+    );
+    let finding = classify(&RETURN_CHANGE, &source)?;
+    weakly(&finding);
+    assert_eq!(
+        miss_of(&finding, "bad")?,
+        Some(RelatedTestMiss::AssertionNotObserving)
+    );
+    Ok(())
+}
+
+#[test]
+fn one_hop_alias_row_stays_exposed_without_miss() -> Result<(), String> {
+    let source = rejected_source(
+        "test('alias', () => {\n  const result = applyDiscount(100);\n  expect(result).toBe(90);\n});\n",
+    );
+    let finding = classify(&RETURN_CHANGE, &source)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(miss_of(&finding, "alias")?, None);
     Ok(())
 }
