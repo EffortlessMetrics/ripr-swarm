@@ -59,7 +59,10 @@ mod proofs {
     assert_eq!(WRONG, STRONG.replacen("    n < max\n", "    n <= max\n", 1));
     assert_eq!(source_parts(STRONG)?.1, source_parts(WRONG)?.1);
     assert_eq!(source_parts(WEAK)?.1, source_parts(WEAK_WRONG)?.1);
-    assert_eq!(source_parts(NARROW_CORRECT)?.1, source_parts(NARROW_WRONG)?.1);
+    assert_eq!(
+        source_parts(NARROW_CORRECT)?.1,
+        source_parts(NARROW_WRONG)?.1
+    );
     Ok(())
 }
 
