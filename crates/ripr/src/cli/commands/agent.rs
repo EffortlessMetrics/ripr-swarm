@@ -4321,6 +4321,11 @@ fn before_phase_summary(packet: &str, packet_path: &str, edit_directive: bool) -
     ));
     if let Some(assertion) = text("/suggested_assertions/0") {
         lines.push(format!("  assertion shape: {assertion}"));
+        if let Some(note) =
+            crate::output::placeholder_assertion::fill_in_note_line("    ", assertion)
+        {
+            lines.push(note);
+        }
     }
     lines.push(format!(
         "  full repair packet (JSON): {packet_path}; add --json to print it here"
@@ -6342,6 +6347,40 @@ mod before_phase_stdout_tests {
                 "missing `{expected}` in:\n{summary}"
             );
         }
+        Ok(())
+    }
+
+    /// #9244 item 3: a remaining handoff line that still carries `/* ... */`
+    /// placeholders names them a shape and says to fill them in, instead of
+    /// reading as unfilled template text.
+    #[test]
+    fn placeholder_assertion_in_summary_gets_a_fill_in_note() -> Result<(), String> {
+        let packet = PACKET.replace(
+            "assert_eq!(discounted_total(10_000), 9_000)",
+            "assert_eq!(discounted_total(/* boundary */), /* expected */)",
+        );
+        let summary = before_phase_stdout(
+            &packet,
+            "target/ripr/workflow/agent-packet.json",
+            false,
+            &continuation(),
+        )?;
+        assert!(
+            summary.contains(
+                "  assertion shape: assert_eq!(discounted_total(/* boundary */), /* expected */)"
+            ),
+            "{summary}"
+        );
+        assert!(
+            summary.contains(
+                "    (replace each /* ... */ comment with a real value from your test before using it)"
+            ),
+            "{summary}"
+        );
+        assert!(
+            !summary.contains("assertion template"),
+            "placeholder assertion must not be labelled a template:\n{summary}"
+        );
         Ok(())
     }
 
