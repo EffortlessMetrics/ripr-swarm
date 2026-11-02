@@ -25,7 +25,7 @@ const REPORT_FILE: &str = "kani.md";
 /// Whole-run wall-clock deadline; a wedged solver is `NOT-ESTABLISHED`.
 const DEFAULT_TIMEOUT_SECS: u64 = 3600;
 /// An independent upper bound on the pre-run cargo-kani availability probe.
-/// The caller\'s smaller requested run timeout also caps this preliminary step.
+/// The caller's smaller requested run timeout also caps this preliminary step.
 const MAX_KANI_VERSION_PROBE_SECS: u64 = 10;
 /// Per-harness deadline handed to Kani, so one non-terminating harness is
 /// `NOT-ESTABLISHED` for itself and the rest of the lane still reports. The
@@ -331,7 +331,9 @@ fn tool_available(timeout_secs: u64) -> Result<(), String> {
         budget,
         "cargo kani --version",
     )
-    .map_err(|reason| format!("cargo kani --version failed to run: {reason}"))?;
+    // A low-level capture error may itself contain unsanitized child output.
+    // Report the failure class, not arbitrary subprocess text as trusted Markdown.
+    .map_err(|_| "cargo kani --version failed to run or capture output".to_string())?;
     if output.timed_out {
         let units = if budget.as_secs() == 1 {
             "second"
