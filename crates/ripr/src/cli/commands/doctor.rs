@@ -1342,7 +1342,7 @@ fn shallow_has_file(root: &Path, name: &str) -> bool {
 
 /// Detect which languages have concrete file markers in this workspace.
 /// Returns detected `LanguageId`s in a stable order (Rust first, then
-/// TypeScript, JavaScript, Python, Perl).
+/// TypeScript, JavaScript, Python, Perl, PHP).
 pub(crate) fn detect_languages(root: &Path) -> Vec<LanguageId> {
     let mut found = Vec::new();
 
@@ -1389,6 +1389,12 @@ pub(crate) fn detect_languages(root: &Path) -> Vec<LanguageId> {
     // `target/` is not.
     if perl_project_detected(root) {
         found.push(LanguageId::Perl);
+    }
+
+    // PHP: composer.json or shallow `.php` sources (detection only; analysis
+    // remains unavailable until the lang-php adapter slice lands).
+    if shallow_has_file(root, "composer.json") || shallow_has_extension(root, "php") {
+        found.push(LanguageId::Php);
     }
 
     found

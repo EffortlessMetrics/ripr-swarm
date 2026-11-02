@@ -114,7 +114,10 @@ impl LanguageId {
             LanguageId::JavaScript => cfg!(feature = "lang-typescript"),
             LanguageId::Python => cfg!(feature = "lang-python"),
             LanguageId::Perl => cfg!(feature = "lang-perl"),
-            LanguageId::Php => cfg!(feature = "lang-php"),
+            // Registry and wire identity exist; PHP analysis dispatch is not
+            // shipped yet (RIPR-SPEC-0392 / #5620). Do not report a compiled
+            // adapter until both pipeline paths can run PHP preview work.
+            LanguageId::Php => false,
         }
     }
 
@@ -889,7 +892,7 @@ mod tests {
             cfg!(feature = "lang-python")
         );
         assert_eq!(LanguageId::Perl.is_available(), cfg!(feature = "lang-perl"));
-        assert_eq!(LanguageId::Php.is_available(), cfg!(feature = "lang-php"));
+        assert!(!LanguageId::Php.is_available());
         assert_eq!(LanguageId::JavaScript.required_feature(), "lang-typescript");
         assert_eq!(LanguageId::Python.required_feature(), "lang-python");
         assert_eq!(LanguageId::Perl.required_feature(), "lang-perl");

@@ -83,15 +83,18 @@ routes to typed limits or conservative classifications.
 | PHP version capability | Declare supported syntax bands (PHP 7.4 through 8.3+ at implementation time) as static capability metadata; do not execute PHP to discover version |
 | Symbol identity | Namespaces, imports, aliases, files, and symbols remain repository-relative and portable; no host-absolute paths in IDs |
 
-Repo configuration (future adapter slice) extends `[languages]`:
+Repo configuration (future adapter slice) will extend `[languages]` once the
+config parser accepts `php`:
 
 ```toml
 [languages]
 enabled = ["rust", "php"]
 ```
 
-When `php` is configured without `lang-php`, the shared availability resolver
-must name the missing feature rather than silently skip PHP files.
+Until that parser slice lands, `php` in `ripr.toml` remains invalid; the
+example documents the intended enablement shape only. When `php` is configured
+without a shipped adapter, the shared availability resolver must name the
+missing adapter rather than silently skip PHP files.
 
 ### Language router
 
