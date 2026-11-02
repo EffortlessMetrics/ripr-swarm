@@ -1,4 +1,5 @@
 pub(crate) mod agent_brief;
+pub(crate) mod agent_card;
 pub(crate) mod agent_receipt;
 #[path = "agent_seam_packets_live.rs"]
 pub(crate) mod agent_seam_packets;

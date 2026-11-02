@@ -7,11 +7,9 @@ mod repair;
 mod repair_admission;
 mod repair_card;
 mod server;
-mod transport;
+pub(crate) mod transport;
 mod workspace;
 mod writer;
-
-use std::path::PathBuf;
 
 pub(super) const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 pub(super) const MAX_RESPONSE_BYTES: usize = 128 * 1024;
@@ -116,7 +114,7 @@ failures use stderr.
 /// A person who typed `ripr mcp` at a prompt would otherwise see a silent
 /// hang; an MCP client pipes stdin, so the hint never reaches one. The write is
 /// best effort so an unwritable stderr cannot keep the server from starting.
-fn write_terminal_hint(stdin_is_terminal: bool, stderr: &mut impl std::io::Write) {
+pub(crate) fn write_terminal_hint(stdin_is_terminal: bool, stderr: &mut impl std::io::Write) {
     if stdin_is_terminal {
         let _ = writeln!(
             stderr,
@@ -125,99 +123,12 @@ fn write_terminal_hint(stdin_is_terminal: bool, stderr: &mut impl std::io::Write
     }
 }
 
-pub fn run(args: &[String]) -> Result<(), String> {
-    // #9867: startup dispatches this route directly, bypassing
-    // `CliCommand::from_parts`, so the extended-help rejection owned there
-    // must be mirrored here: `mcp --help --all` is a usage error naming the
-    // supported routes, not ordinary help that silently discards `--all`.
-    if args.iter().any(|arg| arg == "--help" || arg == "-h")
-        && args.iter().any(|arg| arg == "--all")
-    {
-        return Err(
-            "`ripr mcp --help --all` is not supported; extended help is available via \
-             `ripr help --all` (or `ripr check --help --all` for check)"
-                .to_string(),
-        );
-    }
-    let mut explicit_root = None;
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--help" | "-h" => {
-                println!("{}", crate::cli::help::render_command_help(MCP_HELP, &[]));
-                return Ok(());
-            }
-            "--version" | "-V" => {
-                println!("ripr-mcp {}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
-            }
-            "--stdio" => {}
-            "--root" => {
-                // A following option token is a missing value, not a path
-                // (`--root --help` must print help, not start a server
-                // rooted at a directory named `--help`; #3525 review).
-                let value = match args.get(index + 1) {
-                    // Single-dash option tokens (-h, -V) are options too:
-                    // treating them as paths would swallow the next flag
-                    // (#3587 review).
-                    Some(value) if !value.starts_with('-') => value.clone(),
-                    Some(unexpected) => {
-                        return Err(format!(
-                            "missing value for --root; found option {unexpected:?}; pass the workspace directory after --root"
-                        ));
-                    }
-                    None => return Err("missing value for --root; pass the workspace directory after --root (`ripr mcp --help` shows usage)".to_string()),
-                };
-                if explicit_root.is_some() {
-                    return Err(
-                        "--root may be passed only once; remove the extra --root".to_string()
-                    );
-                }
-                explicit_root = Some(PathBuf::from(value));
-                index += 1;
-            }
-            argument => {
-                return Err(crate::cli::unknown_argument("mcp", argument));
-            }
-        }
-        index += 1;
-    }
-
-    write_terminal_hint(
-        std::io::IsTerminal::is_terminal(&std::io::stdin()),
-        &mut std::io::stderr().lock(),
-    );
-
-    // #9895: an external SIGTERM (or SIGINT) mid-refresh must not leave the
-    // in-flight git tree behind. Installing the process-lifetime cooperative
-    // interrupts lets the bounded child waits observe cancellation, terminate
-    // their owned process, and unwind cleanly. On non-Unix targets this is a
-    // no-op (Windows containment is the job-object ownership in
-    // `process_owner`).
-    crate::cli::interrupt::install_server_interrupts()
-        .map_err(|error| format!("install MCP interrupt containment: {error}"))?;
-
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| format!("create MCP runtime: {error}"))?;
-    let result = runtime.block_on(transport::serve_stdio(explicit_root));
-    // Tokio stdin uses a non-cancellable blocking read. Once the SDK service
-    // has terminated, that read must not hold process exit until stdin EOF.
-    runtime.shutdown_background();
-    result
-}
-
 #[cfg(test)]
 mod agent_facing_text_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn args(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| value.to_string()).collect()
-    }
 
     #[test]
     fn help_tool_list_has_a_single_conjunction() {
@@ -246,25 +157,6 @@ mod tests {
     }
 
     #[test]
-    fn extended_help_pair_is_rejected_on_the_direct_route() -> Result<(), String> {
-        // #9867: startup dispatches `ripr mcp` straight here, bypassing
-        // `CliCommand::from_parts`; the pair must be a usage error naming
-        // the supported routes, not ordinary help discarding `--all`.
-        for argv in [
-            ["--help", "--all"].as_slice(),
-            ["--all", "--help"].as_slice(),
-            ["-h", "--all"].as_slice(),
-        ] {
-            let err = run(&args(argv))
-                .err()
-                .ok_or_else(|| format!("{argv:?} must be rejected on the direct MCP route"))?;
-            assert!(err.contains("not supported"), "{err}");
-            assert!(err.contains("ripr help --all"), "{err}");
-        }
-        Ok(())
-    }
-
-    #[test]
     fn terminal_hint_survives_an_unwritable_stderr() {
         struct Closed;
         impl std::io::Write for Closed {
@@ -276,41 +168,5 @@ mod tests {
             }
         }
         write_terminal_hint(true, &mut Closed);
-    }
-
-    #[test]
-    fn parser_rejects_unknown_and_ambiguous_root_arguments() {
-        assert_eq!(
-            run(&args(&["--bad"])),
-            Err("unknown mcp argument \"--bad\". Run `ripr mcp --help`.".to_string())
-        );
-        // Near-miss flags get the shared suggestion; a distant flag does not.
-        assert_eq!(
-            run(&args(&["--stido"])),
-            Err(
-                "unknown mcp argument \"--stido\". Did you mean `--stdio`? Run `ripr mcp --help`."
-                    .to_string()
-            )
-        );
-        assert_eq!(
-            run(&args(&["--root"])),
-            Err("missing value for --root; pass the workspace directory after --root (`ripr mcp --help` shows usage)".to_string())
-        );
-        // A following option token is a missing value, not a path:
-        // `--root --help` must surface help, not a directory named `--help`.
-        assert!(
-            run(&args(&["--root", "--help"]))
-                .err()
-                .is_some_and(|err| err.contains("missing value for --root"))
-        );
-        assert!(
-            run(&args(&["--root", "--stdio"]))
-                .err()
-                .is_some_and(|err| err.contains("missing value for --root"))
-        );
-        assert_eq!(
-            run(&args(&["--root", ".", "--root", "."])),
-            Err("--root may be passed only once; remove the extra --root".to_string())
-        );
     }
 }

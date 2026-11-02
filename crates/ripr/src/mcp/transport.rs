@@ -442,7 +442,7 @@ fn preserve_malformed_request_params(message: &mut ClientJsonRpcMessage, frame: 
     request.request = ClientRequest::CustomRequest(custom);
 }
 
-pub(super) async fn serve_stdio(explicit_root: Option<PathBuf>) -> Result<(), String> {
+pub(crate) async fn serve_stdio(explicit_root: Option<PathBuf>) -> Result<(), String> {
     let (status, analysis_root) = WorkspaceStatus::resolve_with_root(explicit_root);
     if let Some(warning) = startup_warning(&status) {
         // Stdout is protocol-only; an operational failure belongs on stderr.

@@ -1522,11 +1522,7 @@ mod tests {
             AGENT_PARSER_RS,
             &["parse_agent_verify_execute_options"],
         ),
-        (
-            "annotations",
-            ANNOTATIONS_PARSER_RS,
-            &["parse_options"],
-        ),
+        ("annotations", ANNOTATIONS_PARSER_RS, &["parse_options"]),
         (
             "assistant-loop health",
             CLI_COMMANDS_RS,
@@ -1619,11 +1615,7 @@ mod tests {
         ("mcp", MCP_PARSER_RS, &["run"]),
         ("outcome", CLI_COMMANDS_RS, &["parse_outcome_options"]),
         ("pilot", PILOT_PARSER_RS, &["parse_pilot_options"]),
-        (
-            "plus",
-            RIPR_PLUS_PARSER_RS,
-            &["parse_options"],
-        ),
+        ("plus", RIPR_PLUS_PARSER_RS, &["parse_options"]),
         (
             "policy history",
             POLICY_PARSE_RS,
@@ -1679,11 +1671,7 @@ mod tests {
             PR_COMMENTS_GITHUB_PARSER_RS,
             &["parse_pr_comments_summary_options"],
         ),
-        (
-            "pr-evidence",
-            PR_EVIDENCE_PARSER_RS,
-            &["parse_options"],
-        ),
+        ("pr-evidence", PR_EVIDENCE_PARSER_RS, &["parse_options"]),
         (
             "pr-ledger record",
             CLI_COMMANDS_RS,
@@ -1694,11 +1682,7 @@ mod tests {
             CLI_COMMANDS_RS,
             &["parse_pr_review_front_panel_options"],
         ),
-        (
-            "pr-summary",
-            PR_SUMMARY_PARSER_RS,
-            &["parse_options"],
-        ),
+        ("pr-summary", PR_SUMMARY_PARSER_RS, &["parse_options"]),
         (
             "receipt check",
             RECEIPT_PARSER_RS,

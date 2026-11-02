@@ -775,7 +775,7 @@ unknown route into a recognized one.
   recovery and an independently owned surviving sentinel. Identity-pinned
   process handles and adopted descendant wait statuses distinguish product
   settlement from harness cleanup.
-- `crates/ripr/src/cli/interrupt.rs::tests` — isolated native signal controls,
+- `crates/ripr/src/interrupt.rs::tests` — isolated native signal controls,
   concurrent installation, repeated mixed/TERM escape, terminal signal epochs
   and bounded adverse harness controls.
 - `crates/ripr/src/process_owner.rs::tests` — non-reaping cleanup ordering,

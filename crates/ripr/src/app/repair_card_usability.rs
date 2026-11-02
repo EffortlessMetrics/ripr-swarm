@@ -30,12 +30,12 @@ use crate::analysis::seams::{
     ExpectedSink, OwnerCallShape, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
 };
 use crate::analysis::test_grip_evidence::TestGripEvidence;
-use crate::cli::commands::agent_card::agent_card_plain_lines;
 use crate::domain::{
     Confidence, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticWitness, DiagnosticWitnessLimitation,
     MissingDiscriminatorFact, RepairCardSnapshotCurrentness, StageEvidence, StageState,
 };
+use crate::output::agent_card::agent_card_plain_lines;
 use crate::output::json::render_pretty_with_newline;
 
 use super::repair_attempt::{RepairAttemptId, RepairAttemptManifest, RepairAttemptState};

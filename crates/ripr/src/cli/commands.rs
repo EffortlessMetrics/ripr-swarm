@@ -35,6 +35,8 @@ mod context;
 mod feedback_command;
 #[path = "commands/kani_report.rs"]
 mod kani_report;
+#[path = "commands/mcp_command.rs"]
+mod mcp_command;
 #[path = "commands/policy.rs"]
 mod policy_commands;
 #[path = "commands/receipt.rs"]
@@ -137,7 +139,7 @@ mod check_budget;
 mod check_fanout;
 pub(super) use check::check;
 #[cfg(unix)]
-pub(super) use check::check_with_interrupt_flags;
+pub(crate) use check::check_with_interrupt_flags;
 pub(super) use check::{bind_member_selector_file, resolve_implicit_command_root};
 
 #[path = "commands/review_comments.rs"]
@@ -417,21 +419,25 @@ pub(super) fn assistant_loop(args: &[String]) -> Result<(), String> {
 }
 
 #[path = "commands/first_pr_argv.rs"]
-mod first_pr_argv;
+pub(crate) mod first_pr_argv;
 
 #[path = "commands/annotations.rs"]
 mod annotations_command;
-#[path = "commands/pr_evidence.rs"]
-pub(crate) mod pr_evidence_command;
 #[path = "commands/impacted_evidence.rs"]
 pub(crate) mod impacted_evidence_command;
-#[path = "commands/ripr_plus.rs"]
-pub(crate) mod ripr_plus_command;
+#[path = "commands/pr_evidence.rs"]
+pub(crate) mod pr_evidence_command;
 #[path = "commands/pr_summary.rs"]
 pub(crate) mod pr_summary_command;
+#[path = "commands/ripr_plus.rs"]
+pub(crate) mod ripr_plus_command;
 
 pub(super) fn first_pr(args: &[String]) -> Result<(), String> {
     first_pr_argv::first_pr(args)
+}
+
+pub(super) fn mcp(args: &[String]) -> Result<(), String> {
+    mcp_command::mcp(args)
 }
 
 pub(super) fn first_action(args: &[String]) -> Result<(), String> {

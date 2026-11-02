@@ -823,7 +823,7 @@ fn list_gaps_tool_descriptor() -> Value {
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": crate::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE,
+                    "maximum": crate::app::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE,
                     "description": "Maximum narrowed-item summaries to return in this page (the working-set bound; a larger value is refused as invalid_argument)."
                 },
                 "file": {

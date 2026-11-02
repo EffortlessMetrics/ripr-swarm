@@ -2,9 +2,9 @@
 
 use crate::cli::help;
 use crate::cli::suggest::unknown_argument;
-use crate::output::first_pr::{FirstPrOptions, FIRST_PR_HELP};
+use crate::output::first_pr::{FIRST_PR_HELP, FirstPrOptions};
 
-pub(super) fn first_pr(args: &[String]) -> Result<(), String> {
+pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return Ok(());
@@ -13,7 +13,7 @@ pub(super) fn first_pr(args: &[String]) -> Result<(), String> {
     crate::output::first_pr::first_pr_with_options(options)
 }
 
-pub(super) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
+pub(crate) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
     let mut options = FirstPrOptions {
         preflight: true,
         ..FirstPrOptions::default()

@@ -14505,6 +14505,42 @@ mod architecture_rule_tests {
                 .any(|violation| violation.contains("is stale"))
         );
     }
+
+    #[test]
+    fn adapter_back_edge_rules_reject_representative_imports() {
+        const APP_CLI: &str =
+            "crates/ripr/src/app/**|crate::cli|application must not import CLI adapters";
+        const OUTPUT_CLI: &str =
+            "crates/ripr/src/output/**|crate::cli|output must not import CLI adapters";
+        const MCP_LSP: &str = "crates/ripr/src/mcp/**|crate::lsp|MCP must not import LSP adapters";
+
+        let app_violations = architecture_rule_violations(
+            &[record(APP_CLI)],
+            &[(
+                "crates/ripr/src/app/annotations.rs".to_string(),
+                "use crate::cli::unknown_argument;".to_string(),
+            )],
+        );
+        assert_eq!(app_violations.len(), 1);
+
+        let output_violations = architecture_rule_violations(
+            &[record(OUTPUT_CLI)],
+            &[(
+                "crates/ripr/src/output/first_pr/options.rs".to_string(),
+                "use crate::cli::unknown_argument;".to_string(),
+            )],
+        );
+        assert_eq!(output_violations.len(), 1);
+
+        let mcp_violations = architecture_rule_violations(
+            &[record(MCP_LSP)],
+            &[(
+                "crates/ripr/src/mcp/workspace.rs".to_string(),
+                "use crate::lsp::diagnostic_budget::DiagnosticBudget;".to_string(),
+            )],
+        );
+        assert_eq!(mcp_violations.len(), 1);
+    }
 }
 
 /// #3534: Rust source-role authority. Producer modules derive source role

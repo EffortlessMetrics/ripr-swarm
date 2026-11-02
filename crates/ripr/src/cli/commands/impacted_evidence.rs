@@ -1,6 +1,6 @@
 //! `ripr impacted-evidence` argv adapter.
 
-use crate::app::impacted_evidence::{self, ImpactedEvidenceOptions, IMPACTED_EVIDENCE_HELP};
+use crate::app::impacted_evidence::{self, IMPACTED_EVIDENCE_HELP, ImpactedEvidenceOptions};
 use crate::cli::help;
 use crate::cli::suggest::unknown_argument;
 use std::path::Path;
@@ -11,9 +11,7 @@ pub(super) fn impacted_evidence(args: &[String]) -> Result<(), String> {
 }
 
 /// argv parsing for `ripr impacted-evidence` and compatibility `xtask` routes.
-pub fn parse_impacted_evidence_options(
-    args: &[String],
-) -> Result<ImpactedEvidenceOptions, String> {
+pub fn parse_impacted_evidence_options(args: &[String]) -> Result<ImpactedEvidenceOptions, String> {
     parse_options(args)
 }
 
@@ -78,8 +76,7 @@ fn split_labels(labels: &str) -> Vec<String> {
 }
 
 fn repo_root() -> Result<std::path::PathBuf, String> {
-    std::env::current_dir()
-        .map_err(|err| format!("failed to determine working directory: {err}"))
+    std::env::current_dir().map_err(|err| format!("failed to determine working directory: {err}"))
 }
 
 #[cfg(test)]

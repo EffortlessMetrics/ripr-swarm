@@ -1,6 +1,6 @@
 //! `ripr annotations` argv adapter.
 
-use crate::app::annotations::{self, AnnotationOptions, ANNOTATIONS_HELP};
+use crate::app::annotations::{self, ANNOTATIONS_HELP, AnnotationOptions};
 use crate::cli::help;
 use crate::cli::suggest::unknown_argument;
 

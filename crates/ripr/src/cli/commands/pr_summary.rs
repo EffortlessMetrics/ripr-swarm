@@ -1,6 +1,6 @@
 //! `ripr pr-summary` argv adapter.
 
-use crate::app::pr_summary::{self, SummaryOptions, PR_SUMMARY_HELP};
+use crate::app::pr_summary::{self, PR_SUMMARY_HELP, SummaryOptions};
 use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
@@ -15,7 +15,7 @@ pub(super) fn pr_summary(args: &[String]) -> Result<(), String> {
     pr_summary::execute_pr_summary(options)
 }
 
-pub(super) fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
+pub(crate) fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
     let mut root = PathBuf::from(".");
     let mut check = false;
     let mut baseline: Option<String> = None;

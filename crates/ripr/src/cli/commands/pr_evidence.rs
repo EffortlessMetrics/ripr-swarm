@@ -1,6 +1,6 @@
 //! `ripr pr-evidence` argv adapter.
 
-use crate::app::pr_evidence::{self, PrEvidenceOptions, PR_EVIDENCE_HELP};
+use crate::app::pr_evidence::{self, PR_EVIDENCE_HELP, PrEvidenceOptions};
 use crate::cli::help;
 use crate::cli::suggest::unknown_argument;
 
@@ -13,7 +13,7 @@ pub(super) fn pr_evidence(args: &[String]) -> Result<(), String> {
     pr_evidence::execute_pr_evidence(options)
 }
 
-pub(super) fn parse_options(args: &[String]) -> Result<PrEvidenceOptions, String> {
+pub(crate) fn parse_options(args: &[String]) -> Result<PrEvidenceOptions, String> {
     let mut options = PrEvidenceOptions::default();
     let mut i = 0usize;
     while i < args.len() {

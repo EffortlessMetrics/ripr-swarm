@@ -11,6 +11,9 @@ pub(crate) mod causal_projection;
 mod check;
 pub(crate) mod check_artifact;
 mod context;
+/// Transport-neutral bounded diagnostic/gap delivery selection shared by LSP and
+/// MCP without either adapter importing the other (#5193, #1582).
+pub mod diagnostic_budget;
 pub(crate) mod diff_source;
 mod explain;
 pub(crate) mod gap_bound_repair;

@@ -1,6 +1,6 @@
 //! `ripr plus` argv adapter.
 
-use crate::app::ripr_plus::{self, RiprPlusOptions, PLUS_HELP};
+use crate::app::ripr_plus::{self, PLUS_HELP, RiprPlusOptions};
 use crate::cli::help;
 use crate::cli::suggest::unknown_argument;
 use std::path::PathBuf;
@@ -14,7 +14,7 @@ pub(super) fn ripr_plus(args: &[String]) -> Result<(), String> {
     ripr_plus::execute_ripr_plus(options)
 }
 
-pub(super) fn parse_options(args: &[String]) -> Result<RiprPlusOptions, String> {
+pub(crate) fn parse_options(args: &[String]) -> Result<RiprPlusOptions, String> {
     let mut options = RiprPlusOptions::default();
     let mut index = 0usize;
     while index < args.len() {
