@@ -571,7 +571,10 @@ fn checks_value() {
 
     #[test]
     fn lexical_test_attributes_tolerate_whitespace_and_trailing_comments() {
-        assert!(trimmed_declares_test_attribute("#[tokio::test ]", "tokio::test"));
+        assert!(trimmed_declares_test_attribute(
+            "#[tokio::test ]",
+            "tokio::test"
+        ));
         assert!(trimmed_declares_test_attribute(
             "#[async_std::test /* note */]",
             "async_std::test"

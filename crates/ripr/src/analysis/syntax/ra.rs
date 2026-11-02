@@ -1318,13 +1318,12 @@ pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
         if cfg_predicates::attribute_introduces_only_test(&attr.syntax().text().to_string()) {
             return true;
         }
-        if let Some(path) = attribute_harness_path(attr) {
-            if names_exact_harness_path(&path, "test")
+        if let Some(path) = attribute_harness_path(&attr)
+            && (names_exact_harness_path(&path, "test")
                 || names_exact_harness_path(&path, "tokio::test")
-                || names_exact_harness_path(&path, "async_std::test")
-            {
-                return true;
-            }
+                || names_exact_harness_path(&path, "async_std::test"))
+        {
+            return true;
         }
         let compact = attr
             .syntax()
