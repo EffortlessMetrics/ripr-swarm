@@ -485,7 +485,12 @@ fn many_segment_pattern() -> String {
     format!("src/{}zzz.rs", "**/a/".repeat(16))
 }
 
+fn toml_double_quoted(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\"', "\\\"")
+}
+
 fn suppression_case(id: &str, role: Role, pattern: &str, changed: &str, expect: Expect) -> Case {
+    let pattern = toml_double_quoted(pattern);
     let policy = format!(
         "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"{pattern}\"\nreason = \"termination qualification selector\"\nowner = \"qualification\"\n"
     );
@@ -508,6 +513,7 @@ fn suppression_case(id: &str, role: Role, pattern: &str, changed: &str, expect: 
 }
 
 fn generated_case(id: &str, role: Role, pattern: &str, changed: &str, expect: Expect) -> Case {
+    let pattern = toml_double_quoted(pattern);
     let config = format!(
         "[languages]\nenabled = [\"rust\"]\n\n[languages.rust]\ngenerated_file_patterns = [\"{pattern}\"]\n"
     );
@@ -531,11 +537,25 @@ fn generated_case(id: &str, role: Role, pattern: &str, changed: &str, expect: Ex
 
 /// Literal normalization expectations shared by both slash-containing dialects.
 /// Keep slashless generated-file patterns in their own consumer-specific rows.
-const NORMALIZATION_CASES: [(&str, &str, bool); 4] = [
+pub(crate) const NORMALIZATION_CASES: [(&str, &str, bool); 4] = [
     ("leading-dot-segment", "./src/lib.rs", true),
     ("inner-dot-segment", "src/./lib.rs", true),
     ("empty-segment", "src//lib.rs", true),
     ("normalized-nonmatch", "src/./other.rs", false),
+];
+
+/// Root-relative and separator-boundary rows. The changed path may differ from
+/// `src/lib.rs`. Backslash is source text, not a separator, in the shared dialect.
+pub(crate) const BOUNDARY_CASES: [(&str, &str, &str, bool); 4] = [
+    ("leading-slash-pattern", "/src/lib.rs", "src/lib.rs", true),
+    (
+        r"backslash-not-a-separator",
+        r"src\lib.rs",
+        "src/lib.rs",
+        false,
+    ),
+    ("root-relative-file", "lib.rs", "lib.rs", true),
+    ("root-relative-nonmatch", "tests/**", "lib.rs", false),
 ];
 
 pub(crate) fn glob_cases() -> Vec<Case> {
@@ -723,7 +743,34 @@ pub(crate) fn glob_cases() -> Vec<Case> {
             &deep,
             GeneratedNotExcluded,
         ),
+        generated_case(
+            "adjacent-double-star",
+            Role::Control,
+            "src/**/**/lib.rs",
+            lib,
+            GeneratedExcluded,
+        ),
     ]);
+    for (id, pattern, changed, matches) in BOUNDARY_CASES {
+        cases.push(suppression_case(
+            id,
+            Role::Control,
+            pattern,
+            changed,
+            if matches { GlobMatch } else { GlobNonmatch },
+        ));
+        cases.push(generated_case(
+            id,
+            Role::Control,
+            pattern,
+            changed,
+            if matches {
+                GeneratedExcluded
+            } else {
+                GeneratedNotExcluded
+            },
+        ));
+    }
     for (id, pattern, matches) in NORMALIZATION_CASES {
         cases.push(suppression_case(
             id,
