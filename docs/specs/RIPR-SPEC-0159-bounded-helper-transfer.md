@@ -452,11 +452,13 @@ can only hint that a caller "may lead here" without changing anything.
 
   Known limits (a proper path resolver is a follow-up to #8999): the bare-call
   route credits only a direct `use <lib>::..` import (list imports included)
-  where nothing in the test file can shadow the library name. Valid but
-  refused routes: an extern-crate alias, a re-export through a test-crate
-  module (`pub use ::<lib>::..`, including beside a same-named local module),
-  `super::public_api::..` re-export routes and `self::` re-exports through a
-  test-crate module; the const/static
+  where nothing in the test file can shadow the library name. An integration
+  test may also import through exactly one test-crate module that `pub use`s a
+  library module (`use self::<module>::<path>::<entry>;` when the resolver
+  proves the hop). Valid but still
+  refused routes: an extern-crate alias,
+  `super::public_api::..` re-export routes and unresolved `self::` routes through a
+  decoy test-crate module; the const/static
   veto is file-wide, so a same-named value inside an unrelated module also
   refuses. The package-wide macro-definition and item-position-macro scan on
   the library side is deliberately coarse and fail-closed. A bare call is read from the masked file at

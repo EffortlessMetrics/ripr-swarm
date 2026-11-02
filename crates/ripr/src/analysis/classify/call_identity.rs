@@ -2783,6 +2783,16 @@ pub(super) fn name_bound_outside_owner_crate(
             // integration test, a binary) they bind that crate's items.
             let crate_relative = matches!(first.as_str(), "crate" | "self");
             if crate_relative && !in_owner_crate {
+                if first == "self"
+                    && super::owner_pin::integration_test_relative_import_delivers_entry(
+                        index,
+                        test,
+                        &path.join("::"),
+                        owner,
+                    )
+                {
+                    return false;
+                }
                 return true;
             }
             first != "crate"
