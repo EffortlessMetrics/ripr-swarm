@@ -698,7 +698,7 @@ mod tests {
         let mut out = Vec::new();
         let value = super::announce_cargo_child_to(&mut out, &a, || 7);
         assert_eq!(value, 7);
-        let text = String::from_utf8(out).expect("utf8");
+        let text = String::from_utf8_lossy(&out).into_owned();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 2, "{text}");
         assert_eq!(
