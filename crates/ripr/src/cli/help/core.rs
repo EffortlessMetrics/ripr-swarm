@@ -209,9 +209,8 @@ Common options:
                     walks up to the enclosing workspace or package, or the git
                     top level (never past the repository); `--root .` pins
                     this directory.
-  --quiet           Suppress stderr progress. Known seam totals may appear
-                    as processed_n_of_total. Unknown totals show no
-                    percentage or ETA, and progress makes no speed claim.
+  --quiet           Suppress stderr progress; known seam totals as processed_n_of_total.
+                    Unknown totals show no percentage or ETA, and progress makes no speed claim.
   --timeout SECS    Wall-clock analysis budget (600s default; 0 disables;
                     excludes the repo-wide formats). On analysis_timeout,
                     raise/disable it or narrow the diff; re-run.
@@ -424,8 +423,8 @@ Progress:
   stdout byte-clean. With json, sarif, badge-* or agent selected and
   stderr not a terminal, the stream is off by default; `RIPR_PROGRESS=1`
   restores it. A terminal and the human formats keep it. Unknown totals
-  never become a percentage or ETA. Progress does not mean analysis is
-  faster or that the command will succeed. `--quiet` turns this stream
+  never become a percentage or ETA. Progress does not mean analysis is faster
+  or that the command will succeed. `--quiet` turns this stream
   off; so does setting `RIPR_QUIET` to anything but empty, `0` or
   `false`. `repair` and `continue` accept `--quiet` too and drop their
   progress narration and `wrote <path>` lines; refusal prose is never
