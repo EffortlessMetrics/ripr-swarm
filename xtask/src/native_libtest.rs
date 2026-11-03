@@ -467,7 +467,15 @@ pub(crate) fn compile_libtest(
             selected.executable.display()
         )
     })?;
-    if !executable.starts_with(&target_dir) {
+    // `canonicalize` returns the `\\?\` verbatim form on Windows while `absolute`
+    // does not, so compare against the canonical target directory.
+    let canonical_target_dir = std::fs::canonicalize(&target_dir).map_err(|error| {
+        format!(
+            "resolve private libtest target `{}`: {error}",
+            target_dir.display()
+        )
+    })?;
+    if !executable.starts_with(&canonical_target_dir) {
         return Err(
             "selected libtest executable escapes the private compile target directory".to_string(),
         );
@@ -939,6 +947,7 @@ fn source_digest(root: &Path, skip_dirs: &[&Path]) -> Result<String, String> {
     let skip = skip_dirs
         .iter()
         .filter_map(|path| std::path::absolute(path).ok())
+        .map(|path| lexically_normalized(&path))
         .collect::<Vec<_>>();
     let mut files = BTreeMap::new();
     collect_source_files(root, root, &skip, &mut files)?;
@@ -955,6 +964,24 @@ fn source_digest(root: &Path, skip_dirs: &[&Path]) -> Result<String, String> {
     Ok(sha256_bytes(joined.as_bytes()))
 }
 
+/// Resolve `.` and `..` components without touching the filesystem, so a
+/// `--target-dir` spelled `repo/tmp/../private` is skipped as `repo/private`.
+fn lexically_normalized(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component);
+                }
+            }
+            other => normalized.push(other),
+        }
+    }
+    normalized
+}
+
 fn collect_source_files(
     root: &Path,
     dir: &Path,
@@ -968,7 +995,9 @@ fn collect_source_files(
             .map_err(|error| format!("read libtest source entry `{}`: {error}", dir.display()))?;
         let path = entry.path();
         let name = entry.file_name();
-        let absolute = std::path::absolute(&path).ok();
+        let absolute = std::path::absolute(&path)
+            .ok()
+            .map(|candidate| lexically_normalized(&candidate));
         if name == ".git"
             || name == "Cargo.lock"
             || (name == "target" && dir.join("Cargo.toml").is_file())
@@ -1038,6 +1067,24 @@ fn read_cgroup() -> Option<String> {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn lexical_normalization_resolves_dot_segments_in_skip_paths() {
+        let aliased = Path::new("repo")
+            .join("tmp")
+            .join("..")
+            .join("private")
+            .join(".");
+        assert_eq!(
+            lexically_normalized(&aliased),
+            Path::new("repo").join("private")
+        );
+        // A leading `..` has nothing to pop and is kept rather than dropped.
+        assert_eq!(
+            lexically_normalized(Path::new("..").join("x").as_path()),
+            Path::new("..").join("x")
+        );
+    }
 
     fn artifact_json(package: &str, kind: &str, test: bool, executable: Option<&str>) -> String {
         let executable = match executable {
@@ -1361,8 +1408,12 @@ mod tests {
         assert!(receipt.profile_test);
         assert!(receipt.json_complete);
         assert!(receipt.process_tree_settled);
+        // The receipt keeps `target_dir` as an absolute path and `executable` as the
+        // canonical one (the `\\?\` form on Windows), so compare canonical forms.
+        let canonical_target_dir =
+            std::fs::canonicalize(&receipt.target_dir).map_err(|error| error.to_string())?;
         assert!(
-            Path::new(&receipt.executable).starts_with(&receipt.target_dir),
+            Path::new(&receipt.executable).starts_with(&canonical_target_dir),
             "executable {} escaped {}",
             receipt.executable,
             receipt.target_dir
@@ -1504,7 +1555,10 @@ mod tests {
     }
 
     fn filetime_or_ignore(path: &Path, later: SystemTime) -> Result<(), String> {
-        fs::File::open(path)
+        // Windows refuses `set_modified` on a handle opened read-only.
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)
             .and_then(|file| file.set_modified(later))
             .map_err(|error| error.to_string())
     }
