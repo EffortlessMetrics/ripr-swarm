@@ -39,8 +39,8 @@ code) must pass; missing, empty, contradictory, stale or wrong-head values fail
 inside the verification step, before scratch or any product allocation.
 
 PR evidence and the gate summary prefer the admitted head/base and record the
-integration subject and tree. The main-only nextest archive measurement (#11594)
-is preserved.
+integration subject and tree. Main's removal of the nextest archive measurement
+(#11968) is preserved (a test pins its absence).
 
 ## Evidence and limitations
 

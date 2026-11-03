@@ -100,9 +100,10 @@ fn pr_evidence_and_summary_prefer_admitted_identities() {
 }
 
 #[test]
-fn main_only_nextest_archive_measurement_is_preserved() {
-    assert!(WORKFLOW.contains("- name: Measure nextest archive"));
-    assert!(WORKFLOW.contains("- name: Upload nextest archive (measurement)"));
+fn main_dropped_nextest_archive_measurement_stays_dropped() {
+    // Main removed these steps in #11968; this leaf must not reintroduce them.
+    assert!(!WORKFLOW.contains("Measure nextest archive"));
+    assert!(!WORKFLOW.contains("nextest archive (measurement)"));
 }
 
 #[test]
