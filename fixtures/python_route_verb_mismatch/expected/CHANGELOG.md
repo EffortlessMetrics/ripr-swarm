@@ -111,6 +111,18 @@ Updated:
 ## Pending — python_route_verb_mismatch (10)
 
 Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless python_route_verb_mismatch --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_route_verb_mismatch (11)
+
+Reason:
 RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
 
 Command:

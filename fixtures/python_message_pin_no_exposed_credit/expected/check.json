@@ -85,7 +85,9 @@
           "line": 6,
           "oracle_strength": "strong",
           "oracle_kind": "exact_error_variant",
-          "oracle": "pytest.raises(ValueError, match=\"negative value\")"
+          "oracle": "pytest.raises(ValueError, match=\"negative value\")",
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `message \"negative value: must be at most zero\"`"
         }
       ],
       "repair_placement": {

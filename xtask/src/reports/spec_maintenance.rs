@@ -1128,6 +1128,9 @@ Status: accepted
         if build("None yet; mapping is planned for the next slice.")? {
             return Err("planned mapping text was flagged as absent".to_string());
         }
+        if build("Planned tests:\n\n- `boundary_disclosure_is_not_promoted`\n")? {
+            return Err("explicit planned obligation was flagged as absent".to_string());
+        }
         Ok(())
     }
 

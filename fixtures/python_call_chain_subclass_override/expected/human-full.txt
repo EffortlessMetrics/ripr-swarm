@@ -48,6 +48,7 @@ Evidence
 Weakness
   - No Python test references `_ledger_pad(`; add a pytest or unittest test that calls the changed owner
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_call_chain_subclass_override/input --diff <cwd>/fixtures/python_call_chain_subclass_override/diff.patch --mode fast probe:reach_ledger.py:python_preview:872af001
   ripr context --root <cwd>/fixtures/python_call_chain_subclass_override/input --diff <cwd>/fixtures/python_call_chain_subclass_override/diff.patch --mode fast --at probe:reach_ledger.py:python_preview:872af001
 

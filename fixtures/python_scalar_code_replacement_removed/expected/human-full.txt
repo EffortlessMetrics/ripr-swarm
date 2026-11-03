@@ -52,6 +52,7 @@ Weakness
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_scalar_code_replacement_removed/input --diff <cwd>/fixtures/python_scalar_code_replacement_removed/diff.patch --mode fast probe:rates_table.py:python_preview:d7d976d5
   ripr context --root <cwd>/fixtures/python_scalar_code_replacement_removed/input --diff <cwd>/fixtures/python_scalar_code_replacement_removed/diff.patch --mode fast --at probe:rates_table.py:python_preview:d7d976d5
 

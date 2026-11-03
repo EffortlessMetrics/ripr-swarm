@@ -56,6 +56,7 @@ Repair placement
   pytest node: tests/test_pricing.py::test_discount
   verify (Bash): (cd -P -- <cwd>/fixtures/python_dynamic_namespace_reload/input && python -m pytest tests/test_pricing.py::test_discount) (high)
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast probe:shop_pricing.py:python_preview:b9038d35
   ripr context --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast --at probe:shop_pricing.py:python_preview:b9038d35
 
@@ -99,6 +100,7 @@ Static limitation
   mocked_module — A mocked module replaces the real implementation, so a passing test may not observe the actual changed behavior.
   Next: Add a test that runs the real implementation, with no mock replacing the changed module, and assert on its result.
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast probe:shop_route.py:python_preview:6a58f374
   ripr context --root <cwd>/fixtures/python_dynamic_namespace_reload/input --diff <cwd>/fixtures/python_dynamic_namespace_reload/diff.patch --mode fast --at probe:shop_route.py:python_preview:6a58f374
 

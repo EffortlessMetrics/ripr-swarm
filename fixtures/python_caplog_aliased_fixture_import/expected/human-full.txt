@@ -55,6 +55,7 @@ Static limitation
   unsupported_syntax — The surrounding syntax is not yet supported by ripr's static model, so the reaching path is not resolvable.
   Next: Move the changed logic into a plain function and test that function, or report the syntax in an issue so ripr can model it.
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_caplog_aliased_fixture_import/input --diff <cwd>/fixtures/python_caplog_aliased_fixture_import/diff.patch --mode fast probe:audit.py:python_preview:v1-3a7c2336
   ripr context --root <cwd>/fixtures/python_caplog_aliased_fixture_import/input --diff <cwd>/fixtures/python_caplog_aliased_fixture_import/diff.patch --mode fast --at probe:audit.py:python_preview:v1-3a7c2336
 

@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0402"
+scope = "out"
+reason = "Haskell preview contract (#5887) is spec-only before any Haskell adapter or verdict corpus; acceptance examples are planned for future haskell-verdict-corpus work under epic #5596"

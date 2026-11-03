@@ -55,6 +55,7 @@ Repair placement
   pytest node: tests/test_calc.py::test_base_unchanged
   verify (Bash): (cd -P -- <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input && python -m pytest tests/test_calc.py::test_base_unchanged) (high)
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input --diff <cwd>/fixtures/python_adversarial_local_assignment_operator_input/diff.patch --mode fast probe:src_calc.py:python_preview:3ddbe784
   ripr context --root <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input --diff <cwd>/fixtures/python_adversarial_local_assignment_operator_input/diff.patch --mode fast --at probe:src_calc.py:python_preview:3ddbe784
 

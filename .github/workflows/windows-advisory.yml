@@ -201,6 +201,10 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 75
         shell: bash
+        env:
+          # #12668: name why Cargo rebuilds a unit (the policy covered_by list
+          # recompiles `ripr` after a `--no-run` here) in the retained log.
+          CARGO_LOG: cargo::core::compiler::fingerprint=info
         run: |
           mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run1.log --status target/windows-run1.status -- cargo test --workspace --no-fail-fast -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
@@ -208,6 +212,10 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 75
         shell: bash
+        env:
+          # #12668: name why Cargo rebuilds a unit (the policy covered_by list
+          # recompiles `ripr` after a `--no-run` here) in the retained log.
+          CARGO_LOG: cargo::core::compiler::fingerprint=info
         run: |
           mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run2.log --status target/windows-run2.status -- cargo test --workspace --no-fail-fast -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 

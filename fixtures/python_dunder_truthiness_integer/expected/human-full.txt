@@ -52,6 +52,7 @@ Weakness
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_dunder_truthiness_integer/input --diff <cwd>/fixtures/python_dunder_truthiness_integer/diff.patch --mode fast probe:src_shapes_money.py:python_preview:aacb327b
   ripr context --root <cwd>/fixtures/python_dunder_truthiness_integer/input --diff <cwd>/fixtures/python_dunder_truthiness_integer/diff.patch --mode fast --at probe:src_shapes_money.py:python_preview:aacb327b
 

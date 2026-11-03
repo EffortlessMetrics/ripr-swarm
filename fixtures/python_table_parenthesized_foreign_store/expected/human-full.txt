@@ -55,6 +55,7 @@ Static limitation
   missing_import_graph — The import graph could not be resolved (for example a relative or dynamic import), so ripr cannot connect a test to this change.
   Next: Import the owner in the test by a static, absolute path (not a dynamic, computed or unresolved relative import) so ripr can connect the test to it.
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_table_parenthesized_foreign_store/input --diff <cwd>/fixtures/python_table_parenthesized_foreign_store/diff.patch --mode fast probe:rates_table.py:python_preview:8e86bb6c
   ripr context --root <cwd>/fixtures/python_table_parenthesized_foreign_store/input --diff <cwd>/fixtures/python_table_parenthesized_foreign_store/diff.patch --mode fast --at probe:rates_table.py:python_preview:8e86bb6c
 

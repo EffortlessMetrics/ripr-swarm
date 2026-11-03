@@ -40,6 +40,7 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_property_based_limit/input --diff <cwd>/fixtures/python_property_based_limit/diff.patch --mode fast probe:src_pricing.py:python_preview:ca00849b
   ripr context --root <cwd>/fixtures/python_property_based_limit/input --diff <cwd>/fixtures/python_property_based_limit/diff.patch --mode fast --at probe:src_pricing.py:python_preview:ca00849b
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above

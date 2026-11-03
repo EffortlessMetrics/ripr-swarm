@@ -55,6 +55,7 @@ Static limitation
   decorator_indirection — A decorator wraps the changed owner, so ripr cannot statically confirm a test exercises the underlying behavior.
   Next: Test the undecorated function directly, and assert on the decorated result with an exact value so a wrong result fails.
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_dunder_truthiness_pytest_config/input --diff <cwd>/fixtures/python_dunder_truthiness_pytest_config/diff.patch --mode fast probe:src_shapes_money.py:python_preview:aacb327b
   ripr context --root <cwd>/fixtures/python_dunder_truthiness_pytest_config/input --diff <cwd>/fixtures/python_dunder_truthiness_pytest_config/diff.patch --mode fast --at probe:src_shapes_money.py:python_preview:aacb327b
 

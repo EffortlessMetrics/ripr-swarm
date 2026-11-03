@@ -647,6 +647,19 @@ Updated:
 ## Pending — python_adversarial_operator_delta_input_operand (36)
 
 Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless python_adversarial_operator_delta_input_operand --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_operator_delta_input_operand (37)
+
+Reason:
 RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
 
 Command:

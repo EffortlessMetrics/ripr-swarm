@@ -2572,6 +2572,16 @@ fn run_git_diff(
     run_git_diff_with_unified(root, range, &args, "0", git_timeout, max_stdout_bytes)
 }
 
+/// Lossy UTF-8 decode for Git diff stdout without retaining a complete byte
+/// buffer alongside a complete decoded string on the ordinary accepted path
+/// (#5000).
+fn lossy_owned_utf8(bytes: Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(err) => String::from_utf8_lossy(err.as_bytes()).into_owned(),
+    }
+}
+
 fn run_git_diff_with_unified(
     root: &Path,
     range: &str,
@@ -2583,15 +2593,14 @@ fn run_git_diff_with_unified(
     // Analysis decodes lossy (unchanged): coordinates come from the
     // C-quoted path contract above, and hunk bodies are parsed, not
     // recorded as evidence.
-    Ok(String::from_utf8_lossy(&run_git_diff_bytes(
+    Ok(lossy_owned_utf8(run_git_diff_bytes(
         root,
         range,
         extra_args,
         unified,
         git_timeout,
         max_stdout_bytes,
-    )?)
-    .into_owned())
+    )?))
 }
 
 fn run_git_diff_bytes(
@@ -2792,6 +2801,21 @@ mod tests {
     use super::*;
     use std::fs;
     use std::process::Command;
+
+    #[test]
+    fn lossy_owned_utf8_moves_valid_git_diff_bytes() -> Result<(), String> {
+        // Valid UTF-8 Git diff bytes use `String::from_utf8` (move) rather than
+        // borrowing the full buffer for `from_utf8_lossy` (#5000).
+        let bytes = b"diff --git a/x b/x\n".to_vec();
+        let expected = String::from_utf8(bytes.clone()).map_err(|err| err.to_string())?;
+        assert_eq!(lossy_owned_utf8(bytes), expected);
+        Ok(())
+    }
+
+    #[test]
+    fn lossy_owned_utf8_replaces_invalid_utf8_once() {
+        assert_eq!(lossy_owned_utf8(vec![0xff, b'a']), "\u{FFFD}a");
+    }
 
     #[test]
     fn pr_evidence_diff_range_forwards_its_deadline_to_git() -> Result<(), String> {

@@ -55,6 +55,7 @@ Static limitation
   mocked_module — A mocked module replaces the real implementation, so a passing test may not observe the actual changed behavior.
   Next: Add a test that runs the real implementation, with no mock replacing the changed module, and assert on its result.
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_bool_owner_formatted_patch/input --diff <cwd>/fixtures/python_bool_owner_formatted_patch/diff.patch --mode fast probe:rules.py:python_preview:9d399b85
   ripr context --root <cwd>/fixtures/python_bool_owner_formatted_patch/input --diff <cwd>/fixtures/python_bool_owner_formatted_patch/diff.patch --mode fast --at probe:rules.py:python_preview:9d399b85
 
