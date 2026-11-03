@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0398"
+scope = "out"
+reason = "Lua preview contract is documentation-only until a Lua analyzer and verdict corpus exist; no runtime-mutant truth in this corpus can label Lua/Busted examples"

@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0168-ex02b-unreachable-unchecked-block",
+  "subject_id": "authored-spec0168-2b",
+  "diff": "cases/spec0168-ex02b-unreachable-unchecked-block.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "static_unknown_unsafe_block",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": "Spec example 2, second fixture: the function gains an `unreachable_unchecked()` block. The finding reads `static_unknown` with stop reason `unsafe_obligation`.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "std::process::abort();",
+        "mutated_line": "std::process::abort();",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the changed value is not observed by any test that runs"
+      },
+      {
+        "replacement": "return 1;",
+        "mutated_line": "return 1;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the changed value is not observed by any test that runs"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "large_inputs_are_refused only passes 200, which returns before the new statement, so any change to the statement is unobserved; the statement is never executed. Spec cells: RIPR-SPEC-0168 example 2 (a function that gains an `unreachable_unchecked()` block reads `static_unknown`, `unsafe_obligation`).",
+  "labeling_observation": {
+    "ripr_commit": "99b377f5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0168#2"
+  ]
+}
