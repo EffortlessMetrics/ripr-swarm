@@ -42,6 +42,7 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/input --diff <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/diff.patch --mode fast probe:src_lib.rs:predicate:fa1d51d0
   ripr context --root <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/input --diff <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/diff.patch --mode fast --at probe:src_lib.rs:predicate:fa1d51d0
 
@@ -66,6 +67,7 @@ Evidence
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/input --diff <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/diff.patch --mode fast probe:src_lib.rs:return_value:c71d52af
   ripr context --root <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/input --diff <cwd>/fixtures/macro_passthrough_sibling_item_macro_binding/diff.patch --mode fast --at probe:src_lib.rs:return_value:c71d52af
 

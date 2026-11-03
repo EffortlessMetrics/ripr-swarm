@@ -10,6 +10,7 @@ mod evidence_promotion_semantics;
 mod fixture_cache;
 mod fixture_variants;
 mod operand_callee_honesty;
+mod packaged_repair_receipt;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
 #[cfg(windows)]
@@ -257,16 +258,130 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+// Concurrent tests in one process can observe the same clock tick; a process-wide
+// sequence keeps `create_dir` exclusive (#10613).
+static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn temp_dir_path(name: &str, stamp: u128, sequence: u64) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "ripr-xtask-{name}-{}-{stamp}-{sequence}",
+        std::process::id()
+    ))
+}
+
 pub(crate) fn temp_dir(name: &str) -> PathBuf {
+    loop {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let dir = temp_dir_path(name, stamp, sequence);
+        match fs::create_dir(&dir) {
+            Ok(()) => return dir,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                eprintln!("create exclusive temp root at {dir:?}: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+#[test]
+fn temp_dir_same_stamp_allocations_claim_distinct_exclusive_roots() -> Result<(), String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .map_err(|error| error.to_string())?
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("ripr-xtask-{name}-{stamp}"));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    let first_seq = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let first = temp_dir_path("collision-control", stamp, first_seq);
+    fs::create_dir(&first).map_err(|error| error.to_string())?;
+    let second_seq = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let second = temp_dir_path("collision-control", stamp, second_seq);
+    fs::create_dir(&second).map_err(|error| error.to_string())?;
+    if first == second {
+        return Err(format!(
+            "same-stamp allocations reused exclusive root {first:?}"
+        ));
+    }
+    fs::remove_dir_all(&first).map_err(|error| error.to_string())?;
+    fs::remove_dir_all(&second).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn temp_dir_deterministic_collision_preserves_existing_owner() -> Result<(), String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let path = temp_dir_path("collision-control", stamp, sequence);
+    fs::create_dir(&path).map_err(|error| error.to_string())?;
+    let sentinel = path.join("owned.txt");
+    fs::write(&sentinel, "retained").map_err(|error| error.to_string())?;
+    match fs::create_dir(&path) {
+        Ok(()) => Err(format!(
+            "deterministic collision path was accepted: {path:?}"
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let contents = fs::read_to_string(&sentinel).map_err(|e| e.to_string())?;
+            if contents != "retained" {
+                return Err(format!("collision overwrote owner sentinel: {contents:?}"));
+            }
+            fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        Err(error) => Err(format!("unexpected collision error: {error}")),
+    }
+}
+
+#[test]
+fn temp_dir_concurrent_allocations_all_claim_distinct_roots() -> Result<(), String> {
+    use std::sync::Barrier;
+
+    const THREADS: usize = 8;
+    let barrier = Barrier::new(THREADS);
+    let results = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    temp_dir("concurrent-schema-sweep")
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| match handle.join() {
+                Ok(path) => Ok(path),
+                Err(_) => Err("temp_dir worker panicked".to_string()),
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    let mut paths = BTreeSet::new();
+    for path in &results {
+        if !path.is_dir() {
+            return Err(format!("temp root is not a directory: {path:?}"));
+        }
+        if !paths.insert(path.clone()) {
+            return Err(format!("duplicate temp root {path:?}"));
+        }
+    }
+    if paths.len() != THREADS {
+        return Err(format!(
+            "expected {THREADS} distinct roots, got {}",
+            paths.len()
+        ));
+    }
+    for path in results {
+        fs::remove_dir_all(path).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub(crate) fn write(path: &Path, text: &str) {
@@ -29601,7 +29716,11 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
         ],
         Some(&repo_root()?),
         &[(CHILD_ENV, "1")],
-        crate::run::tool_build_timeout()?,
+        // The child runs the real file-policy Cargo builds, each allowed
+        // FILE_POLICY_COVERED_BY_BUILD_BUDGET by the check itself. A shorter
+        // child deadline fires inside that budget (#12510: Windows runs
+        // finished in ~14 of 15 minutes).
+        crate::run::tool_build_timeout()?.max(crate::policy::FILE_POLICY_COVERED_BY_BUILD_BUDGET),
         "isolated policy facade checks",
     )?
     .output;
@@ -30721,6 +30840,9 @@ fn command_catalog_pins_ci_enforced_classification() -> Result<(), String> {
     assert!(ci_enforced("precommit")?);
     assert!(ci_enforced("check-architecture")?);
     assert!(ci_enforced("check-doc-artifacts")?);
+    assert!(!ci_enforced(
+        "check-tool-capabilities [--as-of YYYY-MM-DD] [--registry <path>]"
+    )?);
     assert!(ci_enforced("markdown-links")?);
     assert!(!ci_enforced("goldens bless <name> --reason <reason>")?);
     assert!(!ci_enforced("check-supply-chain")?);
@@ -31264,6 +31386,7 @@ fn known_commands_include_current_report_and_policy_commands() {
     assert!(commands.contains(&"cockpit"));
     assert!(commands.contains(&"release-readiness --version <version>"));
     assert!(commands.contains(&"targeted-test-outcome --before <path> --after <path>"));
+    assert!(commands.contains(&"native-libtest --root <path> --package <name> [--target-dir <path>] [--locked] [--offline] [--replay-filter <name>] [--out <path>]"));
     assert!(commands.contains(&"mutation-calibration [root] --mutants-json <path>"));
     assert!(
         commands.contains(&"bun-ub-calibration [--corpus <path>] [--out <path>] [--out-md <path>]")
@@ -49529,16 +49652,23 @@ fn lsp_cockpit_report_reads_boundary_gap_fixture_expectations() -> Result<(), St
     assert!(
         boundary_gap
             .action_titles
-            .contains(&"Write targeted test: copy brief".to_string())
-    );
-    assert!(
-        boundary_gap
-            .action_titles
             .contains(&"Write targeted test: open best related test".to_string())
     );
+    assert!(
+        !boundary_gap
+            .action_titles
+            .contains(&"Write targeted test: copy brief".to_string()),
+        "repair-packet brief is gated on fix_site_ready (#1663)"
+    );
     assert!(boundary_gap.context.seam_packet_available);
-    assert!(boundary_gap.context.targeted_test_brief_available);
-    assert!(boundary_gap.context.agent_repair_command_available);
+    assert!(
+        !boundary_gap.context.targeted_test_brief_available,
+        "pinned fixtures omit copyTargetedTestBrief until fix_site_ready"
+    );
+    assert!(
+        !boundary_gap.context.agent_repair_command_available,
+        "pinned fixtures omit copyAgentRepairCommand until fix_site_ready"
+    );
     assert!(boundary_gap.context.agent_packet_command_available);
     assert!(boundary_gap.context.agent_brief_command_available);
     assert!(boundary_gap.context.after_snapshot_command_available);
@@ -49569,8 +49699,14 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
     assert_eq!(editor_fixture.diagnostic_count, 1);
     assert_eq!(editor_fixture.seam_diagnostic_count, 1);
     assert!(editor_fixture.context.seam_packet_available);
-    assert!(editor_fixture.context.targeted_test_brief_available);
-    assert!(editor_fixture.context.agent_repair_command_available);
+    assert!(
+        !editor_fixture.context.targeted_test_brief_available,
+        "editor_lsp_workflow pins repair-packet suppression without fix_site_ready"
+    );
+    assert!(
+        !editor_fixture.context.agent_repair_command_available,
+        "editor_lsp_workflow pins repair start suppression without fix_site_ready"
+    );
     assert!(editor_fixture.context.agent_packet_command_available);
     assert!(editor_fixture.context.agent_brief_command_available);
     assert!(editor_fixture.context.after_snapshot_command_available);
@@ -49753,7 +49889,7 @@ fn lsp_cockpit_report_json_and_markdown_are_structured() -> Result<(), String> {
         serde_json::from_str(&json).map_err(|err| format!("cockpit JSON should parse: {err}"))?;
     assert_eq!(value["schema_version"], "0.1");
     assert_eq!(value["tool"], "ripr");
-    assert!(json.contains("Write targeted test: copy brief"));
+    assert!(json.contains("Write targeted test: copy suggested assertion"));
 
     let markdown = lsp_cockpit_report_markdown(&report);
     assert!(markdown.contains("# ripr LSP cockpit report"));
