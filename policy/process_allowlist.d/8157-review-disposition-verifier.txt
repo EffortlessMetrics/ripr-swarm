@@ -1,0 +1,1 @@
+tools/repo-policy/tests/review_disposition_admission.rs|Command::new|2|ci/admission|Test runs the stdlib-Python review disposition verifier as a subprocess, once for its self-test and once per #8157 control (#8157).
