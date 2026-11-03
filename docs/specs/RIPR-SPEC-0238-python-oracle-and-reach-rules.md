@@ -195,7 +195,7 @@ A call statement or `with` item, by the last dotted segment of its callee:
 | `assertRaises` | `broad_error` / weak |
 | `raises` as `pytest.raises` or bare `raises`, as a `with` item, with `match=` | `exact_error_variant` / strong |
 | the same without `match=` | `broad_error` / weak |
-| `assert_called`, `assert_called_once`, `assert_called_with`, `assert_called_once_with`, `assert_any_call`, `assert_has_calls`, `assert_not_called` | `mock_expectation` / medium |
+| `assert_called`, `assert_called_once`, `assert_called_with`, `assert_called_once_with`, `assert_any_call`, `assert_has_calls`, `assert_not_called`, `assert_awaited`, `assert_awaited_once`, `assert_awaited_with`, `assert_awaited_once_with` | `mock_expectation` / medium |
 | other segment starting `assert_`, or `assert_that` | `unknown`, shape `unknown_custom_helper` (rule 28 re-reads proven numpy.testing and assertpy equality) |
 | anything else | no assertion recorded |
 
@@ -895,7 +895,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     bind parameters like literal `parametrize` cases (positional values
     fill the rightmost parameters, as many as there are values; keyword
     values the named ones); a chained
-    `@example(...).xfail()` or `.via(...)` row is skipped. A `@given`
+    `@example(...).xfail()` or `.via(...)` row is skipped. An `@example`
+    row also binds only while the test's effective settings still run
+    `Phase.explicit`: a static `@settings(phases=...)` (imported or
+    aliased `settings`) that omits it, or one whose phases cannot be read
+    (an unresolved name, a `**` expansion), withholds every row (#10752). A `@given`
     test gives `static_unknown`, `property_based_test`, only when it has
     assertions and either none is strong, or it has no `@example` row and
     its body reads a generated parameter. A `parametrize` mark binds
@@ -1927,6 +1931,7 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `a_deep_sum_is_refused_not_recursed`.
 - Existing: `crates/ripr/src/analysis/language/python/python_tests.rs`
   `oracle_for_call_recognizes_all_unittest_and_mock_variants`,
+  `oracle_for_call_recognizes_async_mock_expectations`,
   `collect_with_item_assertions_treats_pytest_raises_match_as_exact_error`,
   `contains_dynamic_dispatch_detects_registry_indexed_call`,
   `contains_metaprogramming_detects_metaclass_declarations`,
