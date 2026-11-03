@@ -311,6 +311,10 @@ impl ClosedOwner {
         let masked = &masked[item..];
         let open = masked.find('{')?;
         let close = masked.rfind('}')?;
+        // Mismatched braces (a `}` before the first `{`) leave no body to slice.
+        if close <= open {
+            return None;
+        }
         let signature = lex(&masked[..open])?;
         let fn_at = 0;
         if signature.get(fn_at + 1) != Some(&Token::Ident(name.to_string()))
@@ -664,6 +668,12 @@ mod tests {
         assert!(differs(neg, "q", "q(-7, 2)", "-4"));
         let rem = "fn r(a: i32, b: i32) -> i32 {\n    a % b\n}\n";
         assert!(!differs(rem, "r", "r(-7, 2)", "-1"));
+    }
+
+    #[test]
+    fn mismatched_braces_are_no_evidence_not_a_panic() {
+        assert!(ClosedOwner::read("fn f(a: u32) -> u32 } a {", "f").is_none());
+        assert!(ClosedOwner::read("fn f(a: u32) -> u32 {", "f").is_none());
     }
 
     #[test]
