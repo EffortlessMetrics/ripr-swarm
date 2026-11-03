@@ -11601,6 +11601,8 @@ tests = [
   "crates/ripr/src/lsp/agent_protocol.rs::tests::request_envelope_keeps_mode_and_profile_typed",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::success_and_error_envelopes_are_typed_and_bounded",
   "crates/ripr/src/lsp/agent_protocol.rs::tests::source_edit_boundary_is_explicitly_read_only",
+  "xtask/src/ripr_agent_disposition.rs::tests::ledger_covers_capability_fixture_inventory",
+  "xtask/src/ripr_agent_disposition.rs::tests::scanned_surfaces_reject_generic_headless_claims",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -11613,11 +11615,13 @@ fixtures = [
 code = [
   "crates/ripr/src/lsp/agent_protocol.rs",
   "crates/ripr/src/lsp/capabilities.rs",
+  "xtask/src/ripr_agent_disposition.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0131-ripr-agent-protocol-contract.md",
   "docs/specs/README.md",
   "policy/doc-artifacts.toml",
+  "policy/ripr-agent-disposition.toml",
   "schemas/ripr/ripr-agent-capability.schema.json",
   "schemas/ripr/ripr-agent-request.schema.json",
   "schemas/ripr/ripr-agent-success.schema.json",
@@ -21161,6 +21165,15 @@ tests = [
   "crates/ripr/tests/collection_out_parameter_repair.rs::stub_for_a_push_into_a_local_vector_still_needs_an_observer",
   "crates/ripr/tests/collection_out_parameter_repair.rs::stub_for_a_conditional_push_into_the_buffer_still_needs_an_observer",
   "crates/ripr/tests/collection_out_parameter_repair.rs::stub_for_a_local_that_shadows_the_buffer_still_needs_an_observer",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::repair_brief_names_the_contents_check_for_a_pinned_push",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::repair_brief_for_other_gaps_is_unchanged",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::stub_written_under_the_earlier_name_is_already_written",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::different_test_under_the_earlier_name_is_not_already_written",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::stub_written_under_a_numbered_earlier_name_is_already_written",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::outline_names_the_contents_check_not_observer_setup_for_a_ready_push",
+  "crates/ripr/src/analysis/repair_route.rs::tests::contents_check_suggestion_needs_a_ready_headline_route",
+  "crates/ripr/src/analysis/repair_route.rs::tests::contents_check_test_name_is_one_snake_case_name",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::card_names_the_contents_check_only_for_a_ready_headline_push",
   "crates/ripr/tests/collection_out_parameter_repair.rs::inline_count_read_with_no_editable_test_starts_in_neither_command",
   "crates/ripr/src/analysis/repair_route.rs::tests::contents_check_is_proposed_only_for_a_marked_side_effect_push",
   "crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs::tests::count_reads_of_a_fresh_vector_or_string_are_followed",
@@ -21181,9 +21194,51 @@ code = [
   "crates/ripr/src/analysis/test_grip_evidence.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
   "crates/ripr/src/app/task_first.rs",
+  "crates/ripr/src/app/repair_card_handoff.rs",
+  "crates/ripr/src/output/agent_seam_packets.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0407"
+name = "A call spelled through a manifest-resolved workspace dependency carries reach and the boundary input across the crate edge, and every other shape keeps the earlier answer"
+spec = "docs/specs/RIPR-SPEC-0407-rust-cross-crate-call-reach.md"
+tests = [
+  "crates/ripr/tests/cross_crate_reach.rs::boundary_pin_through_another_crates_function_is_noticed_by_check",
+  "crates/ripr/tests/cross_crate_reach.rs::narrow_check_modes_that_leave_the_test_out_claim_nothing",
+  "crates/ripr/tests/cross_crate_reach.rs::bare_repair_keeps_its_earlier_refusal_for_the_audit_case",
+  "crates/ripr/tests/cross_crate_reach.rs::an_argument_the_intermediate_function_changes_is_not_noticed",
+  "crates/ripr/tests/cross_crate_reach.rs::a_result_the_intermediate_function_changes_is_not_noticed",
+  "crates/ripr/tests/cross_crate_reach.rs::a_loose_check_is_not_an_exact_pin",
+  "crates/ripr/tests/cross_crate_reach.rs::an_input_off_the_boundary_is_not_noticed",
+  "crates/ripr/tests/cross_crate_reach.rs::a_renamed_dependency_keeps_the_earlier_no_path_answer",
+  "crates/ripr/tests/cross_crate_reach.rs::a_dev_dependency_edge_keeps_the_earlier_no_path_answer",
+  "crates/ripr/tests/cross_crate_reach.rs::a_same_named_function_in_another_crate_keeps_the_earlier_no_path_answer",
+  "crates/ripr/tests/cross_crate_reach.rs::a_bare_import_of_the_function_is_not_followed_yet",
+  "crates/ripr/tests/cross_crate_reach.rs::a_local_module_named_like_the_dependency_keeps_the_earlier_no_path_answer",
+  "crates/ripr/tests/cross_crate_reach.rs::a_call_that_is_not_the_whole_tail_is_not_followed_as_a_forward",
+  "crates/ripr/tests/cross_crate_reach.rs::a_wrapper_in_the_same_member_package_is_noticed_through_its_own_crate_name",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::a_normal_path_dependency_names_the_library",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::build_dependency_renames_and_other_packages_name_nothing",
+  "crates/ripr/src/analysis/classify/helper_transfer/cross_crate_hop.rs::tests::only_an_unrestricted_pub_fn_at_the_file_root_is_nameable_by_the_crate_path",
+  "crates/ripr/src/analysis/classify/helper_transfer/cross_crate_hop.rs::tests::only_a_sole_call_spelled_through_the_crate_name_binds",
+  "crates/ripr/src/analysis/classify/helper_transfer/cross_crate_hop.rs::tests::a_module_named_like_the_crate_is_seen_but_a_longer_name_is_not",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/classify/helper_transfer/cross_crate_hop.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
+  "crates/ripr/src/analysis/facts/member_crates.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0407-rust-cross-crate-call-reach.md",
 ]
 metrics = [
   "unit_test_pass_rate",
@@ -21377,6 +21432,33 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0410"
+name = "First-hour repair funnel projection"
+spec = "docs/specs/RIPR-SPEC-0410-first-hour-repair-funnel-projection.md"
+tests = [
+  "xtask/src/reports/repair_funnel.rs::tests::repair_funnel_controls_corpus_projects_and_enforces_controls",
+  "xtask/src/reports/repair_funnel.rs::tests::verified_improvement_requires_verification_and_movement",
+  "xtask/src/reports/repair_funnel.rs::tests::verification_pass_alone_does_not_claim_improvement",
+  "xtask/src/reports/repair_funnel.rs::tests::repair_funnel_to_input_zero_cases_is_not_measured",
+]
+fixtures = [
+  "fixtures/repair_funnel/controls/corpus.json",
+]
+code = [
+  "xtask/src/reports/repair_funnel.rs",
+  "xtask/src/reports/dx_scoreboard.rs",
+  "benchmarks/dx_scoreboard/scoreboards.toml",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0410-first-hour-repair-funnel-projection.md",
+]
+metrics = [
+  "repair_time_to_verified_improvement_ms",
+  "repair_time_to_first_honest_result_ms",
+  "repair_selected_case_count",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0378"
 name = "Cross-language edge registry v1"
 spec = "docs/specs/RIPR-SPEC-0378-cross-language-edge-registry-v1.md"
@@ -21490,4 +21572,35 @@ metrics = [
   "terraform_evidence_contract_registered",
   "terraform_capability_cell_index_complete",
   "terraform_generic_hcl_non_claim_registered",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0408"
+name = "Verification run snapshot binding and requested/prepared compatibility"
+spec = "docs/specs/RIPR-SPEC-0408-verification-run-snapshot-binding.md"
+tests = [
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::corpus_cases_match_acceptance_fixtures",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::root_relocation_preserves_portable_identity_while_concrete_root_differs",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::plan_config_resource_change_changes_portable_identity",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::plan_digest_alone_changes_portable_identity",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::committed_pair_is_compatible",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::dirty_worktree_rejects_committed_request",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::capture_policy_mismatch_is_incompatible",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::captured_external_original_path_mismatch_is_incompatible",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::unsupported_inventory_contents_change_binding_identity",
+]
+fixtures = [
+  "fixtures/verification_run_snapshot_binding",
+]
+code = [
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/model.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0408-verification-run-snapshot-binding.md",
+  "docs/spec-index.d/RIPR-SPEC-0408.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0408.toml",
+]
+metrics = [
+  "unit_test_pass_rate",
 ]

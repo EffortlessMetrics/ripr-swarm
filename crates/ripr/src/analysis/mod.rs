@@ -51,6 +51,7 @@ pub(crate) mod repair_route;
 /// here, so a new phase cannot invent a parallel spelling.
 pub(crate) mod resource_cost;
 mod rust_index;
+pub(crate) mod rust_snapshot_files;
 pub(crate) mod seam_cache;
 mod seam_classification;
 mod seam_inventory;
@@ -67,6 +68,7 @@ pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
 mod value_resolution;
+pub(crate) mod verification_plan;
 mod witness;
 mod workspace;
 

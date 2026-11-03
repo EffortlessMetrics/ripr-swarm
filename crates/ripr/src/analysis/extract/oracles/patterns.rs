@@ -145,7 +145,7 @@ const VALUE_SUPPLYING_ADAPTERS: &[&str] = &[
 /// True when an `Err(..)` constructor is an argument of a value-supplying
 /// adapter call, in method or UFCS spelling, grouped or not. Other enclosing
 /// calls (`Some(..)`, `Result::eq(..)`, the assertion macro) keep their reading.
-fn err_constructor_feeds_value_adapter(line: &str) -> bool {
+pub(super) fn err_constructor_feeds_value_adapter(line: &str) -> bool {
     let masked = strip_turbofish(&mask_comments_and_strings(line));
     masked.match_indices("Err").any(|(index, _)| {
         let is_token =

@@ -1619,11 +1619,24 @@ unless it has the named variant, and yield the payload, so
    (`ErrVariant`, or a field gate wrapped in `Err`) is the opposite direction,
    since the macro panics on that exit before any comparison.
 
-Accepted limitation: the import is read at file granularity, as `expect!`'s is.
-A `use claims::assert_ok;` inside one inner module admits the name for a test
-elsewhere in the file that has no such import in scope; such a subject does not
-compile, so the credit is for a test that cannot run. Scoping the import to the
-asserting test's module chain is a follow-up.
+Import scope (#12462): a `use` names its macro in its own module and in the
+test's own body, and a child module does not inherit it. So the claims import
+counts when it is in the test's own module, directly in the test's body, or in
+an ancestor module and every module between that ancestor and the test
+re-imports it with `use super::*;` or `use super::name;`. An import in another
+function, in a sibling module, in a nested block of the body, or in an
+ancestor whose child modules do not re-import it does not count. An import or
+re-import under any `cfg` or `cfg_attr` other than the plain `#[cfg(test)]`
+counts as compiled out, even when its predicate might be true: a gate that is
+not provably on is not credit. A doc example has no test span in its own
+source, so only its root-level imports count, and a span that places no test
+function credits nothing. The test side's binding scan reads the manifest
+verdict and shadowing as before.
+
+Accepted limitation: only `use super::*;` and `use super::name;` are read as
+re-imports. A re-import by another spelling (`use super::{assert_ok};`,
+`use crate::..`) leaves the macro unproven, which loses credit and never adds
+it. `expect!`'s import keeps its file-granular read.
 
 ### Claims payload equality pins (#12304)
 
@@ -2850,7 +2863,8 @@ assertions. This repair shares the existing callback without that larger migrati
 - Claims payload equality pins (#12304):
   `crates/ripr/tests/claims_payload_eq_owner_pin.rs` (the credited twins and
   one negative control per refusal above, the early-`Err` and `None` exit
-  directions, the non-`return_value` families and a multi-line invocation).
+  directions, the non-`return_value` families, and multi-line invocations: credited
+  when the closing line holds only the `;` and a comment, unknown otherwise).
   The inventory rows `claims_assert_ok_eq` / `claims_assert_some_eq` in
   `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs` use a
   `predicate` probe and therefore stay `unknown` on purpose; the

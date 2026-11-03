@@ -30840,6 +30840,9 @@ fn command_catalog_pins_ci_enforced_classification() -> Result<(), String> {
     assert!(ci_enforced("precommit")?);
     assert!(ci_enforced("check-architecture")?);
     assert!(ci_enforced("check-doc-artifacts")?);
+    assert!(!ci_enforced(
+        "check-tool-capabilities [--as-of YYYY-MM-DD] [--registry <path>]"
+    )?);
     assert!(ci_enforced("markdown-links")?);
     assert!(!ci_enforced("goldens bless <name> --reason <reason>")?);
     assert!(!ci_enforced("check-supply-chain")?);
@@ -31383,6 +31386,7 @@ fn known_commands_include_current_report_and_policy_commands() {
     assert!(commands.contains(&"cockpit"));
     assert!(commands.contains(&"release-readiness --version <version>"));
     assert!(commands.contains(&"targeted-test-outcome --before <path> --after <path>"));
+    assert!(commands.contains(&"native-libtest --root <path> --package <name> [--target-dir <path>] [--locked] [--offline] [--replay-filter <name>] [--out <path>]"));
     assert!(commands.contains(&"mutation-calibration [root] --mutants-json <path>"));
     assert!(
         commands.contains(&"bun-ub-calibration [--corpus <path>] [--out <path>] [--out-md <path>]")

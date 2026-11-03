@@ -652,3 +652,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_adversarial_attribute_sink_same_value_other_receiver (36)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless python_adversarial_attribute_sink_same_value_other_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
