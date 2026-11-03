@@ -137,6 +137,11 @@ pub(in crate::analysis) struct OwnerReturnPin {
     pointer_mask_gate: super::mask_pin::PointerMaskGate,
     /// A typed pointer must observe a value that differs from the baseline.
     pointer_return_change: Option<crate::analysis::test_grip_evidence::PointerReturnChange>,
+    /// The changed tail is the whole value `T(e)` / `Self(e)` of a tuple
+    /// struct `T` built from one argument, so `owner(..).0` is exactly `e`
+    /// (#12796). The test side still checks that `T` is a plain
+    /// single-integer-field struct.
+    tuple_projection: Option<String>,
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
@@ -4686,6 +4691,9 @@ impl OwnerReturnPin {
         }
         let walked_positions =
             closure_adaptor::iterated_slice_positions(&owner.body, &probe.expression);
+        let tuple_projection = matches!(path, ReturnPathGate::Any)
+            .then(|| tuple_projection_type(owner, probe))
+            .flatten();
         Some(Self {
             name: name.to_string(),
             call,
@@ -4707,6 +4715,7 @@ impl OwnerReturnPin {
                 probe.before.as_deref(),
                 &probe.expression,
             ),
+            tuple_projection,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -4840,6 +4849,7 @@ impl OwnerReturnPin {
             returns_integer: false,
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
+            tuple_projection: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -4949,6 +4959,7 @@ impl OwnerReturnPin {
             returns_integer: false,
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
+            tuple_projection: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5050,6 +5061,7 @@ impl OwnerReturnPin {
             returns_integer: false,
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
+            tuple_projection: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5135,6 +5147,39 @@ impl OwnerReturnPin {
     /// trailing `.await` (`total(&[1, 2]).await`). A sync owner's `.await`
     /// awaits a future it returns, whose output its return expression does
     /// not hold, so that stays refused.
+    /// #12796: the comparison operands with one `.0` projection removed, when
+    /// the changed tail is the whole `T(e)` of a one-field built-in integer
+    /// tuple struct and the other operand is not itself projected. `T(e).0`
+    /// is `e` on every input, so comparing it pins the changed expression
+    /// exactly as comparing `owner(..)` with `T(literal)` does.
+    fn projected_operands<'a>(
+        &self,
+        operands: [&'a str; 2],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> Option<[&'a str; 2]> {
+        let type_name = self.tuple_projection.as_deref()?;
+        let strip = |operand: &'a str| {
+            operand
+                .trim()
+                .strip_suffix(".0")
+                .map(str::trim_end)
+                .filter(|base| !base.is_empty())
+        };
+        let stripped = match (strip(operands[0]), strip(operands[1])) {
+            (Some(base), None) => [base, operands[1]],
+            (None, Some(base)) => [operands[0], base],
+            _ => return None,
+        };
+        let owner = index.functions().iter().find(|function| {
+            function.file == self.owner_file
+                && function.name == self.name
+                && function.start_line == self.owner_start_line
+        })?;
+        field_builtin_integer_of(owner, type_name, "0", true, index, syntax)?;
+        Some(stripped)
+    }
+
     fn awaited_call_shape<'a>(
         &self,
         poll_context: Option<(&TestSummary, &RustIndex, &OwnerPinSyntax)>,
@@ -5428,6 +5473,13 @@ impl OwnerReturnPin {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
             };
+            // #12796: `owner(..).0` / `let r = owner(..); r.0` of a one-field
+            // integer tuple struct is the changed `T(e)`'s own `e`, so the
+            // projection reads as the whole-value pin on the owner call.
+            let (operands, projection) = match self.projected_operands(operands, index, syntax) {
+                Some(stripped) => (stripped, ".0"),
+                None => (operands, ""),
+            };
             // #9478: a typed immutable function pointer lends its exact call,
             // not an arbitrary use of the owner as a value. Keep this bounded
             // to a sync scalar free-function tail compared with a literal;
@@ -5559,6 +5611,7 @@ impl OwnerReturnPin {
                             test,
                             assertion,
                             operands[at],
+                            projection,
                             &self.name,
                             self.returns_scalar,
                             false,
@@ -5753,6 +5806,7 @@ impl OwnerReturnPin {
                     test,
                     assertion,
                     operand,
+                    "",
                     &self.name,
                     self.returns_scalar,
                     true,
@@ -7404,12 +7458,59 @@ pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
     )
 }
 
+/// #12796: the tuple struct `T` when the changed tail is exactly `T(e)` or
+/// `Self(e)`, the owner declares that type (or `Self`) as its return, and the
+/// constructor takes one argument. A tuple constructor's arity is its field
+/// count, so `owner(..).0` then reads exactly `e`, the changed expression.
+/// Whether `T` is a plain one-field integer struct is the test side's check
+/// ([`field_builtin_integer`]), which needs the shared syntax scan.
+fn tuple_projection_type(owner: &FunctionSummary, probe: &Probe) -> Option<String> {
+    let expression = collapse_whitespace(probe.expression.trim().trim_end_matches(';'));
+    let open = expression.find('(')?;
+    let head = expression[..open].trim();
+    let masked = mask_comments_and_strings(&expression);
+    let closing = matching_close(&masked, open, b'(', b')')?;
+    if closing + 1 != expression.len()
+        || top_level_arguments(&expression[open + 1..closing]).len() != 1
+    {
+        return None;
+    }
+    let impl_type = match &owner.item.container {
+        FunctionContainer::Inherent { self_ty } | FunctionContainer::TraitImpl { self_ty, .. }
+            if !self_ty.contains('<') =>
+        {
+            Some(path_base_name(self_ty)?.to_string())
+        }
+        _ => None,
+    };
+    let type_name = if head == "Self" {
+        impl_type.clone()?
+    } else if is_plain_identifier(head) && head.starts_with(|ch: char| ch.is_ascii_uppercase()) {
+        head.to_string()
+    } else {
+        return None;
+    };
+    let declared = declared_return_type(&owner.body)?;
+    (declared == type_name || (declared == "Self" && impl_type.as_deref() == Some(&type_name)))
+        .then_some(type_name)
+}
+
 /// A method receiver written inline in the assertion operand: a struct
 /// literal or one parenthesized subexpression, not a binding name (#9092).
 fn inline_method_receiver(receiver: &str) -> bool {
     let receiver = receiver.trim();
     if let Some(inner) = group_inner(receiver, '(', ')') {
         return inline_method_receiver(inner);
+    }
+    // A tuple-struct constructor call (`Money(2)`), typed by the same
+    // binding authority as `let m = Money(2);` (#12796).
+    if let Some(open) = receiver.find('(') {
+        let head = receiver[..open].trim();
+        if is_plain_identifier(head) && head.starts_with(|ch: char| ch.is_ascii_uppercase()) {
+            let masked = mask_comments_and_strings(receiver);
+            return matching_close(&masked, open, b'(', b')')
+                .is_some_and(|closing| receiver[closing + 1..].trim().is_empty());
+        }
     }
     let Some(open) = receiver.find('{') else {
         return false;
@@ -9288,16 +9389,34 @@ pub(in crate::analysis) fn field_builtin_integer(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> Option<&'static str> {
+    field_builtin_integer_of(owner, type_name, field, false, index, syntax)
+}
+
+/// [`field_builtin_integer`] for an owner that may be an `impl` method. A
+/// method is found only when it is the file's one `fn` of its name, so a
+/// second same-named method or function refuses (#12796).
+fn field_builtin_integer_of(
+    owner: &FunctionSummary,
+    type_name: &str,
+    field: &str,
+    methods: bool,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> Option<&'static str> {
     let key = (
         owner.file.clone(),
         owner.name.clone(),
         type_name.to_owned(),
-        field.to_owned(),
+        if methods {
+            format!("method:{field}")
+        } else {
+            field.to_owned()
+        },
     );
     if let Some(found) = syntax.field_integer_memo.borrow().get(&key) {
         return *found;
     }
-    let found = field_builtin_integer_uncached(owner, type_name, field, index, syntax);
+    let found = field_builtin_integer_uncached(owner, type_name, field, methods, index, syntax);
     syntax.field_integer_memo.borrow_mut().insert(key, found);
     found
 }
@@ -9306,6 +9425,7 @@ fn field_builtin_integer_uncached(
     owner: &FunctionSummary,
     type_name: &str,
     field: &str,
+    methods: bool,
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> Option<&'static str> {
@@ -9337,6 +9457,7 @@ fn field_builtin_integer_uncached(
                 && function.syntax().parent().is_some_and(|parent| {
                     ast::SourceFile::can_cast(parent.kind())
                         || ast::ItemList::can_cast(parent.kind())
+                        || (methods && ast::AssocItemList::can_cast(parent.kind()))
                 })
         });
     let (Some(owner_fn), None) = (owners.next(), owners.next()) else {
@@ -9365,10 +9486,11 @@ fn field_builtin_integer_uncached(
     if facts.generic_params || facts.other_attributes {
         return None;
     }
-    let mut named = facts
-        .fields
-        .iter()
-        .filter(|candidate| candidate.name.as_deref() == Some(field));
+    // `.0` names the one field of a one-field tuple struct.
+    let tuple_zero = methods && field == "0" && facts.fields.len() == 1;
+    let mut named = facts.fields.iter().filter(|candidate| {
+        candidate.name.as_deref() == Some(field) || (tuple_zero && candidate.name.is_none())
+    });
     let (Some(found), None) = (named.next(), named.next()) else {
         return None;
     };
@@ -12578,6 +12700,7 @@ fn let_bound_owner_call<'a>(
     test: &'a TestSummary,
     assertion: &OracleFact,
     operand: &str,
+    projection: &str,
     name: &str,
     scalar: bool,
     bare_condition: bool,
@@ -12617,7 +12740,9 @@ fn let_bound_owner_call<'a>(
             && assertion_comparison_operands(&other.text).is_some_and(|operands| {
                 operands
                     .iter()
-                    .filter(|candidate| candidate.trim() == operand)
+                    .filter(|candidate| {
+                        candidate.trim().strip_suffix(projection).map(str::trim) == Some(operand)
+                    })
                     .count()
                     == 1
                     && in_text == 1
@@ -16390,7 +16515,7 @@ fn module_item_names_type(item: &ast::Item, base: &str) -> bool {
 /// declares it.
 fn trait_in_scope(source: &str, trait_name: &str, index: &RustIndex) -> bool {
     if file_imports_foreign_callee_name(source, trait_name, &index.package_names) {
-        return false;
+        return std_operator_trait_imported(source, trait_name, index);
     }
     if file_imports_own_item(source, trait_name, &index.package_names) {
         return true;
@@ -16408,6 +16533,43 @@ fn trait_in_scope(source: &str, trait_name: &str, index: &RustIndex) -> bool {
                     })
                 })
         })
+}
+
+/// #12796: the standard operator trait `trait_name` (`Add`, `Sub`, ..) is
+/// the one the file's single explicit import binds: exactly one `use` names it,
+/// through `std::ops::` or `core::ops::` with no rename, and no workspace file
+/// declares a trait of that name. An explicit import outranks globs, so no
+/// other `Add` can reach the file's scopes, and a method call `x.add(y)`
+/// then names this trait's method.
+fn std_operator_trait_imported(source: &str, trait_name: &str, index: &RustIndex) -> bool {
+    const OPERATOR_TRAITS: &[&str] = &[
+        "Add", "Sub", "Mul", "Div", "Rem", "BitAnd", "BitOr", "BitXor", "Shl", "Shr", "Neg", "Not",
+    ];
+    if !OPERATOR_TRAITS.contains(&trait_name) {
+        return false;
+    }
+    let declared_in_workspace = index.files().values().any(|facts| {
+        let masked = mask_comments_and_strings(&facts.source);
+        whole_word_offsets(&masked, "trait")
+            .into_iter()
+            .any(|offset| {
+                starts_with_word(masked[offset + "trait".len()..].trim_start(), trait_name)
+            })
+    });
+    if declared_in_workspace {
+        return false;
+    }
+    let paths = flattened_use_paths(source);
+    let mut binding = paths.iter().filter(|use_path| {
+        let last = use_path.path.rsplit("::").next();
+        last == Some(trait_name) || use_path.alias.as_deref() == Some(trait_name)
+    });
+    let (Some(found), None) = (binding.next(), binding.next()) else {
+        return false;
+    };
+    found.alias.is_none()
+        && (found.path == format!("std::ops::{trait_name}")
+            || found.path == format!("core::ops::{trait_name}"))
 }
 
 fn test_body_shadows_owner(test: &TestSummary, owner: &str) -> bool {
