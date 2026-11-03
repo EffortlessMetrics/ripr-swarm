@@ -273,7 +273,7 @@ fn remaining_time_watchdog_leaves_heartbeat_and_status_for_upload() -> Result<()
     fs::create_dir_all(dir.join("target")).map_err(|e| e.to_string())?;
     fs::write(
         dir.join("target/fixture.sh"),
-        "#!/usr/bin/env bash\nprintf '%s\\n' '        SLOW [> 120.0s] xtask hung::forever'\nwhile true; do :; done\n",
+        "#!/usr/bin/env bash\nprintf '%s\\n' '        SLOW [> 120.0s] xtask hung::forever'\nend=$((SECONDS + 60)); while [ \"$SECONDS\" -lt \"$end\" ]; do :; done\n",
     )
     .map_err(|e| e.to_string())?;
     let script = dir.join("wrapper.sh");
