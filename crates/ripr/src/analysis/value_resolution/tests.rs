@@ -1184,6 +1184,39 @@ fn offset_integer_values_add_only_to_plain_decimal_constants() {
     ));
 }
 
+/// #10819: a `let n = <literal>` that a tuple, struct, slice or `for` pattern
+/// binds again names a different value at the call, so the literal must not be
+/// resolved. Each rebinding is paired with a control that binds another name
+/// and keeps the literal.
+#[test]
+fn a_literal_let_rebound_by_a_pattern_is_not_resolved() {
+    let rebindings = [
+        ("let (n, _m) = (9, 1);", "let (a, _m) = (9, 1);"),
+        ("let Pair { n, .. } = pair;", "let Pair { a, .. } = pair;"),
+        ("let [n, _] = [9, 1];", "let [a, _] = [9, 1];"),
+        // The call sits inside the loop, where the pattern's `n` is the value
+        // it reads (the repro of #10819); the control's loop binds `a` instead.
+        (
+            "for n in [9] { assert_eq!(gate(n), 0); }",
+            "for a in [9] { assert_eq!(gate(a), 0); }",
+        ),
+        (
+            "let Some(n) = opt else { return };",
+            "let Some(a) = opt else { return };",
+        ),
+    ];
+    for (rebinding, control) in rebindings {
+        let body = format!("let n = 10;\n{rebinding}\nassert_eq!(gate(n), 0);");
+        assert_eq!(test_let_bound_literal(&body, "n"), None, "{body}");
+        let kept = format!("let n = 10;\n{control}\nassert_eq!(gate(n), 0);");
+        assert_eq!(
+            test_let_bound_literal(&kept, "n").as_deref(),
+            Some("10"),
+            "{kept}"
+        );
+    }
+}
+
 fn facts_test(name: &str, file: &str, body: &str) -> TestSummary {
     TestSummary {
         name: name.to_string(),

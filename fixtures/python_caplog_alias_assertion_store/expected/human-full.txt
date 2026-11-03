@@ -34,6 +34,7 @@ Language
 
 Static exposure
   static_unknown (note, confidence 0.20)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `check_balance`
@@ -54,6 +55,7 @@ Static limitation
   unsupported_syntax — The surrounding syntax is not yet supported by ripr's static model, so the reaching path is not resolvable.
   Next: Move the changed logic into a plain function and test that function, or report the syntax in an issue so ripr can model it.
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_caplog_alias_assertion_store/input --diff <cwd>/fixtures/python_caplog_alias_assertion_store/diff.patch --mode fast probe:audit.py:python_preview:v1-3a7c2336
   ripr context --root <cwd>/fixtures/python_caplog_alias_assertion_store/input --diff <cwd>/fixtures/python_caplog_alias_assertion_store/diff.patch --mode fast --at probe:audit.py:python_preview:v1-3a7c2336
 
