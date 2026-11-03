@@ -4,8 +4,8 @@
   `checkout(100)` against an exact value, a changed boundary in `discount` is read
   as noticed instead of "no test path". The call must go through a normal
   `[dependencies]` entry named like the crate, to a unique `pub` function at the
-  crate root. A dev-only dependency, a renamed dependency, a bare `use` of the
-  function, a same-named function in another crate, and an intermediate function
+  crate root. A dev-only dependency, a same-named function in another crate,
+  and an intermediate function
   that changes the argument or the result keep the earlier answer (#11401).
 - Bare `ripr repair` now says "already noticed" for a changed spot that
   `ripr check` reads as noticed by a test, instead of "could not establish which

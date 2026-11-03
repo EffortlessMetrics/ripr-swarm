@@ -1184,6 +1184,13 @@ fn chain_through_caller(
     // only the call spelled through the dependency's name binds across the
     // crate edge.
     if crosses_member_packages(caller, callee_name, index) {
+        // #11401: unless the caller's file imports the callee by name from the
+        // one dependency crate that holds it.
+        if let Some(hop) =
+            cross_crate_hop::cross_crate_imported_free_hop(caller, callee_name, index, &sites)
+        {
+            return extend_chain(hop, callee_name, index, workspace_complete, visited);
+        }
         return stopped(format!(
             "call of `{callee_name}` in `{}` crosses to another workspace package without being spelled through its dependency name",
             caller.name
@@ -4077,11 +4084,14 @@ fn caller_tail_forwards_call(
     // #11401: a cross-crate hop forwards only when the tail is exactly the
     // call spelled through its one crate name; none of the bare-name tail
     // shapes below apply to it.
+    // The hop admits one mention of the callee, spelled through the crate
+    // name or (after a `use` by name) bare; the tail must be exactly it.
     if let Some(qualifier) = crate_qualifier {
-        return tail
-            .strip_prefix(qualifier)
-            .and_then(|rest| rest.strip_prefix("::"))
-            .is_some_and(|rest| is_exact_call(rest, callee));
+        return is_exact_call(tail, callee)
+            || tail
+                .strip_prefix(qualifier)
+                .and_then(|rest| rest.strip_prefix("::"))
+                .is_some_and(|rest| is_exact_call(rest, callee));
     }
     if is_exact_call(tail, callee) {
         return true;
