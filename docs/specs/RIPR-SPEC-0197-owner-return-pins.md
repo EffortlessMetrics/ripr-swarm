@@ -1678,6 +1678,34 @@ payload with `expected`, so each reads as the unwrapped pin above
 The import is read at file granularity, with the same accepted limitation as
 "Claims payload pins".
 
+### Pinned literal neither owner version returns (#12716)
+
+An owner-return pin compares the owner's call with a literal. A literal equal
+to the value the owner returned before the diff, or to the value it returns
+after, tells the versions apart: the test passes on one and fails on the other.
+A literal that neither version returns fails on both, so it cannot notice the
+change.
+
+1. Closed subset. The owner, before and after the changed line, is a bare-name
+   `fn` whose parameters are plain `ident: <one integer type>`, whose body is
+   only `if COND { return RET; }` guards and a tail, and whose integers are
+   decimal literals and parameters joined by `+ - * / %`, unary `-` and
+   parentheses, in `Ok(..)`, `Some(..)`, `Err(..)`, `None` or bare. Every
+   intermediate value is checked in the parameter type; an overflow or division
+   by zero is not evaluable. The old version is the owner with the changed line
+   replaced by the diff's old text; a diff with no old line is not evaluable.
+2. The call. Its arguments are plain decimal literals (optionally negated) and
+   it is spelled exactly as the owner call: single-line or multi-line, bare, or
+   followed by `.unwrap()` when the pin unwraps.
+3. Withhold. When both versions, run on those arguments, return `Ok(a)` or
+   `Some(a)` and the pin names the same wrapper with another integer, or take
+   an `Err(..)` or `None` exit that the pin names as `Ok(..)` or `Some(..)`,
+   the pin does not credit. This applies to `assert_eq!`, `matches!` and the
+   claims `assert_ok_eq!` / `assert_some_eq!` alike.
+4. Fail open to today's reading. A call or owner outside the subset, an
+   `Err(..)` payload, a wrapper mismatch the compiler would reject and every
+   pin either version agrees with keep their current result.
+
 ### Bool-owner pins
 
 An owner whose signature declares `-> bool` has two values, so a bare

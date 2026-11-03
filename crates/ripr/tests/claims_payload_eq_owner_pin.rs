@@ -309,6 +309,129 @@ fn claims_payload_equality_credits_only_on_a_verified_claims_import() -> Result<
     Ok(())
 }
 
+/// #12716: a literal that neither the owner before the diff nor after it
+/// returns for the call's literal arguments fails on both versions, so it is
+/// not a discriminator of the change. The owner-return pin withholds the credit
+/// for the claims macros and plain `assert_eq!` alike. A literal pinned to the
+/// old value or the new one tells the versions apart and stays credited, and
+/// anything the closed evaluator cannot judge keeps today's reading.
+#[test]
+fn a_pinned_literal_neither_owner_version_returns_does_not_credit() -> Result<(), String> {
+    let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("claims_payload_eq_mismatch");
+    let ok = "use claims::assert_ok_eq;";
+    let some = "use claims::assert_some_eq;";
+    let cases = [
+        // Positive controls: the literal is what the owner returns after the diff.
+        result_case(
+            "c_claims_right",
+            ok,
+            "assert_ok_eq!(checked_div(17, 5), 3);",
+            true,
+        ),
+        result_case(
+            "c_eq_unwrap_right",
+            "",
+            "assert_eq!(checked_div(17, 5).unwrap(), 3);",
+            true,
+        ),
+        result_case(
+            "c_eq_ok_right",
+            "",
+            "assert_eq!(checked_div(17, 5), Ok(3));",
+            true,
+        ),
+        result_case(
+            "c_claims_multi_line_right",
+            ok,
+            "assert_ok_eq!(\n    checked_div(17, 5),\n    3\n);",
+            true,
+        ),
+        option_case("c_some_right", some, "assert_some_eq!(half(8), 4);", true),
+        option_case("c_eq_some_right", "", "assert_eq!(half(8), Some(4));", true),
+        // The value the owner returned before the diff: the test passes before
+        // and fails after, which is a discriminator.
+        result_case(
+            "o_claims_old",
+            ok,
+            "assert_ok_eq!(checked_div(17, 5), 4);",
+            true,
+        ),
+        result_case(
+            "o_eq_old",
+            "",
+            "assert_eq!(checked_div(17, 5), Ok(4));",
+            true,
+        ),
+        option_case("o_some_old", some, "assert_some_eq!(half(8), 5);", true),
+        // Neither version returns the literal.
+        result_case(
+            "w_claims",
+            ok,
+            "assert_ok_eq!(checked_div(17, 5), 9);",
+            false,
+        ),
+        result_case(
+            "w_eq_unwrap",
+            "",
+            "assert_eq!(checked_div(17, 5).unwrap(), 9);",
+            false,
+        ),
+        result_case(
+            "w_eq_ok",
+            "",
+            "assert_eq!(checked_div(17, 5), Ok(9));",
+            false,
+        ),
+        result_case(
+            "w_claims_multi_line",
+            ok,
+            "assert_ok_eq!(\n    checked_div(17, 5),\n    9\n);",
+            false,
+        ),
+        option_case("w_some", some, "assert_some_eq!(half(8), 7);", false),
+        option_case("w_eq_some", "", "assert_eq!(half(8), Some(7));", false),
+        // The owner takes its guard exit for these arguments.
+        result_case(
+            "g_claims_div_zero",
+            ok,
+            "assert_ok_eq!(checked_div(17, 0), 0);",
+            false,
+        ),
+        option_case("g_some_odd", some, "assert_some_eq!(half(7), 3);", false),
+        // Outside the closed subset: an expression argument is not read, so the
+        // reading is today's.
+        result_case(
+            "u_expression_argument",
+            ok,
+            "assert_ok_eq!(checked_div(16 + 1, 5), 4);",
+            true,
+        ),
+    ];
+    for case in cases {
+        let outcome = run(&root_dir, &case, "return_value")?;
+        assert_eq!(
+            outcome.class == "exposed",
+            case.credited,
+            "{}: {}",
+            case.name,
+            outcome.class
+        );
+        // A claims macro grades only through the pin, so a withheld one reads
+        // `unknown` / none. A plain `assert_eq!` is an exact-value assertion
+        // whatever the pin says; its withheld credit shows in the verdict.
+        let claims = case.body.contains("assert_ok_eq!") || case.body.contains("assert_some_eq!");
+        if case.credited || claims {
+            let expected = if case.credited {
+                ("exact_value".to_string(), "strong".to_string())
+            } else {
+                ("unknown".to_string(), "none".to_string())
+            };
+            assert_eq!(outcome.oracle, expected, "{}: oracle", case.name);
+        }
+    }
+    Ok(())
+}
+
 /// The same verified-import twin under probes that are not `return_value`
 /// (RIPR-SPEC-0197 rule 5): the macro is graded for the return-value family
 /// only, so every other family keeps `unknown` / none and no credit.

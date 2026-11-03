@@ -155,6 +155,10 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// test by the call's spelled path (#6544). `None` when there are none.
     /// Shared per analysis run with the relation stage's identity (#7716).
     identity: Option<std::sync::Arc<OwnerCallIdentity>>,
+    /// #12716: the owner before and after the diff, read as the closed
+    /// arithmetic subset, when both are and it is called by its bare name. It
+    /// lets a pinned literal that neither version returns withhold the credit.
+    closed_owner: Option<super::owner_value::ClosedChange>,
 }
 
 /// A file's `std`/`core`-rooted `assert_eq!` paths and, for each of the four
@@ -4685,6 +4689,13 @@ impl OwnerReturnPin {
         }
         let walked_positions =
             closure_adaptor::iterated_slice_positions(&owner.body, &probe.expression);
+        let closed_owner = probe
+            .before
+            .as_deref()
+            .filter(|_| matches!(call, PinCall::Bare))
+            .and_then(|before| {
+                super::owner_value::ClosedChange::read(&owner.body, name, changed_line, before)
+            });
         Some(Self {
             name: name.to_string(),
             call,
@@ -4717,6 +4728,7 @@ impl OwnerReturnPin {
             owner_start_line: owner.start_line,
             trait_scope_by_file: SyncMemo::default(),
             identity,
+            closed_owner,
         })
     }
 
@@ -4839,6 +4851,7 @@ impl OwnerReturnPin {
             returns_integer: false,
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
+            closed_owner: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -4948,6 +4961,7 @@ impl OwnerReturnPin {
             returns_integer: false,
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
+            closed_owner: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5049,6 +5063,7 @@ impl OwnerReturnPin {
             returns_integer: false,
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
+            closed_owner: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5840,6 +5855,21 @@ impl OwnerReturnPin {
             (true, None) => return false,
             (false, _) => expected,
         };
+        // #12716: a literal that neither the owner before the diff nor after
+        // it returns for this call's literal arguments fails on both versions,
+        // so it cannot notice the change. The closed subset answers only that
+        // provable case; every shape it cannot evaluate keeps the reading
+        // above.
+        if helper.is_none()
+            && substituted.is_none()
+            && let Some(closed) = &self.closed_owner
+            && let Some(call) = call_text
+                .map(str::to_string)
+                .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
+            && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), expected)
+        {
+            return false;
+        }
         // #8097: an expected operand read from a file the test itself may
         // write fixes nothing: the test rewrites the golden from the owner
         // before comparing, so every mutant of the owner survives.
@@ -7360,6 +7390,43 @@ enum CallShape<'a> {
     /// associated-function call; holds `T`. A module path never has a
     /// CamelCase segment ([`path_call_prefix`]), so the two never overlap.
     Associated(&'a str),
+}
+
+/// #12716: the one bare owner call in an assertion's text, for a pin whose
+/// reading kept no call text (`assert_eq!(owner(..).unwrap(), 4)`). It must be
+/// the only spelling of the owner and, for an unwrapped pin, be followed by
+/// exactly `.unwrap()`; the text through that suffix is returned.
+fn owner_call_in(assertion: &str, name: &str, unwrapped: bool) -> Option<String> {
+    let masked = mask_comments_and_strings(assertion);
+    let mut found = None;
+    let mut from = 0;
+    while let Some(offset) = masked[from..].find(name) {
+        let start = from + offset;
+        from = start + name.len();
+        let before = masked[..start].chars().next_back();
+        let after = masked[from..].chars().next();
+        if before.is_some_and(|c| c.is_alphanumeric() || c == '_')
+            || after.is_some_and(|c| c.is_alphanumeric() || c == '_')
+        {
+            continue;
+        }
+        if found.is_some() || before.is_some_and(|c| c == '.' || c == ':') {
+            return None;
+        }
+        found = Some(start);
+    }
+    let start = found?;
+    let open = start + masked[start..].find('(')?;
+    let close = matching_close(&masked, open, b'(', b')')?;
+    let rest = masked[close + 1..].trim_start();
+    let call = &masked[start..=close];
+    if unwrapped {
+        rest.starts_with(".unwrap()")
+            .then(|| format!("{call}.unwrap()"))
+    } else {
+        // Without call text and without an unwrap there is no exact shape.
+        None
+    }
 }
 
 /// Whether `owner` is declared `async fn`, read from the parsed `async`
