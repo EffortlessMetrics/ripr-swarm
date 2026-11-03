@@ -93,8 +93,14 @@ pub(super) fn given_parameter_names(args: &ast::Arguments, decorators: &[Expr]) 
     names
 }
 
-fn settings_phases(call: &ast::ExprCall) -> Option<&Expr> {
-    call.keywords
+/// The `phases=` value of a `settings(...)` call, or `Err(())` when a `**`
+/// keyword expansion could supply it (unreadable, so the caller fails closed).
+fn settings_phases(call: &ast::ExprCall) -> Result<Option<&Expr>, ()> {
+    if call.keywords.iter().any(|keyword| keyword.arg.is_none()) {
+        return Err(());
+    }
+    Ok(call
+        .keywords
         .iter()
         .find(|keyword| {
             keyword
@@ -102,7 +108,18 @@ fn settings_phases(call: &ast::ExprCall) -> Option<&Expr> {
                 .as_ref()
                 .is_some_and(|arg| arg.as_str() == "phases")
         })
-        .map(|keyword| &keyword.value)
+        .map(|keyword| &keyword.value))
+}
+
+/// Hypothesis's `settings`, bare, through the module, or imported under an
+/// alias (`from hypothesis import settings as config`).
+fn is_settings_decorator(name: &str, imports: &[PythonImport]) -> bool {
+    is_hypothesis_decorator(name, "settings")
+        || imports.iter().rev().any(|import| {
+            import.alias == name
+                && import.source_module == "hypothesis"
+                && import.imported == "settings"
+        })
 }
 
 fn resolves_to_hypothesis_module(name: &str, imports: &[PythonImport]) -> bool {
@@ -164,19 +181,21 @@ fn static_phase_list(expr: &Expr, imports: &[PythonImport]) -> Option<BTreeSet<S
     Some(phases)
 }
 
-/// Whether any `@settings(phases=...)` on the test statically omits
-/// `Phase.explicit`, or phases cannot be read conservatively.
+/// Whether `@example` rows still run: false when any `@settings(phases=...)`
+/// on the test statically omits `Phase.explicit`, or when its phases cannot be
+/// read conservatively (unresolved names, `**` expansion).
 fn explicit_examples_enabled(decorators: &[Expr], imports: &[PythonImport]) -> bool {
     for decorator in decorators {
         let Expr::Call(call) = decorator else {
             continue;
         };
-        if !expr_full_name(&call.func)
-            .is_some_and(|name| is_hypothesis_decorator(&name, "settings"))
-        {
+        if !expr_full_name(&call.func).is_some_and(|name| is_settings_decorator(&name, imports)) {
             continue;
         }
-        let Some(phases_expr) = settings_phases(call) else {
+        let Ok(phases) = settings_phases(call) else {
+            return false;
+        };
+        let Some(phases_expr) = phases else {
             continue;
         };
         let Some(phases) = static_phase_list(phases_expr, imports) else {
@@ -392,6 +411,24 @@ mod tests {
     fn shadowed_phase_name_withholds_examples() {
         let source = "@settings(phases=[Phase.generate])\n@given(st.integers())\n@example(1)\ndef test_a(x):\n    pass\n";
         assert_eq!(examples(source, &[]), None);
+    }
+
+    #[test]
+    fn aliased_settings_decorator_governs_examples() {
+        let source = "@config(phases=[Phase.generate])\n@given(st.integers(0, 100))\n@example(50)\ndef test_a(score):\n    pass\n";
+        let mut imports = phase_imports();
+        imports.push(PythonImport {
+            imported: "settings".to_string(),
+            alias: "config".to_string(),
+            source_module: "hypothesis".to_string(),
+        });
+        assert_eq!(examples(source, &imports), None);
+    }
+
+    #[test]
+    fn expanded_settings_keywords_withhold_examples() {
+        let source = "@settings(**{'phases': [Phase.generate]})\n@given(st.integers(0, 100))\n@example(50)\ndef test_a(score):\n    pass\n";
+        assert_eq!(examples(source, &phase_imports()), None);
     }
 
     #[test]
