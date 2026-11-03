@@ -54,6 +54,9 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// RIPR-SPEC-0048: what evaluating the changed constant through those
     /// readers showed; `None` when any part was unreadable.
     pub const_flow: Option<super::ConstFlow>,
+    /// RIPR-SPEC-0096: what evaluating a changed `let` returned unmodified
+    /// showed; `None` when any part was unreadable.
+    pub binding_return_flow: Option<super::BindingReturnFlow>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -84,6 +87,7 @@ impl<'a> ProbeContext<'a> {
             unmounted_build_script: false,
             const_readers: Vec::new(),
             const_flow: None,
+            binding_return_flow: None,
         }
     }
 

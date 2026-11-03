@@ -1814,6 +1814,7 @@ fn binary_root_alias_requires_manifest_authority_and_automatic_targets() -> Resu
     ] {
         // Keep dependency binding valid so each negative case exercises
         // target authority rather than failing earlier on dependency lookup.
+        let label = format!("{manifest:?}");
         let manifest = manifest
             .map(|text| format!("{text}\n[dependencies]\nmy_macros={{path='../macros'}}\n"));
         let names = alias_test_names_with_manifest(
@@ -1825,7 +1826,7 @@ fn binary_root_alias_requires_manifest_authority_and_automatic_targets() -> Resu
         )?;
         assert!(
             names.is_empty(),
-            "unconfirmed binary root credited: {names:?}"
+            "unconfirmed binary root credited for manifest {label}: {names:?}"
         );
     }
     for manifest in [

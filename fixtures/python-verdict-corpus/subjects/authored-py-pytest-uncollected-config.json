@@ -1,0 +1,41 @@
+{
+  "subject_id": "authored-py-pytest-uncollected-config",
+  "origin": "authored",
+  "version_label": "authored@a561a277",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pytest.ini",
+      "sha256": "93b8f62ae5542500bc2ee446fd787d8d9673e222b12a20a2d0951796b31629aa"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/check_name_on.py",
+      "sha256": "4f5cb567ef9f6232384ebd8bb2d55956e5b85db53a9f81f6da300711570fc42a"
+    },
+    {
+      "path": "tests/legacy/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/legacy/check_ignore_off.py",
+      "sha256": "691ed0c74b31f2991daec309750d73f53733a246d0cca3050b5eb987d2d1ecfe"
+    },
+    {
+      "path": "tests/test_name_off.py",
+      "sha256": "32e9bd7894b9915e57107146a5246721650f1bfd1a659da3359e310f4bab6fb2"
+    },
+    {
+      "path": "unconfig/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "unconfig/core.py",
+      "sha256": "042fd0d08800c479663f2ed310401118d36d13130c73fd3dd0a6972d9e179f26"
+    }
+  ]
+}

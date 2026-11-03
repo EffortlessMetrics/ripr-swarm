@@ -1,2 +1,0 @@
-crates/ripr/src/cli/commands/gate.rs|gate could not resolve --out-md: {err}
-crates/ripr/src/cli/commands/gate.rs|gate could not resolve --out: {err}

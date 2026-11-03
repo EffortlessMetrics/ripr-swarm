@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A match arm is no longer read `exposed` because a file-proximity test asserts the enum variant on a local bound to a different indexed function (`let reduced = reduce(tokens, 10); assert_eq!(reduced, Reduction::Over(..))`). The assertion now reads the local's single immutable initializer, so the existing per-assertion refusal applies as it does to the inline call. A `mut` or rebound local still keeps its credit (#12056).

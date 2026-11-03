@@ -4,6 +4,8 @@ import * as path from 'path';
 export const USER_DATA_DIR_NAME = 'vscode-test-user-data';
 export const HOST_DIAGNOSTICS_DIR_NAME = 'vscode-test-host-diagnostics';
 export const HOST_LOG_DIR_NAME = 'logs';
+/** Nested multi-root host logs retained beside the primary host on matrix failure. */
+export const MATRIX_HOST_DIAGNOSTICS_DIR_NAME = 'multiroot';
 export const HOST_DIAGNOSTICS_IDENTITY_FILE = 'retention.json';
 
 /** Total retained diagnostics copy, including identity. Matches the CI upload cap. */
@@ -38,6 +40,11 @@ export interface RetainHostDiagnosticsInput {
   env?: NodeJS.ProcessEnv;
   /** Only the matrix's named receipt; never a workspace or profile directory. */
   matrixReceiptPath?: string;
+  /**
+   * When the runner launched a nested matrix host, retain its logs alongside the
+   * primary host under {@link MATRIX_HOST_DIAGNOSTICS_DIR_NAME}/logs.
+   */
+  matrix?: { userDataDir: string; receiptPath: string };
 }
 
 interface MatrixReceiptRetention {
@@ -108,36 +115,53 @@ export function retainHostDiagnostics(
 
   const logDir = resolveLogDir(input.userDataDir);
   const copiedFiles: string[] = [];
+  const matrixReceiptPath = input.matrix?.receiptPath ?? input.matrixReceiptPath;
   // Reserve the bounded receipt before filling the remaining log budget.
-  const matrixReceipt = retainMatrixReceipt(input, diagnosticsDir);
+  const matrixReceipt = retainMatrixReceipt(
+    { ...input, matrixReceiptPath },
+    diagnosticsDir
+  );
   let bytesWritten = matrixReceipt?.bytes ?? 0;
   const logBudget = MAX_HOST_DIAGNOSTICS_BYTES - MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES;
   const logsRoot = path.join(diagnosticsDir, HOST_LOG_DIR_NAME);
+  const matrixHost = input.matrix;
+  const matrixCopiedFiles: string[] = [];
+  let matrixLogDir: string | undefined;
+  const matrixLogCap = matrixHost === undefined ? 0 : Math.floor(logBudget / 2);
 
-  if (fs.existsSync(logDir) && fs.statSync(logDir).isDirectory()) {
-    for (const relative of listRelativeFiles(logDir)) {
-      const remaining = logBudget - bytesWritten;
-      if (remaining <= 0) {
-        break;
-      }
-      const source = path.join(logDir, relative);
-      const copied = copyTextSlice(
-        source,
-        path.join(logsRoot, relative),
-        Math.min(MAX_HOST_DIAGNOSTICS_FILE_BYTES, remaining),
-        'tail'
-      );
-      if (copied > 0) {
-        copiedFiles.push(relative.split(path.sep).join('/'));
-        bytesWritten += copied;
-      }
-    }
+  if (matrixHost !== undefined) {
+    matrixLogDir = resolveLogDir(matrixHost.userDataDir);
+    const matrixLogsRoot = path.join(
+      diagnosticsDir,
+      MATRIX_HOST_DIAGNOSTICS_DIR_NAME,
+      HOST_LOG_DIR_NAME
+    );
+    bytesWritten += copyContainedLogDirectory({
+      artifactRoot: input.artifactRoot,
+      logDir: matrixLogDir,
+      logsRoot: matrixLogsRoot,
+      copiedFiles: matrixCopiedFiles,
+      byteBudget: bytesWritten + matrixLogCap,
+      bytesWritten
+    });
   }
+
+  bytesWritten += copyContainedLogDirectory({
+    artifactRoot: input.artifactRoot,
+    logDir,
+    logsRoot,
+    copiedFiles,
+    byteBudget: logBudget,
+    bytesWritten
+  });
 
   const identity = serializeIdentity({
     userDataDir: input.userDataDir,
     logDir,
     copiedFiles,
+    matrixUserDataDir: matrixHost?.userDataDir,
+    matrixLogDir,
+    matrixCopiedFiles,
     error: input.error,
     env: input.env ?? process.env,
     matrixReceipt
@@ -166,8 +190,8 @@ export function finalizeHostRun(input: {
   try {
     retention = retainHostDiagnostics({
       artifactRoot: input.artifactRoot,
-      userDataDir: input.matrix?.userDataDir ?? input.userDataDir,
-      matrixReceiptPath: input.matrix?.receiptPath,
+      userDataDir: input.userDataDir,
+      matrix: input.matrix,
       failed: input.error !== undefined,
       error: input.error
     });
@@ -191,10 +215,45 @@ export function finalizeHostRun(input: {
 const MAX_IDENTITY_PATH_CHARS = 256;
 const MAX_COPIED_FILE_ENTRIES = 64;
 
+function copyContainedLogDirectory(input: {
+  artifactRoot: string;
+  logDir: string;
+  logsRoot: string;
+  copiedFiles: string[];
+  byteBudget: number;
+  bytesWritten: number;
+}): number {
+  if (!isContainedDirectory(input.artifactRoot, input.logDir)) {
+    return 0;
+  }
+  let copiedBytes = 0;
+  for (const relative of listRelativeFiles(input.logDir)) {
+    const remaining = input.byteBudget - input.bytesWritten - copiedBytes;
+    if (remaining <= 0) {
+      break;
+    }
+    const source = path.join(input.logDir, relative);
+    const copied = copyTextSlice(
+      source,
+      path.join(input.logsRoot, relative),
+      Math.min(MAX_HOST_DIAGNOSTICS_FILE_BYTES, remaining),
+      'tail'
+    );
+    if (copied > 0) {
+      input.copiedFiles.push(relative.split(path.sep).join('/'));
+      copiedBytes += copied;
+    }
+  }
+  return copiedBytes;
+}
+
 function serializeIdentity(input: {
   userDataDir: string;
   logDir: string;
   copiedFiles: string[];
+  matrixUserDataDir?: string;
+  matrixLogDir?: string;
+  matrixCopiedFiles: string[];
   error: unknown;
   env: NodeJS.ProcessEnv;
   matrixReceipt?: MatrixReceiptRetention;
@@ -212,6 +271,19 @@ function serializeIdentity(input: {
     retention_days: HOST_DIAGNOSTICS_RETENTION_DAYS,
     copied_files: copied,
     copied_files_omitted: Math.max(0, input.copiedFiles.length - copied.length),
+    ...(input.matrixLogDir === undefined
+      ? {}
+      : {
+          matrix_user_data_dir: clipField(input.matrixUserDataDir ?? '', MAX_IDENTITY_PATH_CHARS),
+          matrix_log_dir: clipField(input.matrixLogDir, MAX_IDENTITY_PATH_CHARS),
+          matrix_copied_files: input.matrixCopiedFiles
+            .slice(0, MAX_COPIED_FILE_ENTRIES)
+            .map((name) => clipField(name, MAX_IDENTITY_PATH_CHARS)),
+          matrix_copied_files_omitted: Math.max(
+            0,
+            input.matrixCopiedFiles.length - Math.min(input.matrixCopiedFiles.length, MAX_COPIED_FILE_ENTRIES)
+          )
+        }),
     error: serializeError(input.error),
     github_run_id: clipEnv(input.env.GITHUB_RUN_ID),
     github_run_attempt: clipEnv(input.env.GITHUB_RUN_ATTEMPT),
@@ -238,6 +310,32 @@ function serializeIdentity(input: {
     copied_file_count: input.copiedFiles.length,
     identity_truncated: true
   })}\n`;
+}
+
+/**
+ * The log directory is copied only when it is a real directory under the
+ * artifact root: no `..`, no absolute escape, and no symlink or junction in
+ * any component below the root. Same containment as the matrix receipt path.
+ */
+function isContainedDirectory(artifactRoot: string, directory: string): boolean {
+  const root = path.resolve(artifactRoot);
+  const target = path.resolve(directory);
+  const relative = path.relative(root, target);
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return false;
+  }
+  try {
+    let current = root;
+    for (const part of relative.split(path.sep)) {
+      current = path.join(current, part);
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        return false;
+      }
+    }
+    return fs.lstatSync(target).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function retainMatrixReceipt(

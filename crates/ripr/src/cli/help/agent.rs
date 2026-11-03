@@ -3,19 +3,19 @@ pub(super) const AGENT_HELP: &str = r#"Create a bounded repair transaction for a
 Usage: ripr agent <subcommand>
 
 Primary workflow:
-  repair    Run the before/edit/after repair transaction and its verification phase for one seam.
+  repair    Run the before/edit/after repair transaction and its verification phase for one gap.
   status    Report existing agent-loop artifacts and the exact next command.
 
 Advanced and compatibility workflows:
-  start      Write a source-edit-free workflow manifest for one seam.
-  brief      Rank the seams in a working set so an agent starts at the strongest one.
-  packet     Expand one visible seam into the existing agent seam packet JSON.
-  card       Hand off one visible seam as the compact default repair card.
+  start      Write a source-edit-free workflow manifest for one gap.
+  brief      Rank the gaps in a working set so an agent starts at the strongest one.
+  packet     Expand one visible gap into the existing agent gap packet JSON.
+  card       Hand off one visible gap as the compact default repair card.
   stub       Write a compiling Rust test stub for one gap, ready to fill and run (Rust files only).
   verify     Compare before/after repo-exposure JSON for agent verification.
   verify-execute
              Run the one validated, bounded, read-only verify command that a packet names.
-  receipt    Summarize one seam from agent verify JSON for review handoff.
+  receipt    Summarize one gap from agent verify JSON for review handoff.
   review-summary
              Join agent-loop artifacts into a compact review packet.
 
@@ -33,10 +33,10 @@ From a Rust `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
 the finding prints) gives a ready-to-run test for that gap in one step. Stub
 generation supports Rust files only; a Python or TypeScript path exits `3`.
 
-`--seam-id` takes a seam ID from `ripr pilot --root .` or `ripr agent status`,
+`--seam-id` takes a repair ID from `ripr pilot --root .` or `ripr agent status`,
 and `--phase before` also accepts a `ripr check` finding ID (`probe:...` or
 `repo-probe:...`), a canonical gap ID, or a `file:line` location that names
-one repair-eligible seam.
+one repair-eligible gap.
 
 Run `ripr agent repair --help` for the primary repair workflow. Run
 `ripr agent status --help` to inspect an interrupted or incomplete local loop.
@@ -108,7 +108,8 @@ Options:
   --root PATH        Workspace root. Defaults to the current directory, then
                      walks up to the enclosing workspace or package, or the git
                      top level; `--root .` pins this directory.
-  --seam-id ID       Select one visible seam by ID.
+  --seam-id ID       Select one visible seam by ID, or by any ID that
+                     `ripr check` or `ripr pilot` prints.
   --gap-ledger PATH  Explicit gap decision ledger JSON, read as typed from
                      the current directory.
   --gap-id ID        Select a GapRecord by gap_id or canonical_gap_id.
@@ -132,7 +133,8 @@ Options:
   --root PATH      Workspace root. Defaults to the current directory, then
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
-  --seam-id ID     Select one visible seam by ID.
+  --seam-id ID     Select one visible seam by ID, or by any ID that
+                   `ripr check` or `ripr pilot` prints.
   --json           Emit the versioned repair_card.v1 JSON document. Without
                    this flag the same typed fields render as a short plain
                    brief; add the global `--verbose` for the full field list

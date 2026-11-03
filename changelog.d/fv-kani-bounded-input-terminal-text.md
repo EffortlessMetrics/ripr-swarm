@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- Kani bounded-model-checking harnesses (`cfg(kani)`, no effect on normal builds) prove the `bounded_input` limit arithmetic (exact accept/reject at `limit`, no overflow at `u64::MAX`, exact MiB figure) and the `needs_terminal_escape` character policy behind `terminal_text` (every control, bidi and tag character is flagged; the escape spelling alphabet is never re-escaped) (#11811).

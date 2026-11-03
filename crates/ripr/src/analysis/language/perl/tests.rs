@@ -263,9 +263,20 @@ fn perl_fact_packet_adapter_consumes_exact_return_fixture() -> Result<(), String
 }
 
 #[test]
+fn perl_fact_packet_adapter_accepts_v1_and_v2_schema_versions() -> Result<(), String> {
+    let v1 = consume(EXACT_RETURN_PACKET)?;
+    assert_eq!(v1.schema_version, crate::app::PERL_FACT_PACKET_SCHEMA);
+
+    let v2_text = EXACT_RETURN_PACKET.replace("\"ripr-perl-facts-v1\"", "\"ripr-perl-facts-v2\"");
+    let v2 = consume(&v2_text)?;
+    assert_eq!(v2.schema_version, crate::app::PERL_FACT_PACKET_V2_SCHEMA);
+    Ok(())
+}
+
+#[test]
 fn perl_fact_packet_adapter_rejects_unknown_schema_version() -> Result<(), String> {
     let err = match consume(
-        &EXACT_RETURN_PACKET.replace("\"ripr-perl-facts-v1\"", "\"ripr-perl-facts-v2\""),
+        &EXACT_RETURN_PACKET.replace("\"ripr-perl-facts-v1\"", "\"ripr-perl-facts-v3\""),
     ) {
         Ok(_) => return Err("unknown schema version should fail closed".to_string()),
         Err(err) => err,
@@ -807,6 +818,7 @@ fn perl_strict_actionability_uses_selected_strict_evidence_for_gap_identity() ->
             owner_id: "perl:lib/My/App.pm::My::App::discount".to_string(),
             test_id: "test:t/app.t:discount_smoke".to_string(),
             oracle_id: Some("oracle:t/app.t:6:ok".to_string()),
+            callsite_id: None,
             relation_kind: RelationKind::DirectOwnerCall,
             reachability_hint: ReachabilityHint::Reachable,
             confidence: Confidence::High,
@@ -2736,7 +2748,7 @@ fn consumer_still_parses_legacy_packets_without_frozen_fields() -> Result<(), St
 // ──────────────────────────────────────────────────────────────────────
 
 /// Drive the production mapper: consume a packet, then map to Findings.
-fn findings_from_packet(text: &str) -> Result<Vec<crate::domain::Finding>, String> {
+pub(crate) fn findings_from_packet(text: &str) -> Result<Vec<crate::domain::Finding>, String> {
     let packet = consume(&bless_fingerprint(text))?;
     Ok(packet_to_findings(&packet))
 }
@@ -4434,7 +4446,8 @@ const PARTIAL_DYNAMIC_BOUNDARY_PACKET: &str = r#"{
 #[test]
 fn perl_to_domain_oracle_mapping_preserves_signal_kinds() -> Result<(), String> {
     use super::{
-        OracleKind, OracleStrength, perl_oracle_kind_to_domain, perl_oracle_strength_to_domain,
+        OracleKind, OracleStrength,
+        v2_projection::{perl_oracle_kind_to_domain, perl_oracle_strength_to_domain},
     };
     use crate::domain::{OracleKind as DomainOracleKind, OracleStrength as DomainOracleStrength};
 
@@ -4749,7 +4762,7 @@ fn diff_adding(path: &str, lines: &[usize]) -> crate::analysis::diff::ChangedFil
 
 /// The real producer's change sits on zero-based line 8; the diff adds
 /// one-based line 9. The finding moves from the owner's declaration to the
-/// changed line, and its probe id keeps the owner-based identity.
+/// changed line, and its probe id keeps the named-owner semantic identity.
 #[test]
 fn perl_finding_lands_on_the_changed_line_the_diff_confirms() -> Result<(), String> {
     let packet = real_producer_packet()?;
@@ -4835,6 +4848,38 @@ fn perl_finding_lines_need_one_basis_across_the_packet() -> Result<(), String> {
     Ok(())
 }
 
+/// Declared zero-based coordinates settle on the one-based diff line without
+/// treating the raw packet line as one-based when only that lower line is added.
+#[test]
+fn perl_declared_zero_based_basis_governs_diff_settlement() -> Result<(), String> {
+    let mut packet = real_producer_packet()?;
+    packet.coordinate_line_basis = CoordinateLineBasis::ZeroBased;
+    let change_id = "change:file:lib/App/Discount.pm:8:8";
+
+    assert!(
+        change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[8])]).is_empty(),
+        "zero-based start 8 maps to diff line 9, not 8"
+    );
+    let lines = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[9])]);
+    assert_eq!(lines.get(change_id), Some(&9));
+    Ok(())
+}
+
+/// Declared one-based coordinates settle on the packet line number in the diff.
+#[test]
+fn perl_declared_one_based_basis_governs_diff_settlement() -> Result<(), String> {
+    let mut packet = real_producer_packet()?;
+    packet.coordinate_line_basis = CoordinateLineBasis::OneBased;
+    let change_id = "change:file:lib/App/Discount.pm:8:8";
+
+    let lines = change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[8])]);
+    assert_eq!(lines.get(change_id), Some(&8));
+    assert!(
+        change_lines_from_diff(&packet, &[diff_adding("lib/App/Discount.pm", &[9])]).is_empty()
+    );
+    Ok(())
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // #5498 — current-v1 Perl related-test misses (RIPR-SPEC-0224).
 //
@@ -4845,7 +4890,7 @@ fn perl_finding_lines_need_one_basis_across_the_packet() -> Result<(), String> {
 // ──────────────────────────────────────────────────────────────────────
 
 /// The class and per-row misses of the first finding a packet projects.
-fn first_finding_misses(
+pub(crate) fn first_finding_misses(
     text: &str,
 ) -> Result<(crate::domain::ExposureClass, Vec<Option<RelatedTestMiss>>), String> {
     let findings = findings_from_packet(text)?;
@@ -4858,7 +4903,7 @@ fn first_finding_misses(
     ))
 }
 
-fn with_sinks(changed_observable: &str, observed_sink: Option<&str>) -> String {
+pub(crate) fn with_sinks(changed_observable: &str, observed_sink: Option<&str>) -> String {
     let packet = EXACT_RETURN_PACKET.replace(
         "\"changed_text_digest\": \"sha256:return\",",
         &format!(
@@ -5428,6 +5473,73 @@ fn supplied_partial_packet_with_findings_does_not_hide_a_malformed_diff() -> Res
     Ok(())
 }
 
+/// #6606: on an empty git diff, a supplied complete Perl packet must still
+/// project findings and must not fail `NoScope` outcome validation.
+#[test]
+fn empty_diff_with_supplied_perl_packet_reports_findings() -> Result<(), String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("system time: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-perl-empty-diff-6606-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(root.join("src")).map_err(|error| format!("create src: {error}"))?;
+    let proof = (|| -> Result<(), String> {
+        std::fs::write(root.join("src/lib.rs"), "pub fn placeholder() {}\n")
+            .map_err(|error| error.to_string())?;
+        let facts = root.join("facts.json");
+        std::fs::write(&facts, bless_fingerprint(EXACT_RETURN_PACKET))
+            .map_err(|error| error.to_string())?;
+        let diff = root.join("empty.diff");
+        std::fs::write(&diff, "").map_err(|error| error.to_string())?;
+        let config =
+            crate::config::tests_only_parse("[languages]\nenabled = [\"rust\", \"perl\"]\n")?;
+        let output = crate::app::check_workspace_with_config(
+            crate::CheckInput {
+                root: root.clone(),
+                base: Some("origin/main".to_string()),
+                diff_file: Some(diff),
+                mode: crate::Mode::Draft,
+                format: crate::OutputFormat::Json,
+                include_unchanged_tests: false,
+                perl_facts_path: Some(facts),
+                suppression_policy: None,
+                git_timeout: None,
+                git_candidate: None,
+                scope: Default::default(),
+            },
+            &config,
+        )?;
+        assert!(
+            !output.findings.is_empty(),
+            "expected Perl findings on an empty diff with a supplied packet"
+        );
+        let outcome = output
+            .analysis_outcome
+            .as_ref()
+            .ok_or_else(|| "expected analysis_outcome on successful check".to_string())?;
+        assert_eq!(
+            outcome.kind,
+            crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings,
+            "empty diff with Perl findings must not read as NoScope"
+        );
+        let finding = output
+            .findings
+            .first()
+            .ok_or_else(|| "expected at least one finding".to_string())?;
+        assert_eq!(
+            finding.source_currentness,
+            crate::domain::SourceCurrentness::UnresolvedSubject,
+            "empty diff does not establish candidate-current Perl lines"
+        );
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    proof
+}
+
 /// A partial, finding-free Perl fact packet: it changes and tests nothing.
 const PARTIAL_EMPTY_PACKET: &str = r#"{
   "schema_version": "ripr-perl-facts-v1",
@@ -5558,12 +5670,12 @@ fn partial_packet_outcome(
 // the findings exported below.
 // ──────────────────────────────────────────────────────────────────────
 
-const THRESHOLD_TEST: &str = "test_discount_threshold";
-const SECOND_TEST: &str = "test_discount_wrapper";
+pub(crate) const THRESHOLD_TEST: &str = "test_discount_threshold";
+pub(crate) const SECOND_TEST: &str = "test_discount_wrapper";
 
 /// Parse a packet, apply `edit`, and serialize it again. The fingerprint is
 /// re-blessed by `findings_from_packet`.
-fn edited_packet(
+pub(crate) fn edited_packet(
     text: &str,
     edit: impl FnOnce(&mut serde_json::Value) -> Result<(), String>,
 ) -> Result<String, String> {
@@ -5573,7 +5685,7 @@ fn edited_packet(
     serde_json::to_string_pretty(&packet).map_err(|error| format!("render packet: {error}"))
 }
 
-fn packet_array<'a>(
+pub(crate) fn packet_array<'a>(
     packet: &'a mut serde_json::Value,
     key: &str,
 ) -> Result<&'a mut Vec<serde_json::Value>, String> {
@@ -5585,7 +5697,7 @@ fn packet_array<'a>(
 
 /// Set one field of the first fact in `key` (the threshold test's fact in
 /// `EXACT_RETURN_PACKET`).
-fn set_first(
+pub(crate) fn set_first(
     packet: &mut serde_json::Value,
     key: &str,
     field: &str,
@@ -5602,7 +5714,7 @@ fn set_first(
 /// the same change by `relation_kind`. `own_oracle` adds the test's own
 /// `(kind, strength)` oracle; `linked_oracle_id` is the oracle its relation
 /// links, which may be its own, the threshold test's, or none.
-fn with_second_row(
+pub(crate) fn with_second_row(
     text: &str,
     relation_kind: &str,
     own_oracle: Option<(&str, &str)>,
@@ -5726,7 +5838,9 @@ pub(crate) fn perl_direct_and_advisory_finding() -> Result<crate::domain::Findin
 
 /// `(name, miss)` per row, sorted by test name so a row is found by identity
 /// rather than by position.
-fn rows_by_name(finding: &crate::domain::Finding) -> Vec<(String, Option<RelatedTestMiss>)> {
+pub(crate) fn rows_by_name(
+    finding: &crate::domain::Finding,
+) -> Vec<(String, Option<RelatedTestMiss>)> {
     let mut rows = finding
         .related_tests
         .iter()
@@ -6389,5 +6503,170 @@ fn perl_isnt_is_a_smoke_oracle_not_an_exact_one() -> Result<(), String> {
         EXACT_RETURN_PACKET.replace("is($got, 10, 'discount threshold')", "isnt_zero($got, 10)");
     let (class, _) = first_finding_misses(&packet)?;
     assert_eq!(class, exact_class);
+    Ok(())
+}
+
+/// RIPR-SPEC-0235 rule 23 (#7851): equal sink text is not observation of a
+/// changed returned-list element. The producer often copies the whole
+/// changed expression onto every strong oracle. A literal-list `is_deeply`
+/// still aligns; `is(scalar ...)` and a self-comparison do not. Packets
+/// below are edited-producer consumer evidence: they start from
+/// `EXACT_RETURN_PACKET` and are not upstream fact emission.
+fn equal_fact_list_packet(expression: &str) -> Result<String, String> {
+    edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(
+            packet,
+            "changes",
+            "changed_observable",
+            serde_json::json!("$1"),
+        )?;
+        set_first(packet, "oracles", "observed_sink", serde_json::json!("$1"))?;
+        set_first(
+            packet,
+            "oracles",
+            "expression",
+            serde_json::json!(expression),
+        )?;
+        Ok(())
+    })
+}
+
+fn first_class(packet: &str) -> Result<crate::domain::ExposureClass, String> {
+    findings_from_packet(packet)?
+        .into_iter()
+        .next()
+        .map(|finding| finding.class)
+        .ok_or_else(|| "expected one finding".to_string())
+}
+
+#[test]
+fn list_element_equal_fact_does_not_promote_scalar_or_self_comparison() -> Result<(), String> {
+    use crate::domain::ExposureClass;
+    const LIST: &str = "is_deeply([PathParts::splitpath('d1/d2/d3/file')], ['', 'd1/d2/d3/', 'file'], 'list splits volume, directory, and file')";
+    const SCALAR: &str = "is(scalar PathParts::splitpath('d1/d2/d3/file'), 'file', 'scalar context is the basename')";
+    const SELF: &str = "is_deeply([PathParts::splitpath('d1/d2/d3/file')], [PathParts::splitpath('d1/d2/d3/file')], 'list self-comparison')";
+    const QUALIFIED_SCALAR: &str =
+        "Test::More::is(scalar PathParts::splitpath('d1/d2/d3/file'), 'file', 'scalar')";
+    const QUALIFIED_SELF: &str = "Test::More::is_deeply([PathParts::splitpath('d1/d2/d3/file')], [PathParts::splitpath('d1/d2/d3/file')], 'self')";
+    const IS_SELF: &str = "is(PathParts::splitpath('d1/d2/d3/file'), PathParts::splitpath('d1/d2/d3/file'), 'is self')";
+
+    let list = findings_from_packet(&equal_fact_list_packet(LIST)?)?;
+    let list = list.first().ok_or("expected one finding")?;
+    assert_eq!(
+        list.class,
+        ExposureClass::Exposed,
+        "independent list is_deeply must keep exact alignment"
+    );
+    assert!(
+        list.evidence
+            .iter()
+            .any(|e| e.starts_with("perl_already_discriminated:")),
+        "independent list is_deeply must emit already-discriminated evidence"
+    );
+
+    for (label, expression) in [
+        ("scalar is", SCALAR),
+        ("qualified scalar is", QUALIFIED_SCALAR),
+        ("list self-comparison", SELF),
+        ("qualified list self-comparison", QUALIFIED_SELF),
+        ("is self-comparison", IS_SELF),
+    ] {
+        let findings = findings_from_packet(&equal_fact_list_packet(expression)?)?;
+        let finding = findings.first().ok_or("expected one finding")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{label} must not promote equal-fact list-element sinks: {expression}"
+        );
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|e| e.starts_with("perl_already_discriminated:")),
+            "{label} must not emit already-discriminated evidence"
+        );
+        assert!(
+            finding.canonical_gap.is_some()
+                || finding
+                    .recommended_next_step
+                    .as_deref()
+                    .is_some_and(|step| !step.is_empty()),
+            "{label} must keep advisory guidance"
+        );
+    }
+
+    // Controls: a plain `is` with independent expected text still aligns,
+    // and a name that only starts with `is_deeply` is not the matcher.
+    assert_eq!(
+        first_class(&equal_fact_list_packet(
+            "is($got, 10, 'discount threshold')",
+        )?)?,
+        ExposureClass::Exposed,
+        "plain is($got, 10) keeps exact alignment"
+    );
+    assert_eq!(
+        first_class(&equal_fact_list_packet(
+            "is_deeply_ok([PathParts::splitpath('d1/d2/d3/file')], ['', 'd1/d2/d3/', 'file'])",
+        )?)?,
+        ExposureClass::Exposed,
+        "a longer name than is_deeply is not the self-comparison matcher"
+    );
+
+    // Producer-rate preservation: perl-idiom-wantarray-exact credits
+    // is(scalar ctx_value(), 3) because the equal sink is the scalar arm.
+    let wantarray = edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(
+            packet,
+            "changes",
+            "changed_observable",
+            serde_json::json!("wantarray ? @r : scalar @r"),
+        )?;
+        set_first(
+            packet,
+            "oracles",
+            "observed_sink",
+            serde_json::json!("wantarray ? @r : scalar @r"),
+        )?;
+        set_first(
+            packet,
+            "oracles",
+            "expression",
+            serde_json::json!("is(scalar Toolkit::ctx_value(), 3, 'scalar context counts')"),
+        )?;
+        Ok(())
+    })?;
+    assert_eq!(
+        first_class(&wantarray)?,
+        ExposureClass::Exposed,
+        "is(scalar ...) still aligns when the sink names scalar/wantarray"
+    );
+
+    // Scalar-return observables are not numbered captures; scalar `is` keeps credit.
+    let scalar_return = edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(
+            packet,
+            "changes",
+            "changed_observable",
+            serde_json::json!("$result"),
+        )?;
+        set_first(
+            packet,
+            "oracles",
+            "observed_sink",
+            serde_json::json!("$result"),
+        )?;
+        set_first(
+            packet,
+            "oracles",
+            "expression",
+            serde_json::json!("is(scalar Foo::value(), 3, 'scalar return counts')"),
+        )?;
+        Ok(())
+    })?;
+    assert_eq!(
+        first_class(&scalar_return)?,
+        ExposureClass::Exposed,
+        "scalar is on a scalar-return observable must not be withheld by rule 23"
+    );
     Ok(())
 }

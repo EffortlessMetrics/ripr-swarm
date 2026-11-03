@@ -11,7 +11,7 @@
 
 use crate::analysis::facts::RustIndex;
 use crate::analysis::probes::{
-    BindingValueResolution, ChangedBindingPredicateUse, ChangedBindingReturnFlow,
+    BindingValueResolution, ChangedBindingPredicateUse, ChangedBindingReturnFlow, ReturnFlowKind,
 };
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
 
@@ -66,11 +66,67 @@ pub(super) fn apply_verus_macro_region_limit(
     let Some((start, end)) = region else {
         return;
     };
+    name_verus_region(
+        finding,
+        start,
+        end,
+        side,
+        (
+            "the changed line is inside a `verus! { .. }` token tree, which ripr does not parse as Rust",
+            "This change",
+        ),
+    );
+}
+
+/// #12006: repository mode has no changed line, so the one `static_unknown`
+/// probe the repo seeder emits per `verus! { .. }` region is named by the
+/// file's own index key. Same class gate as the diff path: it never changes
+/// the class, so the finding stays non-actionable and credits no test.
+pub(super) fn apply_verus_macro_region_limit_in_repo_file(
+    finding: &mut Finding,
+    probe: &Probe,
+    index: &RustIndex,
+    path: &std::path::Path,
+) {
+    if probe.family != crate::domain::ProbeFamily::StaticUnknown
+        || finding.class != ExposureClass::StaticUnknown
+        || finding.static_limit_kind.is_some()
+    {
+        return;
+    }
+    let Some(facts) = crate::analysis::rust_index::find_file_facts(index, path) else {
+        return;
+    };
+    let Some((start, end)) =
+        crate::analysis::probes::verus_region_lines(&facts.source, probe.location.line)
+    else {
+        return;
+    };
+    name_verus_region(
+        finding,
+        start,
+        end,
+        "",
+        (
+            "this file holds a `verus! { .. }` token tree, which ripr does not parse as Rust",
+            "This code",
+        ),
+    );
+}
+
+/// The shared limitation disclosure for a `verus! { .. }` region (RIPR-SPEC-0369).
+fn name_verus_region(
+    finding: &mut Finding,
+    start: usize,
+    end: usize,
+    side: &str,
+    (what, subject): (&str, &str),
+) {
     finding.static_limit_kind = Some(StaticLimitKind::UnsupportedSyntax);
     finding.stop_reasons.push(StopReason::ProcMacroOpaque);
-    finding.evidence.push(
-        "limitation: verus_macro_region_unsupported; the changed line is inside a `verus! { .. }` token tree, which ripr does not parse as Rust".to_string(),
-    );
+    finding.evidence.push(format!(
+        "limitation: verus_macro_region_unsupported; {what}"
+    ));
     finding.evidence.push(format!(
         "limitation_last_established_edge: `verus!` invocation spanning lines {start}-{end}{side}"
     ));
@@ -84,10 +140,9 @@ pub(super) fn apply_verus_macro_region_limit(
         "limitation_non_claim: named analyzer limitation only; no test reach, assertion discrimination or specification adequacy is established or denied, and ripr does not run the verifier"
             .to_string(),
     );
-    finding.recommended_next_step = Some(
-        "This change is inside `verus!`; ripr cannot judge it. Run the Verus verifier for spec and proof edits; no test is requested by this finding."
-            .to_string(),
-    );
+    finding.recommended_next_step = Some(format!(
+        "{subject} is inside `verus!`; ripr cannot judge it. Run the Verus verifier for spec and proof edits; no test is requested by this finding."
+    ));
 }
 
 /// #8479: disclose the field-selector boundary without altering any proof leg.
@@ -296,6 +351,13 @@ pub(super) fn attach_changed_binding_return_evidence(
         flow.return_line,
         flow.kind.label()
     ));
+    if matches!(
+        finding.class,
+        ExposureClass::Exposed | ExposureClass::WeaklyExposed
+    ) && flow.kind == ReturnFlowKind::Whole
+    {
+        return;
+    }
     finding.evidence.push(
         "binding_return_non_claim: named analyzer limitation only; the binding value is not evaluated and no test is credited for the changed binding"
             .to_string(),
@@ -1243,6 +1305,37 @@ mod tests {
                 .evidence
                 .iter()
                 .any(|line| line.starts_with("binding_return_non_claim:"))
+        );
+    }
+
+    #[test]
+    fn credited_whole_binding_return_does_not_claim_unread_value() {
+        use crate::analysis::probes::ChangedBindingReturnFlow;
+        let mut finding =
+            static_unknown_finding("let result = helper(amount * 8);", "src/lib.rs::score");
+        finding.class = ExposureClass::Exposed;
+        finding.probe.before = Some("let result = helper(amount * 9);".to_string());
+        let flow = ChangedBindingReturnFlow {
+            binding: "result".to_string(),
+            initializer: "helper(amount * 8)".to_string(),
+            return_expression: "result".to_string(),
+            return_line: 9,
+            kind: crate::analysis::probes::ReturnFlowKind::Whole,
+        };
+        attach_changed_binding_return_evidence(&mut finding, Some(&flow));
+        assert_eq!(finding.class, ExposureClass::Exposed);
+        assert!(finding.evidence.iter().any(|line| {
+            line.starts_with(
+                "binding_return_relation: changed binding `result` initializer `helper(amount * 9)` -> `helper(amount * 8)` reaches the returned expression `result` at line 9 as a whole binding",
+            )
+        }));
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .all(|line| !line.starts_with("binding_return_non_claim:")),
+            "{:?}",
+            finding.evidence
         );
     }
 }

@@ -451,8 +451,12 @@ fn property_mentions_respect_known_package_boundaries() -> Result<(), String> {
         let finding = &json["findings"][0];
         assert_eq!(
             finding["classification"],
+            // #11544: an in-package opaque property mention abstains; the
+            // unrelated-package control keeps `no_static_path`.
             if ordinary {
                 "exposed"
+            } else if limited {
+                "static_unknown"
             } else {
                 "no_static_path"
             },

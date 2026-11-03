@@ -503,20 +503,142 @@ fn recovery_advice(root: &Path, subject: &str) -> String {
     )
 }
 
-fn legacy_repo_exposure_refusal(root: &Path, subject: &str) -> String {
+/// First-useful diagnosis for a missing or older producer stamp (#5115).
+/// Names the producer/schema pair and PATH substitution; it does not embed
+/// an absolute executable path. Regeneration advice stays in `recovery_advice`.
+fn producer_substitution_clause(produced_by: &str, produced_schema: &str) -> String {
     format!(
-        "{subject} is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. {}; the legacy artifact was not accepted",
+        "artifact produced by {produced_by} (schema {produced_schema}); this ripr is {} (expects schema {}) — a different ripr binary likely won PATH resolution; run `ripr --version` / use the same binary",
         env!("CARGO_PKG_VERSION"),
+        crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION,
+    )
+}
+
+fn legacy_repo_exposure_refusal(root: &Path, subject: &str, produced_schema: &str) -> String {
+    format!(
+        "{subject} is not a canonical repo-exposure artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} repo-exposure contract. {}. {}; the legacy artifact was not accepted",
+        env!("CARGO_PKG_VERSION"),
+        producer_substitution_clause("legacy/unknown RIPR", produced_schema),
+        recovery_advice(root, subject),
+    )
+}
+
+fn legacy_check_findings_refusal(root: &Path, subject: &str, produced_schema: &str) -> String {
+    format!(
+        "{subject} is not a canonical check-findings artifact: no RIPR producer envelope (legacy or unknown producer); expected the current RIPR {} check-findings contract. {}. {}; the legacy artifact was not accepted",
+        env!("CARGO_PKG_VERSION"),
+        producer_substitution_clause("legacy/unknown RIPR", produced_schema),
         recovery_advice(root, subject),
     )
 }
 
 fn foreign_producer_refusal(root: &Path, subject: &str, produced_by: &str) -> String {
+    foreign_producer_refusal_with_schema(
+        root,
+        subject,
+        produced_by,
+        crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION,
+    )
+}
+
+fn foreign_producer_refusal_with_schema(
+    root: &Path,
+    subject: &str,
+    produced_by: &str,
+    produced_schema: &str,
+) -> String {
     format!(
-        "{subject} was produced by RIPR {produced_by}, but this consumer is RIPR {}: a producer version other than the consuming executable's is not accepted as current repo-exposure evidence (a version string does not authenticate its producer; the content commitment only proves the bytes were not edited). {}; the foreign-producer artifact was not accepted",
+        "{subject} was produced by RIPR {produced_by}, but this consumer is RIPR {}: {}. A producer version other than the consuming executable's is not accepted as current repo-exposure evidence (a version string does not authenticate its producer; the content commitment only proves the bytes were not edited). {}; the foreign-producer artifact was not accepted",
         env!("CARGO_PKG_VERSION"),
+        producer_substitution_clause(&format!("ripr {produced_by}"), produced_schema),
         recovery_advice(root, subject),
     )
+}
+
+/// Peek `schema_version` and `artifact.producer.version` from the JSON
+/// object before the full typed shape is deserialized. A missing envelope
+/// (released 0.10) or an older/foreign version fails closed here so a later
+/// field cannot surface as serde `missing field` (#5115). Substitution is
+/// only this format: string `schema_version`, scope `repo`, seams array, and
+/// either no envelope or an explicit `producer.tool = "ripr"`. Matching
+/// current version, empty version, foreign tool, and unrelated JSON stay on
+/// the canonical/identity gates.
+fn producer_stamp_mismatch(document: &Value) -> Option<ProducerStampMismatch> {
+    if !repo_exposure_shape_markers(document) {
+        return None;
+    }
+    if is_unversioned_repo_exposure_value(document) {
+        return Some(ProducerStampMismatch {
+            produced_by: None,
+            produced_schema: document
+                .get("schema_version")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+        });
+    }
+    let producer = document.get("artifact")?.get("producer")?;
+    if producer.get("tool").and_then(Value::as_str) != Some("ripr") {
+        return None;
+    }
+    let version = producer.get("version")?.as_str()?;
+    // Empty version stays on the identity-shape gate (#9665): it is a
+    // present-but-invalid envelope, not a PATH substitution diagnosis.
+    if version.trim().is_empty() || version == env!("CARGO_PKG_VERSION") {
+        return None;
+    }
+    Some(ProducerStampMismatch {
+        produced_by: Some(version.to_string()),
+        produced_schema: document
+            .get("schema_version")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+    })
+}
+
+struct ProducerStampMismatch {
+    produced_by: Option<String>,
+    produced_schema: String,
+}
+
+fn producer_stamp_refusal(root: &Path, subject: &str, mismatch: &ProducerStampMismatch) -> String {
+    match mismatch.produced_by.as_deref() {
+        Some(version) => {
+            foreign_producer_refusal_with_schema(root, subject, version, &mismatch.produced_schema)
+        }
+        None => legacy_repo_exposure_refusal(root, subject, &mismatch.produced_schema),
+    }
+}
+
+fn check_findings_producer_stamp_refusal(
+    root: &Path,
+    subject: &str,
+    mismatch: &ProducerStampMismatch,
+) -> String {
+    match mismatch.produced_by.as_deref() {
+        Some(version) => {
+            foreign_producer_refusal_with_schema(root, subject, version, &mismatch.produced_schema)
+        }
+        None => legacy_check_findings_refusal(root, subject, &mismatch.produced_schema),
+    }
+}
+
+fn repo_exposure_parse_refusal(label: &str, err: impl std::fmt::Display) -> String {
+    format!(
+        "agent verify {label} artifact is not a canonical repo-exposure artifact: {err}; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
+    )
+}
+
+fn repo_exposure_cut_refusal(subject: &str, document: &Value) -> Option<String> {
+    let cut = crate::output::repo_exposure::seam_limit_cut_controls(document);
+    if crate::output::repo_exposure::is_byte_bounded_repo_exposure(document) {
+        return Some(byte_bounded_repo_exposure_refusal(subject, &cut));
+    }
+    if !cut.is_empty() {
+        return Some(seam_limited_repo_exposure_refusal(subject, &cut));
+    }
+    None
 }
 
 pub(crate) fn validate_repo_exposure_artifact(
@@ -525,18 +647,45 @@ pub(crate) fn validate_repo_exposure_artifact(
     label: &str,
 ) -> Result<ValidatedArtifact, String> {
     let subject = format!("agent verify {label} artifact");
-    let document: RepoExposureDocument = serde_json::from_str(raw).map_err(|err| {
-        if is_unversioned_repo_exposure(raw) {
-            return legacy_repo_exposure_refusal(root, &subject);
+    // One JSON lexer pass: peek identity/cuts on the Value, then type it.
+    // Byte/seam cuts outrank producer-stamp substitution so a pilot-limited
+    // file without an envelope keeps the control-specific recovery (#12108).
+    let parsed_value = match serde_json::from_str::<Value>(raw) {
+        Ok(document) => document,
+        Err(err) => {
+            return Err(repo_exposure_parse_refusal(label, err));
         }
-        format!("agent verify {label} artifact is not a canonical repo-exposure artifact: {err}")
-    })?;
+    };
+    if let Some(refusal) = repo_exposure_cut_refusal(&subject, &parsed_value) {
+        return Err(refusal);
+    }
+    if let Some(mismatch) = producer_stamp_mismatch(&parsed_value) {
+        return Err(producer_stamp_refusal(root, &subject, &mismatch));
+    }
+    let document: RepoExposureDocument = serde_json::from_value(parsed_value)
+        .map_err(|err| repo_exposure_parse_refusal(label, err))?;
     let RepoExposureDocument {
         schema_version,
         scope,
         artifact: identity,
         seams,
+        run_status,
+        limitations,
     } = document;
+    // #12150: a seam-capped file is a prefix of the inventory; same class.
+    let cut = crate::output::repo_exposure::seam_limit_cut_controls_from_parts(
+        run_status.as_deref(),
+        limitations.as_ref(),
+    );
+    if crate::output::repo_exposure::byte_bounded_from_parts(
+        run_status.as_deref(),
+        limitations.as_ref(),
+    ) {
+        return Err(byte_bounded_repo_exposure_refusal(&subject, &cut));
+    }
+    if !cut.is_empty() {
+        return Err(seam_limited_repo_exposure_refusal(&subject, &cut));
+    }
     if schema_version != crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION {
         return Err(format!(
             "agent verify {label} artifact has unsupported repo-exposure schema `{}`; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
@@ -646,6 +795,10 @@ pub(crate) fn validate_check_findings_artifact(
     raw: &str,
     label: &str,
 ) -> Result<ValidatedCheckFindings, String> {
+    let subject = format!("agent verify {label} artifact");
+    let parsed_value = serde_json::from_str::<Value>(raw)
+        .map_err(|err| check_findings_parse_refusal(label, err))?;
+    refuse_check_findings_producer_stamp_before_shape(root, &subject, &parsed_value)?;
     let CheckFindingsDocument {
         artifact: identity,
         analysis_outcome,
@@ -653,7 +806,8 @@ pub(crate) fn validate_check_findings_artifact(
         run_limitations,
         findings,
         ..
-    } = parse_check_findings_document(raw, label)?;
+    } = serde_json::from_value(parsed_value)
+        .map_err(|err| check_findings_parse_refusal(label, err))?;
     let artifact =
         validate_artifact_identity(root, raw, label, identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
     check_findings_run_is_whole(label, analysis_scope.as_ref(), run_limitations.as_deref())?;
@@ -661,15 +815,27 @@ pub(crate) fn validate_check_findings_artifact(
     Ok(ValidatedCheckFindings { artifact, gaps })
 }
 
-fn parse_check_findings_document(raw: &str, label: &str) -> Result<CheckFindingsDocument, String> {
-    let document: CheckFindingsDocument = serde_json::from_str(raw).map_err(|err| {
-        format!("agent verify {label} artifact is not a canonical check-findings artifact: {err}")
-    })?;
+fn check_findings_parse_refusal(label: &str, err: impl std::fmt::Display) -> String {
+    format!(
+        "agent verify {label} artifact is not a canonical check-findings artifact: {err}; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
+    )
+}
+
+fn parse_check_findings_document(
+    root: &Path,
+    raw: &str,
+    label: &str,
+) -> Result<CheckFindingsDocument, String> {
+    let parsed_value = serde_json::from_str::<Value>(raw)
+        .map_err(|err| check_findings_parse_refusal(label, err))?;
+    let document: CheckFindingsDocument = serde_json::from_value(parsed_value)
+        .map_err(|err| check_findings_parse_refusal(label, err))?;
     if document.schema_version.trim().is_empty() {
         return Err(format!(
             "agent verify {label} artifact has an empty check schema version"
         ));
     }
+    let _ = root;
     Ok(document)
 }
 
@@ -695,7 +861,7 @@ pub(crate) fn validate_issued_check_findings_commitment(
         run_limitations,
         findings,
         ..
-    } = parse_check_findings_document(raw, label)?;
+    } = parse_check_findings_document(root, raw, label)?;
     validate_artifact_identity_shape(label, &identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
     if identity.producer.version != recorded_producer_version {
         return Err(format!(
@@ -1113,16 +1279,111 @@ fn validate_artifact_commitment(
     Ok(expected_root)
 }
 
-/// Classify only the old repo-exposure shape after canonical parsing refused it.
-/// This diagnosis never admits an artifact or authenticates a producer version.
-fn is_unversioned_repo_exposure(raw: &str) -> bool {
-    let Ok(Value::Object(document)) = serde_json::from_str::<Value>(raw) else {
-        return false;
-    };
-    !document.contains_key("artifact")
-        && document.get("schema_version").is_some_and(Value::is_string)
+fn seam_limited_repo_exposure_refusal(subject: &str, controls: &[&str]) -> String {
+    format!(
+        "{subject} is a seam-limited repo-exposure file (its seams[] is a prefix of the inventory cut by {}, so a seam missing from it cannot be compared; {})",
+        controls.join(" and "),
+        crate::output::repo_exposure::seam_limit_cut_repair(controls)
+    )
+}
+
+/// A pilot `repo-exposure.json` whose `seams[]` the byte budget cut (#12108)
+/// lists only some of the seams. `seam_cut` is the same document's seam-limit
+/// controls: when a seam limit also cut it (#12226), the one refusal lists
+/// every control, so the repair does not surface a second refusal.
+fn byte_bounded_repo_exposure_refusal(subject: &str, seam_cut: &[&'static str]) -> String {
+    if !seam_cut.is_empty() {
+        let controls = crate::output::repo_exposure::byte_and_seam_cut_controls(seam_cut);
+        return format!(
+            "{subject} is a byte-bounded and seam-limited repo-exposure file (`ripr pilot` cut its seams[] by {}, so a seam missing from it cannot be compared; {})",
+            controls.join(" and "),
+            crate::output::repo_exposure::seam_limit_cut_repair(&controls)
+        );
+    }
+    format!(
+        "{subject} is a byte-bounded repo-exposure file (`ripr pilot` cut its seams[] to RIPR_PILOT_REPO_EXPOSURE_BYTES, so a seam missing from it cannot be compared; rerun `ripr pilot` with RIPR_PILOT_REPO_EXPOSURE_BYTES=0, or produce the snapshot with `ripr check --format repo-exposure-json`, then compare)"
+    )
+}
+
+/// Top-level markers of a repo-exposure document, with or without a producer
+/// envelope. Substitution never uses these alone as authentication.
+fn repo_exposure_shape_markers(document: &Value) -> bool {
+    document.get("schema_version").is_some_and(Value::is_string)
         && document.get("scope").and_then(Value::as_str) == Some("repo")
         && document.get("seams").is_some_and(Value::is_array)
+}
+
+/// Classify only the old repo-exposure shape (released 0.10: schema, scope,
+/// seams, and no producer envelope). This diagnosis never admits an artifact
+/// or authenticates a producer version.
+fn is_unversioned_repo_exposure_value(document: &Value) -> bool {
+    let Value::Object(map) = document else {
+        return false;
+    };
+    !map.contains_key("artifact") && repo_exposure_shape_markers(document)
+}
+
+/// Top-level markers of a check-findings document. Repo-exposure documents also
+/// carry `schema_version`, so the `findings` array and absence of repo scope
+/// distinguish the two before typed deserialization (#5115).
+fn check_findings_shape_markers(document: &Value) -> bool {
+    document.get("schema_version").is_some_and(Value::is_string)
+        && document.get("findings").is_some_and(Value::is_array)
+        && document.get("scope").is_none()
+}
+
+fn is_unversioned_check_findings_value(document: &Value) -> bool {
+    let Value::Object(map) = document else {
+        return false;
+    };
+    !map.contains_key("artifact") && check_findings_shape_markers(document)
+}
+
+/// Peek producer identity on a check-findings document before the full typed
+/// shape is deserialized (#5115 consume-path parity with repo-exposure).
+fn check_findings_producer_stamp_mismatch(document: &Value) -> Option<ProducerStampMismatch> {
+    if !check_findings_shape_markers(document) {
+        return None;
+    }
+    if is_unversioned_check_findings_value(document) {
+        return Some(ProducerStampMismatch {
+            produced_by: None,
+            produced_schema: document
+                .get("schema_version")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+        });
+    }
+    let producer = document.get("artifact")?.get("producer")?;
+    if producer.get("tool").and_then(Value::as_str) != Some("ripr") {
+        return None;
+    }
+    let version = producer.get("version")?.as_str()?;
+    if version.trim().is_empty() || version == env!("CARGO_PKG_VERSION") {
+        return None;
+    }
+    Some(ProducerStampMismatch {
+        produced_by: Some(version.to_string()),
+        produced_schema: document
+            .get("schema_version")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+    })
+}
+
+fn refuse_check_findings_producer_stamp_before_shape(
+    root: &Path,
+    subject: &str,
+    document: &Value,
+) -> Result<(), String> {
+    if let Some(mismatch) = check_findings_producer_stamp_mismatch(document) {
+        return Err(check_findings_producer_stamp_refusal(
+            root, subject, &mismatch,
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1311,6 +1572,10 @@ struct RepoExposureDocument {
     scope: String,
     artifact: ArtifactIdentity,
     seams: Vec<RepoExposureSeam>,
+    #[serde(default)]
+    run_status: Option<String>,
+    #[serde(default)]
+    limitations: Option<Vec<Value>>,
 }
 
 #[derive(serde::Deserialize)]
@@ -2076,6 +2341,150 @@ mod tests {
         findings: Vec<CheckFindingsFinding>,
     }
 
+    /// #12226: a file the writer cut by bytes AND by the pilot seam budget is
+    /// refused once, naming both controls; single-cut files keep one control.
+    #[test]
+    fn both_cuts_repo_exposure_refusal_names_every_control() -> Result<(), String> {
+        let root = std::path::Path::new(".");
+        let both = crate::output::repo_exposure::tests::both_cuts_document_from_writer()?;
+        let refusal = validate_repo_exposure_artifact(root, &both, "before")
+            .err()
+            .ok_or("a both-cuts file must not validate")?;
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        assert!(refusal.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{refusal}");
+        if refusal.contains("legacy or unknown producer") || refusal.contains("PATH resolution") {
+            return Err(format!(
+                "both-cuts file was misclassified as producer substitution: {refusal}"
+            ));
+        }
+        // Negative: byte-only names no seam control; seam-only names no byte control.
+        let byte_only = serde_json::json!({
+            "schema_version": "0.5", "scope": "repo",
+            "run_status": "limited_repo_exposure_bytes", "seams": []
+        })
+        .to_string();
+        let refusal = validate_repo_exposure_artifact(root, &byte_only, "before")
+            .err()
+            .ok_or("a byte-only file must not validate")?;
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        assert!(!refusal.contains("RIPR_PILOT_SEAM_BUDGET"), "{refusal}");
+        if refusal.contains("legacy or unknown producer") || refusal.contains("PATH resolution") {
+            return Err(format!(
+                "byte-only cut was misclassified as producer substitution: {refusal}"
+            ));
+        }
+        let seam_only = serde_json::json!({
+            "schema_version": "0.5", "scope": "repo",
+            "run_status": "seam_limit_applied",
+            "limitations": [{"category": "pilot_seam_budget_applied"}], "seams": []
+        })
+        .to_string();
+        let refusal = validate_repo_exposure_artifact(root, &seam_only, "before")
+            .err()
+            .ok_or("a seam-only file must not validate")?;
+        assert!(refusal.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{refusal}");
+        assert!(
+            !refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn byte_bounded_repo_exposure_is_refused_by_name_not_as_a_malformed_file() -> Result<(), String>
+    {
+        // #12108: a pilot file whose seams[] the byte budget cut carries no
+        // artifact identity; the refusal names the cut and its recovery.
+        let bounded = serde_json::json!({
+            "schema_version": "0.5",
+            "scope": "repo",
+            "run_status": "limited_repo_exposure_bytes",
+            "seams": []
+        })
+        .to_string();
+        let root = std::path::Path::new(".");
+        let refusal = validate_repo_exposure_artifact(root, &bounded, "before")
+            .err()
+            .ok_or("a byte-bounded repo-exposure file must not validate")?;
+        assert!(
+            refusal.contains("byte-bounded repo-exposure file"),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        if refusal.contains("legacy or unknown producer") || refusal.contains("PATH resolution") {
+            return Err(format!(
+                "byte-bounded cut was misclassified as producer substitution: {refusal}"
+            ));
+        }
+        // Both limits applied: run_status is the seam cap's, the byte bound is a
+        // limitations[] entry, and the file is still refused by name.
+        let both = serde_json::json!({
+            "schema_version": "0.5",
+            "scope": "repo",
+            "run_status": "seam_limit_applied",
+            "limitations": [
+                {"category": "pilot_seam_budget_applied"},
+                {"category": "pilot_repo_exposure_byte_bound_applied"}
+            ],
+            "seams": []
+        })
+        .to_string();
+        let both_refusal = validate_repo_exposure_artifact(root, &both, "before")
+            .err()
+            .ok_or("a seam-capped and byte-bounded file must not validate")?;
+        assert!(both_refusal.contains("byte-bounded"), "{both_refusal}");
+        // #12150: a seam cap alone is refused by its own name and control.
+        let seam_cap_only = both.replace("pilot_repo_exposure_byte_bound_applied", "other");
+        let capped = validate_repo_exposure_artifact(root, &seam_cap_only, "before")
+            .err()
+            .ok_or("a seam-capped file must not validate")?;
+        assert!(!capped.contains("byte-bounded"), "{capped}");
+        assert!(capped.contains("seam-limited"), "{capped}");
+        assert!(capped.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{capped}");
+        let inventory_cap =
+            seam_cap_only.replace("pilot_seam_budget_applied", "repo_seam_limit_applied");
+        let inventory = validate_repo_exposure_artifact(root, &inventory_cap, "before")
+            .err()
+            .ok_or("an inventory-capped file must not validate")?;
+        assert!(
+            inventory.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT=0"),
+            "{inventory}"
+        );
+        // Negative: a declined-files status is not a seam cut and keeps the
+        // generic refusal.
+        let declined = seam_cap_only
+            .replace("seam_limit_applied", "limited_declined_files")
+            .replace("pilot_seam_budget_applied", "rust_files_declined");
+        let declined_refusal = validate_repo_exposure_artifact(root, &declined, "before")
+            .err()
+            .ok_or("a file without artifact identity must not validate")?;
+        assert!(
+            !declined_refusal.contains("seam-limited"),
+            "{declined_refusal}"
+        );
+        // Discriminating negative: the same shape with another status keeps the
+        // generic malformed-artifact refusal, so the new branch is not a catch-all.
+        let other = bounded.replace("limited_repo_exposure_bytes", "complete");
+        let generic = validate_repo_exposure_artifact(root, &other, "before")
+            .err()
+            .ok_or("a file without artifact identity must not validate")?;
+        assert!(!generic.contains("byte-bounded"), "{generic}");
+        assert!(
+            generic.contains("not a canonical repo-exposure artifact"),
+            "{generic}"
+        );
+        Ok(())
+    }
+
     fn ts_finding(fp8: &str, classification: &str) -> serde_json::Value {
         serde_json::json!({
             "id": format!("probe:src_pricing.ts:typescript_preview:{fp8}"),
@@ -2456,6 +2865,31 @@ mod tests {
         )
     }
 
+    fn assert_producer_substitution_diagnostic(
+        error: &str,
+        produced_by: &str,
+        produced_schema: &str,
+    ) -> Result<(), String> {
+        for text in [
+            format!("artifact produced by {produced_by} (schema {produced_schema})"),
+            format!("this ripr is {}", env!("CARGO_PKG_VERSION")),
+            format!(
+                "expects schema {}",
+                crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION
+            ),
+            "different ripr binary likely won PATH resolution".to_string(),
+            "`ripr --version`".to_string(),
+        ] {
+            if !error.contains(&text) {
+                return Err(format!("substitution diagnostic omitted {text}: {error}"));
+            }
+        }
+        if error.contains("missing field") {
+            return Err("producer-stamp refusal exposed an opaque schema error".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn legacy_repo_exposure_has_actionable_rooted_recovery() -> Result<(), String> {
         // Released v0.10.0 (c08d474a) renders schema 0.3, scope repo and
@@ -2476,8 +2910,103 @@ mod tests {
                 return Err(format!("legacy recovery omitted {text}: {error}"));
             }
         }
-        if error.contains("missing field") {
-            return Err("legacy recovery exposed an opaque schema error".to_string());
+        assert_producer_substitution_diagnostic(&error, "legacy/unknown RIPR", "0.3")?;
+        Ok(())
+    }
+
+    /// #5115: an older envelope that names `producer.version` but omits later
+    /// identity fields used to fail as serde `missing field`. The producer
+    /// stamp must be refused first, with the substitution diagnostic.
+    #[test]
+    fn older_producer_stamp_with_incomplete_shape_names_substitution_not_missing_field()
+    -> Result<(), String> {
+        let raw = r#"{"schema_version":"0.3","scope":"repo","seams":[],"artifact":{"producer":{"tool":"ripr","version":"0.10.0"}}}"#;
+        let error = validate_repo_exposure_artifact(Path::new("."), raw, "before")
+            .err()
+            .ok_or("older producer stamp was accepted")?;
+        if !error.contains("produced by RIPR 0.10.0") {
+            return Err(format!("older stamp omitted producer version: {error}"));
+        }
+        assert_producer_substitution_diagnostic(&error, "ripr 0.10.0", "0.3")?;
+        Ok(())
+    }
+
+    /// Matching current `producer.version` is not a substitution refusal.
+    /// An incomplete envelope still fails as a canonical shape error.
+    #[test]
+    fn matching_producer_stamp_keeps_canonical_shape_errors() -> Result<(), String> {
+        let version = env!("CARGO_PKG_VERSION");
+        let schema = crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION;
+        let raw = format!(
+            r#"{{"schema_version":"{schema}","scope":"repo","seams":[],"artifact":{{"producer":{{"tool":"ripr","version":"{version}"}}}}}}"#
+        );
+        let error = validate_repo_exposure_artifact(Path::new("."), &raw, "before")
+            .err()
+            .ok_or("incomplete matching stamp was accepted")?;
+        if !error.contains("missing field") {
+            return Err(format!(
+                "matching stamp must keep the canonical shape error: {error}"
+            ));
+        }
+        if !error.contains("regenerate the before snapshot")
+            || !error.contains("`ripr agent verify --help`")
+        {
+            return Err(format!(
+                "canonical shape error omitted the regenerate next step: {error}"
+            ));
+        }
+        if error.contains("different ripr binary likely won PATH resolution")
+            || error.contains("legacy or unknown producer")
+        {
+            return Err(format!(
+                "matching stamp was misclassified as substitution: {error}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #5115: check-findings consume path peeks producer identity before typed
+    /// deserialize, like repo-exposure.
+    #[test]
+    fn check_findings_older_producer_stamp_names_substitution_not_missing_field()
+    -> Result<(), String> {
+        let raw = r#"{"schema_version":"0.2","findings":[],"artifact":{"kind":"check_findings","producer":{"tool":"ripr","version":"0.10.0"}}}"#;
+        let error = validate_check_findings_artifact(Path::new("."), raw, "before")
+            .err()
+            .ok_or("older check-findings producer stamp was accepted")?;
+        if !error.contains("produced by RIPR 0.10.0") {
+            return Err(format!("older stamp omitted producer version: {error}"));
+        }
+        assert_producer_substitution_diagnostic(&error, "ripr 0.10.0", "0.2")?;
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_check_findings_without_envelope_names_substitution() -> Result<(), String> {
+        let raw = r#"{"schema_version":"0.2","findings":[]}"#;
+        let error = validate_check_findings_artifact(Path::new("."), raw, "before")
+            .err()
+            .ok_or("legacy check-findings artifact was accepted")?;
+        if !error.contains("check-findings artifact") {
+            return Err(format!("legacy refusal omitted format name: {error}"));
+        }
+        assert_producer_substitution_diagnostic(&error, "legacy/unknown RIPR", "0.2")?;
+        Ok(())
+    }
+
+    #[test]
+    fn check_findings_matching_producer_stamp_keeps_canonical_shape_errors() -> Result<(), String> {
+        let version = env!("CARGO_PKG_VERSION");
+        let raw = format!(
+            r#"{{"schema_version":"0.2","findings":[],"artifact":{{"kind":"check_findings","producer":{{"tool":"ripr","version":"{version}"}}}}}}"#
+        );
+        let error = validate_check_findings_artifact(Path::new("."), &raw, "before")
+            .err()
+            .ok_or("incomplete matching check-findings stamp was accepted")?;
+        if !error.contains("missing field") {
+            return Err(format!(
+                "matching check-findings stamp must keep the canonical shape error: {error}"
+            ));
         }
         Ok(())
     }
@@ -2803,12 +3332,17 @@ mod tests {
             r#"{"schema_version":"1","scope":"repo","seams":{}}"#,
             r#"{"schema_version":"1","scope":"repo","seams":[],"artifact":null}"#,
             r#"{"schema_version":"1","scope":"repo","seams":[],"artifact":{}}"#,
+            // Foreign version without repo-exposure markers or producer.tool
+            // is canonical shape, not PATH substitution.
+            r#"{"artifact":{"producer":{"version":"0.10.0"}}}"#,
+            r#"{"schema_version":"0.3","scope":"repo","seams":[],"artifact":{"producer":{"version":"0.10.0"}}}"#,
         ] {
             let error = validate_repo_exposure_artifact(Path::new("."), raw, "after")
                 .err()
                 .ok_or("invalid artifact was accepted")?;
             if !error.contains("not a canonical repo-exposure artifact")
                 || error.contains("legacy or unknown producer")
+                || error.contains("PATH resolution")
             {
                 return Err(format!("unrelated/enveloped JSON misclassified: {error}"));
             }
@@ -5597,7 +6131,14 @@ mod tests {
                 match mutated {
                     Err(error)
                         if error.contains(&format!("produced by RIPR {forged}"))
-                            && error.contains(env!("CARGO_PKG_VERSION")) => {}
+                            && error.contains(env!("CARGO_PKG_VERSION")) =>
+                    {
+                        assert_producer_substitution_diagnostic(
+                            &error,
+                            &format!("ripr {forged}"),
+                            crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION,
+                        )?;
+                    }
                     Err(error) => {
                         return Err(format!("forged {forged}: unexpected rejection: {error}"));
                     }

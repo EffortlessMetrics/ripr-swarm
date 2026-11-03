@@ -26,7 +26,7 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--root")?;
                 if value.trim().is_empty() {
-                    return Err("swarm queue --root requires a non-empty path".to_string());
+                    return Err("swarm queue --root requires a non-empty path; pass a value right after --root".to_string());
                 }
                 root = PathBuf::from(value);
             }
@@ -34,7 +34,7 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--gap-ledger")?;
                 if value.trim().is_empty() {
-                    return Err("swarm queue --gap-ledger requires a non-empty path".to_string());
+                    return Err("swarm queue --gap-ledger requires a non-empty path; pass a value right after --gap-ledger".to_string());
                 }
                 gap_ledger = PathBuf::from(value);
             }
@@ -42,7 +42,7 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--language")?;
                 if value.trim().is_empty() {
-                    return Err("swarm queue --language requires a non-empty language".to_string());
+                    return Err("swarm queue --language requires a non-empty language; pass a value right after --language".to_string());
                 }
                 language = value.to_string();
             }
@@ -261,7 +261,7 @@ mod tests {
         );
         assert_eq!(
             parse_options(&args(&["--top", "0"])),
-            Err("swarm queue --top requires a positive integer; got \"0\"".to_string())
+            Err("swarm queue --top requires a positive integer; pass a whole number of 1 or more, got \"0\"".to_string())
         );
     }
 

@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Added an advisory, `workflow_dispatch`-only `Pilot Measure` workflow that builds a release `ripr` on a hosted runner, reports the byte sizes, exit code and `run_status` of `ripr pilot` on this repository, and prints the agent-format `open=`/`stop=` state on the pinned humantime fortnight commit, so #11951 and #12058 can be confirmed on a current-main release binary; it asserts nothing (#11951, #12058).

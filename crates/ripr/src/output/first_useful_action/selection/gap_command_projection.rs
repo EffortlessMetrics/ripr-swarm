@@ -97,13 +97,13 @@ fn producer_gap_verify_spec(
     display: &str,
 ) -> Result<Option<CommandSpec>, String> {
     let gap_ledger =
-        gap_ledger.ok_or_else(|| "selected gap report has no gap ledger input".to_string())?;
+        gap_ledger.ok_or_else(|| "selected gap report has no gap ledger input; regenerate the input with the command that wrote it, then rerun".to_string())?;
     let mut matching_records = gap_records(gap_ledger)
         .into_iter()
         .filter(|record| record.get("gap_id").and_then(Value::as_str) == Some(gap_id));
     let record_value = matching_records
         .next()
-        .ok_or_else(|| format!("selected gap record {gap_id} is missing from the gap ledger"))?;
+        .ok_or_else(|| format!("selected gap record {gap_id} is missing from the gap ledger; regenerate the input with the command that wrote it, then rerun"))?;
     if matching_records.next().is_some() {
         return Err(format!(
             "selected gap id {gap_id} is ambiguous in the gap ledger"
@@ -111,7 +111,7 @@ fn producer_gap_verify_spec(
     }
 
     let record: GapRecord = serde_json::from_value(record_value.clone())
-        .map_err(|error| format!("selected gap record {gap_id} is invalid: {error}"))?;
+        .map_err(|error| format!("selected gap record {gap_id} is invalid: {error}; regenerate the input with the command that wrote it, then rerun"))?;
     if record.source_currentness.as_deref() != Some("candidate_current") {
         return Ok(None);
     }

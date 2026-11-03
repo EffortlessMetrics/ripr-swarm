@@ -221,7 +221,7 @@ pub(crate) fn policy_history(args: &[String]) -> Result<(), String> {
         && !output::policy_history::policy_history_current_is_durable(&report)
     {
         return Err(
-            "policy history --out-jsonl refuses to append when current policy operations are unavailable or malformed"
+            "policy history --out-jsonl refuses to append when current policy operations are unavailable or malformed; regenerate them with `ripr policy operations`, then rerun"
                 .to_string(),
         );
     }

@@ -1,0 +1,9 @@
+diff --git a/fxpatch/core.py b/fxpatch/core.py
+--- a/fxpatch/core.py
++++ b/fxpatch/core.py
+@@ -11,4 +11,4 @@
+ 
+ 
+ def price_env(x):
+-    return x * 2
++    return x * 3

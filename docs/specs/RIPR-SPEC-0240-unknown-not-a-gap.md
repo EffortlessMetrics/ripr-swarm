@@ -725,10 +725,31 @@ under `rust_indirect_owner_call_unresolved`:
 - **function value**: a non-ignored test with an assertion, in the owner's file
   or an integration test, names the owner without calling it: an argument
   (`.map(inc)`) or an untyped binding (`let f = inc; f(2)`; a typed `fn` pointer binding is left to RIPR-SPEC-0115). A call
-  `inc(..)`, a macro `inc!`, a method `.inc`, a `use` line, a field label
+  `inc(..)`, a macro `inc!`, a method `.inc`, a `use` declaration, a field label
   `inc:`, a `fn inc` definition and a test that binds a local or parameter
   named `inc` are not value uses. A mention only in production code keeps the
-  gap, since no test is shown to run it.
+  gap, since no test is shown to run it. Item declarations are not value
+  mentions, including multiline imports. A nested `fn` or an import of
+  another item only shadows bare references within its lexical block; an
+  owner-qualified value (including a raw identifier) remains a mention. A
+  nested module does not inherit the enclosing block's item shadows. Grouped
+  imports retain their full
+  paths, and an inner owner-preserving import overrides an outer shadow.
+  References after a declaration on the same line remain visible. Opaque,
+  conditional and glob bindings do not establish another owner. Imports suppress
+  a bare mention only when the shared call-identity resolver establishes a
+  different same-name definition; unresolved reexports and aliases retain the
+  limit. A test body the shared parser refuses proves no declaration range, so
+  a single-line `use` mention keeps its lexical exclusion there and the body's
+  remaining declarations stay unproven. The body of a `macro_rules!` definition
+  is token text, not a mention: it is inert only when the macro has no
+  `#[macro_export]` and its name occurs as no identifier token (comments and
+  strings counted) outside its own definition, so an unused macro cannot
+  withhold the gap (#12231). Any other occurrence, including a forwarded
+  `forward!(name)` that expands `$m!()` and a comment-separated `name/**/!()`,
+  keeps the limit, as does any scan containing `include!` or a `#[path]` module,
+  whose unseen text may invoke the macro. This is not general name resolution or
+  macro expansion (#10162).
 - **generated owner**: the changed line lies in no function of its file and the
   changed expression is an item-position macro invocation
   (`def_add!(add_five, 2 + 3);`). The definition the macro emits is not source
@@ -995,26 +1016,30 @@ assertions that do not call the owner: they could not have been its oracle,
 or they are real gaps pinned by the runtime controls. A weak assertion alone
 stays `weakly_exposed`.
 
-### A TypeScript workspace walk cut short at its entry cap (#11767)
+### A TypeScript workspace walk cut short at its source cap or entry backstop (#11767)
 
-TypeScript discovery visits at most `RIPR_TS_MAX_WORKSPACE_FILES` directory
-entries (20,000 by default), counting entries that are never indexed. When the
-cap trips, the test universe is partial, so a finding that would say no test
+TypeScript discovery counts at most `RIPR_TS_MAX_WORKSPACE_FILES` candidate
+source files (20,000 by default; routed extensions minus the generated-name
+family). Directories, assets and generated files do not consume that cap. A
+separate total-entry backstop of five times the cap (100,000 by default) still
+ends a walk over a huge non-source tree, and entries are visited in sorted-name
+order. Either bound sets the one `truncated` flag, so the disclosure names both
+bounds rather than which tripped. When a bound trips, the test universe is partial, so a finding that would say no test
 reaches the change rests on tests the walk may never have read.
 
 When discovery was truncated, every TypeScript or JavaScript finding classed
 `no_static_path` with no earlier `static_limit_kind` is rewritten through
 `withhold_gap` to `static_unknown` under `typescript_workspace_discovery_truncated`.
-The first unresolved edge names the cap and the next step names the setting
+The first unresolved edge names both bounds and the next step names the setting
 (and the read budget) or a narrower root. Findings that have a related test
-are not touched, and a walk that finishes under the cap changes nothing.
+are not touched, and a walk that finishes under both bounds changes nothing.
 
 The diff names what changed, so a changed source file the adapter accepts joins
 the partial file set even when the walk stopped before reaching it. Without
 that, a cut-short walk leaves the change with no owner and no finding at all.
 
-This does not make the cut-short run complete: the cap limitation still marks
-the outcome partial. Walk order, budgeting by candidate source files and the
+This does not make the cut-short run complete: the limitation still marks the
+outcome partial. Reference-tree pruning, walk order by changed paths and the
 read budget are separate work.
 
 ## Scope boundary
@@ -1225,8 +1250,8 @@ Integration: `crates/ripr/tests/owner_pin_execution.rs`
 `gap_admission.rs::tests::a_related_test_line_at_the_call_budget_withholds_a_gap_and_names_an_unknown`.
 
 `crates/ripr/tests/indirect_owner_limit.rs` (function value, pointer binding,
-local and known executors, item macro, `cfg_attr` and trailing-comment
-controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
+local and known executors, item macro, inert-macro, `cfg_attr` and
+trailing-comment controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
 
 Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 

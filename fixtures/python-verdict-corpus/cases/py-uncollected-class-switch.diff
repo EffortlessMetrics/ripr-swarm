@@ -1,0 +1,10 @@
+diff --git a/uncollected/core.py b/uncollected/core.py
+--- a/uncollected/core.py
++++ b/uncollected/core.py
+@@ -1,5 +1,5 @@
+ def class_off(a, b):
+-    return a * b
++    return a + b
+ 
+ 
+ def module_off(a, b):

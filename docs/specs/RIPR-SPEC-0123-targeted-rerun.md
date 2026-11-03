@@ -386,6 +386,9 @@ The benchmark does not justify a universal latency claim.
   only its affected seam/test edges.
 - File-fact cache tests prove unchanged files hit, changed files miss, and a
   corrupt cache entry becomes a named cold fallback.
+- Diff-scoped preparation tests prove a multi-scope canonical-gap rerun performs
+  one Rust workspace preparation while preserving per-scope classified results
+  and non-duplicated file-fact statistics (#3862).
 - Receipt tests prove unchanged, improved, closed, regressed, and limited
   outcomes preserve canonical identities without rendering a runtime claim;
   no-`--before` runs stay current-state-only.

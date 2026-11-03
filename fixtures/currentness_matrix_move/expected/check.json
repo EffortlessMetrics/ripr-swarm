@@ -10,24 +10,12 @@
   },
   "findings": [
     {
-      "id": "probe:src_lib.rs:predicate:6c1bbc04",
-      "canonical_gap_id": "gap:rust:src/lib.rs:price:predicate_boundary:predicate:value==100",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:price:predicate_boundary:predicate:value==100",
-        "language": "rust",
-        "file": "src/lib.rs",
-        "owner": "price",
-        "behavior_kind": "predicate_boundary",
-        "probe_kind": "predicate",
-        "normalized_discriminator": "value==100"
-
-      },
+      "id": "probe:src_lib.rs:predicate:86aa12fb",
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,
       "probe": {
-        "id": "probe:src_lib.rs:predicate:6c1bbc04",
+        "id": "probe:src_lib.rs:predicate:86aa12fb",
         "family": "predicate",
         "delta": "control",
         "file": "./src/lib.rs",
@@ -61,33 +49,21 @@
       "related_tests_total": 0,
       "related_tests": [
       ],
-      "stop_reasons": [],
+      "stop_reasons": ["no_changed_rust_line"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
-      "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
       "language": "rust",
       "source_currentness": "base_deleted"
     },
     {
-      "id": "probe:src_lib.rs:static_unknown:bc4e4027",
-      "canonical_gap_id": "gap:rust:src/lib.rs:price:static_unknown:static_unknown:fn_retired_helper_value_i32->i32",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:price:static_unknown:static_unknown:fn_retired_helper_value_i32->i32",
-        "language": "rust",
-        "file": "src/lib.rs",
-        "owner": "price",
-        "behavior_kind": "static_unknown",
-        "probe_kind": "static_unknown",
-        "normalized_discriminator": "fn_retired_helper_value_i32->i32"
-
-      },
+      "id": "probe:src_lib.rs:static_unknown:0284d11d",
       "classification": "static_unknown",
       "severity": "note",
       "confidence": 0.20,
       "probe": {
-        "id": "probe:src_lib.rs:static_unknown:bc4e4027",
+        "id": "probe:src_lib.rs:static_unknown:0284d11d",
         "family": "static_unknown",
         "delta": "unknown",
         "file": "./src/lib.rs",
@@ -122,11 +98,11 @@
       "related_tests_total": 0,
       "related_tests": [
       ],
-      "stop_reasons": ["static_probe_unknown"],
+      "stop_reasons": ["no_changed_rust_line"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "No static test path reaches this change; a test may still reach it through paths ripr cannot follow. Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
       "language": "rust",
       "source_currentness": "base_deleted"
     }

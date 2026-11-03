@@ -28,7 +28,7 @@ jobs:
       matrix:
         mode: [mapped, primary-only, unmapped]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
@@ -38,14 +38,15 @@ jobs:
           mkdir -p target
           f=.github/workflows/windows-advisory-shards.yml
           awk '/name: Run workspace tests/{s=1} s&&/run: \|/{r=1;next} r&&/^$/{exit} r{print substr($0,11)}' "$f" > target/wrapper.sh
-          sed -i -e 's/[$][{][{] matrix.shard [}][}]/1/' -e 's/seq 1 264/seq 1 12/' -e 's/sleep 10/sleep 1/' target/wrapper.sh
-          sed -i -e 's#^cargo nextest run .* > target/shard-\$shard.log 2>&1 &#bash target/fixture.sh > target/shard-$shard.log 2>\&1 \&#' target/wrapper.sh
+          sed -i -e 's/[$][{][{] matrix.shard [}][}]/1/' -e 's/WATCHDOG_POLLS:=264/WATCHDOG_POLLS:=12/' -e 's/POLL_SECS:=10/POLL_SECS:=1/' target/wrapper.sh
+          sed -i -e 's#^\(cargo nextest run\|bash -c .*cargo nextest run\) .* > target/shard-\$shard.log 2>&1 &#bash target/fixture.sh > target/shard-$shard.log 2>\&1 \&#' target/wrapper.sh
           case "${{ matrix.mode }}" in
             primary-only) sed -i 's#taskkill //F //T //PID#taskkill //F //PID#' target/wrapper.sh ;;
             unmapped) sed -i 's#/proc/$nextest_pid/winpid#/proc/$nextest_pid/no-such-winpid#' target/wrapper.sh ;;
           esac
           grep -q 'bash target/fixture.sh' target/wrapper.sh || { echo "fixture substitution missed" >&2; exit 1; }
-          grep -q 'seq 1 12' target/wrapper.sh || { echo "timer substitution missed" >&2; exit 1; }
+          grep -q 'WATCHDOG_POLLS:=12' target/wrapper.sh || { echo "timer substitution missed" >&2; exit 1; }
+          grep -q 'POLL_SECS:=1' target/wrapper.sh || { echo "poll substitution missed" >&2; exit 1; }
           [ "${{ matrix.mode }}" != primary-only ] || grep -q 'taskkill //F //PID' target/wrapper.sh || { echo "mutation missed" >&2; exit 1; }
           [ "${{ matrix.mode }}" != unmapped ] || grep -q 'no-such-winpid' target/wrapper.sh || { echo "mutation missed" >&2; exit 1; }
           printf '%s\n' 'ping -n 600 127.0.0.1 > /dev/null &' 'child=$!' 'cat "/proc/$child/winpid" > target/fixture.child' > target/fixture.sh
@@ -92,7 +93,7 @@ jobs:
 
       - name: Upload qualification receipts
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: watchdog-qualification-${{ matrix.mode }}
           path: |

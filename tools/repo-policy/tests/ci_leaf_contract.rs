@@ -3,6 +3,7 @@
 use std::process::{Command, Output};
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const WORKFLOW: &str = include_str!("../../../.github/workflows/ci.yml");
+const VSCODE_E2E: &str = include_str!("../../../.github/workflows/vscode-e2e.yml");
 const ORIGINAL: &str = include_str!("../../../fixtures/convergence/ci-exact-subject/original.yml");
 const JOBS: &[(&str, &str)] = &[
     ("rust-only-features", "run_rust_only"),
@@ -26,6 +27,15 @@ fn job<'a>(source: &'a str, name: &str) -> &'a str {
         })
         .map_or(tail.len(), |(offset, _)| offset);
     &tail[..end]
+}
+/// The job whose steps carry a lane's payload: the extension lane lives in the reusable
+/// workflow (#12252), every other lane in ci.yml itself.
+fn payload_job(name: &str) -> &'static str {
+    if name == "vscode" {
+        job(VSCODE_E2E, name)
+    } else {
+        job(WORKFLOW, name)
+    }
 }
 fn body(step: &str) -> String {
     step.split_once("        run: |\n")
@@ -286,6 +296,8 @@ struct Event<'a> {
     action: &'a str,
     label: &'a str,
     labels: &'a [&'a str],
+    // Output of the `vscode surface` job: "true", "false" or "" (the job failed).
+    surface: &'a str,
 }
 fn predicate(
     expression: &str,
@@ -301,6 +313,8 @@ fn predicate(
         .replace("github.event.label.name == 'merge-ready'",flag(event.label=="merge-ready"))
         .replace("contains(github.event.pull_request.labels.*.name, 'full-ci')",flag(event.labels.contains(&"full-ci")))
         .replace("contains(github.event.pull_request.labels.*.name, 'release-check')",flag(event.labels.contains(&"release-check")))
+        .replace("contains(github.event.pull_request.labels.*.name, 'vscode')",flag(event.labels.contains(&"vscode")))
+        .replace("needs.vscode-selection.outputs.selected != 'false'",flag(event.surface != "false"))
         .replace("contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action)",flag(["opened","synchronize","reopened"].contains(&event.action)))
         .replace("github.event_name",&format!("'{}'",event.name))
         .replace("github.ref", "'refs/heads/main'")
@@ -389,7 +403,7 @@ fn actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selecti
             "labeled",
             "merge-ready",
             vec!["merge-ready", "full-ci"],
-            [true; 4],
+            [true, true, true, false],
         ),
         (
             "pull_request",
@@ -406,6 +420,7 @@ fn actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selecti
             action,
             label,
             labels: &labels,
+            surface: "false",
         };
         for ((job_name, _), expected) in JOBS.iter().zip(expected) {
             let expression = condition(job(WORKFLOW, job_name));
@@ -427,10 +442,66 @@ fn actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selecti
     Ok(())
 }
 #[test]
+fn ci_runs_the_extension_e2e_only_off_pull_requests_and_for_a_frozen_selection() -> TestResult {
+    // #12252: a pull request's extension e2e is a job of routed-rust.yml's own run, read by
+    // the Result as a `needs` result. ci.yml keeps push/dispatch and the callable lane.
+    let expression = condition(job(WORKFLOW, "vscode"));
+    for (action, label, labels) in [
+        ("labeled", "merge-ready", &["merge-ready"][..]),
+        ("labeled", "merge-ready", &["merge-ready", "vscode"][..]),
+        ("labeled", "merge-ready", &["merge-ready", "full-ci"][..]),
+        ("synchronize", "", &["merge-ready", "vscode"][..]),
+    ] {
+        let event = Event {
+            name: "pull_request",
+            action,
+            label,
+            labels,
+            surface: "true",
+        };
+        assert!(
+            !predicate(&expression, false, event, false, "skipped")?,
+            "{action}/{label}/{labels:?}"
+        );
+    }
+    let push = Event {
+        name: "push",
+        action: "",
+        label: "",
+        labels: &[],
+        surface: "false",
+    };
+    assert!(predicate(&expression, false, push, false, "skipped")?);
+    // A callable run takes its frozen selection and a successful identity check.
+    let request = Event {
+        name: "pull_request",
+        action: "labeled",
+        label: "merge-ready",
+        labels: &["merge-ready"],
+        surface: "true",
+    };
+    assert!(predicate(&expression, true, request, true, "success")?);
+    assert!(!predicate(&expression, true, request, false, "success")?);
+    assert!(!predicate(&expression, true, request, true, "failure")?);
+    // The retired cross-workflow correlation stays gone from ci.yml.
+    for retired in [
+        "vscode surface",
+        "vscode-selection",
+        "CI merge-ready request",
+    ] {
+        assert!(
+            !WORKFLOW.contains(retired),
+            "ci.yml still carries {retired}"
+        );
+    }
+    Ok(())
+}
+#[test]
 fn independent_event_labels_reject_request_guard_removal() -> TestResult {
     const GUARD: &str =
         "(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')";
-    for (name, _) in JOBS {
+    // The extension lane never runs for a pull request, so it has no request guard (#12252).
+    for (name, _) in JOBS.iter().filter(|(name, _)| *name != "vscode") {
         let expression = condition(job(WORKFLOW, name));
         assert_eq!(expression.matches(GUARD).count(), 1, "{name}");
         let mutant = expression.replacen(GUARD, "true", 1);
@@ -444,6 +515,7 @@ fn independent_event_labels_reject_request_guard_removal() -> TestResult {
                 action,
                 label,
                 labels: &["merge-ready", "full-ci"],
+                surface: "false",
             };
             assert!(
                 !predicate(&expression, false, event, false, "skipped")?,
@@ -473,11 +545,35 @@ fn run_blocks(source: &str) -> Vec<String> {
         })
         .collect()
 }
+/// Steps added by a PR that are absent from the retained predecessor, allowed
+/// only as an exact (job, whole run block) match so any other added or altered
+/// step still fails the per-job equality below.
+const PR_OWNED_STEPS: &[(&str, &str)] = &[(
+    "release-proof",
+    "cargo test -p xtask --features perl-identity reports::sarif::identity_tests",
+)];
+fn without_pr_owned_steps(job_name: &str, scripts: Vec<String>) -> Vec<String> {
+    scripts
+        .into_iter()
+        .filter(|script| !PR_OWNED_STEPS.contains(&(job_name, script.as_str())))
+        .collect()
+}
+#[test]
+fn pr_owned_step_allowance_is_exact_and_job_scoped() {
+    let step = PR_OWNED_STEPS[0].1.to_owned();
+    let altered = format!("{step} --extra");
+    let kept = without_pr_owned_steps("release-proof", vec![step.clone(), altered.clone()]);
+    assert_eq!(kept, vec![altered.clone()]);
+    assert_eq!(
+        without_pr_owned_steps("other-job", vec![step.clone()]),
+        vec![step]
+    );
+}
 #[test]
 fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult {
     for (name, _) in JOBS {
         assert_eq!(
-            run_blocks(job(WORKFLOW, name)).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).collect::<Vec<_>>(),
+            without_pr_owned_steps(name, run_blocks(payload_job(name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).collect::<Vec<_>>(),
             run_blocks(job(ORIGINAL, name)).iter().map(|script| script.replace(
                 "cargo package -p ripr --no-verify && tar xzf \"target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')\" && rm Cargo.lock && cargo generate-lockfile",
                 "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile"
@@ -497,16 +593,36 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
                             .is_some_and(|(_, sha)| sha.len() == 40) =>
                     {
                         let name = pinned.rsplit_once('@').map_or(pinned, |(name, _)| name);
-                        format!("{name}@{}", tag.trim())
+                        // A comment may carry the exact release (`v6.1.0`) while the
+                        // predecessor names the major (`v6`); compare the major.
+                        let tag = tag.trim();
+                        let tag = if tag.starts_with('v') {
+                            tag.split('.').next().unwrap_or(tag)
+                        } else {
+                            tag
+                        };
+                        format!("{name}@{tag}")
                     }
                     _ => line.to_owned(),
                 })
                 .collect::<Vec<_>>()
         };
-        assert_eq!(actions(job(WORKFLOW, name)), actions(job(ORIGINAL, name)));
-        let child = job(WORKFLOW, name);
-        assert!(child.contains("    needs: source-identity"));
-        assert!(child.contains("ref: ${{ inputs.subject_sha || github.sha }}"));
+        assert_eq!(actions(payload_job(name)), actions(job(ORIGINAL, name)));
+        let child = payload_job(name);
+        if name == &"vscode" {
+            // The extension lane is a call of the reusable workflow (#12252).
+            let call = job(WORKFLOW, name);
+            assert!(
+                call.contains("    needs: [source-identity]"),
+                "{name} needs"
+            );
+            assert!(call.contains("    uses: ./.github/workflows/vscode-e2e.yml"));
+            assert!(call.contains("      ref: ${{ inputs.subject_sha || github.sha }}"));
+            assert!(child.contains("ref: ${{ inputs.ref || github.sha }}"));
+        } else {
+            assert!(child.contains("    needs: source-identity"), "{name} needs");
+            assert!(child.contains("ref: ${{ inputs.subject_sha || github.sha }}"));
+        }
         assert!(child.contains("persist-credentials: false"));
         // The callable qualification budget equals the retained predecessor's
         // budget for the same job; first-ever admitted runs must not fit a
@@ -554,7 +670,7 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
     let stub = "cargo() { return \"$NATIVE_STATUS\"; }; npm() { return \"$NATIVE_STATUS\"; }; xvfb-run() { shift; \"$@\"; };\n";
     let mut count = 0;
     for (name, _) in JOBS {
-        for script in run_blocks(job(WORKFLOW, name)) {
+        for script in run_blocks(payload_job(name)) {
             if script.starts_with("cargo ") && !script.contains('\n')
                 || script.starts_with("npm ")
                 || script.starts_with("xvfb-run ")
@@ -572,7 +688,7 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
             }
         }
     }
-    assert_eq!(count, 13, "nonempty payload denominator");
+    assert_eq!(count, 14, "nonempty payload denominator");
     Ok(())
 }
 
@@ -863,6 +979,7 @@ fn release_steps_preserve_manual_semantics_and_ignore_labels_on_calls() -> TestR
                         action: "labeled",
                         label: "unrelated",
                         labels: &labels,
+                        surface: "false",
                     };
                     assert_eq!(
                         predicate(expr, false, context, false, "skipped")?,

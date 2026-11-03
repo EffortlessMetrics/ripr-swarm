@@ -27,6 +27,12 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "observation_not_confirmed", "summary": "the assertion is not confirmed to observe the changed value"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:shop_route.py:python_preview:6a58f374",
         "family": "field_construction",
@@ -125,8 +131,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `response.status_code == 400`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `response.status_code == 400`.",
+      "recommended_next_step": "Python preview: strengthen the existing related test with a field/object assertion for the missing check `response.status_code == 400`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with a field/object assertion for the missing check `response.status_code == 400`.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",

@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Refresh `docs/PUBLIC_PROOF.md` and `metrics/public-proof/verdict-corpus.json` with `cargo xtask public-proof --refresh-receipts`: the page still showed `no_static_path` for the `lib-proptest-*` cases that the verdict-corpus rows already read `static_unknown` (#11544), and the `macro-export-*`, `macro-module-*` and `hex-from-hex-odd-variant` rows moved with the row files.

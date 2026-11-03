@@ -504,18 +504,25 @@ Carried over unchanged from the 2026-10-25 agent runs: answer key 3/3 on every
 target, ripr commands to fix 7, 8 and 10, tool steps 8, 9 and 9, non-exposed
 verdicts left after the fix 0, 4 and 1.
 
-### Finding: a false stop on humantime
+### Finding: a false stop on humantime (fixed, #11825)
 
-On the unfixed humantime gap commit `ripr check --format agent` prints
+On the unfixed humantime gap commit `ripr check --format agent` printed
 `findings=5 gaps=0 ... weakly_exposed=4` and
 `stop=ripr cannot tell from reading the code whether tests would notice;
 nothing more is fixable from the test side`. The smoke-only `is_ok()` test is
-the gap: the answer key shows all three humantime mutants survive it, and the
-human format's top finding asks for a stronger assertion. An agent that obeys
-`stop=` ends at 0/3. The receipt records this as
-`agent.agent_format_gaps_before_fix` = 0 for humantime, which is below its bar
-of 1 (listed as below target, not hidden); it cannot regress further, and a
-fall on another target fails the gate. Owner issue: #11825.
+the gap: the answer key shows all three humantime mutants survive it. Every
+finding carried the reach-only `rust_transitive_reach_unresolved` limitation,
+so none counted as a gap, but each also carried a related-test row the
+producer read as `weak_assertion`. An agent that obeyed `stop=` ended at 0/3.
+
+After the fix the same commit prints `open=` (never `stop=`), the four
+weakly exposed findings with their `weak_assertion` row, and a
+`next=ripr explain` drill-in. They are still not counted in `gaps=`: reach is
+unresolved, so they are not confirmed gaps. The receipt records the named
+test-side work, four lines, as `agent.agent_format_gaps_before_fix` for
+humantime (it was 0, below its bar of 1). On the fixed tree (exact-value
+assertions) the weak row is gone and `stop=` is printed, as before. The
+count was measured with a debug build of the fix branch, not a release build.
 
 ### Gate
 

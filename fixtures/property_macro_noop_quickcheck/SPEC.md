@@ -14,7 +14,7 @@ bytes, then compiles and runs both correct and wrong owner variants.
 
 ## Then
 
-One predicate finding remains `no_static_path`, with no oracle and an explicit macro
+One predicate finding reads `static_unknown` (#11544), with no oracle and an explicit macro
 limitation. Human guidance is static-limited and does not request a new test.
 The runtime harness collects 0 tests and returns success on both owner
 variants. This is a deliberately non-discriminating negative, not an adequacy

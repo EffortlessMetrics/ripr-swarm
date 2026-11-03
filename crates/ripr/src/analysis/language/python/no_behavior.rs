@@ -293,7 +293,23 @@ fn legacy_class_header_shape(line: &str) -> Option<(String, LegacyClassBaseShape
         [Expr::Name(name)] if name.id.as_str() == "object" => LegacyClassBaseShape::SoleObject,
         _ => return None,
     };
-    Some((class.name.to_string(), shape))
+    // PEP 695 type parameters (`class A[T]:`) are part of the header's meaning:
+    // they ride in the name key so `A[T]` against `A[U]` is a different class.
+    let type_params: Vec<&str> = class
+        .type_params
+        .iter()
+        .map(|param| {
+            snippet
+                .get(usize::from(param.range().start())..usize::from(param.range().end()))
+                .unwrap_or_default()
+        })
+        .collect();
+    let name = if type_params.is_empty() {
+        class.name.to_string()
+    } else {
+        format!("{}[{}]", class.name, type_params.join(", "))
+    };
+    Some((name, shape))
 }
 
 /// Whether a single-line `class` header change only adds or removes the legacy

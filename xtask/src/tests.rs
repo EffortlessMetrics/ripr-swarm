@@ -10,11 +10,13 @@ mod evidence_promotion_semantics;
 mod fixture_cache;
 mod fixture_variants;
 mod operand_callee_honesty;
+mod packaged_repair_receipt;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
 #[cfg(windows)]
 mod review_conversations;
 mod rust_corpus_projection;
+mod traceability_planning;
 
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
@@ -256,16 +258,130 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+// Concurrent tests in one process can observe the same clock tick; a process-wide
+// sequence keeps `create_dir` exclusive (#10613).
+static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn temp_dir_path(name: &str, stamp: u128, sequence: u64) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "ripr-xtask-{name}-{}-{stamp}-{sequence}",
+        std::process::id()
+    ))
+}
+
 pub(crate) fn temp_dir(name: &str) -> PathBuf {
+    loop {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let dir = temp_dir_path(name, stamp, sequence);
+        match fs::create_dir(&dir) {
+            Ok(()) => return dir,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                eprintln!("create exclusive temp root at {dir:?}: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+#[test]
+fn temp_dir_same_stamp_allocations_claim_distinct_exclusive_roots() -> Result<(), String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .map_err(|error| error.to_string())?
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("ripr-xtask-{name}-{stamp}"));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    let first_seq = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let first = temp_dir_path("collision-control", stamp, first_seq);
+    fs::create_dir(&first).map_err(|error| error.to_string())?;
+    let second_seq = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let second = temp_dir_path("collision-control", stamp, second_seq);
+    fs::create_dir(&second).map_err(|error| error.to_string())?;
+    if first == second {
+        return Err(format!(
+            "same-stamp allocations reused exclusive root {first:?}"
+        ));
+    }
+    fs::remove_dir_all(&first).map_err(|error| error.to_string())?;
+    fs::remove_dir_all(&second).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn temp_dir_deterministic_collision_preserves_existing_owner() -> Result<(), String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let path = temp_dir_path("collision-control", stamp, sequence);
+    fs::create_dir(&path).map_err(|error| error.to_string())?;
+    let sentinel = path.join("owned.txt");
+    fs::write(&sentinel, "retained").map_err(|error| error.to_string())?;
+    match fs::create_dir(&path) {
+        Ok(()) => Err(format!(
+            "deterministic collision path was accepted: {path:?}"
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let contents = fs::read_to_string(&sentinel).map_err(|e| e.to_string())?;
+            if contents != "retained" {
+                return Err(format!("collision overwrote owner sentinel: {contents:?}"));
+            }
+            fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        Err(error) => Err(format!("unexpected collision error: {error}")),
+    }
+}
+
+#[test]
+fn temp_dir_concurrent_allocations_all_claim_distinct_roots() -> Result<(), String> {
+    use std::sync::Barrier;
+
+    const THREADS: usize = 8;
+    let barrier = Barrier::new(THREADS);
+    let results = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    temp_dir("concurrent-schema-sweep")
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| match handle.join() {
+                Ok(path) => Ok(path),
+                Err(_) => Err("temp_dir worker panicked".to_string()),
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    let mut paths = BTreeSet::new();
+    for path in &results {
+        if !path.is_dir() {
+            return Err(format!("temp root is not a directory: {path:?}"));
+        }
+        if !paths.insert(path.clone()) {
+            return Err(format!("duplicate temp root {path:?}"));
+        }
+    }
+    if paths.len() != THREADS {
+        return Err(format!(
+            "expected {THREADS} distinct roots, got {}",
+            paths.len()
+        ));
+    }
+    for path in results {
+        fs::remove_dir_all(path).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub(crate) fn write(path: &Path, text: &str) {
@@ -7596,13 +7712,13 @@ jobs:
   dependency-review:
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8362,14 +8478,14 @@ fn workflow_runtime_policy_rejects_dependency_review_over_allowlisted_count() {
 jobs:
   dependency-review:
     steps:
-      - uses: actions/dependency-review-action@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8378,7 +8494,7 @@ jobs:
         workflow_runtime_violations(".github/workflows/security.yml", workflow, &allowlist);
 
     assert!(violations.iter().any(|violation| {
-        violation.contains("uses `actions/dependency-review-action@v4` 2 time(s), allowed 1")
+        violation.contains("uses `actions/dependency-review-action@` 2 time(s), allowed 1")
     }));
 }
 
@@ -9525,8 +9641,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
     );
     assert_ne!(
         skippable_result, workflow,
@@ -9539,6 +9655,78 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         "a skippable result reports success when skipped: {:?}",
         routed_rust_ready_event_contract_violations(&skippable_result)
     );
+    for (what, from, to, needle) in [
+        (
+            "the extension e2e result step",
+            "      - name: Require the extension e2e result for the admitted head\n        id: vscode\n",
+            "      - name: Read something else\n        id: other\n",
+            "require the extension e2e result for the admitted head",
+        ),
+        (
+            "the summary branch that fails the Result",
+            "[ \"$VSCODE_CHECK_RESULT\" != success ]",
+            "[ \"$VSCODE_CHECK_RESULT\" = never ]",
+            "fail the Result when the selected extension e2e did not succeed",
+        ),
+        (
+            "the e2e job of this run",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: [vscode-select]\n",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: []\n",
+            "run the extension e2e as a job of this run",
+        ),
+        (
+            "the label selection",
+            "case \",$LABELS,\" in *,full-ci,*|*,vscode,*) return 0 ;; esac",
+            "case \",$LABELS,\" in *,never,*) return 0 ;; esac",
+            "select the extension e2e from the admitted diff and the full-ci and vscode labels",
+        ),
+        (
+            "the e2e job call and its selection condition",
+            "    if: ${{ !cancelled() && needs.vscode-select.result == 'success' && needs.vscode-select.outputs.selected == 'true' }}\n    uses: ./.github/workflows/vscode-e2e.yml\n",
+            "    if: ${{ !cancelled() }}\n    uses: ./.github/workflows/noop.yml\n",
+            "run the extension e2e only when selected",
+        ),
+        (
+            "the Result's reading of this run's results",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-e2e.result }}\n",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-select.result }}\n",
+            "read this run's own selection and e2e results",
+        ),
+        (
+            "the selection's admitted head and labels",
+            "          HEAD_SHA: ${{ needs.admission.outputs.head }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "          HEAD_SHA: ${{ github.sha }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "classify the admitted head and labels",
+        ),
+        (
+            "the Result's dependency on the extension jobs",
+            "docs-gate, vscode-select, vscode-e2e]",
+            "docs-gate]",
+            "make the Result depend on the extension selection and e2e jobs",
+        ),
+        (
+            "the selected-and-succeeded pass",
+            "true:success)",
+            "true:never)",
+            "pass a selected extension e2e only when it succeeded",
+        ),
+        (
+            "the unselected-and-skipped pass",
+            "false:skipped)",
+            "false:never)",
+            "pass an unselected extension e2e only when it was skipped",
+        ),
+    ] {
+        let mutated = workflow.replacen(from, to, 1);
+        assert_ne!(mutated, workflow, "fixture must remove {what}");
+        assert!(
+            routed_rust_ready_event_contract_violations(&mutated)
+                .iter()
+                .any(|violation| violation.contains(needle)),
+            "removing {what} must be rejected (#12122): {:?}",
+            routed_rust_ready_event_contract_violations(&mutated)
+        );
+    }
     for job in ["route", "detect-docs-only", "admission"] {
         let unguarded = workflow.replace(
             "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'\n",
@@ -17825,6 +18013,21 @@ fn dogfood_typescript_preview_repair_loop_receipts_are_checked() -> Result<(), S
         );
         assert!(
             scenarios.iter().any(|scenario| {
+                scenario.gap_state == "already_observed"
+                    && scenario.outcome == "already_observed_unchanged"
+            }),
+            "TypeScript preview repair-loop receipts should retain a positive already_observed control"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .filter(|scenario| scenario.must_not_claim_already_observed)
+                .count()
+                >= 2,
+            "TypeScript preview repair-loop receipts should pin spurious already_observed guards"
+        );
+        assert!(
+            scenarios.iter().any(|scenario| {
                 scenario.name == "typescript_complete_boundary_packet_closed"
                     && scenario.repair_packet_ready
                     && scenario.gap_state == "actionable"
@@ -18381,6 +18584,7 @@ fn valid_typescript_preview_repair_loop_scenario() -> DogfoodTypescriptPreviewRe
             must_have_receipt_command: true,
             must_not_invent_verify_command: true,
             must_not_emit_repair_packet: true,
+            must_not_claim_already_observed: false,
             authority_boundary: "preview_advisory_only".to_string(),
             expected_test_or_observer_shape: "exact equality-boundary assertion".to_string(),
             verify_command: "npm test -- discount".to_string(),
@@ -19081,8 +19285,7 @@ jobs:
 RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.
 
 ### Start here
-- Open `target/ripr/reports/start-here.md` first when it exists.
-- Gate authority: `ripr gate evaluate` remains the pass/fail source only when `RIPR_GATE_MODE` is configured.
+- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
 - {GENERATED_CI_FIRST_ACTION_REPAIR}
 - {GENERATED_CI_FIRST_PR_REPAIR}
 - {GENERATED_CI_FRONT_PANEL_REPAIR}
@@ -19142,6 +19345,43 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
         mutated.errors
     );
     assert!(!mutated.start_here);
+
+    // Dropping the gate boundary wording must fail the scenario (#12261).
+    let no_gate = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "missing-gate-authority",
+        command,
+        10,
+        workflow,
+        &summary.replace("remains pass/fail authority", "remains the decision source"),
+    );
+    assert!(!no_gate.gate_authority_boundary);
+    assert!(
+        no_gate
+            .errors
+            .iter()
+            .any(|error| error.contains("gate-decision authority")),
+        "{:?}",
+        no_gate.errors
+    );
+
+    let no_gate_command = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "missing-gate-command",
+        command,
+        10,
+        workflow,
+        &summary.replace("ripr gate evaluate", "the gate"),
+    );
+    assert!(!no_gate_command.gate_authority_boundary);
+
+    // Unconditional gate authority (no explicit-configuration condition) must fail.
+    let unconditional = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "unconditional-gate-authority",
+        command,
+        10,
+        workflow,
+        &summary.replace(" when explicitly configured", ""),
+    );
+    assert!(!unconditional.gate_authority_boundary);
 
     // Workflow text that still carries the retired shell cannot satisfy the
     // summary properties.
@@ -25009,6 +25249,55 @@ fn local_context_findings_are_sorted_deterministically() {
 }
 
 #[test]
+fn ripr_spec_0140_cli_smoke_trace_reference_matches_live_test_fn() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let manifest_path = root.join(".ripr/traceability.toml");
+    let (behaviors, manifest_violations) = super::load_traceability_behaviors(&manifest_path)?;
+    if !manifest_violations.is_empty() {
+        return Err(format!(
+            "manifest parse violations: {manifest_violations:?}"
+        ));
+    }
+    let behavior = behaviors
+        .iter()
+        .find(|entry| entry.id.as_deref() == Some("RIPR-SPEC-0140"))
+        .ok_or_else(|| "RIPR-SPEC-0140 missing from .ripr/traceability.toml".to_string())?;
+    if let Some(stale) = behavior.tests.iter().find(|entry| {
+        entry.contains("crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain")
+            && entry.contains("byte_identical")
+    }) {
+        return Err(format!(
+            "stale renamed test still referenced in manifest: {stale}"
+        ));
+    }
+    let reference = behavior
+        .tests
+        .iter()
+        .find(|entry| {
+            entry.contains("crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain")
+        })
+        .ok_or_else(|| {
+            "RIPR-SPEC-0140 missing cli_smoke check-artifact reuse test reference".to_string()
+        })?;
+    let (path_text, suffix) = super::split_trace_reference(reference);
+    let Some(symbol) = suffix else {
+        return Err(format!(
+            "expected `::symbol` proof reference, got `{reference}`"
+        ));
+    };
+    let path = root.join(path_text);
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| format!("read `{path_text}` for symbol audit: {error}"))?;
+    let needle = format!("fn {symbol}");
+    if !text.contains(&needle) {
+        return Err(format!(
+            "manifest references `{reference}` but `{path_text}` has no `{needle}` (#2345 live-manifest audit)"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn traceability_symbol_suffix_is_advisory_without_blocking() -> Result<(), String> {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs");
     let references = vec![format!("{}::tests::example", source.display())];
@@ -29427,7 +29716,11 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
         ],
         Some(&repo_root()?),
         &[(CHILD_ENV, "1")],
-        crate::run::tool_build_timeout()?,
+        // The child runs the real file-policy Cargo builds, each allowed
+        // FILE_POLICY_COVERED_BY_BUILD_BUDGET by the check itself. A shorter
+        // child deadline fires inside that budget (#12510: Windows runs
+        // finished in ~14 of 15 minutes).
+        crate::run::tool_build_timeout()?.max(crate::policy::FILE_POLICY_COVERED_BY_BUILD_BUDGET),
         "isolated policy facade checks",
     )?
     .output;
@@ -29452,18 +29745,28 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
 }
 
 fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
+    // Each phase is announced on stderr before it starts. When the child outlives
+    // its tool-build deadline the parent's diagnostic carries this stream, so a
+    // stall names the check it was inside instead of an anonymous TIMEOUT (#12035).
+    fn phase(name: &str, check: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        eprintln!("policy facade phase: {name}");
+        check()
+    }
     with_repo_cwd(|| {
-        check_static_language()?;
-        check_no_panic_family()?;
-        check_allow_attributes()?;
-        check_local_context()?;
-        check_file_policy()?;
-        assert_packet_coverage_report()?;
-        check_executable_files()?;
-        check_workflows()?;
-        check_droid_review_config()?;
-        check_process_policy()?;
-        check_network_policy()
+        phase("check_static_language", check_static_language)?;
+        phase("check_no_panic_family", check_no_panic_family)?;
+        phase("check_allow_attributes", check_allow_attributes)?;
+        phase("check_local_context", check_local_context)?;
+        phase("check_file_policy", check_file_policy)?;
+        phase(
+            "assert_packet_coverage_report",
+            assert_packet_coverage_report,
+        )?;
+        phase("check_executable_files", check_executable_files)?;
+        phase("check_workflows", check_workflows)?;
+        phase("check_droid_review_config", check_droid_review_config)?;
+        phase("check_process_policy", check_process_policy)?;
+        phase("check_network_policy", check_network_policy)
     })
 }
 
@@ -30537,6 +30840,9 @@ fn command_catalog_pins_ci_enforced_classification() -> Result<(), String> {
     assert!(ci_enforced("precommit")?);
     assert!(ci_enforced("check-architecture")?);
     assert!(ci_enforced("check-doc-artifacts")?);
+    assert!(!ci_enforced(
+        "check-tool-capabilities [--as-of YYYY-MM-DD] [--registry <path>]"
+    )?);
     assert!(ci_enforced("markdown-links")?);
     assert!(!ci_enforced("goldens bless <name> --reason <reason>")?);
     assert!(!ci_enforced("check-supply-chain")?);
@@ -31080,6 +31386,7 @@ fn known_commands_include_current_report_and_policy_commands() {
     assert!(commands.contains(&"cockpit"));
     assert!(commands.contains(&"release-readiness --version <version>"));
     assert!(commands.contains(&"targeted-test-outcome --before <path> --after <path>"));
+    assert!(commands.contains(&"native-libtest --root <path> --package <name> [--target-dir <path>] [--locked] [--offline] [--replay-filter <name>] [--out <path>]"));
     assert!(commands.contains(&"mutation-calibration [root] --mutants-json <path>"));
     assert!(
         commands.contains(&"bun-ub-calibration [--corpus <path>] [--out <path>] [--out-md <path>]")
@@ -49139,7 +49446,7 @@ fn vscode_job_block(workflow: &str) -> Result<&str, String> {
     const HEADER: &str = "\n  vscode:\n";
     let start = workflow
         .find(HEADER)
-        .ok_or_else(|| "ci.yml is missing the vscode job".to_string())?;
+        .ok_or_else(|| "vscode-e2e.yml is missing the vscode job".to_string())?;
     let mut offset = start + HEADER.len();
     while offset < workflow.len() {
         let rest = &workflow[offset..];
@@ -49194,8 +49501,13 @@ fn vscode_host_diagnostics_contract_violations(job: &str) -> Vec<String> {
     if upload.contains("if: always()") || upload.contains("if: success()") {
         violations.push("diagnostics upload must not run on success".to_string());
     }
-    if !upload.contains("actions/upload-artifact@v7") {
-        violations.push("diagnostics upload must use actions/upload-artifact@v7".to_string());
+    // The repo pins first-party actions to a commit SHA with the major in the
+    // trailing comment (`actions/upload-artifact@<sha> # v7.x.y`).
+    let pinned_v7 = upload
+        .lines()
+        .any(|line| line.contains("actions/upload-artifact@") && line.contains("# v7"));
+    if !pinned_v7 {
+        violations.push("diagnostics upload must use actions/upload-artifact v7".to_string());
     }
     if !upload.contains("target/ripr/vscode-test-host-diagnostics/") {
         violations
@@ -49280,8 +49592,10 @@ fn vscode_host_diagnostics_contract_rejects_success_uploads_and_exit_laundering(
 #[test]
 fn vscode_host_diagnostics_ci_job_retains_failure_only() -> Result<(), String> {
     let root = repo_root()?;
-    let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
-        .map_err(|err| format!("read ci.yml: {err}"))?;
+    // #12252: the e2e job lives in the reusable workflow both ci.yml and the
+    // routed run call.
+    let workflow = fs::read_to_string(root.join(".github/workflows/vscode-e2e.yml"))
+        .map_err(|err| format!("read vscode-e2e.yml: {err}"))?;
     let job = vscode_job_block(&workflow)?;
     let violations = vscode_host_diagnostics_contract_violations(job);
     assert!(
@@ -49338,16 +49652,23 @@ fn lsp_cockpit_report_reads_boundary_gap_fixture_expectations() -> Result<(), St
     assert!(
         boundary_gap
             .action_titles
-            .contains(&"Write targeted test: copy brief".to_string())
-    );
-    assert!(
-        boundary_gap
-            .action_titles
             .contains(&"Write targeted test: open best related test".to_string())
     );
+    assert!(
+        !boundary_gap
+            .action_titles
+            .contains(&"Write targeted test: copy brief".to_string()),
+        "repair-packet brief is gated on fix_site_ready (#1663)"
+    );
     assert!(boundary_gap.context.seam_packet_available);
-    assert!(boundary_gap.context.targeted_test_brief_available);
-    assert!(boundary_gap.context.agent_repair_command_available);
+    assert!(
+        !boundary_gap.context.targeted_test_brief_available,
+        "pinned fixtures omit copyTargetedTestBrief until fix_site_ready"
+    );
+    assert!(
+        !boundary_gap.context.agent_repair_command_available,
+        "pinned fixtures omit copyAgentRepairCommand until fix_site_ready"
+    );
     assert!(boundary_gap.context.agent_packet_command_available);
     assert!(boundary_gap.context.agent_brief_command_available);
     assert!(boundary_gap.context.after_snapshot_command_available);
@@ -49378,8 +49699,14 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
     assert_eq!(editor_fixture.diagnostic_count, 1);
     assert_eq!(editor_fixture.seam_diagnostic_count, 1);
     assert!(editor_fixture.context.seam_packet_available);
-    assert!(editor_fixture.context.targeted_test_brief_available);
-    assert!(editor_fixture.context.agent_repair_command_available);
+    assert!(
+        !editor_fixture.context.targeted_test_brief_available,
+        "editor_lsp_workflow pins repair-packet suppression without fix_site_ready"
+    );
+    assert!(
+        !editor_fixture.context.agent_repair_command_available,
+        "editor_lsp_workflow pins repair start suppression without fix_site_ready"
+    );
     assert!(editor_fixture.context.agent_packet_command_available);
     assert!(editor_fixture.context.agent_brief_command_available);
     assert!(editor_fixture.context.after_snapshot_command_available);
@@ -49562,7 +49889,7 @@ fn lsp_cockpit_report_json_and_markdown_are_structured() -> Result<(), String> {
         serde_json::from_str(&json).map_err(|err| format!("cockpit JSON should parse: {err}"))?;
     assert_eq!(value["schema_version"], "0.1");
     assert_eq!(value["tool"], "ripr");
-    assert!(json.contains("Write targeted test: copy brief"));
+    assert!(json.contains("Write targeted test: copy suggested assertion"));
 
     let markdown = lsp_cockpit_report_markdown(&report);
     assert!(markdown.contains("# ripr LSP cockpit report"));
@@ -52396,6 +52723,31 @@ fn require_proof_pack_violation(violations: &[String], needle: &str) -> Result<(
             "expected violation containing `{needle}`, got {violations:?}"
         ))
     }
+}
+
+#[test]
+fn check_proof_packs_rejects_output_contracts_lane_missing_pack_command() -> Result<(), String> {
+    let manifest = ci_document(
+        "policy/proof-packs.toml",
+        include_str!("../../policy/proof-packs.toml"),
+    )?;
+    let mut lane_commands = std::collections::BTreeMap::new();
+    lane_commands.insert(
+        "output-contracts".to_string(),
+        [
+            "cargo xtask check-output-contracts",
+            "cargo xtask check-fixture-contracts",
+            "cargo xtask check-generated",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    );
+    let violations = super::proof_pack_output_contracts_lane_violations(&manifest, &lane_commands);
+    require_proof_pack_violation(
+        &violations,
+        "requires `cargo xtask goldens check` but ci_lane `output-contracts`",
+    )
 }
 
 #[test]

@@ -165,10 +165,8 @@ pub(crate) fn read_reader_to_string_with_limit(
 
 pub(crate) fn read_reader_with_limit(reader: impl Read, limit: u64) -> std::io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    reader
-        .take(limit.saturating_add(1))
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > limit {
+    reader.take(read_cap(limit)).read_to_end(&mut bytes)?;
+    if exceeds_limit(bytes.len(), limit) {
         return Err(oversize_error(limit));
     }
     Ok(bytes)
@@ -212,12 +210,33 @@ pub(crate) fn read_required_input(
     })
 }
 
-fn oversize_error(limit: u64) -> std::io::Error {
+/// Bytes to read so an over-limit input is detectable: one past `limit`,
+/// saturating so `limit == u64::MAX` cannot overflow.
+fn read_cap(limit: u64) -> u64 {
+    limit.saturating_add(1)
+}
+
+/// Whether `read_len` bytes (read under [`read_cap`]) prove the input is over
+/// `limit`.
+fn exceeds_limit(read_len: usize, limit: u64) -> bool {
+    read_len as u64 > limit
+}
+
+/// The whole-MiB figure shown in the oversize message, when `limit` is an
+/// exact multiple of one MiB.
+fn whole_mib(limit: u64) -> Option<u64> {
     const MIB: u64 = 1024 * 1024;
-    let readable = if limit >= MIB && limit.is_multiple_of(MIB) {
-        format!(" ({} MiB)", limit / MIB)
+    if limit >= MIB && limit.is_multiple_of(MIB) {
+        Some(limit / MIB)
     } else {
-        String::new()
+        None
+    }
+}
+
+fn oversize_error(limit: u64) -> std::io::Error {
+    let readable = match whole_mib(limit) {
+        Some(mib) => format!(" ({mib} MiB)"),
+        None => String::new(),
     };
     std::io::Error::new(
         std::io::ErrorKind::InvalidData,
@@ -226,6 +245,10 @@ fn oversize_error(limit: u64) -> std::io::Error {
         ),
     )
 }
+
+#[cfg(kani)]
+#[path = "bounded_input_kani.rs"]
+mod kani_proofs;
 
 #[cfg(test)]
 mod tests {

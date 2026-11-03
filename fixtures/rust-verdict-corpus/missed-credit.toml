@@ -25,23 +25,11 @@ case = "cell-0096-drop-of-stored-result"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
-case = "cell-0096-log-info-captured"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "cell-0166-cargo-bin-stdout"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
 case = "cell-0173-trial-callback-pin"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "cell-0231-log-raw-literal-captured"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "cell-0231-log-targeted-record-captured"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
@@ -163,6 +151,26 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "loop-accumulator-bound-input"
 reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
+
+[[entry]]
+case = "macro-export-crate-call"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-export-crate-call. Delete this entry if macro-defined bare calls regain a resolvable identity."
+
+[[entry]]
+case = "macro-export-group-import"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-export-group-import. Delete this entry if macro-defined bare calls regain a resolvable identity."
+
+[[entry]]
+case = "macro-export-path-boundary"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-export-path-boundary. Delete this entry if macro-defined bare calls regain a resolvable identity."
+
+[[entry]]
+case = "macro-module-child-boundary"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-module-child-boundary. Delete this entry if macro-defined bare calls regain a resolvable identity."
+
+[[entry]]
+case = "macro-module-import-boundary"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-module-import-boundary. Delete this entry if macro-defined bare calls regain a resolvable identity."
 
 [[entry]]
 case = "method-hop-field-read-rebound"
@@ -301,6 +309,14 @@ case = "semver-tilde-pre-ge"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "serde-derive-rename-field-upper"
+reason = "Tests discriminate the change; the row reads limited (RIPR-SPEC-0352) because serde_core mounts generated code through an unresolved include!, so macro trust cannot be established. On main it read credited; the identity gate alone would read a false gap."
+
+[[entry]]
+case = "serde-derive-rename-variant-lower"
+reason = "Tests discriminate the change; the row reads limited (RIPR-SPEC-0352) because serde_core mounts generated code through an unresolved include!, so macro trust cannot be established. On main it read credited; the identity gate alone would read a false gap."
+
+[[entry]]
 case = "serde-format-u8-hundreds"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -339,6 +355,10 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "shape-let-else-branch-pinned"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "shape-op-self-ctor-withheld"
+reason = "Tests discriminate the Self(..) operator-body change via Money(2)+Money(3), but RIPR-SPEC-0240 withholds operator credit as static_unknown; added with the case in #10581. Delete this entry when the row credits."
 
 [[entry]]
 case = "shape-sort-direction-truncate"
@@ -537,10 +557,6 @@ case = "spec-b-0169-raw-path-cfg-test-helper"
 reason = "Truth is discriminated but the edit is a test-only helper, so ripr reads silent (no probe seeded), which RIPR-SPEC-0153/0169 require; silent counts as abstained, not a false verdict (#10126 review)."
 
 [[entry]]
-case = "spec0096-named-binding-used"
-reason = "Measured row whose initializer-call and const shape abstains today; analyzer fix tracked in #9871."
-
-[[entry]]
 case = "spec0114-helper-chain-public-api"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -581,6 +597,10 @@ case = "spec0168-ex01-loop-body-in-unsafe-block"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "spec0168-ex02a-fn-gains-unsafe"
+reason = "Discriminated at runtime, abstained on purpose: a function that gains the `unsafe` qualifier reads `static_unknown` with stop reason `unsafe_obligation` (RIPR-SPEC-0168 example 2). Delete this entry if unsafe obligations become creditable."
+
+[[entry]]
 case = "spec0171-ex05-custom-lib-path-dependent"
 reason = "Cross-package wrapper witness now abstains as a named reach limit (#10163)."
 
@@ -597,16 +617,32 @@ case = "spec0231-oracle-any-exact-string-line"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "spec0231r40b-test-case-statement-body"
+reason = "Discriminated at runtime, abstained on purpose: a `#[test_case]` function with a statement body is unread, so no oracle (RIPR-SPEC-0231 example 40). Delete this entry if statement bodies become readable."
+
+[[entry]]
+case = "spec0231r42-package-renamed-claims-dependency"
+reason = "Discriminated at runtime, abstained on purpose: a `package`-renamed claims dependency is not a verified claims import, so the oracle stays unknown (RIPR-SPEC-0231 example 42). Delete this entry if renamed dependencies are resolved."
+
+[[entry]]
+case = "spec0231r43-non-literal-expected-operand"
+reason = "Discriminated at runtime, abstained on purpose: a non-literal expected operand keeps the claims assertion unknown / none (RIPR-SPEC-0231 example 43). Delete this entry if bound operands become evaluable."
+
+[[entry]]
+case = "spec0360-ex08b-call-term-statement-body-callee"
+reason = "Discriminated at runtime, abstained on purpose: a callee with a statement body is not folded, so the accumulator reads `static_unknown` (RIPR-SPEC-0360 example 8). Delete this entry if statement-body callees become evaluable."
+
+[[entry]]
+case = "spec0360-ex09-call-term-second-argument"
+reason = "Discriminated at runtime, abstained on purpose: a call term with a second argument is outside the folded call terms and keeps its `static_unknown` probe (RIPR-SPEC-0360 example 9). Delete this entry if multi-argument call terms become evaluable."
+
+[[entry]]
 case = "spot-cap-generic-via-wrapper"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
 case = "strsim-sorensen-dice-equal"
 reason = "Compares a local rebound from the parameter (`let a = a.chars()..collect()`), so the name-only credit is withheld and the row abstains; fail-closed by design (#9197)."
-
-[[entry]]
-case = "tokens-add-fee-integration-api"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
 case = "tokens-base-six-hop-chain"
@@ -622,14 +658,6 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "tokens-recursive-label-arm"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "trap-row-at-expected-panic-control"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "trap-slot-of-reached-panic-control"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]

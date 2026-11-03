@@ -1,6 +1,6 @@
-pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file (ripr.toml) and, with --ci github, a non-blocking advisory workflow.
+pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file (ripr.toml) and, with --ci, a non-blocking advisory CI preset.
 
-Usage: ripr init [--root PATH] [--ci github] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
+Usage: ripr init [--root PATH] [--ci github|gitlab] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
 
 `ripr init` is optional. It writes the built-in defaults to a repo-local
 ripr.toml so teams can commit, review, and tune policy. Missing ripr.toml is
@@ -9,7 +9,8 @@ not unlock basic CLI, editor, or pilot usefulness.
 
 Options:
   --root PATH      Workspace root where ripr.toml should be written. Defaults to current directory.
-  --ci github      Also write .github/workflows/ripr.yml with advisory reports and optional SARIF rendering/upload.
+  --ci PROVIDER    Also write an advisory CI preset: github writes .github/workflows/ripr.yml;
+                   gitlab writes .gitlab-ci.yml with a merge-request check and review-comments flow.
   --mcp            Also add the ripr MCP server to .mcp.json (Claude Code project config).
                    Other servers in an existing file are kept; an existing
                    `ripr` entry is kept unless --force; a symlink or a file
@@ -44,13 +45,18 @@ Generated config:
   - records the built-in saved-workspace LSP seam diagnostic default
   - remains advisory and does not configure CI blocking or mutation execution
 
-Generated GitHub workflow:
+Generated GitHub workflow (--ci github):
   - installs ripr and runs `ripr reports ci-packet` for the PR evidence packet
   - uploads report artifacts and writes a reviewer-oriented advisory summary
   - optionally renders inline review comments (RIPR_COMMENT_MODE=inline)
   - renders and uploads diff/repo SARIF only while RIPR_UPLOAD_SARIF is true
   - uses continue-on-error for advisory RIPR work and upload steps
   - does not enable baseline failure policy by default
+
+Generated GitLab pipeline (--ci gitlab):
+  - runs on merge-request pipelines only with allow_failure: true
+  - installs the pinned ripr release, runs `ripr check` and `ripr review-comments`
+  - uploads target/ripr/** artifacts for review (no SARIF or MR comment publishing)
 "#;
 pub(super) const CONFIG_HELP: &str = r#"Validate the repository's ripr.toml without running workspace probes.
 
@@ -76,7 +82,7 @@ Options:
                     target/ripr/pilot under the resolved root (`--root .` pins
                     this directory).
   --mode MODE       instant, draft, fast, deep, or ready. Defaults to draft unless ripr.toml sets one.
-  --max-seams N     Maximum ranked seams in the pilot summary. Defaults to 5.
+  --max-seams N     Maximum ranked gaps in the pilot summary. Defaults to 5.
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
                     30000; when the default passes, the same run continues for up to
                     240000 more. An explicit value is a hard limit.
@@ -90,23 +96,35 @@ Progress:
   Long-running pilot analysis writes producer stages to stderr as
   `ripr progress: <stage> [repo]` and, while a stage stays active, throttled
   `still active after <elapsed class>` heartbeats, exactly as `ripr check`
-  reports them. Non-TTY / CI output is newline-delimited with no control
-  sequences; stdout and the pilot packet stay byte-clean. When the default
-  timeout passes, the same run continues under the same progress stream.
-  `--quiet` turns this stream off.
+  reports them, including `processed_<n>_of_<total>` once the inventory has
+  an honest seam denominator. Non-TTY / CI output is newline-delimited with
+  no control sequences; stdout and the pilot packet stay byte-clean. When
+  the default timeout passes, the same run continues under the same progress
+  stream. `--quiet` turns this stream off.
 
 Environment variables:
   RIPR_PILOT_SEAM_BUDGET        Maximum gaps written to pilot artifacts (repo-exposure.json,
                                  agent-seam-packets.json). Default: 2000. Set to 0 to disable
-                                 the budget and write all seams (may produce very large files).
+                                 the budget and write all gaps (may produce very large files).
                                  When the budget is applied, both artifacts include a
                                  limitations[] disclosure naming the env var and a repair route.
+  RIPR_PILOT_REPO_EXPOSURE_BYTES Byte budget for the entries in repo-exposure.json. Default:
+                                 8000000 (the entry count alone let it reach 13 MB). A cut sets
+                                 run_status limited_repo_exposure_bytes, reports the rendered
+                                 and total counts in limitations[] and pilot-summary.json, and
+                                 `ripr outcome` refuses the file. Set to 0 to write every entry.
+  RIPR_PILOT_PACKET_BUDGET      Maximum packets in the pilot packet file. Default: 3, with
+                                 actionable packets first, so the file stays small enough to
+                                 read. Set to 0 to write every packet (often 2-4 MB). When the
+                                 bound cuts, limitations[] reports packets_emitted and
+                                 packets_eligible. The `ripr check` packet format is unaffected
+                                 and writes the full set.
   RIPR_REPO_EXPOSURE_SEAM_LIMIT Maximum gaps analyzed and ranked in one pilot run.
                                  Default: the pilot seam budget (2000), so pilot does not
                                  classify seams it would not rank; `ripr check` keeps 10000.
                                  Set to 0 to analyze every seam. When the
                                  limit cuts the ranking, the terminal and summary state
-                                 "ranked N of M seams" and actionable seam totals become
+                                 the summary reports how many spots were ranked, and actionable totals become
                                  lower bounds until you raise or remove the limit.
   RIPR_GIT_TIMEOUT              Cooperative deadline in seconds for each git invocation
                                  in the current-change discovery path, exactly as `ripr
@@ -122,7 +140,7 @@ Outputs:
   - agent-seam-packets.json
   - pilot-summary.json and pilot-summary.md
 
-The pilot packet is advisory. It reports saved-workspace static seam evidence
+The pilot packet is advisory. It reports saved-workspace static gap evidence
 and points to one next focused test action; it does not run mutation testing,
 edit source files, or configure CI policy. If analysis exceeds the timeout,
 pilot-summary.json and pilot-summary.md are written with status=partial and an
@@ -191,18 +209,18 @@ Common options:
                     walks up to the enclosing workspace or package, or the git
                     top level (never past the repository); `--root .` pins
                     this directory.
-  --quiet           Suppress stderr progress. Unknown totals show no
-                    percentage or ETA, and progress makes no speed claim.
+  --quiet           Suppress stderr progress; known seam totals as processed_n_of_total.
+                    Unknown totals show no percentage or ETA, and progress makes no speed claim.
   --timeout SECS    Wall-clock analysis budget (600s default; 0 disables;
-                    excludes repo seam-inventory formats). On analysis_timeout,
+                    excludes the repo-wide formats). On analysis_timeout,
                     raise/disable it or narrow the diff; re-run.
 
-Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`
-findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
+Exit status: 0 for a completed run, including findings that are `exposed` or weak.
+`unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 Examples:
   ripr check
-  ripr check --base origin/main --json --quiet   (--json alone still prints progress)
+  ripr check --base origin/main --json --quiet   (--json on a pipe is already quiet; --quiet also silences a terminal)
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
@@ -381,8 +399,8 @@ Options:
                            instead of the one-screen summary.
 
 Exit status:
-  Complete and partial_with_limitations reports exit 0, including `exposed`
-  and `weakly_exposed` findings. A non-zero exit means the analysis did not
+  Complete and partial_with_limitations reports exit 0, including findings
+  that are `exposed` or weak. A non-zero exit means the analysis did not
   complete, not that it disapproved of the diff.
   `unsupported_input` reports exit 2 after the original report is written;
   limitations and recovery routes remain available in that report. Usage and
@@ -396,17 +414,30 @@ Exit status:
 Progress:
   Long-running check analysis writes producer stages to stderr as
   `ripr progress: <stage> [<scope>]` and, while a stage stays active,
-  throttled `still active after <elapsed class>` heartbeats. Non-TTY
-  / CI output is newline-delimited with no control sequences. A TTY
-  may reuse one line and stays silent for sub-threshold flashes.
-  Machine formats (json, sarif, github) keep stdout byte-clean;
-  they do not disable stderr progress. Unknown totals never become a
-  percentage or ETA. Progress does not mean analysis is faster or
-  that the command will succeed. `--quiet` turns this stream off; agents
-  and scripts reading json should pass it. Setting `RIPR_QUIET` to anything
-  but empty, `0` or `false` does the same.
+  throttled `still active after <elapsed class>` heartbeats. When a
+  repo-inventory walk has an honest seam denominator, those lines also
+  carry `processed_<n>_of_<total>` so a multi-minute `repo-exposure-json`
+  run can be told from a hang. Non-TTY / CI output is newline-delimited
+  with no control sequences. A TTY may reuse one line and stays silent
+  for sub-threshold flashes. Machine formats (json, sarif, github) keep
+  stdout byte-clean. With json, sarif, badge-* or agent selected and
+  stderr not a terminal, the stream is off by default; `RIPR_PROGRESS=1`
+  restores it. A terminal and the human formats keep it. Unknown totals
+  never become a percentage or ETA. Progress does not mean analysis is faster
+  or that the command will succeed. `--quiet` turns this stream
+  off; so does setting `RIPR_QUIET` to anything but empty, `0` or
+  `false`. `repair` and `continue` accept `--quiet` too and drop their
+  progress narration and `wrote <path>` lines; refusal prose is never
+  suppressed.
 
 Environment variables:
+  RIPR_MAX_DIFF_CHANGED_LINES             Maximum added plus removed diff lines recorded
+                                          while parsing a unified diff before check
+                                          stops with diff_scope_oversized (language-
+                                          neutral; per-language adapter limits may
+                                          still apply). With --json, stdout carries a
+                                          non-consumable limited artifact.
+                                          Default: 100000.
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
                                           before check stops with
                                           diff_scope_oversized. With --json, stdout
@@ -464,9 +495,13 @@ Environment variables:
                                           Default: 1000000 (1 MB).
   RIPR_QUIET                              Silence the stderr `ripr progress:` stream
                                           like --quiet (check, explain, context,
-                                          pilot). Any value except empty, 0 or
-                                          false silences it; stdout, exit codes and
-                                          errors are unchanged.
+                                          pilot, repair, continue). Any value except
+                                          empty, 0 or false silences it; stdout, exit
+                                          codes and errors are unchanged.
+  RIPR_PROGRESS                           Keep the `ripr progress:` stream for a
+                                          machine format on a non-terminal stderr,
+                                          where it is off by default. Any value
+                                          except empty, 0 or false restores it.
   RIPR_GIT_TIMEOUT                        Cooperative deadline in seconds for each
                                           git invocation in the diff-load path. A
                                           git command that exceeds the deadline is
@@ -527,7 +562,7 @@ Exit status:
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 
-Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--quiet] <finding-id|file:line>
+Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--format human|agent] [--quiet] <finding-id|file:line>
 
 Options:
   --root PATH  Workspace root. Defaults to the current directory, then
@@ -539,6 +574,11 @@ Options:
                `--root .` or a finding ID; with
                --from or --diff, a selector naming no file is anchored to that
                directory).
+  --format F   human (default) or agent. agent prints the selected finding as
+               compact `check --format agent` lines (one record, its related
+               test, and an explicit done=/open=/stop= terminal line plus
+               next=<ripr context command>), static advisory only. For the
+               JSON packet use `ripr context --at <finding-id>`.
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.
@@ -579,7 +619,7 @@ Filesystem effects:
 Performance:
   Use --from to skip re-analysis when you already ran
   `ripr check --write-artifact PATH`. This avoids re-parsing the diff and
-  re-classifying every probe — useful for large diffs and scripted workflows
+  re-classifying every changed behavior — useful for large diffs and scripted workflows
   that run check, explain, and context in sequence.
 "#;
 pub(super) const CONTEXT_HELP: &str = r#"Print the per-change context packet for one finding or location.
@@ -722,7 +762,7 @@ root, an ancestor Cargo project bounded by git, or nested in this tree; when
 detected or enabled. Otherwise (for example a Python-only or TypeScript-only
 root with no nested or ancestor Cargo.toml) the analysis profile skips the
 Cargo.toml, cargo, and rustc checks with the reason and does not fail doctor.
-`--profile source-build` still probes cargo and rustc.
+`--profile source-build` still runs cargo and rustc checks.
 
 First-run diagnosis:
   - Detected languages: shallow file-marker scan; each language shows its

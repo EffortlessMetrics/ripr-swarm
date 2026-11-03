@@ -69,7 +69,9 @@ pub(crate) fn source_file_digest(root: &Path, relative: &str) -> Result<Option<S
     match std::fs::read(root.join(relative)) {
         Ok(bytes) => Ok(Some(format!("sha256:{:x}", Sha256::digest(bytes)))),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(format!("read source subject file {relative} failed: {err}")),
+        Err(err) => Err(format!(
+            "read source subject file {relative} failed: {err}; check that the path exists and is readable, then rerun"
+        )),
     }
 }
 

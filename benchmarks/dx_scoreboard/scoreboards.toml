@@ -91,8 +91,8 @@ heavy = true
 [[corpus]]
 id = "servo"
 url = "https://github.com/servo/servo"
-sha = "436d98daa8cc128d96371709bc514b5b4d9cbce3"
-note = "browser engine workspace (several thousand .rs files); the pinned change edits components/net/http_cache.rs"
+sha = "e10d0a00ebd8a62a89ee51f4cff31ae7ed0aff28"
+note = "browser engine workspace (several thousand .rs files); the pinned change adds the devtools getFavicon message, a behavioral edit the warm check reports a finding for (the earlier pin was a type-level refactor with no behavioral candidates, #12203)"
 heavy = true
 
 [[corpus]]
@@ -231,6 +231,59 @@ url = "https://github.com/remeda/remeda"
 sha = "d02c3bdb5e18cfa53e76f33f4ae525adce515379"
 language = "typescript"
 note = "pnpm monorepo whose package is packages/remeda; the commit edits packages/remeda/src/funnel.ts and its test, and only nested detection (#10941) selects the TypeScript adapter without a ripr.toml"
+
+# The largest TypeScript workspace pinned (#11676): VS Code's own tree, a
+# three-file edit in src/vs/platform/agentHost (5,328 files). Before the
+# per-file fact store wrote each shared list once, one test file persisted a
+# 267 MB envelope and the 256 MiB store budget was spent before the workspace
+# was warm (about four runs). The ceilings are a regression gate set above the
+# measured second run (48.6 s, 457 MiB on 4 cores), not the 2 s target; tighten
+# them as the steady-state costs come down.
+#
+# The 2026-11-01 hosted nightly recorded this row's warm check as `incomplete`
+# (`partial_with_limitations`), so its 4.7 s / 345 MiB are not admissible values
+# and the ceilings stay at their local calibration until the row completes
+# (#12052; workspace-walk accounting is #11984).
+[[corpus]]
+id = "vscode-typescript"
+url = "https://github.com/microsoft/vscode"
+sha = "c198526d8e64ba6f9944e9f7bcc079ed1f6d7fcc"
+language = "typescript"
+note = "very large TypeScript application (5,328 files); commit edits agentHostChangesetCoordinator.ts, agentHostChangesetFileMonitorCoordinator.ts and the coordinator test"
+heavy = true
+ceilings = { "speed.warm_check_ms" = 90000, "speed.warm_check_peak_rss_mb" = 1024 }
+
+# The TypeScript compiler's own repository: the workspace walk stops at the
+# 20,000-entry cap, so the row pins the refusal rather than a verdict (#11794).
+# The pinned diff's findings are `static_unknown` with the named
+# `typescript_workspace_discovery_truncated` limit; before #11794 the same diff
+# reported zero findings because the changed file was never discovered. Measured
+# on 4 cores: 16.1 s cold, 2.6 s warm, 62 MiB. The ceilings are a regression
+# gate above those numbers, not a claim that the 2 s bar is met.
+#
+# At this pin the walk no longer reaches the 20,000-entry cap (the
+# `tests/baselines/reference` prune, #11984), but the analysis is still
+# `partial_with_limitations`: the diff adds generated baseline `.js` files the
+# preview adapter skips, a test file registers tests the extractor does not
+# index, and the added test fixture does not parse. All three are typed
+# `language_scope_unsupported` limitations. A warm-check sample is admitted only
+# from a complete analysis, so both hosted nightlies of 2026-11-01 and the
+# 2026-11-02 run recorded this row's `speed.warm_check_*` as `incomplete`.
+# `expected_partial` declares the intended outcome: the sample is admitted only
+# when the analysis is the typed partial outcome and its only limitations are
+# of the declared kind. A complete result, or any other limitation kind
+# beside it, fails the row. The admitted row stays visibly partial and is
+# never scanned for contradictions.
+# The ceilings stay (#12052).
+[[corpus]]
+id = "typescript-compiler"
+url = "https://github.com/microsoft/TypeScript"
+sha = "ad04bf7488384a5dcdf7d250ccb8e5263021a8ff"
+language = "typescript"
+note = "TypeScript compiler repository; commit fixes declaration emit for nested binding patterns in src/compiler and adds baseline files"
+heavy = true
+ceilings = { "speed.warm_check_ms" = 5000, "speed.warm_check_peak_rss_mb" = 256 }
+expected_partial = "language_scope_unsupported"
 
 [[corpus]]
 id = "hono-typescript"
@@ -914,6 +967,46 @@ runner_dependent = true
 per_repo = true
 source = "ingest:first-run"
 
+# --------------------------------------------------------------- repair ----
+# First-hour repair funnel (#6308). Host-sensitive durations stay advisory
+# until runner policy is ratified; zero selected cases remain not_measured.
+
+[[metric]]
+id = "repair.time_to_verified_improvement_ms"
+board = "repair"
+title = "Install to verified improvement or closure (project verification plus static movement)"
+unit = "ms"
+direction = "lower_is_better"
+target = 600000
+regression_pct = 25
+regression_floor = 60000
+runner_dependent = true
+source = "ingest:repair-funnel"
+
+[[metric]]
+id = "repair.time_to_first_honest_result_ms"
+board = "repair"
+title = "Install to first decisive honest result on the first-run walk"
+unit = "ms"
+direction = "lower_is_better"
+target = 300000
+regression_pct = 25
+regression_floor = 30000
+runner_dependent = true
+source = "ingest:repair-funnel"
+
+[[metric]]
+id = "repair.selected_case_count"
+board = "repair"
+title = "Governed funnel cases selected for real-route denominators"
+unit = "cases"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:repair-funnel"
+
 # ------------------------------------------------------------------ agent ----
 # Help-only agents fixing seeded test gaps on pinned crates, scored with
 # hand-written mutants plus cargo-mutants (agent-as-user harness, #5293).
@@ -1016,13 +1109,15 @@ per_repo = true
 source = "ingest:agent-as-user"
 
 # Gaps `ripr check --format agent` names on the unfixed gap commit, where the
-# answer key says all three mutants survive. A count of zero means the compact
-# format told the agent there is nothing to do (a false stop); any fall below
-# the baseline fails.
+# answer key says all three mutants survive. The count is the test-side work the
+# format names: gap lines plus `open=` lines (a reach-limited finding with a
+# weak related assertion, #11825). A count of zero means the compact format
+# told the agent there is nothing to do (a false stop); any fall below the
+# baseline fails.
 [[metric]]
 id = "agent.agent_format_gaps_before_fix"
 board = "agent"
-title = "Gaps named by `ripr check --format agent` on the gap commit, before any fix"
+title = "Gap or open lines named by `ripr check --format agent` on the gap commit, before any fix"
 unit = "gaps"
 direction = "higher_is_better"
 target = 1

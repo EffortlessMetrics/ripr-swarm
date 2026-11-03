@@ -19,17 +19,17 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
   Changed behavior: return x * 2;
-  Discriminator (observed, advisory): Related test reaches `doubled` with an `exact_value` oracle.
-    Static evidence suggests the changed behavior is observed under an exact-value or
-    exact-error-variant discriminator
+  Check (observed, advisory): Related test reaches `doubled` with an `exact_value` oracle. Static
+    evidence suggests the changed behavior is observed under an exact-value or exact-error-variant
+    check
   Related test: tests/cart.test.ts:11 doubled doubles
   Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
-  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -40,14 +40,15 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/currentness_matrix_typescript_deleted_statement/input --diff <cwd>/fixtures/currentness_matrix_typescript_deleted_statement/diff.patch --mode fast probe:src_cart.ts:typescript_preview:7b9c7c82
   ripr context --root <cwd>/fixtures/currentness_matrix_typescript_deleted_statement/input --diff <cwd>/fixtures/currentness_matrix_typescript_deleted_statement/diff.patch --mode fast --at probe:src_cart.ts:typescript_preview:7b9c7c82
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets (TypeScript preview: 2).
-    - src/cart.ts:6 (exposed); kind: field_construction; reason: Related test reaches `cappedTotal` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
-    - src/cart.ts:12 (exposed); kind: field_construction; reason: Related test reaches `flooredTotal` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
+    - src/cart.ts:6 (exposed); kind: field_construction; reason: Related test reaches `cappedTotal` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.
+    - src/cart.ts:12 (exposed); kind: field_construction; reason: Related test reaches `flooredTotal` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.
   Hidden classes:
     exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full

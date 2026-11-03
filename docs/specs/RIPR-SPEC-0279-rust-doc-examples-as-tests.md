@@ -194,10 +194,80 @@ package (`[lib] name`, else the package name with `-` read as `_`):
   same-named rivals.
 - A runtime claim: a registered example is static evidence that a test
   appears to discriminate, not a claim that it compiles or passes.
-- Feature, platform or `cfg(not(doctest))` gating of the documented
-  function: like an ordinary `#[test]`, an example on a gated function
-  registers without establishing that default `cargo test` enables the
-  gate.
+- Resolving a cfg gate beyond the default-feature rule below: any
+  `#[cfg(..)]` or `#[cfg_attr(..)]` between the comment and the item other
+  than `#[cfg(doctest)]` and a gate that is provably true under the package's
+  default features, and any inner `#![cfg(..)]` (or
+  `#![cfg_attr(.., cfg(..))]`) on the file that is not, refuses the example
+  instead of guessing whether default `cargo test` enables the gate (#8639).
+  Target, custom `--cfg` and non-default feature values are not evaluated.
+
+### Default-feature cfg gates (#12230)
+
+A `cfg` gate on the documented item, or an inner `#![cfg(..)]` on its file,
+does not refuse the example when the predicate is provably true in a plain
+`cargo test` of the package, that is, with exactly the package's default
+features. The answer is three-valued and only "provably true" admits:
+
+- `feature = "name"` is true when `name` is in the closure of the package
+  manifest's `[features] default = [..]`. Closure follows plain feature
+  names through `[features]`; a declared `default` feature is itself
+  enabled, and a `dep:name` or weak `name?/feature` entry adds no feature
+  name. A name with no `[features]` entry counts only as an optional
+  dependency's implicit feature: an `optional = true` entry of the package's
+  `[dependencies]` or `[build-dependencies]` (target tables included) that
+  no `[features]` list spells as `dep:name`. That implicit feature is enabled
+  either by a default entry naming it or by a plain `name/feature` entry in
+  the closure, which enables the dependency. Anything else names nothing
+  Cargo would enable.
+- `all(..)` is true when it has at least one operand and every operand is
+  true. `any(..)` is true when at least one operand is true.
+- `doctest` is true; it is the one non-feature name rustdoc sets.
+- `not(..)` is never true: a feature absent from the default set can be
+  switched on by a sibling workspace member or `--features`, and a feature
+  in the set can be switched off by `--no-default-features`, so no negation
+  is resolved. Every other name, key-value, target predicate, custom `--cfg`
+  value and any text this resolver cannot parse is not true.
+- A feature absent from the default closure is not true, even when the
+  manifest declares it.
+- Without a readable manifest `[features]` table (missing manifest authority,
+  a `default` or feature entry that is not an array of strings), no feature
+  is true.
+- `#[cfg_attr(..)]` between the comment and the item still refuses. An
+  inner `#![cfg_attr(.., cfg(..))]` still gates the file.
+
+This assumes the plain command rustdoc is run with. A repository whose CI runs
+doctests with `--no-default-features` or a custom feature set is outside it,
+exactly as an ungated example is read as running under the default command.
+
+### Enclosing cfg gates (#12453)
+
+rustdoc compiles a doc example only when the documented item is compiled, so
+a gate on anything that encloses the item gates the example, not just a gate
+on the item itself. The same rule that reads the item's own gates applies to
+every enclosing gate, and only "provably true" admits:
+
+- Inside the file: a `#[cfg(..)]` or `#[cfg_attr(..)]` on a `mod`, `impl`,
+  `trait` or `extern` block that holds the documented function. An inline
+  module nested in another is read at every level.
+- Across files: the `mod name;` declaration, in the declaring file, of every
+  file on the path from the library root to the documented file, including a
+  `#[path = ".."]` form, and every inline module that holds that declaration.
+  An inner `#![cfg(..)]` on a declaring file gates it as well.
+- `#[cfg(doctest)]` and a gate provably true under the default features
+  (above) admit, on an enclosing item as on the documented one.
+  `#[cfg_attr(..)]` on an enclosing item refuses, as it does on the
+  documented one.
+- Fail closed: a declaring file that is not in the analyzed set, or a
+  declaration this reader cannot find at the recorded line, refuses the
+  example. An enclosing item whose attribute text cannot be parsed refuses.
+
+Negative controls: a `#[cfg(feature = "extra")]` (feature absent from
+`default`) on an enclosing `mod`, on an enclosing `impl`, and on the
+`mod wire_mod;` declaration of the file that holds the example, including
+`any(extra, other)` and the `#[path]` form, each register nothing. The same
+gates with `feature = "alloc"` in the default closure, and `cfg(doctest)`,
+still register.
 
 ## Acceptance Examples
 
@@ -220,7 +290,7 @@ package (`[lib] name`, else the package name with `-` read as `_`):
 
 ## Test Mapping
 
-- `crates/ripr/src/analysis/facts/doctests/tests.rs`: rule 1.
+- `crates/ripr/src/analysis/facts/doctests/tests.rs`: rule 1 and the enclosing cfg gates (#12453).
 - `crates/ripr/tests/doctest_owner_pins.rs`: rules 2 and 3, examples 1 to 6.
 - `fixtures/rust-verdict-corpus`: `mined-doctest-only-read-u16`,
   `mined-doctest-ignored-read-u16-le`, `spec0279-doc-use-bare-call` and
@@ -231,7 +301,9 @@ package (`[lib] name`, else the package name with `-` read as `_`):
 - `crates/ripr/src/analysis/facts/doctests.rs`: `register_doctests`,
   `doc_examples`, `DocExample::synthetic_source`.
 - `crates/ripr/src/analysis/facts/member_crates.rs`:
-  `MemberCrates::runs_library_doctests`.
+  `MemberCrates::runs_library_doctests`, `MemberCrates::default_library_features`.
+- `crates/ripr/src/analysis/facts/doctests.rs`: `gate_is_provably_true`.
+- `crates/ripr/src/analysis/facts/doctests/enclosing.rs`: `enclosing_gate_refuses`.
 - `crates/ripr/src/analysis/facts/index.rs`: `RustIndex::doctest_source`.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
   `OwnerPinSyntax::doctest_refusal`, `OwnerReturnPin::admits`,

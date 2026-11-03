@@ -197,6 +197,12 @@ Test discovery:
   `describe` names, the placeholder `<computed title, line N>`, and the line
   of the registration. A string literal or a substitution-free template keeps
   its text.
+- a Vitest `test.for(rows)(title, fn)` / `it.for(rows)(title, fn)`
+  registration is not indexed (the table call and the title/callback call
+  are not decomposed), so an active, non-empty, non-skipped one is disclosed
+  as the `test.for registration` shape of
+  `typescript_test_extraction_partial` instead of being silently lost; an
+  empty table, a skip option and an unrelated `.for` helper are not (#10757).
 - a registration the extractor drops makes the analysis partial
   (`typescript_test_extraction_partial`) only when a test in that file can be
   related to the diff. The test index is workspace-wide, so the disclosure is
@@ -504,7 +510,16 @@ tree, not by token order, so `a && b > 1 || c` and `a || b > 1 && c` each name
 removed clause, a moved parenthesis, a swapped
 logical operator, an edit to a non-comparison clause, a clause quoted in a
 string or template literal, and a clause with a call, computed or nullish
-operand each name no boundary. The named clause is a boundary fact only: under
+operand each name no boundary. A clause is withheld (#11442) when more than one token is replaced on either
+side of the edit inside it, or when the edit added a comparison clause, because
+neither can be steered to one discriminator. The one exception is a pure
+operand swap, which must be the whole edit: the same operands exchanged around
+the one comparison operator, which becomes its mirror (`>` with `<`, `>=` with
+`<=`, unchanged for `==`, `===`, `!=` and `!==`), with every token outside that
+comparison identical at the same index and the token count unchanged. That is
+the same boundary written the other way round and is still named; a swap plus
+any other edit in the line, and exchanging operands without mirroring the
+operator, are withheld. The named clause is a boundary fact only: under
 `&&` it is observable when the other clauses hold, so it never claims that a
 test can drive that clause independently.
 
@@ -566,6 +581,12 @@ boundary without changing the guards (#4104 E):
   the name; the position, arity, off-value and expected-side rules are the
   literal path's, unchanged. Fixtures: `ts_boundary_local_constant_credit`,
   `ts_boundary_local_constant_refused`.
+- **Object-row expected values** (#11196, RIPR-SPEC-0243 rule 11): a
+  `row.key` expected value of a never-touched `const` object-row table, or
+  of an inline `test.each` object table, is read per row as that row's
+  literal only when every row holds a one-line literal at every key read;
+  otherwise the dynamic-assertion refusal is unchanged. Fixtures:
+  `ts_table_row_expected_credit`, `ts_table_row_expected_refused`.
 - **Boundary input evidence**: for a changed predicate with a named missing
   discriminator `<param> == <operand>`, the adapter emits
   `typescript_boundary_input: parameter=<param>;index=<i>;operand=<operand>;value=<v>`
@@ -626,6 +647,28 @@ boundary without changing the guards (#4104 E):
   stays unwitnessed. The repair packet's assertion shape asks for a value of
   the kind in place of the argument and never reuses the observed input, and
   the "inputs on one side of the boundary" wording is not used for this shape.
+- **Negated `typeof` kind test** (#12281): when the whole edit replaces the
+  guard's equality operator with its negation (`===` and `!==`, `==` and `!=`)
+  and changes no other token, and the comparison is the whole condition (the
+  `if`/loop test, the returned expression, or the test of a returned
+  conditional, with at most `!` and parentheses around it) on a changed line
+  that is itself a complete `if (...)`, `} else if (...)` or `while (...)`
+  header or a `return ...;` statement (balanced parentheses and brackets, no
+  trailing operator or opener), and that line is where the first statement of
+  the owner's own body starts (no earlier statement can return, throw, branch
+  or loop first, and the guard is not nested in a block, loop or callback),
+  every input takes the other branch. A line of a condition written over
+  several lines, or a guard after another statement, never qualifies. An observed
+  owner call whose argument at the guarded parameter's position is written as
+  a value of any readable kind then witnesses the change, so
+  `expect(resolveValue(42)).toBe(42)` against a flipped
+  `typeof input === "function"` reads `exposed` and offers no repair start. An
+  edit that changes the kind name, also changes another token, swaps `===`
+  for `==`, or negates a clause joined by `&&` / `||` or nested in another
+  conditional (`typeof input !== "function" && flag`) keeps the exact-kind
+  rule above, and an argument whose kind the text
+  does not fix (an identifier with no resolved constant, a call) still
+  witnesses nothing.
 - **Faithful boundary discriminator** (#11256): a predicate's missing
   discriminator reads its comparison in code spans only, and a quoted operand
   is one operand whatever it holds. `arg !== "--"` and `mode === "a b"` are not
@@ -661,6 +704,30 @@ values defined in RIPR-SPEC-0026:
   observed)
 - `unsupported_syntax` (e.g., TypeScript syntax the parser flags as
   unsupported for this preview)
+
+### Strong check that is not tied to the changed line
+
+When a related test carries a strong exact-value or snapshot check, the
+classifier reached the generic fallthrough, and no missing discriminator,
+static limit or named limitation applies, the finding's next step says the
+check is already strong but cannot be tied to the changed line and asks for an
+input that flips the changed branch (#12463). The text lives in one shared
+constant that the classifier writes and the preview card reads; the card
+wording applies only to a non-exposed finding carrying exactly that next step
+with a strong snapshot or exact-value oracle. It never asks for another
+exact-value assertion and never produces a repair packet.
+
+The decision is excluded, and keeps the generic "add a test that exercises the
+changed behavior" step, when no input can flip the change: an unwitnessed
+update of a field (`this.hits += 1`) whose new value reads none of the owner's
+parameters, as when the test overwrites the field before reading it, reads an
+accessor-backed field, or runs a table whose rows never call the method
+(`ts_field_update_overwrite_*`, `ts_field_update_table_zero_rows`,
+`ts_field_update_getter_backed`). A deleted call is also excluded, counted or
+not, because it has no branch for an input to flip; the
+`typescript_call_removal_*` fixtures keep their previous wording. The positive fixtures are
+`ts_strong_snapshot_untied` (literal inline snapshot) and
+`ts_coincident_state_update`.
 
 ## Required Evidence
 

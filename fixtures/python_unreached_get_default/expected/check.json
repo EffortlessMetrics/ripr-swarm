@@ -27,6 +27,12 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "observation_not_confirmed", "summary": "the assertion is not confirmed to observe the changed value"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_rates.py:python_preview:0a52360f",
         "family": "return_value",
@@ -134,8 +140,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `tier not in RATE_TABLE`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `tier not in RATE_TABLE`.",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `tier not in RATE_TABLE`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `tier not in RATE_TABLE`.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",

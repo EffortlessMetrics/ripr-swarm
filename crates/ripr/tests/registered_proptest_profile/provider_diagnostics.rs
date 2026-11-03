@@ -12,7 +12,7 @@ fn action(finding: &Value) -> Result<&str, String> {
 }
 
 fn require_withheld(finding: &Value) {
-    assert_eq!(finding["classification"], "no_static_path", "{finding}");
+    assert_eq!(finding["classification"], "static_unknown", "{finding}");
     assert_eq!(finding["related_tests_total"], 0, "{finding}");
     for values in [
         &finding["related_tests"],

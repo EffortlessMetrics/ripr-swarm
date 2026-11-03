@@ -37,7 +37,7 @@ use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use super::{PythonImport, PythonTest, expr_full_name};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use rustpython_parser::{Mode, Tok, lexer::lex};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -358,10 +358,28 @@ fn without_test_bodies(source: &str, statements: &[Stmt]) -> String {
     }
     // A test function named anywhere but its own `def` (called at import,
     // used as a decorator) may run before the decorators: scan everything.
-    if names
-        .iter()
-        .any(|name| identifier_offsets(&blanked, name).count() > 1)
-    {
+    // Count the words once: a whole-word occurrence of an identifier is a word
+    // equal to it, so this is the same test as scanning for each name without
+    // a pass over the module per test (a module of N tests cost N scans). A
+    // name with a character `words` splits on (Python allows identifier
+    // characters that `char::is_alphanumeric` rejects, such as `\u{2118}`) is
+    // not a word of its own, so it keeps the per-name scan.
+    let named_outside_its_def = {
+        let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+        let mut final_counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for word in words(&blanked) {
+            *final_counts.entry(word).or_insert(0) += 1;
+        }
+        names.iter().any(|name| {
+            if name.chars().all(is_word) {
+                final_counts.get(name).copied().unwrap_or(0) > 1
+            } else {
+                identifier_offsets(&blanked, name).count() > 1
+            }
+        })
+    };
+    if named_outside_its_def {
         return source.to_string();
     }
     blanked
@@ -545,6 +563,11 @@ pub(super) struct PythonTestRebinding {
     /// One import and one argument-free test with no definition-time
     /// expressions; only bounded dunder truthiness consumes this fact.
     pub(super) plain_test_module: bool,
+    /// A fixture, setup hook or class decorator that reaches the test
+    /// substitutes the owner or its module (`fixture_substitution.rs`), so the
+    /// test may assert on a stand-in rather than the changed code. Filled by
+    /// the workspace pass.
+    pub(super) fixture_substitution: bool,
     /// The test module's own scalar-literal constants: bound once at module
     /// scope, never `global`-rebound or attribute-assigned (#10707). Shared by
     /// every test of the module.
@@ -599,6 +622,7 @@ pub(super) fn python_test_rebinding(
         implicit_reach: false,
         header_reach: false,
         plain_test_module: false,
+        fixture_substitution: false,
         module_constants: Arc::default(),
         foreign_attributes: Arc::default(),
     }
@@ -669,15 +693,36 @@ pub(super) fn apply_foreign_module_attribute_writes(
     if tests.is_empty() || writes_by_file.iter().all(|(_, writes)| writes.is_empty()) {
         return;
     }
+    // Index the writes by (module, attribute) once so each test looks up the
+    // few modules it can be imported as. Scanning every write for every test
+    // cost tests x writes (django: seconds per check). Two distinct writer
+    // files per key are enough: a test excludes at most its own file.
+    let mut index: HashMap<&str, HashMap<&str, Vec<&Path>>> = HashMap::new();
+    for (file, writes) in writes_by_file {
+        for write in writes {
+            let files = index
+                .entry(write.module.as_str())
+                .or_default()
+                .entry(write.attribute.as_str())
+                .or_default();
+            if files.len() < 2 && !files.contains(&file.as_path()) {
+                files.push(file.as_path());
+            }
+        }
+    }
     for test in tests {
         let modules = test_module_import_paths(&test.file);
-        let mut attributes: Vec<String> = writes_by_file
-            .iter()
-            .filter(|(file, _)| file != &test.file)
-            .flat_map(|(_, writes)| writes)
-            .filter(|write| write_targets_modules(write, &modules))
-            .map(|write| write.attribute.clone())
-            .collect();
+        let mut attributes: Vec<String> = Vec::new();
+        for module in modules.iter().map(String::as_str).chain(["*"]) {
+            let Some(by_attribute) = index.get(module) else {
+                continue;
+            };
+            for (attribute, files) in by_attribute {
+                if files.iter().any(|file| *file != test.file.as_path()) {
+                    attributes.push((*attribute).to_string());
+                }
+            }
+        }
         if attributes.is_empty() {
             continue;
         }
@@ -707,10 +752,6 @@ pub(super) fn module_attribute_writes(
     });
     writes.dedup();
     writes
-}
-
-fn write_targets_modules(write: &PythonModuleAttributeWrite, modules: &[String]) -> bool {
-    write.module == "*" || modules.iter().any(|module| module == &write.module)
 }
 
 /// Import paths under which a test file can be the target of `<mod>.NAME`.
@@ -874,7 +915,7 @@ fn imported_module_path(import: &PythonImport) -> String {
     }
 }
 
-fn visit_exprs_in_statements(statements: &[Stmt], visit: &mut impl FnMut(&Expr)) {
+pub(super) fn visit_exprs_in_statements(statements: &[Stmt], visit: &mut impl FnMut(&Expr)) {
     visit_statements(statements, &mut |stmt| match stmt {
         Stmt::FunctionDef(function) => {
             for decorator in &function.decorator_list {
