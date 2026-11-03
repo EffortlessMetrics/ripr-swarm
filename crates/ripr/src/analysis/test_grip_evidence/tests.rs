@@ -13980,6 +13980,109 @@ fn exact_error_pin_is_not_published_as_an_oracle_on_the_ok_value_seam() -> Resul
     Ok(())
 }
 
+/// #12757: the mirror of the error-pin rule. An exact assertion on the `Ok` /
+/// `Some` payload passes only when the call took the success exit, so it is
+/// published as no oracle on the owner's `Err(..)` / `None` seam, while it
+/// keeps its strong credit on the success seam. The pin that names the failure
+/// arm keeps the failure seam, and an assertion that turns the failure into a
+/// value (`unwrap_or`) is left at its existing grade.
+#[test]
+fn exact_ok_assertion_is_not_published_as_an_oracle_on_the_failure_seam() -> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Even,\n}\n\
+         pub fn parse_pinned(n: u8) -> Result<u8, Fault> {\n    if n % 2 == 0 { Err(Fault::Even) } else { Ok(n) }\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn pinned_even() { assert_eq!(parse_pinned(2).unwrap_err(), Fault::Even); }\n    \
+         #[test] fn exact_odd() { assert_eq!(parse_pinned(1).unwrap(), 1); }\n    \
+         #[test] fn ok_wrapper_odd() { assert_eq!(parse_pinned(3), Ok(3)); }\n    \
+         #[test] fn whole_err() { assert_eq!(parse_pinned(2), Err(Fault::Even)); }\n    \
+         }\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let published =
+        |owner: &str, expression: &str, test: &str| -> Result<Option<OracleStrength>, String> {
+            let seam = seams
+                .iter()
+                .find(|s| s.expression() == expression && s.owner().ends_with(owner))
+                .ok_or_else(|| format!("{owner}: {expression} seam present"))?;
+            Ok(evidence_for_seam(seam, &index)
+                .related_tests
+                .iter()
+                .find(|grip| grip.test_name == test)
+                .map(|grip| grip.oracle_strength.clone()))
+        };
+    let strong = Some(OracleStrength::Strong);
+    // Result: the failure seam, then the success seam.
+    assert_ne!(
+        published("parse_pinned", "Err(Fault::Even)", "exact_odd")?,
+        strong,
+        "unwrap on the Ok exit"
+    );
+    assert_ne!(
+        published("parse_pinned", "Err(Fault::Even)", "ok_wrapper_odd")?,
+        strong,
+        "Ok(..) wrapper"
+    );
+    assert_eq!(
+        published("parse_pinned", "Err(Fault::Even)", "pinned_even")?,
+        strong,
+        "the named pin"
+    );
+    assert_eq!(
+        published("parse_pinned", "Err(Fault::Even)", "whole_err")?,
+        strong,
+        "the whole Err pin"
+    );
+    assert_eq!(
+        published("parse_pinned", "Ok(n)", "exact_odd")?,
+        strong,
+        "the Ok value stays credited"
+    );
+    assert_eq!(
+        published("parse_pinned", "Ok(n)", "ok_wrapper_odd")?,
+        strong,
+        "the Ok wrapper stays credited"
+    );
+    Ok(())
+}
+
+/// #12757: the text rules behind the failure-seam withhold, including the
+/// `Option` / `None` spelling the seam inventory does not surface here.
+#[test]
+fn success_payload_assertion_rules_read_the_failure_arm_by_text() {
+    assert!(constructs_failure_arm("Err(Fault::Even)"));
+    assert!(constructs_failure_arm("None"));
+    assert!(constructs_failure_arm("return Err(Fault::Even);"));
+    assert!(!constructs_failure_arm("Ok(n)"));
+    assert!(!constructs_failure_arm("Some(n / 2)"));
+    assert!(!constructs_failure_arm("Errand(x)"));
+    for success_only in [
+        "assert_eq!(parse_pinned(1).unwrap(), 1);",
+        "assert_eq!(parse_pinned(1).expect(\"odd\"), 1);",
+        "assert_eq!(parse_pinned(3), Ok(3));",
+        "assert_eq!(half(6), Some(3));",
+        "assert_ok_eq!(parse_pinned(1), 1);",
+        "assert_some_eq!(half(6), 3);",
+    ] {
+        assert!(pins_success_payload_only(success_only), "{success_only}");
+    }
+    for failure_or_mixed in [
+        "assert_eq!(parse_pinned(2).unwrap_err(), Fault::Even);",
+        "assert_eq!(parse_pinned(2), Err(Fault::Even));",
+        "assert_eq!(half(7), None);",
+        "assert_eq!(parse_pinned(2).unwrap_or(9), 9);",
+        "assert_eq!(parse_pinned(1).ok(), Some(1));",
+        "assert_eq!(parse_pinned(1).map_err(|e| e).unwrap(), 1);",
+        "assert_eq!(parse_pinned(1), 1); // Ok(1) in a comment",
+        "assert_eq!(parse_pinned(1).len(), 1);",
+    ] {
+        assert!(
+            !pins_success_payload_only(failure_or_mixed),
+            "{failure_or_mixed}"
+        );
+    }
+}
+
 /// #12053: a repo seam whose one-line arms all hold the same statement
 /// decides nothing an exact assertion can see, so it must not read propagated
 /// (and so not strongly gripped). Differing arms keep the propagated read.
