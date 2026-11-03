@@ -185,12 +185,15 @@ and readiness are part of the answer. When it holds, the suggested assertion
 reads "an exact check of the full contents of `buf` after the call, such as
 `assert_eq!(buf, expected_buf)`", and the suggested test name and the stub's
 test name end in `full_contents` rather than `side_effect_observer`. The
-same suggestion and name reach the packet JSON recommended test name and the
-`cargo test` command, the evidence record, the agent brief, the card JSON
-assertion goal, `ripr agent card` and the editor hover. Every
+suggestion text reaches the repair brief, `ripr agent card`, the card JSON
+assertion goal and the targeted test outline's assertion guidance (shown in
+the editor hover's suggested test shape and the pilot output). The name alone
+(with the `cargo test` command that uses it) reaches the agent packet, the
+agent brief, the workflow output and the evidence record. The packet's own assertion shape is unchanged. Every
 other gap keeps its brief and test name. A contents-check stub written
-before this change under `<owner>_side_effect_observer` still reads as
-already written.
+before this change under `<owner>_side_effect_observer` (or its numbered
+`_2` form) still reads as already written; a different test under that name
+does not.
 
 `ripr check` and bare `ripr repair` read the same repository evidence and the
 same `repair_packet_eligibility` decision. In the default check and with

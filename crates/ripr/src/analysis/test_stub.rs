@@ -471,14 +471,29 @@ fn rust_test_stub_for_target(
     // kind's own name; the identical test under that name is still ripr's
     // earlier write, not a reason to write a second copy.
     if matched.is_none() && contents_check {
-        let earlier = format!(
+        let earlier_base = format!(
             "{}_{}",
             snake_case(&signature.name),
             name_suffix(seam.kind())
         );
-        let rendered = render_test_fn(seam, &signature, &earlier, &body, &indent);
-        if scope_contains_test_fn(&scope, &rendered, &earlier) {
-            matched = Some((earlier, rendered));
+        // The earlier writer may have suffixed (`_2`, ...) when another test
+        // owned the name, so search every candidate up to the first free one.
+        let mut number = 1usize;
+        loop {
+            let earlier = if number == 1 {
+                earlier_base.clone()
+            } else {
+                format!("{earlier_base}_{number}")
+            };
+            if !scope_contains_fn_named(&scope, &earlier) {
+                break;
+            }
+            let rendered = render_test_fn(seam, &signature, &earlier, &body, &indent);
+            if scope_contains_test_fn(&scope, &rendered, &earlier) {
+                matched = Some((earlier, rendered));
+                break;
+            }
+            number += 1;
         }
     }
     let (test_name, test_fn, already_present) = match matched {

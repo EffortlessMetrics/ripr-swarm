@@ -763,3 +763,90 @@ fn stub_written_under_the_earlier_name_is_already_written() -> Result<(), String
     }
     Ok(())
 }
+
+#[test]
+fn stub_written_under_a_numbered_earlier_name_is_already_written() -> Result<(), String> {
+    // #12711: when another test already owned `log_line_side_effect_observer`,
+    // the earlier write sat under `log_line_side_effect_observer_2`; that
+    // numbered stub still reads as already written.
+    let repo = Repo::create(OLD, NEW, &test_file(COUNT_BODY))?;
+    let stub_args = [
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "side_effect",
+        "--write",
+    ];
+    repo.ripr(&stub_args)?;
+    let path = repo.0.join("src/lib.rs");
+    let written = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let renamed = written.replace(
+        "fn log_line_full_contents()",
+        "fn log_line_side_effect_observer_2()",
+    );
+    // The test module is the last item in the written file; add the other
+    // owner of the unnumbered name inside it.
+    let Some(end) = renamed.rfind('}') else {
+        return Err(format!("written file has no closing brace:\n{renamed}"));
+    };
+    let mut changed = renamed.clone();
+    changed.insert_str(
+        end,
+        "\n    #[test]\n    fn log_line_side_effect_observer() {}\n",
+    );
+    std::fs::write(&path, &changed).map_err(|e| e.to_string())?;
+    let second = text(&repo.ripr(&stub_args)?);
+    let after = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    if !second.contains("Stub already written at") || after != changed {
+        return Err(format!(
+            "the numbered earlier-named stub must read as already written:\n{second}\n{after}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn different_test_under_the_earlier_name_is_not_already_written() -> Result<(), String> {
+    // #12711: only ripr's identical earlier text counts; another test that
+    // happens to use `log_line_side_effect_observer` does not.
+    let repo = Repo::create(OLD, NEW, &test_file(COUNT_BODY))?;
+    let stub_args = [
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "side_effect",
+        "--write",
+    ];
+    repo.ripr(&stub_args)?;
+    let path = repo.0.join("src/lib.rs");
+    let written = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let other = written
+        .replace(
+            "fn log_line_full_contents()",
+            "fn log_line_side_effect_observer()",
+        )
+        .replace("assert_eq!(buf, expected_buf);", "assert!(buf.len() == 1);");
+    if other == written {
+        return Err(format!("fixture edit must change the file:\n{written}"));
+    }
+    std::fs::write(&path, &other).map_err(|e| e.to_string())?;
+    let second = text(&repo.ripr(&stub_args)?);
+    let after = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    if second.contains("Stub already written at")
+        || !after.contains("fn log_line_full_contents()")
+        || !after.contains("fn log_line_side_effect_observer()")
+    {
+        return Err(format!(
+            "a different test under the earlier name must not count:\n{second}\n{after}"
+        ));
+    }
+    Ok(())
+}
