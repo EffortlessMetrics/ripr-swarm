@@ -512,6 +512,11 @@ pub struct ActivationEvidence {
     pub missing_discriminators: Vec<MissingDiscriminatorFact>,
 }
 
+/// Next-step text for a finding whose related test has a strong check that
+/// ripr cannot tie to the changed line. The TypeScript classifier writes it
+/// and the preview card reads it, so both stay in step (#12463).
+pub(crate) const STRONG_CHECK_UNTIED_NEXT_STEP: &str = "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelatedTest {
     pub name: String,

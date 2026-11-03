@@ -552,7 +552,7 @@ mod tests {
             gap_artifacts: Vec::<ValidatedGapArtifact>::new(),
             gap_artifact_rejections: Vec::<GapArtifactRejection>::new(),
             harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,

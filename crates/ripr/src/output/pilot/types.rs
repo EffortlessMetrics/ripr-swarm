@@ -120,6 +120,21 @@ impl PilotPythonFirstUse {
 }
 
 impl PilotPythonFirstUseStatus {
+    /// Plain words for the terminal and Markdown screens. `as_str` stays the
+    /// machine token in JSON; people read this instead.
+    pub(crate) fn plain_label(self) -> &'static str {
+        match self {
+            PilotPythonFirstUseStatus::AnalysisUnavailable => {
+                "Python could not be analyzed (see the analysis note)"
+            }
+            PilotPythonFirstUseStatus::NoPythonFindings => "no Python findings in this change",
+            PilotPythonFirstUseStatus::NoRepairCards => {
+                "Python findings exist, but none is ready to repair"
+            }
+            PilotPythonFirstUseStatus::Ready => "a Python repair is ready",
+        }
+    }
+
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             PilotPythonFirstUseStatus::AnalysisUnavailable => "analysis_unavailable",
@@ -245,6 +260,24 @@ mod tests {
             "no_repair_cards"
         );
         assert_eq!(PilotPythonFirstUseStatus::Ready.as_str(), "ready");
+    }
+
+    #[test]
+    fn plain_labels_never_show_the_machine_status_token() {
+        for status in [
+            PilotPythonFirstUseStatus::AnalysisUnavailable,
+            PilotPythonFirstUseStatus::NoPythonFindings,
+            PilotPythonFirstUseStatus::NoRepairCards,
+            PilotPythonFirstUseStatus::Ready,
+        ] {
+            let label = status.plain_label();
+            assert!(!label.contains('_'), "{label}");
+            assert_ne!(label, status.as_str());
+        }
+        assert_eq!(
+            PilotPythonFirstUseStatus::NoPythonFindings.plain_label(),
+            "no Python findings in this change"
+        );
     }
 
     #[test]

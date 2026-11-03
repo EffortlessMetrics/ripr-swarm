@@ -37,6 +37,7 @@ mod state;
 mod tests;
 mod transport_bounds;
 mod uri;
+mod workspace_folder_bounds;
 
 use backend::Backend;
 pub use diagnostics::{DiagnosticBatch, workspace_diagnostic_batches};

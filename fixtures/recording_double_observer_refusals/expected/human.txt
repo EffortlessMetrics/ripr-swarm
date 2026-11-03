@@ -42,6 +42,7 @@ Start here:
     - 10 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_assertion_message.rs:call_deletion:24b7502f
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_assertion_message.rs:call_deletion:24b7502f
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above

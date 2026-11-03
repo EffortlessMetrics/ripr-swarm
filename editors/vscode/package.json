@@ -49,6 +49,7 @@
     "onCommand:ripr.showOutput",
     "onCommand:ripr.diagnoseSetup",
     "onCommand:ripr.startCurrentRepair",
+    "onCommand:ripr.startOrContinueRepair",
     "onCommand:ripr.copyCurrentRepairPacket",
     "onCommand:ripr.copyRepoGapMap",
     "onCommand:ripr.openFirstPrPacket",
@@ -245,7 +246,7 @@
       },
       {
         "command": "ripr.refreshDiagnostics",
-        "title": "ripr: Refresh Diagnostics"
+        "title": "ripr: Refresh Full Analysis"
       },
       {
         "command": "ripr.selectWorkspaceRoot",
@@ -270,6 +271,10 @@
       {
         "command": "ripr.startCurrentRepair",
         "title": "ripr: Start Current Repair"
+      },
+      {
+        "command": "ripr.startOrContinueRepair",
+        "title": "ripr: Start or Continue Repair"
       },
       {
         "command": "ripr.copyCurrentRepairPacket",
