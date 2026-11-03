@@ -293,6 +293,28 @@ fn related_test_rename_without_evidence_change_keeps_digest() {
 }
 
 #[test]
+fn related_test_rename_that_reorders_rows_keeps_digest() {
+    let mut first = base_facts("python", "predicate_boundary", "module::compute");
+    let mut weak = first.related_test_rows[0].clone();
+    weak.test_name = "test_a".to_string();
+    weak.row_assessment = "weak".to_string();
+    let mut strong = first.related_test_rows[0].clone();
+    strong.test_name = "test_b".to_string();
+    strong.row_assessment = "strong".to_string();
+    first.related_test_rows = vec![weak.clone(), strong.clone()];
+    let mut second = first.clone();
+    // Rename the weak row so the name-ordered sequence flips while the
+    // evidence (assessment per row) is unchanged.
+    let mut renamed_weak = weak;
+    renamed_weak.test_name = "test_z".to_string();
+    second.related_test_rows = vec![renamed_weak, strong];
+    assert_eq!(
+        project_native_facts(first).semantic_digest,
+        project_native_facts(second).semantic_digest
+    );
+}
+
+#[test]
 fn native_extension_values_stay_verbatim_in_digest() {
     let mut with_semicolon = base_facts("perl", "perl.packet.mention_only", "MyApp::run");
     with_semicolon

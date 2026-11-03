@@ -214,12 +214,28 @@ impl LanguageWitnessProjectionV1 {
             append_field(&mut canonical, value);
         }
         append_field(&mut canonical, &self.related_test_rows.len().to_string());
-        for row in &self.related_test_rows {
+        // Rows are ordered by `test_name` first (derived `Ord`), but the name is
+        // deliberately not digested, so a rename could reorder rows. Order the
+        // digested fields themselves so the digest is rename-stable.
+        let mut digested_rows: Vec<(&str, &str, &str, &str)> = self
+            .related_test_rows
+            .iter()
+            .map(|row| {
+                (
+                    row.row_assessment.as_str(),
+                    row.oracle_kind.as_str(),
+                    row.oracle_strength.as_str(),
+                    row.status.as_str(),
+                )
+            })
+            .collect();
+        digested_rows.sort_unstable();
+        for (assessment, oracle_kind, oracle_strength, status) in digested_rows {
             append_field(&mut canonical, "related_test_row");
-            append_field(&mut canonical, &row.row_assessment);
-            append_field(&mut canonical, &row.oracle_kind);
-            append_field(&mut canonical, &row.oracle_strength);
-            append_field(&mut canonical, row.status.as_str());
+            append_field(&mut canonical, assessment);
+            append_field(&mut canonical, oracle_kind);
+            append_field(&mut canonical, oracle_strength);
+            append_field(&mut canonical, status);
         }
         match &self.selected_target {
             TargetState::SelectedExisting { identities } => {
