@@ -1,0 +1,34 @@
+   Compiling ripr v0.11.0 (/home/user/w10666/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 3m 20s
+     Running tests/receiver_unestablished_limit.rs (target/debug/deps/receiver_unestablished_limit-4d6560021a8a87e0)
+
+running 1 test
+test assert_matches_keeps_every_boundary_of_the_withhold ... FAILED
+
+failures:
+
+---- assert_matches_keeps_every_boundary_of_the_withhold stdout ----
+
+thread 'assert_matches_keeps_every_boundary_of_the_withhold' (20394) panicked at crates/ripr/tests/receiver_unestablished_limit.rs:647:5:
+assertion `left != right` failed: local macro spelled with whitespace around the bang: {"activation":{"missing_discriminators":[],"observed_values":[]},"assertion_texts":{},"classification":"static_unknown","confidence":0.56,"evidence":["Complete propagation witness reaches returned value: 5","No assertion found on related tests","No test is seen calling read; tests share only a name token","Reachable tests can plausibly activate this changed behavior","Related tests were found, but no assertion appears to observe the changed value, error, field, or effect","gap_withheld: reachable_unrevealed is not claimed; whether the standard assertion macro around the owner call is the one the test's target compiles (rust_inherent_receiver_unestablished)","limitation_last_established_edge: related tests `reads` (a/src/shared.rs:17)","limitation_first_unresolved_edge: whether the standard assertion macro around the owner call is the one the test's target compiles","limitation_analyzer_route: analysis/classify/gap-admission","limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],"evidence_path":["reach weak: No test is seen calling read; tests share only a name token","infection yes: Reachable tests can plausibly activate this changed behavior","propagation yes: Complete propagation witness reaches returned value: 5","observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect","discriminator no: No assertion found on related tests","local flow reaches returned value: 5 (line 6)","related test a/src/shared.rs:17 reads uses strong exact value oracle: assert_matches!(Widget::new().read(), Ok(Ready));"],"flow_sinks":[{"kind":"return_value","line":6,"text":"5"}],"id":"probe:a_src_shared.rs:return_value:eb203148","language":"rust","missing":["A Rust test calls the changed inherent method inside a standard assertion, and the receiver resolves to the owner's type if that assertion macro is the standard one, but ripr cannot verify the macro binding because it cannot place the test in a Cargo target (an unresolved `include!` or `#[path]` in the workspace). The receiver was not shown to differ. ripr does not claim a gap; this is a named limitation, not a coverage claim."],"missing_discriminators":[],"observed_values":[],"oracle_kind":"exact_value","oracle_strength":"strong","probe":{"delta":"value","expression":"5","family":"return_value","file":"./a/src/shared.rs","id":"probe:a_src_shared.rs:return_value:eb203148","line":6},"recommended_next_step":"`reads` (a/src/shared.rs:17) calls `read` on a receiver that would resolve if the standard assertion macro is the one its target compiles, and ripr cannot place the test in a Cargo target here (an unresolved `include!` or `#[path]`), so it does not report a gap. Check that the assertion would fail if `read` returned the wrong value; add a test only if none does.","related_tests":[{"file":"a/src/shared.rs","line":17,"miss":"no_call_path","name":"reads","oracle":"assert_matches!(Widget::new().read(), Ok(Ready));","oracle_kind":"exact_value","oracle_strength":"strong","relation_confidence":"low","relation_reason":"weak_token_substring","why":"no established call path to the changed code; linked by name only"}],"related_tests_total":1,"ripr":{"discriminate":{"confidence":"medium","state":"no","summary":"No assertion found on related tests"},"infect":{"confidence":"medium","state":"yes","summary":"Reachable tests can plausibly activate this changed behavior"},"observe":{"confidence":"medium","state":"no","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},"propagate":{"confidence":"high","state":"yes","summary":"Complete propagation witness reaches returned value: 5"},"reach":{"confidence":"low","state":"weak","summary":"No test is seen calling read; tests share only a name token"}},"severity":"note","source_currentness":"candidate_current","static_limit_kind":"rust_inherent_receiver_unestablished","static_limitation":{"analyzer_route":"analysis/classify/gap-admission","first_unresolved_edge":"whether the standard assertion macro around the owner call is the one the test's target compiles","kind":"rust_inherent_receiver_unestablished","last_established_edge":"related tests `reads` (a/src/shared.rs:17)","non_claim":"no missing test, no weak oracle, and no test adequacy is established"},"stop_reasons":["gap_evidence_unresolved"],"suggested_next_action":"`reads` (a/src/shared.rs:17) calls `read` on a receiver that would resolve if the standard assertion macro is the one its target compiles, and ripr cannot place the test in a Cargo target here (an unresolved `include!` or `#[path]`), so it does not report a gap. Check that the assertion would fail if `read` returned the wrong value; add a test only if none does."}
+  left: Some("rust_inherent_receiver_unestablished")
+ right: Some("rust_inherent_receiver_unestablished")
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+   1: core::panicking::panic_fmt
+   2: core::panicking::assert_failed_inner
+   3: core::panicking::assert_failed
+   4: receiver_unestablished_limit::assert_keeps_gap
+   5: receiver_unestablished_limit::keeps_gap
+   6: receiver_unestablished_limit::assert_matches_keeps_every_boundary_of_the_withhold
+   7: receiver_unestablished_limit::assert_matches_keeps_every_boundary_of_the_withhold::{{closure}}
+   8: core::ops::function::FnOnce::call_once
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+
+failures:
+    assert_matches_keeps_every_boundary_of_the_withhold
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.42s
+
+error: test failed, to rerun pass `-p ripr --test receiver_unestablished_limit`

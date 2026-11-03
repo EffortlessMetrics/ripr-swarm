@@ -5763,11 +5763,15 @@ fn inherent_call_node_resolves(
 fn workspace_defines_macro(index: &RustIndex, name: &str) -> bool {
     index.files().values().any(|facts| {
         let source = facts.data().source.as_ref();
-        source.match_indices("macro_rules!").any(|(at, keyword)| {
-            source[at + keyword.len()..]
-                .trim_start()
-                .strip_prefix(name)
-                .is_some_and(|rest| !rest.starts_with(is_ident_char))
+        source.match_indices("macro_rules").any(|(at, keyword)| {
+            // Rust allows whitespace around the `!` and a raw identifier name.
+            let after = source[at + keyword.len()..].trim_start();
+            after.strip_prefix('!').is_some_and(|rest| {
+                let rest = rest.trim_start();
+                let rest = rest.strip_prefix("r#").unwrap_or(rest);
+                rest.strip_prefix(name)
+                    .is_some_and(|rest| !rest.starts_with(is_ident_char))
+            })
         })
     })
 }

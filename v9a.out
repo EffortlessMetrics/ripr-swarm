@@ -1,0 +1,30 @@
+   Compiling ripr v0.11.0 (/home/user/w10666/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 0.74s
+     Running tests/receiver_unestablished_limit.rs (target/debug/deps/receiver_unestablished_limit-4d6560021a8a87e0)
+
+running 21 tests
+test a_call_outside_the_assertion_is_not_blocked_by_the_macro ... ok
+test a_placed_assert_matches_is_never_credited ... ok
+test a_qualified_associated_factory_keeps_the_gap ... ok
+test a_bare_factory_shadowed_by_an_import_keeps_the_gap ... ok
+test a_same_named_type_in_another_crate_does_not_trigger_the_withhold ... ok
+test a_macro_site_in_the_test_packages_own_files_keeps_the_bare_assertion_gap ... ok
+test a_visible_macro_that_replaces_the_bare_assertion_keeps_its_gap ... ok
+test an_ignored_test_does_not_trigger_the_withhold ... ok
+test a_dependency_macro_in_the_test_packages_import_scope_keeps_the_gap ... ok
+test a_receiver_that_does_not_resolve_even_with_the_macro_trusted_keeps_its_gap ... ok
+test an_unplaced_standard_assertion_over_the_owner_call_is_a_named_limitation ... ok
+test an_unplaced_assert_matches_over_the_owner_call_is_a_named_limitation ... ok
+test a_weak_oracle_keeps_its_gap_even_though_the_macro_is_unverifiable ... ok
+test another_crates_glob_reexport_is_part_of_the_unplaced_doubt ... ok
+test an_unrelated_weak_assertion_does_not_lift_the_withhold ... ok
+test draft_mode_credits_indexed_members_across_packages ... ok
+test available_placement_keeps_the_rebound_root_gap_and_the_plain_credit ... ok
+test draft_mode_withholds_the_unplaced_generated_mount_control ... ok
+test the_repository_consumer_credits_nothing_for_the_unplaced_call ... ok
+test an_unauthoritative_inherent_factory_declaration_keeps_the_gap ... ok
+test assert_matches_keeps_every_boundary_of_the_withhold ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.19s
+
+exit=0

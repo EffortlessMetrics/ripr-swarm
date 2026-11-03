@@ -657,8 +657,6 @@ pub(crate) struct CachedSeamLimitInfo {
 /// cannot see (#12722).
 /// `1.149`: a doc example registers as a test only when no gate on an enclosing
 /// `mod`, `impl`, `trait` or `mod name;` declaration may leave it uncompiled (#12453).
-/// `1.151`: a bare `assert_matches!` around an inherent owner call reads the
-/// limit-naming receiver withhold when placement is unavailable (#10666).
 /// `1.150`: a pinned literal that neither the owner before the diff nor after
 /// it returns for the call's literal arguments is no exact-value pin, so it no
 /// longer credits (#12716).
@@ -861,7 +859,6 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.153";
 /// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
 /// `0.150`: same error-pin refusal as full `1.148` (#12722).
 /// `0.151`: same enclosing-cfg doctest rule as full `1.149` (#12453).
-/// `0.153`: same unplaced `assert_matches!` withhold as full `1.151` (#10666).
 /// `0.152`: same neither-version literal refusal as full `1.150` (#12716).
 /// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).
@@ -1059,7 +1056,6 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.155";
 /// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
 /// `0.150`: same error-pin refusal as full `1.148` (#12722).
 /// `0.151`: same enclosing-cfg doctest rule as full `1.149` (#12453).
-/// `0.153`: same unplaced `assert_matches!` withhold as full `1.151` (#10666).
 /// `0.152`: same neither-version literal refusal as full `1.150` (#12716).
 /// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).

@@ -996,7 +996,8 @@ fn a_placed_assert_matches_is_never_credited() -> Result<(), String> {
 #[test]
 fn assert_matches_keeps_every_boundary_of_the_withhold() -> Result<(), String> {
     let local = "macro_rules! assert_matches { ($($t:tt)*) => {}; }\n";
-    let rows: [(&str, Shape<'_>, &str); 5] = [
+    let spaced = "macro_rules ! assert_matches { ($($t:tt)*) => {}; }\n";
+    let rows: [(&str, Shape<'_>, &str); 7] = [
         (
             "wrong receiver type",
             Shape::default(),
@@ -1018,9 +1019,22 @@ fn assert_matches_keeps_every_boundary_of_the_withhold() -> Result<(), String> {
             "assert_matches!(Widget::new().read(), Ok(Ready));",
         ),
         (
+            "local macro spelled with whitespace around the bang",
+            Shape::prelude(spaced),
+            "assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+        (
             "qualified spelling is not a bare binding",
             Shape::default(),
             "std::assert_matches::assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+        // Both qualified rows keep the gap through the caller's macro-binding
+        // gate; the arm's `qualified.is_none()` is defense in depth that no
+        // black-box row can kill on its own.
+        (
+            "crate-qualified spelling is not a bare binding",
+            Shape::default(),
+            "assert_matches::assert_matches!(Widget::new().read(), Ok(Ready));",
         ),
     ];
     for (label, shape, statement) in rows {
