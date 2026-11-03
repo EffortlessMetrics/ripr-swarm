@@ -87,9 +87,11 @@ chain hop when every link is exact:
    `callee` once, in one call fact, spelled `<crate>::<callee>(..)` with
    exactly that one qualifier segment: no bare call, method call, longer
    path, leading `::` or generic argument.
-4. Nothing in the caller's package can rebind `<crate>`: no `use` of the
-   name, alias, glob, block-local item or `mod <crate>` in any file of the
-   package, and no macro or `include` that could splice an item in.
+4. Nothing can rebind `<crate>`. In the caller's own file there is no `use`
+   of the name, alias, glob, block-local item, or macro or `include` that
+   could splice an item in. In every other file of the caller's package there
+   is no textual `mod <crate>` declaration; other forms of rebinding in those
+   files are not scanned.
 5. `caller` invokes no macro that could hide an early return or a rebinding.
 
 The hop is `module_qualified` (so every consumer without a cross-crate proof
@@ -126,6 +128,9 @@ do for a same-crate wrapper: not noticed.
 
 ## Known limits
 
+- A `[target.'cfg(..)'.dependencies]` entry counts as a dependency edge
+  whatever the platform. A call that only builds on another platform would be
+  a build error there, so this is not a realistic source of a wrong reading.
 - `ripr repair` has its own whole-repository seam producer, which relates
   tests within one package by name and does not follow a call into another
   crate. For the audit case bare repair keeps its earlier refusal ("could not
