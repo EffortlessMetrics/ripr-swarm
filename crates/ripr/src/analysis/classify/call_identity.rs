@@ -5079,7 +5079,7 @@ mod tests {
         )?;
         std::fs::write(
             root.join("tests/gen.rs"),
-            "macro_rules! plain {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            assert_eq!(render(1), 2);\n        }\n    };\n}\n\nmacro_rules! rebinding {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            use modules::b::render;\n            assert_eq!(render(1), 3);\n        }\n    };\n}\n\nmod cases {\n    use modules::a::render;\n    plain!(plain_case);\n    rebinding!(rebinding_case);\n}\n",
+            "macro_rules! plain {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            assert_eq!(render(1), 2);\n        }\n    };\n}\n\nmacro_rules! closure_rebinding {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            let apply = |render: fn(i32) -> i32| render(1);\n            assert_eq!(apply(modules::b::render), 3);\n        }\n    };\n}\n\nmacro_rules! rebinding {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            use modules::b::render;\n            assert_eq!(render(1), 3);\n        }\n    };\n}\n\nmod cases {\n    use modules::a::render;\n    plain!(plain_case);\n    rebinding!(rebinding_case);\n    closure_rebinding!(closure_case);\n}\n",
         )?;
         let index = crate::analysis::facts::build_index(
             &root,
@@ -5106,6 +5106,12 @@ mod tests {
         // may be credited from the invocation-site import of `a::render`.
         assert_ne!(
             settle(&index, "/a.rs::render", "rebinding_case"),
+            Some(CallTarget::Owner)
+        );
+        // A closure parameter named `render` shadows the import without a
+        // `let`; the expansion must not borrow the invocation-site scopes.
+        assert_ne!(
+            settle(&index, "/a.rs::render", "closure_case"),
             Some(CallTarget::Owner)
         );
         Ok(())
