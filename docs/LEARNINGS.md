@@ -3,6 +3,40 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-11-03: Backlog-campaign merge operations — funnel order, label discipline, dual runs, one writer, exact-head review
+
+Nov 1–3 backlog-campaign triage across a crowded PR funnel distilled five
+operational rules for merge work on `ripr-swarm`:
+
+- Triage in funnel order: `mergeable_state` first (BLOCKED/BEHIND/DIRTY stop
+  before any CI read), then required-on-exact-head status, then review
+  threads. Diagnose mergeability via REST (`combineable`/`mergeStateStatus`
+  is the freshest signal); the GraphQL `mergeStateStatus` field lags reality
+  by 5–35 min after pushes and label changes, so a stale BLOCKED/UNSTABLE
+  read must be re-checked before acting on it.
+- Cycle `merge-ready` deliberately, never rapidly. Fast remove/re-add
+  manufactures superseded FAILURE+SUCCESS check pairs on the same head that
+  poison the rollup into UNSTABLE and burn a full qualification each lap.
+  The deliberate cycle is: remove the label, confirm the removal landed,
+  wait ~60s for in-flight runs to settle, re-add, then confirm a single
+  fresh run started.
+- Expect dual runs on one head. A label cycle or push-while-queued routinely
+  leaves a SUCCESS and a FAILURE side by side on the same SHA. Always
+  compare latest-per-check-name before diagnosing: a superseded FAILURE
+  beside a newer SUCCESS for the same workflow is funnel noise, not a
+  product signal.
+- One writer per owner-active branch. When a lane owner is mid-repair on
+  their PR, do recon read-only (status, checks, threads) and hand findings
+  back; concurrent pushes, label flips, or thread resolves from a second
+  writer invalidate the owner's exact-head evidence and force re-qualification.
+- Exact-head review checklist before any merge judgment: (1) diffstat scope
+  matches the claimed objective, no drive-by files; (2) no gate, policy,
+  public-API, or workflow-trigger changes hiding in the diff; (3) required
+  checks green on the published head itself, not a sibling SHA or an older
+  base; (4) all threads read back — addressed, replied, resolved — including
+  outdated unresolved inlines. Never dispatch workflows manually to "help"
+  a funnel along; the label route owns CI requests.
+
 ## 2026-10-14: One path can spell three ways on Windows; compare at a shared owner (#7937)
 
 Fifteen lib tests failed deterministically on Windows at a Linux-green main.
