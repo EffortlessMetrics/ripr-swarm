@@ -60,12 +60,12 @@ macro_rules! closed_vocabulary {
     (
         $(#[$meta:meta])*
         $vis:vis enum $name:ident {
-            $($variant:ident => $label:literal,)+
+            $($(#[$vmeta:meta])* $variant:ident => $label:literal,)+
         }
     ) => {
         $(#[$meta])*
         $vis enum $name {
-            $($variant,)+
+            $($(#[$vmeta])* $variant,)+
         }
 
         impl $name {
@@ -121,8 +121,11 @@ closed_vocabulary! {
     /// hide presentation; it cannot change this membership.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub(crate) enum CatalogProfileVisibility {
+        /// Shown in the default actionable profile and in full.
         ActionableAndFull => "actionable_and_full",
+        /// Structural / inspect-only evidence reserved for the full profile.
         FullOnly => "full_only",
+        /// Delivery and lifecycle markers served regardless of profile.
         Always => "always",
     }
 }
