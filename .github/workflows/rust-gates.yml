@@ -35,6 +35,21 @@ on:
         type: string
         required: false
         default: ""
+      constituent-pr-number:
+        description: Caller-supplied trusted PR number of the single admitted constituent (qualification profile only).
+        type: string
+        required: false
+        default: ""
+      constituent-pr-node-id:
+        description: Caller-supplied trusted PR node id of the single admitted constituent (qualification profile only).
+        type: string
+        required: false
+        default: ""
+      constituent-head-sha:
+        description: Caller-supplied trusted exact head H of the admitted constituent; must equal head-sha.
+        type: string
+        required: false
+        default: ""
       runner-config:
         description: JSON string or object accepted by jobs.<job_id>.runs-on.
         required: true
@@ -123,13 +138,14 @@ jobs:
           GENERATION: ${{ inputs.workflow-generation }}
           IDENTITY: ${{ inputs.subject-identity }}
           REPOSITORY_ID: ${{ github.event.repository.node_id }}
-          PR_ID: ${{ github.event.pull_request.node_id }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_ID: ${{ inputs.constituent-pr-node-id }}
+          PR_NUMBER: ${{ inputs.constituent-pr-number }}
+          CONSTITUENT_HEAD: ${{ inputs.constituent-head-sha }}
         run: |
           set -euo pipefail
           case "$PROFILE" in
             legacy)
-              for value in "$SUBJECT_JSON" "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" "$GENERATION" "$IDENTITY"; do
+              for value in "$SUBJECT_JSON" "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" "$GENERATION" "$IDENTITY" "$PR_ID" "$PR_NUMBER" "$CONSTITUENT_HEAD"; do
                 [[ -z "$value" ]] || { echo 'Partial qualification cannot use legacy profile' >&2; exit 1; }
               done
               # Legacy publishes no outputs: consumers fall back to the original event expressions.
@@ -137,6 +153,8 @@ jobs:
             qualification)
               for value in "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" "$GENERATION"; do [[ "$value" =~ ^[0-9a-f]{40}$ ]]; done
               [[ "$IDENTITY" =~ ^[0-9a-f]{64}$ && "$GENERATION" == "$GITHUB_WORKFLOW_SHA" ]]
+              # Constituent identity comes only from the caller's inputs: merge_group events carry no pull_request object.
+              [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,9}$ && -n "$PR_ID" && -n "$REPOSITORY_ID" && "$CONSTITUENT_HEAD" == "$ADMITTED_HEAD" ]]
               jq -e --arg repo "$GITHUB_REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$ADMITTED_HEAD" --arg base "$ADMITTED_BASE" --arg merge "$ADMITTED_MERGE" --arg tree "$ADMITTED_TREE" --arg generation "$GENERATION" '
                 .version == 2 and .repository == $repo and .repository_id == $repo_id and .pr_id == $pr_id and .pr_number == $number and
                 .destination_repository_id == $repo_id and .destination_ref == "refs/heads/main" and

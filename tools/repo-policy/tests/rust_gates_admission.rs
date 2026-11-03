@@ -1,5 +1,6 @@
 //! Static contract for the reusable Rust gate's optional admitted-subject inputs.
-//! Source-shape only: no shell replay, hosted run or caller is exercised here.
+//! Source-shape only; the Bash body is replayed in `rust_gates_admission_replay.rs`.
+//! No hosted run or caller is exercised.
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const WORKFLOW: &str = include_str!("../../../.github/workflows/rust-gates.yml");
@@ -29,6 +30,9 @@ fn existing_callers_keep_working_without_admitted_inputs() -> TestResult {
         "workflow-generation",
         "subject-json",
         "subject-identity",
+        "constituent-pr-number",
+        "constituent-pr-node-id",
+        "constituent-head-sha",
     ] {
         let block = input_block(name)?;
         assert!(block.contains("required: false"), "{name}: {block}");
@@ -61,6 +65,9 @@ fn admitted_subject_is_verified_before_any_proof_step() -> TestResult {
         ("ADMITTED_TREE", "subject-tree"),
         ("GENERATION", "workflow-generation"),
         ("IDENTITY", "subject-identity"),
+        ("PR_ID", "constituent-pr-node-id"),
+        ("PR_NUMBER", "constituent-pr-number"),
+        ("CONSTITUENT_HEAD", "constituent-head-sha"),
     ] {
         let line = format!("          {var}: ${{{{ inputs.{input} }}}}\n");
         assert!(step.contains(&line), "{var} must map to inputs.{input}");
