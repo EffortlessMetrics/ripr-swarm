@@ -2934,9 +2934,10 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
     let selected_target = match &readiness.target_selection {
         RepairTargetSelection::Existing(selected_target) => selected_target,
         RepairTargetSelection::Proposed(proposal) => {
+            let file = display_path(&proposal.file);
             return RecommendedTest {
-                name,
-                file: display_path(&proposal.file),
+                name: uniquify_recommended_test_name(&name, entry, &file),
+                file,
                 target_kind: match proposal.kind {
                     NewTestKind::InlineUnit => RecommendedTestTargetKind::NewInlineTestModule,
                     NewTestKind::Integration => RecommendedTestTargetKind::NewIntegrationTest,
@@ -2964,14 +2965,34 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
             "producer-owned target identity has no matching related-test record",
         );
     };
+    let file = display_path(&test.file);
     RecommendedTest {
-        name,
-        file: display_path(&test.file),
+        name: uniquify_recommended_test_name(&name, entry, &file),
+        file,
         target_kind: RecommendedTestTargetKind::ExistingTest,
         symbol_id: Some(selected_target.symbol_id().0.clone()),
         source: RecommendedTestSource::RelatedTestEvidence,
         reason: "place the new targeted test next to the producer-owned related test".to_string(),
     }
+}
+
+/// Avoid suggesting a new test name that already exists in the target file
+/// (#4217 F15-9). Pilot and packet surfaces reuse this recommendation.
+fn uniquify_recommended_test_name(base: &str, entry: &ClassifiedSeam, target_file: &str) -> String {
+    let taken: Vec<&str> = entry
+        .evidence
+        .related_tests
+        .iter()
+        .filter(|test| display_path(&test.file) == target_file)
+        .map(|test| test.test_name.as_str())
+        .collect();
+    if !taken.contains(&base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|suffix| format!("{base}_{suffix}"))
+        .find(|candidate| !taken.contains(&candidate.as_str()))
+        .unwrap_or_else(|| format!("{base}_2"))
 }
 
 /// Whether `ripr agent repair` can route its edit to the target that
@@ -6646,6 +6667,55 @@ mod tests {
             RecommendedTestTargetKind::Unresolved
         );
         assert_eq!(unresolved.file, "not_applicable");
+    }
+
+    #[test]
+    fn recommended_test_name_avoids_existing_test_in_target_file() {
+        let mut entry = weakly_gripped_classified();
+        let expected_base = recommended_test_for(&entry).name;
+        entry
+            .evidence
+            .related_tests
+            .push(std::sync::Arc::new(RelatedTestGrip {
+                test_name: expected_base.clone(),
+                file: PathBuf::from("tests/pricing.rs"),
+                line: 40,
+                test_target: None,
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                evidence_summary: "existing targeted test".to_string(),
+                relation_reason:
+                    crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
+                relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+            }));
+        let recommended = recommended_test_for(&entry);
+        assert_eq!(
+            recommended.name,
+            format!("{expected_base}_2"),
+            "pilot must not suggest a test name that already exists in the file"
+        );
+
+        entry
+            .evidence
+            .related_tests
+            .push(std::sync::Arc::new(RelatedTestGrip {
+                test_name: format!("{expected_base}_2"),
+                file: PathBuf::from("tests/pricing.rs"),
+                line: 41,
+                test_target: None,
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                evidence_summary: "second collision".to_string(),
+                relation_reason:
+                    crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
+                relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+            }));
+        let recommended = recommended_test_for(&entry);
+        assert_eq!(
+            recommended.name,
+            format!("{expected_base}_3"),
+            "must skip every taken spelling in the target file"
+        );
     }
 
     #[test]
