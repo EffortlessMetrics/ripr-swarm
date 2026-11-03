@@ -121,3 +121,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_build_script_no_test_reach (10)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless rust_build_script_no_test_reach --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -1145,6 +1145,62 @@ fn latency_trace_line_uses_repo_exposure_trace_shape() {
 }
 
 #[test]
+fn evidence_for_seams_reports_honest_units_to_the_inventory_listener() -> Result<(), String> {
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn boundary_case() {
+    assert_eq!(discounted_total(100, 100), 90);
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    assert!(
+        !seams.is_empty(),
+        "pricing fixture must yield seams so the reporter has a denominator"
+    );
+    let total = u64::try_from(seams.len()).unwrap_or(u64::MAX);
+    let log = Arc::new(std::sync::Mutex::new(Vec::<(u64, u64)>::new()));
+    let captured = Arc::clone(&log);
+    crate::analysis::inventory_progress::with_listener(
+        Some(Arc::new(move |completed, reported_total| {
+            match captured.lock() {
+                Ok(mut rows) => rows.push((completed, reported_total)),
+                Err(poisoned) => poisoned.into_inner().push((completed, reported_total)),
+            }
+        })),
+        || {
+            let _ = evidence_for_seams(&seams, &index);
+        },
+    );
+    let rows = match log.lock() {
+        Ok(rows) => rows.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    };
+    assert!(
+        rows.first() == Some(&(0, total)),
+        "denominator must be visible before the walk: {rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|(completed, reported_total)| { *completed == total && *reported_total == total }),
+        "final report must close the honest count: {rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .all(|(_, reported_total)| *reported_total == total),
+        "listener must not invent a second denominator: {rows:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn latency_trace_line_can_report_evidence_context_start() {
     let line = crate::analysis::resource_cost::latency_trace_line(
         "evidence_context",
@@ -3052,6 +3108,44 @@ fn window_boundaries_keep_a_held_second_spelling_shared() -> Result<(), String> 
     assert_eq!(
         context.share_grip(grip("tests/f.rs")).file.as_os_str(),
         "tests/f.rs"
+    );
+    Ok(())
+}
+
+#[test]
+fn cancelled_evidence_pass_releases_provisional_shared_grips() -> Result<(), String> {
+    use crate::analysis::cancellation::{self, AnalysisAbortKind, AnalysisCancellationToken};
+    use std::sync::Weak;
+    let (index, seams) = parallel_evidence_fixture()?;
+    let pass = EvidencePass::new(&index);
+    let context = pass
+        .context
+        .as_ref()
+        .ok_or("fixture must build a context")?;
+    let provisional: Weak<RelatedTestGrip> = {
+        let shared = context.share_grip(RelatedTestGrip {
+            test_name: "below_threshold_has_no_discount".to_string(),
+            file: PathBuf::from("tests/pricing_tests.rs"),
+            line: 12,
+            test_target: None,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            evidence_summary: "exact returned value assertion".to_string(),
+            relation_reason: RelationReason::DirectOwnerCall,
+            relation_confidence: RelationConfidence::High,
+        });
+        Arc::downgrade(&shared)
+    };
+    let token = AnalysisCancellationToken::new();
+    token.cancel(AnalysisAbortKind::Cancelled);
+    let evidence = cancellation::with_token(&token, || pass.evidence_for(&seams));
+    assert!(
+        evidence.is_empty(),
+        "cancelled evidence production must stay non-complete"
+    );
+    assert!(
+        provisional.upgrade().is_none(),
+        "provisional shared-grip records must be released after a cancelled pass"
     );
     Ok(())
 }
@@ -13729,6 +13823,163 @@ fn proximity_test_pinning_another_function_cannot_grade_a_match_arm_up() -> Resu
     Ok(())
 }
 
+/// #12434: the same refusal for a predicate boundary. `wait < 5` in `consume`
+/// is read through `reduce`, so a proximity test that pins `reduce` lends it no
+/// oracle once a test that runs `consume` is related, while a test that also
+/// calls `consume` still does. With no test tied to `consume` by a relation
+/// that establishes reach, the seam is `activation_unknown` and keeps the
+/// lent oracle: refusing it would read the seam `reachable_unrevealed` and
+/// claim a test runs code nothing is seen calling. Full and compact entry
+/// points must agree on the stage they credit.
+#[test]
+fn proximity_test_pinning_another_function_lends_a_predicate_boundary_no_oracle()
+-> Result<(), String> {
+    let published_for = |extra_tests: &str| -> Result<(Vec<OracleStrength>, bool), String> {
+        let prod = format!(
+            "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
+             pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
+             pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    {extra_tests}\n}}\n"
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let boundary = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary && s.expression().contains("wait < 5")
+            })
+            .ok_or_else(|| "wait < 5 boundary seam present".to_string())?;
+        let full = evidence_for_seam(boundary, &index);
+        let context = CompactGripContext::new(&index);
+        let compact = compact_evidence_for_seam(boundary, &context);
+        let published = full
+            .related_tests
+            .iter()
+            .map(|grip| grip.oracle_strength.clone())
+            .collect();
+        let agree = full.observe.state == compact.observe.state
+            && full.discriminate.state == compact.discriminate.state;
+        Ok((published, agree))
+    };
+    let other = "#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }";
+    let (alone, alone_agree) = published_for(other)?;
+    let (with_runner, runner_agree) = published_for(&format!(
+        "{other} #[test] fn consume_runs() {{ let _ = consume(3); }}"
+    ))?;
+    let (owner_and_other, both_agree) = published_for(
+        "#[test] fn consume_and_reduce() { let _ = consume(3); assert_eq!(reduce(3), Reduction::Over(3)); }",
+    )?;
+    assert!(
+        alone_agree && runner_agree && both_agree,
+        "full and compact agree"
+    );
+    assert_eq!(
+        alone,
+        vec![OracleStrength::Strong],
+        "no runner keeps credit"
+    );
+    assert_eq!(
+        with_runner,
+        vec![OracleStrength::None, OracleStrength::None],
+        "runner without assertion: other-function lends none"
+    );
+    assert_eq!(owner_and_other, vec![OracleStrength::Strong], "owner+other");
+    Ok(())
+}
+
+/// #12600/#12671: the same refusal for a returned value. `Ok(n)` in
+/// `parse_masked` is a value `parse_pinned` also returns, so a same-file test
+/// that pins `parse_pinned` lends it no oracle once a test that runs
+/// `parse_masked` is related. With no such test every related test is
+/// proximity-only and keeps the lent oracle, so the seam stays
+/// `activation_unknown` rather than reading `reachable_unrevealed`.
+#[test]
+fn proximity_test_pinning_another_function_lends_a_return_value_no_oracle() -> Result<(), String> {
+    let published_for = |extra_tests: &str| -> Result<Vec<OracleStrength>, String> {
+        let prod = format!(
+            "pub fn parse_masked(n: u8) -> Result<u8, u8> {{\n    if n % 2 == 1 {{ Err(1) }} else {{ Ok(n) }}\n}}\n\
+             pub fn parse_pinned(n: u8) -> Result<u8, u8> {{\n    if n % 2 == 0 {{ Err(2) }} else {{ Ok(n) }}\n}}\n\
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    {extra_tests}\n}}\n"
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let value = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::ReturnValue
+                    && s.expression() == "Ok(n)"
+                    && s.display_line() == 2
+            })
+            .ok_or_else(|| "parse_masked Ok(n) return_value seam present".to_string())?;
+        let full = evidence_for_seam(value, &index);
+        let context = CompactGripContext::new(&index);
+        let compact = compact_evidence_for_seam(value, &context);
+        assert!(
+            full.observe.state == compact.observe.state
+                && full.discriminate.state == compact.discriminate.state,
+            "full and compact agree"
+        );
+        Ok(full
+            .related_tests
+            .iter()
+            .map(|grip| grip.oracle_strength.clone())
+            .collect())
+    };
+    let other = "#[test] fn pinned_even() { assert_eq!(parse_pinned(2).unwrap_err(), 2); }";
+    let alone = published_for(other)?;
+    let with_runner = published_for(&format!(
+        "{other} #[test] fn masked_runs() {{ let _ = parse_masked(1); }}"
+    ))?;
+    assert!(
+        alone.iter().all(|o| *o != OracleStrength::None),
+        "no runner keeps credit: {alone:?}"
+    );
+    assert!(
+        with_runner.iter().all(|o| *o == OracleStrength::None),
+        "runner without assertion: other-function lends none: {with_runner:?}"
+    );
+    Ok(())
+}
+
+/// #12722: an exact error-variant pin reads the owner's `Err` arm, so it is
+/// published as no oracle on the owner's returned-value `Ok(n)` seam, while an
+/// exact value assertion on that value keeps its strong credit. The same pin
+/// still credits the `Err(..)` seam it names.
+#[test]
+fn exact_error_pin_is_not_published_as_an_oracle_on_the_ok_value_seam() -> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Even,\n}\n\
+         pub fn parse_pinned(n: u8) -> Result<u8, Fault> {\n    if n % 2 == 0 { Err(Fault::Even) } else { Ok(n) }\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn pinned_even() { assert_eq!(parse_pinned(2).unwrap_err(), Fault::Even); }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let published = |expression: &str| -> Result<Vec<OracleStrength>, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.expression() == expression)
+            .ok_or_else(|| format!("{expression} seam present"))?;
+        Ok(evidence_for_seam(seam, &index)
+            .related_tests
+            .iter()
+            .map(|grip| grip.oracle_strength.clone())
+            .collect())
+    };
+    assert_eq!(
+        published("Ok(n)")?,
+        vec![OracleStrength::None],
+        "the error pin cannot see the Ok value"
+    );
+    assert_eq!(
+        published("Err(Fault::Even)")?,
+        vec![OracleStrength::Strong],
+        "the same pin still credits the Err value it names"
+    );
+    Ok(())
+}
+
 /// #12478: ranking a match-arm seam with many related tests builds owner
 /// reach once, not once per test, and still publishes the #12060 credited
 /// view (other-function `None`, owner+other `Strong`).
@@ -22178,5 +22429,99 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
         StageState::Yes,
         "an opaque expected value is not a variant pin"
     );
+    Ok(())
+}
+
+/// Residual name-only false credits and missing pins tracked in #8917.
+#[test]
+#[rustfmt::skip]
+fn inherent_receiver_name_only_residual_gaps_issue_8917() -> Result<(), String> {
+    let site = site!("}");
+    let cases: Vec<(String, &str, bool)> = vec![
+        (
+            format!("{site}\nfn Site() -> Cache {{ Cache }}"),
+            "assert_eq!(Site().area(), 1);",
+            false,
+        ),
+        (
+            format!("{site}\nimpl Site {{ pub fn Make() -> Cache {{ Cache }} }}"),
+            "assert_eq!(Site::Make().area(), 1);",
+            false,
+        ),
+        (
+            format!(
+                "{site}\nfn fixture() -> Site {{ Site {{ v: 1 }} }}\n#[cfg(test)]\nmod tests {{\n    use ext::fixture;\n    #[test]\n    fn t() {{ assert_eq!(fixture().area(), 1); }}\n}}\n"
+            ),
+            "__mod_tests__",
+            false,
+        ),
+        (
+            site.to_string(),
+            "type Site = Cache;\n    assert_eq!(Site::new().area(), 1);",
+            false,
+        ),
+        (
+            "pub struct Ledger { balance: u32 }\nimpl Ledger {\n    pub fn new() -> Self { Self { balance: 0 } }\n    pub fn m09(&self) -> u32 { self.balance + 9 }\n}\n".to_string(),
+            "__ledger_m09__",
+            false,
+        ),
+        (
+            format!("{site}\nimpl Other<x::From<u8>> for Site {{ fn from(_: u8) -> Self {{ Site {{ v: 0 }} }} }}"),
+            "assert_eq!(Site::from(1).area(), 1);",
+            false,
+        ),
+        (
+            "#[cfg_attr(test, derive(Default))]\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }".to_string(),
+            "assert_eq!(Site::default().area(), 1);",
+            true,
+        ),
+        (
+            "pub struct Site { v: u32 }\nimpl From<String> for Site { fn from(_: String) -> Self { Site { v: 1 } } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }".to_string(),
+            "assert_eq!(Site::from(String::new()).area(), 1);",
+            true,
+        ),
+    ];
+    for (source, call, expected) in cases {
+        if call == "__mod_tests__" {
+            let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source.as_str())])?;
+            let owner = index
+                .functions()
+                .iter()
+                .find(|f| f.name == "area" && f.item.has_self_param)
+                .ok_or("missing owner")?;
+            let caller = index
+                .tests()
+                .iter()
+                .find(|t| t.name == "t")
+                .ok_or("missing test")?;
+            assert_eq!(
+                crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+                expected,
+                "mod tests fixture import over `{source}`"
+            );
+            continue;
+        }
+        if call == "__ledger_m09__" {
+            let call = "let book = Ledger::new();\n    let book = String::new();\n    assert_eq!(book.m09(), 9);";
+            let (index, _) = receiver_rule_parts(source.as_str(), call)?;
+            let owner = index
+                .functions()
+                .iter()
+                .find(|f| f.name == "m09" && f.item.has_self_param)
+                .ok_or("missing m09 owner")?;
+            let caller = index.tests().iter().find(|t| t.name == "t").ok_or("missing test")?;
+            assert_eq!(
+                crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+                expected,
+                "live-shadowed Ledger receiver"
+            );
+            continue;
+        }
+        assert_eq!(
+            receiver_resolves(source.as_str(), call)?,
+            expected,
+            "call `{call}` over `{source}`"
+        );
+    }
     Ok(())
 }

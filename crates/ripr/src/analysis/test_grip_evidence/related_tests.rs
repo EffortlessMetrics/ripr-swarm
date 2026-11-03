@@ -762,15 +762,23 @@ pub(super) fn sort_related_tests_for_seam<'a>(
 ) -> Vec<BestOracle> {
     let owner = seam_owner_activation(seam, context);
     let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, context.index);
+    // The gate reads the complete relation set of this seam (#12434); asking
+    // per test would see a lone proximity relation and disagree with the
+    // stage views.
+    let refuse = super::refuses_other_function_oracle(
+        seam,
+        related.iter().map(|(_, reason)| *reason),
+        owner_fn.is_some(),
+    );
     // #12478: one reverse owner-reach walk for the whole related set. A
     // one-element slice per test rebuilt the walk (and its unbounded
-    // OnceLock closure) on every related test of a match arm.
-    let credited_views = (seam.kind() == SeamKind::MatchArm && !related.is_empty()).then(|| {
+    // OnceLock closure) on every related test of the seam.
+    let credited_views = (refuse && !related.is_empty()).then(|| {
         let related_pairs: Vec<_> = related
             .iter()
             .map(|&(indexed, reason)| (indexed.test, reason))
             .collect();
-        super::credited_related_tests(seam, context, owner_fn, &related_pairs)
+        super::credited_related_tests(context, owner_fn, &related_pairs, refuse)
     });
     debug_assert!(
         credited_views
@@ -784,7 +792,8 @@ pub(super) fn sort_related_tests_for_seam<'a>(
             let (indexed, reason) = entry;
             // #12060: rank and publish the oracle the stages credit. A
             // proximity test whose assertion pins another function keeps its
-            // identity but offers no oracle for this match arm.
+            // identity but offers no oracle for this match arm or predicate
+            // boundary (#12434).
             let credited_test = credited_views
                 .as_ref()
                 .and_then(|views| views.get(i))
