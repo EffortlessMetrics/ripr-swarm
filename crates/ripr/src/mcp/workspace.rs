@@ -614,7 +614,9 @@ impl Snapshot {
         let snapshot_id = snapshot_identity(&outcome, &items, &scope, source, custody.commitment())
             .map_err(|error| {
                 AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
-            })?;
+            })?
+            .as_str()
+            .to_string();
         let profile_identity = format!(
             "mcp:{}:profile:diff:draft",
             root_identity.unwrap_or("root:unavailable")
@@ -692,7 +694,7 @@ fn snapshot_identity(
     scope: &ScopeFacts,
     source: RefreshSource,
     custody_commitment: Option<&str>,
-) -> Result<String, String> {
+) -> Result<crate::domain::CompletedAnalysisSnapshotId, String> {
     let outcome_digest = outcome.semantic_digest()?;
     let item_ids = items
         .iter()
@@ -728,7 +730,8 @@ fn snapshot_identity(
     }
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
-    Ok(format!("snapshot:sha256:{}", sha256_hex(&bytes)))
+    let wire = format!("snapshot:sha256:{}", sha256_hex(&bytes));
+    crate::domain::CompletedAnalysisSnapshotId::parse(&wire).map_err(|error| error.to_string())
 }
 
 fn evidence_identity(items: &[GapItem]) -> Result<String, String> {
@@ -5162,7 +5165,7 @@ mod tests {
                 RefreshSource::Committed,
                 None,
             )?;
-            assert_eq!(snapshot.snapshot_id, original_id);
+            assert_eq!(snapshot.snapshot_id, original_id.as_str());
 
             let session = WorkspaceSession {
                 in_flight: false,
@@ -5179,9 +5182,9 @@ mod tests {
                 .first()
                 .ok_or_else(|| "the original item oracle must not be empty".to_string())?;
             let document = session
-                .get_gap(&item.canonical_id, Some(&original_id))
+                .get_gap(&item.canonical_id, Some(original_id.as_str()))
                 .map_err(|f| f.detail)?;
-            assert_eq!(document, item.document(&original_id));
+            assert_eq!(document, item.document(original_id.as_str()));
         }
         assert_eq!(lengths.len(), 2);
         assert_eq!(

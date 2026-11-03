@@ -27,6 +27,11 @@
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_constants.py:python_preview:21c1d18e",
         "family": "return_value",

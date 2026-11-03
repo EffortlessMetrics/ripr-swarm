@@ -1162,6 +1162,12 @@ pub(super) struct DiagnosticResultIdCache {
     workspace_id: String,
 }
 
+fn bind_diagnostic_result_id(wire: String) -> String {
+    crate::domain::DiagnosticResultId::from_producer_id(&wire)
+        .map(|id| id.as_str().to_string())
+        .unwrap_or(wire)
+}
+
 impl DiagnosticResultIdCache {
     pub(super) fn for_snapshot(snapshot: Arc<AnalysisSnapshot>) -> Self {
         // Derived once from the committed selection, never a second budget
@@ -1171,17 +1177,15 @@ impl DiagnosticResultIdCache {
             .diagnostics_by_uri
             .keys()
             .map(|uri| {
-                (
-                    uri.clone(),
-                    document_diagnostic_result_id_with_omissions(
-                        &snapshot,
-                        uri,
-                        &delivery_omissions,
-                    ),
-                )
+                let wire = document_diagnostic_result_id_with_omissions(
+                    &snapshot,
+                    uri,
+                    &delivery_omissions,
+                );
+                (uri.clone(), bind_diagnostic_result_id(wire))
             })
             .collect();
-        let workspace_id = workspace_diagnostic_result_id(&snapshot);
+        let workspace_id = bind_diagnostic_result_id(workspace_diagnostic_result_id(&snapshot));
         Self {
             snapshot,
             document_ids,
@@ -1197,10 +1201,9 @@ impl DiagnosticResultIdCache {
     pub(super) fn document_id(&self, snapshot: &AnalysisSnapshot, uri: &Uri) -> String {
         // Exact-key cache lookup; admitted aliases fall back to the same
         // stored-document projection used for payload membership.
-        self.document_ids
-            .get(uri)
-            .cloned()
-            .unwrap_or_else(|| document_diagnostic_result_id(snapshot, uri))
+        self.document_ids.get(uri).cloned().unwrap_or_else(|| {
+            bind_diagnostic_result_id(document_diagnostic_result_id(snapshot, uri))
+        })
     }
 
     pub(super) fn delivered_diagnostics_for_uri(
@@ -8425,6 +8428,24 @@ mod delivery_tests {
                 "refresh clock or attempt snapshot_id entered the workspace result ID".to_string(),
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn producer_diagnostic_result_ids_satisfy_typed_identity_law() -> Result<(), String> {
+        let snapshot = snapshot_for_identity(
+            "/workspace",
+            &[("file:///workspace/src/lib.rs", vec![diagnostic("same", 4)])],
+        )?;
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<Uri>()
+            .map_err(|err| format!("parse URI failed: {err}"))?;
+        let document = document_diagnostic_result_id(&snapshot, &uri);
+        let workspace = workspace_diagnostic_result_id(&snapshot);
+        crate::domain::DiagnosticResultId::from_producer_id(&document)
+            .map_err(|error| error.to_string())?;
+        crate::domain::DiagnosticResultId::from_producer_id(&workspace)
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 

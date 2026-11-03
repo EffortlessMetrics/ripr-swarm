@@ -17,6 +17,7 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:src/pricing.py:is_large:predicate_boundary:predicate:total>100
   Changed behavior: return total > 100
