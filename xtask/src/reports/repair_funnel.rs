@@ -586,10 +586,10 @@ fn validate_controls(
         .get("selected_for_denominator")
         .and_then(Value::as_bool)
         == Some(false)
-        && !inputs
+        && inputs
             .get("exclusion_reason")
             .and_then(Value::as_str)
-            .is_some_and(|reason| !reason.trim().is_empty())
+            .is_none_or(|reason| reason.trim().is_empty())
     {
         violations.push("control_6: row excluded from denominator without exclusion_reason".into());
     }
