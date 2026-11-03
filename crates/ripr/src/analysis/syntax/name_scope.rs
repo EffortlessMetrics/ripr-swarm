@@ -320,8 +320,25 @@ pub(crate) fn expansion_declares_items(text: &str) -> bool {
             && node
                 .parent()
                 .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()));
-        ast::Item::can_cast(node.kind()) && !top_level_fn && !ast::MacroCall::can_cast(node.kind())
+        let item = ast::Item::can_cast(node.kind())
+            && !top_level_fn
+            && !ast::MacroCall::can_cast(node.kind());
+        item || binds_outside_a_let(&node)
     })
+}
+
+/// A binding pattern whose owner is not a plain `let` statement: a closure or
+/// function parameter, a `for` pattern, an `if let`/`while let` condition or a
+/// `match` arm. `let` bindings are tracked by the test fact's shadow lines;
+/// these are not, so they could rebind a callee invisibly (#12320).
+fn binds_outside_a_let(node: &SyntaxNode) -> bool {
+    if !ast::IdentPat::can_cast(node.kind()) {
+        return false;
+    }
+    node.ancestors()
+        .skip(1)
+        .find(|ancestor| !ast::Pat::can_cast(ancestor.kind()))
+        .is_some_and(|owner| !ast::LetStmt::can_cast(owner.kind()))
 }
 
 /// Name scopes for a test summary. An authored test resolves through its own
@@ -367,6 +384,17 @@ fn name_scopes_at_line(
     // invocation, so fail closed.
     let invocation = token.parent()?.ancestors().find_map(ast::MacroCall::cast)?;
     if line_index.line(invocation.syntax().text_range().start()) != line {
+        return None;
+    }
+    // Generated tests are pinned to a line, not an offset: when several
+    // invocations start there, which one a test came from is unknown.
+    let invocations_on_line = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|call| line_index.line(call.syntax().text_range().start()) == line)
+        .count();
+    if invocations_on_line != 1 {
         return None;
     }
     let modules_of = |node: &SyntaxNode| {
@@ -895,6 +923,29 @@ mod a { child_table!(case); } mod b { use demo::owner; #[test] fn case() { owner
         assert!(tree.is_some_and(|tree| {
             name_scopes_for_test_caller(&tree, &LineIndex::new(source), 2, "case", None).is_none()
         }));
+    }
+
+    #[test]
+    fn several_invocations_on_one_line_borrow_no_scopes() {
+        let source = "use demo::a::render;\nt!(one); mod x { use demo::b::render; t!(two); }\n";
+        assert!(generated_scopes(source, 2, "two", false).is_none());
+        assert!(generated_scopes(source, 2, "one", false).is_none());
+    }
+
+    #[test]
+    fn non_let_bindings_in_an_expansion_count_as_declarations() {
+        for body in [
+            "let f = |render: i32| render + 1; f(1);",
+            "for render in 0..1 { render; }",
+            "if let Some(render) = x { render; }",
+            "match x { Some(render) => render, None => 0 };",
+        ] {
+            let text = format!("#[test]\nfn case() {{ {body} }}\n");
+            assert!(expansion_declares_items(&text), "{body}");
+        }
+        assert!(!expansion_declares_items(
+            "#[test]\nfn case() { let want = 3; assert_eq!(owner(1), want); }\n"
+        ));
     }
 
     #[test]
