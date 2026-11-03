@@ -4161,11 +4161,17 @@ fn missing_field_value_discriminator(
                                     qualifier.iter().all(|segment| {
                                         matches!(segment.as_str(), "crate" | "self" | "super")
                                     }) && !index.files().get(&test.file).is_some_and(|facts| {
+                                        let source = &facts.data().source;
                                         super::reveal::file_imports_foreign_callee_name(
-                                            &facts.data().source,
+                                            source,
                                             &owner.name,
                                             &index.package_names,
-                                        )
+                                        ) || (qualifier.is_empty()
+                                            && super::reveal::file_foreign_glob_defeats_bare_callee_name(
+                                                source,
+                                                &owner.name,
+                                                &index.package_names,
+                                            ))
                                     }) && index
                                         .functions()
                                         .iter()
@@ -5039,29 +5045,42 @@ fn owner_call_parameter_values_where(
                 !crate::analysis::value_resolution::test_case_bound_literals(test, argument)
                     .is_empty()
             };
+            let case_arguments = cells
+                .iter()
+                .filter(|(_, _, argument, table)| !*table && case_column(argument))
+                .map(|(_, _, argument, _)| *argument)
+                .collect::<Vec<_>>();
+            let readable_case_rows = if case_arguments.is_empty() {
+                Vec::new()
+            } else {
+                (0..crate::analysis::value_resolution::rstest_case_row_count(test))
+                    .filter(|&case_index| {
+                        case_arguments.iter().all(|argument| {
+                            test_case_scalar_at(test, argument, case_index).is_some()
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let table_height = cells
+                .iter()
+                .filter(|(_, _, _, table)| *table)
+                .map(|(_, values, _, _)| values.len())
+                .max();
             let by_row = cells.iter().any(|(_, _, _, table)| *table)
                 && cells.iter().all(|(_, values, argument, table)| {
                     *table || (values.len() == 1 && !case_column(argument))
                 });
-            let height = if by_row {
-                cells
-                    .iter()
-                    .map(|(_, values, _, _)| values.len())
-                    .max()
-                    .unwrap_or(0)
-            } else {
-                usize::from(!cells.is_empty())
-            };
-            for position in 0..height {
+            let mut push_row = |case_index: Option<usize>, table_index: Option<usize>| {
                 let row = cells
                     .iter()
-                    .filter_map(|(parameter, values, _, _)| {
-                        let value = match values.len() {
-                            _ if !by_row => values.first(),
-                            1 => values.first(),
-                            len if len == height => values.get(position),
-                            _ => None,
-                        }?;
+                    .filter_map(|(parameter, values, argument, table)| {
+                        let value = if *table {
+                            table_index.and_then(|idx| values.get(idx)).cloned()?
+                        } else if case_column(argument) {
+                            test_case_scalar_at(test, argument, case_index?)?
+                        } else {
+                            values.first()?.clone()
+                        };
                         Some(ParameterValue {
                             parameter: (*parameter).clone(),
                             value: value.clone(),
@@ -5073,6 +5092,86 @@ fn owner_call_parameter_values_where(
                     .collect::<Vec<_>>();
                 if !row.is_empty() {
                     rows.push(row);
+                }
+            };
+            if let Some(table_height) = table_height.filter(|_| !readable_case_rows.is_empty()) {
+                // Each rstest case runs the inner constant-row loop, so case
+                // rows and table rows are independent dimensions (#7127).
+                for &case_index in &readable_case_rows {
+                    for table_index in 0..table_height {
+                        push_row(Some(case_index), Some(table_index));
+                    }
+                }
+            } else if table_height.is_none() && !readable_case_rows.is_empty() {
+                // Columns of the same `#[case(..)]` row stay correlated.
+                for &case_index in &readable_case_rows {
+                    push_row(Some(case_index), None);
+                }
+            } else if table_height.is_none() {
+                let height = if by_row {
+                    cells
+                        .iter()
+                        .map(|(_, values, _, _)| values.len())
+                        .max()
+                        .unwrap_or(0)
+                } else {
+                    usize::from(!cells.is_empty())
+                };
+                for position in 0..height {
+                    let row = cells
+                        .iter()
+                        .filter_map(|(parameter, values, _, _)| {
+                            let value = match values.len() {
+                                _ if !by_row => values.first(),
+                                1 => values.first(),
+                                len if len == height => values.get(position),
+                                _ => None,
+                            }?;
+                            Some(ParameterValue {
+                                parameter: (*parameter).clone(),
+                                value: value.clone(),
+                                line: call.line,
+                                text: call.text.to_string(),
+                                file: Some(test.file.clone()),
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    if !row.is_empty() {
+                        rows.push(row);
+                    }
+                }
+            } else {
+                let height = if by_row {
+                    cells
+                        .iter()
+                        .map(|(_, values, _, _)| values.len())
+                        .max()
+                        .unwrap_or(0)
+                } else {
+                    usize::from(!cells.is_empty())
+                };
+                for position in 0..height {
+                    let row = cells
+                        .iter()
+                        .filter_map(|(parameter, values, _, _)| {
+                            let value = match values.len() {
+                                _ if !by_row => values.first(),
+                                1 => values.first(),
+                                len if len == height => values.get(position),
+                                _ => None,
+                            }?;
+                            Some(ParameterValue {
+                                parameter: (*parameter).clone(),
+                                value: value.clone(),
+                                line: call.line,
+                                text: call.text.to_string(),
+                                file: Some(test.file.clone()),
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    if !row.is_empty() {
+                        rows.push(row);
+                    }
                 }
             }
         }
@@ -5588,10 +5687,10 @@ fn chain_entry_rows(
         is_free(&entry.caller),
         &entry_parameters,
         |test, call| {
-            !super::helper_transfer::test_call_is_shadowed(
+            !super::helper_transfer::test_call_is_shadowed_for_entry(
                 index,
                 test,
-                &entry.caller.name,
+                &entry.caller,
                 call.line,
             ) && !constructor_names(&call.text).any(|name| {
                 // #9329 Devin review: a test-local `let Size = |n| ..` makes
@@ -6952,6 +7051,15 @@ fn owner_argument_values_in(test: &TestSummary, argument: &str, text_cells: bool
         .collect()
 }
 
+/// One readable scalar from rstest case row `case_index` for `ident`, using
+/// the same guards and scalar filter as [`owner_argument_values_in`].
+fn test_case_scalar_at(test: &TestSummary, ident: &str, case_index: usize) -> Option<String> {
+    let value = crate::analysis::value_resolution::test_case_bound_cell(test, ident, case_index)?;
+    (!value.starts_with(['"', '\''])
+        && scalar_values(&value).as_slice() == std::slice::from_ref(&value))
+    .then_some(value)
+}
+
 /// The argument with the wrappers that keep a literal's value stripped: a
 /// reference (`&"Bob"`), `.to_string()`, `.to_owned()`, `.into()` and
 /// `String::from(..)`. Anything else around a literal is left in place for
@@ -7510,6 +7618,10 @@ fn scalar_values(text: &str) -> Vec<String> {
             if let Some(radix_end) = radix_literal_end(&chars, idx) {
                 if let Some((end_byte, end_ch)) = chars.get(radix_end - 1)
                     && let Some(value) = text.get(byte_idx..end_byte + end_ch.len_utf8())
+                    && !is_truncated_by_cast(
+                        value,
+                        text.get(end_byte + end_ch.len_utf8()..).unwrap_or(""),
+                    )
                 {
                     values.push(value.to_string());
                 }
@@ -7535,7 +7647,18 @@ fn scalar_values(text: &str) -> Vec<String> {
                     break;
                 }
             }
-            if let Some(value) = text.get(byte_idx..end) {
+            // A float exponent (`1e5`, `1E-5f64`, `2.5e3`) is part of the
+            // literal. Stopping at the `e` read `1e5` as the value `1` and
+            // `1E-5f64` as `-5` and `1`, inputs the test never passes (#6912).
+            // The spelled value is not folded here, so the literal yields no
+            // exact value (fail closed).
+            if let Some(exponent_end) = float_exponent_end(&chars, cursor) {
+                idx = exponent_end;
+                continue;
+            }
+            if let Some(value) = text.get(byte_idx..end)
+                && !is_truncated_by_cast(value, text.get(end..).unwrap_or(""))
+            {
                 values.push(value.to_string());
             }
             idx = cursor;
@@ -7546,6 +7669,127 @@ fn scalar_values(text: &str) -> Vec<String> {
     values.sort();
     values.dedup();
     values
+}
+
+/// The index one past a float exponent (`e5`, `E-5`, `e+3`, with `_`
+/// separators) that starts at `cursor`, or `None` when the text there is not
+/// one. A type suffix (`f64`) is left for the caller's identifier-digit guard.
+fn float_exponent_end(chars: &[(usize, char)], cursor: usize) -> Option<usize> {
+    if !matches!(chars.get(cursor).map(|(_, ch)| *ch), Some('e' | 'E')) {
+        return None;
+    }
+    let mut digits_at = cursor + 1;
+    if matches!(chars.get(digits_at).map(|(_, ch)| *ch), Some('+' | '-')) {
+        digits_at += 1;
+    }
+    // Rust allows separators before the exponent digits (`1.0e_5`).
+    while chars.get(digits_at).is_some_and(|(_, ch)| *ch == '_') {
+        digits_at += 1;
+    }
+    if !chars
+        .get(digits_at)
+        .is_some_and(|(_, ch)| ch.is_ascii_digit())
+    {
+        return None;
+    }
+    let mut end = digits_at;
+    while chars
+        .get(end)
+        .is_some_and(|(_, ch)| ch.is_ascii_digit() || *ch == '_')
+    {
+        end += 1;
+    }
+    Some(end)
+}
+
+/// Whether `literal` is followed by an `as` cast to an integer type that
+/// changes its value: a fractional literal truncates, and an integer outside
+/// the target's range wraps (`300 as u8` is 44). Such a literal is not the
+/// value it is spelled as, so it yields no exact value (#6912). A cast that
+/// keeps the value, or a cast to a type this does not know, is left alone.
+fn is_truncated_by_cast(literal: &str, rest: &str) -> bool {
+    // A type suffix on the literal (`300u16`) and closing parentheses around it
+    // (`(300) as u8`) sit between the literal and its first `as`. A closing
+    // parenthesis may also end a call (`f(300) as u8` casts the call), which
+    // only makes this abstain more: the value is dropped, never kept.
+    let mut remaining = rest;
+    if remaining.starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_') {
+        let suffix_len = remaining
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .unwrap_or(remaining.len());
+        remaining = &remaining[suffix_len..];
+    }
+    // The value survives a cast chain (`300 as u16 as u8`) only if it fits
+    // every target, so each step is checked against the literal itself.
+    loop {
+        remaining = remaining.trim_start_matches(|ch: char| ch.is_whitespace() || ch == ')');
+        let Some(after_as) = remaining.strip_prefix("as") else {
+            return false;
+        };
+        if !after_as.starts_with(char::is_whitespace) {
+            return false;
+        }
+        let after_as = after_as.trim_start();
+        let target_len = after_as
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .unwrap_or(after_as.len());
+        if cast_changes_value(literal, &after_as[..target_len]) {
+            return true;
+        }
+        remaining = &after_as[target_len..];
+    }
+}
+
+/// Whether casting the literal to the named integer type changes its value.
+/// A type this does not know (a float, `char`, a user alias) is left alone.
+fn cast_changes_value(literal: &str, target: &str) -> bool {
+    let (min, max): (i128, i128) = match target {
+        "u8" => (0, i128::from(u8::MAX)),
+        "i8" => (i128::from(i8::MIN), i128::from(i8::MAX)),
+        "u16" => (0, i128::from(u16::MAX)),
+        "i16" => (i128::from(i16::MIN), i128::from(i16::MAX)),
+        "u32" => (0, i128::from(u32::MAX)),
+        "i32" => (i128::from(i32::MIN), i128::from(i32::MAX)),
+        "u64" => (0, i128::from(u64::MAX)),
+        "i64" => (i128::from(i64::MIN), i128::from(i64::MAX)),
+        "usize" => (0, i128::from(u64::MAX)),
+        "isize" => (i128::from(i64::MIN), i128::from(i64::MAX)),
+        _ => return false,
+    };
+    // A whole-valued float (`1.0 as u8`) converts without changing; a fractional
+    // one truncates, and an out-of-range one saturates.
+    if literal.contains('.') {
+        return match literal.replace('_', "").parse::<f64>() {
+            Ok(value) => value.fract() != 0.0 || value < min as f64 || value > max as f64,
+            Err(_) => true,
+        };
+    }
+    match integer_literal_value(literal) {
+        Some(value) => value < min || value > max,
+        None => true,
+    }
+}
+
+/// The value of an integer literal spelled in decimal or with a `0x`/`0b`/`0o`
+/// prefix, with `_` separators and a leading `-`; `None` when it does not fit
+/// or is not one.
+fn integer_literal_value(literal: &str) -> Option<i128> {
+    let digits = literal.replace('_', "");
+    let (negative, body) = match digits.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, digits.as_str()),
+    };
+    let lowered = body.to_ascii_lowercase();
+    let magnitude = if let Some(hex) = lowered.strip_prefix("0x") {
+        i128::from_str_radix(hex, 16).ok()?
+    } else if let Some(bin) = lowered.strip_prefix("0b") {
+        i128::from_str_radix(bin, 2).ok()?
+    } else if let Some(oct) = lowered.strip_prefix("0o") {
+        i128::from_str_radix(oct, 8).ok()?
+    } else {
+        lowered.parse::<i128>().ok()?
+    };
+    Some(if negative { -magnitude } else { magnitude })
 }
 
 /// The index one past a radix-prefixed integer literal (`0x1F`, `-0b101`,
@@ -9964,6 +10208,72 @@ assert_eq!(input.amount, 100);"#
     }
 
     #[test]
+    fn scalar_values_read_a_float_exponent_as_no_exact_value() {
+        // #6912: `1e5` was read as `1` and `1E-5f64` as `-5` and `1`, inputs the
+        // test never passes. The exponent form yields no exact value.
+        for spelled in [
+            "score(1e5)",
+            "score(1E-5f64)",
+            "score(2.5e3)",
+            "score(1e+5)",
+            "score(1e5_f32)",
+            "score(1_0e1_0)",
+            "score(1.0e_5)",
+            "score(1.0e-_5)",
+        ] {
+            assert!(scalar_values(spelled).is_empty(), "{spelled}");
+        }
+        // Another argument beside the exponent literal is still read.
+        assert_eq!(scalar_values("f(1e5, 7)"), vec!["7".to_string()]);
+        // Controls: no exponent keeps its reading, and an `e` that is part of
+        // an identifier or not followed by a digit is not an exponent.
+        assert_eq!(scalar_values("f(1.5)"), vec!["1.5".to_string()]);
+        assert_eq!(scalar_values("f(1_000)"), vec!["1_000".to_string()]);
+        assert_eq!(scalar_values("f(1.5f64)"), vec!["1.5".to_string()]);
+        assert_eq!(scalar_values("f(2e)"), vec!["2".to_string()]);
+        assert!(scalar_values("f(x1e5)").is_empty());
+        assert_eq!(scalar_values("f(0xE5)"), vec!["0xE5".to_string()]);
+    }
+
+    #[test]
+    fn scalar_values_read_a_value_changing_cast_as_no_exact_value() {
+        // #6912: `300 as u8` is 44, not 300.
+        for spelled in [
+            "score(300 as u8)",
+            "score(-1 as u32)",
+            "score(128 as i8)",
+            "score(1.5 as u8)",
+            "score(70_000 as u16)",
+            "score(0x100 as u8)",
+            "score(0b1_0000_0000 as u8)",
+            "score(-0x81 as i8)",
+            "score(1.5e0 as u8)",
+            "score(300u16 as u8)",
+            "score((300) as u8)",
+            "score(300 as u16 as u8)",
+            "score(300_u16 as u8)",
+            "score(0x100u16 as u8)",
+        ] {
+            assert!(scalar_values(spelled).is_empty(), "{spelled}");
+        }
+        // Controls: a cast that keeps the value, a widening cast, a float
+        // target and a non-cast `as`-prefixed word keep the reading.
+        assert_eq!(scalar_values("score(255 as u8)"), vec!["255".to_string()]);
+        assert_eq!(scalar_values("score(300 as u64)"), vec!["300".to_string()]);
+        assert_eq!(scalar_values("score(-1 as i32)"), vec!["-1".to_string()]);
+        assert_eq!(scalar_values("score(3 as f64)"), vec!["3".to_string()]);
+        // A whole-valued float and an in-range radix literal convert unchanged.
+        assert_eq!(scalar_values("score(1.0 as u8)"), vec!["1.0".to_string()]);
+        assert_eq!(scalar_values("score(0.0 as i32)"), vec!["0.0".to_string()]);
+        assert_eq!(scalar_values("score(0xFF as u8)"), vec!["0xFF".to_string()]);
+        assert_eq!(
+            scalar_values("score(0x100 as u16)"),
+            vec!["0x100".to_string()]
+        );
+        assert_eq!(scalar_values("score(300 assert)"), vec!["300".to_string()]);
+    }
+
+    #[test]
     fn scalar_values_read_a_radix_prefixed_integer_as_one_literal() {
         // #9164: `0xFF` was read as `0` (the leading digit), so `is_big(0x10)`
         // against a `0xFF` boundary compared equal and read as the boundary.
@@ -10023,12 +10333,13 @@ assert_eq!(input.amount, 100);"#
         assert!(!scalar_values("f(0xFFu8)").contains(&"8".to_string()));
         // Distinct spellings stay distinct.
         assert_ne!(scalar_values("f(0b1010)"), scalar_values("f(0b1011)"));
-        // Decimal, float and exponent reading is unchanged.
+        // Decimal and float reading is unchanged; an exponent literal yields no
+        // exact value (#6912, it was read as its mantissa digits).
         assert_eq!(scalar_values("f(100)"), vec!["100".to_string()]);
         assert_eq!(scalar_values("f(1_000)"), vec!["1_000".to_string()]);
         assert_eq!(scalar_values("f(-5)"), vec!["-5".to_string()]);
         assert_eq!(scalar_values("f(0.5f32)"), vec!["0.5".to_string()]);
-        assert_eq!(scalar_values("f(1e5)"), vec!["1".to_string()]);
+        assert!(scalar_values("f(1e5)").is_empty());
         assert_eq!(scalar_values("f(99u32)"), vec!["99".to_string()]);
         assert!(scalar_values("f(a0, b1x, c0o7)").is_empty());
         // Non-radix letter after a zero is not a radix literal.
@@ -10562,6 +10873,120 @@ assert_eq!(input.amount, 100);"#
             owner_argument_values(&test, "cents"),
             vec!["4_999".to_string(), "5_000".to_string()]
         );
+    }
+
+    #[test]
+    fn rstest_case_rows_cross_constant_table_rows_for_owner_call_inputs() {
+        // #7127: each `#[case]` run executes every constant-row loop row, so
+        // activation must pair every case value with every table value.
+        let body = "fn t(#[case] left: u32) {\n    for right in [99, 100] {\n        assert_eq!(eq(left, right), left == right);\n    }\n}";
+        let mut test = test_with_body_calls(body, &[(13, "eq(left, right)")]);
+        test.calls[0].name = "eq".into();
+        test.attrs = vec![
+            "#[rstest]".to_string(),
+            "#[case(100)]".to_string(),
+            "#[case(99)]".to_string(),
+        ];
+        let rows = owner_call_parameter_values(
+            &[&test],
+            "eq",
+            false,
+            &["left".to_string(), "right".to_string()],
+        );
+        let pairs = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.iter()
+                        .find(|cell| cell.parameter == "left")
+                        .map(|cell| cell.value.as_str())
+                        .unwrap_or(""),
+                    row.iter()
+                        .find(|cell| cell.parameter == "right")
+                        .map(|cell| cell.value.as_str())
+                        .unwrap_or(""),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(pairs.len(), 4);
+        assert!(pairs.contains(&("100", "99")));
+        assert!(pairs.contains(&("100", "100")));
+        assert!(pairs.contains(&("99", "99")));
+        assert!(pairs.contains(&("99", "100")));
+    }
+
+    #[test]
+    fn rstest_case_columns_stay_correlated_without_inventing_cross_pairs() {
+        // #7127 negative control: columns of one `#[case(a, b, c)]` row zip
+        // together; ripr must not invent `(1, 1)` or `(2, 2)`.
+        let body = "fn correlated_cases(\n    #[case] left: u32,\n    #[case] right: u32,\n    #[case] expected: bool,\n) {\n    assert_eq!(less(left, right), expected);\n}";
+        let mut test = test_with_body_calls(body, &[(15, "less(left, right)")]);
+        test.calls[0].name = "less".into();
+        test.attrs = vec![
+            "#[rstest]".to_string(),
+            "#[case(1, 2, true)]".to_string(),
+            "#[case(2, 1, false)]".to_string(),
+        ];
+        let rows = owner_call_parameter_values(
+            &[&test],
+            "less",
+            false,
+            &["left".to_string(), "right".to_string()],
+        );
+        let pairs = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.iter()
+                        .find(|cell| cell.parameter == "left")
+                        .map(|cell| cell.value.as_str())
+                        .unwrap_or(""),
+                    row.iter()
+                        .find(|cell| cell.parameter == "right")
+                        .map(|cell| cell.value.as_str())
+                        .unwrap_or(""),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(pairs, vec![("1", "2"), ("2", "1")]);
+    }
+
+    #[test]
+    fn rstest_case_zip_uses_original_row_index_not_compressed_columns() {
+        // When one case cell is unreadable, do not zip surviving literals from
+        // different original case rows (#7127 / Devin review).
+        let body = "fn t(#[case] left: u32, #[case] right: u32) {\n    assert_eq!(eq(left, right), left == right);\n}";
+        let mut test = test_with_body_calls(body, &[(13, "eq(left, right)")]);
+        test.calls[0].name = "eq".into();
+        test.attrs = vec![
+            "#[rstest]".to_string(),
+            "#[case(1, 2)]".to_string(),
+            "#[case(UNKNOWN, 4)]".to_string(),
+            "#[case(4, UNKNOWN)]".to_string(),
+            "#[case(5, 6)]".to_string(),
+        ];
+        let rows = owner_call_parameter_values(
+            &[&test],
+            "eq",
+            false,
+            &["left".to_string(), "right".to_string()],
+        );
+        let pairs = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.iter()
+                        .find(|cell| cell.parameter == "left")
+                        .map(|cell| cell.value.as_str())
+                        .unwrap_or(""),
+                    row.iter()
+                        .find(|cell| cell.parameter == "right")
+                        .map(|cell| cell.value.as_str())
+                        .unwrap_or(""),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(pairs, vec![("1", "2"), ("5", "6")]);
     }
 
     #[test]
@@ -11207,6 +11632,7 @@ assert_eq!(input.amount, 100);"#
                     receiver: None,
                     through_macro: false,
                     module_qualified: false,
+                    crate_qualifier: None,
                     transparent_macros_rebound: false,
                     diverging_handlers: Vec::new(),
                 },
@@ -11217,6 +11643,7 @@ assert_eq!(input.amount, 100);"#
                     receiver: None,
                     through_macro: false,
                     module_qualified: false,
+                    crate_qualifier: None,
                     transparent_macros_rebound: false,
                     diverging_handlers: Vec::new(),
                 },

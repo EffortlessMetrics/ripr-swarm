@@ -1,0 +1,7 @@
+# Registers the adapter-fed Err refusal tests (#12359) under RIPR-SPEC-0106.
+[[extend]]
+id = "RIPR-SPEC-0106"
+tests = [
+  "crates/ripr/src/analysis/extract/oracles/patterns.rs::an_err_constructor_compared_or_matched_still_pins_an_error_variant",
+  "crates/ripr/src/analysis/extract/oracles/patterns.rs::an_err_handed_to_a_value_supplying_adapter_pins_nothing",
+]
