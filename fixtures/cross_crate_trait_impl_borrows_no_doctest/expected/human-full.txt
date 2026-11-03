@@ -44,6 +44,7 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/cross_crate_trait_impl_borrows_no_doctest/input --diff <cwd>/fixtures/cross_crate_trait_impl_borrows_no_doctest/diff.patch --mode fast probe:util_src_stream_take.rs:predicate:7b453838
   ripr context --root <cwd>/fixtures/cross_crate_trait_impl_borrows_no_doctest/input --diff <cwd>/fixtures/cross_crate_trait_impl_borrows_no_doctest/diff.patch --mode fast --at probe:util_src_stream_take.rs:predicate:7b453838
 
@@ -68,6 +69,7 @@ Evidence
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/cross_crate_trait_impl_borrows_no_doctest/input --diff <cwd>/fixtures/cross_crate_trait_impl_borrows_no_doctest/diff.patch --mode fast probe:util_src_stream_take.rs:return_value:2263b7d6
   ripr context --root <cwd>/fixtures/cross_crate_trait_impl_borrows_no_doctest/input --diff <cwd>/fixtures/cross_crate_trait_impl_borrows_no_doctest/diff.patch --mode fast --at probe:util_src_stream_take.rs:return_value:2263b7d6
 

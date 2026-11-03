@@ -4,7 +4,7 @@ Spec: RIPR-SPEC-0245
 
 ## Given
 
-Eight small authored Perl distributions under `subjects/`, our own code under
+Nine small authored Perl distributions under `subjects/`, our own code under
 this repository's license: `authored-perl-testmore-shop` (Test::More),
 `authored-perl-test2-ledger` (Test2::V0),
 `authored-perl-testexception-account` (Test::Exception),
@@ -13,8 +13,11 @@ prefix regex, a class-only `throws_ok`, `is($@->message)` after `throws_ok`,
 `eval` with `like($@)`, `lives_and { ok(...) }` and `eval` with `ok(!$@)`),
 `authored-perl-testdeep-inventory` (Test::Deep),
 `authored-perl-moose-profile` (Moose and blessed hashes),
-`authored-perl-idioms-toolkit` (closures, wantarray, local, regexes) and
-`authored-perl-hostile-source` (decoys, AUTOLOAD, generated subs). Each case is a
+`authored-perl-idioms-toolkit` (closures, wantarray, local, regexes),
+`authored-perl-hostile-source` (decoys, AUTOLOAD, generated subs) and
+`authored-perl-testmore-pathparts` (File::Spec::Unix::splitpath-shaped list
+return; Test::More `is_deeply` vs scalar-basename and self-comparison
+controls, #7851). Each case is a
 one-line behavior-preserving rewrite under `cases/` with the fact packet the
 pinned `perl-ripr-facts` producer wrote for that diff under `packets/`.
 Each case is labeled with what `prove -l t` discriminates when each listed
@@ -32,7 +35,7 @@ it to carry a RIPR-SPEC-0235 fact the producer cannot emit yet. Their
 edit; their rates are reported apart from producer-packet rates.
 
 `spec-coverage.toml` lists RIPR-SPEC-0235 as the one in-scope spec and counts
-each of its 31 numbered examples once a case cites it in `spec_examples`. A
+each of its 32 numbered examples once a case cites it in `spec_examples`. A
 `perl-0235-*` case derived from another case keeps that case's diff and run
 truth, because a packet edit changes which facts ripr reads, not what
 `prove -l t` does with the rewrite; its base is named in `perl_facts.edits`.

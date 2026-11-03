@@ -48,6 +48,7 @@ Weakness
 Next step
   Strengthen the related assertion so it discriminates the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/whole_value_string_from_shadow/input --diff <cwd>/fixtures/whole_value_string_from_shadow/diff.patch --mode fast probe:src_lib.rs:field_construction:e9de435c
   ripr context --root <cwd>/fixtures/whole_value_string_from_shadow/input --diff <cwd>/fixtures/whole_value_string_from_shadow/diff.patch --mode fast --at probe:src_lib.rs:field_construction:e9de435c
 
@@ -92,5 +93,6 @@ Stop reasons:
 Next step
   Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/whole_value_string_from_shadow/input --diff <cwd>/fixtures/whole_value_string_from_shadow/diff.patch --mode fast probe:src_lib.rs:static_unknown:54daf74a
   ripr context --root <cwd>/fixtures/whole_value_string_from_shadow/input --diff <cwd>/fixtures/whole_value_string_from_shadow/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:54daf74a

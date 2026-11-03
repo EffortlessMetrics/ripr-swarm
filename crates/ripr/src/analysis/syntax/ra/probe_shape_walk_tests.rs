@@ -425,6 +425,118 @@ fn deferred() {
     Ok(())
 }
 
+// #12196: the call is resolved to the `core::hint` intrinsic through the
+// file's `use` bindings, not taken from its spelling.
+#[test]
+fn probe_walk_resolves_unchecked_assumption_through_use_bindings() -> Result<(), String> {
+    let assumed = |text: &str| -> Result<usize, String> {
+        let facts = equivalent_file_facts(text)?;
+        Ok(facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::UnsafeBoundary)
+            .filter(|shape| shape.text == UNCHECKED_ASSUMPTION_LABEL)
+            .count())
+    };
+    // Established: a bare import, a renamed import, an aliased or imported
+    // module, a glob, a block-local import and the `intrinsics` spelling.
+    for (name, text) in [
+        (
+            "bare import",
+            "use std::hint::unreachable_unchecked;\nfn f() { unsafe { unreachable_unchecked() }; }\n",
+        ),
+        (
+            "renamed import",
+            "use core::hint::assert_unchecked as assume;\nfn f(x: bool) { unsafe { assume(x) }; }\n",
+        ),
+        (
+            "aliased module",
+            "use std::hint as h;\nfn f() { unsafe { h::unreachable_unchecked() }; }\n",
+        ),
+        (
+            "imported module",
+            "use core::hint::{self, black_box};\nfn f() { unsafe { hint::unreachable_unchecked() }; }\n",
+        ),
+        (
+            "glob",
+            "use std::hint::*;\nfn f() { unsafe { unreachable_unchecked() }; }\n",
+        ),
+        (
+            "block-local import",
+            "fn f() { use std::hint::unreachable_unchecked; unsafe { unreachable_unchecked() }; }\n",
+        ),
+        (
+            "absolute std path",
+            "fn f() { unsafe { ::std::hint::unreachable_unchecked() }; }\n",
+        ),
+        (
+            "absolute core path",
+            "fn f(x: bool) { unsafe { ::core::hint::assert_unchecked(x) }; }\n",
+        ),
+        (
+            "import inside the unsafe block",
+            "fn f() { unsafe { use std::hint::unreachable_unchecked; unreachable_unchecked() }; }\n",
+        ),
+        (
+            "intrinsics path",
+            "fn f(x: bool) { unsafe { std::intrinsics::assert_unchecked(x) }; }\n",
+        ),
+    ] {
+        assert_eq!(assumed(text)?, 1, "{name} must be established");
+    }
+    // Not established: a bare name nothing imports, a project function of that
+    // name, an import from another module, an aliased project module.
+    for (name, text) in [
+        (
+            "unimported bare name",
+            "fn f() { unsafe { unreachable_unchecked() }; }\n",
+        ),
+        (
+            "local function",
+            "fn unreachable_unchecked() {}\nfn f() { unsafe { unreachable_unchecked() }; }\n",
+        ),
+        (
+            "import from another module",
+            "use crate::util::assert_unchecked;\nfn f(x: bool) { unsafe { assert_unchecked(x) }; }\n",
+        ),
+        (
+            "aliased project module",
+            "use crate::checks as h;\nfn f() { unsafe { h::unreachable_unchecked() }; }\n",
+        ),
+        (
+            "parent module import is not inherited",
+            "use std::hint::unreachable_unchecked;\nmod inner { fn f() { unsafe { unreachable_unchecked() }; } }\n",
+        ),
+        (
+            "nested block import shadows the outer one",
+            "use std::hint::assert_unchecked;\nfn f() { unsafe { { use crate::checks::assert_unchecked; assert_unchecked(true); } }; }\n",
+        ),
+        (
+            "local function inside the unsafe block",
+            "fn f() { unsafe { fn unreachable_unchecked() {} unreachable_unchecked() }; }\n",
+        ),
+        (
+            "let binding shadows a renamed import",
+            "use std::hint::assert_unchecked as assume;\nfn f() { let assume = |_: bool| {}; unsafe { assume(true) }; }\n",
+        ),
+        (
+            "parameter shadows an import",
+            "use std::hint::unreachable_unchecked;\nfn f(unreachable_unchecked: fn()) { unsafe { unreachable_unchecked() }; }\n",
+        ),
+        (
+            "absolute path to another crate",
+            "fn f() { unsafe { ::other::hint::unreachable_unchecked() }; }\n",
+        ),
+        (
+            "self path",
+            "fn f() { unsafe { self::unreachable_unchecked() }; }\n",
+        ),
+    ] {
+        assert_eq!(assumed(text)?, 0, "{name} must keep the plain label");
+    }
+    Ok(())
+}
+
 #[test]
 fn probe_walk_full_facts_nested_return_targets_and_duplicate_shapes() -> Result<(), String> {
     let text = r#"

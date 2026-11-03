@@ -13,6 +13,7 @@ use crate::output::agent_seam_packets::{
 use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::human::{plain_observation_wording, plain_stop_condition};
+use crate::output::placeholder_assertion::fill_in_note_line;
 use crate::output::preview_actionability::{PreviewActionability, preview_actionability_for};
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use serde_json::Value;
@@ -53,6 +54,16 @@ pub(super) enum NoEvidenceState {
     /// A snapshot committed and its producer outcome is `no_changed_lines`:
     /// the diff against the base has no changed lines.
     AnalyzedNoChanges { base: Option<String> },
+    /// A snapshot committed and its producer outcome is `no_scope` or
+    /// `no_behavioral_candidates`: the last analysis analyzed nothing at all,
+    /// which is not an all-clear for the change an agent believes it made
+    /// (#12416). Carries the outcome kind (the default-base cause sentence
+    /// differs per kind) and the requested base (`None` = the loader's
+    /// default resolution).
+    AnalyzedNoScope {
+        kind: crate::analysis_outcome::AnalysisOutcomeKind,
+        requested_base: Option<String>,
+    },
     /// A snapshot committed; this position simply has no evidence.
     Analyzed,
 }
@@ -147,6 +158,23 @@ pub(super) fn hover_response_without_evidence(
             );
             format!(
                 "**ripr** found no changed lines against {base_text} at its last analysis, so there is nothing to grade. ripr estimates static RIPR exposure for changed {language_text} behavior; findings appear here after a change against the base is saved and analyzed."
+            )
+        }
+        // #12416: the shared not-all-clear fact plus the editor set-a-base
+        // recovery. The cause sentence is the same bytes MCP's
+        // `empty_scope_hint` carries; only the surface wrapper differs, so a
+        // no-scope session never dead-ends in the generic analyzed advice.
+        NoEvidenceState::AnalyzedNoScope {
+            kind,
+            requested_base,
+        } => {
+            let cause = kind.empty_scope_cause_sentence(
+                requested_base.as_deref(),
+                crate::analysis_outcome::EmptyScopeDiffAuthority::SavedWorktree,
+            );
+            format!(
+                "**ripr** {cause}. {}",
+                super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE
             )
         }
         NoEvidenceState::Analyzing => format!(
@@ -851,6 +879,9 @@ fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness)
     }
     if let Some(assertion) = &witness.suggested_assertion {
         lines.push(format!("- suggested assertion: `{assertion}`"));
+        if let Some(note) = fill_in_note_line("  ", assertion) {
+            lines.push(note);
+        }
     }
     lines.push(format!("- explain: `{}`", witness.explain_command));
     if let Some(value) = witness.confidence.value {
@@ -1011,7 +1042,8 @@ const SOURCE_TEXT_AFTER_COLON_PREFIXES: &[&str] = &[
     "No complete owner-bound propagation witness found for ",
     "Propagation witness is incomplete for ",
     "Related tests appear to reach ",
-    "Related tests exercise the wrapper seam's converted callee",
+    "No test is seen calling ",
+    "Related tests exercise the wrapper seam's converted callee", // user-text-exempt: matches producer text
     "Detected test input literal matching changed boundary",
 ];
 
@@ -1021,7 +1053,7 @@ const SOURCE_TEXT_AFTER_COLON_PREFIXES: &[&str] = &[
 /// hover shows "check" where the producer wrote "discriminator". Whole words
 /// only, so identifiers like `missing_discriminators` are never touched.
 ///
-/// Backticked spans and the source-text tail of the known producer forms
+/// Backticked spans, bracketed literal lists and the source-text tail of the known producer forms
 /// above are never rewritten: a hover must not tell someone to look for a name
 /// their code does not contain. An unbalanced backtick means source text may
 /// hold a lone backtick, so the summary is then left verbatim.
@@ -1040,13 +1072,18 @@ fn plain_hover_summary(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut word = String::new();
     let mut in_code = false;
+    let mut bracket_depth = 0usize;
     let flush = |word: &mut String, out: &mut String, verbatim: bool| {
         match word.as_str() {
             _ if verbatim => out.push_str(word),
-            "discriminator" => out.push_str("check"),
-            "Discriminator" => out.push_str("Check"),
-            "discriminators" => out.push_str("checks"),
-            "Discriminators" => out.push_str("Checks"),
+            "discriminator" => out.push_str("check"), // user-text-exempt: rewrites the producer word
+            "Discriminator" => out.push_str("Check"), // user-text-exempt: rewrites the producer word
+            "discriminators" => out.push_str("checks"), // user-text-exempt: rewrites the producer word
+            "Discriminators" => out.push_str("Checks"), // user-text-exempt: rewrites the producer word
+            "seam" => out.push_str("spot"), // user-text-exempt: rewrites the producer word
+            "Seam" => out.push_str("Spot"), // user-text-exempt: rewrites the producer word
+            "seams" => out.push_str("spots"), // user-text-exempt: rewrites the producer word
+            "Seams" => out.push_str("Spots"), // user-text-exempt: rewrites the producer word
             _ => out.push_str(word),
         }
         word.clear();
@@ -1058,14 +1095,26 @@ fn plain_hover_summary(text: &str) -> String {
         }
         // `word` ended just before `at`, so the tail test uses its start.
         let word_start = at - word.len();
-        flush(&mut word, &mut out, in_code || word_start >= tail_start);
-        if c == '`' {
-            in_code = !in_code;
+        flush(
+            &mut word,
+            &mut out,
+            in_code || bracket_depth > 0 || word_start >= tail_start,
+        );
+        match c {
+            '`' => in_code = !in_code,
+            // The producer lists literals as `[a, b]`; they are source text.
+            '[' if !in_code => bracket_depth += 1,
+            ']' if !in_code => bracket_depth = bracket_depth.saturating_sub(1),
+            _ => {}
         }
         out.push(c);
     }
     let word_start = text.len() - word.len();
-    flush(&mut word, &mut out, in_code || word_start >= tail_start);
+    flush(
+        &mut word,
+        &mut out,
+        in_code || bracket_depth > 0 || word_start >= tail_start,
+    );
     out
 }
 
@@ -1078,7 +1127,7 @@ fn plain_hover_summary(text: &str) -> String {
 fn discriminator_stage_line(finding: &Finding) -> String {
     let stage = &finding.ripr.reveal.discriminate;
     if finding.class == ExposureClass::Exposed || stage.state != StageState::Yes {
-        return stage_line("discriminator", stage);
+        return stage_line("discriminator", stage); // user-text-exempt: glossed stage label kept by design
     }
     let missing = finding
         .activation
@@ -1238,8 +1287,20 @@ fn push_test_shape(lines: &mut Vec<String>, entry: &ClassifiedSeam) {
         lines.push(format!("- candidate value: `{candidate}`"));
     }
     lines.push(format!("- assertion shape: {}", outline.assertion_shape));
-    if let Some(assertion) = suggested_assertion_for_classified_seam(entry) {
-        lines.push(format!("- assertion template: `{assertion}`"));
+    if let Some(note) = fill_in_note_line("  ", &outline.assertion_shape) {
+        lines.push(note);
+    }
+    // #9244 item 3: do not print a second "assertion template" line. That
+    // label reads as unfilled template text; the outline already carries the
+    // shape, and a distinct suggested assertion is still a shape, not a
+    // paste-ready template.
+    if let Some(assertion) = suggested_assertion_for_classified_seam(entry)
+        && assertion != outline.assertion_shape
+    {
+        lines.push(format!("- assertion shape: `{assertion}`"));
+        if let Some(note) = fill_in_note_line("  ", &assertion) {
+            lines.push(note);
+        }
     }
 }
 
@@ -1881,6 +1942,28 @@ mod seam_hover_tests {
     }
 
     #[test]
+    fn gap_diagnostic_hover_renders_the_python_stop_condition_in_plain_words() -> Result<(), String>
+    {
+        // The real producer sentence (pinned against the producer in
+        // `python_repair_card`'s drift test), rendered through the hover.
+        let mut diagnostic = sample_gap_diagnostic();
+        if let Some(data) = diagnostic.data.as_mut() {
+            data["repair_route"]["stop_conditions"] = serde_json::json!([
+                "Stop if the expected value for the missing discriminator is ambiguous."
+            ]);
+        }
+        let hover = diagnostic_hover_response(&diagnostic);
+        let md = extract_markup(&hover)?;
+        if !md.contains("Stop if the expected value for the missing check is ambiguous.") {
+            return Err(format!("plain stop condition missing from hover:\n{md}"));
+        }
+        if md.contains("missing discriminator") {
+            return Err(format!("jargon stop condition reached the hover:\n{md}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn gap_diagnostic_hover_projects_repair_route_with_preview_limits_first() -> Result<(), String>
     {
         let hover = diagnostic_hover_response(&sample_gap_diagnostic());
@@ -2341,11 +2424,16 @@ mod seam_hover_tests {
             "- name: `discounted_total_boundary_discriminator`",
             "- candidate value: `discount_threshold (equality boundary)`",
             "- assertion shape: assert_eq!(discounted_total",
-            "- assertion template: `assert_eq!(discounted_total",
+            "  (replace each /* ... */ comment with a real value from your test before using it)",
         ] {
             if !md.contains(needle) {
                 return Err(format!("missing {needle:?} in:\n{md}"));
             }
+        }
+        if md.contains("assertion template") {
+            return Err(format!(
+                "placeholder assertion must not be labelled a template:\n{md}"
+            ));
         }
         Ok(())
     }
@@ -2939,6 +3027,65 @@ mod plain_hover_summary_tests {
             plain_hover_summary("no strong discriminator for `x"),
             "no strong discriminator for `x"
         );
+    }
+
+    #[test]
+    fn says_spot_where_the_producer_says_seam() {
+        assert_eq!(
+            plain_hover_summary(
+                "Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): seam_helper, seam"
+            ),
+            "Related tests exercise the wrapper spot's converted callee (the changed owner is not invoked by them): seam_helper, seam"
+        );
+        assert_eq!(
+            plain_hover_summary("no test reaches this seam; other seams are fine"),
+            "no test reaches this spot; other spots are fine"
+        );
+    }
+
+    #[test]
+    fn protects_bracketed_literals_and_name_token_tails() {
+        assert_eq!(
+            plain_hover_summary(
+                "Tests have literals [\"discriminator\", 3], but no detected value matches changed boundary [4]; no discriminator found"
+            ),
+            "Tests have literals [\"discriminator\", 3], but no detected value matches changed boundary [4]; no check found"
+        );
+        assert_eq!(
+            plain_hover_summary(
+                "No test is seen calling f; tests share only its file or a name token: discriminator_ok, discriminator"
+            ),
+            "No test is seen calling f; tests share only its file or a name token: discriminator_ok, discriminator"
+        );
+    }
+
+    #[test]
+    fn every_source_text_prefix_still_appears_in_a_producer() {
+        // The prefix list is a reviewed allowlist; if a producer rewords its
+        // summary the entry stops protecting anything, so fail loudly (#12284).
+        // Production code only: test fixtures in the same files repeat the
+        // wording and would mask a production reword.
+        let producers = [
+            include_str!("../analysis/classify/flow.rs"),
+            include_str!("../analysis/classify/reach.rs"),
+            include_str!("../analysis/classify/infection.rs"),
+            include_str!("../domain/classification.rs"),
+        ]
+        .map(|source| {
+            // Cut at the real test module: producers carry earlier item-level
+            // `#[cfg(test)]` attributes that a bare first-match cut would hit.
+            source
+                .split("#[cfg(test)]\nmod tests {")
+                .next()
+                .unwrap_or(source)
+        })
+        .join("\n");
+        for prefix in super::SOURCE_TEXT_AFTER_COLON_PREFIXES {
+            assert!(
+                producers.contains(prefix),
+                "no producer emits {prefix:?}; update SOURCE_TEXT_AFTER_COLON_PREFIXES"
+            );
+        }
     }
 
     #[test]

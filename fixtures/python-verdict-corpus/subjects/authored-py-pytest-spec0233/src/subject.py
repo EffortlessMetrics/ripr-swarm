@@ -178,3 +178,9 @@ def on_parse(text, handler):
 
 def label_key_lambda(x):
     return sorted(x, key=lambda: 0) + [1]
+
+
+def perr_raises_class(text):
+    if not text:
+        raise ValueError("empty")
+    return int(text)

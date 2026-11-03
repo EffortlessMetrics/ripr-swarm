@@ -550,8 +550,16 @@ pub(crate) fn collect_expect_assertions_in_statement(
         }
         Statement::ReturnStatement(return_stmt) => {
             if let Some(argument) = &return_stmt.argument {
-                if let Some(mut assertion) =
-                    assertion_from_expression_any(argument, source, &context.returning())
+                let returning = context.returning();
+                // A `.resolves` / `.rejects` matcher returned inside a callback
+                // whose value is discarded (`forEach`) is not runner-bound (#8933).
+                if !returning.returned_to_runner
+                    && !returning.expression_body
+                    && is_floating_promise_assertion(argument)
+                {
+                    collect_nested_callback_assertions(argument, false, source, context, out);
+                } else if let Some(mut assertion) =
+                    assertion_from_expression_any(argument, source, &returning)
                 {
                     attach_match_object_const(&mut assertion, argument, context);
                     out.push(assertion);
@@ -1760,7 +1768,7 @@ pub(crate) fn ava_assertion_from_expression(
             source,
         ),
         oracle_confidence,
-        rendered_call: None,
+        rendered_call: Some(format!("{receiver}.{method}(...)")),
         loose_number_expected: false,
         expected_object_const: None,
         compares_reference_identity: TypeScriptAssertion::ava_compares_reference_identity(method),

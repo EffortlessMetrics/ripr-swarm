@@ -1,6 +1,6 @@
-pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file (ripr.toml) and, with --ci github, a non-blocking advisory workflow.
+pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file (ripr.toml) and, with --ci, a non-blocking advisory CI preset.
 
-Usage: ripr init [--root PATH] [--ci github] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
+Usage: ripr init [--root PATH] [--ci github|gitlab] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
 
 `ripr init` is optional. It writes the built-in defaults to a repo-local
 ripr.toml so teams can commit, review, and tune policy. Missing ripr.toml is
@@ -9,7 +9,8 @@ not unlock basic CLI, editor, or pilot usefulness.
 
 Options:
   --root PATH      Workspace root where ripr.toml should be written. Defaults to current directory.
-  --ci github      Also write .github/workflows/ripr.yml with advisory reports and optional SARIF rendering/upload.
+  --ci PROVIDER    Also write an advisory CI preset: github writes .github/workflows/ripr.yml;
+                   gitlab writes .gitlab-ci.yml with a merge-request check and review-comments flow.
   --mcp            Also add the ripr MCP server to .mcp.json (Claude Code project config).
                    Other servers in an existing file are kept; an existing
                    `ripr` entry is kept unless --force; a symlink or a file
@@ -44,13 +45,18 @@ Generated config:
   - records the built-in saved-workspace LSP seam diagnostic default
   - remains advisory and does not configure CI blocking or mutation execution
 
-Generated GitHub workflow:
+Generated GitHub workflow (--ci github):
   - installs ripr and runs `ripr reports ci-packet` for the PR evidence packet
   - uploads report artifacts and writes a reviewer-oriented advisory summary
   - optionally renders inline review comments (RIPR_COMMENT_MODE=inline)
   - renders and uploads diff/repo SARIF only while RIPR_UPLOAD_SARIF is true
   - uses continue-on-error for advisory RIPR work and upload steps
   - does not enable baseline failure policy by default
+
+Generated GitLab pipeline (--ci gitlab):
+  - runs on merge-request pipelines only with allow_failure: true
+  - installs the pinned ripr release, runs `ripr check` and `ripr review-comments`
+  - uploads target/ripr/** artifacts for review (no SARIF or MR comment publishing)
 "#;
 pub(super) const CONFIG_HELP: &str = r#"Validate the repository's ripr.toml without running workspace probes.
 
@@ -90,10 +96,11 @@ Progress:
   Long-running pilot analysis writes producer stages to stderr as
   `ripr progress: <stage> [repo]` and, while a stage stays active, throttled
   `still active after <elapsed class>` heartbeats, exactly as `ripr check`
-  reports them. Non-TTY / CI output is newline-delimited with no control
-  sequences; stdout and the pilot packet stay byte-clean. When the default
-  timeout passes, the same run continues under the same progress stream.
-  `--quiet` turns this stream off.
+  reports them, including `processed_<n>_of_<total>` once the inventory has
+  an honest seam denominator. Non-TTY / CI output is newline-delimited with
+  no control sequences; stdout and the pilot packet stay byte-clean. When
+  the default timeout passes, the same run continues under the same progress
+  stream. `--quiet` turns this stream off.
 
 Environment variables:
   RIPR_PILOT_SEAM_BUDGET        Maximum gaps written to pilot artifacts (repo-exposure.json,
@@ -202,8 +209,8 @@ Common options:
                     walks up to the enclosing workspace or package, or the git
                     top level (never past the repository); `--root .` pins
                     this directory.
-  --quiet           Suppress stderr progress. Unknown totals show no
-                    percentage or ETA, and progress makes no speed claim.
+  --quiet           Suppress stderr progress; known seam totals as processed_n_of_total.
+                    Unknown totals show no percentage or ETA, and progress makes no speed claim.
   --timeout SECS    Wall-clock analysis budget (600s default; 0 disables;
                     excludes the repo-wide formats). On analysis_timeout,
                     raise/disable it or narrow the diff; re-run.
@@ -407,20 +414,30 @@ Exit status:
 Progress:
   Long-running check analysis writes producer stages to stderr as
   `ripr progress: <stage> [<scope>]` and, while a stage stays active,
-  throttled `still active after <elapsed class>` heartbeats. Non-TTY
-  / CI output is newline-delimited with no control sequences. A TTY
-  may reuse one line and stays silent for sub-threshold flashes.
-  Machine formats (json, sarif, github) keep stdout byte-clean. With json,
-  sarif, badge-* or agent selected and stderr not a terminal, the
-  stream is off by default; `RIPR_PROGRESS=1` restores it. A terminal and
-  the human formats keep it. Unknown totals never become a
-  percentage or ETA. Progress does not mean analysis is faster or
-  that the command will succeed. `--quiet` turns this stream off; so does
-  setting `RIPR_QUIET` to anything but empty, `0` or `false`. `repair` and
-  `continue` accept `--quiet` too and drop their progress narration and
-  `wrote <path>` lines; refusal prose is never suppressed.
+  throttled `still active after <elapsed class>` heartbeats. When a
+  repo-inventory walk has an honest seam denominator, those lines also
+  carry `processed_<n>_of_<total>` so a multi-minute `repo-exposure-json`
+  run can be told from a hang. Non-TTY / CI output is newline-delimited
+  with no control sequences. A TTY may reuse one line and stays silent
+  for sub-threshold flashes. Machine formats (json, sarif, github) keep
+  stdout byte-clean. With json, sarif, badge-* or agent selected and
+  stderr not a terminal, the stream is off by default; `RIPR_PROGRESS=1`
+  restores it. A terminal and the human formats keep it. Unknown totals
+  never become a percentage or ETA. Progress does not mean analysis is faster
+  or that the command will succeed. `--quiet` turns this stream
+  off; so does setting `RIPR_QUIET` to anything but empty, `0` or
+  `false`. `repair` and `continue` accept `--quiet` too and drop their
+  progress narration and `wrote <path>` lines; refusal prose is never
+  suppressed.
 
 Environment variables:
+  RIPR_MAX_DIFF_CHANGED_LINES             Maximum added plus removed diff lines recorded
+                                          while parsing a unified diff before check
+                                          stops with diff_scope_oversized (language-
+                                          neutral; per-language adapter limits may
+                                          still apply). With --json, stdout carries a
+                                          non-consumable limited artifact.
+                                          Default: 100000.
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
                                           before check stops with
                                           diff_scope_oversized. With --json, stdout

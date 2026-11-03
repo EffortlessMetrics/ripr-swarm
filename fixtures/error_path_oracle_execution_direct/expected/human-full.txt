@@ -39,6 +39,7 @@ Evidence
   - related test src/lib.rs:21 reports_read_failure uses strong exact value oracle: assert_eq!(read_all(rdr).unwrap_err().kind(), io::ErrorKind::Other);
   - source enum variant value io::ErrorKind::Other at line 23
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/error_path_oracle_execution_direct/input --diff <cwd>/fixtures/error_path_oracle_execution_direct/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
   ripr context --root <cwd>/fixtures/error_path_oracle_execution_direct/input --diff <cwd>/fixtures/error_path_oracle_execution_direct/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
 
@@ -81,5 +82,6 @@ Stop reasons:
 Next step
   Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/error_path_oracle_execution_direct/input --diff <cwd>/fixtures/error_path_oracle_execution_direct/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
   ripr context --root <cwd>/fixtures/error_path_oracle_execution_direct/input --diff <cwd>/fixtures/error_path_oracle_execution_direct/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379

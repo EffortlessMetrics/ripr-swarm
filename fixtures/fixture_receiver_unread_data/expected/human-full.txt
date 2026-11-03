@@ -59,6 +59,7 @@ Limitation detail
 Next step
   `cfg_pin` (src/cfg_rows.rs:8) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/fixture_receiver_unread_data/input --diff <cwd>/fixtures/fixture_receiver_unread_data/diff.patch --mode fast probe:src_cfg_rows.rs:return_value:8e82fa17
   ripr context --root <cwd>/fixtures/fixture_receiver_unread_data/input --diff <cwd>/fixtures/fixture_receiver_unread_data/diff.patch --mode fast --at probe:src_cfg_rows.rs:return_value:8e82fa17
 
@@ -109,5 +110,6 @@ Limitation detail
 Next step
   `raw_pin` (src/raw_owner.rs:10) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/fixture_receiver_unread_data/input --diff <cwd>/fixtures/fixture_receiver_unread_data/diff.patch --mode fast probe:src_raw_owner.rs:return_value:d4ace2c1
   ripr context --root <cwd>/fixtures/fixture_receiver_unread_data/input --diff <cwd>/fixtures/fixture_receiver_unread_data/diff.patch --mode fast --at probe:src_raw_owner.rs:return_value:d4ace2c1
