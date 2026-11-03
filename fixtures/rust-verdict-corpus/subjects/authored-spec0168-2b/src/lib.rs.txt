@@ -1,0 +1,14 @@
+pub fn next(x: u32) -> u32 {
+    if x > 100 { return 0; }
+    x + 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_adds_one() {
+        assert_eq!(next(4), 5);
+    }
+}

@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub fn next(x: u32) -> u32 {
+-    if x > 100 { return 0; }
++    if x > 100 { unsafe { std::hint::unreachable_unchecked() } }
+     x + 1
+ }
+ 
