@@ -65,8 +65,8 @@ pub(crate) use name_scope::{
     name_scope_for_file, name_scope_for_items, name_scopes_for_fn, use_item_bindings,
 };
 pub(crate) use nesting::{
-    block_comment_only_lines, non_code_token_end, parse_clean_source_file, rust_nesting_refusal,
-    string_literal_continuation_lines,
+    block_comment_only_lines, non_code_token_end, parse_clean_source_file,
+    parse_clean_source_file_memoized, rust_nesting_refusal, string_literal_continuation_lines,
 };
 pub(crate) use parent_module_cfg_gate::owner_gated_by_parent_mod_declarations;
 pub(crate) use ra::drop_in_assertion_leaf;
