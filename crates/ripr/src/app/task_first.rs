@@ -1198,29 +1198,48 @@ fn notice_what_check_notices<'a>(
 /// check could read this seam as noticed through a call from another crate,
 /// the one thing the seam producer cannot follow. True only when the workspace
 /// holds a package manifest besides the owner's own (`manifest_dirs`, from
-/// the path-only workspace scan) and the owner is a top-level `pub fn` of its
-/// package's library root, the shape another crate can name as
-/// `<crate>::<fn>`. A source that cannot be read answers true.
+/// the path-only workspace scan) and the owner is a `pub fn` declared in a
+/// library source file of its package (the library root or one of its
+/// modules, inline or in a file), the shapes another crate can name as
+/// `<crate>::<fn>` or `<crate>::<module>::<fn>`. Whether the module path is
+/// really public is check's decision, not this pre-test's. A source that
+/// cannot be read answers true.
 fn call_may_cross_a_crate(
     root: &Path,
     entry: &crate::analysis::ClassifiedSeam,
     manifest_dirs: &[String],
 ) -> bool {
     let file = entry.seam.file();
-    let owner_dir = file
-        .parent()
-        .and_then(Path::parent)
-        .map(crate::analysis::stable_path_text)
-        .unwrap_or_default();
+    let components: Vec<_> = file
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    // The package directory is everything above the last `src` directory; the
+    // library target is any file there but `main.rs` and `src/bin/`.
+    let Some(src_at) = components
+        .iter()
+        .take(components.len().saturating_sub(1))
+        .rposition(|part| part == "src")
+    else {
+        return false;
+    };
+    let below_src = &components[src_at + 1..];
+    if below_src.first().is_some_and(|first| first == "bin") || below_src == ["main.rs".to_string()]
+    {
+        return false;
+    }
+    let owner_dir = components[..src_at]
+        .iter()
+        .filter(|part| part.as_str() != "." && part.as_str() != "/")
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("/");
     let owner_prefix = if owner_dir.is_empty() {
         String::new()
     } else {
         format!("{owner_dir}/")
     };
     if !manifest_dirs.iter().any(|dir| *dir != owner_prefix) {
-        return false;
-    }
-    if !file.ends_with("src/lib.rs") {
         return false;
     }
     let name = entry
@@ -1239,9 +1258,10 @@ fn call_may_cross_a_crate(
         return true;
     };
     source.lines().any(|line| {
-        line.strip_prefix("pub fn ")
-            .or_else(|| line.strip_prefix("pub async fn "))
-            .or_else(|| line.strip_prefix("pub const fn "))
+        line.trim_start()
+            .strip_prefix("pub fn ")
+            .or_else(|| line.trim_start().strip_prefix("pub async fn "))
+            .or_else(|| line.trim_start().strip_prefix("pub const fn "))
             .is_some_and(|rest| {
                 rest.strip_prefix(name.as_str())
                     .is_some_and(|tail| tail.starts_with(['(', '<']))
@@ -4151,6 +4171,49 @@ pub(crate) mod tests {
             &["wscore/".to_string(), "fuzz/".to_string()]
         ));
         assert!(!call_may_cross_a_crate(&root, &private, &both));
+        // A module file of the library, an inline module's function, and a
+        // binary target.
+        std::fs::create_dir_all(root.join("wscore/src/pricing")).map_err(|e| e.to_string())?;
+        std::fs::write(
+            root.join("wscore/src/pricing/rules.rs"),
+            "pub fn discount(price: u32) -> u32 {\n    price\n}\n",
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(
+            root.join("wscore/src/main.rs"),
+            "pub fn discount(price: u32) -> u32 {\n    price\n}\n",
+        )
+        .map_err(|e| e.to_string())?;
+        assert!(call_may_cross_a_crate(
+            &root,
+            &entry_for("wscore/src/pricing/rules.rs", "discount"),
+            &both
+        ));
+        assert!(!call_may_cross_a_crate(
+            &root,
+            &entry_for("wscore/src/pricing/rules.rs", "discount"),
+            &["wscore/".to_string()]
+        ));
+        assert!(!call_may_cross_a_crate(
+            &root,
+            &entry_for("wscore/src/main.rs", "discount"),
+            &both
+        ));
+        assert!(!call_may_cross_a_crate(
+            &root,
+            &entry_for("wscore/examples/lib.rs", "discount"),
+            &both
+        ));
+        std::fs::write(
+            root.join("wscore/src/lib.rs"),
+            "pub mod pricing {\n    pub fn inner(price: u32) -> u32 {\n        price\n    }\n}\n",
+        )
+        .map_err(|e| e.to_string())?;
+        assert!(call_may_cross_a_crate(
+            &root,
+            &entry_for("wscore/src/lib.rs", "inner"),
+            &both
+        ));
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }

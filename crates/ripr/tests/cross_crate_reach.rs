@@ -49,6 +49,10 @@ const NO_PATH: &str = "1 no test path";
 /// `feature` from `WSCORE_OLD` to `WSCORE_NEW`.
 struct Case {
     files: Vec<(&'static str, String)>,
+    /// The file `feature` rewrites, and its text there.
+    changed: (&'static str, String),
+    /// Where the finding must sit on the check screen.
+    location: &'static str,
 }
 
 impl Case {
@@ -62,7 +66,53 @@ impl Case {
                 ("app/src/lib.rs", APP_LIB.to_string()),
                 ("app/tests/t.rs", APP_TEST.to_string()),
             ],
+            changed: ("wscore/src/lib.rs", WSCORE_NEW.to_string()),
+            location: "./wscore/src/lib.rs:2",
         }
+    }
+
+    /// The audit case with the callee in `wscore/src/<file>` under the public
+    /// module declared by `lib_rs`, called as `wscore::<path>::discount`.
+    fn in_file(lib_rs: &str, file: &'static str, path: &str) -> Self {
+        let mut case = Self::audit()
+            .with("wscore/src/lib.rs", lib_rs)
+            .with(file, WSCORE_OLD)
+            .with(
+                "app/src/lib.rs",
+                &format!("pub fn checkout(price: u32) -> u32 {{\n    wscore::{path}::discount(price)\n}}\n"),
+            );
+        case.changed = (file, WSCORE_NEW.to_string());
+        case.location = match file {
+            "wscore/src/pricing.rs" => "./wscore/src/pricing.rs:2",
+            _ => "./wscore/src/pricing/rules.rs:2",
+        };
+        case
+    }
+
+    /// app -> mid -> wscore: `app` depends on `mid` only, `mid` on `wscore`.
+    fn chain() -> Self {
+        Self::audit()
+            .with(
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"wscore\", \"mid\", \"app\"]\nresolver = \"2\"\n",
+            )
+            .with(
+                "mid/Cargo.toml",
+                "[package]\nname = \"mid\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n",
+            )
+            .with("mid/src/lib.rs", APP_LIB)
+            .with(
+                "app/Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nmid = { path = \"../mid\" }\n",
+            )
+            .with(
+                "app/src/lib.rs",
+                "pub fn run(price: u32) -> u32 {\n    mid::checkout(price)\n}\n",
+            )
+            .with(
+                "app/tests/t.rs",
+                "use app::run;\n\n#[test]\nfn run_discounts() {\n    assert_eq!(run(100), 90);\n}\n",
+            )
     }
 
     /// Replace (or add) one file of the base commit.
@@ -105,7 +155,7 @@ impl Repo {
         repo.git(&["commit", "-qm", "base"])?;
         repo.git(&["branch", "-M", "main"])?;
         repo.git(&["checkout", "-qb", "feature"])?;
-        repo.write("wscore/src/lib.rs", WSCORE_NEW)?;
+        repo.write(case.changed.0, &case.changed.1)?;
         repo.git(&["commit", "-qam", "change"])?;
         Ok(repo)
     }
@@ -182,7 +232,11 @@ fn check_start_id(check: &str) -> Option<&str> {
 /// The fixture built what the test says it did: one finding, on the changed
 /// comparison in `wscore`.
 fn assert_changed_subject(case: &str, check: &str) -> Result<(), String> {
-    if !check.contains("File: ./wscore/src/lib.rs:2")
+    assert_changed_subject_at(case, check, "./wscore/src/lib.rs:2")
+}
+
+fn assert_changed_subject_at(case: &str, check: &str, location: &str) -> Result<(), String> {
+    if !check.contains(&format!("File: {location}"))
         || !check.contains("Changed behavior: price >= 100")
         || !check.contains("1 changed behavior checked")
     {
@@ -234,7 +288,7 @@ fn assert_repair_says_noticed(case: &str, repo: &Repo) -> Result<(), String> {
 fn assert_open_gap_starts(case: &str, base: Case) -> Result<(), String> {
     let repo = Repo::create(&base)?;
     let check = repo.check(&[])?;
-    assert_changed_subject(case, &check)?;
+    assert_changed_subject_at(case, &check, base.location)?;
     if check.contains(NOTICED) || !check.contains("1 partly noticed") {
         return Err(format!("{case}: check must read a partial gap:\n{check}"));
     }
@@ -256,13 +310,26 @@ fn assert_open_gap_starts(case: &str, base: Case) -> Result<(), String> {
 fn assert_not_noticed(case: &str, base: Case, summary_part: &str) -> Result<(), String> {
     let repo = Repo::create(&base)?;
     let check = repo.check(&[])?;
-    assert_changed_subject(case, &check)?;
+    assert_changed_subject_at(case, &check, base.location)?;
     if !check.contains(NOT_NOTICED) || check.contains(NOTICED) || !check.contains(summary_part) {
         return Err(format!(
             "{case}: must not read as noticed, and must read `{summary_part}`:\n{check}"
         ));
     }
     assert_no_repair_start(case, &repo, &check)
+}
+
+/// A positive: check reads the changed line as noticed and exposed, offers no
+/// start, and bare repair says the change is already noticed.
+fn assert_noticed(case: &str, base: Case) -> Result<(), String> {
+    let repo = Repo::create(&base)?;
+    let check = repo.check(&[])?;
+    assert_changed_subject_at(case, &check, base.location)?;
+    if !check.contains(NOTICED) || !check.contains("Static exposure: exposed") {
+        return Err(format!("{case}: must read noticed and exposed:\n{check}"));
+    }
+    assert_no_repair_start(case, &repo, &check)?;
+    assert_repair_says_noticed(case, &repo)
 }
 
 #[test]
@@ -810,4 +877,345 @@ fn a_wrapper_in_the_same_member_package_is_noticed_through_its_own_crate_name() 
     // `discount` is a top-level `pub fn` of `wscore/src/lib.rs`, so the
     // pre-test passes and repair agrees with check.
     assert_repair_says_noticed("same package", &repo)
+}
+
+// Slice 4: public submodule paths and chains of more than one crate.
+
+const PRICING_LIB: &str = "pub mod pricing;\n";
+const PRICING_FILE: &str = "wscore/src/pricing.rs";
+
+fn pricing_case() -> Case {
+    Case::in_file(PRICING_LIB, PRICING_FILE, "pricing")
+}
+
+/// The same callee with the caller spelling it differently: one change from
+/// `pricing_case`, the app library text.
+fn pricing_with_app(app_lib: &str) -> Case {
+    pricing_case().with("app/src/lib.rs", app_lib)
+}
+
+#[test]
+fn a_call_through_a_public_file_module_is_noticed_by_check_and_repair() -> Result<(), String> {
+    assert_noticed("file module", pricing_case())?;
+    // `pricing/mod.rs` is the same module.
+    let mut nested_layout =
+        Case::in_file(PRICING_LIB, "wscore/src/pricing/mod.rs", "pricing").without(PRICING_FILE);
+    nested_layout.location = "./wscore/src/pricing/mod.rs:2";
+    assert_noticed("mod.rs module", nested_layout)?;
+    // Two levels, the second declared in `pricing/mod.rs`.
+    let two_levels = Case::in_file(PRICING_LIB, "wscore/src/pricing/rules.rs", "pricing::rules")
+        .with("wscore/src/pricing/mod.rs", "pub mod rules;\n");
+    assert_noticed("two file modules", two_levels)
+}
+
+#[test]
+fn a_call_through_an_inline_public_module_is_noticed() -> Result<(), String> {
+    let indented = WSCORE_OLD
+        .lines()
+        .map(|line| format!("    {line}\n"))
+        .collect::<String>();
+    let mut case = Case::audit()
+        .with(
+            "wscore/src/lib.rs",
+            &format!("pub mod pricing {{\n{indented}}}\n"),
+        )
+        .with(
+            "app/src/lib.rs",
+            "pub fn checkout(price: u32) -> u32 {\n    wscore::pricing::discount(price)\n}\n",
+        );
+    let changed = WSCORE_NEW
+        .lines()
+        .map(|line| format!("    {line}\n"))
+        .collect::<String>();
+    case.changed = (
+        "wscore/src/lib.rs",
+        format!("pub mod pricing {{\n{changed}}}\n"),
+    );
+    case.location = "./wscore/src/lib.rs:3";
+    assert_noticed("inline module", case)
+}
+
+#[test]
+fn a_bare_call_after_a_use_through_a_public_module_is_noticed() -> Result<(), String> {
+    for (label, import) in [
+        ("single use", "use wscore::pricing::discount;"),
+        ("list use", "use wscore::pricing::{self, discount};"),
+    ] {
+        assert_noticed(label, pricing_with_app(&bare_lib(import)))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_renamed_dependency_reaches_through_a_public_module() -> Result<(), String> {
+    assert_noticed(
+        "renamed, qualified",
+        pricing_with_app(
+            "pub fn checkout(price: u32) -> u32 {\n    disc::pricing::discount(price)\n}\n",
+        )
+        .with("app/Cargo.toml", RENAMED_APP_TOML),
+    )?;
+    assert_noticed(
+        "renamed, imported",
+        pricing_with_app(&bare_lib("use disc::pricing::discount;"))
+            .with("app/Cargo.toml", RENAMED_APP_TOML),
+    )
+}
+
+#[test]
+fn a_path_that_does_not_name_the_module_the_function_is_in_is_not_followed() -> Result<(), String> {
+    for (label, app_lib) in [
+        (
+            "module left out",
+            "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n".to_string(),
+        ),
+        (
+            "another module",
+            "pub fn checkout(price: u32) -> u32 {\n    wscore::other::discount(price)\n}\n".to_string(),
+        ),
+        (
+            "module in the wrong place",
+            "pub fn checkout(price: u32) -> u32 {\n    wscore::pricing::more::discount(price)\n}\n".to_string(),
+        ),
+        (
+            "module path used without the crate name",
+            "pub fn checkout(price: u32) -> u32 {\n    pricing::discount(price)\n}\n".to_string(),
+        ),
+        ("import without the module", bare_lib("use wscore::discount;")),
+        (
+            "import of the module only",
+            "use wscore::pricing;\n\npub fn checkout(price: u32) -> u32 {\n    pricing::discount(price)\n}\n".to_string(),
+        ),
+        (
+            "aliased import",
+            "use wscore::pricing::discount as d;\n\npub fn checkout(price: u32) -> u32 {\n    d(price)\n}\n".to_string(),
+        ),
+        ("glob of the module", bare_lib("use wscore::pricing::*;")),
+    ] {
+        assert_not_noticed(label, pricing_with_app(&app_lib), NO_PATH)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_module_that_is_not_plainly_public_is_not_followed() -> Result<(), String> {
+    // Each case changes the declaration of `pricing` and nothing else.
+    for (label, lib) in [
+        ("private module", "mod pricing;\n"),
+        ("crate-visible module", "pub(crate) mod pricing;\n"),
+        ("cfg module", "#[cfg(feature = \"x\")]\npub mod pricing;\n"),
+        (
+            "remapped module",
+            "#[path = \"pricing.rs\"]\npub mod pricing;\n",
+        ),
+        (
+            "module declared twice",
+            "pub mod pricing;\npub mod pricing;\n",
+        ),
+        (
+            "macro that could declare modules",
+            "macro_rules! m { () => {}; }\npub mod pricing;\n",
+        ),
+    ] {
+        assert_not_noticed(label, Case::in_file(lib, PRICING_FILE, "pricing"), NO_PATH)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_module_with_two_files_or_a_restricted_function_is_not_followed() -> Result<(), String> {
+    assert_not_noticed(
+        "both module files",
+        pricing_case().with("wscore/src/pricing/mod.rs", "pub fn other() {}\n"),
+        NO_PATH,
+    )?;
+    let restricted = WSCORE_OLD.replacen("pub fn", "pub(crate) fn", 1);
+    let mut case = pricing_case().with(PRICING_FILE, &restricted);
+    case.changed = (
+        PRICING_FILE,
+        WSCORE_NEW.replacen("pub fn", "pub(crate) fn", 1),
+    );
+    assert_not_noticed("crate-visible function", case, NO_PATH)
+}
+
+#[test]
+fn a_public_module_call_keeps_the_argument_and_pin_rules() -> Result<(), String> {
+    assert_not_noticed(
+        "module path, transformed argument",
+        pricing_with_app(
+            "pub fn checkout(price: u32) -> u32 {\n    wscore::pricing::discount(price + 1)\n}\n",
+        ),
+        "1 found",
+    )?;
+    assert_not_noticed(
+        "module path, off the boundary",
+        pricing_case().with(
+            "app/tests/t.rs",
+            "use app::checkout;\n\n#[test]\nfn checkout_discounts() {\n    assert_eq!(checkout(150), 140);\n}\n",
+        ),
+        "1 found",
+    )?;
+    assert_not_noticed(
+        "module path, bound then shifted",
+        pricing_with_app(
+            "pub fn checkout(price: u32) -> u32 {\n    let net = wscore::pricing::discount(price);\n    net + 1\n}\n",
+        )
+        .with(
+            "app/tests/t.rs",
+            "use app::checkout;\n\n#[test]\nfn checkout_discounts() {\n    assert_eq!(checkout(100), 91);\n}\n",
+        ),
+        "1 found",
+    )
+}
+
+#[test]
+fn a_local_module_named_like_the_dependency_stops_the_module_path() -> Result<(), String> {
+    assert_not_noticed(
+        "local wscore module",
+        pricing_with_app(
+            "mod wscore {\n    pub mod pricing {\n        pub fn discount(price: u32) -> u32 {\n            price\n        }\n    }\n}\n\npub fn checkout(price: u32) -> u32 {\n    wscore::pricing::discount(price)\n}\n",
+        ),
+        NO_PATH,
+    )
+}
+
+#[test]
+fn an_import_group_that_rebinds_the_crate_name_stops_the_imported_call() -> Result<(), String> {
+    assert_not_noticed(
+        "in-group rebind",
+        Case::audit().with(
+            "app/src/lib.rs",
+            &bare_lib("use wscore::{discount, inner as wscore};"),
+        ),
+        NO_PATH,
+    )?;
+    assert_not_noticed(
+        "in-group rebind, module path",
+        pricing_with_app(&bare_lib(
+            "use wscore::pricing::{discount, inner as wscore};",
+        )),
+        NO_PATH,
+    )?;
+    assert_not_noticed(
+        "sibling import ends in the crate name",
+        Case::audit().with(
+            "app/src/lib.rs",
+            &bare_lib("use crate::shim::wscore;\nuse wscore::discount;"),
+        ),
+        NO_PATH,
+    )
+}
+
+#[test]
+fn another_plain_import_from_the_same_crate_does_not_stop_the_imported_call() -> Result<(), String>
+{
+    assert_noticed(
+        "sibling import of the crate",
+        Case::audit().with(
+            "app/src/lib.rs",
+            &bare_lib("use wscore::other;\nuse wscore::discount;"),
+        ),
+    )?;
+    assert_noticed(
+        "sibling import of the crate, module path",
+        pricing_with_app(&bare_lib(
+            "use wscore::more::{a, b};\nuse wscore::pricing::discount;",
+        )),
+    )
+}
+
+#[test]
+fn a_call_chain_over_three_crates_is_noticed_by_check_and_repair() -> Result<(), String> {
+    assert_noticed("app -> mid -> wscore", Case::chain())?;
+    assert_noticed(
+        "chain, middle crate imports by name",
+        Case::chain().with("mid/src/lib.rs", &bare_lib("use wscore::discount;")),
+    )?;
+    assert_noticed(
+        "chain, top crate imports by name",
+        Case::chain().with(
+            "app/src/lib.rs",
+            "use mid::checkout;\n\npub fn run(price: u32) -> u32 {\n    checkout(price)\n}\n",
+        ),
+    )?;
+    let mut through_module = Case::chain()
+        .with("wscore/src/lib.rs", PRICING_LIB)
+        .with(PRICING_FILE, WSCORE_OLD)
+        .with(
+            "mid/src/lib.rs",
+            "pub fn checkout(price: u32) -> u32 {\n    wscore::pricing::discount(price)\n}\n",
+        );
+    through_module.changed = (PRICING_FILE, WSCORE_NEW.to_string());
+    through_module.location = "./wscore/src/pricing.rs:2";
+    assert_noticed("chain through a public module", through_module)
+}
+
+#[test]
+fn a_call_chain_stops_at_the_first_hop_that_does_not_forward() -> Result<(), String> {
+    for (label, case) in [
+        (
+            "middle transforms the argument",
+            Case::chain().with(
+                "mid/src/lib.rs",
+                "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price + 1)\n}\n",
+            ),
+        ),
+        (
+            "top transforms the argument",
+            Case::chain().with(
+                "app/src/lib.rs",
+                "pub fn run(price: u32) -> u32 {\n    mid::checkout(price + 1)\n}\n",
+            ),
+        ),
+        (
+            "top shifts the result",
+            Case::chain()
+                .with(
+                    "app/src/lib.rs",
+                    "pub fn run(price: u32) -> u32 {\n    mid::checkout(price) + 1\n}\n",
+                )
+                .with(
+                    "app/tests/t.rs",
+                    "use app::run;\n\n#[test]\nfn run_discounts() {\n    assert_eq!(run(100), 91);\n}\n",
+                ),
+        ),
+        (
+            "top has no dependency edge to the middle crate",
+            Case::chain().with(
+                "app/Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dev-dependencies]\nmid = { path = \"../mid\" }\n",
+            ),
+        ),
+        (
+            "middle has no dependency edge to the callee crate",
+            Case::chain().with(
+                "mid/Cargo.toml",
+                "[package]\nname = \"mid\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dev-dependencies]\nwscore = { path = \"../wscore\" }\n",
+            ),
+        ),
+    ] {
+        let repo = Repo::create(&case)?;
+        let check = repo.check(&[])?;
+        assert_changed_subject_at(label, &check, case.location)?;
+        if check.contains(NOTICED) {
+            return Err(format!("{label}: must not read as noticed:\n{check}"));
+        }
+        assert_no_repair_start(label, &repo, &check)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_function_name_shared_along_the_chain_is_ambiguous() -> Result<(), String> {
+    // A second `checkout` anywhere in the workspace makes the middle name
+    // ambiguous; the chain must not pick one.
+    let repo = Repo::create(&Case::chain().with("app/src/extra.rs", "pub fn checkout() {}\n"))?;
+    let check = repo.check(&[])?;
+    assert_changed_subject("ambiguous middle name", &check)?;
+    if check.contains(NOTICED) {
+        return Err(format!(
+            "ambiguous middle name must not read noticed:\n{check}"
+        ));
+    }
+    Ok(())
 }
