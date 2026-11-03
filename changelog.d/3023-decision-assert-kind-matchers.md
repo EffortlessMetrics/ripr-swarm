@@ -1,1 +1,2 @@
-Replace six `decision.rs` test-body/probe-expression opaque substring heuristics with typed `AssertKind` matchers (#3023).
+<!-- section: Internal -->
+- Replace six `decision.rs` test-body/probe-expression opaque substring heuristics with typed `AssertKind` matchers (#3023).
