@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex18-reversed-sinks.json",
-    "sha256": "1fd58ce66a762eace6ce504c6e7b3ac2e3024a7d345c7b84a6a07a155eef182d",
+    "sha256": "43087a0871edafd6196fc0b68c8bb4c1e2901cdbdc5ae1f700a188d9ec6cb160",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": \"return 0.01 * $amount\"}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
   },

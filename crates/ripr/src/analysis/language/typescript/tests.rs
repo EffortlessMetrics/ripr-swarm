@@ -4222,7 +4222,7 @@ fn typescript_preview_weak_oracle_guidance_keeps_broad_error_advisory() -> Resul
         .as_deref()
         .ok_or_else(|| "expected recommended next step".to_string())?;
     assert!(
-        recommended.contains("broad error evidence does not establish missing discriminator")
+        recommended.contains("broad error evidence does not establish the missing check")
             && recommended.contains("no actionable repair packet is emitted"),
         "expected broad-error advisory recommendation, got {recommended:?}"
     );
@@ -4231,6 +4231,53 @@ fn typescript_preview_weak_oracle_guidance_keeps_broad_error_advisory() -> Resul
         "broad error preview guidance should not ask for an exact-value assertion: {recommended:?}"
     );
     Ok(())
+}
+
+/// #12124: the default check screen prints this text as the Next step, so
+/// every oracle kind names the gap as "the missing check" and none leaks the
+/// internal term; the packet boundary sentence stays.
+#[test]
+fn weak_oracle_recommendation_uses_plain_words_for_every_kind() {
+    for kind in [
+        OracleKind::Snapshot,
+        OracleKind::SmokeOnly,
+        OracleKind::BroadError,
+        OracleKind::ExactValue,
+    ] {
+        let recommended = weak_oracle_recommendation(&kind, "amount == threshold", None);
+        assert!(
+            recommended.contains("the missing check `amount == threshold`"),
+            "{kind:?}: {recommended}"
+        );
+        assert!(
+            !recommended.to_lowercase().contains("discriminator"),
+            "{kind:?}: {recommended}"
+        );
+        assert!(
+            recommended.contains("no actionable repair packet is emitted"),
+            "{kind:?}: {recommended}"
+        );
+    }
+    // Mock expectations have their own two wordings (no payload / payload).
+    for payload in [None, Some("toHaveBeenCalledWith(5)")] {
+        let recommended = weak_oracle_recommendation(
+            &OracleKind::MockExpectation,
+            "amount == threshold",
+            payload,
+        );
+        assert!(
+            recommended.contains("`amount == threshold`"),
+            "{recommended}"
+        );
+        assert!(
+            !recommended.to_lowercase().contains("discriminator"),
+            "{payload:?}: {recommended}"
+        );
+        assert!(
+            recommended.contains("no actionable repair packet is emitted"),
+            "{payload:?}: {recommended}"
+        );
+    }
 }
 
 #[test]
@@ -4274,7 +4321,7 @@ fn typescript_preview_weak_oracle_guidance_distinguishes_mock_payload_limits() -
         .as_deref()
         .ok_or_else(|| "expected recommended next step".to_string())?;
     assert!(
-        recommended.contains("mock payloads are not yet a safe discriminator"),
+        recommended.contains("mock payloads are not yet a safe check"),
         "expected mock-payload recommendation, got {recommended:?}"
     );
     assert!(
@@ -8667,6 +8714,39 @@ fn ava_not_assertion_extracts_relational_oracle() {
     assert_eq!(assertion.expected_value_or_variant.as_deref(), Some("8"));
     assert_eq!(assertion_oracle_text(assertion), "t.not(...)");
     assert!(!assertion.has_dynamic_matcher_arg);
+}
+
+/// Mocha passes a `done` callback, not an AVA `t` context; rendered oracle
+/// text must use the parameter name (#6594).
+#[test]
+fn execution_context_oracle_text_uses_the_callback_parameter_name() {
+    let source = "test('p', (done) => { done.is(price(150), 130); });";
+    let allocator = Allocator::default();
+    let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+    let call = parse_result
+        .program
+        .body
+        .iter()
+        .find_map(|stmt| match stmt {
+            Statement::ExpressionStatement(stmt) => match &stmt.expression {
+                Expression::CallExpression(call) => Some(call),
+                _ => None,
+            },
+            _ => None,
+        });
+    assert!(call.is_some(), "expected a test() call expression");
+    let Some(call) = call else { return };
+    let result = test_name_and_assertions_from_call(
+        call,
+        &SourceText::new(source),
+        &TypeScriptAssertionBindings::default(),
+    );
+    assert!(result.is_some(), "should recognize the test call");
+    let Some((_, assertions)) = result else {
+        return;
+    };
+    assert_eq!(assertions.len(), 1);
+    assert_eq!(assertion_oracle_text(&assertions[0]), "done.is(...)");
 }
 
 /// End-to-end: a full AVA `test('name', t => { t.is(...) })` call has its
@@ -14591,6 +14671,20 @@ fn spec_0027_ambiguous_fallback_is_never_exposed_and_punctuation_is_ignored() ->
         !discriminate.contains("predicate boundary"),
         "the discrimination summary must not claim a predicate boundary: {discriminate}"
     );
+    // RIPR-SPEC-0027: a strong check already exists, so the next step must not
+    // ask for another exact-value assertion.
+    let next_step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "expected recommended next step".to_string())?;
+    assert!(
+        next_step.contains("already strong") && next_step.contains("input that flips it"),
+        "strong oracle next step must say the check is strong: {next_step}"
+    );
+    assert!(
+        !next_step.contains("exact-value assertion") && !next_step.contains("discriminator"),
+        "strong oracle next step must not ask for another assertion: {next_step}"
+    );
     let limitation = ts_predicate_boundary_limitation(
         &classify_probe_shape_detail("  n.value"),
         "  n.value",
@@ -20188,6 +20282,7 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
     assert!(!plain[0].exported_as_default);
 }
 
+mod async_matcher_completion_tests;
 mod ava_throws_message_tests;
 mod boolean_pin_tests;
 mod catch_arm_tests;
@@ -20206,6 +20301,7 @@ mod directory_specifier_tests;
 mod dropped_term_tests;
 mod enum_member_tests;
 mod error_payload_tests;
+mod floating_promise_tests;
 mod function_reference_callback_tests;
 mod gap_reach_config_tests;
 mod guard_entry_tests;
@@ -20233,6 +20329,8 @@ mod module_entry_tests;
 mod namespace_reexport_tests;
 mod nested_callback_tests;
 mod nullish_chain_tests;
+mod object_row_callback_comment_tests;
+mod object_row_tests;
 mod out_dir_specifier_tests;
 mod playwright_fixture_tests;
 mod playwright_unit_tests;

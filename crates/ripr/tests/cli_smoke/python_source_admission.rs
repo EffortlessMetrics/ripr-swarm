@@ -712,3 +712,55 @@ fn shared_absence_disclosure_preserves_rust_path_identity() -> TestResult {
     fs::remove_dir_all(root)?;
     Ok(())
 }
+
+#[test]
+fn mismatched_python_identity_source_is_incomplete_and_preserves_other_file() -> TestResult {
+    let root = fixture("python-identity-context-mismatch")?;
+    let other_source = SOURCE.replace("discount", "other");
+    let other_patch = PATCH
+        .replace("discount.py", "other.py")
+        .replace("discount(total)", "other(total)");
+    fs::write(root.join("src/other.py"), other_source)?;
+    fs::write(root.join("change.patch"), format!("{PATCH}{other_patch}"))?;
+    let present = json(&root)?;
+    assert_eq!(present["analysis_outcome"]["analysis_complete"], true);
+    assert!(
+        present["findings"]
+            .as_array()
+            .is_some_and(|items| items.len() >= 2)
+    );
+    fs::write(
+        root.join("src/discount.py"),
+        SOURCE.replace(">= 100", ">= 100 + 1"),
+    )?;
+    let mismatch = json(&root)?;
+    assert_eq!(mismatch["analysis_outcome"]["analysis_complete"], false);
+    let limitations = outcome(&mismatch)["limitations"]
+        .as_array()
+        .ok_or("missing limitations")?;
+    assert!(limitations.iter().any(|item| {
+        item["kind"] == "producer_failure"
+            && item["path"] == "src/discount.py"
+            && item["bounded_detail"]
+                .as_str()
+                .is_some_and(|text| text.contains("identity context"))
+    }));
+    let findings = mismatch["findings"].as_array().ok_or("missing findings")?;
+    assert!(
+        findings
+            .iter()
+            .all(|item| !item["id"].as_str().unwrap_or("").contains("discount.py"))
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|item| item["id"].as_str().unwrap_or("").contains("other.py"))
+    );
+    let badge: Value = serde_json::from_str(&check(&root, "badge-json")?)?;
+    assert_eq!(badge["analysis_complete"], false);
+    assert_ne!(badge["status"], "pass");
+    fs::write(root.join("src/discount.py"), SOURCE)?;
+    assert_eq!(json(&root)?, present);
+    fs::remove_dir_all(root)?;
+    Ok(())
+}

@@ -718,3 +718,374 @@ fn foreign_formatting_does_not_inherit_rust_literal_boundaries() -> Result<(), S
     }
     Ok(())
 }
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_literal_whitespace_changes_id_and_invalidates_suppression() -> Result<(), String> {
+    let fixture = Fixture::new(&[])?;
+    fixture.write(
+        "pyproject.toml",
+        "[project]\nname=\"identity_fixture\"\nversion=\"0.0.0\"\n",
+    )?;
+    let mut config = ripr::config::RiprConfig::default();
+    config.languages.enabled = vec![
+        ripr::domain::LanguageId::Rust,
+        ripr::domain::LanguageId::Python,
+    ];
+    let before = "def label(x):\n    return x\n";
+    let original = "def label(x):\n    return 'a b' + x\n";
+    let formatted = "def label(x):\n    return 'a b'  +   x\n";
+    let changed = "def label(x):\n    return 'a  b' + x\n";
+    let check = |source: &str| -> Result<CheckOutput, String> {
+        fixture.write("src/subject.py", source)?;
+        fixture.check_with_config(&[("src/subject.py", before, source)], &config)
+    };
+    let selected_id = |output: CheckOutput| -> String {
+        assert_eq!(output.findings.len(), 1, "fixture must select one finding");
+        output.findings[0].id.clone()
+    };
+    let id = selected_id(check(original)?);
+    assert!(id.contains(":python_preview:v1-"));
+    let colliding = "def label(x):\n    return 'current001612  x'\n";
+    let colliding_id = selected_id(check(colliding)?);
+    assert_ne!(colliding_id, "probe:src_subject.py:python_preview:7bb65c5e");
+    assert!(colliding_id.contains(":python_preview:v1-"));
+    let legacy_id = "probe:src_subject.py:python_preview:78348af1";
+    assert_ne!(
+        id, legacy_id,
+        "ambiguous historical ID must not match either value"
+    );
+    assert_eq!(id, selected_id(check(formatted)?));
+    assert_ne!(id, selected_id(check(changed)?));
+    fixture.write("suppressions.toml", &format!(
+        "schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"{legacy_id}\"\nreason = \"ambiguous old value\"\nowner = \"identity-test\"\n"
+    ))?;
+    for source in [original, changed] {
+        let outcome = check(source)?
+            .suppression
+            .ok_or("missing suppression outcome")?;
+        assert!(
+            outcome.suppressed.is_empty(),
+            "legacy ID must not suppress either value"
+        );
+        assert!(!outcome.warnings.is_empty());
+    }
+    fixture.write("suppressions.toml", &format!(
+        "schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"{id}\"\nreason = \"reviewed original value\"\nowner = \"identity-test\"\n"
+    ))?;
+    let current = check(original)?
+        .suppression
+        .ok_or("missing suppression outcome")?;
+    assert_eq!(current.suppressed.len(), 1);
+    let outcome = check(changed)?
+        .suppression
+        .ok_or("missing suppression outcome")?;
+    assert!(
+        outcome.suppressed.is_empty(),
+        "old value must not suppress the new one"
+    );
+    assert!(
+        !outcome.warnings.is_empty(),
+        "stale selector must be visible"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_multiline_identity_on_diff_repo_and_deleted_paths() -> Result<(), String> {
+    let fixture = Fixture::new(&[])?;
+    fixture.write(
+        "pyproject.toml",
+        "[project]\nname=\"identity_fixture\"\nversion=\"0.0.0\"\n",
+    )?;
+    let mut config = ripr::config::RiprConfig::default();
+    config.languages.enabled = vec![
+        ripr::domain::LanguageId::Rust,
+        ripr::domain::LanguageId::Python,
+    ];
+    let before = "def label():\n    return 'old'\n";
+    let a = "def label():\n    return  \"\"\"foo \nbar\"\"\"\n";
+    let formatted = "def label():\n    return    \"\"\"foo \nbar\"\"\"\n";
+    let changed = "def label():\n    return  \"\"\"foo  \nbar\"\"\"\n";
+    let mut diff_ids = Vec::new();
+    let mut repo_ids = Vec::new();
+    for source in [a, formatted, changed] {
+        fixture.write("src/subject.py", source)?;
+        let line = source.lines().nth(1).ok_or("missing opening line")?;
+        let select = |out: CheckOutput| -> Result<String, String> {
+            let rows: Vec<_> = out
+                .findings
+                .iter()
+                .filter(|f| {
+                    f.probe
+                        .expression
+                        .lines()
+                        .next()
+                        .is_some_and(|first| first.trim_start() == line.trim_start())
+                })
+                .collect();
+            if rows.len() != 1 {
+                return Err(format!("expected one opening-line finding, got {rows:?}"));
+            }
+            Ok(rows[0].id.clone())
+        };
+        diff_ids.push(select(
+            fixture.check_with_config(&[("src/subject.py", before, source)], &config)?,
+        )?);
+        repo_ids.push(select(ripr::app::check_workspace_repo_with_config(
+            CheckInput {
+                root: fixture.root.clone(),
+                mode: Mode::Draft,
+                format: OutputFormat::Json,
+                ..CheckInput::default()
+            },
+            &config,
+        )?)?);
+    }
+    assert_eq!(diff_ids[0], diff_ids[1]);
+    assert_ne!(diff_ids[0], diff_ids[2]);
+    assert_eq!(repo_ids[0], repo_ids[1]);
+    assert_ne!(repo_ids[0], repo_ids[2]);
+
+    // The deleted line is found by its original coordinate, not the new-side
+    // projected location. Keep the following return unchanged to isolate it.
+    let live = "def label():\n    return 'done'\n";
+    let mut deleted_ids = Vec::new();
+    for (spaces, indent) in [(" ", "  "), (" ", "    "), ("  ", "  ")] {
+        let old = format!(
+            "def label():\n    value{indent}= \"\"\"foo{spaces}\nbar\"\"\"\n    return 'done'\n"
+        );
+        fixture.write("src/subject.py", live)?;
+        let line = old.lines().nth(1).ok_or("missing removed line")?;
+        let out = fixture.check_with_config(&[("src/subject.py", &old, live)], &config)?;
+        let rows: Vec<_> = out
+            .findings
+            .iter()
+            .filter(|f| f.probe.expression == line && f.probe.after.is_none())
+            .collect();
+        if rows.len() != 1 {
+            return Err(format!("expected one deleted-line finding, got {rows:?}"));
+        }
+        deleted_ids.push(rows[0].id.clone());
+    }
+    assert_eq!(deleted_ids[0], deleted_ids[1]);
+    assert_ne!(deleted_ids[0], deleted_ids[2]);
+    Ok(())
+}
+
+#[cfg(all(feature = "lang-python", unix))]
+#[test]
+fn python_colon_path_keeps_identity_and_rejects_legacy_selector() -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let path = "src/a:b.py";
+    let before = "def label(x):\n    return x\n";
+    let one = "def label(x):\n    return 'a b' + x\n";
+    let formatted = "def label(x):\n    return 'a b'  +   x\n";
+    let two = "def label(x):\n    return 'a  b' + x\n";
+    let fixture = Fixture::new(&[(path, one)])?;
+    fixture.write(
+        "pyproject.toml",
+        "[project]\nname=\"identity_fixture\"\nversion=\"0.0.0\"\n",
+    )?;
+    let mut config = ripr::config::RiprConfig::default();
+    config.languages.enabled = vec![
+        ripr::domain::LanguageId::Rust,
+        ripr::domain::LanguageId::Python,
+    ];
+    let check = |source: &str| -> Result<CheckOutput, String> {
+        fixture.write(path, source)?;
+        fixture.check_with_config(&[(path, before, source)], &config)
+    };
+    let baseline = check(one)?;
+    assert_eq!(
+        baseline.findings.len(),
+        1,
+        "fixture must select one finding"
+    );
+    let finding = &baseline.findings[0];
+    let id = finding.id.clone();
+    assert!(
+        id.starts_with("probe:src_a:b.py:python_preview:v1-"),
+        "{id}"
+    );
+    let owner = finding
+        .probe
+        .owner
+        .as_ref()
+        .ok_or("missing owner")?
+        .0
+        .as_str();
+    let payload = format!("src_a:b.py\0python_preview\0{owner}\0return 'a b' + x\0");
+    let digest = Sha256::digest(payload.as_bytes());
+    let legacy = format!(
+        "probe:src_a:b.py:python_preview:{:02x}{:02x}{:02x}{:02x}",
+        digest[0], digest[1], digest[2], digest[3]
+    );
+    let get_id = |out: CheckOutput| -> Result<String, String> {
+        if out.findings.len() != 1 {
+            return Err(format!("expected one finding: {out:?}"));
+        }
+        Ok(out.findings[0].id.clone())
+    };
+    assert_eq!(id, get_id(check(formatted)?)?);
+    assert_ne!(id, get_id(check(two)?)?);
+    fixture.write("suppressions.toml", &format!("schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"{legacy}\"\nreason = \"ambiguous legacy value\"\nowner = \"identity-test\"\n"))?;
+    for source in [one, two] {
+        let outcome = check(source)?
+            .suppression
+            .ok_or("missing suppression outcome")?;
+        assert!(outcome.suppressed.is_empty());
+        assert!(!outcome.warnings.is_empty());
+    }
+    fixture.write("suppressions.toml", &format!("schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"{id}\"\nreason = \"reviewed value\"\nowner = \"identity-test\"\n"))?;
+    assert_eq!(
+        check(one)?
+            .suppression
+            .ok_or("missing suppression outcome")?
+            .suppressed
+            .len(),
+        1
+    );
+    assert!(
+        check(two)?
+            .suppression
+            .ok_or("missing suppression outcome")?
+            .suppressed
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_repo_comment_termination_changes_identity_and_suppression() -> Result<(), String> {
+    let fixture = Fixture::new(&[])?;
+    fixture.write(
+        "pyproject.toml",
+        "[project]\nname=\"identity_fixture\"\nversion=\"0.0.0\"\n",
+    )?;
+    let mut config = ripr::config::RiprConfig::default();
+    config.languages.enabled = vec![
+        ripr::domain::LanguageId::Rust,
+        ripr::domain::LanguageId::Python,
+    ];
+    let active = "def label(x):\n    return (\"a b\" # note\n        + x\n    )\n";
+    let formatted = "def label(x):\n    return  (\"a b\" # note\n          + x\n    )\n";
+    let commented = "def label(x):\n    return (\"a b\" # note + x\n    )\n";
+    let literal_hash = "def label(x):\n    return (\"a # b\"\n        + x\n    )\n";
+    let literal_formatted = "def label(x):\n    return  (\"a # b\"\n          + x\n    )\n";
+    let check = |source: &str| -> Result<CheckOutput, String> {
+        fixture.write("src/subject.py", source)?;
+        ripr::app::check_workspace_repo_with_config(
+            CheckInput {
+                root: fixture.root.clone(),
+                mode: Mode::Draft,
+                format: OutputFormat::Json,
+                suppression_policy: fixture
+                    .root
+                    .join("suppressions.toml")
+                    .is_file()
+                    .then(|| fixture.root.join("suppressions.toml")),
+                ..CheckInput::default()
+            },
+            &config,
+        )
+    };
+    let selected = |out: &CheckOutput| -> Result<String, String> {
+        let rows: Vec<_> = out
+            .findings
+            .iter()
+            .filter(|f| {
+                f.probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.0.ends_with("::label"))
+                    && f.probe.expression.starts_with("return")
+            })
+            .collect();
+        if rows.len() != 1 {
+            return Err(format!("expected one label return: {rows:?}"));
+        }
+        Ok(rows[0].id.clone())
+    };
+    let active_id = selected(&check(active)?)?;
+    assert_eq!(active_id, selected(&check(formatted)?)?);
+    assert_ne!(active_id, selected(&check(commented)?)?);
+    let hash_id = selected(&check(literal_hash)?)?;
+    assert_eq!(hash_id, selected(&check(literal_formatted)?)?);
+    fixture.write("suppressions.toml", &format!(
+        "schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"{active_id}\"\nreason = \"reviewed active addition\"\nowner = \"identity-test\"\n"
+    ))?;
+    assert_eq!(
+        check(active)?
+            .suppression
+            .ok_or("missing suppression outcome")?
+            .suppressed
+            .len(),
+        1
+    );
+    let changed = check(commented)?
+        .suppression
+        .ok_or("missing suppression outcome")?;
+    assert!(
+        changed.suppressed.is_empty(),
+        "suppression must not cross comment boundary"
+    );
+    assert!(!changed.warnings.is_empty());
+    Ok(())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_findings_are_withheld_when_the_checkout_is_not_the_diff_post_image() -> Result<(), String>
+{
+    let fixture = Fixture::new(&[])?;
+    fixture.write(
+        "pyproject.toml",
+        "[project]\nname=\"identity_fixture\"\nversion=\"0.0.0\"\n",
+    )?;
+    let mut config = ripr::config::RiprConfig::default();
+    config.languages.enabled = vec![
+        ripr::domain::LanguageId::Rust,
+        ripr::domain::LanguageId::Python,
+    ];
+    let before =
+        "def limit(quantity):\n    if quantity >= 100:\n        return 0.1\n    return 0.0\n";
+    let after =
+        "def limit(quantity):\n    if quantity > 100:\n        return 0.1\n    return 0.0\n";
+    let python_findings = |output: &CheckOutput| {
+        output
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding
+                    .probe
+                    .location
+                    .file
+                    .to_string_lossy()
+                    .ends_with("subject.py")
+            })
+            .count()
+    };
+    // Positive control: the checkout is the diff's post-image, so the finding
+    // is minted from verifiable source context.
+    fixture.write("src/subject.py", after)?;
+    let matching = fixture.check_with_config(&[("src/subject.py", before, after)], &config)?;
+    assert_eq!(
+        python_findings(&matching),
+        1,
+        "a verifiable post-image must keep its finding"
+    );
+    // Negative control: the same diff over the pre-image checkout cannot be
+    // tied to source context, so the file's findings are withheld (fail
+    // closed) rather than minted with an unverifiable identity.
+    fixture.write("src/subject.py", before)?;
+    let mismatched = fixture.check_with_config(&[("src/subject.py", before, after)], &config)?;
+    assert_eq!(
+        python_findings(&mismatched),
+        0,
+        "a checkout that is not the diff post-image must not yield findings"
+    );
+    Ok(())
+}

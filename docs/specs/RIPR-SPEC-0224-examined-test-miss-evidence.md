@@ -153,7 +153,7 @@ unsupported state as unknown and fabricates no reason conforms.
 | --- | --- | --- | --- | --- |
 | `no_call_path` | yes | yes (closed-body reach fact on a function owner, name-only rows; residual limits below) | no (absence unprovable from one file) | no |
 | `no_assertion` | yes | yes (extraction-complete admission, fail-closed; residual limits below) | no (admission blind spots) | no |
-| `assertion_not_observing` | yes | no (credit-only alignment; withheld pending #5491) | no (withheld pending #5495) | no (#3223) |
+| `assertion_not_observing` | yes | no (credit-only alignment; withheld pending #5491) | yes (affirmative other-sink only, #5528) | no (#3223) |
 | `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
 | `weak_assertion` | yes | yes (weak and smoke only) | yes (weak and smoke only) | no |
 | `missing_input` | yes | yes (predicate boundary, row-owned) | yes (row-owned `MissedBoundary` fact only, hedged "seen" wording, #10040) | no (#4061, perl-lsp-swarm#17237, #5562) |
@@ -186,8 +186,9 @@ call, not hooks, helpers or re-exports; a sound fact needs a reach mode of the
 admission scan that treats production imports, barrel and `export *`
 re-exports, side-effect imports, `jest.mock`/`vi.mock` factories, `it.each`
 tables, dynamic `import()`/`require`, class and instance owners, hook bodies
-and runner config as reaching), `assertion_not_observing` (withheld pending
-#5495; row eligibility is the explicit role, not this value) and
+and runner config as reaching), `assertion_not_observing` (only when row-local
+changed-sink observation is `affirmatively_other_sink`, #5528; unresolved
+observation stays `observation_unconfirmed`) and
 `no_assertion` (the single-file admission scan cannot see project setup files
 or runner plugins). Rows with unresolved admission, static-limited findings,
 `exposed`, `static_unknown`

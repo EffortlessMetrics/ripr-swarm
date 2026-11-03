@@ -1,0 +1,12 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -142,7 +142,7 @@
+ 
+ 
+ def exit_before_assert(a, b):
+-    return a * b
++    return b * a
+ 
+ 
+ def conditional_exit(a, b):

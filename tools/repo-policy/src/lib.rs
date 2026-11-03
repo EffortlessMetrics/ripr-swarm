@@ -763,9 +763,10 @@ pub fn workflow_plain_scalar_comment_violations(path: &str, text: &str) -> Vec<S
 /// Retired exceptions to the third-party action SHA-pin rule (#9303, #9529).
 pub const UNPINNED_ACTION_ALLOWLIST: &str = "policy/workflow_unpinned_action_allowlist.txt";
 
-/// Third-party `uses:` references in one workflow, as `(line, action@ref)`.
+/// External `uses:` references in one workflow, as `(line, action@ref)`.
 ///
-/// First-party `actions/*`, local `./` actions and comments are not third-party.
+/// Every non-local action, first-party `actions/*` included, must be SHA-pinned
+/// (#11692). Local `./` actions and comments are not external references.
 /// A `uses:` is recognised only as a step/job key (optionally after `- `), so
 /// the same text inside a `run:` string or a comment is not mistaken for one.
 fn third_party_action_refs(text: &str) -> Vec<(usize, String)> {
@@ -778,7 +779,7 @@ fn third_party_action_refs(text: &str) -> Vec<(usize, String)> {
         };
         let value = value.split(" #").next().unwrap_or("").trim();
         let value = value.trim_matches(|c| c == '"' || c == '\'');
-        if value.is_empty() || value.starts_with("./") || value.starts_with("actions/") {
+        if value.is_empty() || value.starts_with("./") {
             continue;
         }
         refs.push((index + 1, value.to_string()));
@@ -793,12 +794,13 @@ fn is_full_commit_sha(reference: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-/// Fail a third-party action (or reusable workflow) that is not pinned to a
+/// Fail an external action (or reusable workflow) that is not pinned to a
 /// full 40-hex commit SHA.
 ///
 /// A tag or branch is mutable: whoever controls it can change the code that
 /// runs beside this job's `GITHUB_TOKEN` and secrets. First-party `actions/*`
-/// follow the existing tag policy (`deprecated_workflow_action_refs`). Existing
+/// are pinned too (#11692); `deprecated_workflow_action_refs` rejects retired
+/// majors both as tags and as a SHA pin whose version comment names them. Existing
 /// exceptions were held in `policy/workflow_unpinned_action_allowlist.txt` with
 /// a per-file count. The production entry point now requires that retired
 /// allowlist to remain empty, including rows whose count is zero (#9529).
@@ -1351,6 +1353,46 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "bind the succession read to this run's own attempt",
             ".id == $id and .run_attempt == $attempt and .head_sha == $head",
         ),
+        (
+            "run the extension e2e as a job of this run through the reusable workflow, so no other request's result can be read (#12252)",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: [vscode-select]\n",
+        ),
+        (
+            "select the extension e2e from the admitted diff and the full-ci and vscode labels (#12252)",
+            "case \",$LABELS,\" in *,full-ci,*|*,vscode,*) return 0 ;; esac",
+        ),
+        (
+            "run the extension e2e only when selected, by calling the reusable workflow (#12252)",
+            "    if: ${{ !cancelled() && needs.vscode-select.result == 'success' && needs.vscode-select.outputs.selected == 'true' }}\n    uses: ./.github/workflows/vscode-e2e.yml\n",
+        ),
+        (
+            "read this run's own selection and e2e results in the Result (#12252)",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-e2e.result }}\n",
+        ),
+        (
+            "classify the admitted head and labels in the extension selection (#12252)",
+            "          HEAD_SHA: ${{ needs.admission.outputs.head }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+        ),
+        (
+            "make the Result depend on the extension selection and e2e jobs (#12252)",
+            "docs-gate, vscode-select, vscode-e2e]",
+        ),
+        (
+            "require the extension e2e result for the admitted head before summarizing (#12122)",
+            "      - name: Require the extension e2e result for the admitted head\n        id: vscode\n",
+        ),
+        (
+            "pass a selected extension e2e only when it succeeded (#12252)",
+            "true:success)",
+        ),
+        (
+            "pass an unselected extension e2e only when it was skipped (#12252)",
+            "false:skipped)",
+        ),
+        (
+            "fail the Result when the selected extension e2e did not succeed (#12122)",
+            "[ \"$VSCODE_CHECK_RESULT\" != success ]",
+        ),
     ] {
         if !workflow.contains(snippet) {
             violations.push(format!(
@@ -1796,6 +1838,37 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
     violations
 }
 
+/// Count lines that pin a retired major by commit SHA, e.g.
+/// `actions/checkout@<40 hex> # v4.2.0` for the retired `actions/checkout@v4`.
+///
+/// SHA pinning (#11692) removes the literal `owner/repo@vN` text this gate
+/// matches, so the pin's trailing version comment is the only place the major
+/// is still recorded. The comment must start with `v<major>` followed by a
+/// non-digit or the end of the line, so `# v40.1.0` does not read as `v4`.
+fn pinned_retired_ref_count(text: &str, old_ref: &str) -> usize {
+    let Some((action, major)) = old_ref.split_once('@') else {
+        return 0;
+    };
+    let prefix = format!("{action}@");
+    text.lines()
+        .filter(|line| {
+            let Some(rest) = line.split_once(prefix.as_str()).map(|(_, rest)| rest) else {
+                return false;
+            };
+            let Some((sha, comment)) = rest.split_once('#') else {
+                return false;
+            };
+            if !is_full_commit_sha(sha.trim()) {
+                return false;
+            }
+            comment
+                .trim()
+                .strip_prefix(major)
+                .is_some_and(|tail| !tail.starts_with(|ch: char| ch.is_ascii_digit()))
+        })
+        .count()
+}
+
 pub fn workflow_runtime_violations(
     path: &str,
     text: &str,
@@ -1803,7 +1876,7 @@ pub fn workflow_runtime_violations(
 ) -> Vec<String> {
     let mut violations = Vec::new();
     for (old_ref, new_ref) in deprecated_workflow_action_refs() {
-        let count = text.matches(old_ref).count();
+        let count = text.matches(old_ref).count() + pinned_retired_ref_count(text, old_ref);
         if count > 0 {
             violations.push(format!(
                 "{path} uses deprecated action runtime ref `{old_ref}` {count} time(s); use `{new_ref}`"
@@ -1879,7 +1952,7 @@ pub fn deprecated_workflow_action_refs() -> &'static [(&'static str, &'static st
 }
 
 pub fn workflow_runtime_exception_patterns() -> &'static [&'static str] {
-    &["actions/dependency-review-action@v4"]
+    &["actions/dependency-review-action@"]
 }
 
 pub fn is_extension_node_workflow(path: &str) -> bool {

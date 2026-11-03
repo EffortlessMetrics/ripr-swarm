@@ -13,6 +13,10 @@ fn payload(source: &str) -> String {
             "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
             "Swatinem/rust-cache@v2",
         )
+        .replace(
+            "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2",
+            "actions/upload-artifact@v7",
+        )
 }
 
 fn input_bindings(source: &str) -> bool {
@@ -122,7 +126,8 @@ fn exact_checkout_and_full_platform_shell_payload_are_preserved() {
             "      {key}:\n        type: string\n        required: true"
         )));
     }
-    let checkout = WORKFLOW.find("actions/checkout@v6");
+    let checkout =
+        WORKFLOW.find("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0");
     let guard = WORKFLOW.find("Verify exact source before product execution");
     let toolchain =
         WORKFLOW.find("dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591");

@@ -286,6 +286,12 @@ pub(crate) struct GapItem {
     /// (#7464).
     pub(crate) list_summary: Value,
     list_summary_bytes: usize,
+    /// The `ripr agent stub --at FILE:LINE --kind FAMILY` location the shared
+    /// stub resolver (`stub_route_location`, the owner `ripr check` and
+    /// `ripr repair` use) names for this finding, if any. A refused
+    /// `ripr_prepare_repair` carries it in `next` for `seam_not_found` and
+    /// `seam_ambiguous` (#11622); it is not part of any served document.
+    pub(crate) stub_route: Option<(String, usize, &'static str)>,
     /// Complete bounded evidence document (without the per-request snapshot
     /// binding and links, which are injected at serve time). The repair
     /// projection reads `changed_behavior` and the discriminator from it.
@@ -309,6 +315,18 @@ pub(crate) struct GapItem {
     /// finding's probe family (`describe_for_family`), so the MCP reason cannot
     /// drift from them (#11821).
     static_limit_reason: Option<String>,
+    /// Whether the finding's probe family is `predicate`, captured for the
+    /// terminal-static-limit marker (#11622).
+    predicate_family: bool,
+}
+
+/// The wire token of a producer static limit, shared by the limitation
+/// document and the terminal-static-limit marker so they cannot disagree.
+fn static_limit_token(kind: crate::domain::StaticLimitKind) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "static_limitation".to_string())
 }
 
 impl GapItem {
@@ -368,11 +386,13 @@ impl GapItem {
             language,
             list_summary,
             list_summary_bytes,
+            stub_route: crate::app::test_stub::stub_route_location(finding, root),
             evidence_core,
             evidence_bytes,
             candidate_actionable: finding.is_candidate_actionable(),
             evidence_sha256,
             repair_readiness,
+            predicate_family: finding.probe.family == crate::domain::ProbeFamily::Predicate,
             static_limit: finding.static_limit_kind,
             static_limit_reason: finding
                 .static_limit_kind
@@ -382,6 +402,25 @@ impl GapItem {
 
     pub(crate) fn class(&self) -> &str {
         &self.class
+    }
+
+    /// The producer's typed static limit when this is an `infection_unknown`
+    /// predicate item (#11622): ripr named a static limit on the finding
+    /// itself, so neither a refresh on unchanged input nor ripr's repair
+    /// route changes it. Read from committed facts only; it adds no verdict.
+    pub(crate) fn terminal_static_limit(&self) -> Option<Value> {
+        if !(self.predicate_family && self.class == "infection_unknown") {
+            return None;
+        }
+        let kind = self.static_limit?;
+        Some(json!({
+            "kind": static_limit_token(kind),
+            "reason": self
+                .static_limit_reason
+                .clone()
+                .unwrap_or_else(|| kind.describe().to_string()),
+            "recovery": kind.next_step(),
+        }))
     }
 
     /// The earliest producer fact that prevents a safe repair route for this
@@ -414,10 +453,7 @@ impl GapItem {
         let refresh_recovery =
             "call ripr_refresh and re-read this limitation against the new snapshot";
         let limitation = if let Some(kind) = self.static_limit {
-            let kind_token = serde_json::to_value(kind)
-                .ok()
-                .and_then(|value| value.as_str().map(str::to_string))
-                .unwrap_or_else(|| "static_limitation".to_string());
+            let kind_token = static_limit_token(kind);
             json!({
                 "kind": kind_token,
                 "stage": "producer_static_limit",
@@ -1986,6 +2022,46 @@ mod tests {
             .ok_or_else(|| format!("limitation document lacks {name}: {document}"))
     }
 
+    /// #11622: the terminal marker needs all three typed facts together:
+    /// `infection_unknown` class, `predicate` family and a producer static
+    /// limit. Removing any one of them removes the marker.
+    #[test]
+    fn terminal_static_limit_needs_class_family_and_a_typed_limit() -> Result<(), String> {
+        let mut base = finding()?;
+        base.canonical_gap = None;
+        base.class = crate::domain::ExposureClass::InfectionUnknown;
+        base.probe.family = crate::domain::ProbeFamily::Predicate;
+        base.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
+        let item = GapItem::from_finding(&base, Path::new("."))?;
+        let marker = item
+            .terminal_static_limit()
+            .ok_or("infection_unknown predicate with a limit must carry the marker")?;
+        if marker["kind"] != "unsupported_syntax"
+            || marker["reason"] != crate::domain::StaticLimitKind::UnsupportedSyntax.describe()
+        {
+            return Err(format!("marker lost the typed limit: {marker}"));
+        }
+        let mut no_limit = base.clone();
+        no_limit.static_limit_kind = None;
+        let mut other_class = base.clone();
+        other_class.class = crate::domain::ExposureClass::WeaklyExposed;
+        let mut other_family = base.clone();
+        other_family.probe.family = crate::domain::ProbeFamily::ReturnValue;
+        for (label, changed) in [
+            ("no typed limit", no_limit),
+            ("other class", other_class),
+            ("other family", other_family),
+        ] {
+            if GapItem::from_finding(&changed, Path::new("."))?
+                .terminal_static_limit()
+                .is_some()
+            {
+                return Err(format!("{label} must not carry the terminal marker"));
+            }
+        }
+        Ok(())
+    }
+
     /// #1898: the producer's own typed static limitation is the earliest
     /// fact and outranks every readiness gate, reusing the shared
     /// `describe`/`next_step` vocabulary instead of a renderer-local string.
@@ -2355,6 +2431,46 @@ mod tests {
         assert_eq!(rows[0]["miss"], "observation_unconfirmed");
         assert_eq!(rows[0]["why"], why.as_str());
         assert!(rows[1]["miss"].is_null() && rows[1]["why"].is_null());
+        Ok(())
+    }
+
+    /// #5496: the MCP gap evidence carries the production-classified Python
+    /// rows with the shared sentence on the explained row only.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn python_production_rows_agree_in_gap_evidence() -> Result<(), String> {
+        use crate::output::related_test_miss::related_test_miss_reason;
+        let finding = crate::analysis::python_direct_and_advisory_finding()?;
+        let explained = finding
+            .related_tests
+            .iter()
+            .find(|row| row.miss.is_some())
+            .ok_or("expected one explained row")?;
+        let withheld = finding
+            .related_tests
+            .iter()
+            .find(|row| row.miss.is_none())
+            .ok_or("expected one withheld row")?;
+        let why = related_test_miss_reason(explained, &finding.probe.family)
+            .ok_or("the explained row should have a reason")?;
+        let item = GapItem::from_finding(&finding, Path::new("/test-root"))?;
+        let rows = item.evidence_core["related_tests"]
+            .as_array()
+            .ok_or("expected related_tests in gap evidence")?;
+        let explained_row = rows
+            .iter()
+            .find(|row| row["name"] == explained.name)
+            .ok_or("explained row in evidence")?;
+        let withheld_row = rows
+            .iter()
+            .find(|row| row["name"] == withheld.name)
+            .ok_or("withheld row in evidence")?;
+        assert_eq!(
+            explained_row["miss"].as_str(),
+            explained.miss.map(|miss| miss.as_str())
+        );
+        assert_eq!(explained_row["why"], why.as_str());
+        assert!(withheld_row["miss"].is_null() && withheld_row["why"].is_null());
         Ok(())
     }
 

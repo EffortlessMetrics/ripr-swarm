@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,7 +2,7 @@
+     if x > 100 {
+         return 0;
+     }
+-    let _ = ();
++    unsafe { std::hint::unreachable_unchecked() };
+     x + 1
+ }
+ 

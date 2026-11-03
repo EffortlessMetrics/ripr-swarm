@@ -159,7 +159,14 @@ fn exposed_change_says_nothing_to_repair_in_both_commands() -> Result<(), String
             && check.contains("already notice this change (exposed)"),
         "check must say there is nothing to repair:\n{check}"
     );
-    for leak in ["no seam in this finding's file", "missing", "found no seam"] {
+    for leak in [
+        "no spot in this finding's file",
+        "no repairable spot in this finding's file",
+        "no spot in this finding's file",
+        "missing",
+        "found no seam",
+        "found no repairable spot",
+    ] {
         let advisory: Vec<&str> = check
             .lines()
             .filter(|line| line.contains("no repair start offered"))
@@ -182,7 +189,10 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     let repo = Repo::create(
         "pub fn label(n: u32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        1 => \"one\",\n        _ => \"many\",\n    }\n}\n",
         "pub fn label(n: u32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        1 => \"uno\",\n        _ => \"many\",\n    }\n}\n",
-        "use ar::label;\n\n#[test]\nfn labels() {\n    assert!(!label(1).is_empty());\n}\n",
+        // The test takes the wildcard arm, so no test runs a literal arm
+        // and repair lists seams instead of starting one (a test passing
+        // `label(1)` is a match-arm repair start since #11111).
+        "use ar::label;\n\n#[test]\nfn labels() {\n    assert!(!label(7).is_empty());\n}\n",
     )?;
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
@@ -191,14 +201,46 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     );
     let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
     assert!(
-        !check.contains("found no seam") && !check.contains("no seam in this finding's file"),
+        !check.contains("found no spot") && !check.contains("no spot in this finding's file"),
         "check must not claim there is no seam while repair lists seams:\n{check}"
     );
     assert!(
         check.contains(
-            "seams in this finding's file, but could not tie one to this finding's changed line"
+            "spots in this finding's file, but could not tie one to this finding's changed line"
         ),
         "check must name the one reason it cannot bind a seam:\n{check}"
+    );
+    Ok(())
+}
+
+#[test]
+fn untied_count_does_not_claim_gripped_sibling_is_repairable() -> Result<(), String> {
+    let sibling = "\npub fn doubled(x: i32) -> i32 {\n    x * 2\n}\n";
+    let old = format!(
+        "pub fn label(n: u32) -> &'static str {{\n    match n {{\n        0 => \"zero\",\n        1 => \"one\",\n        _ => \"many\",\n    }}\n}}\n{sibling}"
+    );
+    let new = old.replace("1 => \"one\"", "1 => \"uno\"");
+    let repo = Repo::create_uncommitted(
+        &old,
+        &new,
+        // Only `doubled` is gripped; the changed `label` arm has no matching
+        // test input, so check counts untied spots in the file while repair
+        // counts the gripped sibling outside the changed lines.
+        "use ar::doubled;\n\n#[test]\nfn doubled_works() {\n    assert_eq!(doubled(2), 4);\n}\n",
+    )?;
+    let repair = repo.ripr(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains("outside your changed lines is already noticed by existing tests"),
+        "gripped sibling precondition:\n{repair}"
+    );
+    let check = repo.ripr(&["check", "--base", "HEAD"])?;
+    assert!(
+        check.contains("spots in this finding's file, but could not tie one"),
+        "unbound precondition:\n{check}"
+    );
+    assert!(
+        !check.contains("repairable spots in this finding's file"),
+        "count must not assert eligibility:\n{check}"
     );
     Ok(())
 }
@@ -349,6 +391,12 @@ const CONST_OLD: &str = "pub const GREETING: &str = \"hello\";\n\npub fn greet(n
 const CONST_NEW: &str = "pub const GREETING: &str = \"howdy\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n\npub fn shout(name: &str) -> String {\n    format!(\"{name}!\")\n}\n";
 const CONST_TEST: &str = "use ar::{greet, shout};\n\n#[test]\nfn greets() {\n    assert!(greet(\"a\").contains(\"a\"));\n    assert!(!shout(\"a\").is_empty());\n}\n";
 
+/// A reader that pads the constant (`{GREETING:>8}`) can hide the change for
+/// some inputs, so the changed constant keeps its own finding with no seam
+/// (#11400 follows only a plain `{GREETING}` in a whole-body `format!`).
+const CONST_PADDED_OLD: &str = "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING:>8}, {name}\")\n}\n\npub fn shout(name: &str) -> String {\n    format!(\"{name}!\")\n}\n";
+const CONST_PADDED_NEW: &str = "pub const GREETING: &str = \"howdy\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING:>8}, {name}\")\n}\n\npub fn shout(name: &str) -> String {\n    format!(\"{name}!\")\n}\n";
+
 /// #11111 (group 2): a changed string constant has no seam of its own, so
 /// `ripr check` offers no repair start for it ("no gap ID"). Bare repair must
 /// not start, or offer to choose, a repair on the unchanged functions that
@@ -356,7 +404,7 @@ const CONST_TEST: &str = "use ar::{greet, shout};\n\n#[test]\nfn greets() {\n   
 /// check reported.
 #[test]
 fn changed_constant_with_no_seam_does_not_start_repair_elsewhere() -> Result<(), String> {
-    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let repo = Repo::create_uncommitted(CONST_PADDED_OLD, CONST_PADDED_NEW, CONST_TEST)?;
     let check = repo.ripr(&["check", "--base", "HEAD"])?;
     assert!(
         check.contains("Changed behavior: pub const GREETING")
@@ -381,6 +429,37 @@ fn changed_constant_with_no_seam_does_not_start_repair_elsewhere() -> Result<(),
             && repair.contains("not offered")
             && repair.contains("`ripr repair <seam-id>`"),
         "repair must say why nothing is offered and how to name a seam:\n{repair}"
+    );
+    Ok(())
+}
+
+/// #11400: when the only reader returns the constant whole in one
+/// `format!`, check names that returned value and offers a start, and bare
+/// repair selects the same seam, not `shout` in the same file.
+#[test]
+fn changed_constant_returned_whole_selects_the_same_repair_in_both() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let check = repo.ripr(&["check", "--base", "HEAD"])?;
+    let id = check
+        .lines()
+        .find_map(|line| {
+            let rest = line.trim_start().strip_prefix("ripr repair ")?;
+            let id = rest.split_whitespace().next()?;
+            (id.len() == 16 && id.bytes().all(|b| b.is_ascii_hexdigit())).then_some(id)
+        })
+        .ok_or_else(|| format!("check must offer a repair start for greet:\n{check}"))?;
+    assert!(
+        check.contains("Changed behavior: format!(\"{GREETING}, {name}\")"),
+        "check must name greet's returned value:\n{check}"
+    );
+    // The change is uncommitted, so repair selects the seam and then asks
+    // for the commit before starting; the selection is what must agree.
+    let repair = repo.ripr(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains(&format!("--seam-id {id}"))
+            && !repair.contains("shout")
+            && !repair.contains("choose the change to repair"),
+        "repair must select the seam check offered ({id}):\n{repair}"
     );
     Ok(())
 }
@@ -444,10 +523,16 @@ const ERR_TEST: &str = "use ar::{parse, ParseError};\n\n#[test]\nfn long_input_i
 
 const WS_ROOT: &str = "[workspace]\nmembers = [\"wscore\", \"app\"]\nresolver = \"2\"\n";
 const WS_APP_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n";
-const WS_CORE_TOML: &str = "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
+const WS_CORE_TOML: &str =
+    "[package]\nname = \"wscore\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
 const WS_APP_SRC: &str = "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n";
 const WS_OLD: &str = "pub fn discount(price: u32) -> u32 {\n    if price > 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";
 const WS_NEW: &str = "pub fn discount(price: u32) -> u32 {\n    if price >= 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";
+/// #11401: the unreached fixture. A plain `wscore::discount(price)` call now
+/// reads noticed in `ripr check` (RIPR-SPEC-0407), so the dependency is
+/// declared under `[dev-dependencies]` only here: library code cannot see it,
+/// the call is not a crate edge, and the change keeps no static path.
+const WS_DEV_ONLY_APP_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dev-dependencies]\nwscore = { path = \"../wscore\" }\n";
 const WS_CORE_TEST: &str = "use wscore::discount;\n\n#[test]\nfn discount_at_boundary() {\n    assert_eq!(discount(100), 90);\n    assert_eq!(discount(50), 50);\n}\n";
 const WS_APP_TEST: &str = "use app::checkout;\n\n#[test]\nfn checkout_at_boundary() {\n    assert_eq!(checkout(100), 90);\n}\n";
 
@@ -465,6 +550,24 @@ fn workspace_repo(core_tests: bool, commit_change: bool) -> Result<Repo, String>
         files.push(("app/tests/t.rs", WS_APP_TEST));
     }
     Repo::create_workspace(&files, WS_NEW, commit_change)
+}
+
+/// The workspace whose only test is in `app` and reaches `wscore` through a
+/// dev-only dependency ripr does not follow: no static path
+/// (#11401).
+fn unreached_workspace_repo(commit_change: bool) -> Result<Repo, String> {
+    Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_DEV_ONLY_APP_TOML),
+            ("app/src/lib.rs", WS_APP_SRC),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", WS_OLD),
+            ("app/tests/t.rs", WS_APP_TEST),
+        ],
+        WS_NEW,
+        commit_change,
+    )
 }
 
 /// The repair text for a fixture, with the refusal asserted (exit 3).
@@ -692,7 +795,7 @@ fn limited_generic_change_is_not_called_gripped_by_repair() -> Result<(), String
 
 #[test]
 fn unreached_workspace_change_is_not_called_gripped_by_repair() -> Result<(), String> {
-    let committed = workspace_repo(false, true)?;
+    let committed = unreached_workspace_repo(true)?;
     let check = committed.ripr(&["check", "--base", "HEAD~1"])?;
     assert!(
         check.contains("Static exposure: no path")
@@ -708,7 +811,7 @@ fn unreached_workspace_change_is_not_called_gripped_by_repair() -> Result<(), St
         "the class refusal must be plain and name what ripr could not establish:\n{unscoped}"
     );
 
-    let repo = workspace_repo(false, false)?;
+    let repo = unreached_workspace_repo(false)?;
     let check = repo.ripr(&["check"])?;
     assert!(
         check.contains("Static exposure: no path"),

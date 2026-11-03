@@ -24,7 +24,9 @@ pub(in crate::cli) fn capabilities(args: &[String]) -> Result<(), String> {
             "--language" => {
                 let value = match arguments.next().map(String::as_str) {
                     Some("--help" | "-h" | "--json" | "--language") | None => {
-                        return Err("missing value for --language".to_string());
+                        return Err(
+                            "missing value for --language; pass a value right after it".to_string()
+                        );
                     }
                     Some(value) => value,
                 };
@@ -84,7 +86,7 @@ mod tests {
     fn bad_arguments_are_refused_with_a_named_reason() {
         let missing = run(&["--language"]).err().unwrap_or_default();
         assert!(
-            missing.contains("missing value for --language"),
+            missing.contains("missing value for --language; pass a value right after it"),
             "{missing}"
         );
         let flag_value = run(&["--language", "--json"]).err().unwrap_or_default();

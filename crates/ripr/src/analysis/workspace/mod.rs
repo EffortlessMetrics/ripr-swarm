@@ -4,6 +4,7 @@ mod cargo_targets;
 mod classify;
 mod discover;
 mod module_graph;
+mod named_dependent_scope;
 mod path_dependencies;
 mod select;
 mod source_role;
@@ -11,8 +12,8 @@ mod source_role;
 pub(crate) use assertion_dependency::{
     AnyhowIdentity, JsonRootEligibilityMemo, LiteralJsonIdentity, MetadataProbeFailure,
     config_snapshot_identity, eligible_json_root, eligible_manifest, eligible_proptest_root,
-    verified_anyhow_identity, verified_json_identity, verified_proptest_identity,
-    verified_proptest_identity_result,
+    locked_at_audited_version, verified_anyhow_identity, verified_bolero_identity,
+    verified_json_identity, verified_proptest_identity, verified_proptest_identity_result,
 };
 pub(crate) use cargo_input_identity::cargo_input_identity;
 pub(crate) use cargo_targets::{
@@ -30,6 +31,8 @@ pub(crate) use source_role::{
 
 pub(crate) use classify::{normalize_path, package_root};
 pub(crate) use discover::UnlinkedPythonTests;
+#[cfg(test)]
+pub(crate) use discover::discover_probe;
 pub use discover::discover_rust_files;
 pub(crate) use discover::path_enters_ignored_dir;
 pub(crate) use discover::{
@@ -38,6 +41,10 @@ pub(crate) use discover::{
     has_inspectable_source_file, limitations_for_absent_changed_files,
     supplement_absent_file_limitations, worktree_contains_regular_source_file,
 };
+pub(crate) use named_dependent_scope::{
+    composes_modules, withheld_source_disables_crate_root_routing,
+};
 pub(crate) use select::{
-    select_rust_files_for_mode_with_dependent_packages, with_module_context_files,
+    module_parent_candidates, select_rust_files_for_mode_with_dependent_packages,
+    with_module_context_files,
 };

@@ -144,6 +144,21 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      suite. A projection carries only the fields judged by its contract and makes
      no captured-output or execution claim. Independent invariant controls must
      reject false-credit and empty-report re-blessing.
+     A case that pins a repo seam (`expected_repo_seam_grip` or `expected_repo_seam_related_test`) also names the
+     Cargo `report_subject` the report was captured from. The gate regenerates
+     that subject with the current binary (`ripr check --mode draft --format
+     repo-exposure-json`) and fails when the committed report differs in the
+     judged fields: the seam set, each seam's `grip_class` and stage states, and
+     each related test's `oracle_strength` and `relation_reason`. Producer
+     version, timestamps and the root are not judged. A repo-seam case without a
+     regenerable subject fails (#12144).
+     Every committed report under `reports/` that carries
+     `source_subject.corpus.cache_schema_version` must record the analyzer's
+     current `CACHE_SCHEMA_VERSION`, read from `seam_cache.rs`; an older
+     generation is allowed only through a `report_cache_schema_pins` entry in
+     the corpus naming the report, the version it is held at and a reason. A
+     pin that disagrees with the report, is not older than the current version, or names
+     no capture fails (#12293).
 2a. Validates the case tier before trusting the expectation:
    - `pure` cases are checked-in tiny examples and must not carry
      pinned-external metadata.

@@ -15,6 +15,7 @@ pub(crate) mod diff_source;
 mod explain;
 pub(crate) mod gap_bound_repair;
 pub(crate) mod impacted_evidence;
+pub(crate) mod kani_import;
 mod navigation;
 pub mod pr_evidence;
 mod progress;
@@ -28,6 +29,7 @@ pub(crate) mod python_repair_binding;
 pub(crate) mod python_repair_verification;
 pub(crate) mod receipt;
 pub(crate) mod repair_attempt;
+pub(crate) mod repair_attempt_closeout_matrix;
 pub(crate) mod repair_card;
 /// Production handoff producer that assembles a `RepairCardV1` for one seam
 /// entry (#4667: card-first bounded agent handoff; canonical packet stays
@@ -37,8 +39,10 @@ pub(crate) mod repair_card_handoff;
 /// (#4669; RIPR-SPEC-0196): synthetic wire-size measurement and governed
 /// real-opportunity accounting that back the versioned decision receipt.
 pub mod repair_card_usability;
+pub(crate) mod review_comments_receipt;
 pub(crate) mod ripr_plus;
 mod running_binary;
+pub(crate) mod subcommand;
 /// Task-first repair selection services behind `ripr repair` and
 /// `ripr continue` (#6305). The CLI adapter parses and renders; the
 /// decisions here reuse the inventory, eligibility, selector, and attempt
@@ -69,6 +73,12 @@ pub use check::{check_workspace, check_workspace_repo, repo_seam_inventory_input
 /// (`cli::commands`) reference this single source of truth via
 /// `crate::app::PERL_FACT_PACKET_SCHEMA`.
 pub(crate) const PERL_FACT_PACKET_SCHEMA: &str = "ripr-perl-facts-v1";
+/// Consumer-side v2 wire schema accepted alongside v1 during the #3216 train.
+pub(crate) const PERL_FACT_PACKET_V2_SCHEMA: &str = "ripr-perl-facts-v2";
+
+pub(crate) fn is_supported_perl_fact_packet_schema(schema: &str) -> bool {
+    matches!(schema, PERL_FACT_PACKET_SCHEMA | PERL_FACT_PACKET_V2_SCHEMA)
+}
 
 /// The versioned envelope consumed by the producer-owned agent verification
 /// route and emitted by the agent seam packet renderer.
@@ -94,7 +104,7 @@ pub(crate) use check::check_workspace_worktree_with_sources_open_rust_paths_and_
 pub(crate) use check::is_managed_perl_producer;
 pub use check::{
     check_workspace_repo_with_config, check_workspace_with_config,
-    check_workspace_worktree_with_config,
+    check_workspace_worktree_with_config, try_check_workspace, try_check_workspace_with_config,
 };
 pub(crate) use context::collect_context_from_artifact;
 pub use context::collect_context_with_config;
@@ -103,11 +113,11 @@ pub use context::{collect_context, collect_context_with_input};
 #[cfg(test)]
 pub(crate) use explain::explain_finding_from_artifact;
 pub use explain::explain_finding_with_config;
-pub use explain::{explain_finding, explain_finding_with_input};
 pub(crate) use explain::{
-    explain_finding_from_artifact_with_navigation_mode,
+    ExplainFormat, ExplainRun, explain_finding_from_artifact_with_navigation_mode,
     explain_finding_with_config_navigation_mode_and_progress,
 };
+pub use explain::{explain_finding, explain_finding_with_input};
 pub(crate) use navigation::{
     CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, GapRepairRoute,
     RepairRoute, RepairRouteRefusal, finding_navigation, finding_navigation_with_worktree,

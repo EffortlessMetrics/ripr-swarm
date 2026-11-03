@@ -39,11 +39,19 @@ use super::drop_in::{config_mentions, normalized, patches};
 /// Dependency tables whose crates a test target can import. Build
 /// dependencies reach only the build script.
 const TEST_DEPENDENCY_TABLES: &[&str] = &["dependencies", "dev-dependencies", "dev_dependencies"];
+/// Dependency tables whose crates a library target can import. A
+/// `[dev-dependencies]` entry is visible to tests, examples and benches only,
+/// and `[build-dependencies]` to the build script only (#11401).
+const LIBRARY_DEPENDENCY_TABLES: &[&str] = &["dependencies"];
 
 /// Import names per (test file directory, owner crate root).
 type ImportNames = BTreeMap<(PathBuf, PathBuf), Vec<String>>;
 /// Foreign-export answers per (owner crate root, item name).
 type ForeignExports = BTreeMap<(PathBuf, String), bool>;
+/// Selected library root and its witnessed literal macro-export lines.
+type LibraryMacroExports = (PathBuf, BTreeMap<String, usize>);
+/// Negative-only export witnesses per (consumer directory, imported crate).
+type ImportedMacroExports = BTreeMap<(PathBuf, String), Option<Arc<LibraryMacroExports>>>;
 
 /// Per-analysis cache of member-crate import names, keyed by the test file's
 /// directory and the owner's crate root. Clones share the cache.
@@ -51,12 +59,18 @@ type ForeignExports = BTreeMap<(PathBuf, String), bool>;
 pub(crate) struct MemberCrates {
     root: Option<PathBuf>,
     names: Arc<Mutex<ImportNames>>,
+    /// Per (caller file directory, owner crate root): the name a library
+    /// caller spells the owner's crate with (#11401).
+    library_names: Arc<Mutex<ImportNames>>,
     /// Per (crate root, item name): whether the library may export a
     /// foreign item of that name, computed by the classifier.
     foreign_exports: Arc<Mutex<ForeignExports>>,
     /// All possible library target roots in the selected manifest epoch.
     /// Missing inventory authority never establishes binary-only ownership.
     library_roots: Arc<OnceLock<Option<BTreeSet<PathBuf>>>>,
+    /// Kept for this analysis only. A missing entry or macro is not an
+    /// absence certificate and must never clear a broader ambiguity.
+    imported_macro_exports: Arc<Mutex<ImportedMacroExports>>,
 }
 
 impl MemberCrates {
@@ -64,8 +78,10 @@ impl MemberCrates {
         Self {
             root: Some(root.to_path_buf()),
             names: Arc::default(),
+            library_names: Arc::default(),
             foreign_exports: Arc::default(),
             library_roots: Arc::default(),
+            imported_macro_exports: Arc::default(),
         }
     }
 
@@ -125,11 +141,150 @@ impl MemberCrates {
         {
             return names;
         }
-        let names = resolve(&root, test_dir, owner_dir, &owner_root, false).unwrap_or_default();
+        let names =
+            resolve(&root, test_dir, owner_dir, &owner_root, false, false).unwrap_or_default();
         if let Ok(mut cache) = self.names.lock() {
             cache.insert(key, names.clone());
         }
         names
+    }
+
+    /// The one crate identifier through which the library of the package
+    /// holding `caller_file` imports the library whose crate root is
+    /// `owner_root` (#11401), or `None` when that edge is not established.
+    ///
+    /// Stricter than [`Self::import_names`] on purpose: only a `[dependencies]`
+    /// entry counts (a `[dev-dependencies]` or `[build-dependencies]` entry is
+    /// not visible to library code), the caller and the owner must be
+    /// different packages, and exactly one name must result. A `package = ".."`
+    /// rename is followed: the name is then the entry's key. Everything
+    /// `import_names` refuses is refused here too.
+    pub(crate) fn library_dependency_name(
+        &self,
+        caller_file: &Path,
+        owner_root: &Path,
+    ) -> Option<String> {
+        let root = lexical(self.root.as_ref()?);
+        let caller_file = lexical(&root.join(caller_file));
+        let owner_root = lexical(&root.join(owner_root));
+        let (caller_dir, owner_dir) = (caller_file.parent()?, owner_root.parent()?);
+        let key = (caller_dir.to_path_buf(), owner_root.clone());
+        let cached = self
+            .library_names
+            .lock()
+            .ok()
+            .and_then(|names| names.get(&key).cloned());
+        let names = match cached {
+            Some(names) => names,
+            None => {
+                let names = resolve(&root, caller_dir, owner_dir, &owner_root, false, true)
+                    .unwrap_or_default();
+                if let Ok(mut cache) = self.library_names.lock() {
+                    cache.insert(key, names.clone());
+                }
+                names
+            }
+        };
+        match names.as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        }
+    }
+
+    /// A selected local library that this consumer imports as `krate`, with
+    /// a literal unconditional root export of `name` (#11810). This supplies
+    /// only a refusal witness; `None` never certifies that an import is safe.
+    /// Registry/git crates, unknown placement and incomplete inventories are
+    /// outside this bounded query. Source-role/discovery selection is unchanged.
+    pub(crate) fn imported_literal_macro_export(
+        &self,
+        consumer: &Path,
+        krate: &str,
+        name: &str,
+    ) -> Option<(PathBuf, usize)> {
+        let read_root = self.root.as_deref()?;
+        let root = snapshot_root(read_root)?;
+        let consumer = lexical(&root.join(consumer));
+        let directory = consumer.parent()?;
+        let key = (
+            directory.to_path_buf(),
+            krate.trim_start_matches("r#").to_string(),
+        );
+        let cached = self
+            .imported_macro_exports
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&key).cloned());
+        let exports = match cached {
+            Some(exports) => exports,
+            None => {
+                let exports = self
+                    .local_library_macro_exports(read_root, &root, directory, &key.1)
+                    .map(Arc::new);
+                if let Ok(mut cache) = self.imported_macro_exports.lock() {
+                    cache.insert(key, exports.clone());
+                }
+                exports
+            }
+        }?;
+        exports
+            .1
+            .get(name.trim_start_matches("r#"))
+            .map(|line| (exports.0.clone(), *line))
+    }
+
+    fn local_library_macro_exports(
+        &self,
+        read_root: &Path,
+        root: &Path,
+        consumer_directory: &Path,
+        krate: &str,
+    ) -> Option<LibraryMacroExports> {
+        let listed_root = lexical(read_root);
+        let libraries = self
+            .library_roots
+            .get_or_init(|| selected_library_roots(read_root))
+            .as_ref()?;
+        let mut selected = None;
+        for library in libraries {
+            crate::analysis::cancellation::checkpoint().ok()?;
+            // The shared negative inventory includes possible library roots
+            // outside this workspace. They cannot be a local export witness;
+            // an unrelated external declaration must not hide a bound local one.
+            let Ok(relative) = library.strip_prefix(&listed_root) else {
+                continue;
+            };
+            let absolute = lexical(&root.join(relative));
+            let owner_directory = absolute.parent()?;
+            // Unlike import_names' worktree convenience query, this uses the
+            // selected manifest epoch, including configuration substitutions.
+            if resolve(
+                root,
+                consumer_directory,
+                owner_directory,
+                &absolute,
+                true,
+                false,
+            )
+            .is_some_and(|names| names.iter().any(|name| name == krate))
+            {
+                if selected.is_some() {
+                    return None;
+                }
+                selected = Some(relative.to_path_buf());
+            }
+        }
+        let relative = selected?;
+        let bytes =
+            crate::analysis::committed_source::read_source_bytes(root, &relative).ok()??;
+        // Bound the auxiliary syntax query, not a dependency source index.
+        // Large or unsupported libraries contribute no affirmative witness.
+        if bytes.len() > 256 * 1024 {
+            return None;
+        }
+        let source = std::str::from_utf8(&bytes).ok()?;
+        let exports = crate::analysis::syntax::literal_root_macro_exports(source);
+        Some((relative, exports))
     }
 
     /// Whether `crate_root`, a root-relative `src/lib.rs` or `src/main.rs`,
@@ -224,12 +379,17 @@ impl MemberCrates {
                         .is_some_and(|path| path == file)
                 })
             });
+        let autodiscovered_bin = |path: &Path| {
+            path.extension().is_some_and(|extension| extension == "rs")
+                && (path.parent() == Some(directory.join("src/bin").as_path())
+                    || path.file_name().is_some_and(|name| name == "main.rs")
+                        && path.parent().and_then(|parent| parent.parent())
+                            == Some(directory.join("src/bin").as_path()))
+        };
         let automatic = package
             .get("autobins")
             .is_none_or(|value| value.as_bool() == Some(true))
-            && (file == directory.join("src/main.rs")
-                || (file.parent() == Some(directory.join("src/bin").as_path())
-                    && file.extension().is_some_and(|extension| extension == "rs")));
+            && (file == directory.join("src/main.rs") || autodiscovered_bin(&file));
         explicit || automatic
     }
 
@@ -395,7 +555,7 @@ impl MemberCrates {
         {
             return false;
         }
-        resolve(&root, test_dir, owner_dir, &macro_absolute, true).is_some_and(|names| {
+        resolve(&root, test_dir, owner_dir, &macro_absolute, true, false).is_some_and(|names| {
             names
                 .iter()
                 .any(|bound| bound == name.trim_start_matches("r#"))
@@ -635,25 +795,9 @@ impl MemberCrates {
     /// `proc-macro`, or no `crate-type`). Without manifest authority, or with
     /// any value it cannot read, the answer is no.
     pub(crate) fn runs_library_doctests(&self, crate_root: &Path) -> bool {
-        let Some(root) = &self.root else {
+        let Some(package) = self.default_library_package(crate_root) else {
             return false;
         };
-        if !crate_root.ends_with(Path::new("src").join("lib.rs"))
-            || !self.is_default_target_root(crate_root)
-        {
-            return false;
-        }
-        let root = lexical(root);
-        let crate_root = lexical(&root.join(crate_root));
-        let Some(directory) = crate_root.parent().and_then(Path::parent) else {
-            return false;
-        };
-        let Some((package, _)) = nearest_package(&root, directory) else {
-            return false;
-        };
-        if package.directory != directory || !is_default_library_root(&package, &crate_root) {
-            return false;
-        }
         let Some(lib) = package.manifest.get("lib") else {
             return true;
         };
@@ -674,6 +818,109 @@ impl MemberCrates {
             .get("proc-macro")
             .is_none_or(|value| value.as_bool() == Some(false));
         doctest_on && linkable && not_proc_macro
+    }
+}
+
+impl MemberCrates {
+    /// The package whose default library root is `crate_root`, a
+    /// root-relative `src/lib.rs`, or `None` without manifest authority, for
+    /// a moved or non-default root, or for any manifest value it cannot read.
+    fn default_library_package(&self, crate_root: &Path) -> Option<Package> {
+        let root = self.root.as_ref()?;
+        if !crate_root.ends_with(Path::new("src").join("lib.rs"))
+            || !self.is_default_target_root(crate_root)
+        {
+            return None;
+        }
+        let root = lexical(root);
+        let crate_root = lexical(&root.join(crate_root));
+        let directory = crate_root.parent().and_then(Path::parent)?;
+        let (package, _) = nearest_package(&root, directory)?;
+        if package.directory != directory || !is_default_library_root(&package, &crate_root) {
+            return None;
+        }
+        Some(package)
+    }
+
+    /// `package`'s `Cargo.toml` as the analysis reads sources: through the
+    /// committed-source overlay when one is active, else the worktree file.
+    /// `None` when it cannot be read or has no `[package]`.
+    fn analyzed_manifest(&self, package: &Package) -> Option<toml::Table> {
+        let root = self.root.as_ref()?;
+        let relative = package.directory.strip_prefix(lexical(root)).ok()?;
+        let read_root = snapshot_root(root)?;
+        let text = read_manifest(&read_root, &read_root.join(relative), true).ok()??;
+        let manifest = text.parse::<toml::Table>().ok()?;
+        manifest.get("package")?;
+        Some(manifest)
+    }
+
+    /// The cargo features a plain `cargo test` of the library rooted at
+    /// `crate_root` enables: the closure of the manifest's `[features]
+    /// default = [..]` over plain feature names (RIPR-SPEC-0279, #12230).
+    /// A `dep:name` or weak `name?/feature` entry adds nothing; a plain
+    /// `name/feature` entry enables the optional dependency `name`, which
+    /// credits `name` only where it is that dependency's implicit feature.
+    /// The declared `default` feature itself is enabled. `None` when the
+    /// package cannot be read, or its
+    /// `default` or a followed feature entry is not an array of strings:
+    /// the caller then resolves no feature gate.
+    pub(crate) fn default_library_features(
+        &self,
+        crate_root: &Path,
+    ) -> Option<std::collections::BTreeSet<String>> {
+        let package = self.default_library_package(crate_root)?;
+        // Package selection above reads the worktree; the feature table is
+        // read where the analyzed sources are read, so a dirty `Cargo.toml`
+        // cannot add a default feature the analyzed commit lacks (review of
+        // #12368). With no committed overlay active this is the worktree file.
+        let manifest = self.analyzed_manifest(&package)?;
+        let Some(table) = manifest.get("features") else {
+            return Some(std::collections::BTreeSet::new());
+        };
+        let table = table.as_table()?;
+        // `visited` bounds the walk so a list that names `default`
+        // (directly or through a cycle) terminates; `enabled` is what the
+        // walk credits, which includes a declared `default` feature.
+        let implicit = implicit_dependency_features(&manifest, table);
+        let mut enabled = std::collections::BTreeSet::new();
+        let mut visited = std::collections::BTreeSet::new();
+        let mut pending = vec!["default".to_string()];
+        while let Some(name) = pending.pop() {
+            if !visited.insert(name.clone()) {
+                continue;
+            }
+            // A name with no `[features]` entry is credited only as an
+            // optional dependency's implicit feature (Cargo has no other
+            // such feature, and drops the implicit one once any feature
+            // list spells `dep:name`); it walks no further.
+            let Some(entry) = table.get(&name) else {
+                if implicit.contains(&name) {
+                    enabled.insert(name);
+                }
+                continue;
+            };
+            enabled.insert(name.clone());
+            for member in entry.as_array()? {
+                let member = member.as_str()?;
+                if member.starts_with("dep:") {
+                    continue;
+                }
+                // `name/feature` enables the optional dependency `name`
+                // (and so its implicit feature, if it has one); the weak
+                // `name?/feature` enables nothing by itself.
+                if let Some((dependency, _)) = member.split_once('/') {
+                    if !dependency.ends_with('?') && implicit.contains(dependency) {
+                        enabled.insert(dependency.to_string());
+                    }
+                    continue;
+                }
+                if !visited.contains(member) {
+                    pending.push(member.to_string());
+                }
+            }
+        }
+        Some(enabled)
     }
 }
 
@@ -838,6 +1085,51 @@ fn committed_package(
 }
 
 /// One package manifest: its directory and parsed table.
+/// The implicit features Cargo creates for the package's optional
+/// dependencies: one per `optional = true` entry of `[dependencies]` and
+/// `[build-dependencies]` (target tables included), minus any name some
+/// `[features]` list spells as `dep:name`, which turns the implicit feature
+/// off. A default-feature name outside this set and the `[features]` table
+/// names nothing Cargo would enable, so it is not credited.
+fn implicit_dependency_features(
+    manifest: &toml::Table,
+    features: &toml::Table,
+) -> std::collections::BTreeSet<String> {
+    const SECTIONS: [&str; 2] = ["dependencies", "build-dependencies"];
+    let mut tables: Vec<&toml::Table> = SECTIONS
+        .iter()
+        .filter_map(|section| manifest.get(*section).and_then(toml::Value::as_table))
+        .collect();
+    if let Some(targets) = manifest.get("target").and_then(toml::Value::as_table) {
+        for target in targets.values().filter_map(toml::Value::as_table) {
+            tables.extend(
+                SECTIONS
+                    .iter()
+                    .filter_map(|section| target.get(*section).and_then(toml::Value::as_table)),
+            );
+        }
+    }
+    let mut names: std::collections::BTreeSet<String> = tables
+        .into_iter()
+        .flat_map(|table| table.iter())
+        .filter(|(_, spec)| {
+            spec.as_table()
+                .and_then(|spec| spec.get("optional"))
+                .and_then(toml::Value::as_bool)
+                == Some(true)
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    for entries in features.values().filter_map(toml::Value::as_array) {
+        for entry in entries.iter().filter_map(toml::Value::as_str) {
+            if let Some(suppressed) = entry.strip_prefix("dep:") {
+                names.remove(suppressed);
+            }
+        }
+    }
+    names
+}
+
 struct Package {
     directory: PathBuf,
     manifest: toml::Table,
@@ -865,6 +1157,7 @@ fn resolve(
     owner_dir: &Path,
     owner_root: &Path,
     snapshot: bool,
+    library_edge: bool,
 ) -> Option<Vec<String>> {
     let (owner, owner_chain) = nearest_package_snapshot(root, owner_dir, snapshot)?;
     let (test, test_chain) = nearest_package_snapshot(root, test_dir, snapshot)?;
@@ -892,8 +1185,13 @@ fn resolve(
         return None;
     }
     if test.directory == owner.directory {
+        // A library edge is a dependency between two packages; the same
+        // package needs no edge and is not this question (#11401).
+        if library_edge {
+            return None;
+        }
         // A dependency keyed by the library's own name would shadow it.
-        let shadowed = test_dependency_tables(&test.manifest)
+        let shadowed = test_dependency_tables(&test.manifest, false)
             .iter()
             .any(|table| table.keys().any(|key| normalized(key) == library));
         return (!shadowed).then(|| vec![library]);
@@ -916,7 +1214,7 @@ fn resolve(
     // read without their predicates, so a name bound to the owner on one
     // target and elsewhere on another is ambiguous and admitted nowhere.
     let mut elsewhere = Vec::new();
-    for table in test_dependency_tables(&test.manifest) {
+    for table in test_dependency_tables(&test.manifest, library_edge) {
         for (key, spec) in table {
             match import_name(
                 key,
@@ -1176,8 +1474,13 @@ fn is_library_root(package: &Package, owner_root: &Path) -> bool {
     stays_inside && owner_root == package.directory.join(relative)
 }
 
-fn test_dependency_tables(manifest: &toml::Table) -> Vec<&toml::Table> {
-    let direct = TEST_DEPENDENCY_TABLES
+fn test_dependency_tables(manifest: &toml::Table, library_edge: bool) -> Vec<&toml::Table> {
+    let tables = if library_edge {
+        LIBRARY_DEPENDENCY_TABLES
+    } else {
+        TEST_DEPENDENCY_TABLES
+    };
+    let direct = tables
         .iter()
         .filter_map(|name| manifest.get(*name).and_then(toml::Value::as_table));
     let targets = manifest
@@ -1187,7 +1490,7 @@ fn test_dependency_tables(manifest: &toml::Table) -> Vec<&toml::Table> {
         .flat_map(|targets| targets.values())
         .filter_map(toml::Value::as_table)
         .flat_map(|target| {
-            TEST_DEPENDENCY_TABLES
+            tables
                 .iter()
                 .filter_map(|name| target.get(*name).and_then(toml::Value::as_table))
         });
@@ -1219,6 +1522,296 @@ mod tests {
 
     const ROOT: &str = "[workspace]\nmembers = [\"pricing\", \"orders\"]\n";
     const PRICING: &str = "[package]\nname = \"pricing\"\nversion = \"0.1.0\"\n";
+    const MACRO_EXPORT: &str = "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\n";
+
+    #[test]
+    fn literal_macro_exports_follow_selected_local_library_identity() -> Result<(), String> {
+        for (dependencies, library, imported, expected) in [
+            ("other={path='target/other'}", "", "other", true),
+            ("other={path='target/other'}", "", "r#other", true),
+            ("other={path='target/other'}", "", "unrelated", false),
+            ("", "", "other", false),
+            ("other='1'", "", "other", false),
+            (
+                "other={workspace=true}\n[workspace.dependencies]\nother={path='target/other'}",
+                "",
+                "other",
+                true,
+            ),
+            (
+                "renamed={package='other',path='target/other'}",
+                "",
+                "renamed",
+                true,
+            ),
+            (
+                "renamed={package='elsewhere',path='target/other'}",
+                "",
+                "renamed",
+                false,
+            ),
+            (
+                "other={path='target/other'}",
+                "[lib]\nname='exported_macros'\npath='lib/macros.rs'\n",
+                "exported_macros",
+                true,
+            ),
+            (
+                "other={path='target/other'}",
+                "[lib]\nname='exported_macros'\npath='lib/macros.rs'\n",
+                "other",
+                false,
+            ),
+        ] {
+            let manifest = format!(
+                "[package]\nname='consumer'\nversion='0.0.0'\n[dev-dependencies]\n{dependencies}\n"
+            );
+            let exporter = format!("[package]\nname='other'\nversion='0.0.0'\n{library}");
+            let root = temp_workspace(
+                "literal-macro-identity",
+                &[
+                    ("Cargo.toml", &manifest),
+                    ("tests/pin.rs", ""),
+                    ("target/other/Cargo.toml", &exporter),
+                    ("target/other/src/lib.rs", MACRO_EXPORT),
+                    ("target/other/lib/macros.rs", MACRO_EXPORT),
+                ],
+            )?;
+            let members = MemberCrates::new(&root);
+            let witness = members.imported_literal_macro_export(
+                Path::new("tests/pin.rs"),
+                imported,
+                "assert_eq",
+            );
+            let missing = members.imported_literal_macro_export(
+                Path::new("tests/pin.rs"),
+                imported,
+                "assert_ne",
+            );
+            let _ = std::fs::remove_dir_all(&root);
+            assert_eq!(
+                witness.is_some(),
+                expected,
+                "{dependencies}; {library}; {imported}"
+            );
+            if let Some((path, line)) = witness {
+                let selected = if library.is_empty() {
+                    "target/other/src/lib.rs"
+                } else {
+                    "target/other/lib/macros.rs"
+                };
+                assert_eq!(path, Path::new(selected));
+                assert_eq!(line, 2);
+            }
+            assert!(missing.is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn literal_macro_export_witness_reads_the_selected_manifest_and_source_epoch()
+    -> Result<(), String> {
+        use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
+        let manifest = "[package]\nname='consumer'\nversion='0.0.0'\n[dev-dependencies]\nother={path='target/other'}\n";
+        let no_dependency = "[package]\nname='consumer'\nversion='0.0.0'\n";
+        for (worktree_manifest, worktree_source, selected_manifest, selected_source, expected) in [
+            (manifest, MACRO_EXPORT, Some(manifest), Some(""), false),
+            (manifest, "", Some(manifest), Some(MACRO_EXPORT), true),
+            (
+                manifest,
+                MACRO_EXPORT,
+                Some(no_dependency),
+                Some(MACRO_EXPORT),
+                false,
+            ),
+            (
+                no_dependency,
+                MACRO_EXPORT,
+                Some(manifest),
+                Some(MACRO_EXPORT),
+                true,
+            ),
+            (manifest, MACRO_EXPORT, None, Some(MACRO_EXPORT), false),
+            (manifest, MACRO_EXPORT, Some(manifest), None, false),
+        ] {
+            let root = temp_workspace(
+                "literal-macro-epoch",
+                &[
+                    ("Cargo.toml", worktree_manifest),
+                    ("tests/pin.rs", ""),
+                    (
+                        "target/other/Cargo.toml",
+                        "[package]\nname='other'\nversion='0.0.0'\n",
+                    ),
+                    ("target/other/src/lib.rs", worktree_source),
+                ],
+            )?;
+            let overlay = CommittedSourceOverlay::from_entries(
+                &root,
+                [
+                    ("Cargo.toml", selected_manifest.map(str::as_bytes)),
+                    (
+                        "target/other/src/lib.rs",
+                        selected_source.map(str::as_bytes),
+                    ),
+                ],
+            );
+            let witness = with_overlay(Some(std::sync::Arc::new(overlay)), || {
+                MemberCrates::new(&root).imported_literal_macro_export(
+                    Path::new("tests/pin.rs"),
+                    "other",
+                    "assert_eq",
+                )
+            });
+            let _ = std::fs::remove_dir_all(&root);
+            assert_eq!(witness.is_some(), expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn literal_macro_export_does_not_bypass_the_output_set_input_boundary() -> Result<(), String> {
+        let root = temp_workspace(
+            "literal-macro-boundary",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname='consumer'\nversion='0.0.0'\n[dev-dependencies]\nother={path='target/other'}\n",
+                ),
+                ("tests/pin.rs", ""),
+                (
+                    "target/other/Cargo.toml",
+                    "[package]\nname='other'\nversion='0.0.0'\n",
+                ),
+                ("target/other/src/lib.rs", MACRO_EXPORT),
+            ],
+        )?;
+        let boundary = crate::analysis::input_boundary::Boundary::new(&root)?;
+        let witness = MemberCrates::new(&root).imported_literal_macro_export(
+            Path::new("tests/pin.rs"),
+            "other",
+            "assert_eq",
+        );
+        let guarded = boundary.verify();
+        drop(boundary);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(witness.is_some());
+        assert!(
+            guarded.is_err(),
+            "excluded auxiliary source must not claim output-set custody"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_unrelated_external_library_root_does_not_hide_a_local_macro_export() -> Result<(), String>
+    {
+        let root = temp_workspace(
+            "literal-macro-external-root",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname='consumer'\nversion='0.0.0'\n[dev-dependencies]\nother={path='target/other'}\n",
+                ),
+                ("tests/pin.rs", ""),
+                (
+                    "target/other/Cargo.toml",
+                    "[package]\nname='other'\nversion='0.0.0'\n",
+                ),
+                ("target/other/src/lib.rs", MACRO_EXPORT),
+                (
+                    "unrelated/Cargo.toml",
+                    "[package]\nname='unrelated'\nversion='0.0.0'\n[lib]\npath='../../outside.rs'\n",
+                ),
+            ],
+        )?;
+        let inventory = selected_library_roots(&root).ok_or("complete library inventory")?;
+        assert!(inventory.iter().any(|path| !path.starts_with(&root)));
+        let witness = MemberCrates::new(&root).imported_literal_macro_export(
+            Path::new("tests/pin.rs"),
+            "other",
+            "assert_eq",
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(witness, Some((PathBuf::from("target/other/src/lib.rs"), 2)));
+        Ok(())
+    }
+
+    #[test]
+    fn unchanged_index_reuse_refreshes_warmed_auxiliary_macro_export_witnesses()
+    -> Result<(), String> {
+        use crate::analysis::facts::{
+            build_analysis_index_from_loaded_files, index_build_probe,
+            reuse_cached_index_with_loaded_files,
+        };
+        let manifest = "[package]\nname='consumer'\nversion='0.0.0'\n[dev-dependencies]\nother={path='target/other'}\n";
+        let no_dependency = "[package]\nname='consumer'\nversion='0.0.0'\n";
+        let production = "pub fn value() -> u32 { 8 }\n";
+        let test = "#[macro_use] extern crate other;\n#[test]\nfn pins() { assert_eq!(consumer::value(), 8); }\n";
+        let root = temp_workspace(
+            "literal-macro-reuse",
+            &[
+                ("Cargo.toml", manifest),
+                ("src/lib.rs", production),
+                ("tests/pin.rs", test),
+                (
+                    "target/other/Cargo.toml",
+                    "[package]\nname='other'\nversion='0.0.0'\n",
+                ),
+                ("target/other/src/lib.rs", ""),
+            ],
+        )?;
+        // Neither auxiliary Rust source nor a manifest is among the reused
+        // parsed facts. Only those auxiliary bytes change in the loop below.
+        let files = vec![
+            (PathBuf::from("src/lib.rs"), production.as_bytes().to_vec()),
+            (PathBuf::from("tests/pin.rs"), test.as_bytes().to_vec()),
+        ];
+        assert!(files.iter().all(|(path, _)| !path.starts_with("target")));
+        let mut cached = build_analysis_index_from_loaded_files(&root, &files, &[])?;
+        let original_hash = cached.files_content_hash.clone();
+        assert!(
+            cached
+                .index
+                .member_crates
+                .imported_literal_macro_export(Path::new("tests/pin.rs"), "other", "assert_eq",)
+                .is_none()
+        );
+        for (source, selected_manifest, expected) in [
+            (MACRO_EXPORT, manifest, true),
+            (MACRO_EXPORT, no_dependency, false),
+            (MACRO_EXPORT, manifest, true),
+            ("", manifest, false),
+        ] {
+            std::fs::write(root.join("target/other/src/lib.rs"), source)
+                .map_err(|error| error.to_string())?;
+            std::fs::write(root.join("Cargo.toml"), selected_manifest)
+                .map_err(|error| error.to_string())?;
+            let previous = cached.index.member_crates.clone();
+            // A cloned index shares the old authority until the same-byte
+            // reuse boundary installs fresh run-scoped memos.
+            cached.index = cached.index.clone();
+            let (reused, builds) = index_build_probe::observe(|| {
+                reuse_cached_index_with_loaded_files(cached, &root, &files, &[])
+            });
+            cached = reused?;
+            assert_eq!(builds, 0, "auxiliary refresh must not reparse the index");
+            assert_eq!(cached.files_content_hash, original_hash);
+            assert_eq!(cached.index.files().len(), files.len());
+            assert!(!Arc::ptr_eq(
+                &previous.imported_macro_exports,
+                &cached.index.member_crates.imported_macro_exports,
+            ));
+            let witness = cached.index.member_crates.imported_literal_macro_export(
+                Path::new("tests/pin.rs"),
+                "other",
+                "assert_eq",
+            );
+            assert_eq!(witness.is_some(), expected);
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
 
     #[test]
     fn binary_macro_boundaries_require_manifest_authority() -> Result<(), String> {
@@ -1244,6 +1837,7 @@ mod tests {
             (format!("{binary}[lib]\npath='lib.rs'\n"), "parse.rs", true),
             (PRICING.to_string(), "src/main.rs", true),
             (PRICING.to_string(), "src/bin/tool.rs", true),
+            (PRICING.to_string(), "src/bin/tool/main.rs", true),
             (PRICING.to_string(), "parse.rs", false),
             (PRICING.to_string(), "src/lib.rs", false),
             (format!("{PRICING}autobins=false\n"), "src/main.rs", false),
@@ -2028,6 +2622,133 @@ mod tests {
             files.extend(extra.iter().map(|(path, text)| (*path, text.as_str())));
             assert_eq!(names(&files, test, owner)?, Vec::<String>::new(), "{label}");
         }
+        Ok(())
+    }
+    /// #11401: the one name a library caller uses for another package's
+    /// library, from `[dependencies]` only, never the same
+    /// package.
+    fn library_name(
+        files: &[(&str, &str)],
+        caller: &str,
+        owner: &str,
+    ) -> Result<Option<String>, String> {
+        let root = temp_workspace("library-edge", files)?;
+        let name =
+            MemberCrates::new(&root).library_dependency_name(Path::new(caller), Path::new(owner));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(name)
+    }
+
+    const LIB_ROOT: &str = "[workspace]\nmembers = [\"wscore\", \"app\"]\n";
+    const LIB_WSCORE: &str = "[package]\nname = \"wscore\"\nversion = \"0.1.0\"\n";
+
+    fn app(dependencies: &str) -> String {
+        format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n{dependencies}")
+    }
+
+    #[test]
+    fn a_normal_path_dependency_names_the_library() -> Result<(), String> {
+        let manifest = app("[dependencies]\nwscore = { path = \"../wscore\" }\n");
+        let files = [
+            ("Cargo.toml", LIB_ROOT),
+            ("wscore/Cargo.toml", LIB_WSCORE),
+            ("app/Cargo.toml", manifest.as_str()),
+        ];
+        assert_eq!(
+            library_name(&files, "app/src/lib.rs", "wscore/src/lib.rs")?,
+            Some("wscore".to_string())
+        );
+        // The same files answer nothing for a dev-dependency, so the fixture
+        // is what makes the answer above.
+        let dev = app("[dev-dependencies]\nwscore = { path = \"../wscore\" }\n");
+        let files = [
+            ("Cargo.toml", LIB_ROOT),
+            ("wscore/Cargo.toml", LIB_WSCORE),
+            ("app/Cargo.toml", dev.as_str()),
+        ];
+        assert_eq!(
+            library_name(&files, "app/src/lib.rs", "wscore/src/lib.rs")?,
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_renamed_dependency_is_named_by_its_key_unless_another_name_competes() -> Result<(), String>
+    {
+        let renamed =
+            app("[dependencies]\ndisc = { path = \"../wscore\", package = \"wscore\" }\n");
+        let both = app(
+            "[dependencies]\nwscore = { path = \"../wscore\" }\ndisc = { path = \"../wscore\", package = \"wscore\" }\n",
+        );
+        let elsewhere =
+            app("[dependencies]\ndisc = { path = \"../wscore\", package = \"other\" }\n");
+        for (label, manifest, expected) in [
+            ("renamed", &renamed, Some("disc")),
+            ("two names", &both, None),
+            ("renamed to another package", &elsewhere, None),
+        ] {
+            let files = [
+                ("Cargo.toml", LIB_ROOT),
+                ("wscore/Cargo.toml", LIB_WSCORE),
+                ("app/Cargo.toml", manifest.as_str()),
+            ];
+            assert_eq!(
+                library_name(&files, "app/src/lib.rs", "wscore/src/lib.rs")?,
+                expected.map(str::to_string),
+                "{label}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn build_dependencies_and_other_packages_name_nothing() -> Result<(), String> {
+        let cases = [
+            (
+                "build-dependency",
+                app("[build-dependencies]\nwscore = { path = \"../wscore\" }\n"),
+                "app/src/lib.rs",
+            ),
+            (
+                "other path",
+                app("[dependencies]\nwscore = { path = \"../elsewhere\" }\n"),
+                "app/src/lib.rs",
+            ),
+            (
+                "registry",
+                app("[dependencies]\nwscore = \"1\"\n"),
+                "app/src/lib.rs",
+            ),
+        ];
+        for (label, manifest, caller) in cases {
+            let files = [
+                ("Cargo.toml", LIB_ROOT),
+                ("wscore/Cargo.toml", LIB_WSCORE),
+                ("app/Cargo.toml", manifest.as_str()),
+            ];
+            assert_eq!(
+                library_name(&files, caller, "wscore/src/lib.rs")?,
+                None,
+                "{label}"
+            );
+        }
+        // A caller inside the owner's own package is no dependency edge.
+        let manifest = app("[dependencies]\nwscore = { path = \"../wscore\" }\n");
+        let files = [
+            ("Cargo.toml", LIB_ROOT),
+            ("wscore/Cargo.toml", LIB_WSCORE),
+            ("app/Cargo.toml", manifest.as_str()),
+        ];
+        assert_eq!(
+            library_name(&files, "wscore/src/other.rs", "wscore/src/lib.rs")?,
+            None
+        );
+        // The owner must be the library root file itself.
+        assert_eq!(
+            library_name(&files, "app/src/lib.rs", "wscore/src/pricing.rs")?,
+            None
+        );
         Ok(())
     }
 }

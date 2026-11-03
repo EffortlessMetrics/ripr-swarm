@@ -223,10 +223,10 @@ fn actionable_repair_route(packet: Option<&GapRecord>) -> String {
         {
             return match route.assertion_shape.as_deref().filter(|s| !s.is_empty()) {
                 Some(shape) => format!(
-                    "add a focused assertion for the missing discriminator `{disc}` in the related test, shaped like `{shape}`"
+                    "add a focused assertion for the missing check `{disc}` in the related test, shaped like `{shape}`"
                 ),
                 None => format!(
-                    "add a focused assertion for the missing discriminator `{disc}` in the related test"
+                    "add a focused assertion for the missing check `{disc}` in the related test"
                 ),
             };
         }
@@ -455,7 +455,7 @@ mod tests {
         };
         assert_eq!(
             actionable_repair_route(Some(&record)),
-            "add a focused assertion for the missing discriminator `throws TypeError matching 'invalid limit'` in the related test, shaped like `expect(parseLimit('x')).toThrow(expected)`"
+            "add a focused assertion for the missing check `throws TypeError matching 'invalid limit'` in the related test, shaped like `expect(parseLimit('x')).toThrow(expected)`"
         );
     }
 
@@ -651,11 +651,9 @@ mod tests {
             "{projected:?}"
         );
         assert!(
-            projected
-                .iter()
-                .any(|line| line.starts_with(
-                    "repair_action: add a focused assertion for the missing discriminator `amount == threshold`"
-                )),
+            projected.iter().any(|line| line.starts_with(
+                "repair_action: add a focused assertion for the missing check `amount == threshold`"
+            )),
             "{projected:?}"
         );
         assert!(

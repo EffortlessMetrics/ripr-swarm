@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0231r43-non-literal-expected-operand",
+  "subject_id": "authored-spec0231-43",
+  "diff": "cases/spec0231r43-non-literal-expected-operand.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 8
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "scalar_return_value",
+  "test_shape": "claims_assert_ok_eq_bound_expected",
+  "hard_case": "The expected operand is a bound local (`want`), not a literal, so the claims assertion stays unknown / none.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Ok(2 + n)",
+        "mutated_line": "Ok(2 + n)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::parse_doubles",
+        "equivalence_review": "not equivalent: the test fails on the changed value"
+      },
+      {
+        "replacement": "Ok(2 / n)",
+        "mutated_line": "Ok(2 / n)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::parse_doubles",
+        "equivalence_review": "not equivalent: the test fails on the changed value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`assert_ok_eq!(parse(5), want)` with `let want = 10;` pins the payload at runtime and kills every mutant, but the expected operand is not a literal. Spec cells: RIPR-SPEC-0231 example 43 (a non-literal expected operand reads unknown / none).",
+  "labeling_observation": {
+    "ripr_commit": "99b377f5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#43"
+  ]
+}

@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,7 +1,7 @@
+ pub fn bucket(raw: &str) -> u32 {
+     let picked = match raw {
+         "k" => 1_000,
+-        _ => 10,
++        _ => 20,
+     };
+     picked
+ }

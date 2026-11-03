@@ -273,7 +273,19 @@ rejected alternative. Any can be reversed later without touching the rest.
    `assert_eq!` that reads the whole field from the binding that ran the
    owner, after the call, with a non-default expected value, in a test that is
    neither `#[ignore]`d nor `#[should_panic]`. A sibling-field read, a read on
-   another binding, a later write and no read never credit it. Repository
+   another binding, a later write and no read never credit it. The owner must borrow
+   its receiver (`&self`, `&mut self`, `self: &Self`): a by-value receiver
+   (`self`, `mut self`, a builder's `fn retries(mut self, n) -> Self`) writes a
+   moved copy, and for a `Copy` type the test's binding keeps its old field,
+   so no read of that binding confirms the write. Such a write stays unjudged;
+   ripr cannot yet confirm it through the value the call chain returns. `fixtures/rust_copy_builder_field_write`
+   pins this in the RIPR-SPEC-0108 honesty corpus. The guidance follows the receiver: for a borrowed
+   receiver the hover, the agent packet's `missing_oracle_shape` and the
+   hand-written step say to assert the field on the value the method was called
+   on; for a by-value receiver they say to assert it on the value the call
+   returns (the stub refusal is `field_written_by_value`, not
+   `field_written_in_method`); when the receiver mode is not recorded they name
+   neither value. Repository
    scope resolves no `self` methods, so a later `self.m()` call counts as a
    possible write and the write gets no seam. Only a field this file declares
    plain `pub` gets the seam: a private or `pub(crate)` field is observed
@@ -287,6 +299,14 @@ rejected alternative. Any can be reversed later without touching the rest.
    crediting a seam by the field name alone, which any binding or sibling
    read would satisfy; and starting a repair from a weak read of the written
    field, which needs its own start policy and proof.
+
+`ripr agent stub` refuses a field-write seam with its own reason
+(`field_written_in_method`): the value to check is the receiver after the
+call, which the stub cannot write. The `ripr check` hand-written step for it
+says to call the method with an input for which old and new code store
+different values and assert the changed field on the value the method was
+called on (for a builder, on the value the chain returns), instead of the
+struct-literal wording about a wrapper or `Err` variant.
 
 ## Required Evidence
 

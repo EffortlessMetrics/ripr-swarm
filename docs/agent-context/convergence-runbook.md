@@ -110,6 +110,30 @@ leave a handback comment that names the head, evidence and resume condition,
 and move to another claim. Deleting or overwriting a raced candidate is not a
 repair.
 
+## Plans are hypotheses
+
+An issue's Investigation comment is a researched plan, not a spec: it records
+what was true when it was written. Before implementing, re-resolve every
+anchor — cited files, symbols, line numbers, issue states, linked PRs — at
+current main. If the plan is wrong at code time, stop and record the
+discrepancy as the lane's blocker; do not improvise around it. The lanes that
+did this (the rival-race skips and the plan-discrepancy stop) were the
+convergence campaign's correct yields, and the lanes that improvised around
+wrong plans produced unused work. Premises rot at fleet velocity
+([LEARNINGS: premise rot](../LEARNINGS.md)).
+
+## Decision briefs
+
+When a lane needs an owner ruling, post ONE comment at the ruling site that
+makes ruling cheap: option-by-option concrete costs, an empirical check of
+the decision's hinge, and a ready-to-execute plan for the recommended
+default. The convergence campaign collapsed a six-item decision ledger
+(#11501) to minutes-scale bookkeeping this way — four of the six items
+dissolved on investigation before any ruling, because the brief's empirical
+check showed main had already merged the resolution. Re-verify the hinge
+against current main immediately before posting
+([LEARNINGS: premise rot](../LEARNINGS.md)).
+
 ## Platform discipline
 
 Never bless goldens on Windows: separator-sensitive hashes make

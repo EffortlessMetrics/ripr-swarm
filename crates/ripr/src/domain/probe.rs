@@ -108,6 +108,18 @@ pub enum StopReason {
     /// the ambiguous name but cannot bind it to one workspace function.
     /// Classification is `static_unknown`. See RIPR-SPEC-0159 / #7272.
     HelperIdentityUnresolved,
+    /// The changed line is a compile-time assertion (`const _: () = assert!(..)`,
+    /// `static_assertions::const_assert!`). A violating edit fails to build; it
+    /// is not a test-kill question, so ripr states that instead of placing the
+    /// line in a function. Classification stays `static_unknown`, never
+    /// `exposed` (#11547).
+    CompileTimeInvariant,
+    /// The changed code states an unsafe contract the compiler does not
+    /// check: an `unsafe fn` (callers now carry a safety obligation) or an
+    /// unchecked assumption (`unreachable_unchecked`, `assert_unchecked`).
+    /// A safe-code test cannot discharge it. Classification stays
+    /// `static_unknown`, never `exposed` (#11549).
+    UnsafeObligation,
 }
 
 impl StopReason {
@@ -128,6 +140,8 @@ impl StopReason {
             StopReason::MacroReachUnresolved => "macro_reach_unresolved",
             StopReason::GapEvidenceUnresolved => "gap_evidence_unresolved",
             StopReason::HelperIdentityUnresolved => "helper_identity_unresolved",
+            StopReason::CompileTimeInvariant => "compile_time_invariant",
+            StopReason::UnsafeObligation => "unsafe_obligation",
         }
     }
 
@@ -189,6 +203,14 @@ impl StopReason {
                 "ripr cannot tell which workspace function a test call names because that name \
                  is not unique"
             }
+            StopReason::CompileTimeInvariant => {
+                "the changed line is a compile-time assertion, so a violating edit fails to \
+                 build instead of failing a test"
+            }
+            StopReason::UnsafeObligation => {
+                "the change adds or alters an unsafe contract (an unsafe function or an \
+                 unchecked assumption) that safe test code cannot discharge"
+            }
         }
     }
 
@@ -224,36 +246,44 @@ impl Probe {
         if self.family != ProbeFamily::StaticUnknown {
             return None;
         }
-        let mut rest = self.expression.trim_start();
-        if let Some(after_pub) = rest.strip_prefix("pub") {
-            rest = after_pub.trim_start();
-            if rest.starts_with('(') {
-                rest = rest[rest.find(')')? + 1..].trim_start();
-            }
-        }
-        rest = rest
-            .strip_prefix("const ")
-            .or_else(|| rest.strip_prefix("static "))?
-            .trim_start();
-        rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
-        let end = rest
-            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .unwrap_or(rest.len());
-        let name = &rest[..end];
-        let declaration = rest[end..].trim_start();
-        // An initializer on the line separates an item from a generics or
-        // parameter continuation line such as `const N: usize,`.
-        let named_item = !name.is_empty()
-            && name != "_"
-            && declaration.starts_with(':')
-            && declaration.contains('=');
-        named_item.then_some(name)
+        declared_const_name(&self.expression)
     }
 
     /// Whether `ripr check` resolves a stub route for this probe.
     pub(crate) fn offers_stub_route(&self) -> bool {
         self.family.offers_stub_route() || self.changed_const_name().is_some()
     }
+}
+
+/// The name of the `const` or `static` item a changed line declares
+/// (`pub const GREETING: &str = "hi";` names `GREETING`), when the line holds
+/// its initializer. Shared by the static-unknown const probe and the #11400
+/// reader retarget, so both read one declaration rule.
+pub(crate) fn declared_const_name(expression: &str) -> Option<&str> {
+    let mut rest = expression.trim_start();
+    if let Some(after_pub) = rest.strip_prefix("pub") {
+        rest = after_pub.trim_start();
+        if rest.starts_with('(') {
+            rest = rest[rest.find(')')? + 1..].trim_start();
+        }
+    }
+    rest = rest
+        .strip_prefix("const ")
+        .or_else(|| rest.strip_prefix("static "))?
+        .trim_start();
+    rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+    let end = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let name = &rest[..end];
+    let declaration = rest[end..].trim_start();
+    // An initializer on the line separates an item from a generics or
+    // parameter continuation line such as `const N: usize,`.
+    let named_item = !name.is_empty()
+        && name != "_"
+        && declaration.starts_with(':')
+        && declaration.contains('=');
+    named_item.then_some(name)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -424,6 +454,19 @@ pub(crate) fn input_boundary_fact<'a>(
     }
 }
 
+/// Row-local exact-discriminator support for #5575: typed value/field/error/effect
+/// facts only, never input-activation gaps (guard unentered, unselected arm).
+pub(crate) fn row_exact_discriminator_fact<'a>(
+    facts: &'a [MissingDiscriminatorFact],
+    family: &ProbeFamily,
+) -> Option<&'a MissingDiscriminatorFact> {
+    let boundary = input_boundary_fact(facts, family);
+    facts.iter().find(|fact| {
+        !is_unselected_input_reason(&fact.reason)
+            && boundary.is_none_or(|boundary| !std::ptr::eq(*fact, boundary))
+    })
+}
+
 /// The missing discriminator that names an exact assertion no test makes
 /// (an error variant or a constructed field): the first fact that is not the
 /// predicate input boundary.
@@ -468,6 +511,11 @@ pub struct ActivationEvidence {
     pub observed_values: Vec<ValueFact>,
     pub missing_discriminators: Vec<MissingDiscriminatorFact>,
 }
+
+/// Next-step text for a finding whose related test has a strong check that
+/// ripr cannot tie to the changed line. The TypeScript classifier writes it
+/// and the preview card reads it, so both stay in step (#12463).
+pub(crate) const STRONG_CHECK_UNTIED_NEXT_STEP: &str = "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelatedTest {
@@ -866,6 +914,17 @@ pub(crate) fn boundary_input_observed_with_weak_oracle(
 }
 
 impl Finding {
+    /// The (file, line, expression) a finding speaks about. Probes of
+    /// different families can sit on one expression (#11554); they share this
+    /// key, so counts and selection can treat them as one verdict.
+    pub(crate) fn expression_key(&self) -> (&std::path::Path, usize, &str) {
+        (
+            self.probe.location.file.as_path(),
+            self.probe.location.line,
+            self.probe.expression.as_str(),
+        )
+    }
+
     /// A weak predicate finding whose related tests already supply the changed
     /// boundary input (infection `yes`): the remaining gap is the oracle, not
     /// the input (#10622). Static evidence only. The finding must also carry
@@ -928,6 +987,27 @@ impl Finding {
         self.source_currentness.permits_candidate_action()
     }
 
+    /// The one sentence every surface uses to say a finding is not a
+    /// candidate edit target (#11905). `None` for a candidate-current finding.
+    /// Human, hover and any later renderer take the wording from here so a
+    /// base-side finding reads the same on every surface.
+    pub fn source_currentness_disclosure(&self) -> Option<String> {
+        if self.is_candidate_actionable() {
+            return None;
+        }
+        // `unresolved_subject` means the producer could not tell, so it must
+        // not be called base-side evidence.
+        let reason = if self.source_currentness.is_base_side() {
+            "base-side evidence, not a candidate edit target"
+        } else {
+            "source currentness not established, not a candidate edit target"
+        };
+        Some(format!(
+            "{} \u{2014} {reason}",
+            self.source_currentness.as_str()
+        ))
+    }
+
     /// Mark this finding as produced by a repo-mode run (#5531). The single
     /// place that sets the typed scope and derives the compatibility
     /// evidence line `analysis_scope: repo` (disclosed in
@@ -957,6 +1037,10 @@ impl Finding {
         }
     }
 }
+
+#[cfg(kani)]
+#[path = "probe_kani.rs"]
+mod kani_proofs;
 
 #[cfg(test)]
 mod tests {
@@ -1043,6 +1127,8 @@ mod tests {
             StopReason::MacroReachUnresolved,
             StopReason::GapEvidenceUnresolved,
             StopReason::HelperIdentityUnresolved,
+            StopReason::CompileTimeInvariant,
+            StopReason::UnsafeObligation,
         ] {
             let gloss = reason.describe();
             assert!(!gloss.contains("  "), "{}: {gloss}", reason.as_str());

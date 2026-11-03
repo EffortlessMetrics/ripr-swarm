@@ -18,13 +18,13 @@ Start here:
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
     test may already exercise it through macros, helper-call chains, or integration tests that
     ripr's static model does not yet trace. If none does, add a co-located test that reaches and
-    observes the changed behavior so a discriminator exists
-  Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no
+    observes the changed behavior so an assertion can notice if it is wrong
+  Evidence: reach no · infection unknown · propagation yes · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -35,6 +35,7 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/glob_import_qualified_other_module/input --diff <cwd>/fixtures/glob_import_qualified_other_module/diff.patch --mode fast probe:src_lib.rs:return_value:7a1193ba
   ripr context --root <cwd>/fixtures/glob_import_qualified_other_module/input --diff <cwd>/fixtures/glob_import_qualified_other_module/diff.patch --mode fast --at probe:src_lib.rs:return_value:7a1193ba
   no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that checks the changed return value; safe test target; new test proposal blocked: the selected inline test module does not have ordinary Rust access to the owner; follow the Next step above, then rerun `ripr check`

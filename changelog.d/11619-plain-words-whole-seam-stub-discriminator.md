@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The default `ripr check` screen says "spot" and "the surrounding code as a whole" where it said "seam" in the untied-spot and conflicting-evidence repair-start refusals and the test-stub chooser, and the no-static-path Next step ends "so an assertion can notice if it is wrong" instead of "so a discriminator exists" (#11619). JSON keeps the stub reason; the Next step string is shared by every surface.

@@ -27,6 +27,11 @@
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_notify.py:python_preview:6b1824c6",
         "family": "side_effect",
@@ -48,7 +53,7 @@
         {"kind":"call_effect","text":"notifier(\"receipt.sent\", order_id)","line":2}
       ],
       "evidence": ["owner: send_receipt", "owner_kind: function", "test_framework: pytest (test_send_receipt_notifies_callback)", "test_verify_command: python -m pytest tests/test_notify.py::test_send_receipt_notifies_callback (test_send_receipt_notifies_callback)", "related_test_relation: syntactic_call (test_send_receipt_notifies_callback)", "test_oracle: mock_expectation medium (test_send_receipt_notifies_callback)", "test_oracle_shape: mock_expectation (test_send_receipt_notifies_callback)"],
-      "missing": ["Related Python test reaches `send_receipt` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `send_receipt` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {

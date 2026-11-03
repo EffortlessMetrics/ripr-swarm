@@ -96,14 +96,17 @@ validates every committed producer document instead, so a qualification run does
 not depend on which subjects someone remembered to register (#3919, #3920):
 
 ```bash
-cargo xtask schema-producer-sweep [--rev REV] \
+cargo xtask schema-producer-sweep [--rev REV | --worktree] \
   [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...
 ```
 
 Every schema and document it validates is read from one commit (`--rev`,
 default `HEAD`) through `git archive`, never from the working tree, so
 uncommitted edits and untracked files such as live artifacts cannot change the
-result. It uses the same validator as the registered contracts and writes
+result. Release qualification always uses this commit-bound mode. `--worktree`
+is the local `precommit` mode only: it snapshots HEAD plus uncommitted and
+untracked non-ignored files through a private index, and cannot combine with
+`--rev` or `--live-replay`. It uses the same validator as the registered contracts and writes
 `target/ripr/reports/schema-producer-sweep.json`: per schema row, the schema
 digest, discovered and validated producer counts, edge fixtures, excluded
 stimulus, live artifacts, every subject's byte digest, the commit, and a `rows_sha256` digest over all
@@ -142,8 +145,8 @@ every run, and on pull requests and merge groups also `pr-evidence`
 unparseable artifact fails the step, so a producer that stops writing cannot
 turn a row into `not_run`. A producer that drifts from its published schema
 (for example renaming a `doctor` field) fails the gate with
-`missing required field` / `unexpected field`. Replacing the required gate's
-hand-picked subject selection is still #3919.
+`missing required field` / `unexpected field`. Replacing the required gate's hand-picked subject selection landed in #3919; the
+release sweep remains the commit-bound qualification replay (#3920).
 
 Reviewed narrower authority (#9561): `repair-attempt` and `execution_result`
 need an agent repair transaction, which is too heavy to add to the required

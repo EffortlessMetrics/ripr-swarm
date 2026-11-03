@@ -11,7 +11,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_commands.py:python_preview:e40b24a9",
+      "id": "probe:src_commands.py:python_preview:v1-814210a5",
       "canonical_gap_id": "gap:python:src/commands.py:ship:call_or_output_effect:side_effect:click.echo_shipment_queued",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -27,8 +27,14 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "oracle_below_strong", "summary": "related tests hold no exact-value oracle (weak or smoke assertion)"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.",
       "probe": {
-        "id": "probe:src_commands.py:python_preview:e40b24a9",
+        "id": "probe:src_commands.py:python_preview:v1-814210a5",
         "family": "side_effect",
         "delta": "effect",
         "file": "src/commands.py",
@@ -125,8 +131,8 @@
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
-      "recommended_next_step": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `output contains \"shipment queued\"`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `output contains \"shipment queued\"`.",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `output contains \"shipment queued\"`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `output contains \"shipment queued\"`.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",

@@ -206,6 +206,28 @@
       "description": "A boolean that is null where the producer could not determine the value.",
       "type": ["boolean", "null"]
     },
+    "config_validation": {
+      "description": "Structured semantic ripr.toml validation coordinates (#2624). Present on a failing config check when the loader produced a typed ConfigDiagnostic; omitted for structural TOML parse failures.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "file", "location_status", "message"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "config_path": { "$ref": "#/$defs/nullable_string" },
+        "file": { "type": "string", "minLength": 1 },
+        "location_status": { "enum": ["exact", "unavailable"] },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "start_column": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "end_column": { "type": "integer", "minimum": 1 },
+        "invalid_value": { "$ref": "#/$defs/nullable_string" },
+        "expected_values": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "message": { "type": "string" }
+      }
+    },
     "check": {
       "type": "object",
       "additionalProperties": false,
@@ -214,6 +236,7 @@
         "name": { "type": "string", "minLength": 1 },
         "status": { "$ref": "#/$defs/check_status" },
         "evidence": { "$ref": "#/$defs/nullable_string" },
+        "validation": { "$ref": "#/$defs/config_validation" },
         "elapsed_ms": {
           "description": "How long this check's computation took, in milliseconds (additive, #8540). Omitted for skipped checks. Volatile (#9807): emitted only with `ripr doctor --json --timings`.",
           "type": "integer",
@@ -255,6 +278,26 @@
           "description": "Whether the effective configuration enables this language; null when the configuration could not be loaded, so enablement is unknown rather than disabled.",
           "$ref": "#/$defs/nullable_boolean",
           "type": ["boolean", "null"]
+        },
+        "availability_state": {
+          "description": "The shared language-availability state, added within schema 0.4 and therefore optional so earlier 0.4 documents stay valid; the producer always emits it. `null` when the configuration could not be loaded (enablement unknown). Availability never means the adapter ran or that the support tier moved.",
+          "enum": [
+            "detected_compiled_enabled",
+            "detected_compiled_disabled",
+            "detected_not_compiled",
+            "configured_enabled_not_detected",
+            "configured_enabled_but_unavailable",
+            "auto_detected_enabled",
+            "supported_but_no_current_scope",
+            "adapter_ran_with_limitations",
+            "not_enabled",
+            null
+          ]
+        },
+        "remediation": {
+          "description": "Ordered remediation steps for the availability state, added within schema 0.4 and therefore optional; the producer always emits it, empty when none applies.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
         }
       }
     },

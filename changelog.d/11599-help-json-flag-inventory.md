@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr help --json` (schema_version 4) replaces the conflated `json_support` boolean with `accepts_json_flag` (the exact stdout spelling, `--json` or `--format json`, or null) and `writes_json_artifacts` (file-only JSON), and adds a per-command `flags` inventory (name, value arity, closed value sets, required, repeatable, env) with `flags_scope` so agents no longer scrape `--help --all` (#11599).

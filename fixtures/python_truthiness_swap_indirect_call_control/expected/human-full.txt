@@ -35,6 +35,7 @@ Language
 
 Static exposure
   exposed (info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `pick`
@@ -46,11 +47,12 @@ Evidence
   - related test tests/test_lib.py:4 test_pick uses strong exact value oracle: assert list(map(pick, [0], [3])) == [3]
 
 Weakness
-  - Related Python test reaches `pick` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  - Related Python test reaches `pick` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check
 
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_truthiness_swap_indirect_call_control/input --diff <cwd>/fixtures/python_truthiness_swap_indirect_call_control/diff.patch --mode fast probe:src_lib.py:python_preview:fc6faa73
   ripr context --root <cwd>/fixtures/python_truthiness_swap_indirect_call_control/input --diff <cwd>/fixtures/python_truthiness_swap_indirect_call_control/diff.patch --mode fast --at probe:src_lib.py:python_preview:fc6faa73
 
