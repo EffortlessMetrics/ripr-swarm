@@ -671,7 +671,14 @@ pub(crate) fn callee_is_unique(callee_name: &str, index: &RustIndex) -> bool {
 /// scope (#7088): `test_call_is_shadowed` asks this once per callee, not once
 /// per wrapper call.
 fn callee_is_unique_cached(callee_name: &str, index: &RustIndex) -> bool {
-    let index_id = format!("{:p}", std::ptr::from_ref(index));
+    // The index address plus its storage identity (arena addresses and the
+    // function-membership revision): `push_function` on the same index, or
+    // another index reusing the address, must not read a stale answer.
+    let index_id = format!(
+        "{:p}:{:?}",
+        std::ptr::from_ref(index),
+        index.storage_identity()
+    );
     crate::analysis::syntax::run_memo::memoize_with(
         crate::analysis::syntax::run_memo::Product::ForeignEntryImport,
         1,
@@ -5633,6 +5640,38 @@ mod tests {
         let twins = index(vec![function("src/lib.rs", "order_discount", &[]), twin]);
         assert!(test_call_is_shadowed(&twins, &test, "order_discount", 11));
         assert!(!callee_is_unique("order_discount", &twins));
+    }
+
+    // #7088 review: a memo scope must not outlive a membership change of the
+    // index it answered for.
+    #[test]
+    fn callee_is_unique_cached_tracks_membership_changes_within_a_scope() {
+        let mut idx = index(vec![function("src/lib.rs", "order_discount", &[])]);
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        assert!(callee_is_unique_cached("order_discount", &idx));
+        idx.push_function(function("src/tests.rs", "order_discount", &[]));
+        assert!(!callee_is_unique("order_discount", &idx));
+        assert!(
+            !callee_is_unique_cached("order_discount", &idx),
+            "a same-named function pushed after the first answer makes the callee ambiguous"
+        );
+    }
+
+    // #7088 review: an imported (renamed) callee must stay defeated through
+    // the memo, not only the no-import case.
+    #[test]
+    fn test_call_is_shadowed_memo_keeps_a_renamed_import_defeated() {
+        let idx = index(vec![function("src/lib.rs", "order_discount", &[])]);
+        let mut test = test_summary_calling("order_discount", "order_discount(10)");
+        test.body =
+            "use other::compute as order_discount;\nfn t() {\n    order_discount(10);\n}\n".into();
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        for line in [2_usize, 3] {
+            assert!(
+                test_call_is_shadowed(&idx, &test, "order_discount", line),
+                "renamed import defeats the call on line {line}"
+            );
+        }
     }
 
     // #7088: import defeat and uniqueness are call-line-independent; only the
