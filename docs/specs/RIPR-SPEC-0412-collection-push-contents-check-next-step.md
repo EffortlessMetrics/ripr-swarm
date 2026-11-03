@@ -14,7 +14,8 @@ Linked issues:
 
 Support-tier impact:
 
-- None. Guidance wording only; no repair signal, class, or schema changes.
+- None. Guidance wording only; no repair signal, class, or schema changes, and
+  the canonical boundary remains [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
