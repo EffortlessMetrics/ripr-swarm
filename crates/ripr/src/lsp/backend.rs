@@ -41,10 +41,10 @@ use super::refresh_scheduler::{
 };
 use super::state::{
     AnalysisAttemptState, AnalysisFailure, AnalysisFailureKind, AnalysisHealth, AnalysisSnapshot,
-    ConfigPullCoordinator, ConfigPullState, DocumentStalenessReason, DocumentState,
-    QuarantineLedger, QuarantineTransition, WorkspaceFolderEntry, WorkspaceFolderEventRejection,
-    WorkspaceFolderSelection, WorkspaceFolderSet, WorkspaceRootAuthority, WorkspaceRootState,
-    content_digest, format_duration,
+    CommittedDiagnostics, ConfigPullCoordinator, ConfigPullState, DocumentStalenessReason,
+    DocumentState, QuarantineLedger, QuarantineTransition, WorkspaceFolderEntry,
+    WorkspaceFolderEventRejection, WorkspaceFolderSelection, WorkspaceFolderSet,
+    WorkspaceRootAuthority, WorkspaceRootState, content_digest, format_duration,
 };
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uris_match,
@@ -220,6 +220,13 @@ pub(super) struct Backend {
     /// snapshot: a byte-identical repeated degradation warns once, a new
     /// signature warns again, and a cleared signature logs one recovery line.
     last_component_degradation: Mutex<Option<String>>,
+    /// #12416: the scope sentence covered by the last deduplicated
+    /// empty-scope INFO disclosure. Compared per committed snapshot: a
+    /// byte-identical repeated empty scope discloses once, a changed
+    /// sentence (new outcome kind or base) discloses again, and a populated
+    /// scope clears the state so a later empty scope discloses again.
+    /// Mirrors `last_component_degradation`.
+    last_scope_outcome: Mutex<Option<String>>,
     /// The snapshot input identity whose pull-side partial-delivery
     /// disclosures have already been logged (#9604 finding 35). Compared per
     /// document pull: repeated pulls of the same committed selection warn
@@ -312,7 +319,7 @@ struct DiagnosticsInputWatch {
 pub(super) struct RefreshTransaction {
     pub(super) plan: DiagnosticRefreshPlan,
     pub(super) snapshot: AnalysisSnapshot,
-    pub(super) previous_diagnostics: BTreeMap<Uri, Vec<Diagnostic>>,
+    pub(super) previous_diagnostics: CommittedDiagnostics,
     /// The analyzed saved-content identity this transaction would record
     /// for each open document, computed at prepare time from the persisted
     /// bytes the analysis read (#1970). Applied to the document store only
@@ -373,6 +380,7 @@ impl Backend {
             watched_files_relative_pattern_support: AtomicBool::new(false),
             diagnostics_input_watch: AsyncMutex::new(DiagnosticsInputWatch::default()),
             last_component_degradation: Mutex::new(None),
+            last_scope_outcome: Mutex::new(None),
             pull_delivery_disclosure_logged_for: Mutex::new(None),
             last_analysis_failure_shown: Mutex::new(None),
             unavailable_language_notices_shown: Mutex::new(BTreeSet::new()),
@@ -752,8 +760,14 @@ impl Backend {
         #[cfg(test)]
         self.wait_consumed_source_barrier(generation, &diagnostics.snapshot)
             .await;
-        let summary = RefreshLogSummary::from_snapshot(generation, &diagnostics.snapshot)
-            .with_enabled_languages(&enabled_languages);
+        let summary = RefreshLogSummary::from_snapshot(
+            generation,
+            &diagnostics.snapshot,
+            self.analysis_config()
+                .as_ref()
+                .and_then(|config| config.base_ref.as_deref()),
+        )
+        .with_enabled_languages(&enabled_languages);
         let Some(transaction) = self.prepare_refresh_transaction(diagnostics) else {
             self.report_refresh_failure_after(
                 request,
@@ -1096,7 +1110,7 @@ impl Backend {
         self.disclose_unavailable_languages_to_generic_client()
             .await;
         self.log_refresh_completed(
-            summary,
+            &summary,
             published_uri_count,
             unchanged_uri_count,
             cleared_uri_count,
@@ -1104,6 +1118,9 @@ impl Backend {
             suppressed_payload_bytes,
         )
         .await;
+        // #12416: the not-all-clear empty-scope sentence rides after the
+        // counter line it explains, deduplicated per distinct scope sentence.
+        self.log_scope_outcome_disclosure(&summary).await;
         RefreshAttemptOutcome::Published
     }
 
@@ -1296,6 +1313,7 @@ impl Backend {
         Some(RefreshTransaction {
             plan,
             snapshot,
+            // Arc clone of the previous generation plus its sparse overlay.
             previous_diagnostics: last_diagnostics.clone(),
             pending_analyzed,
             pending_entered,
@@ -1356,18 +1374,23 @@ impl Backend {
         // the client receives a quarantine marker. When quarantine lifts, the
         // next plan re-publishes the full saved-state set instead of diffing
         // against findings the client was not shown as line-local diagnostics
-        // (#1970/#7771).
-        let mut committed_diagnostics = snapshot.diagnostics_by_uri.clone();
-        for (uri, diagnostics) in committed_diagnostics.iter_mut() {
-            if documents
-                .state_for_uri(uri)
-                .is_some_and(|state| state.is_quarantined())
-            {
-                diagnostics.clear();
-            }
-        }
+        // (#1970/#7771). Overlay only the quarantined URIs; the generation
+        // itself stays shared with the snapshot (#4998).
+        let cleared = snapshot
+            .diagnostics_by_uri
+            .keys()
+            .filter(|uri| {
+                documents
+                    .state_for_uri(uri)
+                    .is_some_and(DocumentState::is_quarantined)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         drop(documents);
-        *last_diagnostics = committed_diagnostics;
+        *last_diagnostics = CommittedDiagnostics::from_generation_with_cleared(
+            snapshot.diagnostics_by_uri.clone(),
+            cleared,
+        );
         *last_diagnostic_uris = plan.current_uris.clone();
         *latest_analysis = Some(snapshot);
         *stored_result_ids = Some(diagnostic_result_ids);
@@ -1376,7 +1399,7 @@ impl Backend {
 
     async fn rollback_refresh_transaction(
         &self,
-        previous_diagnostics: &BTreeMap<Uri, Vec<Diagnostic>>,
+        previous_diagnostics: &CommittedDiagnostics,
         plan: &DiagnosticRefreshPlan,
     ) {
         if self.pull_diagnostics_enabled() {
@@ -1390,10 +1413,7 @@ impl Backend {
         if self.refresh_scheduler.is_stopping() {
             return;
         }
-        let mut uris = previous_diagnostics
-            .keys()
-            .cloned()
-            .collect::<BTreeSet<_>>();
+        let mut uris = previous_diagnostics.uris();
         uris.extend(plan.current_uris.iter().cloned());
         let previous_selection = self
             .latest_analysis
@@ -1407,10 +1427,7 @@ impl Backend {
         for uri in uris {
             let diagnostics = rollback_push_diagnostics(
                 &uri,
-                previous_diagnostics
-                    .get(&uri)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
+                previous_diagnostics.get(&uri).unwrap_or(&[]),
                 previous_selection.as_deref(),
                 previous_omissions.get(uri.as_str()),
                 self.document_quarantine(&uri).is_some(),
@@ -1429,7 +1446,7 @@ impl Backend {
     async fn rollback_refresh_transaction_if_authority_is_current(
         &self,
         request: &RefreshRequest,
-        previous_diagnostics: &BTreeMap<Uri, Vec<Diagnostic>>,
+        previous_diagnostics: &CommittedDiagnostics,
         plan: &DiagnosticRefreshPlan,
     ) {
         if self.refresh_authority_is_unchanged(request) {
@@ -1920,7 +1937,36 @@ impl Backend {
             .lock()
             .ok()?
             .get(uri)
-            .cloned()
+            .map(<[Diagnostic]>::to_vec)
+    }
+
+    #[cfg(test)]
+    pub(super) fn last_diagnostics_generation_for_test(
+        &self,
+    ) -> Option<super::state::DiagnosticsGeneration> {
+        self.quarantine
+            .last_diagnostics
+            .lock()
+            .ok()
+            .map(|last| last.generation().clone())
+    }
+
+    #[cfg(test)]
+    pub(super) fn last_diagnostics_overlay_uris_for_test(&self) -> Vec<Uri> {
+        self.quarantine
+            .last_diagnostics
+            .lock()
+            .map(|last| last.overlay_uris())
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    pub(super) fn last_diagnostics_overlay_clears_uri_for_test(&self, uri: &Uri) -> bool {
+        self.quarantine
+            .last_diagnostics
+            .lock()
+            .ok()
+            .is_some_and(|last| last.overlay_contains_empty(uri))
     }
 
     fn analysis_health_snapshot(&self) -> AnalysisHealth {
@@ -2462,11 +2508,7 @@ impl Backend {
     /// screen, so a user who opened a second repository learns why it has no
     /// evidence.
     async fn disclose_kept_root(&self, root: &Path, others: &[PathBuf]) {
-        let listed = others
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let listed = super::workspace_folder_bounds::bounded_path_list_phrase(others);
         let message = format!(
             "ripr keeps analyzing {}. Not analyzed by this server: {listed}. ripr analyzes one workspace root per server; open another repository in its own editor session to analyze it.",
             root.display()
@@ -2705,6 +2747,8 @@ impl Backend {
         } else {
             None
         };
+        let (candidate_roots_listed, candidate_roots_omitted) =
+            super::workspace_folder_bounds::bounded_path_list_entries(&root.candidate_roots);
         serde_json::json!({
             "schema_version": "0.1",
             "tool": "ripr",
@@ -2771,11 +2815,8 @@ impl Backend {
                 .effective_root
                 .as_ref()
                 .map(|path| path.to_string_lossy().to_string()),
-            "candidate_roots": root
-                .candidate_roots
-                .iter()
-                .map(|path| path.to_string_lossy().to_string())
-                .collect::<Vec<_>>(),
+            "candidate_roots": candidate_roots_listed,
+            "candidate_roots_omitted_count": candidate_roots_omitted,
             "root_input_identity": root.input_identity(),
             "root_detail": root.detail,
             "root_recovery_route": root_recovery_route(&root.state),
@@ -3003,6 +3044,11 @@ impl Backend {
         // (#1997 review): a signature suppressed there must re-warn once in
         // the new context instead of staying silently suppressed.
         if let Ok(mut last) = self.last_component_degradation.lock() {
+            *last = None;
+        }
+        // #12416: the scope-disclosure dedup belongs to the old context too;
+        // a new root must be able to disclose its own empty scope again.
+        if let Ok(mut last) = self.last_scope_outcome.lock() {
             *last = None;
         }
         if let Ok(mut last) = self.last_analysis_failure_shown.lock() {
@@ -3713,7 +3759,9 @@ impl Backend {
     /// What the no-evidence hover may say (#11253): a committed snapshot whose
     /// producer outcome is `no_changed_lines` is a clean workspace against its
     /// base; with no snapshot, a queued or running attempt means the result is
-    /// on its way rather than missing.
+    /// on its way rather than missing. An empty-scope outcome (`no_scope`,
+    /// `no_behavioral_candidates`) analyzed nothing at all, which is not an
+    /// all-clear (#12416).
     fn no_evidence_state(&self) -> NoEvidenceState {
         let committed = self
             .latest_analysis
@@ -3721,16 +3769,31 @@ impl Backend {
             .ok()
             .and_then(|value| value.clone());
         if let Some(snapshot) = committed {
-            let no_changes = snapshot.analysis_outcome.as_ref().is_some_and(|outcome| {
-                outcome.kind == crate::analysis_outcome::AnalysisOutcomeKind::NoChangedLines
-            });
-            return if no_changes {
-                NoEvidenceState::AnalyzedNoChanges {
+            let kind = snapshot
+                .analysis_outcome
+                .as_ref()
+                .map(|outcome| outcome.kind);
+            // #12416: a session that analyzed nothing must not collapse into
+            // the generic analyzed-advice arm; `no_changed_lines` keeps its
+            // own clean-workspace arm.
+            if let Some(
+                kind @ (crate::analysis_outcome::AnalysisOutcomeKind::NoScope
+                | crate::analysis_outcome::AnalysisOutcomeKind::NoBehavioralCandidates),
+            ) = kind
+            {
+                return NoEvidenceState::AnalyzedNoScope {
+                    kind,
+                    requested_base: self
+                        .analysis_config()
+                        .and_then(|config| config.base_ref.clone()),
+                };
+            }
+            if kind == Some(crate::analysis_outcome::AnalysisOutcomeKind::NoChangedLines) {
+                return NoEvidenceState::AnalyzedNoChanges {
                     base: snapshot.base.clone(),
-                }
-            } else {
-                NoEvidenceState::Analyzed
-            };
+                };
+            }
+            return NoEvidenceState::Analyzed;
         }
         if matches!(
             self.analysis_health_snapshot().state,
@@ -5138,10 +5201,23 @@ pub(super) struct RefreshLogSummary {
     withheld_gap: usize,
     enabled_languages: usize,
     enabled_language_names: Vec<&'static str>,
+    /// #12416: the committed snapshot's typed outcome kind, appended to the
+    /// completion line so a no-scope refresh never reads as an ordinary run.
+    /// `None` when the snapshot carries no typed outcome (no token is
+    /// invented).
+    analysis_outcome_kind: Option<crate::analysis_outcome::AnalysisOutcomeKind>,
+    /// #12416: the not-all-clear scope sentence under the MCP
+    /// `empty_scope_hint` gate, carried for the deduplicated post-commit
+    /// human disclosure. `None` for a populated or complete-clean scope.
+    scope_disclosure: Option<String>,
 }
 
 impl RefreshLogSummary {
-    pub(super) fn from_snapshot(generation: u64, snapshot: &AnalysisSnapshot) -> Self {
+    pub(super) fn from_snapshot(
+        generation: u64,
+        snapshot: &AnalysisSnapshot,
+        requested_base: Option<&str>,
+    ) -> Self {
         let duration = match snapshot.refresh.duration {
             Some(duration) => duration,
             None => Duration::ZERO,
@@ -5202,6 +5278,17 @@ impl RefreshLogSummary {
             withheld_gap: withheld_static_gap_summary(snapshot).0,
             enabled_languages: 1,
             enabled_language_names: vec!["rust"],
+            analysis_outcome_kind: snapshot
+                .analysis_outcome
+                .as_ref()
+                .map(|outcome| outcome.kind),
+            scope_disclosure: empty_scope_disclosure(
+                snapshot.analysis_outcome.as_ref(),
+                requested_base,
+                snapshot.diagnostic_count() != 0
+                    || !snapshot.findings.is_empty()
+                    || !snapshot.gap_artifacts.is_empty(),
+            ),
         }
     }
 
@@ -5276,7 +5363,7 @@ impl Backend {
 
     async fn log_refresh_completed(
         &self,
-        summary: RefreshLogSummary,
+        summary: &RefreshLogSummary,
         published_uri_count: usize,
         unchanged_uri_count: usize,
         cleared_uri_count: usize,
@@ -5287,7 +5374,7 @@ impl Backend {
             .log_message(
                 MessageType::INFO,
                 refresh_completed_log_message_with_telemetry(
-                    &summary,
+                    summary,
                     published_uri_count,
                     unchanged_uri_count,
                     cleared_uri_count,
@@ -5332,6 +5419,36 @@ impl Backend {
                 .await;
         }
     }
+
+    /// Decide whether this refresh must emit the deduplicated empty-scope
+    /// disclosure (#12416). `Some(sentence)` under the MCP `empty_scope_hint`
+    /// gate; the sentence doubles as the dedup signature, exactly like the
+    /// component-degradation warning: a byte-identical repeated empty scope
+    /// discloses once, a changed sentence discloses again, and a populated
+    /// scope clears the state so a later empty scope discloses again.
+    fn scope_disclosure_should_log(&self, disclosure: &Option<String>) -> bool {
+        let previous = {
+            let Ok(mut last) = self.last_scope_outcome.lock() else {
+                return false;
+            };
+            std::mem::replace(&mut *last, disclosure.clone())
+        };
+        disclosure.is_some() && previous.as_ref() != disclosure.as_ref()
+    }
+
+    /// Emit the deduplicated client-visible empty-scope disclosure for one
+    /// committed snapshot (#12416): the same not-all-clear fact MCP's
+    /// `empty_scope_hint` carries, so an editor agent watching the log
+    /// cannot conclude tested-ness from a clean counter line.
+    async fn log_scope_outcome_disclosure(&self, summary: &RefreshLogSummary) {
+        if self.scope_disclosure_should_log(&summary.scope_disclosure)
+            && let Some(disclosure) = &summary.scope_disclosure
+        {
+            self.client
+                .log_message(MessageType::INFO, disclosure.clone())
+                .await;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -5359,8 +5476,17 @@ fn refresh_completed_log_message_with_telemetry(
     suppressed_payload_bytes: usize,
 ) -> String {
     let duration = format_duration(summary.duration);
+    // #12416: the typed outcome kind rides the machine-readable line as an
+    // appended token, so a no-scope refresh never reads as an ordinary run.
+    // Appending keeps the many `.contains("ripr analysis refresh completed
+    // in")` assertions intact; a snapshot without a typed outcome adds no
+    // invented token.
+    let outcome_token = summary
+        .analysis_outcome_kind
+        .map(|kind| format!(", analysis_outcome={}", kind.as_str()))
+        .unwrap_or_default();
     format!(
-        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, withheld_preview={}, withheld_gap={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
+        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, withheld_preview={}, withheld_gap={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}{}",
         summary.generation,
         summary.diagnostics,
         summary.files,
@@ -5385,7 +5511,8 @@ fn refresh_completed_log_message_with_telemetry(
         unchanged_uri_count,
         cleared_uri_count,
         published_payload_bytes,
-        suppressed_payload_bytes
+        suppressed_payload_bytes,
+        outcome_token
     )
 }
 
@@ -5394,6 +5521,39 @@ pub(super) fn refresh_failed_log_message(message: &str, duration: Duration) -> S
         "ripr analysis refresh failed after {}: {message}",
         format_duration(duration)
     )
+}
+
+/// #12416: the editor-surface recovery route appended to the shared
+/// empty-scope cause sentence
+/// ([`crate::analysis_outcome::AnalysisOutcomeKind::empty_scope_cause_sentence`]).
+/// The fact content and the recovery route are shared across surfaces; the
+/// LSP names its own configuration surface rather than MCP's `ripr_refresh`
+/// arguments.
+pub(super) const EMPTY_SCOPE_LSP_RETRY_ROUTE: &str = "Set the analysis base to the revision your change branches from (the `baseRef` session option or `[lsp] base_ref` in `ripr.toml`) and run ripr.refresh to re-analyze.";
+
+/// #12416: the not-all-clear scope sentence for an empty-scope snapshot,
+/// `Some` exactly under the MCP `empty_scope_hint` gate: an empty-scope
+/// outcome kind (`no_scope` | `no_changed_lines` | `no_behavioral_candidates`)
+/// AND a zero-item projection. The LSP reads one saved-content capture (the
+/// saved bytes the editor holds), so MCP's committed-vs-worktree source
+/// distinction has no separate arm here. `CompleteNoFindings` and
+/// `CompleteWithFindings` are real answers and stay silent.
+pub(super) fn empty_scope_disclosure(
+    outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
+    requested_base: Option<&str>,
+    has_items: bool,
+) -> Option<String> {
+    let kind = outcome?.kind;
+    if !kind.is_empty_scope() || has_items {
+        return None;
+    }
+    let mut sentence = kind.empty_scope_cause_sentence(
+        requested_base,
+        crate::analysis_outcome::EmptyScopeDiffAuthority::SavedWorktree,
+    );
+    sentence.push_str(". ");
+    sentence.push_str(EMPTY_SCOPE_LSP_RETRY_ROUTE);
+    Some(sentence)
 }
 
 pub(super) fn deadline_exceeded_log_message(deadline_ms: u64) -> String {
@@ -5615,7 +5775,7 @@ fn snapshot_id_for_generation(generation: u64) -> String {
 
 fn bind_seam_evidence_identity(snapshot: &mut AnalysisSnapshot, batches: &mut [DiagnosticBatch]) {
     let evidence_identity = snapshot.evidence_identity();
-    for diagnostics in snapshot.diagnostics_by_uri.values_mut() {
+    for diagnostics in snapshot.diagnostics_by_uri.to_mut().values_mut() {
         for diagnostic in diagnostics {
             bind_seam_diagnostic_identity(diagnostic, &evidence_identity);
         }
@@ -5683,12 +5843,8 @@ fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
     let folders = if root.candidate_roots.is_empty() {
         String::new()
     } else {
-        let listed = root
-            .candidate_roots
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let listed =
+            super::workspace_folder_bounds::bounded_path_list_phrase(&root.candidate_roots);
         // Removed and changed roots carry the previous root, not the
         // folders the client sent.
         let label = match root.state {
@@ -6014,6 +6170,20 @@ impl Backend {
                 diagnostic_profile_full_recovery_route()
             )
         });
+        // #12416: an empty-scope committed snapshot must not read as an
+        // all-clear through a clean zero-item envelope. The typed outcome
+        // (the same Serialize the status payload emits) and the
+        // not-all-clear scope sentence ride additive fields under exactly
+        // the MCP `empty_scope_hint` gate; the suppression contract above is
+        // a different fact about withheld live findings and stays separate.
+        let analysis_outcome = snapshot.analysis_outcome.clone();
+        let scope_disclosure = empty_scope_disclosure(
+            snapshot.analysis_outcome.as_ref(),
+            self.analysis_config()
+                .as_ref()
+                .and_then(|config| config.base_ref.as_deref()),
+            result.total_canonical_items != 0,
+        );
         Ok(Some(serde_json::json!({
             "kind": "actionable_items",
             "status": "ok",
@@ -6042,6 +6212,11 @@ impl Backend {
             "withheld_unknown_findings": withheld_unknown_items,
             "withheld_unknown_truncated": withheld_unknown.len() > LIST_ACTIONABLE_HIDDEN_MAX,
             "suppression_disclosure": suppression_disclosure,
+            // #12416: the typed producer outcome and, for an empty scope,
+            // the not-all-clear sentence. Additive; `null` when the snapshot
+            // carries no typed outcome or the scope is a real answer.
+            "analysis_outcome": analysis_outcome,
+            "scope_disclosure": scope_disclosure,
             "budget_identity": result.snapshot_profile_budget_identity,
             "complete_evidence_identity": result.complete_evidence_identity,
             "continuation_or_inspect_route": result.continuation_or_inspect_route,
@@ -6240,8 +6415,9 @@ impl LanguageServer for Backend {
         // Retain the canonical workspace-folder set (#2036, RIPR-SPEC-0139)
         // so `didChangeWorkspaceFolders` deltas apply to stored state
         // instead of being discarded. The root resolution is unchanged.
+        let (folder_set, folder_rejection) = workspace_folder_set_from_initialize_params(&params);
         if let Ok(mut set) = self.workspace_folders.lock() {
-            *set = workspace_folder_set_from_initialize_params(&params);
+            *set = folder_set;
         }
         let (repo_config, config_error) = match &resolution {
             WorkspaceRootResolution::Selected(root) if root.is_dir() => {
@@ -6263,6 +6439,11 @@ impl LanguageServer for Backend {
             "initial workspace root resolution pending",
         ));
         self.apply_workspace_root_resolution(resolution).await;
+        if let Some(rejection) = folder_rejection {
+            let previous = self.workspace_root_authority();
+            self.reject_workspace_folder_update(rejection).await;
+            self.disclose_blocked_root_transition(&previous).await;
+        }
         if let Some(error) = config_error {
             // Commit the owning config failure before the optional client
             // disclosures (#3802): the state transition must not depend on a
@@ -7676,7 +7857,7 @@ impl Backend {
             "invalidation_reason": reason,
             "recovery_route": REFRESH_COMMAND,
             "recovery_command": REFRESH_COMMAND,
-            "limits_note": "Static editor evidence only; refresh before using seam context or repair guidance.",
+            "limits_note": "Static editor evidence only; refresh before using gap context or repair guidance.",
         })
     }
 
@@ -8123,7 +8304,9 @@ fn withheld_static_gap_summary(snapshot: &AnalysisSnapshot) -> (usize, Vec<&'sta
     let withheld =
         super::diagnostics::withheld_gap_findings(snapshot.diagnostic_profile, &snapshot.findings)
             .into_iter()
-            .filter(|finding| !super::diagnostics::finding_is_withheld_preview_gap(finding))
+            .filter(|finding| {
+                !super::diagnostics::finding_is_withheld_preview_profile_finding(finding)
+            })
             .collect::<Vec<_>>();
     let classes = withheld
         .iter()
@@ -9256,13 +9439,13 @@ fn top_limitation_dto(
             "seams_deferred",
             "seams_deferred",
             "deferred",
-            "interactive analysis deferred the expensive seam inventory".to_string(),
+            "interactive analysis deferred the full gap list".to_string(),
             "refresh",
             Vec::new(),
             1,
             1,
             vec![
-                "seam evidence is incomplete",
+                "gap evidence is incomplete",
                 "not test adequacy",
                 "not runtime evidence",
             ],
@@ -9533,7 +9716,7 @@ mod top_limitation_selection_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri: BTreeMap::new(),
+            diagnostics_by_uri: BTreeMap::new().into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -11479,7 +11662,7 @@ mod delivery_selection_parity_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -12637,7 +12820,7 @@ mod list_actionable_items_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri: BTreeMap::new(),
+            diagnostics_by_uri: BTreeMap::new().into(),
             diagnostic_uri_index: None,
             delivery_selection: selection.map(Arc::new),
             seams_deferred: false,
@@ -12705,6 +12888,37 @@ mod list_actionable_items_tests {
             "snapshot:test-profile",
             "evidence:test",
         ))
+    }
+
+    /// A real `Applied` selection over no diagnostics at all: the shape a
+    /// zero-finding (or empty-scope) snapshot commits with.
+    fn zero_item_applied_selection() -> DiagnosticDeliverySelection {
+        DiagnosticDeliverySelection::evaluate(
+            &BTreeMap::new(),
+            &DiagnosticBudget::default(),
+            "snapshot:test-empty",
+            "evidence:test-empty",
+        )
+    }
+
+    /// A validated `no_scope` outcome fixture: every count zero by contract.
+    fn no_scope_outcome() -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+        crate::analysis_outcome::AnalysisOutcome::new(
+            crate::analysis_outcome::AnalysisOutcomeKind::NoScope,
+            crate::analysis_outcome::AnalysisIdentity::default(),
+            crate::analysis_outcome::AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )
+        .map_err(|error| format!("no_scope fixture: {error}"))
+    }
+
+    /// A session configuration that names a requested base, for the
+    /// requested-base disclosure control.
+    fn requested_base_config() -> crate::lsp::config::LspAnalysisConfig {
+        crate::lsp::config::LspAnalysisConfig {
+            base_ref: Some("origin/main".to_string()),
+            ..crate::lsp::config::LspAnalysisConfig::default()
+        }
     }
 
     #[test]
@@ -12991,6 +13205,133 @@ mod list_actionable_items_tests {
         Ok(())
     }
 
+    /// #12416: a committed no-scope snapshot must not read as an all-clear
+    /// through a clean zero-item envelope. The typed outcome rides an
+    /// additive field (the same Serialize the status payload emits) beside
+    /// a scope sentence that names the cause and the recovery route — the
+    /// fact MCP's `empty_scope_hint` carries for the identical state.
+    #[test]
+    fn list_actionable_items_discloses_an_empty_scope() -> Result<(), String> {
+        let zero_item_selection = zero_item_applied_selection();
+        let mut snapshot = snapshot_with_selection(Some(zero_item_selection));
+        snapshot.analysis_outcome = Some(no_scope_outcome()?);
+        let harness = handler_harness()?;
+        install_snapshot(&harness, snapshot)?;
+        let response = call_handler(&harness)?;
+
+        // The run did complete: `status` stays `ok`; the disclosure names the
+        // scope, it does not downgrade the verdict.
+        assert_eq!(response["status"], "ok", "{response:#}");
+        assert_eq!(response["total_count"], 0);
+        assert_eq!(
+            response["analysis_outcome"]["kind"],
+            crate::analysis_outcome::AnalysisOutcomeKind::NoScope.as_str(),
+            "the typed outcome must ride the response: {response:#}"
+        );
+        let disclosure = response["scope_disclosure"]
+            .as_str()
+            .ok_or_else(|| format!("an empty scope must disclose: {response:#}"))?;
+        assert!(
+            disclosure.contains("not an all-clear"),
+            "the sentence must carry the MCP not-all-clear fact: {disclosure}"
+        );
+        assert!(
+            disclosure.contains("default base"),
+            "the sentence must name the default-base cause: {disclosure}"
+        );
+        assert!(
+            disclosure.contains("baseRef") && disclosure.contains("ripr.refresh"),
+            "the sentence must name the editor recovery route: {disclosure}"
+        );
+        // The suppression contract ("the profile withheld live findings") is
+        // a different fact and stays null on an empty finding set.
+        assert_eq!(response["suppression_disclosure"], serde_json::Value::Null);
+        Ok(())
+    }
+
+    /// #12416 anti-over-disclosure controls: a complete-clean or
+    /// finding-bearing snapshot invents no scope sentence, and a
+    /// no-changed-lines snapshot with a requested base names that base
+    /// (matching the MCP `Some(base)` arm).
+    #[test]
+    fn list_actionable_items_scope_disclosure_controls() -> Result<(), String> {
+        let kinds = [
+            (
+                crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings,
+                crate::analysis_outcome::AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 1,
+                    candidate_line_count: 1,
+                    probe_count: 1,
+                    finding_count: 0,
+                },
+            ),
+            (
+                crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings,
+                crate::analysis_outcome::AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 1,
+                    candidate_line_count: 1,
+                    probe_count: 1,
+                    finding_count: 1,
+                },
+            ),
+        ];
+        for (kind, counts) in kinds {
+            let mut snapshot = snapshot_with_selection(Some(zero_item_applied_selection()));
+            snapshot.analysis_outcome = Some(
+                crate::analysis_outcome::AnalysisOutcome::new(
+                    kind,
+                    crate::analysis_outcome::AnalysisIdentity::default(),
+                    counts,
+                    Vec::new(),
+                )
+                .map_err(|error| format!("{kind:?} fixture: {error}"))?,
+            );
+            let harness = handler_harness()?;
+            install_snapshot(&harness, snapshot)?;
+            let response = call_handler(&harness)?;
+            assert_eq!(
+                response["scope_disclosure"],
+                serde_json::Value::Null,
+                "{kind:?} must not disclose a scope: {response:#}"
+            );
+            assert_eq!(response["analysis_outcome"]["kind"], kind.as_str());
+        }
+
+        // A `no_changed_lines` snapshot under a requested base names it.
+        let mut snapshot = snapshot_with_selection(Some(zero_item_applied_selection()));
+        snapshot.analysis_outcome = Some(
+            crate::analysis_outcome::AnalysisOutcome::new(
+                crate::analysis_outcome::AnalysisOutcomeKind::NoChangedLines,
+                crate::analysis_outcome::AnalysisIdentity::default(),
+                crate::analysis_outcome::AnalysisOutcomeCounts::default(),
+                Vec::new(),
+            )
+            .map_err(|error| format!("no_changed_lines fixture: {error}"))?,
+        );
+        let harness = handler_harness()?;
+        harness
+            .service
+            .inner()
+            .set_analysis_config(requested_base_config());
+        install_snapshot(&harness, snapshot)?;
+        let response = call_handler(&harness)?;
+        let disclosure = response["scope_disclosure"]
+            .as_str()
+            .ok_or_else(|| format!("empty scope must disclose: {response:#}"))?;
+        assert!(
+            disclosure.contains("origin/main"),
+            "a requested base must be named: {disclosure}"
+        );
+        assert!(
+            disclosure.contains("saved diff"),
+            "LSP scope disclosure must name saved worktree bytes, not a committed diff: {disclosure}"
+        );
+        assert!(disclosure.contains("not an all-clear"), "{disclosure}");
+        Ok(())
+    }
+
     /// #5276: the pull channel names profile-withheld `*_unknown` findings
     /// with the same escape hatch the status and listing surfaces carry, so
     /// a zero-item pull never reads as "no findings" while one is withheld.
@@ -13158,6 +13499,10 @@ mod list_actionable_items_tests {
             sorted_keys(&response),
             vec![
                 "allowed_edit_surface",
+                // #12416: the typed producer outcome and the empty-scope
+                // disclosure joined the interim shape; the doc section and
+                // this pin moved together.
+                "analysis_outcome",
                 "budget_identity",
                 "complete_evidence_identity",
                 "continuation_or_inspect_route",
@@ -13168,6 +13513,7 @@ mod list_actionable_items_tests {
                 "omitted",
                 "omitted_count",
                 "omitted_truncated",
+                "scope_disclosure",
                 "seam_evidence_identity",
                 "selected",
                 "selected_count",
@@ -13316,6 +13662,39 @@ mod pull_disclosure_dedup_tests {
         );
     }
 
+    /// #12416: the empty-scope disclosure dedups per sentence — a
+    /// byte-identical repeated empty scope discloses once, a changed
+    /// sentence (new outcome kind or base) discloses again, and a populated
+    /// scope clears the state so a later empty scope discloses again. The
+    /// decision seam mirrors `log_component_degradations` (#1997).
+    #[test]
+    fn scope_disclosure_dedups_per_sentence_and_recovers_after_a_populated_scope() {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        let empty = Some("no base was passed, so the default base was used; nothing was analyzed. Set the analysis base".to_string());
+        let renamed = Some("the committed diff against requested base `origin/main` holds no analyzable behavior change. Set the analysis base".to_string());
+        assert!(
+            backend.scope_disclosure_should_log(&empty),
+            "the first empty scope discloses"
+        );
+        assert!(
+            !backend.scope_disclosure_should_log(&empty),
+            "an identical repeated empty scope stays silent"
+        );
+        assert!(
+            backend.scope_disclosure_should_log(&renamed),
+            "a changed scope sentence discloses again"
+        );
+        assert!(
+            !backend.scope_disclosure_should_log(&None),
+            "a populated scope discloses nothing"
+        );
+        assert!(
+            backend.scope_disclosure_should_log(&empty),
+            "a later empty scope discloses again after the scope recovered"
+        );
+    }
+
     #[test]
     fn committed_selection_identity_comes_from_the_snapshot() -> Result<(), String> {
         // The dedup key is the committed selection's input identity, so two
@@ -13400,6 +13779,18 @@ mod pull_disclosure_dedup_tests {
             AnalysisOutcomeCounts::default(),
             Vec::new(),
         )?);
+        Ok(snapshot)
+    }
+
+    fn no_scope_snapshot(
+        kind: AnalysisOutcomeKind,
+        counts: AnalysisOutcomeCounts,
+    ) -> Result<crate::lsp::state::AnalysisSnapshot, String> {
+        let mut snapshot = snapshot_fixture()?;
+        snapshot.analysis_outcome = Some(
+            AnalysisOutcome::new(kind, AnalysisIdentity::default(), counts, Vec::new())
+                .map_err(|error| format!("{kind:?} fixture: {error}"))?,
+        );
         Ok(snapshot)
     }
 
@@ -13490,6 +13881,67 @@ mod pull_disclosure_dedup_tests {
         Ok(())
     }
 
+    /// #12416: the first hover a curious user tries must not dead-end in the
+    /// generic CLI advice when the committed analysis analyzed nothing. A
+    /// `no_scope` (or `no_behavioral_candidates`) session renders the
+    /// not-all-clear sentence with the set-a-base recovery; the genuinely
+    /// analyzed Rust-only arm above stays byte-identical `HOVER_TEXT`.
+    #[test]
+    fn no_evidence_hover_names_an_empty_scope_instead_of_generic_advice() -> Result<(), String> {
+        for (kind, counts) in [
+            (
+                AnalysisOutcomeKind::NoScope,
+                AnalysisOutcomeCounts::default(),
+            ),
+            (
+                AnalysisOutcomeKind::NoBehavioralCandidates,
+                AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 2,
+                    ..AnalysisOutcomeCounts::default()
+                },
+            ),
+        ] {
+            let (service, _socket) =
+                LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+            let backend = service.inner();
+            commit(backend, no_scope_snapshot(kind, counts)?)?;
+            let text = rendered(backend)?;
+            assert!(
+                text.contains("not an all-clear"),
+                "{kind:?} hover must say this is not an all-clear: {text}"
+            );
+            assert!(
+                text.contains("baseRef"),
+                "{kind:?} hover must name the base recovery route: {text}"
+            );
+            assert_ne!(
+                text,
+                crate::lsp::HOVER_TEXT,
+                "{kind:?} hover must not fall back to the generic advice"
+            );
+        }
+
+        // The default session requests no base, so the sentence names the
+        // default-base cause; a configured base is named instead.
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        backend.set_analysis_config(requested_base_config());
+        commit(
+            backend,
+            no_scope_snapshot(
+                AnalysisOutcomeKind::NoScope,
+                AnalysisOutcomeCounts::default(),
+            )?,
+        )?;
+        let text = rendered(backend)?;
+        assert!(
+            text.contains("origin/main"),
+            "a requested base must be named: {text}"
+        );
+        Ok(())
+    }
+
     fn snapshot_fixture() -> Result<crate::lsp::state::AnalysisSnapshot, String> {
         // Empty evidence keeps the fixture consistent (`is_consistent` ties
         // the diagnostic count to findings, seams, gaps, and scope guards);
@@ -13510,7 +13962,7 @@ mod pull_disclosure_dedup_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -13521,6 +13973,15 @@ mod pull_disclosure_dedup_tests {
             language_view: None,
             rust_diagnostic_origins: Default::default(),
         })
+    }
+
+    /// A session configuration that names a requested base, for the
+    /// requested-base hover control.
+    fn requested_base_config() -> crate::lsp::config::LspAnalysisConfig {
+        crate::lsp::config::LspAnalysisConfig {
+            base_ref: Some("origin/main".to_string()),
+            ..crate::lsp::config::LspAnalysisConfig::default()
+        }
     }
 }
 

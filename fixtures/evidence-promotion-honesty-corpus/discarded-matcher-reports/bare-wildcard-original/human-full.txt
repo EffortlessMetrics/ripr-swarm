@@ -41,6 +41,7 @@ Weakness
 Next step
   Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bare-wildcard-original --diff fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bare-wildcard-original/diff.patch --mode fast probe:src_lib.rs:return_value:519eff0d
   ripr context --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bare-wildcard-original --diff fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bare-wildcard-original/diff.patch --mode fast --at probe:src_lib.rs:return_value:519eff0d
 
