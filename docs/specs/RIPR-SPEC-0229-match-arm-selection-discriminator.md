@@ -476,7 +476,8 @@ implies but does not spell out:
   the owner may be nested in a block. The owner function, and any item in
   its body, may carry no attribute other than a compiler builtin (a derive
   only of the standard derivable traits, and no `cfg_attr`); an import that
-  shadows a builtin attribute or derive makes that attribute unread (a glob of the enum's own variants cannot, so it does not). An
+  shadows a builtin attribute or derive makes that attribute unread (a glob of the enum's own variants
+  cannot, so it does not). An
   unread proc-macro attribute or custom derive may declare a local `Kind`
   whose associated constant a pattern compares by value (#7692).
   Alternatively, the owner's file
