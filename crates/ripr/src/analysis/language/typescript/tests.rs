@@ -7754,7 +7754,7 @@ fn mock_paths_projection_matches_reference_loop_in_order() {
         arity: None,
         params: Vec::new(),
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let make = |name: &str, line: usize, mocks: &[&str]| TypeScriptTest {
