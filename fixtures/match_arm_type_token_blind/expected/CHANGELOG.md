@@ -455,3 +455,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_type_token_blind (29)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless match_arm_type_token_blind --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

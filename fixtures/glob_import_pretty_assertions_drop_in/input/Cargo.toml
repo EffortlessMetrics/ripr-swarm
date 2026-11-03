@@ -1,0 +1,4 @@
+[package]
+name = "glob_import_pretty_assertions_drop_in_fixture"
+version = "0.1.0"
+edition = "2024"
