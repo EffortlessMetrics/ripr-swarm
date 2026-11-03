@@ -15,8 +15,9 @@
 //! - the manifests give exactly one name for the callee's library in the
 //!   caller's package: a `[dependencies]` path entry (never a
 //!   `[dev-dependencies]` or `[build-dependencies]` one, which library code
-//!   cannot see), whose key is the callee's own library identifier (a renamed
-//!   dependency is not resolved here), between two different packages;
+//!   cannot see), keyed by the callee's library identifier or renamed with
+//!   `package = ".."` (the key is then the crate name), between two
+//!   different packages;
 //! - the caller mentions the callee name exactly once, in one call fact, as
 //!   `<crate_name>::<callee>(..)` with exactly that one qualifier segment;
 //! - nothing in the caller's package can rebind `<crate_name>`: no import,
@@ -24,6 +25,11 @@
 //!   may be spliced in by a macro or an `include`;
 //! - the caller invokes no macro that could hide an early return or a
 //!   rebinding.
+//!
+//! A bare call after the caller's file imports the callee by name
+//! (`use wscore::discount;`, `use wscore::{discount, ..}`) binds the same way
+//! under [`cross_crate_imported_free_hop`]; a glob import or an alias does
+//! not. A dependency renamed with `package = ".."` is named by its key.
 //!
 //! The hop carries reach and argument bindings exactly like a same-crate
 //! direct call hop; every later rule that decides whether a result is
@@ -33,11 +39,14 @@ use super::{HelperHop, split_call_arguments_at_paren};
 use crate::analysis::classify::{call_identity, related_tests};
 use crate::analysis::facts::{FunctionContainer, FunctionSummary, RustIndex};
 
-pub(super) fn cross_crate_free_hop(
-    caller: &FunctionSummary,
-    callee_name: &str,
-    index: &RustIndex,
-) -> Option<HelperHop> {
+/// What both call spellings need before the call shape is read: the unique
+/// callee, the one manifest name for its library, and the caller's source.
+struct Admitted {
+    crate_name: String,
+    source: String,
+}
+
+fn admit(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) -> Option<Admitted> {
     let mut candidates = index
         .functions()
         .iter()
@@ -66,6 +75,15 @@ pub(super) fn cross_crate_free_hop(
     let crate_name = index
         .member_crates
         .library_dependency_name(&caller.file, &callee.file)?;
+    Some(Admitted { crate_name, source })
+}
+
+pub(super) fn cross_crate_free_hop(
+    caller: &FunctionSummary,
+    callee_name: &str,
+    index: &RustIndex,
+) -> Option<HelperHop> {
+    let Admitted { crate_name, source } = admit(caller, callee_name, index)?;
 
     let mut mentions = caller.calls.iter().filter(|call| call.name == callee_name);
     let call = mentions.next()?;
@@ -94,6 +112,202 @@ pub(super) fn cross_crate_free_hop(
         transparent_macros_rebound: super::transparent_macro_name_rebound(&caller.body, index),
         diverging_handlers: Vec::new(),
     })
+}
+
+/// The same hop for a call spelled by its bare name after the caller's file
+/// imports it by name (`use wscore::discount;` or `use wscore::{discount, ..}`,
+/// #11401). `sites` are the direct call sites of the bare name in the caller.
+///
+/// On top of the shared admission this needs, all of:
+///
+/// - the caller is a top-level function of its file and the bare name is
+///   mentioned exactly once in its body, in one direct call;
+/// - exactly one `use` in the file mentions the callee name; it is a plain,
+///   top-level, attribute-free and visibility-free `use` whose path is
+///   `<crate>::<callee>` or whose list holds the bare `callee` under
+///   `<crate>`: no alias, no glob form of the name, no other import of it;
+/// - no other item, binding or parameter in the file is named like the
+///   callee, no `extern crate`, and nothing can be spliced in by a macro or
+///   an `include`;
+/// - nothing in the caller's package can rebind `<crate>` (`mod <crate>`).
+///
+/// A glob import (`use wscore::*;`) never names the callee and is not followed.
+pub(super) fn cross_crate_imported_free_hop(
+    caller: &FunctionSummary,
+    callee_name: &str,
+    index: &RustIndex,
+    sites: &[(String, Vec<String>)],
+) -> Option<HelperHop> {
+    let [(call_text, arguments)] = sites else {
+        return None;
+    };
+    let Admitted { crate_name, source } = admit(caller, callee_name, index)?;
+    let mut mentions = caller.calls.iter().filter(|call| call.name == callee_name);
+    mentions.next()?;
+    if mentions.next().is_some()
+        || word_count(
+            &crate::analysis::language::mask_rust_comments_and_strings(&caller.body),
+            callee_name,
+        ) != 1
+        || !starts_at_file_root(&source, caller.start_line)
+        || super::caller_invokes_opaque_macro(&caller.body, true)
+        || package_declares_name(index, caller, &crate_name)
+        || !file_imports_only_by_name(&source, &crate_name, callee_name)
+    {
+        return None;
+    }
+    Some(HelperHop {
+        caller: caller.clone(),
+        call_text: call_text.clone(),
+        arguments: arguments.clone(),
+        receiver: None,
+        through_macro: false,
+        module_qualified: true,
+        crate_qualifier: Some(crate_name),
+        transparent_macros_rebound: super::transparent_macro_name_rebound(&caller.body, index),
+        diverging_handlers: Vec::new(),
+    })
+}
+
+fn word_count(masked: &str, word: &str) -> usize {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_' || !ch.is_ascii();
+    masked
+        .match_indices(word)
+        .filter(|(at, _)| {
+            !masked[..*at].chars().next_back().is_some_and(is_word)
+                && !masked[at + word.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word)
+        })
+        .count()
+}
+
+/// Whether the item starting at 1-based `start_line` sits outside every
+/// block of the file.
+fn starts_at_file_root(source: &str, start_line: usize) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    masked
+        .lines()
+        .take(start_line.saturating_sub(1))
+        .flat_map(str::chars)
+        .fold(0usize, |depth, ch| match ch {
+            '{' => depth + 1,
+            '}' => depth.saturating_sub(1),
+            _ => depth,
+        })
+        == 0
+}
+
+/// Whether `source` brings `callee` into scope only through one plain
+/// top-level `use` under `crate_name`, and declares nothing of that name.
+fn file_imports_only_by_name(source: &str, crate_name: &str, callee: &str) -> bool {
+    use ra_ap_syntax::{AstNode, SyntaxKind, ast, ast::HasAttrs, ast::HasName, ast::HasVisibility};
+    if call_identity::source_may_splice_items(source, true) {
+        return false;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return false;
+    };
+    let tree = parse.tree();
+    let named = |token: &ra_ap_syntax::SyntaxToken| {
+        token.kind() == SyntaxKind::IDENT && token.text().trim_start_matches("r#") == callee
+    };
+    let named_crate = |token: &ra_ap_syntax::SyntaxToken| {
+        token.kind() == SyntaxKind::IDENT && token.text().trim_start_matches("r#") == crate_name
+    };
+    let mut importing = Vec::new();
+    let mut other_uses = Vec::new();
+    for node in tree.syntax().descendants() {
+        if ast::ExternCrate::can_cast(node.kind()) {
+            return false;
+        }
+        if let Some(item) = ast::Use::cast(node.clone()) {
+            if item
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| named(&token))
+            {
+                importing.push(item);
+            } else {
+                other_uses.push(item);
+            }
+            continue;
+        }
+        if node
+            .ancestors()
+            .skip(1)
+            .any(|up| ast::Use::can_cast(up.kind()))
+        {
+            continue;
+        }
+        if ast::RecordField::can_cast(node.kind()) {
+            continue;
+        }
+        let declares = ast::AnyHasName::cast(node)
+            .and_then(|item| item.name())
+            .is_some_and(|name| {
+                name.syntax()
+                    .descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .any(|token| named(&token) || named_crate(&token))
+            });
+        if declares {
+            return false;
+        }
+    }
+    let [item] = importing.as_slice() else {
+        return false;
+    };
+    // Any other import that names `<crate>` (`use legacy as wscore;`) or is a
+    // glob can give the crate segment a different identity.
+    if other_uses.iter().any(|other| {
+        other
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .any(|token| named_crate(&token) || token.kind() == SyntaxKind::STAR)
+    }) {
+        return false;
+    }
+    if item.attrs().next().is_some()
+        || item.visibility().is_some()
+        || item
+            .syntax()
+            .parent()
+            .is_none_or(|parent| parent.kind() != SyntaxKind::SOURCE_FILE)
+    {
+        return false;
+    }
+    let squeeze = |text: String| text.split_whitespace().collect::<String>();
+    let Some(use_tree) = item.use_tree() else {
+        return false;
+    };
+    if use_tree.rename().is_some() || use_tree.star_token().is_some() {
+        return false;
+    }
+    let Some(path) = use_tree
+        .path()
+        .map(|path| squeeze(path.syntax().text().to_string()))
+    else {
+        return false;
+    };
+    match use_tree.use_tree_list() {
+        None => path == format!("{crate_name}::{callee}"),
+        Some(list) => {
+            path == crate_name
+                && list.use_trees().any(|entry| {
+                    entry.rename().is_none()
+                        && entry.star_token().is_none()
+                        && entry.use_tree_list().is_none()
+                        && entry
+                            .path()
+                            .map(|path| squeeze(path.syntax().text().to_string()))
+                            .is_some_and(|path| path == callee)
+                })
+        }
+    }
 }
 
 /// Whether `callee` is declared `pub` (not `pub(..)`) at the top level of its
@@ -279,5 +493,74 @@ mod tests {
         assert!(!named("mod wscore_ext {}"));
         assert!(!named("let wscore = 1;"));
         assert!(!named("module wscore"));
+    }
+
+    #[test]
+    fn only_one_plain_top_level_use_by_name_imports_the_callee() {
+        let imports = |source: &str| file_imports_only_by_name(source, "wscore", "discount");
+        let call = "pub fn checkout(p: u32) -> u32 { discount(p) }\n";
+        for source in [
+            "use wscore::discount;\n",
+            "use wscore::{discount, other};\n",
+            "use wscore::{self, discount};\n",
+            "use wscore::{\n    other,\n    discount,\n};\n",
+        ] {
+            assert!(imports(&format!("{source}{call}")), "{source}");
+        }
+        for (label, source) in [
+            ("none", String::new()),
+            ("glob", "use wscore::*;\n".to_string()),
+            ("alias", "use wscore::discount as d;\n".to_string()),
+            (
+                "aliased in list",
+                "use wscore::{discount as d};\n".to_string(),
+            ),
+            ("other crate", "use legacy::discount;\n".to_string()),
+            ("submodule", "use wscore::pricing::discount;\n".to_string()),
+            ("leading colons", "use ::wscore::discount;\n".to_string()),
+            ("visible", "pub use wscore::discount;\n".to_string()),
+            ("cfg", "#[cfg(test)]\nuse wscore::discount;\n".to_string()),
+            (
+                "twice",
+                "use wscore::discount;\nuse legacy::discount;\n".to_string(),
+            ),
+            (
+                "inside a function",
+                "fn f() {\n    use wscore::discount;\n}\n".to_string(),
+            ),
+            (
+                "inside a module",
+                "mod m {\n    use wscore::discount;\n}\n".to_string(),
+            ),
+            (
+                "local function",
+                "use wscore::discount;\nfn discount() {}\n".to_string(),
+            ),
+            (
+                "local binding",
+                "use wscore::discount;\nfn f() { let discount = 1; }\n".to_string(),
+            ),
+            (
+                "extern crate",
+                "extern crate wscore;\nuse wscore::discount;\n".to_string(),
+            ),
+        ] {
+            assert!(!imports(&format!("{source}{call}")), "{label}");
+        }
+    }
+
+    #[test]
+    fn a_word_is_counted_only_as_a_whole_identifier() {
+        assert_eq!(word_count("discount(a) + discounted(b)", "discount"), 1);
+        assert_eq!(word_count("a.discount(b) + discount(c)", "discount"), 2);
+        assert_eq!(word_count("x_discount(1)", "discount"), 0);
+    }
+
+    #[test]
+    fn only_an_item_outside_every_block_starts_at_the_file_root() {
+        let source = "fn a() {\n}\nmod m {\n    fn b() {}\n}\n";
+        assert!(starts_at_file_root(source, 1));
+        assert!(starts_at_file_root(source, 3));
+        assert!(!starts_at_file_root(source, 4));
     }
 }

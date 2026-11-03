@@ -895,7 +895,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     bind parameters like literal `parametrize` cases (positional values
     fill the rightmost parameters, as many as there are values; keyword
     values the named ones); a chained
-    `@example(...).xfail()` or `.via(...)` row is skipped. A `@given`
+    `@example(...).xfail()` or `.via(...)` row is skipped. An `@example`
+    row also binds only while the test's effective settings still run
+    `Phase.explicit`: a static `@settings(phases=...)` (imported or
+    aliased `settings`) that omits it, or one whose phases cannot be read
+    (an unresolved name, a `**` expansion), withholds every row (#10752). A `@given`
     test gives `static_unknown`, `property_based_test`, only when it has
     assertions and either none is strong, or it has no `@example` row and
     its body reads a generated parameter. A `parametrize` mark binds
