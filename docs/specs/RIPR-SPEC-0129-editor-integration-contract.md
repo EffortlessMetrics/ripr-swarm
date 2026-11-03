@@ -142,8 +142,11 @@ an arbitrary `RIPR_TEST_SERVER_PATH` is not packaged-identity evidence.
 
 ### Layer 3 — Headless `riprAgent`
 
-A programmatic agent client (Codex, CI tooling) that drives the typed
-`experimental.riprAgent` protocol over saved-workspace snapshots.
+A programmatic client that drives the typed `experimental.riprAgent`
+protocol over saved-workspace snapshots. This layer is an
+experimental/private, VS Code-bounded compatibility surface (#1896,
+RIPR-SPEC-0131). It is not a public integration for generic third-party
+headless agents or LSP clients; those use standard LSP (Layer 1) or MCP.
 
 Consumes everything in Layer 1, plus:
 - `ripr/workspaceStatus`, `ripr/refreshAnalysis`
@@ -160,7 +163,7 @@ real handlers. The capability is advertised as `capability_only`.
 
 ## Support matrix
 
-| Dimension | Layer 1 (standard) | Layer 2 (VS Code) | Layer 3 (headless agent) |
+| Dimension | Layer 1 (standard) | Layer 2 (VS Code) | Layer 3 (private riprAgent) |
 |---|---|---|---|
 | Transport | stdio | stdio | stdio |
 | Diagnostic mode | push or pull | push or pull | pull (preferred) |
@@ -186,7 +189,7 @@ fixtures alone.
 | Framed JSON-RPC harness over a tokio duplex through the real tower-lsp-server 0.23.0 (`framed_lsp_protocol_smoke_exercises_tower_server` and the framed refresh/config/root-switch/degradation tests) | Wire-level initialize/request/shutdown framing | protocol fixture passes |
 | VS Code extension 0.10.0 (`editors/vscode`) | `client.ts` capability advertisement parsed as text by the parity tests; NOT run end-to-end against a live editor | advertisement parity only; real proof #1579 pending |
 | Off-the-shelf standard client (Neovim/Helix/Eglot) | none yet | unclaimed — #1630 |
-| Headless agent client | `supported_requests: []` fail-closed | reserved — #1602/#1603 |
+| Private `riprAgent` consumer (experimental, not public) | `supported_requests: []` fail-closed | reserved — #1602/#1603 |
 
 Unsupported or unexercised clients remain unclaimed. The extension's
 advertised `RIPR_CLIENT_COMMANDS` list is verified by parsing
@@ -256,7 +259,7 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
   omit-vs-disabled difference (#1776/#1892) lives between profiles, not
   between transports. A divergence is a transport defect, not a profile
   difference.
-- A headless agent client sees `experimental.riprAgent` advertised with
+- A private `riprAgent` consumer sees `experimental.riprAgent` advertised with
   `supported_requests: []` and `implementation_state: "capability_only"`
   until #1602/#1603 land real handlers.
 - A resolve-capable client that sends `codeAction/resolve` for an action

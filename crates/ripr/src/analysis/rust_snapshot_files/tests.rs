@@ -351,3 +351,40 @@ fn a_non_utf8_name_makes_the_listing_unknown_and_never_demotes() -> Result<(), S
     assert!(!listing.certainly_lacks(&["record".to_string()]));
     Ok(())
 }
+
+#[test]
+fn macro_definitions_are_found_with_any_whitespace_around_the_bang() {
+    let mut found = BTreeSet::new();
+    collect_snapshot_macro_definitions(
+        "macro_rules! assert_snapshot { () => {} }\n\
+         macro_rules !assert_json_snapshot { () => {} }\n\
+         macro_rules!  assert_debug_snapshot{ () => {} }\n\
+         macro_rules! helper { () => {} }\n\
+         // macro_rules mentioned in prose, not a definition\n",
+        &mut found,
+    );
+    let expected: BTreeSet<String> = [
+        "assert_snapshot",
+        "assert_json_snapshot",
+        "assert_debug_snapshot",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn a_same_file_macro_with_odd_spacing_still_refuses_the_import() {
+    let file = "use insta::*;\nmacro_rules!assert_snapshot { ($v:expr) => {}; }\n";
+    assert!(!imports_from_insta(file, "assert_snapshot"));
+    assert!(imports_from_insta("use insta::*;\n", "assert_snapshot"));
+}
+
+#[test]
+fn a_bare_call_is_marked_bare_and_a_path_call_is_not() {
+    let bare = snapshot_call("assert_snapshot!(value);", "use insta::*;\n");
+    let path = snapshot_call("insta::assert_snapshot!(value);", "");
+    assert_eq!(bare.map(|call| call.bare), Some(true));
+    assert_eq!(path.map(|call| call.bare), Some(false));
+}

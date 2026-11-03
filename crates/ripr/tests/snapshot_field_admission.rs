@@ -284,3 +284,28 @@ fn an_unresolvable_snapshot_shape_keeps_its_grade() -> Result<(), String> {
     }
     Ok(())
 }
+
+// #12720: a bare `assert_json_snapshot!` is insta's only when no workspace file
+// defines a macro of that name. A `#[macro_use]` definition in another file
+// shadows the `use insta` import, so the seam keeps today's grade.
+#[test]
+fn a_bare_snapshot_macro_defined_in_another_file_keeps_the_return_seam_credit() -> Result<(), String>
+{
+    const BARE: &str =
+        "use insta::assert_json_snapshot;\n        assert_json_snapshot!(record.items);";
+    let plain = Fixture::new(BARE, None)?;
+    assert_eq!(
+        grip(&plain.record()?),
+        "weakly_gripped",
+        "an imported insta macro with no committed file still demotes"
+    );
+
+    let shadowed = Fixture::new(BARE, None)?;
+    std::fs::write(
+        shadowed.root.join("src/macros.rs"),
+        "macro_rules! assert_json_snapshot {\n    ($value:expr) => {\n        assert_eq!(format!(\"{:?}\", $value), \"2\");\n    };\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(grip(&shadowed.record()?), "strongly_gripped");
+    Ok(())
+}
