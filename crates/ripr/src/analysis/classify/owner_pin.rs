@@ -80,14 +80,15 @@ use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::ra::LineIndex;
 use crate::analysis::syntax::{
-    AssertionContextRefusal, GeneratedTestPins, HelperLoan, ItemNesting, MacroBindingCandidates,
-    MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, RootShadow,
-    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, cfg_if_module_name,
-    drop_in_assertion_leaf, empty_macro_binding_ambiguities, err_return_guard_key,
-    generated_test_pins, local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
-    owner_pin_matches_assertions, parse_clean_source_file, pattern_pins, qualified_matches_paths,
-    returns_leave_the_function, source_binds_value_name, source_declares_value_name,
-    source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
+    AssertionContextRefusal, CLAIMS_PAYLOAD_MACRO_NAMES, GeneratedTestPins, HelperLoan,
+    ItemNesting, MacroBindingCandidates, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
+    PatternPins, RootShadow, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
+    cfg_if_module_name, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
+    err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
+    owner_pin_assertions, owner_pin_matches_assertions, parse_clean_source_file, pattern_pins,
+    qualified_matches_paths, returns_leave_the_function, source_binds_value_name,
+    source_declares_value_name, source_imported_claims_macros, trusted_macro_binding_site_sets,
+    trusted_macro_binding_sites,
 };
 use crate::analysis::workspace::declared_crate_root_paths_from_manifest;
 use crate::domain::{Probe, ProbeFamily};
@@ -5413,7 +5414,8 @@ impl OwnerReturnPin {
                 || helper_arguments::expected_literal(second, index).is_none()
                 || doctest.is_some()
                 || !index.files().get(&test.file).is_some_and(|facts| {
-                    source_imported_claims_macros(&facts.source).contains(&spelling)
+                    source_imported_claims_macros(&facts.source, (test.start_line, test.end_line))
+                        .contains(&spelling)
                 })
             {
                 return false;
@@ -5605,10 +5607,23 @@ impl OwnerReturnPin {
                                     // on a verified `use claims::..` import.
                                     .or_else(|| {
                                         let (name, call) = claims_payload_call(initializer)?;
-                                        let imported =
-                                            index.files().get(&test.file).is_some_and(|facts| {
-                                                source_imported_claims_macros(&facts.source)
-                                                    .contains(&name)
+                                        // #12462: the example's own synthetic source when
+                                        // the test is a doc example (its test fn opens on
+                                        // the fence line, so the span is valid there), the
+                                        // holding file otherwise.
+                                        let imported = doctest
+                                            .or_else(|| {
+                                                index
+                                                    .files()
+                                                    .get(&test.file)
+                                                    .map(|facts| facts.data().source.as_ref())
+                                            })
+                                            .is_some_and(|source| {
+                                                source_imported_claims_macros(
+                                                    source,
+                                                    (test.start_line, test.end_line),
+                                                )
+                                                .contains(&name)
                                             });
                                         // The macro panics on the other variant and yields
                                         // the payload, so only a pin on that same payload
@@ -6067,8 +6082,11 @@ impl OwnerReturnPin {
         // (the syntax admission settles the manifest and shadowing): they
         // evaluate their operand and bind nothing, so an owner call inside
         // one is no rebinding.
+        // #12462: scoped to the asserting test (a doc example reads its own
+        // synthetic source, whose test fn opens on the fence line).
+        let claims_span = (test.start_line, test.end_line);
         let claims_macros: Vec<&str> = test_source
-            .map(source_imported_claims_macros)
+            .map(|source| source_imported_claims_macros(source, claims_span))
             .unwrap_or_default();
         match (&self.call, call) {
             // #7082: a cfg on the owner or an enclosing module may compile
@@ -7700,7 +7718,7 @@ fn claims_eq_operands<'a>(text: &'a str, spelling: &str) -> Option<[&'a str; 2]>
 fn claims_payload_call(operand: &str) -> Option<(&'static str, &str)> {
     let operand = operand.trim();
     let masked = mask_comments_and_strings(operand);
-    let name = ["assert_ok", "assert_some"]
+    let name = CLAIMS_PAYLOAD_MACRO_NAMES
         .into_iter()
         .find(|name| masked.starts_with(name))?;
     let after_bang = masked[name.len()..]
