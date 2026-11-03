@@ -21399,8 +21399,7 @@ code = [
   "benchmarks/dx_scoreboard/scoreboards.toml",
 ]
 outputs = [
-  "target/ripr/reports/repair-funnel.json",
-  "target/ripr/reports/repair-funnel.md",
+  "docs/specs/RIPR-SPEC-0410-first-hour-repair-funnel-projection.md",
 ]
 metrics = [
   "repair_time_to_verified_improvement_ms",
