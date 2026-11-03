@@ -142,8 +142,11 @@ an arbitrary `RIPR_TEST_SERVER_PATH` is not packaged-identity evidence.
 
 ### Layer 3 — Headless `riprAgent`
 
-A programmatic agent client (Codex, CI tooling) that drives the typed
-`experimental.riprAgent` protocol over saved-workspace snapshots.
+A programmatic client that drives the typed `experimental.riprAgent`
+protocol over saved-workspace snapshots. This layer is an
+experimental/private, VS Code-bounded compatibility surface (#1896,
+RIPR-SPEC-0131). It is not a public integration for generic third-party
+headless agents or LSP clients; those use standard LSP (Layer 1) or MCP.
 
 Consumes everything in Layer 1, plus:
 - `ripr/workspaceStatus`, `ripr/refreshAnalysis`
@@ -160,7 +163,7 @@ real handlers. The capability is advertised as `capability_only`.
 
 ## Support matrix
 
-| Dimension | Layer 1 (standard) | Layer 2 (VS Code) | Layer 3 (headless agent) |
+| Dimension | Layer 1 (standard) | Layer 2 (VS Code) | Layer 3 (private riprAgent) |
 |---|---|---|---|
 | Transport | stdio | stdio | stdio |
 | Diagnostic mode | push or pull | push or pull | pull (preferred) |
@@ -186,7 +189,7 @@ fixtures alone.
 | Framed JSON-RPC harness over a tokio duplex through the real tower-lsp-server 0.23.0 (`framed_lsp_protocol_smoke_exercises_tower_server` and the framed refresh/config/root-switch/degradation tests) | Wire-level initialize/request/shutdown framing | protocol fixture passes |
 | VS Code extension 0.10.0 (`editors/vscode`) | `client.ts` capability advertisement parsed as text by the parity tests; NOT run end-to-end against a live editor | advertisement parity only; real proof #1579 pending |
 | Off-the-shelf standard client (Neovim/Helix/Eglot) | none yet | unclaimed — #1630 |
-| Headless agent client | `supported_requests: []` fail-closed | reserved — #1602/#1603 |
+| Private `riprAgent` consumer (experimental, not public) | `supported_requests: []` fail-closed | reserved — #1602/#1603 |
 
 Unsupported or unexercised clients remain unclaimed. The extension's
 advertised `RIPR_CLIENT_COMMANDS` list is verified by parsing
@@ -256,7 +259,7 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
   omit-vs-disabled difference (#1776/#1892) lives between profiles, not
   between transports. A divergence is a transport defect, not a profile
   difference.
-- A headless agent client sees `experimental.riprAgent` advertised with
+- A private `riprAgent` consumer sees `experimental.riprAgent` advertised with
   `supported_requests: []` and `implementation_state: "capability_only"`
   until #1602/#1603 land real handlers.
 - A resolve-capable client that sends `codeAction/resolve` for an action
@@ -285,7 +288,8 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
   parse the advertisement from `editors/vscode/src/client.ts`, so a command
   the extension registers but does not advertise fails the parity tests.
   Further `tests.rs` tests verify `CodeActionContext.only` honoring (#1750)
-  and the kind parity invariant in both directions: emitted-kinds
+  including unknown/reserved kinds returning an empty list (#1891) and the
+  kind parity invariant in both directions: emitted-kinds
   ⊆ advertised-kinds and advertised-kinds ⊆ emitted-kinds (#7773).
 - `action_contract.rs` tests verify the versioned data payload shape, the
   deterministic `action_id`, and the closed disabled-reason vocabulary
@@ -447,8 +451,11 @@ client supports:
   (`quickfix` keeps every per-diagnostic `quickfix.ripr.*` action;
   `source` keeps only `source.ripr.refresh`; `quickfix.ripr.navigate`
   keeps only that subtree). An absent `only` leaves the response
-  unfiltered, and an action with no kind fails closed. The kind filter
-  compounds with the negotiated client-command filter.
+  unfiltered, and an action with no kind fails closed. A requested kind
+  with no matching emitted action — including unknown kinds and the
+  reserved unemitted `quickfix.ripr.verify` / `source.ripr.verify`
+  names — yields an empty list rather than unrelated actions (#1891).
+  The kind filter compounds with the negotiated client-command filter.
 - Every code action carries the versioned `ripr-code-action-data-v1` data
   payload, and diagnostic-addressing actions attach the addressed
   diagnostic (#1892). The #1776 client-command filter becomes the

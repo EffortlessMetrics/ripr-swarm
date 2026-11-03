@@ -385,6 +385,26 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "import builtins\nbuiltins['isinstance'] += 1\n\n\n",
         "import builtins as b\nb.isinstance **= 2\n\n\n",
         "import builtins as b\nvalue = 1; b.isinstance += 1\n\n\n",
+        // #12593: assignment targets split across lines or continued with `\`.
+        "import builtins as b\n(other,\n b.isinstance) = (None, checker)\n\n\n",
+        "import builtins as b\n[other,\n b.isinstance] = [None, checker]\n\n\n",
+        "import builtins as b\nb.isinstance = \\\n    checker\n\n\n",
+        "import builtins as b\n(\n    b.isinstance,\n    other,\n) = (checker, None)\n\n\n",
+        // #12591: `for`, `with ... as` and comprehension targets store too.
+        "import builtins as b\nfor b.isinstance in items:\n    pass\n\n\n",
+        "import builtins as b\nfor other, b.isinstance in pairs:\n    pass\n\n\n",
+        "import builtins as b\nfor (other, b.isinstance) in pairs:\n    pass\n\n\n",
+        "import builtins as b\nasync for b.isinstance in items:\n    pass\n\n\n",
+        "import builtins as b\nwith ctx() as b.isinstance:\n    pass\n\n\n",
+        "import builtins as b\nwith open(path) as handle, ctx() as b.isinstance:\n    pass\n\n\n",
+        "import builtins as b\nwith (ctx() as b.isinstance, other() as handle):\n    pass\n\n\n",
+        "import builtins as b\nwith ctx() as (other, b.isinstance):\n    pass\n\n\n",
+        "import builtins as b\nchecks = [0 for b.isinstance in items]\n\n\n",
+        "import builtins as b\nchecks = {k: 0 for k, b.isinstance in pairs}\n\n\n",
+        "import builtins as b\nchecks = list(1 for other in rows for b.isinstance in other)\n\n\n",
+        "import builtins as b\nfor b . isinstance in items:\n    pass\n\n\n",
+        "import builtins as b\nfor b['isinstance'] in items:\n    pass\n\n\n",
+        "import builtins as b\nchecks = [0 for other in rows\n          for b.isinstance in other]\n\n\n",
     ];
     for patch in patches {
         let owner = format!("{patch}{arm}");
@@ -418,6 +438,24 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         // #12592 controls: augmented ops on the right or unrelated targets bind nothing.
         "import builtins as b\nlimit = b.isinstance + 1\n\n\n",
         "import builtins as b\nother += b.isinstance\n\n\n",
+        // #12593 controls: multiline reads and continued expressions bind nothing.
+        "import builtins as b\nchecks = (b.isinstance,\n b.len)\n\n\n",
+        "import builtins as b\nsame = b.isinstance == \\\n    checker\n\n\n",
+        // #12591 controls: plain targets, and the attribute only read in the
+        // iterable, context expression, a string or a comprehension condition.
+        "import builtins as b\nfor item in items:\n    pass\n\n\n",
+        "import builtins as b\nwith ctx() as handle:\n    pass\n\n\n",
+        "import builtins as b\nfor item in [b.isinstance, b.len]:\n    pass\n\n\n",
+        "import builtins as b\nwith b.isinstance as handle:\n    pass\n\n\n",
+        "import builtins as b\nwith open(b.isinstance) as handle, ctx() as other:\n    pass\n\n\n",
+        "import builtins as b\nchecks = [b.isinstance for item in items]\n\n\n",
+        "import builtins as b\nchecks = [item for item in items if item is b.isinstance]\n\n\n",
+        "import builtins as b\nlabel = \"for b.isinstance in items\"\n\n\n",
+        "import builtins as b\nimport os as handle\nuse(b.isinstance)\n\n\n",
+        // #12728: the attribute inside a target but not as a store slot.
+        "import builtins as b\nfor items[b.isinstance] in rows:\n    pass\n\n\n",
+        "import builtins as b\nwith ctx() as items[b.isinstance]:\n    pass\n\n\n",
+        "import builtins as b\nfor item in rows: use(b.isinstance)\n\n\n",
     ] {
         let owner = format!("{harmless}{arm}");
         assert_eq!(

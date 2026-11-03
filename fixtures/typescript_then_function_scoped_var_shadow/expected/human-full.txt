@@ -88,6 +88,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: the related test asserts inside a callback the extractor cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is needed on that evidence, and no repair packet is emitted
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_then_function_scoped_var_shadow/input --diff <cwd>/fixtures/typescript_then_function_scoped_var_shadow/diff.patch --mode fast probe:src_total.ts:typescript_preview:44386250
   ripr context --root <cwd>/fixtures/typescript_then_function_scoped_var_shadow/input --diff <cwd>/fixtures/typescript_then_function_scoped_var_shadow/diff.patch --mode fast --at probe:src_total.ts:typescript_preview:44386250
 

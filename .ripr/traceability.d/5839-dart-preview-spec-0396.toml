@@ -1,0 +1,16 @@
+# Registers the Dart preview static-facts spec (#5839) as a proposed behavior
+# contract. Implementation tests and fixtures land in later epic slices.
+[[behavior]]
+id = "RIPR-SPEC-0396"
+name = "Dart preview static facts (package:test, flutter_test, async, platform)"
+spec = "docs/specs/RIPR-SPEC-0396-dart-preview-static-facts.md"
+outputs = [
+  "docs/specs/RIPR-SPEC-0396-dart-preview-static-facts.md",
+  "docs/spec-index.d/RIPR-SPEC-0396.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0396.toml",
+]
+metrics = [
+  "spec_format_compliance",
+  "traceability_registration",
+  "capability_cell_identity_defined",
+]

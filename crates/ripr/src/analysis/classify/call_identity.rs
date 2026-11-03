@@ -144,6 +144,8 @@ pub(crate) struct CallIdentityMemos {
     /// Test-only scaling probe: repeated probes must not rescan.
     #[cfg(test)]
     rebound_scans: std::sync::atomic::AtomicUsize,
+    /// #8917: whether a type name carries a unique workspace `Default` derive.
+    pub(in crate::analysis) type_derives_default: Mutex<BTreeMap<String, bool>>,
 }
 
 impl CallIdentityMemos {
