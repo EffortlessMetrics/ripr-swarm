@@ -31,7 +31,7 @@
         "activate": "yes",
         "propagate": "yes",
         "observe": "yes",
-        "discriminate": "yes"
+        "discriminate": "weak"
       },
       "related_tests_total": 2,
       "related_tests": [

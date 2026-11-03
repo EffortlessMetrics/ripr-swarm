@@ -46,6 +46,8 @@ pub(crate) mod mutation_calibration;
 pub(crate) mod oracle_phrase;
 #[cfg(test)]
 mod related_test_role_tests;
+#[cfg(test)]
+mod shared_grip_consumer_matrix_tests;
 pub use mutation_calibration::{
     CargoMutantsLocationJoin, CargoMutantsOutcomeRecord, CargoMutantsRuntimeSpan,
     CargoMutantsSeamLocation, join_cargo_mutants_location, parse_cargo_mutants_outcomes_json,
