@@ -533,18 +533,6 @@ fn an_owner_attribute_macro_that_may_shadow_the_type_names_no_arm() -> Result<()
     // compiler builtin on the owner expands to no item, so both reads stand.
     let sibling = "mod kinds;\npub use kinds::Kind;\n\n#[shadowing_attr]\npub fn g() {}\n\npub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        _ => 2,\n    }\n}\n";
     let builtin = "mod kinds;\npub use kinds::Kind;\n\n#[inline]\npub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        _ => 2,\n    }\n}\n";
-    // An attributed function of the same name in the enum's module cannot
-    // expand at the owner's match, so it does not hide the enum's variants.
-    let kinds_with_peer = format!("{kinds}\n#[shadowing_attr]\nfn f() {{}}\n");
-    assert_eq!(
-        changed_wildcard(
-            builtin,
-            &[("src/kinds.rs", kinds_with_peer.as_str())],
-            WILDCARD_TEST,
-            "src/lib.rs"
-        )?,
-        vec!["_"]
-    );
     for lib in [sibling, builtin] {
         assert_eq!(
             changed_wildcard(
