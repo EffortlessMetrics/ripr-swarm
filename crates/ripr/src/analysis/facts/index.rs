@@ -169,6 +169,9 @@ pub struct RustIndex {
     /// use (#12189). Not serialized: a rebuilt or deserialized index reads
     /// the listing again.
     pub(crate) snapshot_listing: crate::analysis::rust_snapshot_files::SnapshotListingCell,
+    /// `assert_*snapshot` macros any workspace file defines, read on first
+    /// use (#12720). Not serialized, like the listing.
+    pub(crate) local_snapshot_macros: crate::analysis::rust_snapshot_files::LocalSnapshotMacrosCell,
     /// The display name and synthetic source of each registered doc
     /// example test, keyed by (file, start line) (#6648). A doctest is its
     /// own crate: its scopes come from this text, not from the file that

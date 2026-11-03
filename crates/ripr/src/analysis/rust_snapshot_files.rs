@@ -27,6 +27,7 @@
 //! and a committed-history overlay that records a differing snapshot input
 //! makes the answer unknown.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
@@ -215,6 +216,49 @@ impl SnapshotListingCell {
     }
 }
 
+/// The `assert_*snapshot!` macro names any workspace Rust file defines with
+/// `macro_rules!`, read on first use beside the listing. A `#[macro_use]`
+/// definition in another file shadows an `insta` import by textual scope, so
+/// a bare call is insta's only when no file defines the name (#12720). The
+/// seam cache key already hashes every analyzed Rust file, so a definition
+/// added or removed anywhere moves the key.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LocalSnapshotMacrosCell(OnceLock<Arc<BTreeSet<String>>>);
+
+impl LocalSnapshotMacrosCell {
+    fn defines(&self, index: &RustIndex, name: &str) -> bool {
+        self.0
+            .get_or_init(|| {
+                let mut names = BTreeSet::new();
+                for (_, file) in index.files().iter() {
+                    collect_snapshot_macro_definitions(&file.source, &mut names);
+                }
+                Arc::new(names)
+            })
+            .contains(name)
+    }
+}
+
+/// Add every `macro_rules! assert_*snapshot` name in `source` to `out`,
+/// tolerating whitespace around the `!`.
+fn collect_snapshot_macro_definitions(source: &str, out: &mut BTreeSet<String>) {
+    let mut rest = source;
+    while let Some(at) = rest.find("macro_rules") {
+        rest = &rest[at + "macro_rules".len()..];
+        let Some(after_bang) = rest.trim_start().strip_prefix('!') else {
+            continue;
+        };
+        let name: String = after_bang
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        if name.starts_with("assert_") && name.ends_with("snapshot") {
+            out.insert(name);
+        }
+    }
+}
+
 /// `true` when `oracle` is a plain file-backed insta assertion in `test`
 /// whose committed `.snap` file is certainly missing. `false` for every
 /// other case, including every one this reading cannot resolve.
@@ -242,6 +286,17 @@ pub(crate) fn file_backed_snapshot_missing(
     ) else {
         return false;
     };
+    // A bare macro name could resolve to a crate-local macro defined in
+    // another file; only the `insta::` path (or a name nothing defines) is
+    // insta's.
+    if snapshot_call(&oracle.text, &source).is_some_and(|call| {
+        call.bare
+            && index
+                .local_snapshot_macros
+                .defines(index, call.macro_name.as_str())
+    }) {
+        return false;
+    }
     let listing = index.snapshot_listing.get(&authority.root);
     listing.certainly_lacks(&names)
 }
@@ -289,6 +344,8 @@ fn expected_snapshot_names(
 
 struct SnapshotCall {
     macro_name: String,
+    /// Spelled without the `insta::` path, so name resolution picked it.
+    bare: bool,
     arguments: Vec<String>,
 }
 
@@ -308,11 +365,11 @@ fn snapshot_call(text: &str, file_source: &str) -> Option<SnapshotCall> {
     if !macro_name.starts_with("assert_") || path.matches("::").count() > 1 {
         return None;
     }
-    match path.strip_suffix(macro_name) {
-        Some("insta::") => {}
-        Some("") if imports_from_insta(file_source, macro_name) => {}
+    let bare = match path.strip_suffix(macro_name) {
+        Some("insta::") => false,
+        Some("") if imports_from_insta(file_source, macro_name) => true,
         _ => return None,
-    }
+    };
     let rest = text[bang + 1..].trim_start();
     let open = rest
         .chars()
@@ -331,6 +388,7 @@ fn snapshot_call(text: &str, file_source: &str) -> Option<SnapshotCall> {
     }
     Some(SnapshotCall {
         macro_name: macro_name.to_string(),
+        bare,
         arguments,
     })
 }
@@ -339,7 +397,9 @@ fn snapshot_call(text: &str, file_source: &str) -> Option<SnapshotCall> {
 /// and defines no macro of that name, so a bare `assert_snapshot!` is insta's
 /// and not a local assertion that checks an explicit value.
 fn imports_from_insta(source: &str, macro_name: &str) -> bool {
-    if source.contains(&format!("macro_rules! {macro_name}")) {
+    let mut defined = BTreeSet::new();
+    collect_snapshot_macro_definitions(source, &mut defined);
+    if defined.contains(macro_name) {
         return false;
     }
     source.split(';').any(|statement| {
