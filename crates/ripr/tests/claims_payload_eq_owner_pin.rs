@@ -433,6 +433,89 @@ fn a_pinned_literal_neither_owner_version_returns_does_not_credit() -> Result<()
     Ok(())
 }
 
+/// RIPR-SPEC-0197 literal `matches!` pins read the same two owner versions as
+/// `assert_eq!`: a pattern that neither returns fails on both and is withheld,
+/// while the old or new value keeps its credit (#12716).
+#[test]
+fn a_literal_matches_pin_neither_owner_version_returns_does_not_credit() -> Result<(), String> {
+    let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("matches_pin_mismatch");
+    let cases = [
+        result_case(
+            "m_right",
+            "",
+            "assert!(matches!(checked_div(17, 5), Ok(3)));",
+            true,
+        ),
+        result_case(
+            "m_old",
+            "",
+            "assert!(matches!(checked_div(17, 5), Ok(4)));",
+            true,
+        ),
+        option_case(
+            "m_some_right",
+            "",
+            "assert!(matches!(half(8), Some(4)));",
+            true,
+        ),
+        option_case(
+            "m_some_old",
+            "",
+            "assert!(matches!(half(8), Some(5)));",
+            true,
+        ),
+        result_case(
+            "m_neither",
+            "",
+            "assert!(matches!(checked_div(17, 5), Ok(9)));",
+            false,
+        ),
+        result_case(
+            "m_neither_multi_line",
+            "",
+            "assert!(matches!(\n    checked_div(17, 5),\n    Ok(9)\n));",
+            false,
+        ),
+        option_case(
+            "m_some_neither",
+            "",
+            "assert!(matches!(half(8), Some(7)));",
+            false,
+        ),
+        result_case(
+            "m_guard_exit",
+            "",
+            "assert!(matches!(checked_div(17, 0), Ok(0)));",
+            false,
+        ),
+        option_case(
+            "m_some_guard_exit",
+            "",
+            "assert!(matches!(half(7), Some(3)));",
+            false,
+        ),
+        // An expression argument is outside the closed subset, so today's
+        // reading holds.
+        result_case(
+            "m_expression_argument",
+            "",
+            "assert!(matches!(checked_div(16 + 1, 5), Ok(9)));",
+            true,
+        ),
+    ];
+    for case in cases {
+        let outcome = run(&root_dir, &case, "return_value")?;
+        assert_eq!(
+            outcome.class == "exposed",
+            case.credited,
+            "{}: {}",
+            case.name,
+            outcome.class
+        );
+    }
+    Ok(())
+}
+
 /// The same verified-import twin under probes that are not `return_value`
 /// (RIPR-SPEC-0197 rule 5): the macro is graded for the return-value family
 /// only, so every other family keeps `unknown` / none and no credit.
