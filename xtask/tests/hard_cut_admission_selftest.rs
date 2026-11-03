@@ -4,14 +4,14 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-fn run_self_test(script: &str, expected: &str) -> Result<(), String> {
+fn run_python_control(script: &str, argument: &str, expected: &str) -> Result<(), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let path = root
         .join(".github/actions/pr-candidate-admission")
         .join(script);
     let output = Command::new("python3")
         .arg(&path)
-        .arg("--self-test")
+        .arg(argument)
         .output()
         .map_err(|error| format!("python3 must be available for {script}: {error}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -21,10 +21,26 @@ fn run_self_test(script: &str, expected: &str) -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    if !stdout.contains(expected) {
+    if !stdout.contains(expected) && !String::from_utf8_lossy(&output.stderr).contains(expected) {
         return Err(format!("{script} unexpected output: {stdout}"));
     }
     Ok(())
+}
+
+fn run_self_test(script: &str, expected: &str) -> Result<(), String> {
+    run_python_control(script, "--self-test", expected)
+}
+
+#[cfg(unix)]
+#[test]
+fn history_sync_scope_real_bash_controls_pass() -> Result<(), String> {
+    run_python_control("test_history_sync_scope.py", "-q", "Ran 22 tests in")
+}
+
+#[cfg(unix)]
+#[test]
+fn history_sync_live_authorization_controls_pass() -> Result<(), String> {
+    run_python_control("test_history_sync_live.py", "-q", "Ran 26 tests in")
 }
 
 #[test]
