@@ -20,7 +20,7 @@
       "worktree": "dirty"
     },
     "canonicalization": "raw_json_placeholder_v1",
-    "content_sha256": "sha256:be6feff67ec932ae892e8f79cc5a9b861ac16183e73c13d3566788246f9d8eff",
+    "content_sha256": "sha256:19a88340998459e60da550458b509f5df349093dd6fea6670534c7a47c11b450",
     "kind": "repo_exposure",
     "producer": {
       "tool": "ripr",
@@ -58,7 +58,7 @@
       "end_line": 2,
       "evidence": {
         "activate": "yes",
-        "discriminate": "yes",
+        "discriminate": "weak",
         "observe": "yes",
         "propagate": "yes",
         "reach": "yes"

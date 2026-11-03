@@ -634,8 +634,9 @@ impl RiprAgentCapability {
             snapshot_handles: false,
             cancellation: true,
             claim_boundary: concat!(
-                "ripr/listActionableItems is implemented; ",
-                "all other riprAgent requests remain reserved."
+                "ripr/listActionableItems is implemented for the VS Code private adapter; ",
+                "all other riprAgent requests remain reserved; ",
+                "not generic third-party LSP client support."
             )
             .to_string(),
             ..Self::v0_1()
@@ -1548,7 +1549,7 @@ mod tests {
             return Err("diagnostic_modes drifted from push-only".to_string());
         }
         if capability.claim_boundary
-            != "ripr/listActionableItems is implemented; all other riprAgent requests remain reserved."
+            != "ripr/listActionableItems is implemented for the VS Code private adapter; all other riprAgent requests remain reserved; not generic third-party LSP client support."
         {
             return Err(format!(
                 "claim_boundary drifted: {}",
