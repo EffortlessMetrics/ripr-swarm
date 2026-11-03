@@ -947,6 +947,7 @@ fn source_digest(root: &Path, skip_dirs: &[&Path]) -> Result<String, String> {
     let skip = skip_dirs
         .iter()
         .filter_map(|path| std::path::absolute(path).ok())
+        .map(|path| lexically_normalized(&path))
         .collect::<Vec<_>>();
     let mut files = BTreeMap::new();
     collect_source_files(root, root, &skip, &mut files)?;
@@ -963,6 +964,24 @@ fn source_digest(root: &Path, skip_dirs: &[&Path]) -> Result<String, String> {
     Ok(sha256_bytes(joined.as_bytes()))
 }
 
+/// Resolve `.` and `..` components without touching the filesystem, so a
+/// `--target-dir` spelled `repo/tmp/../private` is skipped as `repo/private`.
+fn lexically_normalized(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component);
+                }
+            }
+            other => normalized.push(other),
+        }
+    }
+    normalized
+}
+
 fn collect_source_files(
     root: &Path,
     dir: &Path,
@@ -976,7 +995,9 @@ fn collect_source_files(
             .map_err(|error| format!("read libtest source entry `{}`: {error}", dir.display()))?;
         let path = entry.path();
         let name = entry.file_name();
-        let absolute = std::path::absolute(&path).ok();
+        let absolute = std::path::absolute(&path)
+            .ok()
+            .map(|candidate| lexically_normalized(&candidate));
         if name == ".git"
             || name == "Cargo.lock"
             || (name == "target" && dir.join("Cargo.toml").is_file())
@@ -1046,6 +1067,24 @@ fn read_cgroup() -> Option<String> {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn lexical_normalization_resolves_dot_segments_in_skip_paths() {
+        let aliased = Path::new("repo")
+            .join("tmp")
+            .join("..")
+            .join("private")
+            .join(".");
+        assert_eq!(
+            lexically_normalized(&aliased),
+            Path::new("repo").join("private")
+        );
+        // A leading `..` has nothing to pop and is kept rather than dropped.
+        assert_eq!(
+            lexically_normalized(Path::new("..").join("x").as_path()),
+            Path::new("..").join("x")
+        );
+    }
 
     fn artifact_json(package: &str, kind: &str, test: bool, executable: Option<&str>) -> String {
         let executable = match executable {
