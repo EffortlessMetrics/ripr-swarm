@@ -923,6 +923,13 @@ pub(crate) fn resolve_repair_start(
         .filter(|(_, refusal)| matches!(refusal, Some((RefusalKind::AlreadyGripped, _))))
         .map(|(entry, _)| *entry)
         .collect();
+    // #11401: the seam producer cannot follow a call into another workspace
+    // crate, but `ripr check` can. A changed seam that check reads as noticed
+    // is not an open gap here either, so the two commands cannot disagree.
+    let refusals =
+        notice_what_check_notices(refusals, &classified, (root, base, &config), |entry| {
+            matches!(scope, Some(ChangeScope::TouchesSeams(_))) && !off_change(entry)
+        });
     // For each gripped refusal: whether the spot is outside the change, and why.
     let mut gripped_reasons: Vec<(bool, String)> = Vec::new();
     let mut eligible_off_change = 0usize;
@@ -1105,6 +1112,66 @@ pub(crate) fn resolve_repair_start(
         start_spec: spec.as_ref(),
         change,
     })
+}
+
+/// Why a changed spot needs no repair when `ripr check` already reads it as
+/// noticed by a test (#11401). It speaks to the changed code itself, unlike
+/// [`GRIPPED_SPOT_REASON`].
+const CHECK_NOTICED_REASON: &str = "`ripr check` reads this changed code as already noticed by a test, so there is no gap to repair here";
+
+/// Turn the refusal of each changed seam that `ripr check` reads as noticed
+/// into an already-gripped one. Check is the authority for a changed line, and
+/// the seam inventory is a separate producer that follows fewer calls (it does
+/// not trace into another workspace crate), so it can leave such a seam
+/// startable or "not ready" beside a test check already counts.
+///
+/// Only ever closes a start: a seam is never made startable, and a check that
+/// cannot run or reads nothing keeps every refusal as the seam producer made
+/// it. The finding binds to its seam through the shared location join
+/// ([`finding_names_seam_by_location`]), never by a gap id of its own.
+fn notice_what_check_notices<'a>(
+    mut refusals: Vec<(
+        &'a crate::analysis::ClassifiedSeam,
+        Option<(RefusalKind, String)>,
+    )>,
+    classified: &[crate::analysis::ClassifiedSeam],
+    (root, base, config): (&Path, Option<&str>, &crate::config::RiprConfig),
+    on_change: impl Fn(&crate::analysis::ClassifiedSeam) -> bool,
+) -> Vec<(
+    &'a crate::analysis::ClassifiedSeam,
+    Option<(RefusalKind, String)>,
+)> {
+    let open: Vec<usize> = refusals
+        .iter()
+        .enumerate()
+        .filter(|(_, (entry, refusal))| {
+            on_change(entry) && !matches!(refusal, Some((RefusalKind::AlreadyGripped, _)))
+        })
+        .map(|(position, _)| position)
+        .collect();
+    if open.is_empty() {
+        return refusals;
+    }
+    let Ok(output) = super::gap_bound_repair::default_check_output(root, base, config) else {
+        return refusals;
+    };
+    let noticed: Vec<&crate::domain::Finding> = output
+        .findings
+        .iter()
+        .filter(|finding| finding.class == crate::domain::ExposureClass::Exposed)
+        .collect();
+    for position in open {
+        let entry = refusals[position].0;
+        if noticed.iter().any(|finding| {
+            super::repair_card_handoff::finding_names_seam_by_location(finding, entry, classified)
+        }) {
+            refusals[position].1 = Some((
+                RefusalKind::AlreadyGripped,
+                CHECK_NOTICED_REASON.to_string(),
+            ));
+        }
+    }
+    refusals
 }
 
 /// Why an already-gripped spot needs no repair, naming its limits.

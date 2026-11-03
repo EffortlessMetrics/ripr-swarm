@@ -116,6 +116,19 @@ the manifests give for the entry's own package
 A test of another package, an entry outside a library root and an unreadable
 manifest add nothing, so those imports still read foreign.
 
+### A direct test beside the cross-crate entry
+
+An owner can also have a direct test in its own package (`discount(5)` in
+`wscore/tests`) beside the wrapper test in `app`. The multi-caller rule counted
+that direct test as a second reached caller and gave up the chain, and the
+activation rows preferred the direct call over the chain's. When the owner has
+exactly one non-test caller reached by a test, and its chain crosses a crate
+edge (a hop carries `crate_qualifier`), that chain stands, and its transferred
+rows are added to the direct rows. Both sides stay as they were: the direct
+test keeps its own relation and rows, and the pairing still needs a boundary
+row and an exact pin on the same entry call in one test. Any other mix of
+callers stays ambiguous. A chain with no crate edge is unchanged.
+
 ### What the result is
 
 With the hop and the entry recognised, the existing rules decide, unchanged:
@@ -126,21 +139,43 @@ The audit case reads `exposed`. A transformed argument, a transformed or
 re-bound result, a loose assertion and an input off the boundary read as they
 do for a same-crate wrapper: not noticed.
 
+## Bare `ripr repair`
+
+Bare repair reads whole-repository seams from its own producer, which relates
+tests within one package by name and does not follow a call into another
+crate. For a changed spot it therefore asks `ripr check`, the authority for a
+changed line, through the same analysis a default `ripr check` runs. When a
+seam on the changed lines binds (shared location join: file, owner, probe
+family and line, most-specific claimant only) to a finding that check reads as
+`exposed`, the seam's refusal becomes "already noticed":
+
+> `ripr check` reads this changed code as already noticed by a test, so there
+> is no gap to repair here
+
+This only ever closes a start. A seam is never made startable, a seam off the
+changed lines is not consulted, and a check that cannot run keeps every
+refusal as the seam producer made it. Repair takes no check mode, so it reads
+the whole workspace like the default check does: in `--no-unchanged-tests`
+and `--mode instant`, where check leaves the unchanged `app` test out and
+claims nothing, repair still names the noticed change and starts nothing.
+A same-crate wrapper that check already read as noticed, and repair called
+"not ready", now agrees too. An explicit `ripr repair <id>` start goes
+through the seam gate alone and is unchanged.
+
 ## Known limits
 
 - A `[target.'cfg(..)'.dependencies]` entry counts as a dependency edge
   whatever the platform. A call that only builds on another platform would be
   a build error there, so this is not a realistic source of a wrong reading.
-- `ripr repair` has its own whole-repository seam producer, which relates
-  tests within one package by name and does not follow a call into another
-  crate. For the audit case bare repair keeps its earlier refusal ("could not
-  establish which test runs this code") and never starts a repair, so no
-  wrong repair signal is added; it does not yet say "already noticed". That
-  is slice 2 of #11401. Where the owner's package also holds an unrelated
-  test, repair can still start a repair on the seam beside the cross-crate
-  pin; this also holds for a same-crate wrapper today.
+- The seam producer itself still does not follow a call into another crate;
+  repair gets the answer from check for the changed lines only. A seam off the
+  changed lines, and an explicit `ripr repair <id>` start, use the seam
+  producer alone.
+- Repair runs the default check analysis a second time when an open seam sits
+  on the changed lines.
 - `--no-unchanged-tests` and `--mode instant` leave the unchanged `app` test
-  out of check's evidence, so they keep the earlier no-path reading.
+  out of check's evidence, so check keeps the earlier no-path reading there
+  (repair, which has no mode, reads the workspace whole).
 - Not followed: a bare `use wscore::discount;` call, a renamed dependency, a
   submodule path (`wscore::pricing::discount`), a method or associated
   function, more than one crate edge in a chain beyond what the existing
@@ -161,8 +196,7 @@ do for a same-crate wrapper: not noticed.
 
 ## Non-Goals
 
-- Making `ripr repair` say "already noticed" for the cross-crate case (slice 2
-  of #11401).
+- Teaching the seam producer to follow a call into another crate.
 - Resolving a bare `use`d function, a renamed dependency, a submodule path or
   a method across a crate edge.
 - Any runtime claim, test generation or change to the actionability flip.
@@ -173,7 +207,8 @@ do for a same-crate wrapper: not noticed.
    `app::checkout` returns `wscore::discount(price)` through a normal
    `[dependencies]` path entry; `app/tests/t.rs` asserts
    `assert_eq!(checkout(100), 90)`. `ripr check` reads the change as noticed
-   and offers no repair start; bare `ripr repair` does not start.
+   and offers no repair start; bare `ripr repair` does not start and says the
+   change is already noticed.
 2. The same workspace with `wscore::discount(price + 1)`, with
    `wscore::discount(price) + 1` (and the pin moved to 91), with
    `assert!(checkout(100) > 0)`, or with `checkout(150)` is not read as
@@ -182,8 +217,13 @@ do for a same-crate wrapper: not noticed.
    `[dev-dependencies]`, shadowed by a local `mod wscore`, called through
    `use wscore::discount;`, or with a second `discount` in a third crate keeps
    the earlier no-path reading.
-4. `checkout` and `discount` both in one member package whose integration test
-   does `use wscore::checkout;` reads as noticed in a virtual workspace.
+4. With an extra `wscore/tests/other.rs` asserting `discount(5) == 5`, check
+   still reads the change as noticed, and bare repair does not start. With the
+   `app` pin moved to `checkout(150)`, loosened to `assert!(checkout(100) > 0)`,
+   the dependency renamed or the argument changed, check reads a partial gap
+   and both commands start the same repair.
+5. `checkout` and `discount` both in one member package whose integration test
+   does `use wscore::checkout;` reads as noticed in a virtual workspace, and bare repair agrees.
 
 ## Test Mapping
 
@@ -204,10 +244,18 @@ do for a same-crate wrapper: not noticed.
   `cross_crate_free_hop`, reached from `chain_through_caller` after the
   own-crate qualified route. `HelperHop::crate_qualifier` carries the crate
   name; `hops_forward_owner_result_with` reads it for the tail rule.
+- `crates/ripr/src/app/task_first.rs`: `notice_what_check_notices`, called by
+  `resolve_repair_start` between the shared gate (`repair_refusal`) and the
+  refusal presentation; the binding is
+  `repair_card_handoff::finding_names_seam_by_location`.
 - `crates/ripr/src/analysis/classify/helper_transfer.rs`:
+  `resolve_multi_caller` (a direct test beside a cross-crate entry) and
   `test_call_is_shadowed_for_entry` (the member-package import fix, read by
   `related_tests` and the activation entry rows) and
   `crosses_member_packages` (a bare call between two members is not a hop).
+- `crates/ripr/src/analysis/classify/activation.rs`: `call_values_for_owner`
+  adds the chain's transferred rows to the direct rows when the chain crosses a
+  crate edge.
 
 ## Metrics
 

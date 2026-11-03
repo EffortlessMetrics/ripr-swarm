@@ -5286,13 +5286,25 @@ fn call_values_for_owner(
         },
         &ReceiverParameters::reading_text_cells(text_cells).reading_files_of(index),
     );
-    if !direct.is_empty() {
+    // #11401: a chain through another workspace crate is a separate test's
+    // input, not a stand-in for a direct call, so a direct call beside it must
+    // not hide the row that reaches the owner through the other crate.
+    let crosses_crate = helper_chain
+        .is_some_and(|chain| chain.hops.iter().any(|hop| hop.crate_qualifier.is_some()));
+    if !direct.is_empty() && !crosses_crate {
         return direct;
     }
     let Some(chain) = helper_chain else {
         return direct;
     };
-    helper_transferred_rows(&parameters, chain, related_tests, index)
+    let mut rows = direct;
+    rows.extend(helper_transferred_rows(
+        &parameters,
+        chain,
+        related_tests,
+        index,
+    ));
+    rows
 }
 
 /// Whether `argument` computes one deterministic value ripr cannot read

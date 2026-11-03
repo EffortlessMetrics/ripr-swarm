@@ -12,10 +12,11 @@
 //! The first test of each family asserts the generated fixture itself (the
 //! finding is on `wscore/src/lib.rs:2`, `price >= 100`) before any claim.
 //!
-//! `ripr repair` has its own seam producer, which does not follow a call into
-//! another crate yet (slice 2 of #11401). Until then bare repair must keep
-//! its earlier refusal and never start beside a test that already checks the
-//! change, in every case below.
+//! Bare `ripr repair` reads the same change through its own seam producer,
+//! which does not follow a call into another crate. It asks `ripr check` about
+//! the changed spot (slice 2 of #11401), so repair says the change is already
+//! noticed exactly when check does, and never starts beside that test. Where
+//! check does not read the change as noticed, repair keeps its own answer.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -196,6 +197,51 @@ fn assert_no_repair_start(case: &str, repo: &Repo, check: &str) -> Result<(), St
     Ok(())
 }
 
+/// The unit test of the owner's package: it calls the changed function far from
+/// the boundary, so it reaches the change without pinning it.
+const OWNER_PACKAGE_TEST: &str = "use wscore::discount;\n\n#[test]\nfn small_price_is_unchanged() {\n    assert_eq!(discount(5), 5);\n}\n";
+
+/// Bare repair does not start and says the changed code is already noticed,
+/// in the words check's agreement uses, with no leftover "could not establish"
+/// or "missing evidence" claim.
+fn assert_repair_says_noticed(case: &str, repo: &Repo) -> Result<(), String> {
+    let (started, repair) = repo.repair()?;
+    if started
+        || !repair.contains("Nothing to do for this change")
+        || !repair.contains("reads this changed code as already noticed by a test")
+        || repair.contains("could not establish")
+        || repair.contains("missing evidence")
+        || repair.contains("repair route not ready")
+    {
+        return Err(format!(
+            "{case}: bare repair must say the change is already noticed and not start:\n{repair}"
+        ));
+    }
+    Ok(())
+}
+
+/// A negative with an open gap: check reads the change as partly noticed and
+/// offers a start, and bare repair starts that same repair.
+fn assert_open_gap_starts(case: &str, base: Case) -> Result<(), String> {
+    let repo = Repo::create(&base)?;
+    let check = repo.check(&[])?;
+    assert_changed_subject(case, &check)?;
+    if check.contains(NOTICED) || !check.contains("1 partly noticed") {
+        return Err(format!("{case}: check must read a partial gap:\n{check}"));
+    }
+    let Some(id) = check_start_id(&check) else {
+        return Err(format!("{case}: check must offer a repair start:\n{check}"));
+    };
+    let id = id.to_string();
+    let (started, repair) = repo.repair()?;
+    if !started || !repair.contains(&id) {
+        return Err(format!(
+            "{case}: bare repair must start the repair check names ({id}):\n{repair}"
+        ));
+    }
+    Ok(())
+}
+
 /// A negative: the same changed line, read as `summary_part`, never as noticed,
 /// and no repair start anywhere.
 fn assert_not_noticed(case: &str, base: Case, summary_part: &str) -> Result<(), String> {
@@ -241,18 +287,104 @@ fn narrow_check_modes_that_leave_the_test_out_claim_nothing() -> Result<(), Stri
             ));
         }
         assert_no_repair_start(&format!("audit {extra:?}"), &repo, &check)?;
+        // Bare repair takes no mode: it reads the whole workspace, as the
+        // default check does, so it names the same noticed change.
+        assert_repair_says_noticed(&format!("audit {extra:?}"), &repo)?;
     }
     Ok(())
 }
 
 #[test]
-fn bare_repair_keeps_its_earlier_refusal_for_the_audit_case() -> Result<(), String> {
+fn bare_repair_agrees_the_audit_case_is_already_noticed() -> Result<(), String> {
     let repo = Repo::create(&Case::audit())?;
-    let (started, repair) = repo.repair()?;
-    if started || !repair.contains("none is ready for an automatic repair") {
-        return Err(format!("repair must refuse without a start:\n{repair}"));
+    let check = repo.check(&[])?;
+    assert_changed_subject("audit", &check)?;
+    if !check.contains(NOTICED) {
+        return Err(format!(
+            "precondition: check reads the pin as noticed:\n{check}"
+        ));
     }
-    Ok(())
+    assert_repair_says_noticed("audit", &repo)
+}
+
+#[test]
+fn an_unrelated_test_in_the_owners_package_does_not_start_a_repair_beside_the_pin()
+-> Result<(), String> {
+    // `wscore/tests/other.rs` calls `discount` at an input far from the
+    // boundary. It reaches the changed code but does not pin it, so the seam
+    // looked open and repair started beside the `checkout(100) == 90` pin.
+    let case = Case::audit().with("wscore/tests/other.rs", OWNER_PACKAGE_TEST);
+    let repo = Repo::create(&case)?;
+    let check = repo.check(&[])?;
+    assert_changed_subject("unrelated test", &check)?;
+    if !check.contains(NOTICED) || check_start_id(&check).is_some() {
+        return Err(format!(
+            "check must read the pin as noticed and offer no start:\n{check}"
+        ));
+    }
+    assert_repair_says_noticed("unrelated test", &repo)
+}
+
+#[test]
+fn an_unrelated_test_beside_a_pin_off_the_boundary_still_starts_the_same_repair()
+-> Result<(), String> {
+    // One change from the test above: the cross-crate pin is at 150, not 100.
+    // Nothing notices the boundary, so check and repair both offer the start.
+    assert_open_gap_starts(
+        "off the boundary",
+        Case::audit()
+            .with("wscore/tests/other.rs", OWNER_PACKAGE_TEST)
+            .with(
+                "app/tests/t.rs",
+                "use app::checkout;\n\n#[test]\nfn checkout_discounts() {\n    assert_eq!(checkout(150), 140);\n}\n",
+            ),
+    )
+}
+
+#[test]
+fn an_unrelated_test_beside_a_loose_cross_crate_check_still_starts_the_same_repair()
+-> Result<(), String> {
+    assert_open_gap_starts(
+        "loose check",
+        Case::audit()
+            .with("wscore/tests/other.rs", OWNER_PACKAGE_TEST)
+            .with(
+                "app/tests/t.rs",
+                "use app::checkout;\n\n#[test]\nfn checkout_discounts() {\n    assert!(checkout(100) > 0);\n}\n",
+            ),
+    )
+}
+
+#[test]
+fn an_unrelated_test_beside_a_renamed_dependency_still_starts_the_same_repair() -> Result<(), String>
+{
+    assert_open_gap_starts(
+        "renamed dependency",
+        Case::audit()
+            .with("wscore/tests/other.rs", OWNER_PACKAGE_TEST)
+            .with(
+                "app/Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ndisc = { path = \"../wscore\", package = \"wscore\" }\n",
+            )
+            .with(
+                "app/src/lib.rs",
+                "pub fn checkout(price: u32) -> u32 {\n    disc::discount(price)\n}\n",
+            ),
+    )
+}
+
+#[test]
+fn an_unrelated_test_beside_a_changed_argument_still_starts_the_same_repair() -> Result<(), String>
+{
+    assert_open_gap_starts(
+        "transformed argument",
+        Case::audit()
+            .with("wscore/tests/other.rs", OWNER_PACKAGE_TEST)
+            .with(
+                "app/src/lib.rs",
+                "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price + 1)\n}\n",
+            ),
+    )
 }
 
 #[test]
@@ -445,5 +577,6 @@ fn a_wrapper_in_the_same_member_package_is_noticed_through_its_own_crate_name() 
             "a same-package wrapper pin must read noticed:\n{check}"
         ));
     }
-    Ok(())
+    // Bare repair used to call this one "not ready" beside check's noticed.
+    assert_repair_says_noticed("same package", &repo)
 }
