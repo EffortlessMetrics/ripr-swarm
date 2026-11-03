@@ -88,7 +88,7 @@ fn review_disposition_self_test_passes() -> Result<(), String> {
 #[test]
 fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
     let head = "a".repeat(40);
-    let cases: [(&str, bool); 22] = [
+    let cases: [(&str, bool); 25] = [
         ("SOURCE_REVIEW_READY", true),
         ("REVIEW_INCOMPLETE", false),
         (
@@ -120,6 +120,13 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
         ("<!--\ndisposition: REVIEW_READY\n-->", false),
         ("<!-- unclosed\nREVIEW_READY", false),
         ("REVIEW_READY\n\nChecked the diff and the oracle.", true),
+        // Deferred in #12814 and fixed in the follow-up: negating prose after the marker.
+        ("REVIEW_READY\nnot ready; repairs are required", false),
+        ("REVIEW_READY\nThere is a blocking issue remaining", false),
+        (
+            "REVIEW_READY\n```\nnot ready\n```\nChecked the oracle.",
+            true,
+        ),
         ("", false),
     ];
     for (body, expected) in cases {
@@ -151,7 +158,41 @@ fn wrong_head_changes_requested_and_identity_controls() -> Result<(), String> {
     let mut deleted_user_block = review("x", "CHANGES_REQUESTED", &head, at, "");
     deleted_user_block["user"] = serde_json::Value::Null;
     deleted_user_block["id"] = serde_json::json!(2);
+    let mut other_negative = review(
+        "other",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:02Z",
+        "REPAIR_REQUIRED",
+    );
+    other_negative["id"] = serde_json::json!(2);
+    let mut chatter = review(
+        "other",
+        "COMMENTED",
+        &head,
+        "2026-10-15T01:00:02Z",
+        "Looks fine to me",
+    );
+    chatter["id"] = serde_json::json!(2);
+    let ready = review("r", "COMMENTED", &head, at, "REVIEW_READY");
+    let mut no_time = review("r", "APPROVED", &head, at, "");
+    no_time["submitted_at"] = serde_json::Value::Null;
     let controls = [
+        (
+            "another reviewer's negative comment",
+            serde_json::json!([ready.clone(), other_negative]),
+            false,
+        ),
+        (
+            "another reviewer's neutral comment",
+            serde_json::json!([ready, chatter]),
+            true,
+        ),
+        (
+            "decisive review without submitted_at",
+            serde_json::json!([no_time]),
+            false,
+        ),
         (
             "changes requested from a deleted account",
             serde_json::json!([review("r", "APPROVED", &head, at, ""), deleted_user_block]),
@@ -190,6 +231,18 @@ fn wrong_head_changes_requested_and_identity_controls() -> Result<(), String> {
     ];
     for (name, reviews, expected) in controls {
         expect_outcome(&check_reviews(&reviews, &head)?, expected, name)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_review_pages_refuse_instead_of_crashing() -> Result<(), String> {
+    let head = "a".repeat(40);
+    for page in [
+        serde_json::json!({"message": "Bad credentials"}),
+        serde_json::json!([1]),
+    ] {
+        expect_outcome(&check_reviews(&page, &head)?, false, &format!("{page}"))?;
     }
     Ok(())
 }

@@ -31,6 +31,13 @@ STATE_MENTION = re.compile(
     r"|NOT_READY|WITHDRAWN|SUPERSEDED|CHANGES_REQUESTED",
     re.IGNORECASE,
 )
+# Negating or withdrawing prose on a line after the marker. Fail closed: evidence that
+# must use these words belongs in a fenced block, or the body stays marker-only.
+NEGATION = re.compile(
+    r"\b(?:not|no longer|never|isn't|aren't|cannot|can't|won't|without|unless|except)\b"
+    r"|repair|incomplete|withdraw|revok|retract|block(?:er|ing|ed)?\b|reject|fail|missing|pending",
+    re.IGNORECASE,
+)
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 DECISIVE_STATES = frozenset({"APPROVED", "CHANGES_REQUESTED", "DISMISSED"})
@@ -82,9 +89,24 @@ def comment_body_ready(body: str) -> bool:
     if not substantive or not POSITIVE_LINE.match(substantive[0]):
         return False
     return all(
-        POSITIVE_LINE.match(line) or not STATE_MENTION.search(line)
+        POSITIVE_LINE.match(line)
+        or not (STATE_MENTION.search(line) or NEGATION.search(line))
         for line in substantive[1:]
     )
+
+
+def comment_body_negative(body: str) -> bool:
+    """Whether a COMMENT body speaks about disposition without being exactly positive.
+
+    Ordinary chatter with no state mention is neutral. Structurally ambiguous bodies
+    count as negative so they can never silently drop a refusal.
+    """
+    if comment_body_ready(body):
+        return False
+    lines = visible_lines(body)
+    if lines is None:
+        return True
+    return any(STATE_MENTION.search(line) for line in lines)
 
 
 def _order(review: dict[str, Any]) -> tuple[str, int]:
@@ -120,6 +142,11 @@ def reviews_allow_source_attestation(
 ) -> bool:
     """Whether review evidence admits qualification for ``head``."""
     del author  # same-account COMMENT attestation is allowed; trust comes from author_association.
+    if any(
+        str(r.get("state") or "") in DECISIVE_STATES and not r.get("submitted_at")
+        for r in reviews
+    ):
+        return False  # cannot be ordered, so it cannot be proven superseded
     native = _latest_decisive(reviews)
     if any(str(r.get("state") or "") == "CHANGES_REQUESTED" for r in native):
         return False
@@ -130,15 +157,18 @@ def reviews_allow_source_attestation(
         for r in native
     ):
         return True
-    for review in _latest_by_login(reviews):
-        if (
-            str(review.get("commit_id") or "") == head
-            and _trusted(review)
-            and str(review.get("state") or "") == "COMMENTED"
-            and comment_body_ready(str(review.get("body") or ""))
-        ):
-            return True
-    return False
+    commented = [
+        r
+        for r in _latest_by_login(reviews)
+        if str(r.get("commit_id") or "") == head
+        and _trusted(r)
+        and str(r.get("state") or "") == "COMMENTED"
+    ]
+    # Any trusted reviewer's current negative disposition refuses, even when another
+    # trusted reviewer's current comment is ready.
+    if any(comment_body_negative(str(r.get("body") or "")) for r in commented):
+        return False
+    return any(comment_body_ready(str(r.get("body") or "")) for r in commented)
 
 
 def parse_paginated(text: str) -> list[dict[str, Any]]:
@@ -151,7 +181,9 @@ def parse_paginated(text: str) -> list[dict[str, Any]]:
             index += 1
             continue
         page, index = decoder.raw_decode(text, index)
-        reviews.extend(page if isinstance(page, list) else [page])
+        if not isinstance(page, list) or not all(isinstance(item, dict) for item in page):
+            raise ValueError("review page is not a list of review objects")
+        reviews.extend(page)
     return reviews
 
 
@@ -208,6 +240,9 @@ def self_test() -> None:
         ("<!-- unclosed\nREVIEW_READY", False),
         ("REVIEW_READY\n<!-- note -->\ndisposition: REVIEW_READY", True),
         ("", False),
+        ("REVIEW_READY\nnot ready; repairs are required", False),
+        ("REVIEW_READY\nThere is a blocking issue remaining", False),
+        ("REVIEW_READY\n```\nnot ready\n```\nChecked the oracle.", True),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)
@@ -218,6 +253,7 @@ def self_test() -> None:
     review = lambda **kw: {
         "user": {"login": "reviewer"},
         "author_association": "MEMBER",
+        "submitted_at": "2026-10-15T01:00:00Z",
         **kw,
     }
     assert not reviews_allow_source_attestation(
@@ -239,6 +275,36 @@ def self_test() -> None:
     assert reviews_allow_source_attestation(
         [review(state="APPROVED", commit_id=head)], head=head
     )
+    # Another trusted reviewer's later negative comment refuses despite a ready comment.
+    assert not reviews_allow_source_attestation(
+        [
+            review(state="COMMENTED", commit_id=head, id=1, body="REVIEW_READY",
+                   submitted_at="2026-10-15T01:00:01Z"),
+            review(state="COMMENTED", commit_id=head, id=2, body="REPAIR_REQUIRED",
+                   submitted_at="2026-10-15T01:00:02Z", user={"login": "other"}),
+        ],
+        head=head,
+    )
+    # Plain chatter from another reviewer stays neutral.
+    assert reviews_allow_source_attestation(
+        [
+            review(state="COMMENTED", commit_id=head, id=1, body="REVIEW_READY",
+                   submitted_at="2026-10-15T01:00:01Z"),
+            review(state="COMMENTED", commit_id=head, id=2, body="Looks fine to me",
+                   submitted_at="2026-10-15T01:00:02Z", user={"login": "other"}),
+        ],
+        head=head,
+    )
+    # A decisive review without submitted_at cannot be ordered, so refuse.
+    assert not reviews_allow_source_attestation(
+        [review(state="APPROVED", commit_id=head, submitted_at=None)], head=head
+    )
+    for bad_page in ('{"message": "Bad credentials"}', '[1]', '[{"a":1}] {"b":2}'):
+        try:
+            parse_paginated(bad_page)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted malformed page {bad_page!r}")
     # A CHANGES_REQUESTED from a deleted account (user: null) must still block.
     assert not reviews_allow_source_attestation(
         [
@@ -337,14 +403,21 @@ def main() -> int:
     if live:
         try:
             reviews = fetch_reviews(args.repository, args.pr)
-        except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
             print(
                 f"::error::source review attestation refused: could not read reviews: {exc}",
                 file=sys.stderr,
             )
             return 1
     else:
-        reviews = parse_paginated(args.check_reviews.read())
+        try:
+            reviews = parse_paginated(args.check_reviews.read())
+        except ValueError as exc:
+            print(
+                f"::error::source review attestation refused: malformed review data: {exc}",
+                file=sys.stderr,
+            )
+            return 1
     if not reviews_allow_source_attestation(reviews, head=args.head, author=args.author):
         print(
             "::error::source review attestation refused: a trusted reviewer "
