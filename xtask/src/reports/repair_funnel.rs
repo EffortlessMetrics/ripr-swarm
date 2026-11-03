@@ -893,7 +893,10 @@ mod tests {
             .iter()
             .find(|sample| sample.metric == "repair.selected_case_count")
             .ok_or("missing selected_case_count sample")?;
-        assert_eq!(count.outcome, SampleOutcome::Value(report.selected_count as f64));
+        assert_eq!(
+            count.outcome,
+            SampleOutcome::Value(report.selected_count as f64)
+        );
         Ok(())
     }
 
