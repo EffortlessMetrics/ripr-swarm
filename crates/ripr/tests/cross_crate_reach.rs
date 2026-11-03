@@ -644,6 +644,38 @@ fn an_aliased_or_nested_import_does_not_name_the_function() -> Result<(), String
 }
 
 #[test]
+fn a_name_that_rebinds_the_crate_segment_stops_the_imported_call() -> Result<(), String> {
+    for (label, prefix) in [
+        ("use as crate name", "use legacy as wscore;\n"),
+        (
+            "use crate path as crate name",
+            "use crate::shim as wscore;\n",
+        ),
+        ("struct of the crate name", "struct wscore;\n"),
+        ("enum of the crate name", "enum wscore {\n    One,\n}\n"),
+    ] {
+        let lib = bare_lib(&format!("{prefix}use wscore::discount;"));
+        assert_not_noticed(label, Case::audit().with("app/src/lib.rs", &lib), NO_PATH)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_struct_field_named_like_the_function_does_not_stop_the_imported_call() -> Result<(), String> {
+    let lib = format!(
+        "{}\npub struct Rates {{\n    pub discount: u32,\n}}\n",
+        bare_lib("use wscore::discount;")
+    );
+    let repo = Repo::create(&Case::audit().with("app/src/lib.rs", &lib))?;
+    let check = repo.check(&[])?;
+    assert_changed_subject("field named like the callee", &check)?;
+    if !check.contains(NOTICED) {
+        return Err(format!("a field is not a rebinding:\n{check}"));
+    }
+    assert_repair_says_noticed("field named like the callee", &repo)
+}
+
+#[test]
 fn a_local_function_of_the_same_name_shadows_the_import() -> Result<(), String> {
     // The call may mean the local `discount`, which `price` never reaches
     // `wscore` through.

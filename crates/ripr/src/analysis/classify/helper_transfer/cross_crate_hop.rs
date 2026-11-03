@@ -213,7 +213,11 @@ fn file_imports_only_by_name(source: &str, crate_name: &str, callee: &str) -> bo
     let named = |token: &ra_ap_syntax::SyntaxToken| {
         token.kind() == SyntaxKind::IDENT && token.text().trim_start_matches("r#") == callee
     };
+    let named_crate = |token: &ra_ap_syntax::SyntaxToken| {
+        token.kind() == SyntaxKind::IDENT && token.text().trim_start_matches("r#") == crate_name
+    };
     let mut importing = Vec::new();
+    let mut other_uses = Vec::new();
     for node in tree.syntax().descendants() {
         if ast::ExternCrate::can_cast(node.kind()) {
             return false;
@@ -226,6 +230,8 @@ fn file_imports_only_by_name(source: &str, crate_name: &str, callee: &str) -> bo
                 .any(|token| named(&token))
             {
                 importing.push(item);
+            } else {
+                other_uses.push(item);
             }
             continue;
         }
@@ -236,13 +242,16 @@ fn file_imports_only_by_name(source: &str, crate_name: &str, callee: &str) -> bo
         {
             continue;
         }
+        if ast::RecordField::can_cast(node.kind()) {
+            continue;
+        }
         let declares = ast::AnyHasName::cast(node)
             .and_then(|item| item.name())
             .is_some_and(|name| {
                 name.syntax()
                     .descendants_with_tokens()
                     .filter_map(|element| element.into_token())
-                    .any(|token| named(&token))
+                    .any(|token| named(&token) || named_crate(&token))
             });
         if declares {
             return false;
@@ -251,6 +260,17 @@ fn file_imports_only_by_name(source: &str, crate_name: &str, callee: &str) -> bo
     let [item] = importing.as_slice() else {
         return false;
     };
+    // Any other import that names `<crate>` (`use legacy as wscore;`) or is a
+    // glob can give the crate segment a different identity.
+    if other_uses.iter().any(|other| {
+        other
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .any(|token| named_crate(&token) || token.kind() == SyntaxKind::STAR)
+    }) {
+        return false;
+    }
     if item.attrs().next().is_some()
         || item.visibility().is_some()
         || item

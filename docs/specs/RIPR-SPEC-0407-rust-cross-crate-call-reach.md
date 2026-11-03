@@ -128,8 +128,13 @@ all of these hold in addition to rules 1, 2 and 5 above:
   another crate, an import inside a function or module, and a second import
   of the name all refuse;
 - the file declares nothing named `callee` (function, binding, parameter,
-  closure parameter, item or macro) and holds no `extern crate`, `include` or
-  macro that could splice items in;
+  closure parameter, item or macro; a struct field of that name is not a
+  declaration in the namespace and does not refuse) and holds no
+  `extern crate`, `include` or macro that could splice items in;
+- nothing in the file can rebind `<crate>`: no other `use` that names it
+  (`use legacy as wscore;`, `use crate::shim as wscore;`), no glob import,
+  and no item named `<crate>` (`struct wscore;`, `enum wscore`), which is the
+  rule 4 scan applied to the import form;
 - no file of the caller's package declares `mod <crate>`.
 
 A glob import (`use wscore::*;`) never names the callee, so a bare call after
