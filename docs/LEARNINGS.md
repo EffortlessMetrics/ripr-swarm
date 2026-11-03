@@ -3,6 +3,24 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-11-02: A step timeout below the job cap is not leftover time (#12338)
+
+Shard 3 of `windows-advisory-shards.yml` was cancelled at the 80-minute job
+cap with no log twice (runs 39854834481, 41359717895). The lane already had a
+44-minute nextest watchdog, a 55-minute step timeout, streamed `tail -F`
+output, and `always()` summarize/upload (#9812, #12096). None of those fire
+when warmup has already consumed most of the job: the step clock starts when
+the test step starts, the job clock started at checkout, and a job-cap cancel
+tears the runner down before `always()` upload. GitHub then returned
+BlobNotFound for the job log.
+
+Durable rules: (1) a watchdog that must leave an artifact has to bound itself
+by *remaining job time minus an upload reserve*, not by a fixed duration from
+step start; (2) write a heartbeat of in-flight SLOW/TIMEOUT rows during the
+wait so the next hang names a test even if the log blob is lost; (3) do not
+treat `timeout-minutes` on a step plus `if: always()` on upload as proof that
+a job-cap cancel will keep evidence.
+
 ## 2026-10-14: One path can spell three ways on Windows; compare at a shared owner (#7937)
 
 Fifteen lib tests failed deterministically on Windows at a Linux-green main.
@@ -3433,3 +3451,52 @@ build gate standing in for the oracle.
 Durable rule: after any compile repair or test enablement, execute the
 affected tests, not just the compile. `--no-run` proves the code compiles; it
 proves nothing about the assertions inside it.
+
+## 2026-11-07: A re-requested CI run can test a stale merge - read the merge ref (#11875)
+
+A PR's hosted qualification failed identically across three `merge-ready`
+re-requests on a Python test its one-file comment/test diff could not
+affect. The cause was not flake: GitHub kept testing merge-ref
+`refs/pull/11875/merge` pinned at an old main (`9230fe145`), which predated
+the owning repair (#11918) even though main already contained it. Re-requests
+do not always recompute the test merge.
+
+Durable rules: (1) when a failure survives re-requests unchanged, fetch the
+PR's merge ref and check the expected fix is an ancestor of its main side
+before attributing anything; (2) merging latest main into the candidate
+refreshes the head and forces recomputation — behind-only merges are still
+discouraged in general, but a provably stale test merge is a concrete reason,
+not unrelated movement; (3) verify the owned repair is actually in the merge
+tree under test, not merely landed on main.
+
+## 2026-11-07: PR admission checks literal template lines - validate the body first (#11875)
+
+The `merge-ready` qualification refused admission with
+`claim_identity_missing` because a shortened PR body dropped the template's
+`Governing issue or accepted claim:` and `Acceptance delta (one sentence):`
+lines — even though the same information existed elsewhere in the body. The
+checker parses lines, not meaning.
+
+Durable rule: before requesting CI on a new PR, confirm the body contains the
+exact required template lines (copy from `.github/pull_request_template.md`);
+a reworded equivalent fails closed.
+
+## 2026-11-07: Downgrade guard rules only on affirmative foreign evidence (#11244)
+
+The TypeScript effect-branch observation guard confirmed any strong assertion
+whose observed expression merely did not name the owner (`classifier.rs`
+side-channel arm) — including assertions on genuinely unrelated values —
+while the value branch explicitly failed closed on the same shape. The
+asymmetry was spec-blessed ("may be a side channel"), which made the tests
+pass and the heuristic wrong in exactly one direction (false clean).
+
+Durable rules: (1) a confirm-on-absence rule ("does not name X, therefore
+observes") needs an affirmative-foreignness gate before it can downgrade —
+downgrade only on positive foreign evidence (foreign callee, foreign-bound
+initializer), never on mere absence of linkage; (2) unit-test-only signals
+cannot be downgrade requirements — `scope_bindings` is empty in unit tests,
+so absence there must keep confirming; (3) every guard tightening ships as a
+red/green pair: a red test that fails before (unrelated assertion downgrades)
+and a green control that must not move (bare-local channel keeps confirming)
+— the pair, not the golden count, is what proves the boundary moved the
+right way.

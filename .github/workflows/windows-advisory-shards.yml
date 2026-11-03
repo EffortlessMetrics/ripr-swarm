@@ -40,6 +40,12 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4]
     steps:
+      # Elapsed-time base for the remaining-time watchdog (#12338). Written to
+      # GITHUB_ENV so checkout cannot wipe it.
+      - name: Record job start
+        shell: bash
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
       # Full history, like the Linux test lanes: base-resolving tests refuse
       # on a shallow clone (#10344).
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -110,21 +116,16 @@ jobs:
       # cargo status is recorded so a failed test still fails the job, and the log
       # is uploaded even when it does. The log is also streamed to the step output
       # as nextest writes it (`tail -F`, which also waits for the file; stopped after
-      # the status is recorded), and the Summarize and Upload steps run under `always()`. This is intended to leave
-      # the SLOW rows and the log so far from a shard that wedges until the job cap
-      # (#12092); that is not yet observed on Windows, and it cannot help if the
-      # runner itself stops reporting.
-      #
-      # Shard 3 of run 39854834481 outlived GNU `timeout` and the step cap and the
-      # job was cancelled with no log. The cause is not established. nextest now
-      # runs in the background with a watchdog scoped to its own process tree:
-      # after 44 minutes it records that subtree's command lines and force-kills
-      # it by native PID. This is intended to leave a log and a status to upload;
-      # only a forced stall on the runner proves it. The watchdog polls every 10
-      # seconds and exits when nextest does, so nothing outlives the step.
-      # The MSYS PID of the background job is not a native PID. Only a PID read from
-      # /proc/<pid>/winpid reaches taskkill; with no mapping the watchdog records
-      # that and kills the MSYS job only.
+      # the status is recorded), and the Summarize and Upload steps run under `always()`.
+      # A 44-minute watchdog is not enough when warmup has already spent most of the
+      # 80-minute job cap: shard 3 of runs 39854834481 and 41359717895 outlived the
+      # watchdog, the 55-minute step cap, and was cancelled at 1h20m with no log
+      # (#12338). The watchdog now takes min(44 min, time left before the job cap
+      # minus an 8-minute summarize/upload reserve) and writes a heartbeat of the
+      # latest SLOW/TIMEOUT/FAIL rows so a hang names an in-flight test before the
+      # runner tears the job down. The MSYS PID of the background job is not a
+      # native PID. Only a PID read from /proc/<pid>/winpid reaches taskkill; with
+      # no mapping the watchdog records that and kills the MSYS job only.
       #
       # Two nextest runs per shard, `-p xtask` then `--workspace --exclude xtask`
       # (#12245). A build that selects `ripr` in test mode and an xtask-only build
@@ -147,6 +148,9 @@ jobs:
         run: |
           mkdir -p target
           shard=${{ matrix.shard }}
+          : "${JOB_CAP_SECS:=4800}" "${UPLOAD_RESERVE_SECS:=480}" "${WATCHDOG_POLLS:=264}" "${POLL_SECS:=10}"
+          start=${JOB_START:-$(date +%s)}; remain=$((JOB_CAP_SECS - ($(date +%s) - start) - UPLOAD_RESERVE_SECS)); [ "$remain" -ge "$POLL_SECS" ] || remain=$POLL_SECS; polls=$(( (remain + POLL_SECS - 1) / POLL_SECS )); [ "$polls" -le "$WATCHDOG_POLLS" ] || polls=$WATCHDOG_POLLS
+          deadline=$(( $(date +%s) + polls * POLL_SECS ))
           bash -c 'rc=0; for pkg in "-p xtask" "--workspace --exclude xtask"; do cargo nextest run --profile windows-advisory $pkg --no-fail-fast --test-threads 2 --partition count:$0/4 -E "not $ACL_TESTS" || rc=$?; done; exit $rc' "$shard" > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
           tail -n +1 -F target/shard-$shard.log &
@@ -154,9 +158,13 @@ jobs:
           winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null | tr -cd 0-9 || true)
           (
             set +e
-            for _ in $(seq 1 264); do
-              sleep 10
+            for i in $(seq 1 "$polls"); do
+              sleep "$POLL_SECS"
               kill -0 "$nextest_pid" 2> /dev/null || exit 0
+              { echo "heartbeat poll=$i/$polls"; sed -E 's/\x1b\[[0-9;]*m//g' target/shard-$shard.log 2>/dev/null | grep -aE "SLOW|TIMEOUT|FAIL" | tail -5; } | tee target/shard-$shard.heartbeat
+              # Wall-clock bound: the heartbeat pipeline and slow process spawns make a poll
+              # take longer than POLL_SECS, so the count alone would fire late.
+              [ "$(date +%s)" -lt "$deadline" ] || break
             done
             if [ -z "$winpid" ]; then
               echo "fired unmapped msys_pid=$nextest_pid; no native PID, no taskkill" > target/shard-$shard.watchdog
@@ -166,7 +174,7 @@ jobs:
               powershell -NoProfile -Command "\$root = $winpid; \$all = Get-CimInstance Win32_Process; \$keep = @(\$root); do { \$new = \$all | Where-Object { \$keep -contains \$_.ParentProcessId -and \$keep -notcontains \$_.ProcessId }; \$keep += \$new.ProcessId } while (\$new); \$all | Where-Object { \$keep -contains \$_.ProcessId } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List" > target/shard-$shard.processes 2>&1
               taskkill //F //T //PID "$winpid" > /dev/null 2>&1
             fi
-          ) > /dev/null 2>&1 &
+          ) &
           watchdog_pid=$!
           set +e
           wait "$nextest_pid"; status=$?
@@ -187,7 +195,9 @@ jobs:
       # The ripr tests matching ACL_TESTS and the xtask ones are both non-empty on
       # Windows, so neither run is an empty filter.
       - name: Run the real-ACL tests outside bash (shard 1 only)
-        if: ${{ !cancelled() && matrix.shard == 1 }}
+        # Skipped once the watchdog fired: the remaining job time is the summarize and
+        # upload reserve, which this 20-minute step would otherwise spend (#12338).
+        if: ${{ !cancelled() && matrix.shard == 1 && hashFiles('target/shard-1.watchdog') == '' }}
         shell: pwsh
         # A step timeout fails only this step, so the Summarize and Upload steps
         # still run; a stall under the 80-minute job cap would cancel them and
@@ -210,14 +220,16 @@ jobs:
       # uploaded log stays raw.
       - name: Summarize failures
         if: ${{ always() }}
+        timeout-minutes: 3
         shell: bash
         run: |
-          { echo "### Shard ${{ matrix.shard }} of 4"; echo "cargo nextest exit status: $(cat target/shard-${{ matrix.shard }}.status 2>/dev/null || echo missing)"; echo; echo '```'; sed -E 's/\x1b\[[0-9;]*m//g' target/shard-${{ matrix.shard }}.log 2>/dev/null | grep -aE "^\s*(FAIL|SIGABRT|SIGSEGV|TIMEOUT|LEAK)|Summary" | sort -u | head -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### Shard ${{ matrix.shard }} of 4"; echo "cargo nextest exit status: $(cat target/shard-${{ matrix.shard }}.status 2>/dev/null || echo missing)"; echo "heartbeat: $(tr '\n' ' | ' < target/shard-${{ matrix.shard }}.heartbeat 2>/dev/null || echo missing)"; echo; echo '```'; sed -E 's/\x1b\[[0-9;]*m//g' target/shard-${{ matrix.shard }}.log 2>/dev/null | grep -aE "^\s*(FAIL|SIGABRT|SIGSEGV|TIMEOUT|LEAK)|Summary" | sort -u | head -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           # The real-ACL step (shard 1 only) is reported on its own so an ACL-only failure still names its rows.
           [ ! -f target/acl.status ] || { echo "### Real-ACL tests (pwsh, shard 1)"; echo "cargo nextest exit status: $(cat target/acl.status)"; echo; echo '```'; sed -E 's/\x1b\[[0-9;]*m//g' target/acl.log | grep -aE "^\s*(FAIL|SIGABRT|SIGSEGV|TIMEOUT|LEAK)|Summary" | sort -u | head -20; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload shard logs
         if: ${{ always() }}
+        timeout-minutes: 3
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-shard-${{ matrix.shard }}
@@ -226,6 +238,7 @@ jobs:
             target/shard-${{ matrix.shard }}.status
             target/shard-${{ matrix.shard }}.watchdog
             target/shard-${{ matrix.shard }}.processes
+            target/shard-${{ matrix.shard }}.heartbeat
             target/acl.log
             target/acl.status
           if-no-files-found: warn

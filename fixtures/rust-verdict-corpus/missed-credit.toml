@@ -593,6 +593,10 @@ case = "spec0168-ex01-loop-body-in-unsafe-block"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "spec0168-ex02a-fn-gains-unsafe"
+reason = "Discriminated at runtime, abstained on purpose: a function that gains the `unsafe` qualifier reads `static_unknown` with stop reason `unsafe_obligation` (RIPR-SPEC-0168 example 2). Delete this entry if unsafe obligations become creditable."
+
+[[entry]]
 case = "spec0171-ex05-custom-lib-path-dependent"
 reason = "Cross-package wrapper witness now abstains as a named reach limit (#10163)."
 
@@ -607,6 +611,26 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "spec0231-oracle-any-exact-string-line"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "spec0231r40b-test-case-statement-body"
+reason = "Discriminated at runtime, abstained on purpose: a `#[test_case]` function with a statement body is unread, so no oracle (RIPR-SPEC-0231 example 40). Delete this entry if statement bodies become readable."
+
+[[entry]]
+case = "spec0231r42-package-renamed-claims-dependency"
+reason = "Discriminated at runtime, abstained on purpose: a `package`-renamed claims dependency is not a verified claims import, so the oracle stays unknown (RIPR-SPEC-0231 example 42). Delete this entry if renamed dependencies are resolved."
+
+[[entry]]
+case = "spec0231r43-non-literal-expected-operand"
+reason = "Discriminated at runtime, abstained on purpose: a non-literal expected operand keeps the claims assertion unknown / none (RIPR-SPEC-0231 example 43). Delete this entry if bound operands become evaluable."
+
+[[entry]]
+case = "spec0360-ex08b-call-term-statement-body-callee"
+reason = "Discriminated at runtime, abstained on purpose: a callee with a statement body is not folded, so the accumulator reads `static_unknown` (RIPR-SPEC-0360 example 8). Delete this entry if statement-body callees become evaluable."
+
+[[entry]]
+case = "spec0360-ex09-call-term-second-argument"
+reason = "Discriminated at runtime, abstained on purpose: a call term with a second argument is outside the folded call terms and keeps its `static_unknown` probe (RIPR-SPEC-0360 example 9). Delete this entry if multi-argument call terms become evaluable."
 
 [[entry]]
 case = "spot-cap-generic-via-wrapper"

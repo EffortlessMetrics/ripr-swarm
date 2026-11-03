@@ -1616,8 +1616,11 @@ fn check_inner(
     // format — see `repo_audit_path_disclosure`) — like the repo-scope
     // --base/--diff warning above, this is an advisory notice, so it is not
     // part of the --quiet-suppressed progress stream.
-    if let Some(disclosure) = format.repo_audit_path_disclosure() {
+    if let Some(disclosure) = format.repo_audit_path_disclosure(&input.root) {
         eprintln!("{disclosure}");
+        // The audit-path formats also say when the cache has no usable entry
+        // and the full walk runs (#12505).
+        crate::analysis::announce_seam_facts_cache_misses();
     }
     if matches!(format, OutputFormat::RepoExposureJson) {
         // #7781: this path never reaches `check_with_progress`, so it needs
