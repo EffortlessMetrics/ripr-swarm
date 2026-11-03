@@ -21,3 +21,11 @@ The separate [native conformance subset](native-captures/README.md) contains eig
 genuine untouched exports, their exact source and a portable provenance projection.
 It supplements these contract examples with offline replay controls, retaining
 their distinct origin and the remaining profile-qualification limits.
+
+`cargo test -p ripr --test kani_report_cli` also consumes both contract examples
+and all eight retained captures through the public `ripr reports kani` binary.
+It uses newly authored portable bindings and checks literal native outcomes,
+complete JSON/Markdown observations, binding refusals and output-path protection.
+The fixture ledger points to this integration target; all private importer and
+renderer tests remain in the required workspace suite. Listing the target checks
+that the pointer selects tests, not that their assertions have executed.
