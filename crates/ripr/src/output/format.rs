@@ -589,8 +589,6 @@ mod tests {
     /// has stored entries.
     #[test]
     fn repo_audit_path_disclosure_is_cache_presence_aware() -> Result<(), String> {
-        use std::path::Path;
-
         let workspace_root =
             std::env::temp_dir().join(format!("ripr-format-cache-presence-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&workspace_root);

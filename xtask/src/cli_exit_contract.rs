@@ -366,11 +366,10 @@ fn raw_string_hashes(chars: &[char], at: usize) -> Option<usize> {
 
 /// A `'` opens a char literal (`'x'`, `'\n'`), not a lifetime (`'a`).
 fn is_char_literal(chars: &[char], at: usize) -> bool {
-    match (chars.get(at + 1), chars.get(at + 2)) {
-        (Some('\\'), _) => true,
-        (Some(_), Some('\'')) => true,
-        _ => false,
-    }
+    matches!(
+        (chars.get(at + 1), chars.get(at + 2)),
+        (Some('\\'), _) | (Some(_), Some('\''))
+    )
 }
 
 /// A missing allowlist pins nothing, so every literal exit is reported; it
@@ -452,6 +451,10 @@ mod tests {
             count,
             reason: "test".to_string(),
         }
+    }
+
+    fn rejects(text: &str) -> bool {
+        parse_allowlist(text).err().is_some()
     }
 
     fn lits(text: &str) -> Vec<i32> {
@@ -536,20 +539,17 @@ mod tests {
     fn parse_allowlist_rejects_malformed_entries() {
         let head = "schema_version = \"1\"\n[[allow]]\npath = \"a.rs\"\nliteral = 2\ncount = 1\n";
         // missing reason, empty reason, typo key, missing count, bad schema
-        assert!(parse_allowlist(head).is_err());
-        assert!(parse_allowlist(&format!("{head}reason = \" \"\n")).is_err());
-        assert!(parse_allowlist(&format!("{head}reasn = \"r\"\n")).is_err());
-        assert!(
-            parse_allowlist(
-                "schema_version = \"1\"\n[[allow]]\npath = \"a.rs\"\nliteral = 2\nreason = \"r\"\n"
-            )
-            .is_err()
-        );
+        assert!(rejects(head));
+        assert!(rejects(&format!("{head}reason = \" \"\n")));
+        assert!(rejects(&format!("{head}reasn = \"r\"\n")));
+        assert!(rejects(
+            "schema_version = \"1\"\n[[allow]]\npath = \"a.rs\"\nliteral = 2\nreason = \"r\"\n"
+        ));
         let wrong_schema = format!(
             "{}reason = \"r\"\n",
             head.replace("schema_version = \"1\"", "schema_version = \"2\"")
         );
-        assert!(parse_allowlist(&wrong_schema).is_err());
+        assert!(rejects(&wrong_schema));
         // a trailing comment on the header is valid TOML and still one entry
         let commented = format!(
             "{}reason = \"r\"\n",
