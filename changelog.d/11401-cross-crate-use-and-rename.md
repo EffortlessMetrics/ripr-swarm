@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A change reached through another workspace crate is now followed when the caller imports the function by name (`use wscore::discount;`, `use wscore::{discount, ..}`) or depends on the crate under a `package = ".."` rename, so a test that pins the changed value through such a wrapper reads as noticed and `ripr repair` does not start a repair for it; glob and aliased imports, shadowing names and ambiguous dependencies stay unreached (#11401).

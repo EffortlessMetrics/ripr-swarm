@@ -1,0 +1,52 @@
+schema_version = "2.0"
+id = "ripr.slice.stop-reason-contract.v1"
+generation = 1
+
+source_issue = "issue:5514"
+design_reference = "RIPR-SPEC-0411"
+change_class = "spec_and_test_hardening"
+
+claim_boundary = """
+Adds RIPR-SPEC-0411 documenting every StopReason wire value (trigger, class
+impact, owning spec), marks three wire-stable tokens as reserved-not-emitted on
+current main, notes that reservation in OUTPUT_SCHEMA, and registers an
+exhaustive production contract with discriminating unit tests. No classifier
+behavior, schema version, or golden drift.
+"""
+
+non_goals = [
+  "emitting max_depth_reached, external_crate_boundary, or feature_unknown",
+  "rust_test_stub / app test_stub E0061 repair (#12466)",
+  "rewording RIPR-SPEC-0319 next-step strings",
+]
+
+return_conditions = [
+  "Return if a design choice is needed to emit or retire wire tokens beyond the reserved note.",
+  "Return if another open PR edits decision.rs stop_reason heuristics for the same claim.",
+]
+
+owned_seams = [
+  "seam:ripr:analysis:stop-reason-contract",
+  "seam:ripr:docs:output-schema-stop-reason",
+]
+
+shared_seams = [
+  "seam:ripr:domain:stop-reason-enum",
+]
+
+forbidden_seams = [
+  "seam:ripr:app:test-stub-call-sites",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0411#stop-reason-contract"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"
