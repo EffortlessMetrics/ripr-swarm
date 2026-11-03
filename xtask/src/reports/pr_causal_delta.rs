@@ -312,7 +312,11 @@ fn duplicate_gap_reason(items: &[SnapshotItem], label: &str) -> Option<String> {
     if repeated.is_empty() {
         return None;
     }
-    let ids = repeated.into_iter().take(3).collect::<Vec<_>>().join(", ");
+    let total = repeated.len();
+    let mut ids = repeated.into_iter().take(3).collect::<Vec<_>>().join(", ");
+    if total > 3 {
+        ids.push_str(", ...");
+    }
     Some(format!(
         "{label} snapshot repeats canonical gap id(s) {ids}; withheld because attribution would depend on row order"
     ))
@@ -965,6 +969,20 @@ mod tests {
         let unique = ids.iter().collect::<HashSet<_>>();
         if ids.len() != unique.len() {
             return Err(format!("output repeats a gap id: {ids:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn more_than_three_repeated_ids_are_marked_as_truncated() -> Result<(), String> {
+        let rows = ["a", "b", "c", "d"]
+            .iter()
+            .flat_map(|id| [seam_json(id, "weak"), seam_json(id, "weak")])
+            .collect::<Vec<_>>();
+        let snapshot = parse_snapshot(&snapshot_text(&rows), "head")?;
+        let reason = snapshot.limitations.join(" ");
+        if !reason.contains("a, b, c, ...;") {
+            return Err(format!("truncation not marked: {reason}"));
         }
         Ok(())
     }
