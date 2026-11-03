@@ -40,5 +40,6 @@ Evidence
   - related test src/lib.rs:16 wrapper_is_send uses no oracle; misses: has no assertion
   - source assertion argument value 7 at line 24
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/asserting_same_file_test_positive_control/input --diff <cwd>/fixtures/asserting_same_file_test_positive_control/diff.patch --mode fast probe:src_lib.rs:return_value:d2732503
   ripr context --root <cwd>/fixtures/asserting_same_file_test_positive_control/input --diff <cwd>/fixtures/asserting_same_file_test_positive_control/diff.patch --mode fast --at probe:src_lib.rs:return_value:d2732503

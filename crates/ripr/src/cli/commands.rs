@@ -47,8 +47,8 @@ mod swarm_command;
 mod task_first;
 
 pub(super) use agent::{
-    agent, before_phase_stdout, resolve_agent_repair_root, run_before_repair_with_identity,
-    translate_agent_repair_seam_id,
+    SeamIdSurface, SeamIdTranslateError, agent, before_phase_stdout, resolve_agent_repair_root,
+    run_before_repair_with_identity, translate_agent_repair_seam_id, translate_seam_id_for,
 };
 pub(super) use context::context;
 // Flag-documenting help bodies live beside their parsers so `cli::help`
@@ -144,6 +144,7 @@ pub(super) use check::{bind_member_selector_file, resolve_implicit_command_root}
 
 #[path = "commands/review_comments.rs"]
 mod review_comments;
+mod review_guidance_index_handoff;
 pub(super) use review_comments::review_comments;
 
 #[path = "commands/capabilities.rs"]
@@ -174,7 +175,7 @@ mod init_agents;
 #[path = "commands/init_workflow.rs"]
 mod init_workflow;
 #[cfg(test)]
-use init_workflow::generated_github_actions_workflow;
+use init_workflow::{generated_github_actions_workflow, generated_gitlab_ci_yaml};
 
 #[path = "commands/pilot.rs"]
 mod pilot;
@@ -7889,11 +7890,12 @@ language = "rust"
             Err("unknown init argument \"--wat\". Run `ripr init --help`.".to_string())
         );
         assert_eq!(
-            init(&args(&["--ci", "gitlab"])),
-            Err(
-                "unknown init --ci provider \"gitlab\". Did you mean `github`? Accepted: github."
-                    .to_string()
-            )
+            init(&args(&["--ci", "jenkins"])),
+            Err("unknown init --ci provider \"jenkins\". Accepted: github, gitlab.".to_string())
+        );
+        assert_eq!(
+            parse_init_options(&args(&["--ci", "gitlab"])).map(|options| options.ci),
+            Ok(Some(InitCi::Gitlab))
         );
     }
 
@@ -8325,6 +8327,19 @@ language = "rust"
         assert!(!workflow.contains("RIPR_GATE_MODE: \"baseline-check\""));
         assert!(!workflow.contains("RIPR_GATE_MODE: \"calibrated-gate\""));
         Ok(())
+    }
+
+    #[test]
+    fn init_generated_gitlab_ci_is_advisory_merge_request_flow() {
+        let yaml = generated_gitlab_ci_yaml();
+        assert!(yaml.contains("allow_failure: true"));
+        assert!(yaml.contains(r#"$CI_PIPELINE_SOURCE == "merge_request_event""#));
+        assert!(yaml.contains("ripr check --root . --base"));
+        assert!(!yaml.contains("ripr check --root . --head"));
+        assert!(yaml.contains("ripr review-comments --root ."));
+        assert!(yaml.contains("paths:\n      - target/ripr/"));
+        assert!(!yaml.contains("RIPR_GATE_MODE"));
+        assert!(!yaml.contains("ripr reports ci-packet"));
     }
 
     #[test]

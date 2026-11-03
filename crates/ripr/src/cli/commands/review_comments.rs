@@ -4,7 +4,8 @@
 //! placement, rendering, identity, receipt DTOs, and analysis live in
 //! `crate::output::review_comments*`, `crate::analysis`, and `crate::app`.
 //! This module owns the current CLI transaction: argv/options, input
-//! preparation, phase receipts, deadline checks, and output-path handling.
+//! preparation, deadline checks, and output-path handling. Phase receipt
+//! lifecycle policy lives in [`crate::app::review_comments_receipt`].
 
 use crate::analysis;
 use crate::app::CheckInput;
@@ -12,6 +13,7 @@ use crate::app::agent_brief::{
     AgentBriefChangedOwner, AgentBriefLine, AgentBriefPolicy, AgentBriefResolvedWorkingSet,
     BoundedAgentBrief,
 };
+use crate::app::review_comments_receipt::ReviewCommentsReceiptRun;
 use crate::cli::commands_agent_support::{
     agent_brief_lines_from_diff, agent_brief_owner_attribution_for_lines,
 };
@@ -23,10 +25,15 @@ use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::domain::LanguageId;
 use crate::output;
+use crate::output::review_comments_receipt::attach_to_json;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use super::review_guidance_index_handoff::{
+    ReviewGuidancePreparedWorkspace, resolve_review_guidance_prepared_workspace,
+    should_record_index_recompute_compatibility, took_index_recompute_compatibility_route,
+};
 use super::write_text_file;
 
 const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 120_000;
@@ -176,7 +183,7 @@ fn positive_u64_limit_from_env(
 }
 
 fn record_review_comments_oversized(
-    receipt: &mut crate::output::review_comments_receipt::ReviewCommentsRunReceipt,
+    receipt: &mut crate::app::review_comments_receipt::ReviewCommentsReceiptRun,
     receipt_path: &Path,
     phase: &str,
     error: String,
@@ -191,7 +198,7 @@ fn record_review_comments_oversized(
 }
 
 fn record_review_comments_error(
-    receipt: &mut crate::output::review_comments_receipt::ReviewCommentsRunReceipt,
+    receipt: &mut crate::app::review_comments_receipt::ReviewCommentsReceiptRun,
     receipt_path: &Path,
     phase: &str,
     error: String,
@@ -206,7 +213,7 @@ fn record_review_comments_error(
 }
 
 fn enforce_review_comments_deadline(
-    receipt: &mut crate::output::review_comments_receipt::ReviewCommentsRunReceipt,
+    receipt: &mut crate::app::review_comments_receipt::ReviewCommentsReceiptRun,
     receipt_path: &Path,
     started: Instant,
     now: Instant,
@@ -220,7 +227,7 @@ fn enforce_review_comments_deadline(
 }
 
 fn record_review_comments_timeout(
-    receipt: &mut output::review_comments_receipt::ReviewCommentsRunReceipt,
+    receipt: &mut ReviewCommentsReceiptRun,
     receipt_path: &Path,
     phase: &str,
 ) -> String {
@@ -514,8 +521,7 @@ fn review_comments_with_admission(
         ..CheckInput::default()
     };
     apply_to_check_input(&mut input, &config, CheckInputExplicit::default());
-    let receipt_path =
-        output::review_comments_receipt::ReviewCommentsRunReceipt::path_for_output(&options.out);
+    let receipt_path = ReviewCommentsReceiptRun::path_for_output(&options.out);
     let markdown_path = review_comments_markdown_path(&options.out);
     let artifacts = vec![
         output::outcome::display_path(&options.out),
@@ -539,7 +545,7 @@ fn review_comments_with_admission(
     // `started` is observed immediately before admission, making the run's
     // full budget the remaining budget at this point.
     let revision_budget = Some(Duration::from_millis(options.timeout_ms));
-    let mut receipt = output::review_comments_receipt::ReviewCommentsRunReceipt::new(
+    let mut receipt = ReviewCommentsReceiptRun::new(
         &input.root,
         &options.base,
         &options.head,
@@ -620,8 +626,7 @@ fn review_comments_with_admission(
         )?;
         receipt.phase("static_rendering", "artifact_io");
         receipt.write_atomic(&receipt_path)?;
-        let rendered_json =
-            output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
+        let rendered_json = attach_to_json(&rendered_json, &receipt)?;
         write_text_file(&options.out, &rendered_json).map_err(|error| {
             record_review_comments_error(&mut receipt, &receipt_path, "artifact_io", error)
         })?;
@@ -637,8 +642,7 @@ fn review_comments_with_admission(
             "artifact_io",
         )?;
         receipt.complete(&artifacts);
-        let rendered_json =
-            output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
+        let rendered_json = attach_to_json(&rendered_json, &receipt)?;
         write_text_file(&options.out, &rendered_json)?;
         receipt.write_atomic(&receipt_path)?;
         println!("Wrote {}", output::path::human_path(&options.out));
@@ -803,14 +807,44 @@ fn review_comments_with_admission(
     .map_err(|error| {
         record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
     })?;
+    let prepared_workspace_decision = resolve_review_guidance_prepared_workspace(
+        options.check_output.as_deref(),
+        &input.root,
+        &options.base,
+        &options.head,
+        &config,
+        None,
+    )
+    .map_err(|error| {
+        record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
+    })?;
+    let index_recompute_compatibility = took_index_recompute_compatibility_route(
+        &prepared_workspace_decision,
+        options.check_output.as_deref(),
+    );
+    let optional_prepared = match &prepared_workspace_decision {
+        ReviewGuidancePreparedWorkspace::Reuse { prepared } => Some(*prepared),
+        ReviewGuidancePreparedWorkspace::Recompute { .. } => None,
+    };
     let scoped_inventory = analysis::cancellation::with_token(&cancellation, || {
-        analysis::inventory_diff_scoped_streamed_seams_at_with_config(
-            &input.root,
-            &config,
-            &working_set.files,
-            &changed_owner_names,
-            &mut selection_builder,
-        )
+        if let Some(prepared) = optional_prepared {
+            analysis::inventory_diff_scoped_streamed_seams_with_optional_prepared(
+                &input.root,
+                &config,
+                &working_set.files,
+                &changed_owner_names,
+                &mut selection_builder,
+                Some(prepared),
+            )
+        } else {
+            analysis::inventory_diff_scoped_streamed_seams_at_with_config(
+                &input.root,
+                &config,
+                &working_set.files,
+                &changed_owner_names,
+                &mut selection_builder,
+            )
+        }
     })
     .map_err(|error| {
         if cancellation.observed_abort()
@@ -953,7 +987,7 @@ fn review_comments_with_admission(
     )?;
     receipt.phase("static_rendering", "artifact_io");
     receipt.write_atomic(&receipt_path)?;
-    let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
+    let rendered_json = attach_to_json(&rendered_json, &receipt)?;
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&markdown_path, &rendered_md)?;
     enforce_review_comments_deadline(
@@ -964,8 +998,13 @@ fn review_comments_with_admission(
         options.timeout_ms,
         "artifact_io",
     )?;
+    if should_record_index_recompute_compatibility(index_recompute_compatibility, &scoped_inventory)
+        && let ReviewGuidancePreparedWorkspace::Recompute { reason } = &prepared_workspace_decision
+    {
+        receipt.index_recompute_compatibility(reason);
+    }
     receipt.complete(&artifacts);
-    let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
+    let rendered_json = attach_to_json(&rendered_json, &receipt)?;
     write_text_file(&options.out, &rendered_json)?;
     receipt.write_atomic(&receipt_path)?;
     println!("Wrote {}", output::path::human_path(&options.out));
@@ -1152,6 +1191,7 @@ fn review_comments_markdown_path(json_path: &Path) -> PathBuf {
 mod tests {
     use super::super::tests::{args, unique_command_test_dir};
     use super::*;
+    use crate::output::review_comments_receipt::CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM;
     use sha2::{Digest, Sha256};
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
@@ -2679,9 +2719,9 @@ mod tests {
             ));
         }
         let kept_nothing = receipt["non_claims"].as_array().is_some_and(|claims| {
-            claims.iter().any(|claim| {
-                claim == output::review_comments_receipt::CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM
-            })
+            claims
+                .iter()
+                .any(|claim| claim == CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM)
         });
         if !kept_nothing {
             return Err(format!(
@@ -2839,10 +2879,9 @@ mod tests {
         // retry disclosure or timeout progress field (#11107).
         if receipt.get("canonical_analysis_evaluated_seams").is_some()
             || receipt["non_claims"].as_array().is_some_and(|claims| {
-                claims.iter().any(|claim| {
-                    claim
-                        == output::review_comments_receipt::CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM
-                })
+                claims
+                    .iter()
+                    .any(|claim| claim == CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM)
             })
         {
             return Err(format!(

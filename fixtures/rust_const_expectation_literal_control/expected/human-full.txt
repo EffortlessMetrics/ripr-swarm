@@ -39,6 +39,7 @@ Evidence
   - related test tests/api.rs:6 quota_is_pinned uses strong exact value oracle: assert_eq!(quota(2), EXPECTED);
   - source function argument value n = 2 at line 7
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_const_expectation_literal_control/input --diff <cwd>/fixtures/rust_const_expectation_literal_control/diff.patch --mode fast probe:src_lib.rs:return_value:543b6d50
   ripr context --root <cwd>/fixtures/rust_const_expectation_literal_control/input --diff <cwd>/fixtures/rust_const_expectation_literal_control/diff.patch --mode fast --at probe:src_lib.rs:return_value:543b6d50
 
@@ -81,5 +82,6 @@ Stop reasons:
 Next step
   Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_const_expectation_literal_control/input --diff <cwd>/fixtures/rust_const_expectation_literal_control/diff.patch --mode fast probe:src_lib.rs:static_unknown:788c0b42
   ripr context --root <cwd>/fixtures/rust_const_expectation_literal_control/input --diff <cwd>/fixtures/rust_const_expectation_literal_control/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:788c0b42
