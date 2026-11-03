@@ -202,44 +202,71 @@ mod tests {
 
     #[test]
     fn failed_attempt_echo_does_not_parse_as_completed_snapshot() {
-        assert!(CompletedAnalysisSnapshotId::parse("snapshot:9").is_err());
-        assert!(AnalysisAttemptId::parse_agent_snapshot_id("snapshot:9").is_ok());
+        assert_eq!(CompletedAnalysisSnapshotId::parse("snapshot:9").ok(), None);
+        assert!(
+            AnalysisAttemptId::parse_agent_snapshot_id("snapshot:9")
+                .ok()
+                .is_some()
+        );
     }
 
     #[test]
     fn completed_snapshot_rejects_attempt_echo() {
-        assert!(CompletedAnalysisSnapshotId::parse("snapshot:42").is_err());
+        assert_eq!(CompletedAnalysisSnapshotId::parse("snapshot:42").ok(), None);
     }
 
     #[test]
     fn diagnostic_result_rejects_snapshot_and_attempt_handles() {
-        assert!(DiagnosticResultId::from_producer_id("snapshot:1").is_err());
-        assert!(DiagnosticResultId::from_producer_id("snapshot:sha256:abc").is_err());
+        assert_eq!(
+            DiagnosticResultId::from_producer_id("snapshot:1").ok(),
+            None
+        );
+        assert_eq!(
+            DiagnosticResultId::from_producer_id("snapshot:sha256:abc").ok(),
+            None
+        );
     }
 
     #[test]
     fn attempt_id_requires_numeric_refresh_generation() {
-        assert!(AnalysisAttemptId::parse_agent_snapshot_id("snapshot:abc").is_err());
-        assert!(AnalysisAttemptId::parse_agent_snapshot_id("snapshot:").is_err());
-        assert!(AnalysisAttemptId::parse_agent_snapshot_id("snapshot:9").is_ok());
+        assert_eq!(
+            AnalysisAttemptId::parse_agent_snapshot_id("snapshot:abc").ok(),
+            None
+        );
+        assert_eq!(
+            AnalysisAttemptId::parse_agent_snapshot_id("snapshot:").ok(),
+            None
+        );
+        assert!(
+            AnalysisAttemptId::parse_agent_snapshot_id("snapshot:9")
+                .ok()
+                .is_some()
+        );
     }
 
     #[test]
     fn continuation_rejects_diagnostic_result_prefix() {
-        assert!(
-            ContinuationId::parse_request("ripr-document-diagnostics-v2:0123456789abcdef").is_err()
+        assert_eq!(
+            ContinuationId::parse_request("ripr-document-diagnostics-v2:0123456789abcdef").ok(),
+            None
         );
     }
 
     #[test]
     fn continuation_rejects_snapshot_rebind() {
-        assert!(ContinuationId::parse_request("snapshot:sha256:abc").is_err());
+        assert_eq!(
+            ContinuationId::parse_request("snapshot:sha256:abc").ok(),
+            None
+        );
     }
 
     #[test]
     fn attempt_and_completed_types_reject_each_other_wire_values() {
-        assert!(AnalysisAttemptId::parse_agent_snapshot_id("snapshot:sha256:abc").is_err());
-        assert!(CompletedAnalysisSnapshotId::parse("snapshot:7").is_err());
+        assert_eq!(
+            AnalysisAttemptId::parse_agent_snapshot_id("snapshot:sha256:abc").ok(),
+            None
+        );
+        assert_eq!(CompletedAnalysisSnapshotId::parse("snapshot:7").ok(), None);
     }
 
     #[test]
