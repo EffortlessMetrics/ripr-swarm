@@ -40,5 +40,6 @@ Evidence
   - source assertion argument value 110 at line 24
   - source function argument value p = 100 at line 24
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_polling_helper_direct/input --diff <cwd>/fixtures/rust_polling_helper_direct/diff.patch --mode fast probe:src_lib.rs:return_value:e14b9880
   ripr context --root <cwd>/fixtures/rust_polling_helper_direct/input --diff <cwd>/fixtures/rust_polling_helper_direct/diff.patch --mode fast --at probe:src_lib.rs:return_value:e14b9880
