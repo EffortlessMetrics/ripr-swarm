@@ -756,37 +756,52 @@ impl Drop for UnanchoredDir {
 /// must hold no manifest or repo).
 #[cfg(unix)]
 #[test]
-fn unanchored_gate_refuses_while_the_plain_walk_retains_and_explicit_root_skips() {
+fn unanchored_gate_refuses_while_the_plain_walk_retains_and_explicit_root_skips()
+-> Result<(), String> {
     let _cwd = cwd_lock::hold_cwd();
-    let guard = UnanchoredDir::new("gate-refusal").expect("unanchored control dir");
-    let original = std::env::current_dir().expect("current dir");
+    let guard = UnanchoredDir::new("gate-refusal")?;
+    let original = std::env::current_dir().map_err(|err| err.to_string())?;
     let _restore = CwdRestore(original);
-    std::env::set_current_dir(&guard.0).expect("set cwd");
+    std::env::set_current_dir(&guard.0).map_err(|err| err.to_string())?;
 
-    let cause = unanchored_implicit_root_cause()
-        .expect("an unanchored directory must produce a refusal cause");
-    assert!(
-        cause.contains("no workspace, package or Git repository was found"),
-        "cause must name the discovery outcome: {cause}"
-    );
+    let Some(cause) = unanchored_implicit_root_cause() else {
+        return Err("an unanchored directory must produce a refusal cause".to_string());
+    };
+    if !cause.contains("no workspace, package or Git repository was found") {
+        return Err(format!("cause must name the discovery outcome: {cause}"));
+    }
 
     // The gate itself: refuse, naming the cause.
-    let error = resolve_implicit_command_root_refusing(&mut PathBuf::from("."), false)
-        .expect_err("the refusing resolution must refuse an unanchored directory");
-    assert_eq!(error, cause);
+    let error = resolve_implicit_command_root_refusing(&mut PathBuf::from("."), false);
+    if error != Err(cause.clone()) {
+        return Err(format!(
+            "the gate must refuse with its cause, got {error:?}"
+        ));
+    }
 
     // check/pilot/context/rerun keep retain-start: the plain walk answers Ok
     // and leaves the root as typed.
     let mut retained = PathBuf::from(".");
     resolve_implicit_command_root(&mut retained, false)
-        .expect("the plain walk must keep retain-start");
-    assert_eq!(retained, PathBuf::from("."), "retain-start keeps the root");
+        .map_err(|error| format!("the plain walk must keep retain-start: {error}"))?;
+    if retained != PathBuf::from(".") {
+        return Err(format!(
+            "retain-start keeps the root, got {}",
+            retained.display()
+        ));
+    }
 
     // An explicit --root skips the gate.
     let mut explicit = PathBuf::from(".");
     resolve_implicit_command_root_refusing(&mut explicit, true)
-        .expect("an explicit --root must skip the gate");
-    assert_eq!(explicit, PathBuf::from("."));
+        .map_err(|error| format!("an explicit --root must skip the gate: {error}"))?;
+    if explicit != PathBuf::from(".") {
+        return Err(format!(
+            "an explicit root is kept as typed, got {}",
+            explicit.display()
+        ));
+    }
+    Ok(())
 }
 
 /// #12417, #12480: a standalone `package.json` project without Git or Cargo
@@ -794,26 +809,27 @@ fn unanchored_gate_refuses_while_the_plain_walk_retains_and_explicit_root_skips(
 /// anchored: it is a project.
 #[cfg(unix)]
 #[test]
-fn a_plain_package_manifest_keeps_the_gate_anchored() {
+fn a_plain_package_manifest_keeps_the_gate_anchored() -> Result<(), String> {
     let _cwd = cwd_lock::hold_cwd();
-    let guard = UnanchoredDir::new("gate-plain-package").expect("unanchored control dir");
+    let guard = UnanchoredDir::new("gate-plain-package")?;
     std::fs::write(guard.0.join("package.json"), "{\"name\":\"shop\"}")
-        .expect("write package.json");
-    let original = std::env::current_dir().expect("current dir");
+        .map_err(|err| err.to_string())?;
+    let original = std::env::current_dir().map_err(|err| err.to_string())?;
     let _restore = CwdRestore(original);
-    std::env::set_current_dir(&guard.0).expect("set cwd");
+    std::env::set_current_dir(&guard.0).map_err(|err| err.to_string())?;
 
     // The walk itself still finds no anchor; the ordinary manifest is what
     // keeps the gate silent.
-    assert!(
-        matches!(resolve_project_root(Path::new(".")), Ok(None)),
-        "a plain package.json without workspaces must not anchor the walk"
-    );
-    assert!(
-        unanchored_implicit_root_cause().is_none(),
-        "a plain package project must not be refused"
-    );
+    if !matches!(resolve_project_root(Path::new(".")), Ok(None)) {
+        return Err("a plain package.json without workspaces must not anchor the walk".to_string());
+    }
+    if let Some(cause) = unanchored_implicit_root_cause() {
+        return Err(format!(
+            "a plain package project must not be refused: {cause}"
+        ));
+    }
     let mut root = PathBuf::from(".");
     resolve_implicit_command_root_refusing(&mut root, false)
-        .expect("the gate must keep a plain package project");
+        .map_err(|error| format!("the gate must keep a plain package project: {error}"))?;
+    Ok(())
 }
