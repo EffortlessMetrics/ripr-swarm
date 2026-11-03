@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0393"
+scope = "out"
+reason = "Normative .NET project and language evidence contract is spec/corpus law without runtime-mutant verdict subjects until #5634–#5645; covered by fixtures/dotnet-evidence-contract-corpus/corpus.json"

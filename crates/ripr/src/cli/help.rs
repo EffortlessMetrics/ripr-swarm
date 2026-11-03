@@ -931,6 +931,7 @@ mod tests {
         assert!(CHECK_HELP.contains("--quiet"));
         assert!(CHECK_HELP.contains("ripr progress:"));
         assert!(CHECK_HELP.contains("percentage or ETA"));
+        assert!(CHECK_HELP.contains("processed_<n>_of_<total>"));
         assert!(CHECK_HELP.contains("does not mean analysis is faster"));
         assert!(CHECK_HELP.contains("json, sarif, github"));
         assert!(!CHECK_HELP.contains("json, sarif, markdown"));
@@ -1015,6 +1016,7 @@ mod tests {
         assert!(INIT_HELP.starts_with("Write an optional repo policy file"));
         assert!(INIT_HELP.contains("Usage: ripr init"));
         assert!(INIT_HELP.contains("--ci github"));
+        assert!(INIT_HELP.contains("--ci gitlab") || INIT_HELP.contains("github|gitlab"));
         assert!(INIT_HELP.contains("--dry-run"));
         assert!(INIT_HELP.contains("--force"));
         // --force resets ripr.toml only for plain `ripr init`; with --ci/--mcp

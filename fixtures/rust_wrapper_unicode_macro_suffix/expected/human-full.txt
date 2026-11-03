@@ -54,6 +54,7 @@ Stop reasons:
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/input --diff <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/diff.patch --mode fast probe:src_lib.rs:predicate:41e056ec
   ripr context --root <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/input --diff <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/diff.patch --mode fast --at probe:src_lib.rs:predicate:41e056ec
 
@@ -85,5 +86,6 @@ Stop reasons:
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/input --diff <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/diff.patch --mode fast probe:src_lib.rs:return_value:cc17bcd3
   ripr context --root <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/input --diff <cwd>/fixtures/rust_wrapper_unicode_macro_suffix/diff.patch --mode fast --at probe:src_lib.rs:return_value:cc17bcd3

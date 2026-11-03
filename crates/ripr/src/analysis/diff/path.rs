@@ -413,6 +413,16 @@ impl DecodedPath {
     }
 }
 
+/// Native identity of one git path token under `core.quotePath=true`.
+///
+/// C-quoted tokens decode octal and backslash escapes the same way the
+/// unified-diff parser does (#3601, #3609). Unquoted tokens pass through.
+pub(crate) fn native_path_from_git_token(raw: &str) -> PathBuf {
+    parse_diff_path_token(raw)
+        .map(|decoded| decoded.as_path().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from(raw.trim().trim_matches('"')))
+}
+
 fn parse_diff_path_token(raw: &str) -> Option<DecodedPath> {
     let raw = raw.trim_end_matches('\r');
     if let Some(quoted) = raw.strip_prefix('"') {
@@ -682,6 +692,40 @@ pub(crate) fn artifact_root_gitignore_entry(root: &Path) -> String {
     }
     entry.push('/');
     entry
+}
+
+/// The untrack command printed to the user, bound to the selected root:
+/// pasted from another directory, a bare `git rm --cached` would untrack
+/// files in whatever repository the shell happens to be in (#8301 review).
+/// The default `.` root keeps the short form. The command pins the global
+/// `--literal-pathspecs` switch and passes each root PLAIN: shell quoting
+/// only protects the argument from the shell, while git pathspec magic
+/// (`*`, `?`, `[`) would otherwise wildcard-match a configured root like
+/// `build/cache*` against `build/cache1` (PR #8901 review, graphite
+/// finding) — and the earlier glob-escaped form (`build/cache\*`) does not
+/// match the literal-star directory's indexed descendants at all (verified
+/// against git 2.47; the escaped form fails both with and without
+/// `--literal-pathspecs`). Plain roots under `--literal-pathspecs` match
+/// literal-star directories and glob-free roots alike.
+///
+/// One builder for every surface that names the cure — doctor's tracking
+/// fact, the first-`check` ignore note, and the tracked-cache-base advisory
+/// (#12432) — so one condition carries one wording and a binding fix lands
+/// everywhere at once.
+pub(crate) fn untrack_artifacts_command(root: &Path, artifact_roots: &[PathBuf]) -> String {
+    let pathspecs = artifact_roots
+        .iter()
+        .map(|root| crate::agent::loop_commands::shell_arg(&artifact_root_pathspec(root)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if root == Path::new(".") {
+        format!("git --literal-pathspecs rm --cached -r -- {pathspecs}")
+    } else {
+        format!(
+            "git -C {} --literal-pathspecs rm --cached -r -- {pathspecs}",
+            crate::agent::loop_commands::shell_arg(&crate::output::path::human_path(root))
+        )
+    }
 }
 
 /// Whether a repository-relative diff path names content under one of
@@ -1284,6 +1328,15 @@ mod tests {
         // byte-for-byte, on every platform.
         let decoded = parse_new_path_marker("+++ \"b/caf\\303\\251.rs\"");
         assert_eq!(decoded, Some(PathBuf::from("café.rs")));
+        assert_eq!(
+            native_path_from_git_token("\"venv/caf\\303\\251.py\""),
+            PathBuf::from("venv/café.py"),
+            "numstat C-quoted tokens must decode to the same native identity"
+        );
+        assert_eq!(
+            native_path_from_git_token("src/plain.py"),
+            PathBuf::from("src/plain.py")
+        );
     }
 
     #[cfg(unix)]
