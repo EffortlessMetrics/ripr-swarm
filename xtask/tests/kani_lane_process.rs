@@ -53,8 +53,7 @@ impl Fixture {
         ));
         fs::create_dir(&root).map_err(|error| error.to_string())?;
         let fixture = Self(root);
-        fs::create_dir_all(fixture.0.join("crates/ripr/src"))
-            .map_err(|error| error.to_string())?;
+        fs::create_dir_all(fixture.0.join("crates/ripr/src")).map_err(|error| error.to_string())?;
         fs::create_dir(fixture.0.join("bin")).map_err(|error| error.to_string())?;
         for (file, name) in harnesses {
             fs::write(
@@ -84,7 +83,13 @@ impl Fixture {
         let timeout = if mode == "timeout" { "3" } else { "20" };
         let output = xtask_bin::output(|command| {
             command
-                .args(["kani", "--timeout-secs", timeout, "--harness-timeout-secs", "1"])
+                .args([
+                    "kani",
+                    "--timeout-secs",
+                    timeout,
+                    "--harness-timeout-secs",
+                    "1",
+                ])
                 .current_dir(&self.0)
                 .env("PATH", &path)
                 .env("KANI_CONTROL_ROOT", &self.0)
@@ -93,8 +98,7 @@ impl Fixture {
                 command.arg("--allow-empty");
             }
         })?;
-        let calls = fs::read_to_string(self.0.join("calls"))
-            .map_err(|error| error.to_string())?;
+        let calls = fs::read_to_string(self.0.join("calls")).map_err(|error| error.to_string())?;
         assert_eq!(
             calls.lines().collect::<Vec<_>>(),
             [
@@ -124,7 +128,9 @@ impl Drop for Fixture {
 
 fn assert_row(report: &str, name: &str, file: &str, status: &str) {
     assert!(
-        report.contains(&format!("| `{name}` | `crates/ripr/src/{file}` | {status} |")),
+        report.contains(&format!(
+            "| `{name}` | `crates/ripr/src/{file}` | {status} |"
+        )),
         "expected {name} in {file} to be {status}: {report}"
     );
 }
@@ -135,7 +141,11 @@ fn kani_runner_retains_unique_success_and_explicit_failure() -> Result<(), Strin
     let observed = fixture.run("success", false)?;
     assert_eq!(observed.output.status.code(), Some(0));
     assert_row(&observed.report, "one", "one.rs", "VERIFIED");
-    assert!(observed.report.contains("within the harness bounds | 0.1s |"));
+    assert!(
+        observed
+            .report
+            .contains("within the harness bounds | 0.1s |")
+    );
 
     let fixture = Fixture::new(
         &[("one.rs", "one")],
@@ -155,7 +165,11 @@ fn kani_runner_refuses_success_text_after_nonzero_or_signal() -> Result<(), Stri
             let observed = fixture.run(mode, allow_empty)?;
             assert_eq!(observed.output.status.code(), Some(1));
             assert_row(&observed.report, "one", "one.rs", "VERIFIED");
-            assert!(observed.report.contains("NOT-ESTABLISHED: cargo kani exited"));
+            assert!(
+                observed
+                    .report
+                    .contains("NOT-ESTABLISHED: cargo kani exited")
+            );
             assert!(String::from_utf8_lossy(&observed.output.stderr).contains("cargo kani exited"));
         }
     }
@@ -188,7 +202,10 @@ fn kani_runner_refuses_ambiguous_sources_in_either_native_order() -> Result<(), 
 
 #[test]
 fn kani_runner_refuses_repeated_blocks_and_absent_results() -> Result<(), String> {
-    for text in [format!("{PASS}{PASS}"), "compiled without a verdict\n".into()] {
+    for text in [
+        format!("{PASS}{PASS}"),
+        "compiled without a verdict\n".into(),
+    ] {
         let fixture = Fixture::new(&[("one.rs", "one")], &text)?;
         let observed = fixture.run("success", false)?;
         assert_eq!(observed.output.status.code(), Some(1));
@@ -203,7 +220,11 @@ fn kani_runner_preserves_completed_rows_after_a_real_timeout() -> Result<(), Str
     let fixture = Fixture::new(&[("one.rs", "one"), ("two.rs", "two")], &text)?;
     let observed = fixture.run("timeout", false)?;
     assert_eq!(observed.output.status.code(), Some(1));
-    assert!(observed.report.contains("NOT-ESTABLISHED: cargo kani timed out"));
+    assert!(
+        observed
+            .report
+            .contains("NOT-ESTABLISHED: cargo kani timed out")
+    );
     assert_row(&observed.report, "one", "one.rs", "VERIFIED");
     assert_row(&observed.report, "two", "two.rs", "NOT-ESTABLISHED");
     assert!(String::from_utf8_lossy(&observed.output.stderr).contains("1 not established"));

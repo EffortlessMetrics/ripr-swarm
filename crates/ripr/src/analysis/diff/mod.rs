@@ -16,7 +16,7 @@ pub(crate) use load::{
 };
 pub(crate) use load::{
     another_base_candidate, is_shallow_repository, load_diff_core,
-    load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
+    load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
     resolve_effective_base_core,
 };
@@ -43,5 +43,5 @@ pub(crate) use parse::{
 pub(crate) use path::diff_path_identity_key_with;
 pub(crate) use path::{
     artifact_root_gitignore_entry, artifact_root_pathspec, diff_path_identity_key,
-    is_ripr_artifact_path_under, ripr_artifact_roots,
+    is_ripr_artifact_path_under, ripr_artifact_roots, untrack_artifacts_command,
 };

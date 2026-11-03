@@ -754,7 +754,8 @@ mod tests {
 
     #[test]
     fn duplicate_source_names_never_share_a_native_result() {
-        let success = "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
+        let success =
+            "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
         let failure = "Checking harness b::same...\nVERIFICATION:- FAILED\n";
         let unique = "Checking harness m::unique...\nVERIFICATION:- SUCCESSFUL\n";
         // Duplicate names in separate files and in one file are both ambiguous:
@@ -801,9 +802,9 @@ mod tests {
                 }
                 let report = render_report(&results, "");
                 assert!(report.contains("| `same` | `a.rs` | NOT-ESTABLISHED |"));
-                assert!(report.contains(&format!(
-                    "| `same` | `{second_file}` | NOT-ESTABLISHED |"
-                )));
+                assert!(
+                    report.contains(&format!("| `same` | `{second_file}` | NOT-ESTABLISHED |"))
+                );
                 assert!(!report.contains("| `same` | `a.rs` | VERIFIED |"));
                 assert!(report.contains("| `unique` | `unique.rs` | VERIFIED |"));
             }
@@ -816,7 +817,8 @@ mod tests {
             file: "one.rs".to_string(),
             name: "same".to_string(),
         }];
-        let success = "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
+        let success =
+            "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
         let other_failure = "Checking harness b::same...\nVERIFICATION:- FAILED\n";
         let repeated_failure = "Checking harness a::same...\nVERIFICATION:- FAILED\n";
         for output in [
@@ -857,7 +859,7 @@ mod tests {
                 Some(HarnessStatus::Verified)
             ));
             assert_eq!(results.first().map(|row| row.time.as_str()), Some("0.5s"));
-            assert!(lane_verdict(&results, true, false).is_ok());
+            assert_eq!(lane_verdict(&results, true, false).err(), None);
         }
         for selector in ["not_same", "m::notsame", "same::nested"] {
             let output = format!("Checking harness {selector}...\nVERIFICATION:- SUCCESSFUL\n");
@@ -883,9 +885,13 @@ mod tests {
             file: "proof.rs".to_string(),
             name: "proof".to_string(),
         }];
-        let output = "Checking harness m::proof...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 1s\n";
+        let output =
+            "Checking harness m::proof...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 1s\n";
         let success = reconcile_kani_output(&harnesses, output, None);
-        assert!(complete_lane_verdict(&success.results, true, false, None).is_ok());
+        assert_eq!(
+            complete_lane_verdict(&success.results, true, false, None).err(),
+            None
+        );
 
         for (timed_out, status, expected) in [
             (false, Some(false), "exited"),
@@ -893,27 +899,35 @@ mod tests {
             (true, Some(true), "timed out"),
         ] {
             let problem = process_completion_problem(timed_out, status, "exit status: 1", 5);
-            assert!(problem.as_deref().is_some_and(|text| text.contains(expected)));
+            assert!(
+                problem
+                    .as_deref()
+                    .is_some_and(|text| text.contains(expected))
+            );
             let run = reconcile_kani_output(&harnesses, output, problem);
             assert!(matches!(&run.results[0].status, HarnessStatus::Verified));
             assert_eq!(run.results[0].time, "1s");
-            assert!(render_report(&run.results, run.process_problem.as_deref().unwrap_or(""))
-                .contains(expected));
+            assert!(
+                render_report(&run.results, run.process_problem.as_deref().unwrap_or(""))
+                    .contains(expected)
+            );
             for allow_empty in [false, true] {
-                assert!(complete_lane_verdict(
-                    &run.results,
-                    true,
-                    allow_empty,
-                    run.process_problem.as_deref(),
-                )
-                .is_err());
+                assert!(
+                    complete_lane_verdict(
+                        &run.results,
+                        true,
+                        allow_empty,
+                        run.process_problem.as_deref(),
+                    )
+                    .is_err()
+                );
             }
         }
         assert!(process_completion_problem(false, Some(true), "exit status: 0", 5).is_none());
     }
 
     #[test]
-    fn partial_timeout_preserves_completed_rows_but_never_passes() {
+    fn partial_timeout_preserves_completed_rows_but_never_passes() -> Result<(), String> {
         let harnesses = [
             Harness {
                 file: "first.rs".to_string(),
@@ -934,21 +948,20 @@ mod tests {
             HarnessStatus::NotEstablished(_)
         ));
         assert_eq!(run.results[1].time, "n/a");
-        assert!(render_report(&run.results, "NOT-ESTABLISHED: process timed out")
-            .contains("second.rs"));
-        let error = complete_lane_verdict(
-            &run.results,
-            true,
-            false,
-            run.process_problem.as_deref(),
-        )
-        .expect_err("partial timeout cannot pass");
+        assert!(
+            render_report(&run.results, "NOT-ESTABLISHED: process timed out").contains("second.rs")
+        );
+        let error =
+            complete_lane_verdict(&run.results, true, false, run.process_problem.as_deref())
+                .err()
+                .ok_or("partial timeout cannot pass")?;
         assert!(error.contains("timed out"));
         assert!(error.contains("1 not established"));
+        Ok(())
     }
 
     #[test]
-    fn mixed_failure_and_absent_results_keep_distinct_dispositions() {
+    fn mixed_failure_and_absent_results_keep_distinct_dispositions() -> Result<(), String> {
         let harnesses = [
             Harness {
                 file: "first.rs".to_string(),
@@ -972,17 +985,21 @@ mod tests {
             false,
             mixed.process_problem.as_deref(),
         )
-        .expect_err("failed harness must fail aggregate");
+        .err()
+        .ok_or("failed harness must fail aggregate")?;
         assert!(err.contains("1 failed"));
 
         let absent = reconcile_kani_output(&harnesses, "", None);
-        assert!(absent
-            .results
-            .iter()
-            .all(|row| matches!(&row.status, HarnessStatus::NotEstablished(_))));
+        assert!(
+            absent
+                .results
+                .iter()
+                .all(|row| matches!(&row.status, HarnessStatus::NotEstablished(_)))
+        );
         assert!(complete_lane_verdict(&absent.results, true, false, None).is_err());
         assert!(complete_lane_verdict(&[], true, true, Some("abnormal exit")).is_err());
-        assert!(complete_lane_verdict(&[], true, true, None).is_ok());
+        assert_eq!(complete_lane_verdict(&[], true, true, None).err(), None);
+        Ok(())
     }
 
     #[test]

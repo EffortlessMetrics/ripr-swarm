@@ -4,9 +4,12 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
 
 const FAKE_CARGO: &str = r#"#!/bin/sh
 set -eu
@@ -49,8 +52,7 @@ impl Fixture {
         ));
         fs::create_dir(&root).map_err(|error| error.to_string())?;
         let fixture = Self(root);
-        fs::create_dir_all(fixture.0.join("crates/ripr/src"))
-            .map_err(|error| error.to_string())?;
+        fs::create_dir_all(fixture.0.join("crates/ripr/src")).map_err(|error| error.to_string())?;
         fs::create_dir(fixture.0.join("bin")).map_err(|error| error.to_string())?;
         fs::create_dir(fixture.0.join("missing")).map_err(|error| error.to_string())?;
         fs::write(fixture.0.join("Cargo.toml"), "[workspace]\nmembers=[]\n")
@@ -82,19 +84,17 @@ impl Fixture {
         }
         let path = std::env::join_paths(paths).map_err(|error| error.to_string())?;
         let started = Instant::now();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
-        command
-            .args(["kani", "--timeout-secs", "1", "--harness-timeout-secs", "1"])
-            .current_dir(&self.0)
-            .env("PATH", &path)
-            .env("KANI_PROBE_ROOT", &self.0)
-            .env("KANI_PROBE_MODE", mode);
-        if allow_empty {
-            command.arg("--allow-empty");
-        }
-        let output = command
-            .output()
-            .map_err(|error| format!("failed to launch xtask: {error}"))?;
+        let output = xtask_bin::output(|command| {
+            command
+                .args(["kani", "--timeout-secs", "1", "--harness-timeout-secs", "1"])
+                .current_dir(&self.0)
+                .env("PATH", &path)
+                .env("KANI_PROBE_ROOT", &self.0)
+                .env("KANI_PROBE_MODE", mode);
+            if allow_empty {
+                command.arg("--allow-empty");
+            }
+        })?;
         let elapsed = started.elapsed();
         let report = fs::read_to_string(self.0.join("target/ripr/reports/kani.md"))
             .map_err(|error| error.to_string())?;
@@ -137,8 +137,16 @@ fn kani_availability_probe_deadline_prevents_a_verification_launch() -> Result<(
         );
         assert_eq!(observed.output.status.code(), Some(1));
         assert_eq!(observed.calls, ["kani --version".to_string()]);
-        assert!(observed.report.contains("NOT-ESTABLISHED: cargo-kani unavailable"));
-        assert!(observed.report.contains("cargo kani --version timed out after 1 second"));
+        assert!(
+            observed
+                .report
+                .contains("NOT-ESTABLISHED: cargo-kani unavailable")
+        );
+        assert!(
+            observed
+                .report
+                .contains("cargo kani --version timed out after 1 second")
+        );
         assert!(observed.report.contains("no harness was run"));
         assert!(!observed.report.contains("| `proof` |"));
     }
@@ -161,7 +169,11 @@ fn kani_availability_probe_refuses_nonzero_signal_and_missing_tool() -> Result<(
                 },
                 "{mode}: verification must not run after failed discovery"
             );
-            assert!(observed.report.contains("NOT-ESTABLISHED: cargo-kani unavailable"));
+            assert!(
+                observed
+                    .report
+                    .contains("NOT-ESTABLISHED: cargo-kani unavailable")
+            );
             assert!(observed.report.contains("no harness was run"));
             assert!(
                 !observed.report.contains("injected")
@@ -190,9 +202,11 @@ fn kani_availability_probe_preserves_success_and_the_empty_opt_out() -> Result<(
             "kani -p ripr -Z unstable-options --harness-timeout 1s".to_string(),
         ]
     );
-    assert!(observed.report.contains(
-        "| `proof` | `crates/ripr/src/proof.rs` | VERIFIED |"
-    ));
+    assert!(
+        observed
+            .report
+            .contains("| `proof` | `crates/ripr/src/proof.rs` | VERIFIED |")
+    );
     assert!(!observed.report.contains("cargo-kani unavailable"));
 
     let fixture = Fixture::new(false)?;
