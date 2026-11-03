@@ -186,10 +186,16 @@ fn literal_sequence(argument: &str) -> Option<Vec<String>> {
     if argument.starts_with("vec!") {
         let open = argument.find('[')?;
         let close = matching_bracket(argument, open, b'[')?;
+        if !argument[close + 1..].trim().is_empty() {
+            return None;
+        }
         return split_top_level_commas(&argument[open + 1..close]);
     }
     if argument.starts_with('[') {
         let close = matching_bracket(argument, 0, b'[')?;
+        if !argument[close + 1..].trim().is_empty() {
+            return None;
+        }
         return split_top_level_commas(&argument[1..close]);
     }
     None
@@ -234,7 +240,12 @@ fn split_top_level_commas(text: &str) -> Option<Vec<String>> {
     if depth != 0 {
         return None;
     }
-    parts.push(text[start..].trim().to_string());
+    // A trailing comma (`vec![1, 2,]`) leaves an empty last part; it is not
+    // an element.
+    let last = text[start..].trim();
+    if !last.is_empty() {
+        parts.push(last.to_string());
+    }
     (!parts.is_empty() && parts.iter().all(|part| !part.is_empty())).then_some(parts)
 }
 
@@ -247,6 +258,20 @@ mod tests {
         let line = "assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);";
         let calls = synthetic_calls_in_line(line);
         assert_eq!(calls, vec![("inc".to_string(), "inc(1)".to_string())]);
+    }
+
+    #[test]
+    fn a_trailing_comma_is_not_an_element_but_a_wrapped_literal_is_refused() {
+        assert_eq!(
+            literal_sequence("vec![1, 2,]"),
+            Some(vec!["1".to_string(), "2".to_string()])
+        );
+        assert_eq!(literal_sequence("wrap(vec![1, 2])"), None);
+        assert_eq!(literal_sequence("vec![1, 2].len()"), None);
+        assert_eq!(
+            literal_sequence("[1, 2] "),
+            Some(vec!["1".to_string(), "2".to_string()])
+        );
     }
 
     #[test]
