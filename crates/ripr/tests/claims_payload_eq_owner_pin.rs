@@ -427,6 +427,24 @@ fn claims_payload_equality_grades_only_the_return_value_family() -> Result<(), S
             assert_ne!(outcome.oracle.0, "exact_value", "{name}: oracle");
         }
     }
+    // The `Some` direction reads through the same multi-line path.
+    let some = option_case(
+        "multi_line_assert_some_eq",
+        "use claims::assert_some_eq;",
+        "assert_some_eq!(\n    half(8),\n    4\n);",
+        true,
+    );
+    let outcome = run(&root_dir, &some, "return_value")?;
+    assert_eq!(
+        outcome.class, "exposed",
+        "assert_some_eq: {}",
+        outcome.class
+    );
+    assert_eq!(
+        outcome.oracle,
+        ("exact_value".to_string(), "strong".to_string()),
+        "assert_some_eq: oracle"
+    );
     Ok(())
 }
 

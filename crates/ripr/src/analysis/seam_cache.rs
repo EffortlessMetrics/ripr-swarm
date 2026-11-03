@@ -643,10 +643,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// registers as a test again (#12230).
 /// `1.143`: an assertion whose `Err(..)` constructor feeds a value-supplying
 /// adapter is a relation, not an exact oracle of any kind (#12610).
-/// `1.144`: a multi-line `assert_ok_eq!` / `assert_some_eq!` of a literal is
+/// `1.144`: a file-backed insta snapshot whose committed `.snap` file is
+/// certainly missing no longer discriminates a seam, and the `.snap` listing is
+/// part of the key (#12189).
+/// `1.145`: a multi-line `assert_ok_eq!` / `assert_some_eq!` of a literal is
 /// nominated like its one-line form and reads `exact_value` / strong under the
 /// same owner-pin gates (RIPR-SPEC-0197, #12394). Old entries keep `unknown`.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.144";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.145";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -831,8 +834,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.144";
 /// `0.143`: same table-callback comment rule as full `1.141` (#12494).
 /// `0.144`: same default-feature doctest rule as full `1.142` (#12230).
 /// `0.145`: same adapter-fed `Err(..)` relation as full `1.143` (#12610).
-/// `0.146`: same multi-line claims nomination as full `1.144` (#12394).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.146";
+/// `0.146`: same missing-committed-snapshot rule as full `1.144` (#12189).
+/// `0.147`: same multi-line claims nomination as full `1.145` (#12394).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.147";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1019,8 +1023,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.146";
 /// `0.143`: same table-callback comment rule as full `1.141` (#12494).
 /// `0.144`: same default-feature doctest rule as full `1.142` (#12230).
 /// `0.145`: same adapter-fed `Err(..)` relation as full `1.143` (#12610).
-/// `0.146`: same multi-line claims nomination as full `1.144` (#12394).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.146";
+/// `0.146`: same missing-committed-snapshot rule as full `1.144` (#12189).
+/// `0.147`: same multi-line claims nomination as full `1.145` (#12394).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.147";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1803,6 +1808,15 @@ impl WorkspaceKeyContext<'_> {
             } else {
                 workspace_manifests_hash
             };
+        // #12189 (before the Cargo identity, whose unavailable marker must stay
+        // the key's suffix): a committed `.snap` file decides whether a file-backed
+        // snapshot assertion can fail, so adding, deleting or (un)tracking
+        // one must move the key. Existence and tracking are the inputs;
+        // content is not.
+        let workspace_manifests_hash = hash_str(&format!(
+            "{workspace_manifests_hash}:rust-snapshot-files:{}",
+            super::rust_snapshot_files::SnapshotListing::read(self.workspace_root).identity()
+        ));
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -5868,8 +5882,9 @@ mod tests {
         // 1.140 -> 1.141: comments inside table-test callbacks no longer demote the row (#12494).
         // 1.141 -> 1.142: default-feature cfg gates register doctests (#12230).
         // 1.142 -> 1.143: adapter-fed Err is a relation (#12610).
-        // 1.143 -> 1.144: multi-line claims payload-equality nomination (#12394).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.144");
+        // 1.143 -> 1.144: file-backed snapshot with no committed `.snap` (#12189).
+        // 1.144 -> 1.145: multi-line claims payload-equality nomination (#12394).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.145");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5994,9 +6009,10 @@ mod tests {
         // 0.142 -> 0.143: same table-callback comment rule as full 1.141 (#12494).
         // 0.143 -> 0.144: same default-feature doctest rule as full 1.142 (#12230).
         // 0.144 -> 0.145: same adapter-fed Err relation as full 1.143 (#12610).
-        // 0.145 -> 0.146: same multi-line claims nomination as full 1.144 (#12394).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.146");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.146");
+        // 0.145 -> 0.146: same missing-snapshot rule as full 1.144 (#12189).
+        // 0.146 -> 0.147: same multi-line claims nomination as full 1.145 (#12394).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.147");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.147");
     }
 
     #[test]
