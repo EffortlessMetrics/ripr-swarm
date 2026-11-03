@@ -46,6 +46,7 @@ Stop reasons:
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_qualified_helper_effect_reach/input --diff <cwd>/fixtures/rust_qualified_helper_effect_reach/diff.patch --mode fast probe:src_lib.rs:call_deletion:05331642
   ripr context --root <cwd>/fixtures/rust_qualified_helper_effect_reach/input --diff <cwd>/fixtures/rust_qualified_helper_effect_reach/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:05331642
 
@@ -72,5 +73,6 @@ Stop reasons:
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_qualified_helper_effect_reach/input --diff <cwd>/fixtures/rust_qualified_helper_effect_reach/diff.patch --mode fast probe:src_lib.rs:side_effect:2ead93ea
   ripr context --root <cwd>/fixtures/rust_qualified_helper_effect_reach/input --diff <cwd>/fixtures/rust_qualified_helper_effect_reach/diff.patch --mode fast --at probe:src_lib.rs:side_effect:2ead93ea
