@@ -22,7 +22,7 @@ Linked specs:
 - [RIPR-SPEC-0240](RIPR-SPEC-0240-unknown-not-a-gap.md) — gap evidence
 - [RIPR-SPEC-0028](RIPR-SPEC-0028-python-preview-static-facts.md) — Python static limits
 
-Support-tier impact: none (documentation and enforcement of existing behavior)
+Support-tier impact: none (documentation and enforcement of existing behavior); see [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact: register in `policy/doc-artifacts.toml` and `.ripr/traceability.toml`
 
