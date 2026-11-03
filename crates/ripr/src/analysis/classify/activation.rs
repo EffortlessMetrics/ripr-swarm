@@ -5687,10 +5687,10 @@ fn chain_entry_rows(
         is_free(&entry.caller),
         &entry_parameters,
         |test, call| {
-            !super::helper_transfer::test_call_is_shadowed(
+            !super::helper_transfer::test_call_is_shadowed_for_entry(
                 index,
                 test,
-                &entry.caller.name,
+                &entry.caller,
                 call.line,
             ) && !constructor_names(&call.text).any(|name| {
                 // #9329 Devin review: a test-local `let Size = |n| ..` makes
@@ -11632,6 +11632,7 @@ assert_eq!(input.amount, 100);"#
                     receiver: None,
                     through_macro: false,
                     module_qualified: false,
+                    crate_qualifier: None,
                     transparent_macros_rebound: false,
                     diverging_handlers: Vec::new(),
                 },
@@ -11642,6 +11643,7 @@ assert_eq!(input.amount, 100);"#
                     receiver: None,
                     through_macro: false,
                     module_qualified: false,
+                    crate_qualifier: None,
                     transparent_macros_rebound: false,
                     diverging_handlers: Vec::new(),
                 },

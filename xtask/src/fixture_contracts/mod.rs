@@ -24,6 +24,7 @@ mod installed_journey;
 mod installed_journey_recipe;
 mod installed_journey_refresh;
 mod native_python;
+mod packaged_repair_parity;
 mod report_validators;
 mod retained_files;
 mod upstream_python;
@@ -121,6 +122,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_blind_journey_installed_rust_fixture(&mut violations)?;
     validate_blind_journey_installed_python_fixture(&mut violations)?;
     validate_blind_journey_installed_typescript_fixture(&mut violations)?;
+    packaged_repair_parity::validate_packaged_repair_parity_fixture(&mut violations)?;
     validate_packaged_repair_parity_fixture(&mut violations)?;
     for entry in
         fs::read_dir(fixtures_dir).map_err(|err| format!("failed to read fixtures: {err}"))?

@@ -1337,10 +1337,10 @@ fn find_related_tests_with_candidates<'a>(
                         // #6780 Devin review: a test-local closure or nested
                         // fn named like the hop caller shadows it, so the
                         // call never reaches the helper.
-                        && !super::helper_transfer::test_call_is_shadowed(
+                        && !super::helper_transfer::test_call_is_shadowed_for_entry(
                             index,
                             test,
-                            &hop.caller.name,
+                            &hop.caller,
                             call.line,
                         )
                 })
@@ -8025,6 +8025,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 receiver: None,
                 through_macro: false,
                 module_qualified: false,
+                crate_qualifier: None,
                 transparent_macros_rebound: false,
                 diverging_handlers: Vec::new(),
             }],
@@ -8138,6 +8139,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 receiver: None,
                 through_macro: false,
                 module_qualified: false,
+                crate_qualifier: None,
                 transparent_macros_rebound: false,
                 diverging_handlers: Vec::new(),
             }],
@@ -8195,6 +8197,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 receiver: None,
                 through_macro: false,
                 module_qualified: false,
+                crate_qualifier: None,
                 transparent_macros_rebound: false,
                 diverging_handlers: Vec::new(),
             }],
