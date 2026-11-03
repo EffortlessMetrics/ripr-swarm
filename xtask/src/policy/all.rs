@@ -1,8 +1,7 @@
 //! Local composition of the nine independent source/Git policy checks (#5073).
 use super::{
-    check_allow_attributes, check_cli_exit_contract, check_covered_by, check_executable_files,
-    check_local_context, check_network_policy, check_no_panic_family, check_process_policy,
-    check_static_language,
+    check_allow_attributes, check_covered_by, check_executable_files, check_local_context,
+    check_network_policy, check_no_panic_family, check_process_policy, check_static_language,
 };
 
 pub(crate) fn check_policy_all() -> Result<(), String> {
@@ -17,7 +16,6 @@ pub(crate) fn check_policy_all() -> Result<(), String> {
         ("check-covered-by", check_covered_by()),
         ("check-executable-files", check_executable_files()),
         ("check-process-policy", check_process_policy()),
-        ("check-cli-exit-contract", check_cli_exit_contract()),
         ("check-network-policy", check_network_policy()),
         ("check-lint-policy", crate::check_lint_policy()),
     ];

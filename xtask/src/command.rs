@@ -2476,8 +2476,8 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "non_mutating_check",
             "target/ripr/reports/cli-exit-contract.md",
             false,
-            true,
-            "Pins numeric process::exit literals in ripr sources against policy/cli_exit_literal_allowlist.toml (#12505).",
+            false,
+            "Pins numeric process::exit literals in ripr sources against policy/cli_exit_literal_allowlist.toml (#12505); CI enforces it through check-process-policy.",
         ),
         command_entry(
             "check-network-policy",

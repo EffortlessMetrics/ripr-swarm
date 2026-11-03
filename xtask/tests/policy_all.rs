@@ -32,7 +32,6 @@ const CHECKS: &[(&str, &str)] = &[
     ("check-covered-by", "covered-by.md"),
     ("check-executable-files", "executable-files.md"),
     ("check-process-policy", "process-policy.md"),
-    ("check-cli-exit-contract", "cli-exit-contract.md"),
     ("check-network-policy", "network-policy.md"),
     ("check-lint-policy", "lint-policy.md"),
 ];

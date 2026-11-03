@@ -261,19 +261,6 @@ impl From<&SeamLimitInfo> for CachedSeamLimitInfo {
     }
 }
 
-/// Walk production Rust files at `root` and emit per-seam evidence and
-/// classification. This is the input to `output/repo-exposure-report-v1`.
-/// The discard hook in `inventory_seams_at` from #237 is replaced by
-/// this real consumer; evidence and classification are no longer
-/// computed for the diff-free seam-only formats.
-///
-/// Consults the on-disk fact-layer cache
-/// (`target/ripr/cache/repo-seam-facts/...`) before computing. Cache
-/// hits skip the file walk, parse, evidence build, and classification
-/// pipeline entirely. Misses and corrupt entries fall through to a
-/// fresh compute and write the result for the next run. Cache
-/// failures never fail the analysis.
-
 pub(crate) fn seam_facts_cache_miss_message(compact: bool) -> &'static str {
     if compact {
         "ripr: no usable compact seam-facts cache entry for this workspace state; running the full compact classified walk"
@@ -286,6 +273,18 @@ fn disclose_seam_facts_cache_miss(compact: bool) {
     eprintln!("{}", seam_facts_cache_miss_message(compact));
 }
 
+/// Walk production Rust files at `root` and emit per-seam evidence and
+/// classification. This is the input to `output/repo-exposure-report-v1`.
+/// The discard hook in `inventory_seams_at` from #237 is replaced by
+/// this real consumer; evidence and classification are no longer
+/// computed for the diff-free seam-only formats.
+///
+/// Consults the on-disk fact-layer cache
+/// (`target/ripr/cache/repo-seam-facts/...`) before computing. Cache
+/// hits skip the file walk, parse, evidence build, and classification
+/// pipeline entirely. Misses and corrupt entries fall through to a
+/// fresh compute and write the result for the next run. Cache
+/// failures never fail the analysis.
 #[cfg(test)]
 pub(crate) fn inventory_classified_seams_at(root: &Path) -> Result<Vec<ClassifiedSeam>, String> {
     inventory_classified_seams_report_at_with_config(root, &RiprConfig::default())
@@ -437,7 +436,9 @@ fn inventory_classified_seams_report_collect(
             }
             CacheLoad::Miss => {
                 trace_latency_phase("cache_load", "miss", cache_started.elapsed());
-                disclose_seam_facts_cache_miss(false);
+                // The stat-only key is rebuilt from the same inputs; the
+                // post-collect load below is the one authoritative miss, so
+                // disclose there and print once per run (#12505).
             }
             CacheLoad::CorruptIgnored { reason } => {
                 trace_latency_phase("cache_load", "corrupt_ignored", cache_started.elapsed());
@@ -931,7 +932,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
             }
             CacheLoad::Miss => {
                 trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
-                disclose_seam_facts_cache_miss(true);
+                // Disclosed once at the post-collect load below (#12505).
             }
             CacheLoad::CorruptIgnored { reason } => {
                 trace_latency_phase(
