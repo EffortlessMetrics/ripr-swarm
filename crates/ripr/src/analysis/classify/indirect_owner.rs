@@ -582,12 +582,15 @@ fn body_has_no_owner_item_syntax(source: &str, name: &str) -> bool {
     if identifier_offsets(source, "use").next().is_some() {
         return false;
     }
-    // A comment may sit between `fn` and the name (`fn /* c */ inc`,
-    // `fn // c` newline `inc`, `fn/**/inc`), so the text before the name does
-    // not end in `fn`. Any `fn` followed by a comment opener reads the tree.
-    if identifier_offsets(source, "fn")
-        .any(|at| source[at + "fn".len()..].trim_start().starts_with('/'))
-    {
+    // Only a plain identifier may follow `fn` for the textual check below to
+    // see the name. A comment (`fn /* c */ inc`, `fn // c` newline `inc`,
+    // `fn/**/inc`), or whitespace the lexer accepts but `trim_start` does not
+    // (U+200E), hides it, so any other next character reads the tree.
+    if identifier_offsets(source, "fn").any(|at| {
+        !source[at + "fn".len()..]
+            .trim_start()
+            .starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_')
+    }) {
         return false;
     }
     !identifier_offsets(source, name).any(|at| {
@@ -909,6 +912,7 @@ mod tests {
             "fn // c\n inc() {} inc();",
             "fn/**/inc() {} inc();",
             "fn /** d */ inc() {} inc();",
+            "fn\u{200E}inc() {} inc();",
         ] {
             assert!(!body_has_no_owner_item_syntax(spelled, "inc"), "{spelled}");
         }
