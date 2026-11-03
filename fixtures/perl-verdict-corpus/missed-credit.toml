@@ -18,11 +18,11 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "perl-bless-counter-inc"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: ripr lists no related test for this change from the pinned producer packet, so the row reads static_unknown; why the packet's relations do not link a test is not yet attributed (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-bless-counter-start"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: ripr lists no related test for this change from the pinned producer packet, so the row reads static_unknown; why the packet's relations do not link a test is not yet attributed (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-hostile-autoload-field"
@@ -30,7 +30,7 @@ reason = "Tests catch the rewrite, but the changed sub is reached only through A
 
 [[entry]]
 case = "perl-hostile-constant-tax"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown; ripr also records the static limit `unsupported_syntax` (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: ripr fails closed on the static limit `unsupported_syntax` for this code, so the row reads static_unknown (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-hostile-glob-double"
@@ -38,15 +38,15 @@ reason = "Tests catch the rewrite, but the changed sub is reached only through A
 
 [[entry]]
 case = "perl-hostile-line-directive-pad"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown; ripr also records the static limit `unsupported_syntax` (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: ripr fails closed on the static limit `unsupported_syntax` for this code, so the row reads static_unknown (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-hostile-string-eval-quad"
-reason = "Discriminated at runtime, abstained on purpose: no Perl fact covers the changed line (unsupported_syntax), a fail-closed limit on hostile syntax (#12764). Delete this entry if the producer later covers the line and the row credits."
+reason = "Discriminated at runtime, abstained: ripr fails closed on the static limit `unsupported_syntax` for this code, so the row reads static_unknown (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-hostile-unicode-sub-name"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown; ripr also records the static limit `unsupported_syntax` (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: ripr fails closed on the static limit `unsupported_syntax` for this code, so the row reads static_unknown (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-idiom-closure-counter"
@@ -54,11 +54,11 @@ reason = "Catches the rewrite but ripr abstains (limited) rather than reporting 
 
 [[entry]]
 case = "perl-idiom-local-separator"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: the producer found no changed observable for this change, so ripr cannot tell whether the strong oracle pins it and reads static_unknown (RIPR-SPEC-0235 rule 18); the producer needs to emit the observable (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-moose-builder-join"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: ripr lists no related test for this change from the pinned producer packet, so the row reads static_unknown; why the packet's relations do not link a test is not yet attributed (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-test2-close-month-subtest"
@@ -66,15 +66,15 @@ reason = "Tests discriminate the change (a zero month and a month short by one s
 
 [[entry]]
 case = "perl-test2-net-change-imported"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: ripr lists no related test for this change from the pinned producer packet, so the row reads static_unknown; why the packet's relations do not link a test is not yet attributed (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-test2-withdraw-dies-like-message"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: the related test asserts the raised error through a class or message matcher that the producer grades strong, so ripr cannot tell which boundary raises it and reads static_unknown (RIPR-SPEC-0235 rule 16, an intended limit) (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-testdeep-adjust-exact-hash"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads reachable_unrevealed; ripr also records the static limit `opaque_custom_assertion_helper` (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: the test asserts through an opaque custom assertion helper (static limit `opaque_custom_assertion_helper`), so the row reads reachable_unrevealed (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-testexception-class-then-message"
@@ -86,40 +86,40 @@ reason = "Tests discriminate the change but ripr abstains: the producer now bind
 
 [[entry]]
 case = "perl-testexception-freeze-class"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: the related test asserts the raised error through a class or message matcher that the producer grades strong, so ripr cannot tell which boundary raises it and reads static_unknown (RIPR-SPEC-0235 rule 16, an intended limit) (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-testexception-transfer-boundary-pair"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: the related test asserts the raised error through a class or message matcher that the producer grades strong, so ripr cannot tell which boundary raises it and reads static_unknown (RIPR-SPEC-0235 rule 16, an intended limit) (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-testexception-withdraw-throws-message"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: the related test asserts the raised error through a class or message matcher that the producer grades strong, so ripr cannot tell which boundary raises it and reads static_unknown (RIPR-SPEC-0235 rule 16, an intended limit) (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-testmore-bulk-subtest"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: ripr lists no related test for this change from the pinned producer packet, so the row reads static_unknown; why the packet's relations do not link a test is not yet attributed (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-testmore-bundle-helper-sub"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: ripr lists no related test for this change from the pinned producer packet, so the row reads static_unknown; why the packet's relations do not link a test is not yet attributed (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-testmore-cart-dynamic-dispatch"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: ripr lists no related test for this change from the pinned producer packet, so the row reads static_unknown; why the packet's relations do not link a test is not yet attributed (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-testmore-cart-method-total"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: ripr lists no related test for this change from the pinned producer packet, so the row reads static_unknown; why the packet's relations do not link a test is not yet attributed (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-testmore-discount-imported-boundary"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: ripr lists no related test for this change from the pinned producer packet, so the row reads static_unknown; why the packet's relations do not link a test is not yet attributed (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-testmore-quote-is-deeply-total"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: the producer found no changed observable for this change, so ripr cannot tell whether the strong oracle pins it and reads static_unknown (RIPR-SPEC-0235 rule 18); the producer needs to emit the observable (#12764). Delete this entry when the row credits."
 
 [[entry]]
 case = "perl-testmore-tax-table-loop"
-reason = "Discriminated at runtime, abstained: the pinned producer packet carries no `missing_discriminator` for this change (ripr reads `Missing discriminator from packet`), so there is no concrete discriminator to credit and the row reads static_unknown (#12764). Delete this entry when the producer supplies the discriminator and the row credits."
+reason = "Discriminated at runtime, abstained: ripr lists no related test for this change from the pinned producer packet, so the row reads static_unknown; why the packet's relations do not link a test is not yet attributed (#12764). Delete this entry when the row credits."
