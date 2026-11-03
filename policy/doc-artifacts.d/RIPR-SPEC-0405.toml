@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0405"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md"
+status = "proposed"
+owner = "language-adapter"
+standalone_reason = "Issue #5862 defines the normative Julia preview contract for package roles, method-signature identity, standard Test activation, numerical/array observations, and native/GPU boundaries before parser or adapter work; documentation-only slice for parent #5593."

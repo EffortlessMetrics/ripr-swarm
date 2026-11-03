@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0393](../specs/RIPR-SPEC-0393-dotnet-shared-project-and-language-evidence-contracts.md) | accepted | .NET shared project facts and separate C#, F#, and Visual Basic evidence contracts (#5632, #5585) |

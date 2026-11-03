@@ -56,7 +56,15 @@ remain separate; the full JSON card and its detail references are unchanged.
 `ripr agent card --root PATH --seam-id ID [--json]` resolves one visible,
 policy-admitted seam exactly like `ripr agent packet` (same inventory, same
 not-found refusal naming `ripr pilot`, same `AgentBriefPolicy` omission
-check), then assembles one `RepairCardV1`:
+check), then assembles one `RepairCardV1`. `--seam-id` also accepts any ID
+`ripr check` or `ripr pilot` prints (a `probe:`/`repo-probe:` finding ID, a
+`gap:` ID, or a `file:line`): the shared repair resolver maps it to its seam, so
+for an eligible seam the card is byte-identical to the exact-seam-ID run. A
+translated ID is as strict as `ripr agent repair`: an ambiguous, ineligible or
+stale mapping is a typed `seam_not_found` refusal naming this command's retry
+(the exact seam ID is still served for a policy-admitted seam), a failure of
+the resolver itself stays the operational failure it was, and an exact seam ID
+passes through untouched (#12420):
 
 - `crates/ripr/src/app/repair_card_handoff.rs` gathers the producer facts:
   the packet eligibility/readiness authority

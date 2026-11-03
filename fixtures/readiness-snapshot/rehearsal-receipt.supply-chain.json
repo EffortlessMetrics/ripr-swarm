@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "kind": "readiness_no_publish_rehearsal_receipt",
+  "source_sha": "161e97dfdf94979f73629ef6c417bc16294c49a8",
+  "tree_clean": true,
+  "identity": {
+    "cargo_lock_digest": "sha256:b31b72867f3ae9a6e67197d293185cb4ecc0fbb9472a0b34ac90d37e85f51765",
+    "package_lock_digest": "sha256:f0c87f90ccae731d67d910261d6472f4daca712433227aadfc233addbadbc44b",
+    "rust_toolchain_digest": "sha256:48e029bb0b480b4b3bab15cb3de843dbfd6a7b9497163cc79c3af1d3026440bb",
+    "crate_version": "0.11.0",
+    "extension_version": "0.11.0"
+  },
+  "crate_package": {
+    "status": "pass",
+    "sha256": "abc123"
+  },
+  "installed_binary": {
+    "status": "pass",
+    "sha256": "def456"
+  },
+  "vsix": {
+    "status": "pass",
+    "sha256": "789abc"
+  },
+  "limitations": [],
+  "non_claims": [
+    "not a publication"
+  ],
+  "published_channels": [],
+  "dependency_policy": {
+    "status": "pass",
+    "sha256": "111111"
+  },
+  "sbom": {
+    "status": "pass",
+    "sha256": "222222"
+  },
+  "provenance_plan": {
+    "status": "not_run"
+  }
+}
