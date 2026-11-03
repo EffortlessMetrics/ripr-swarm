@@ -155,15 +155,43 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    const PRODUCTION_STOP_REASON_SOURCES: &[&str] = &[
-        include_str!("decision.rs"),
-        include_str!("gap_admission.rs"),
-        include_str!("../language/python.rs"),
-        include_str!("../language/rust/mod.rs"),
-        include_str!("../language/rust/dependent_scope.rs"),
-        include_str!("../language/python/transitive_reach.rs"),
-        include_str!("../classifier/finding.rs"),
-    ];
+    /// Every `.rs` file under `src/analysis`, where findings are produced.
+    fn analysis_sources() -> Result<Vec<(PathBuf, String)>, String> {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/analysis");
+        let mut pending = vec![root];
+        let mut found = Vec::new();
+        while let Some(dir) = pending.pop() {
+            let entries =
+                std::fs::read_dir(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+            for entry in entries {
+                let path = entry.map_err(|err| err.to_string())?.path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let text = std::fs::read_to_string(&path)
+                        .map_err(|err| format!("{}: {err}", path.display()))?;
+                    found.push((path, text));
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// Count uses of `token` (e.g. `StopReason::MaxDepthReached`) that build or
+    /// push the value. Whitespace is ignored so a rustfmt-split `.push(\n
+    /// StopReason::X)` still counts; a match-arm or or-pattern use (followed by
+    /// `=>` or `|`) only reads the value and is not an emission.
+    fn emission_sites(source: &str, token: &str) -> usize {
+        let compact: String = source.split_whitespace().collect();
+        compact
+            .match_indices(token)
+            .filter(|(at, _)| {
+                let after = &compact[at + token.len()..];
+                let boundary = !after.starts_with(|c: char| c.is_alphanumeric() || c == '_');
+                boundary && !after.starts_with("=>") && !after.starts_with('|')
+            })
+            .count()
+    }
 
     fn all_stop_reason_variants() -> [StopReason; 17] {
         [
@@ -226,19 +254,52 @@ mod tests {
     }
 
     #[test]
-    fn reserved_wire_stop_reasons_have_no_production_push_sites() {
+    fn reserved_wire_stop_reasons_have_no_production_push_sites() -> Result<(), String> {
+        let sources = analysis_sources()?;
+        if sources.len() < 20 {
+            return Err(format!(
+                "expected the analysis tree, read {} files",
+                sources.len()
+            ));
+        }
         for entry in STOP_REASON_CONTRACT {
             if entry.role != StopReasonEmissionRole::ReservedWire {
                 continue;
             }
-            let needle = format!(".push({}::", stringify_token(&entry.reason));
-            for source in PRODUCTION_STOP_REASON_SOURCES {
-                assert!(
-                    !source.contains(&needle),
-                    "{} must stay reserved (no .push site) but found in production source",
-                    entry.reason.as_str()
-                );
+            let token = stringify_token(&entry.reason);
+            for (path, source) in &sources {
+                if path.ends_with("classify/stop_reason_contract.rs") {
+                    continue;
+                }
+                if emission_sites(source, token) != 0 {
+                    return Err(format!(
+                        "{} must stay reserved but {} builds or pushes it",
+                        entry.reason.as_str(),
+                        path.display()
+                    ));
+                }
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn emission_detector_flags_pushes_and_ignores_match_arms() {
+        let token = "StopReason::MaxDepthReached";
+        for emitting in [
+            "reasons.push(StopReason::MaxDepthReached);",
+            "reasons\n    .push(\n        StopReason::MaxDepthReached,\n    );",
+            "let r = vec![StopReason::MaxDepthReached];",
+            "finding.stop_reasons = [StopReason::MaxDepthReached];",
+        ] {
+            assert_eq!(emission_sites(emitting, token), 1, "{emitting}");
+        }
+        for reading in [
+            "match r { StopReason::MaxDepthReached => 1, _ => 0 }",
+            "StopReason::MaxDepthReached | StopReason::TransitiveReachUnresolved => 2,",
+            "reasons.push(StopReason::MaxDepthReachedOther);",
+        ] {
+            assert_eq!(emission_sites(reading, token), 0, "{reading}");
         }
     }
 
@@ -254,8 +315,12 @@ mod tests {
         })?;
         for entry in STOP_REASON_CONTRACT {
             let wire = entry.reason.as_str();
-            if !spec.contains(&format!("`{wire}`")) {
-                return Err(format!("spec must document wire value `{wire}`"));
+            // A table row, not a prose mention: the row carries the role and trigger.
+            let row_prefix = format!("| `{wire}` |");
+            if !spec.lines().any(|line| line.starts_with(&row_prefix)) {
+                return Err(format!(
+                    "spec table must have a row for wire value `{wire}`"
+                ));
             }
         }
         if !spec.contains("Reserved wire values") {

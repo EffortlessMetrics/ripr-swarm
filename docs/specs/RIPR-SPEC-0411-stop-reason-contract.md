@@ -62,6 +62,14 @@ specs already state.
 | `helper_identity_unresolved` | helper identity | yes | ambiguous same-named helper on the test entry path | RIPR-SPEC-0159 |
 | `dynamic_dispatch_unresolved` | static-limit mapping | yes | Python preview maps `StaticLimitKind::DynamicDispatch` | RIPR-SPEC-0028 |
 
+The Trigger column names the primary producer on current main, not the only
+one. Other adapters build the same wire values through their own paths: the
+TypeScript classifier assigns the unknown-class backfill, transitive-reach and
+gap-evidence values directly, and Rust Verus-region handling
+(`language/rust/probes.rs`) attaches `proc_macro_opaque`. A producer may emit a
+wire value only for the role in this table; a new trigger for an existing value
+updates its row.
+
 Heuristic annotations run in `decision::stop_reasons` before classification
 backfill; they only add parallel reasons. Unknown-class backfill runs after
 classification via `ensure_unknown_stop_reason`.
@@ -81,8 +89,10 @@ slice does not remove tokens.
 ## Required Evidence
 
 - `analysis/classify/stop_reason_contract.rs` holds the exhaustive registry and
-  tests that reserved wires have no `.push` sites in production classifiers.
-- The spec table above documents every wire value (enforced by test).
+  tests that no file under `src/analysis` builds or pushes a reserved wire
+  (match-arm reads are not emissions), with a unit test that the detector flags
+  pushes, split pushes and `vec!` literals.
+- The spec table above has a row for every wire value (enforced by test).
 - `docs/OUTPUT_SCHEMA.md` carries the reserved-wire note under `stop_reason`
   values.
 
