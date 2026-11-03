@@ -1,11 +1,11 @@
-//! Normative emission contract for [`StopReason`] (RIPR-SPEC-0379, #5514).
+//! Normative emission contract for [`StopReason`] (RIPR-SPEC-0411, #5514).
 
 use crate::domain::StopReason;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(
     dead_code,
-    reason = "policy:5514: normative registry consumed by spec 0379 tests"
+    reason = "policy:5514: normative registry consumed by spec 0411 tests"
 )]
 pub(in crate::analysis) enum StopReasonEmissionRole {
     /// Valid wire token with gloss and next-step guidance, but no production
@@ -32,7 +32,7 @@ pub(in crate::analysis) enum StopReasonEmissionRole {
 
 #[expect(
     dead_code,
-    reason = "policy:5514: normative registry consumed by spec 0379 tests"
+    reason = "policy:5514: normative registry consumed by spec 0411 tests"
 )]
 pub(in crate::analysis) struct StopReasonContractEntry {
     pub reason: StopReason,
@@ -44,20 +44,20 @@ pub(in crate::analysis) struct StopReasonContractEntry {
 
 #[expect(
     dead_code,
-    reason = "policy:5514: normative registry consumed by spec 0379 tests"
+    reason = "policy:5514: normative registry consumed by spec 0411 tests"
 )]
 pub(in crate::analysis) const STOP_REASON_CONTRACT: &[StopReasonContractEntry] = &[
     StopReasonContractEntry {
         reason: StopReason::MaxDepthReached,
         role: StopReasonEmissionRole::ReservedWire,
         changes_classification: false,
-        governing_spec: "RIPR-SPEC-0379",
+        governing_spec: "RIPR-SPEC-0411",
     },
     StopReasonContractEntry {
         reason: StopReason::ExternalCrateBoundary,
         role: StopReasonEmissionRole::ReservedWire,
         changes_classification: false,
-        governing_spec: "RIPR-SPEC-0379",
+        governing_spec: "RIPR-SPEC-0411",
     },
     StopReasonContractEntry {
         reason: StopReason::DynamicDispatchUnresolved,
@@ -69,49 +69,49 @@ pub(in crate::analysis) const STOP_REASON_CONTRACT: &[StopReasonContractEntry] =
         reason: StopReason::ProcMacroOpaque,
         role: StopReasonEmissionRole::HeuristicAnnotation,
         changes_classification: false,
-        governing_spec: "RIPR-SPEC-0379",
+        governing_spec: "RIPR-SPEC-0411",
     },
     StopReasonContractEntry {
         reason: StopReason::FixtureOpaque,
         role: StopReasonEmissionRole::HeuristicAnnotation,
         changes_classification: false,
-        governing_spec: "RIPR-SPEC-0379",
+        governing_spec: "RIPR-SPEC-0411",
     },
     StopReasonContractEntry {
         reason: StopReason::FeatureUnknown,
         role: StopReasonEmissionRole::ReservedWire,
         changes_classification: false,
-        governing_spec: "RIPR-SPEC-0379",
+        governing_spec: "RIPR-SPEC-0411",
     },
     StopReasonContractEntry {
         reason: StopReason::AsyncBoundaryOpaque,
         role: StopReasonEmissionRole::HeuristicAnnotation,
         changes_classification: false,
-        governing_spec: "RIPR-SPEC-0379",
+        governing_spec: "RIPR-SPEC-0411",
     },
     StopReasonContractEntry {
         reason: StopReason::NoChangedRustLine,
         role: StopReasonEmissionRole::HeuristicAnnotation,
         changes_classification: false,
-        governing_spec: "RIPR-SPEC-0379",
+        governing_spec: "RIPR-SPEC-0411",
     },
     StopReasonContractEntry {
         reason: StopReason::InfectionEvidenceUnknown,
         role: StopReasonEmissionRole::UnknownClassBackfill,
         changes_classification: false,
-        governing_spec: "RIPR-SPEC-0379",
+        governing_spec: "RIPR-SPEC-0411",
     },
     StopReasonContractEntry {
         reason: StopReason::PropagationEvidenceUnknown,
         role: StopReasonEmissionRole::UnknownClassBackfill,
         changes_classification: false,
-        governing_spec: "RIPR-SPEC-0379",
+        governing_spec: "RIPR-SPEC-0411",
     },
     StopReasonContractEntry {
         reason: StopReason::StaticProbeUnknown,
         role: StopReasonEmissionRole::UnknownClassBackfill,
         changes_classification: false,
-        governing_spec: "RIPR-SPEC-0379",
+        governing_spec: "RIPR-SPEC-0411",
     },
     StopReasonContractEntry {
         reason: StopReason::TransitiveReachUnresolved,
@@ -141,7 +141,7 @@ pub(in crate::analysis) const STOP_REASON_CONTRACT: &[StopReasonContractEntry] =
         reason: StopReason::CompileTimeInvariant,
         role: StopReasonEmissionRole::CompileTimeInvariant,
         changes_classification: false,
-        governing_spec: "RIPR-SPEC-0379",
+        governing_spec: "RIPR-SPEC-0411",
     },
     StopReasonContractEntry {
         reason: StopReason::UnsafeObligation,
@@ -153,7 +153,7 @@ pub(in crate::analysis) const STOP_REASON_CONTRACT: &[StopReasonContractEntry] =
 
 #[expect(
     dead_code,
-    reason = "policy:5514: normative registry consumed by spec 0379 tests"
+    reason = "policy:5514: normative registry consumed by spec 0411 tests"
 )]
 pub(in crate::analysis) fn contract_entry(
     reason: &StopReason,
@@ -244,10 +244,10 @@ mod tests {
     #[test]
     fn stop_reason_contract_spec_documents_every_wire_value() -> Result<(), String> {
         let spec_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/specs/RIPR-SPEC-0379-stop-reason-contract.md");
+            .join("../../docs/specs/RIPR-SPEC-0411-stop-reason-contract.md");
         let spec = std::fs::read_to_string(&spec_path).map_err(|err| {
             format!(
-                "RIPR-SPEC-0379 must exist at {}: {err}",
+                "RIPR-SPEC-0411 must exist at {}: {err}",
                 spec_path.display()
             )
         })?;

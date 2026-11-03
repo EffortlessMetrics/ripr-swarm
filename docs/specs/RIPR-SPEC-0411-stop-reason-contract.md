@@ -1,4 +1,4 @@
-# RIPR-SPEC-0379: Stop reason contract
+# RIPR-SPEC-0411: Stop reason contract
 
 Status: proposed
 
@@ -44,17 +44,17 @@ specs already state.
 
 | Wire value | Role | Changes class? | Trigger (current main) | Owning spec |
 | --- | --- | --- | --- | --- |
-| `max_depth_reached` | reserved wire | no | not emitted | RIPR-SPEC-0379 |
-| `external_crate_boundary` | reserved wire | no | not emitted | RIPR-SPEC-0379 |
-| `feature_unknown` | reserved wire | no | not emitted | RIPR-SPEC-0379 |
-| `infection_evidence_unknown` | unknown-class backfill | no | `ensure_unknown_stop_reason` when class is `infection_unknown` and the list would be empty | RIPR-SPEC-0379 |
-| `propagation_evidence_unknown` | unknown-class backfill | no | same for `propagation_unknown` | RIPR-SPEC-0379 |
-| `static_probe_unknown` | unknown-class backfill | no | same for `static_unknown` | RIPR-SPEC-0379 |
-| `fixture_opaque` | heuristic annotation | no | related test body contains `fixture`, `builder`, or `arb_` | RIPR-SPEC-0379 |
-| `async_boundary_opaque` | heuristic annotation | no | probe expression mentions `async`, `spawn`, or `await` | RIPR-SPEC-0379 |
-| `proc_macro_opaque` | heuristic annotation | no | probe expression contains a `name!(` invocation (not `!=`) | RIPR-SPEC-0379 |
-| `no_changed_rust_line` | heuristic annotation | no | changed line has no owning Rust function and is not a compile-time assertion | RIPR-SPEC-0379 |
-| `compile_time_invariant` | compile-time shape | no | changed line is a compile-time assertion (`const_assert!`, etc.) without an owner function | RIPR-SPEC-0379 |
+| `max_depth_reached` | reserved wire | no | not emitted | RIPR-SPEC-0411 |
+| `external_crate_boundary` | reserved wire | no | not emitted | RIPR-SPEC-0411 |
+| `feature_unknown` | reserved wire | no | not emitted | RIPR-SPEC-0411 |
+| `infection_evidence_unknown` | unknown-class backfill | no | `ensure_unknown_stop_reason` when class is `infection_unknown` and the list would be empty | RIPR-SPEC-0411 |
+| `propagation_evidence_unknown` | unknown-class backfill | no | same for `propagation_unknown` | RIPR-SPEC-0411 |
+| `static_probe_unknown` | unknown-class backfill | no | same for `static_unknown` | RIPR-SPEC-0411 |
+| `fixture_opaque` | heuristic annotation | no | related test body contains `fixture`, `builder`, or `arb_` | RIPR-SPEC-0411 |
+| `async_boundary_opaque` | heuristic annotation | no | probe expression mentions `async`, `spawn`, or `await` | RIPR-SPEC-0411 |
+| `proc_macro_opaque` | heuristic annotation | no | probe expression contains a `name!(` invocation (not `!=`) | RIPR-SPEC-0411 |
+| `no_changed_rust_line` | heuristic annotation | no | changed line has no owning Rust function and is not a compile-time assertion | RIPR-SPEC-0411 |
+| `compile_time_invariant` | compile-time shape | no | changed line is a compile-time assertion (`const_assert!`, etc.) without an owner function | RIPR-SPEC-0411 |
 | `unsafe_obligation` | unsafe obligation | no | `static_unknown` probe labels `unsafe fn` or unchecked-assumption block | RIPR-SPEC-0168 |
 | `transitive_reach_unresolved` | reach limitation | yes | bounded reach walk stops at an unresolved internal edge | RIPR-SPEC-0114 |
 | `macro_reach_unresolved` | reach limitation | yes | reach candidate stops at an unexpanded same-repo macro | RIPR-SPEC-0117 |
@@ -102,7 +102,7 @@ slice does not remove tokens.
    `dynamic_dispatch_unresolved` per RIPR-SPEC-0028; no Rust finding emits
    `max_depth_reached` on current main.
 3. OUTPUT_SCHEMA lists `max_depth_reached`, `external_crate_boundary`, and
-   `feature_unknown` with the RIPR-SPEC-0379 reserved-wire note.
+   `feature_unknown` with the RIPR-SPEC-0411 reserved-wire note.
 
 ## Test Mapping
 

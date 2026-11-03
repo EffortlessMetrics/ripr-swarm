@@ -3,11 +3,11 @@ id = "ripr.slice.stop-reason-contract.v1"
 generation = 1
 
 source_issue = "issue:5514"
-design_reference = "RIPR-SPEC-0379"
+design_reference = "RIPR-SPEC-0411"
 change_class = "spec_and_test_hardening"
 
 claim_boundary = """
-Adds RIPR-SPEC-0379 documenting every StopReason wire value (trigger, class
+Adds RIPR-SPEC-0411 documenting every StopReason wire value (trigger, class
 impact, owning spec), marks three wire-stable tokens as reserved-not-emitted on
 current main, notes that reservation in OUTPUT_SCHEMA, and registers an
 exhaustive production contract with discriminating unit tests. No classifier
@@ -39,7 +39,7 @@ forbidden_seams = [
 ]
 
 [[requirement_delta]]
-requirement_id = "RIPR-SPEC-0379#stop-reason-contract"
+requirement_id = "RIPR-SPEC-0411#stop-reason-contract"
 requirement_generation = 1
 
 [implementation_claim]

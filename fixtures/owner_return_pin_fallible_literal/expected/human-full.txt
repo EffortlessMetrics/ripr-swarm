@@ -38,5 +38,6 @@ Evidence
   - related test src/test_support.rs:10 observes_answer uses strong exact value oracle: ensure!(actual == 7);
   - source assertion argument value 7 at line 5
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/owner_return_pin_fallible_literal/input --diff <cwd>/fixtures/owner_return_pin_fallible_literal/diff.patch --mode fast probe:src_lib.rs:return_value:b4958fd8
   ripr context --root <cwd>/fixtures/owner_return_pin_fallible_literal/input --diff <cwd>/fixtures/owner_return_pin_fallible_literal/diff.patch --mode fast --at probe:src_lib.rs:return_value:b4958fd8

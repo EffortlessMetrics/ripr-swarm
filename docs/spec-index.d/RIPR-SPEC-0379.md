@@ -1,1 +1,1 @@
-| [RIPR-SPEC-0379](../specs/RIPR-SPEC-0379-stop-reason-contract.md) | proposed | Normative StopReason emission contract and reserved wire tokens (#5514) |
+| [RIPR-SPEC-0379](../specs/RIPR-SPEC-0379-tool-capability-authority-registry.md) | proposed | Versioned `.ripr/tool-capabilities.toml` schema and report-only parser for capability/claim authority (#2355) |
