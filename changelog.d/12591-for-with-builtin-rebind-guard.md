@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Python `isinstance` guard is read as unknown, and keeps fail-open credit, when the file rebinds a builtin through the builtins module as a `for` target, a `with ... as` target or a comprehension target (`for b.isinstance in items:`, `with ctx() as b.isinstance:`); a plain `for x in items:` or `with ctx() as x:` and a read of the attribute in the iterable still leave the guard readable (#12591).
