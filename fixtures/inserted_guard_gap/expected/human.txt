@@ -34,8 +34,10 @@ Start here:
     - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/inserted_guard_gap/input --diff <cwd>/fixtures/inserted_guard_gap/diff.patch --mode fast probe:src_lib.rs:predicate:a2396351
   ripr context --root <cwd>/fixtures/inserted_guard_gap/input --diff <cwd>/fixtures/inserted_guard_gap/diff.patch --mode fast --at probe:src_lib.rs:predicate:a2396351
+  (spot id, for repair)
   ripr repair 67fc764ba37d77bd --root <cwd>/fixtures/inserted_guard_gap/input
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/inserted_guard_gap/input --at src/lib.rs:2 --kind predicate

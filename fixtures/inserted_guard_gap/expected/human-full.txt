@@ -50,6 +50,7 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/inserted_guard_gap/input --diff <cwd>/fixtures/inserted_guard_gap/diff.patch --mode fast probe:src_lib.rs:predicate:a2396351
   ripr context --root <cwd>/fixtures/inserted_guard_gap/input --diff <cwd>/fixtures/inserted_guard_gap/diff.patch --mode fast --at probe:src_lib.rs:predicate:a2396351
 
@@ -77,5 +78,6 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/inserted_guard_gap/input --diff <cwd>/fixtures/inserted_guard_gap/diff.patch --mode fast probe:src_lib.rs:return_value:32a01728
   ripr context --root <cwd>/fixtures/inserted_guard_gap/input --diff <cwd>/fixtures/inserted_guard_gap/diff.patch --mode fast --at probe:src_lib.rs:return_value:32a01728
