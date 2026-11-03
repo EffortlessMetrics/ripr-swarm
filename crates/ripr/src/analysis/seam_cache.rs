@@ -2320,6 +2320,27 @@ impl RepoModuleTreeScanCache {
     }
 }
 
+/// A published entry: a single-entry `*.json` file, or a per-key sharded
+/// directory holding `manifest.json`. Publication `.lock` files, temporary
+/// files and empty key directories left by a skipped or failed store are not
+/// entries, so they never earn a warm-rerun promise. This is a presence probe
+/// for the layer, not a hit check for the current workspace key.
+fn cache_entry_layer_has_any_entry(dir: &Path, sharded: bool) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        if sharded {
+            path.join("manifest.json").is_file()
+        } else {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+                && path.is_file()
+        }
+    })
+}
+
 /// Crate-private cache I/O surface. Holds the directory the cache lives
 /// in but not in-memory state; safe to construct cheaply per call.
 pub(crate) struct RepoSeamFactCache {
@@ -2357,6 +2378,19 @@ impl RepoSeamFactCache {
             ClassifiedCacheFamily::CompactClassifiedSeams,
             COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION,
         )
+    }
+
+    /// Cheap cache-presence probe for invocation-time cost disclosure (#12505).
+    pub(crate) fn seam_facts_cache_has_stored_entries(
+        workspace_root: &Path,
+        compact: bool,
+    ) -> bool {
+        let cache = if compact {
+            Self::at_compact_classified(workspace_root)
+        } else {
+            Self::at(workspace_root)
+        };
+        cache.has_stored_entries()
     }
 
     fn at_named(
@@ -2401,6 +2435,13 @@ impl RepoSeamFactCache {
     /// (see `publish_sharded_generation`), hence `true` only there.
     pub(crate) fn entry_dirs(&self) -> [(PathBuf, bool); 2] {
         [(self.dir.clone(), false), (self.sharded_dir.clone(), true)]
+    }
+
+    /// True when either cache layer directory contains at least one entry.
+    pub(crate) fn has_stored_entries(&self) -> bool {
+        self.entry_dirs()
+            .iter()
+            .any(|(dir, sharded)| cache_entry_layer_has_any_entry(dir, *sharded))
     }
 
     pub(crate) fn rooted_at(dir: PathBuf, sharded_dir: PathBuf, base: PathBuf) -> Self {

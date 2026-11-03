@@ -5,6 +5,7 @@ mod capability_docs;
 mod capability_producers;
 mod changelog_fragments;
 mod ci_lane_whitelist;
+mod cli_exit_contract;
 mod covered_by;
 mod dependency_expiry;
 pub(crate) mod distribution;
@@ -41,6 +42,7 @@ pub(crate) use changelog_fragments::{
     check_changelog_fragments, check_changelog_fragments_with_args, unfolded_fragment_paths,
 };
 pub(crate) use ci_lane_whitelist::check_ci_lane_whitelist;
+pub(crate) use cli_exit_contract::check_cli_exit_contract;
 pub(crate) use covered_by::check_covered_by;
 pub(crate) use dependency_expiry::{
     check_dependency_suppression_expiry, check_post_0_11_dependency_defer_tracking,
