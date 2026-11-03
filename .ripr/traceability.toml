@@ -21548,9 +21548,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0407"
+id = "RIPR-SPEC-0408"
 name = "Verification run snapshot binding and requested/prepared compatibility"
-spec = "docs/specs/RIPR-SPEC-0407-verification-run-snapshot-binding.md"
+spec = "docs/specs/RIPR-SPEC-0408-verification-run-snapshot-binding.md"
 tests = [
   "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::corpus_cases_match_acceptance_fixtures",
   "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::root_relocation_preserves_portable_identity_while_concrete_root_differs",
@@ -21570,9 +21570,9 @@ code = [
   "crates/ripr/src/analysis/verification_plan/snapshot_binding/model.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0407-verification-run-snapshot-binding.md",
-  "docs/spec-index.d/RIPR-SPEC-0407.md",
-  "policy/doc-artifacts.d/RIPR-SPEC-0407.toml",
+  "docs/specs/RIPR-SPEC-0408-verification-run-snapshot-binding.md",
+  "docs/spec-index.d/RIPR-SPEC-0408.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0408.toml",
 ]
 metrics = [
   "unit_test_pass_rate",

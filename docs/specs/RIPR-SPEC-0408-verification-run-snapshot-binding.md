@@ -1,4 +1,4 @@
-# RIPR-SPEC-0407: Verification run snapshot binding and requested/prepared compatibility
+# RIPR-SPEC-0408: Verification run snapshot binding and requested/prepared compatibility
 
 Status: proposed
 
@@ -19,9 +19,9 @@ Support-tier impact:
 
 Policy impact:
 
-- Register in `policy/doc-artifacts.d/RIPR-SPEC-0407.toml`.
-- Add `docs/spec-index.d/RIPR-SPEC-0407.md`.
-- Register `.ripr/traceability.toml` behavior `RIPR-SPEC-0407`.
+- Register in `policy/doc-artifacts.d/RIPR-SPEC-0408.toml`.
+- Add `docs/spec-index.d/RIPR-SPEC-0408.md`.
+- Register `.ripr/traceability.toml` behavior `RIPR-SPEC-0408`.
 
 ## Problem
 
