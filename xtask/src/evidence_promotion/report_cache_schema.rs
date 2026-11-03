@@ -236,7 +236,7 @@ mod tests {
         assert!(
             found
                 .iter()
-                .any(|v| v.contains("is the current generation"))
+                .any(|v| v.contains("only for a generation older"))
         );
         assert!(
             found
