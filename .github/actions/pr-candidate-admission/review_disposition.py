@@ -29,8 +29,15 @@ POSITIVE_LINE = re.compile(
     r"(?P<tail>(?:[ \t]*[,\u2014\u2013]|[ \t]+-[ \t]|[ \t]+for\b)[^\n]*)?[ \t]*$",
     re.IGNORECASE,
 )
-# Extra words that turn a marker line into a hedge or retraction.
-TAIL_BLOCK = re.compile(r"\b(?:but|however|although|except|unless)\b", re.IGNORECASE)
+# Words that turn a marker line into a hedge, condition or retraction. Marker-line tails
+# are short and the real ones use none of these; "subject to ..." is the one allowed
+# qualifier. Deliberately strict: a false refusal fails closed, a false admit does not.
+TAIL_BLOCK = re.compile(
+    r"\b(?:but|however|although|except|unless|until|if|only|after|pending|awaiting|waiting"
+    r"|blocked|blocking|blocker|failing|fails?|failed|incomplete|revoked?|retract\w*|withdraw\w*"
+    r"|hold|stale|tentative|provisional|conditional|not|never|requested|rejected)\b|n't",
+    re.IGNORECASE,
+)
 # Any line that speaks about disposition or readiness state. After the first line,
 # such a line is only allowed when it is itself an exact positive line.
 STATE_MENTION = re.compile(
@@ -45,7 +52,10 @@ NEGATION = re.compile(
     r"\bnot[ \t]+(?:yet[ \t]+)?(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
     r"|\bno[ \t]+longer[ \t]+(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
     r"|\b(?:repairs?|changes?|fixes)[ \t]+(?:(?:is|are)[ \t]+)?(?:still[ \t]+)?(?:required|needed)\b"
-    r"|\bneeds?[ \t]+(?:repair|changes|rework)\b",
+    r"|\bneeds?[ \t]+(?:repair|changes|rework)\b"
+    r"|\b(?:do[ \t]+not|don't)[ \t]+merge\b|\btake[ \t]+(?:it|that)[ \t]+back\b"
+    r"|\b(?:is|are|remains?|still)[ \t]+blocked\b|\bblocked[ \t]+(?:on|by)\b"
+    r"|\bon[ \t]+hold\b|\bhold[ \t]+(?:the[ \t]+)?merge\b|\bchanges[ \t]+requested\b",
     re.IGNORECASE,
 )
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -274,6 +284,20 @@ def self_test() -> None:
         ("REVIEW_READY \u2014 head b9a71b72\n**The blocker is fixed.** The case now adds `unsafe { x.unreachable_unchecked() }`.", True),
         ("REVIEW_READY \u2014 not ready", False),
         ("REVIEW_READY \u2014 REPAIR_REQUIRED", False),
+        ("REVIEW_READY \u2014 pending fix", False),
+        ("REVIEW_READY, blocked on CI", False),
+        ("REVIEW_READY \u2014 blocking issue found", False),
+        ("REVIEW_READY \u2014 do not merge", False),
+        ("REVIEW_READY \u2014 changes requested", False),
+        ("REVIEW_READY \u2014 failing tests remain", False),
+        ("REVIEW_READY \u2014 stale", False),
+        ("REVIEW_READY, if CI passes", False),
+        ("REVIEW_READY \u2014 only after fix", False),
+        ("REVIEW_READY \u2014 awaiting CI", False),
+        ("REVIEW_READY\nDo not merge", False),
+        ("REVIEW_READY\nI take it back", False),
+        ("REVIEW_READY\nThe change is blocked on CI", False),
+        ("REVIEW_READY \u2014 no findings", True),
         ("REVIEW_READY for the candidate, but repairs required", False),
         ("SOURCE_REVIEW_READY, but repairs required", False),
         ("REVIEW_READY\n```\nnot ready\n```\nChecked the oracle.", True),

@@ -88,7 +88,7 @@ fn review_disposition_self_test_passes() -> Result<(), String> {
 #[test]
 fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
     let head = "a".repeat(40);
-    let cases: [(&str, bool); 37] = [
+    let cases: [(&str, bool); 51] = [
         ("SOURCE_REVIEW_READY", true),
         ("REVIEW_INCOMPLETE", false),
         (
@@ -154,6 +154,20 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
         ),
         ("REVIEW_READY \u{2014} not ready", false),
         ("REVIEW_READY \u{2014} REPAIR_REQUIRED", false),
+        ("REVIEW_READY \u{2014} pending fix", false),
+        ("REVIEW_READY, blocked on CI", false),
+        ("REVIEW_READY \u{2014} blocking issue found", false),
+        ("REVIEW_READY \u{2014} do not merge", false),
+        ("REVIEW_READY \u{2014} changes requested", false),
+        ("REVIEW_READY \u{2014} failing tests remain", false),
+        ("REVIEW_READY \u{2014} stale", false),
+        ("REVIEW_READY, if CI passes", false),
+        ("REVIEW_READY \u{2014} only after fix", false),
+        ("REVIEW_READY \u{2014} awaiting CI", false),
+        ("REVIEW_READY\nDo not merge", false),
+        ("REVIEW_READY\nI take it back", false),
+        ("REVIEW_READY\nThe change is blocked on CI", false),
+        ("REVIEW_READY \u{2014} no findings", true),
         (
             "REVIEW_READY for the candidate, but repairs required",
             false,
