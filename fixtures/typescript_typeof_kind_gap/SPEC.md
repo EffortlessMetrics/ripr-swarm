@@ -4,7 +4,7 @@ Spec: RIPR-SPEC-0027
 
 ## Given
 
-A TypeScript production module flips the kind test of a guard (#11196):
+A TypeScript production module changes the kind a guard tests (#11196):
 
 ```ts
 typeof input === "function"
@@ -13,8 +13,11 @@ typeof input === "function"
 to:
 
 ```ts
-typeof input !== "function"
+typeof input === "object"
 ```
+
+The operator is unchanged, so this is not a negation (#12281): a number or a
+string takes the same branch under both guards.
 
 Two Jest-style tests call the owner with strong exact assertions. One passes
 a number. The other passes the string `"function"` behind a type assertion
@@ -32,18 +35,21 @@ cargo xtask fixtures typescript_typeof_kind_gap
 
 The TypeScript preview adapter:
 
-- names the missing discriminator `typeof input == "function"`: the kind the
-  guard tests, never `input == "function"`, which would send a reader to pass
+- names the missing discriminator `typeof input == "object"`: the kind the
+  guard tests, never `input == "object"`, which would send a reader to pass
   the type-name string;
-- does not credit either test, because neither passes a value written as a
-  function at the position of `input`;
+- does not credit either test, because neither passes a value written as an
+  object at the position of `input`, and the changed kind name means an input
+  of another kind is not sent down the other branch;
 - classifies the changed line `weakly_exposed`; the repair packet stays
   incomplete here (no repair start is offered), and the assertion-shape wording
-  that asks for a function value is covered by unit tests rather than this
+  that asks for a value of the kind is covered by unit tests rather than this
   golden.
 
 The companion fixture `typescript_typeof_kind_exposed` adds a test that calls
-the owner with `() => 42` and reads `exposed`.
+the owner with `() => 42` and reads `exposed`. The companion
+`typescript_typeof_negation_other_kind_exposed` negates the operator instead,
+where `resolveValue(42)` alone already notices the edit and reads `exposed`.
 
 ## Must Not
 

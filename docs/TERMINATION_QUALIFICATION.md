@@ -45,16 +45,17 @@ and bounded drains.
 | Family | Route | Shapes |
 |---|---|---|
 | `rust_nesting` | `ripr check --diff` and `ripr pilot` | nested blocks, `if`, parentheses, closures, prefix operators, generic arguments, `else if` chains, long operator chains; a below-budget control; comment, string, char and raw-string lookalikes |
-| `python_nesting` | `ripr check --diff` | long binary, ternary, `not`, unary minus and `await` runs; long `elif` chain; a deep-but-supported control; comment and string lookalikes |
-| `path_glob_suppression` | `ripr check --suppression-policy` | `*`, `?`, `**`, zero-segment `**`, adjacent `**`, `.` and empty segments, Unicode, empty pattern, many-star and many-segment nonmatches |
-| `path_glob_generated_file` | `ripr check` with `generated_file_patterns` | the same dialect through the second consumer, including its slashless-pattern rule |
+| `python_nesting` | `ripr check --diff`, `ripr check --diff --format sarif`, and `ripr pilot` (Python preview names the diff-first `ripr check` route) | long binary, ternary, `not`, unary minus and `await` runs; long `elif` chain; parenthesized multiline and backslash-continuation operator runs; a deep-but-supported control; comment and string lookalikes |
+| `path_glob_suppression` | `ripr check --suppression-policy` | `*`, `?`, `**`, zero-segment `**`, adjacent `**`, `.` and empty segments, Unicode, empty pattern, refused leading `/` and backslash selectors, many-star and many-segment nonmatches, repository-root paths |
+| `path_glob_generated_file` | `ripr check` with `generated_file_patterns` | the same dialect through the second consumer, including its slashless-pattern rule and adjacent `**` rows |
 
-Corpus generation `ripr-termination-corpus-v2` retains the original row IDs and
-expectations and adds generated-file leading `./`, inner `.`, and empty-segment
-rows from the same literal table as suppression policy. A normalized nonmatch
-is retained for both consumers. This expands the glob corpus from 29 to 34 rows;
-the packet format remains `ripr-termination-qualification-v1`. Historical
-version 1 packets retain their original corpus identity and coverage.
+Corpus generation `ripr-termination-corpus-v4` retains v3 path-glob and Rust
+rows and expands each Python shape to three route-specific case IDs
+(`.check`, `.sarif`, `.pilot`) with multiline and backslash-continuation
+shapes. Historical v1, v2, and v3 packets retain their original corpus
+identity and coverage. The path-glob families remain at 41 rows; Python
+`python_nesting` grows to 30 rows. The packet format remains
+`ripr-termination-qualification-v1`.
 
 Each Rust and Python row carries an unchanged hostile file outside the diff
 and a changed file whose finding must stay visible. `pilot` is the only route
@@ -133,7 +134,11 @@ reports in `--version`, not the build that produced it. It does not exercise LSP
 
 Known gaps against the child issues, each deliberate for this first harness:
 
-- Python rows use `check --diff` only, with no multi-line or continuation forms.
+- Python `pilot` rows assert the named diff-first route only
+  (`Expect::PilotPythonFirstUse`); they do not require successful
+  `python_first_use` analysis in the generated non-Git workspaces.
+- Python parse-budget declines on `pilot` remain out of scope (Rust `#9308`
+  parity).
 - The decoy-repository control plants its repository above the case root; it
   does not run the harness from a decoy caller directory, because the child's
   working directory is always the owned root.
@@ -155,5 +160,7 @@ Known gaps against the child issues, each deliberate for this first harness:
 - The candidate in the packet is the shipped binary, not the manifest's own
   candidate build; the binding between them is the commit in `--version`, not
   a byte comparison.
-- Glob corpus omits mixed separators, root-relative boundaries and an empty
-  path, and the generated-file family omits adjacent-`**` rows.
+- Glob corpus still omits an empty changed path through the product routes; the
+  shared matcher documents `**` against `""` in unit tests only. Invalid
+  leading `/` and backslash selectors are exercised as suppression-policy
+  refusals, not as generated-file rows.

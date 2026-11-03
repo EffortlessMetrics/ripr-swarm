@@ -64,5 +64,6 @@ Limitation detail
 Next step
   Check whether `outer_triples`, which may reach `inner` through `outer`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_mixed_direct_macro_reach/input --diff <cwd>/fixtures/rust_mixed_direct_macro_reach/diff.patch --mode fast probe:src_lib.rs:return_value:acafd82e
   ripr context --root <cwd>/fixtures/rust_mixed_direct_macro_reach/input --diff <cwd>/fixtures/rust_mixed_direct_macro_reach/diff.patch --mode fast --at probe:src_lib.rs:return_value:acafd82e

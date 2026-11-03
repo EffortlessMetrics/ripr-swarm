@@ -45,6 +45,7 @@ Weakness
 Next step
   - Strengthen the related assertion so it discriminates the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_competing_reverse_effect_oracle/input --diff <cwd>/fixtures/rust_competing_reverse_effect_oracle/diff.patch --mode fast probe:src_lib.rs:call_deletion:7fe87b48
   ripr context --root <cwd>/fixtures/rust_competing_reverse_effect_oracle/input --diff <cwd>/fixtures/rust_competing_reverse_effect_oracle/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:7fe87b48
 
@@ -68,5 +69,6 @@ Weakness
 Next step
   - Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_competing_reverse_effect_oracle/input --diff <cwd>/fixtures/rust_competing_reverse_effect_oracle/diff.patch --mode fast probe:src_lib.rs:side_effect:7ea236c2
   ripr context --root <cwd>/fixtures/rust_competing_reverse_effect_oracle/input --diff <cwd>/fixtures/rust_competing_reverse_effect_oracle/diff.patch --mode fast --at probe:src_lib.rs:side_effect:7ea236c2

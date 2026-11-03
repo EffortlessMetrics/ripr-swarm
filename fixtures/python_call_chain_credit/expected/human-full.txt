@@ -51,6 +51,7 @@ Weakness
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_call_chain_credit/input --diff <cwd>/fixtures/python_call_chain_credit/diff.patch --mode fast probe:reach_ledger.py:python_preview:872af001
   ripr context --root <cwd>/fixtures/python_call_chain_credit/input --diff <cwd>/fixtures/python_call_chain_credit/diff.patch --mode fast --at probe:reach_ledger.py:python_preview:872af001
 

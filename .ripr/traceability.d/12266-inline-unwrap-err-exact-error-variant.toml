@@ -1,0 +1,8 @@
+# Registers the inline unwrap_err variant-pin tests (#12266) under RIPR-SPEC-0106.
+[[extend]]
+id = "RIPR-SPEC-0106"
+tests = [
+  "crates/ripr/src/analysis/extract/oracles/patterns.rs::inline_unwrap_err_equality_with_a_named_variant_is_recognized",
+  "crates/ripr/src/analysis/extract/oracles/patterns.rs::inline_unwrap_err_requires_an_equality_with_a_specific_error",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::inline_unwrap_err_equality_discriminates_an_error_variant_seam",
+]

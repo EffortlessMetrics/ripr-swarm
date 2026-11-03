@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0377"
+scope = "out"
+reason = "Repair-attempt closeout matrix is offline integration evidence for #4799; not a Perl exposure-verdict example for labeled corpus cases"

@@ -448,3 +448,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_constructor_field_wrong_field_observer (36)
+
+Reason:
+RIPR-SPEC-0122: return_value --at stub route targets probe line not nearest gap
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_wrong_field_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_constructor_field_wrong_field_observer (37)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_wrong_field_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

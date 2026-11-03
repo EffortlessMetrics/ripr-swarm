@@ -277,7 +277,10 @@ rejected alternative. Any can be reversed later without touching the rest.
    the test file does not import from another crate, and only when no
    other production function shares the owner's name, since
    `other::owner(..)` may name a foreign namesake and the identity is also
-   absent for layouts it cannot classify); its pattern names the variant of the
+   absent for layouts it cannot classify); a foreign glob `use` of a path
+   outside the workspace packages (when the file does not also explicitly
+   import the owner callee from the workspace) defeats the fallback the same
+   way a named foreign import does; its pattern names the variant of the
    struct literal holding the changed initializer, with the same last path
    segment and, when both spell one, the same enclosing segment, exactly
    once; that group binds `f` to a literal (integer, float, `bool`, `char`
@@ -329,10 +332,18 @@ rejected alternative. Any can be reversed later without touching the rest.
      an outside crate's macro or a module in a directory the index skips
      (`src/fixtures/`) may otherwise declare a local `u32`. An outside
      procedural macro's output is not read; a derive or attribute macro that
-     declares a type named after a primitive is outside this decision, as is
-     an owner or element type that ends the process before the assertion
-     (`std::process::exit` in the owner or in a `Drop`), which no owner pin
-     models yet (#8084);
+     declares a type named after a primitive is outside this decision;
+   - for the indexed pin above, a sibling element's matching field built from
+     anything other than a literal or plain path refuses the pin (blocks,
+     calls and non-plain arithmetic), and an owner or element type that ends
+     the process before the assertion (`std::process::exit` in the owner or
+     in a `Drop`) is outside the pin (#8084);
+   - separately, a `return_value` probe on the same owner shape demotes from
+     `exposed` to `weakly_exposed` when any struct field initializer or
+     non-record array element may exit during array construction (blocks,
+     calls, macros and similar exit-capable shapes). Ordinary arithmetic on
+     literals and paths does not demote (#8084,
+     `crates/ripr/src/analysis/classifier/evidence.rs::a_sibling_field_that_may_exit_keeps_return_value_weakly`);
 
    - the owner's name is the name of no other indexed function, because the
      owner call is matched by name and a nested module's `super::rows` or a
@@ -497,7 +508,8 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   the literal pattern reads `exposed`; open, wildcard, guarded,
   alternative and range patterns, a variant a helper, `const` or macro
   also builds, a test-module helper building it, a non-literal call
-  argument and a `#[should_panic]` test do not) and the unit tests in
+  argument and a `#[should_panic]` test do not; foreign glob imports without
+  an explicit own-package owner import do not) and the unit tests in
   `crates/ripr/src/analysis/classify/variant_field_pattern.rs`; verdict
   corpus `lib-assert-matches-variant-field-pinned`.
 
