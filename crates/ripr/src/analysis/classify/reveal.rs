@@ -1365,7 +1365,10 @@ fn owner_call_binding_let_initializer<'a>(body: &'a str, binding: &str) -> Optio
         let let_at = search + relative;
         let mut rest = body[let_at + 4..].trim_start();
         rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
-        let after = rest.strip_prefix(binding)?;
+        let Some(after) = rest.strip_prefix(binding) else {
+            search = let_at + 1;
+            continue;
+        };
         if after.starts_with(ident) {
             search = let_at + 1;
             continue;
@@ -14082,5 +14085,21 @@ return Err(\"typed pin\".into());
                 (Some("Money".to_string()), "new".to_string()),
             ]
         );
+    }
+
+    /// An unrelated `let` before the binding's own `let` must not stop the
+    /// initializer scan (#7683 review).
+    #[test]
+    fn binding_initializer_scan_skips_unrelated_lets() {
+        let body = "let x = 1; let mut other = Inventory::seeded(); let mut stock = Ledger::seeded();";
+        assert!(owner_call_binding_init_names_impl_type(
+            body, "stock", "Ledger"
+        ));
+        assert!(!owner_call_binding_init_names_impl_type(
+            body, "stock", "Inventory"
+        ));
+        assert!(owner_call_binding_init_names_impl_type(
+            body, "other", "Inventory"
+        ));
     }
 }
