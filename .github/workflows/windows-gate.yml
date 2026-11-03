@@ -30,7 +30,7 @@ jobs:
       windows_relevant: ${{ steps.check.outputs.windows_relevant }}
       detect_reason: ${{ steps.check.outputs.detect_reason }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
       - name: Detect cfg(windows)-touching diff
@@ -135,7 +135,7 @@ jobs:
     outputs:
       verdict_pass: ${{ steps.verdict.outputs.verdict_pass }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false

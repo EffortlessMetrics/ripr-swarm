@@ -314,14 +314,14 @@ jobs:
           if ($versionExit -ne 0 -or $versionOutput -ne "ripr $expectedBinaryVersion ($candidateHead)") { throw "archive binary version check failed" }
 
       - name: Upload qualified server artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ripr-server-qualification-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
 
       - name: Upload final native payload identity
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ripr-final-native-payload-${{ matrix.target }}
           path: |
@@ -388,7 +388,7 @@ jobs:
           } | ConvertTo-Json -Depth 7 | Set-Content -Encoding utf8 "build-identity/$env:TARGET.json"
 
       - name: Upload exact build identity
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ripr-server-build-identity-${{ matrix.target }}
           path: build-identity/${{ matrix.target }}.json
@@ -595,7 +595,7 @@ jobs:
           } > dist/server-archive-qualification-receipt.md
 
       - name: Upload qualification manifest and receipt
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ripr-server-qualification-manifest
           path: |
@@ -668,7 +668,7 @@ jobs:
 
       - name: Upload terminal receipt
         if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ripr-server-terminal-qualification-receipt
           path: terminal-receipt/*

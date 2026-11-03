@@ -133,7 +133,7 @@ jobs:
     outputs:
       docs_only: ${{ steps.check.outputs.docs_only }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
       - name: Check whether every changed file is docs/spec/markdown
@@ -213,7 +213,7 @@ jobs:
       queue_entry: ${{ steps.entry.outputs.queue_entry }}
       request: ${{ steps.entry.outputs.request }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Select trusted admission source
         id: trusted
         shell: bash
@@ -237,7 +237,7 @@ jobs:
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Check out trusted admission bundle
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ steps.trusted.outputs.sha }}
           path: .admission-trusted
@@ -478,7 +478,7 @@ jobs:
     outputs:
       selected: ${{ steps.surface.outputs.selected }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -541,7 +541,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
