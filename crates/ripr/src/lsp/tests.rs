@@ -88,6 +88,7 @@ use tower_lsp_server::{LspService, Server};
 mod analysis_thread_routing_tests;
 mod bare_cr_origin_tests;
 mod consumed_source_tests;
+mod diagnostics_generation_tests;
 mod panic_containment_tests;
 mod progress_completion_tests;
 mod progress_create_liveness_tests;
@@ -1149,7 +1150,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
@@ -7392,7 +7393,7 @@ fn code_action_response_disabled_actions_never_execute_across_scenarios() -> Res
     let disabled_capable = client_features_with_disabled_support(&[])?;
     let (seam_params, seam_snapshot) = seam_code_action_request()?;
     let (_gap_root, gap_params, mut stale_snapshot) = gap_kind_parity_request()?;
-    stale_snapshot.diagnostics_by_uri.clear();
+    stale_snapshot.diagnostics_by_uri.to_mut().clear();
     let scenarios = [
         (
             "policy",
@@ -7458,7 +7459,7 @@ fn gap_code_actions_stale_diagnostic_yields_disabled_stale_snapshot_action() -> 
     // the legacy omission.
     let disabled_capable = client_features_with_disabled_support(&[])?;
     let (_gap_root, gap_params, mut snapshot) = gap_kind_parity_request()?;
-    snapshot.diagnostics_by_uri.clear();
+    snapshot.diagnostics_by_uri.to_mut().clear();
 
     let omitted = code_action_response(&gap_params, Some(&snapshot), &vscode_client_features()?);
     assert_eq!(
@@ -7696,7 +7697,7 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
     // These two stale-snapshot cases remain more specific than retained
     // health; preserve their refusal reasons and identities through conversion.
     let (_root, params, mut stale_snapshot) = gap_kind_parity_request()?;
-    stale_snapshot.diagnostics_by_uri.clear();
+    stale_snapshot.diagnostics_by_uri.to_mut().clear();
     let stale = code_action_response(&params, Some(&stale_snapshot), &client);
     let stale_action_id = code_action_literals(&stale)?
         .into_iter()
@@ -9473,7 +9474,9 @@ fn diagnostic_refresh_plan_clears_stale_previous_uris() -> Result<(), String> {
     previous.insert(current_uri.clone(), Vec::new());
 
     let plan = diagnostic_refresh_plan(
-        &previous,
+        &super::state::CommittedDiagnostics::from_generation(
+            super::state::DiagnosticsGeneration::from_map(previous),
+        ),
         vec![DiagnosticBatch {
             uri: current_uri.clone(),
             diagnostics: vec![gap_action_diagnostic()],
@@ -9495,6 +9498,9 @@ fn diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri() 
     let mut previous = BTreeMap::new();
     previous.insert(uri.clone(), vec![first.clone()]);
 
+    let previous = super::state::CommittedDiagnostics::from_generation(
+        super::state::DiagnosticsGeneration::from_map(previous),
+    );
     let unchanged = diagnostic_refresh_plan(
         &previous,
         vec![DiagnosticBatch {
@@ -10401,7 +10407,7 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri: BTreeMap::new(),
+        diagnostics_by_uri: BTreeMap::new().into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
@@ -15757,7 +15763,7 @@ fn sample_analysis_snapshot(
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
@@ -18488,7 +18494,7 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
             Vec::new(),
         );
         deferred.batches.clear();
-        deferred.snapshot.diagnostics_by_uri.clear();
+        deferred.snapshot.diagnostics_by_uri.to_mut().clear();
         deferred.snapshot.refresh.snapshot_id = Some("snapshot:deferred".to_string());
         deferred.snapshot.seams_deferred = true;
         let transaction = backend
@@ -23140,7 +23146,7 @@ fn quarantine_workspace_diagnostics(
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
@@ -24071,7 +24077,7 @@ fn partition_workspace_diagnostics(
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred,
@@ -24430,7 +24436,7 @@ fn disabled_language_workspace_diagnostics(
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
@@ -24759,7 +24765,7 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri: BTreeMap::new(),
+        diagnostics_by_uri: BTreeMap::new().into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,

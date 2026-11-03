@@ -653,6 +653,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.147`: a multi-line `assert_ok_eq!` / `assert_some_eq!` of a literal is
 /// nominated like its one-line form and reads `exact_value` / strong under the
 /// same owner-pin gates (RIPR-SPEC-0197, #12394). Old entries keep `unknown`.
+/// `1.148`: an exact error-variant pin is no oracle on a returned-value seam it
+/// cannot see (#12722).
 /// `1.149`: a doc example registers as a test only when no gate on an enclosing
 /// `mod`, `impl`, `trait` or `mod name;` declaration may leave it uncompiled (#12453).
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.149";
@@ -844,6 +846,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.149";
 /// `0.147`: same returned-value other-function refusal as full `1.145` (#12671).
 /// `0.148`: same shadowed-snapshot-macro rule as full `1.146` (#12720).
 /// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
+/// `0.150`: same error-pin refusal as full `1.148` (#12722).
 /// `0.151`: same enclosing-cfg doctest rule as full `1.149` (#12453).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.151";
 
@@ -1036,6 +1039,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.151";
 /// `0.147`: same returned-value other-function refusal as full `1.145` (#12671).
 /// `0.148`: same shadowed-snapshot-macro rule as full `1.146` (#12720).
 /// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
+/// `0.150`: same error-pin refusal as full `1.148` (#12722).
 /// `0.151`: same enclosing-cfg doctest rule as full `1.149` (#12453).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.151";
 
@@ -5898,6 +5902,7 @@ mod tests {
         // 1.144 -> 1.145: returned-value seams refuse another function's oracle (#12671).
         // 1.145 -> 1.146: shadowed bare snapshot macro (#12720).
         // 1.146 -> 1.147: multi-line claims payload-equality nomination (#12394).
+        // 1.147 -> 1.148: an exact error-variant pin is no oracle on an Ok-value seam (#12722).
         // 1.148 -> 1.149: enclosing cfg gates on a doctest (#12453).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.149");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
@@ -6028,6 +6033,7 @@ mod tests {
         // 0.146 -> 0.147: same returned-value refusal as full 1.145 (#12671).
         // 0.147 -> 0.148: same shadowed-macro rule as full 1.146 (#12720).
         // 0.148 -> 0.149: same multi-line claims nomination as full 1.147 (#12394).
+        // 0.149 -> 0.150: same error-pin refusal as full 1.148 (#12722).
         // 0.150 -> 0.151: same enclosing-cfg doctest rule as full 1.149 (#12453).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.151");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.151");

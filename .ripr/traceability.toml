@@ -21432,6 +21432,33 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0410"
+name = "First-hour repair funnel projection"
+spec = "docs/specs/RIPR-SPEC-0410-first-hour-repair-funnel-projection.md"
+tests = [
+  "xtask/src/reports/repair_funnel.rs::tests::repair_funnel_controls_corpus_projects_and_enforces_controls",
+  "xtask/src/reports/repair_funnel.rs::tests::verified_improvement_requires_verification_and_movement",
+  "xtask/src/reports/repair_funnel.rs::tests::verification_pass_alone_does_not_claim_improvement",
+  "xtask/src/reports/repair_funnel.rs::tests::repair_funnel_to_input_zero_cases_is_not_measured",
+]
+fixtures = [
+  "fixtures/repair_funnel/controls/corpus.json",
+]
+code = [
+  "xtask/src/reports/repair_funnel.rs",
+  "xtask/src/reports/dx_scoreboard.rs",
+  "benchmarks/dx_scoreboard/scoreboards.toml",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0410-first-hour-repair-funnel-projection.md",
+]
+metrics = [
+  "repair_time_to_verified_improvement_ms",
+  "repair_time_to_first_honest_result_ms",
+  "repair_selected_case_count",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0378"
 name = "Cross-language edge registry v1"
 spec = "docs/specs/RIPR-SPEC-0378-cross-language-edge-registry-v1.md"

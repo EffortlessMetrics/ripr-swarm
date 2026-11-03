@@ -826,7 +826,7 @@ fn mutation_scored_total(mutation: &Value) -> Result<f64, String> {
 /// Boards the nightly scoreboard receipt defines but does not ingest.
 /// An unmeasured row here is omitted unless a lane baseline supplies a number.
 fn foreign_scoreboard_board(board: &str) -> bool {
-    matches!(board, "agent" | "corpus" | "ranking")
+    matches!(board, "agent" | "corpus" | "ranking" | "repair")
 }
 
 fn metric_lacks_number(metric: &Value) -> bool {
