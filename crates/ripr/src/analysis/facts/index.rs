@@ -176,6 +176,7 @@ pub struct RustIndex {
     /// serialized provider receipt. Rebuilt together with property registration.
     pub(super) proptest_metadata_failures:
         BTreeMap<(PathBuf, usize, String), super::proptest::ProptestMetadataFailure>,
+    pub(super) bolero_receipts: BTreeMap<(PathBuf, usize, String), super::bolero::BoleroReceipt>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -731,6 +732,8 @@ impl RustIndex {
         self.proptest_receipts
             .retain(|(file, _, _), _| file.as_path() != path);
         self.proptest_metadata_failures
+            .retain(|(file, _, _), _| file.as_path() != path);
+        self.bolero_receipts
             .retain(|(file, _, _), _| file.as_path() != path);
         // Positions follow the retained orders; rebuild them now so slot
         // lookups never answer from the pre-removal layout.
