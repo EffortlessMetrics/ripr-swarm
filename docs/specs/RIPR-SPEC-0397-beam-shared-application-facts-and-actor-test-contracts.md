@@ -81,12 +81,17 @@ semantics.
 
 ```text
 BeamApplicationFactsV1          shared Mix/rebar3/OTP/project substrate
-  -> ElixirLanguageFactsV1      Elixir-only owners, probes, limits
-  -> ErlangLanguageFactsV1      Erlang-only owners, probes, limits
-       -> FrameworkFact cells    ExUnit | EUnit | Common Test | StreamData | PropEr
-            -> ActorTemporalFactsV1   distinct process/message/supervision/temporal facts
-                 -> TestActivationFactV1 / OracleEligibilityV1 (#5542)
-                      -> shared witness + output projection (#5532, RIPR-SPEC-0026)
+  |-> ElixirLanguageFactsV1     Elixir-only owners, probes, limits
+  |     -> FrameworkFact cells  ExUnit | StreamData
+  |-> ErlangLanguageFactsV1     Erlang-only owners, probes, limits
+        -> FrameworkFact cells  EUnit | Common Test | PropEr
+
+Each language branch independently feeds the layers below; neither borrows
+capability state from the other.
+
+ActorTemporalFactsV1            distinct process/message/supervision/temporal facts
+  -> TestActivationFactV1 / OracleEligibilityV1 (#5542)
+       -> shared witness + output projection (#5532, RIPR-SPEC-0026)
 ```
 
 Shared application facts answer “what project context was selected and with what
