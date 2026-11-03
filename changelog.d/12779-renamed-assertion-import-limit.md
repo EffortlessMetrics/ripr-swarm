@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A test that invokes a macro imported with `use claims::assert_ok_eq as ok_eq;` (or any `use ..::assert_* as name`, plain or in a brace list) now names `rust_macro_wrapped_assertion_unresolved` (verdict `limited`) instead of reading as a gap that asks for an assertion the test already has (#12779). A rename of a non-assertion item, an unused rename and an invocation with no import keep their verdicts. The classified seam cache moves to `1.150`.
