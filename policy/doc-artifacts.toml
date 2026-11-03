@@ -626,7 +626,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0131-ripr-agent-protocol-contract.md"
 status = "proposed"
 owner = "product-swarm"
-standalone_reason = "Issue #1599 protocol contract slice: ratifies capability-only riprAgent v0.1 request, success, and error envelopes with independent protocol/schema identities, repository-owned JSON schemas, closed vocabularies, and recovery routes; supported_requests and supported_profiles remain empty, with no handlers, source edits, provider integration, lifecycle, or repair-usefulness claim."
+standalone_reason = "Issue #1599 / #1896 protocol contract slice: versioned experimental riprAgent envelopes with closed vocabularies and recovery routes; dispositioned as private VS Code compatibility (policy/ripr-agent-disposition.toml), not generic third-party LSP/MCP integration; one implemented private handler (ripr/listActionableItems) with all other names reserved."
 
 [[artifact]]
 id = "RIPR-SPEC-0132"

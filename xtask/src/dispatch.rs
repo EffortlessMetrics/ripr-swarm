@@ -259,6 +259,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
                 super::schema_producer_sweep::contract_subjects_owned_by_corpus_gate,
             )
         }
+        XtaskCommand::CheckRiprAgentDisposition => super::ripr_agent_disposition::check(),
         XtaskCommand::SchemaProducerSweep(args) => {
             super::schema_producer_sweep::schema_producer_sweep(&args)
         }
