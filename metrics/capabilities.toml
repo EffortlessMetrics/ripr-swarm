@@ -1774,6 +1774,18 @@ next = "dogfood/perl-real-repo-evals-v2"
 metric = "language_adapter_perl_facts_packet_v1, language_adapter_perl_gap_record_projection, language_adapter_perl_doctor_preview, language_adapter_perl_bespoke_card_advisory_only_invariant, language_adapter_perl_real_repo_eval_launchpoints"
 
 [[capability]]
+id = "r_preview_static_facts_contract"
+name = "R preview static facts contract"
+status = "planned"
+spec = "RIPR-SPEC-0401"
+evidence = [
+  "docs/specs/RIPR-SPEC-0401-r-preview-package-testthat-numerical-data-boundaries.md defines wire identity r, package/script/testthat/numerical/data/condition/snapshot/side-effect boundaries, typed NSE/dispatch/native limits, #5542 activation projection, #5559 native provenance, and contractual capability cell ids before any R adapter or parser lands (#5850, #5592).",
+]
+fixtures = []
+next = "epic/r/parser-and-routing"
+metric = "r_preview_contract_registered"
+
+[[capability]]
 id = "typescript_preview_static_facts"
 cells = [
   "typescript/any/diff/static_facts",
@@ -2155,6 +2167,22 @@ evidence = [
 fixtures = []
 next = "agent/typed-command-spec-projections"
 metric = "command_spec_projection_accepted_routes, command_spec_projection_omitted_fail_closed, command_spec_projection_multi_route_arrays"
+
+[[capability]]
+id = "julia_preview_static_facts"
+name = "Julia preview static facts"
+status = "planned"
+spec = "RIPR-SPEC-0405"
+evidence = [
+  "docs/specs/RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md defines wire language julia, lang-julia feature gate, Project.toml/Manifest bounded project facts, source roles, method-signature owner identity, standard Test activation mapping through shared #5542 vocabulary, separate exact and approximate numerical and array shape/value/order/eltype/mutation facts, bounded oracle law through #5546, native ccall and GPU edges only through #5559, Julia-specific static_limit_kind tokens, and the soundness invariant that generic names, imports, deps, and native spellings cannot establish reach",
+  "docs/spec-index.d/RIPR-SPEC-0405.md registers the spec in the doc index",
+  ".ripr/traceability.d/5862-julia-preview-package-dispatch-test-boundaries.toml registers RIPR-SPEC-0405",
+  "docs/CAPABILITY_MATRIX.md lists julia_preview_static_facts as planned with no gate, badge, baseline, RIPR Zero, or repair-loop authority",
+  "Parent epic #5593 and issue #5862 acceptance: contract-only slice with positive and negative acceptance examples; implementation and judged corpora land in follow-on PRs",
+]
+fixtures = []
+next = "adr/julia-parser-substrate"
+metric = "language_adapter_julia_spec_registered"
 
 [[capability]]
 id = "source_role_authority"

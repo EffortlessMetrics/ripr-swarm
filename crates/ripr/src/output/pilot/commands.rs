@@ -70,6 +70,7 @@ pub(super) fn canonical_next_action_for_pilot(
         check_item: None,
         card_item: None,
         item_candidates: Vec::new(),
+        item_candidate_labels: Vec::new(),
         attempts: Vec::new(),
         currentness: NextActionCurrentness {
             head_expected: None,
