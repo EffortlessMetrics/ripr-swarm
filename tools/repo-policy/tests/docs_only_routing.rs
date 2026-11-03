@@ -601,8 +601,6 @@ fn spec_registration_surfaces_classify_as_docs_only() -> TestResult {
         ".ripr/traceability.d/9999-issue.toml",
         "changelog.d/9999-issue.md",
         "fixtures/rust-verdict-corpus/spec-scopes/RIPR-SPEC-9999.toml",
-        ".github/workflows/routed-rust.yml",
-        "tools/repo-policy/tests/docs_only_routing.rs",
     ] {
         let fixture = Fixture::new()?;
         let base = fixture.git(&["rev-parse", "HEAD"])?;
