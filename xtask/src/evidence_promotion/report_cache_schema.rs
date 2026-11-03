@@ -8,7 +8,7 @@
 //! must equal `CACHE_SCHEMA_VERSION`, or be pinned in the corpus under
 //! `report_cache_schema_pins` with the version it is intentionally held at and
 //! a reason. A pin is checked against the report too: it must match the
-//! report's recorded version and must not equal the current one, so a pin
+//! report's recorded version and must be older than the current one, so a pin
 //! cannot silently outlive the need for it.
 
 use super::{EVIDENCE_PROMOTION_HONESTY_CORPUS, read_evidence_promotion_corpus};
@@ -29,6 +29,20 @@ fn current_cache_schema_version(seam_cache_source: &str) -> Result<String, Strin
         .filter(|version| !version.is_empty())
         .map(str::to_string)
         .ok_or_else(|| format!("could not read `CACHE_SCHEMA_VERSION` from {SEAM_CACHE_SOURCE}"))
+}
+
+/// Dotted numeric comparison (`1.74` < `1.146`). A version that does not parse
+/// is not older, so a malformed pin fails instead of passing by accident.
+fn is_older(version: &str, current: &str) -> bool {
+    let parts = |text: &str| {
+        text.split('.')
+            .map(|part| part.parse::<u64>().ok())
+            .collect::<Option<Vec<_>>>()
+    };
+    match (parts(version), parts(current)) {
+        (Some(version), Some(current)) => version < current,
+        _ => false,
+    }
 }
 
 fn recorded_version(report: &Value) -> Option<&str> {
@@ -105,9 +119,9 @@ fn check_reports(
                     violations.push(format!(
                         "{path}: pinned at cache schema `{pinned}` but the report records `{recorded}`; update the pin to the intended generation (#12293)"
                     ));
-                } else if recorded == current {
+                } else if !is_older(pinned, current) {
                     violations.push(format!(
-                        "{path}: pinned at cache schema `{pinned}` but that is the current generation; remove the pin (#12293)"
+                        "{path}: pinned at cache schema `{pinned}` but a pin is only for a generation older than the current `{current}`; remove the pin or recapture the report (#12293)"
                     ));
                 }
             }
@@ -265,5 +279,21 @@ mod tests {
             ))
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_pin_must_be_older_than_the_current_generation() {
+        // Numeric, not lexical: 1.74 is older than 1.146.
+        assert!(is_older("1.74", "1.146"));
+        assert!(!is_older("1.146", "1.146"));
+        assert!(!is_older("1.147", "1.146"));
+        assert!(!is_older("one", "1.146"));
+        // A report and matching pin at a future generation still fail.
+        let found = run(
+            &[("r.json", capture("1.147"))],
+            &[("r.json", "1.147", "why")],
+        );
+        assert_eq!(found.len(), 1);
+        assert!(found[0].contains("only for a generation older"));
     }
 }

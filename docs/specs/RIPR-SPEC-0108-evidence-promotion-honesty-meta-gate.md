@@ -157,7 +157,7 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      current `CACHE_SCHEMA_VERSION`, read from `seam_cache.rs`; an older
      generation is allowed only through a `report_cache_schema_pins` entry in
      the corpus naming the report, the version it is held at and a reason. A
-     pin that disagrees with the report, equals the current version, or names
+     pin that disagrees with the report, is not older than the current version, or names
      no capture fails (#12293).
 2a. Validates the case tier before trusting the expectation:
    - `pure` cases are checked-in tiny examples and must not carry
