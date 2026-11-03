@@ -1,15 +1,14 @@
 //
-// Mid-session language-server crash handling (#9370 section 1).
-//
-// A fake client captures `clientOptions.errorHandler` and exposes lifecycle
-// `state` so the suite can drive `closed` without spawning a server. The
-// production path is the captured handler plus `onDidChangeState`, not a
-// parallel test double of the restart policy.
+// Mid-session language-server crash handling (#9370 section 1, #1744 recovery).
 //
 
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { CloseAction, LanguageClientOptions, State } from 'vscode-languageclient/node';
+import {
+  CRASH_RECOVERY_SESSION_BUDGET,
+  CrashRecoveryController
+} from '../../src/crashRecovery';
 import {
   RiprClientController,
   RiprClientRuntime,
@@ -54,6 +53,7 @@ interface CrashHarness {
   outputLines: string[];
   stopClosed?: { action: CloseAction; handled?: boolean };
   resolveError: (choice: string | undefined) => void;
+  flushRetry: () => void;
   closed(): { action: CloseAction; handled?: boolean };
 }
 
@@ -74,10 +74,16 @@ function crashHarness(): CrashHarness {
   const errorCalls: Array<{ message: string; items: string[] }> = [];
   const outputLines: string[] = [];
   const answers: Array<ReturnType<typeof pendingChoice>> = [];
+  const retryCallbacks: Array<() => void> = [];
   let restartCalls = 0;
+  let startAttempts = 0;
   let stopClosed: { action: CloseAction; handled?: boolean } | undefined;
   const stateListeners: Array<(event: { oldState: State; newState: State }) => void> = [];
   let state = State.Stopped;
+  const crashRecovery = new CrashRecoveryController((callback) => {
+    retryCallbacks.push(callback);
+    return setTimeout(() => undefined, 86_400_000);
+  });
 
   const runtime: RiprClientRuntime = {
     getConfig: () => enabledConfig,
@@ -122,7 +128,14 @@ function crashHarness(): CrashHarness {
         sendRequest: async () => undefined,
         setTrace: () => undefined,
         start: async () => {
-          fake.setState(State.Running);
+          startAttempts += 1;
+          fake.setState(State.Starting);
+          if (startAttempts === 1) {
+            fake.setState(State.Running);
+            return;
+          }
+          fake.setState(State.StartFailed);
+          throw new Error('simulated recovery start failure');
         },
         stop: async () => {
           const handler = capturedOptions?.errorHandler;
@@ -159,7 +172,10 @@ function crashHarness(): CrashHarness {
   const controller = new RiprClientController(
     {} as unknown as vscode.ExtensionContext,
     output,
-    runtime
+    runtime,
+    undefined,
+    undefined,
+    crashRecovery
   );
 
   return {
@@ -185,6 +201,11 @@ function crashHarness(): CrashHarness {
       assert.ok(answer, 'expected a pending crash message');
       answer.resolve(choice);
     },
+    flushRetry: () => {
+      const callback = retryCallbacks.shift();
+      assert.ok(callback, 'expected a pending retry callback');
+      callback();
+    },
     closed: () => {
       const handler = capturedOptions?.errorHandler;
       assert.ok(handler, 'clientOptions must install errorHandler');
@@ -199,88 +220,49 @@ function controllerStatus(controller: RiprClientController): { kind: string } {
   return (controller as unknown as { status: { kind: string } }).status;
 }
 
-suite('Server crash handling (#9370 section 1)', () => {
-  test('closed restarts until the limit, then shows a restart message and is not running', async () => {
+suite('Server crash handling (#9370 section 1, #1744)', () => {
+  test('SERVER_CRASH_RESTART_LIMIT matches the #1744 session budget', () => {
+    assert.strictEqual(SERVER_CRASH_RESTART_LIMIT, CRASH_RECOVERY_SESSION_BUDGET);
+  });
+
+  test('closed() never asks the library to restart; controller schedules bounded retries then circuit_open', async () => {
     const h = crashHarness();
     await h.controller.start();
     assert.ok(h.controller.isRunning(), 'a started fake client with Running state is running');
-    assert.ok(h.clientOptions.errorHandler, 'start() must install errorHandler on clientOptions');
 
-    for (let i = 0; i < SERVER_CRASH_RESTART_LIMIT; i += 1) {
-      const result = h.closed();
-      assert.strictEqual(
-        result.action,
-        CloseAction.Restart,
-        `close ${i + 1} of ${SERVER_CRASH_RESTART_LIMIT} must restart`
-      );
-      assert.ok(h.controller.isRunning(), `close ${i + 1} must leave the client running while the library restarts`);
-      assert.strictEqual(h.errorCalls.length, 0, 'under-limit closes must not notify the user');
-    }
-
-    const exhausted = h.closed();
-    assert.strictEqual(exhausted.action, CloseAction.DoNotRestart, 'over-limit close must stop restarting');
-    assert.strictEqual(exhausted.handled, true, 'the library must not show its own crash toast');
-    assert.strictEqual(h.errorCalls.length, 1, 'exactly one crash message');
-    assert.ok(
-      h.errorCalls[0].message.includes('stopped unexpectedly'),
-      `message must be plain words: ${h.errorCalls[0].message}`
-    );
-    assert.ok(
-      !h.errorCalls[0].message.includes('errorHandler'),
-      `message must not leak implementation jargon: ${h.errorCalls[0].message}`
-    );
-    assert.deepStrictEqual(h.errorCalls[0].items, [SERVER_CRASH_RESTART_ACTION]);
-    assert.ok(h.controller.isRunning(), 'DoNotRestart alone does not change client state');
-
-    h.client.setState(State.Stopped);
-    assert.strictEqual(h.controller.isRunning(), false, 'Stopped after the restart budget is exhausted is not running');
+    h.closed();
+    assert.strictEqual(h.errorCalls.length, 0, 'under-budget closes must not notify until the circuit opens');
     assert.strictEqual(controllerStatus(h.controller).kind, 'serverFailed');
-    assert.strictEqual(h.restartCalls, 0, 'the message must wait for the Restart Server action');
+    h.flushRetry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    h.flushRetry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.strictEqual(h.errorCalls.length, 1, 'exactly one crash message after the circuit opens');
+    assert.deepStrictEqual(h.errorCalls[0].items, [SERVER_CRASH_RESTART_ACTION]);
+    assert.strictEqual(controllerStatus(h.controller).kind, 'circuitOpen');
 
     h.resolveError(SERVER_CRASH_RESTART_ACTION);
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.strictEqual(h.restartCalls, 1, 'Restart Server must run ripr.restartServer via restartWorkspaceRoot');
   });
 
-  test('Stopped after an under-limit close does not paint a crash and stays restarting', async () => {
+  test('Stopped after a scheduled retry does not paint circuit_open early', async () => {
     const h = crashHarness();
     await h.controller.start();
-    const result = h.closed();
-    assert.strictEqual(result.action, CloseAction.Restart);
+    h.closed();
     h.client.setState(State.Stopped);
-    assert.strictEqual(
-      h.controller.isRunning(),
-      false,
-      'Stopped is not running even when the library is about to restart'
-    );
-    assert.notStrictEqual(
-      controllerStatus(h.controller).kind,
-      'serverFailed',
-      'an automatic restart must not show the exhausted-crash status'
-    );
-    assert.strictEqual(h.errorCalls.length, 0);
-    h.client.setState(State.Starting);
-    assert.ok(h.controller.isRunning(), 'Starting after an automatic restart still counts as running');
+    assert.notStrictEqual(controllerStatus(h.controller).kind, 'circuitOpen');
   });
 
-  test('StartFailed after an automatic restart paints serverFailed and is not running', async () => {
+  test('StartFailed after a live session is charged through recovery restart failure', async () => {
     const h = crashHarness();
     await h.controller.start();
-    const result = h.closed();
-    assert.strictEqual(result.action, CloseAction.Restart);
-    h.client.setState(State.StartFailed);
-    assert.strictEqual(h.controller.isRunning(), false);
-    assert.strictEqual(controllerStatus(h.controller).kind, 'serverFailed');
-    assert.strictEqual(h.errorCalls.length, 0, 'a failed auto-restart uses status, not a second toast');
-  });
-
-  test('Stopped without closed() after a live session paints serverFailed', async () => {
-    const h = crashHarness();
-    await h.controller.start();
-    h.client.setState(State.Stopped);
-    assert.strictEqual(h.controller.isRunning(), false);
-    assert.strictEqual(controllerStatus(h.controller).kind, 'serverFailed');
+    h.closed();
+    h.flushRetry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     assert.strictEqual(h.errorCalls.length, 0);
+    assert.notStrictEqual(controllerStatus(h.controller).kind, 'circuitOpen');
   });
 
   test('closed during an intentional stop does not restart or notify', async () => {

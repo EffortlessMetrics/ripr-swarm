@@ -274,6 +274,11 @@ impl NextActionCheckCase {
 pub enum NextActionStop {
     SelectItem {
         candidates: Vec<String>,
+        /// Human-facing location or context beside each id when the producer
+        /// knows it (#9006). Empty or shorter than `candidates` means render
+        /// the ids alone.
+        #[serde(default)]
+        labels: Vec<String>,
         total: usize,
     },
     SelectAttempt {
@@ -451,6 +456,9 @@ pub(crate) struct NextActionInput<'a> {
     /// bind one item; producers with their own selection law (check triage
     /// rank) bind the winner and leave this empty.
     pub(crate) item_candidates: Vec<String>,
+    /// Optional parallel labels for `item_candidates` (same order, one row
+    /// per visible candidate). Used only for human select_item rendering.
+    pub(crate) item_candidate_labels: Vec<String>,
     /// Visible attempts, oldest first. Empty for producers without attempt
     /// state; more than one forces an explicit selection.
     pub(crate) attempts: Vec<NextActionAttemptView>,
@@ -888,11 +896,18 @@ pub(crate) fn select_canonical_next_action(
             .take(MAX_NEXT_ACTION_STOP_CANDIDATES)
             .cloned()
             .collect();
+        let labels: Vec<String> = input
+            .item_candidate_labels
+            .iter()
+            .take(candidates.len())
+            .cloned()
+            .collect();
         return stopped(
             input,
             NextActionClass::ChooseItem,
             NextActionStop::SelectItem {
                 candidates,
+                labels,
                 total: input.item_candidates.len(),
             },
             None,
@@ -1207,6 +1222,7 @@ mod tests {
             check_item: None,
             card_item: Some("seam:demo".to_string()),
             item_candidates: Vec::new(),
+            item_candidate_labels: Vec::new(),
             attempts: Vec::new(),
             currentness: fresh_currentness(),
             offered_command: None,
@@ -2519,6 +2535,7 @@ mod tests {
         let stops = vec![
             NextActionStop::SelectItem {
                 candidates: vec!["a".to_string()],
+                labels: Vec::new(),
                 total: 1,
             },
             NextActionStop::SelectAttempt {
@@ -2627,6 +2644,7 @@ mod tests {
             check_item: None,
             card_item: None,
             item_candidates: candidates,
+            item_candidate_labels: Vec::new(),
             attempts: Vec::new(),
             currentness: fresh_currentness(),
             offered_command: offered,
@@ -2742,3 +2760,6 @@ mod tests {
         assert_eq!(current_command_platform(), Some(CommandPlatform::Macos));
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs;

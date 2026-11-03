@@ -985,20 +985,16 @@ fn install_step_arms() -> std::collections::BTreeMap<String, String> {
     arms
 }
 
-/// #6245 slice 1: the generated `Install ripr` mapping is bound to the
-/// distribution contract instead of standing as an unchecked second matrix.
-/// Every tar.gz contract target must be mapped to exactly its contract Rust
+/// #6245: the generated `Install ripr` mapping is bound to the distribution
+/// contract instead of standing as an unchecked second matrix. Every contract
+/// target (tar.gz and zip alike) must be mapped to exactly its contract Rust
 /// target (falsifier 9), and no arm may name a target the contract lacks.
 #[test]
 fn generated_install_step_mapping_matches_distribution_contract() -> Result<(), String> {
     let contract = parsed_contract(CONTRACT_TEXT)?;
     let arms = install_step_arms();
     let mut expected = std::collections::BTreeMap::new();
-    for target in contract
-        .target
-        .iter()
-        .filter(|target| target.archive == "tar.gz")
-    {
+    for target in &contract.target {
         expected.insert(runner_label(target)?, target.rust_target.clone());
     }
     assert_eq!(
@@ -1015,18 +1011,47 @@ fn generated_install_step_mapping_matches_distribution_contract() -> Result<(), 
         "the `*)` fallback must keep target=\"\" (Cargo fallback route), never name a real target"
     );
     assert!(
-        INIT_WORKFLOW_TEXT.contains(r#"asset="ripr-server-v$version-$target.tar.gz""#),
-        "the unix asset name must stay the contract's tar.gz shape"
+        INIT_WORKFLOW_TEXT.contains(r#"asset="ripr-server-v$version-$target.$ext""#),
+        "the asset name must stay the contract's `ripr-server-v<version>-<target>.<archive>` shape"
     );
     Ok(())
 }
 
-/// #6245 slice 1: the Windows x64 identities the installer must consume are
-/// owned by the contract (ZIP + `ripr.exe`), and the installer does not yet
-/// carry a Windows arm, so Windows-X64 still reports "no prebuilt" rather than
-/// a half-implemented route. Adding the arm (slice 2) must update this test.
+/// #6245: the archive extension and executable the installer selects per
+/// target are the contract's, not a second table. The installer derives them
+/// from the target triple (`*-windows-*` is the zip + `.exe` route), so every
+/// contract target must agree with that rule in both directions.
 #[test]
-fn windows_x64_identity_is_contract_owned_and_not_yet_mapped() -> Result<(), String> {
+fn generated_install_step_archive_and_executable_follow_the_contract() -> Result<(), String> {
+    let contract = parsed_contract(CONTRACT_TEXT)?;
+    assert!(
+        INIT_WORKFLOW_TEXT.contains("*-windows-*) ext=zip exe=ripr.exe ;;")
+            && INIT_WORKFLOW_TEXT.contains("*) ext=tar.gz exe=ripr ;;"),
+        "the installer's archive/executable selection drifted from the documented rule"
+    );
+    for target in &contract.target {
+        let windows = target.rust_target.contains("-windows-");
+        let (archive, executable) = if windows {
+            ("zip", "ripr.exe")
+        } else {
+            ("tar.gz", "ripr")
+        };
+        assert_eq!(
+            (target.archive.as_str(), target.executable.as_str()),
+            (archive, executable),
+            "contract target {} disagrees with the installer's archive/executable rule",
+            target.rust_target
+        );
+    }
+    Ok(())
+}
+
+/// #6245 slice 2: the Windows x64 identities the installer consumes are owned
+/// by the contract (ZIP + `ripr.exe`) and the installer now maps them; Windows
+/// ARM64 is not a contract target and is an explicit unsupported error (never
+/// x64 success, never the Cargo fallback).
+#[test]
+fn windows_x64_identity_is_contract_owned_and_mapped() -> Result<(), String> {
     let contract = parsed_contract(CONTRACT_TEXT)?;
     let windows = contract
         .target
@@ -1036,11 +1061,20 @@ fn windows_x64_identity_is_contract_owned_and_not_yet_mapped() -> Result<(), Str
     assert_eq!(runner_label(windows)?, "Windows-X64");
     assert_eq!(windows.archive, "zip");
     assert_eq!(windows.executable, "ripr.exe");
+    assert_eq!(
+        install_step_arms().get("Windows-X64").map(String::as_str),
+        Some("x86_64-pc-windows-msvc"),
+        "Windows-X64 must map to the contract's MSVC target"
+    );
     assert!(
-        !install_step_arms()
-            .keys()
-            .any(|label| label.starts_with("Windows")),
-        "a Windows arm needs the zip/checksum/extraction route (#6245 slice 2) and a contract-tied update here"
+        !install_step_arms().contains_key("Windows-ARM64"),
+        "Windows ARM64 is not a contract target and must stay an explicit unsupported error"
+    );
+    assert!(
+        INIT_WORKFLOW_TEXT
+            .contains("Windows-ARM64) echo \"::error::Unsupported runner Windows-ARM64:")
+            && INIT_WORKFLOW_TEXT.contains("Use a Windows x64 runner.\"; exit 1 ;;"),
+        "Windows-ARM64 must be an explicit unsupported error arm"
     );
     Ok(())
 }

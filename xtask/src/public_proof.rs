@@ -826,7 +826,7 @@ fn mutation_scored_total(mutation: &Value) -> Result<f64, String> {
 /// Boards the nightly scoreboard receipt defines but does not ingest.
 /// An unmeasured row here is omitted unless a lane baseline supplies a number.
 fn foreign_scoreboard_board(board: &str) -> bool {
-    matches!(board, "agent" | "corpus" | "ranking")
+    matches!(board, "agent" | "corpus" | "ranking" | "repair")
 }
 
 fn metric_lacks_number(metric: &Value) -> bool {
@@ -1351,7 +1351,11 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         false_actionable.numerator,
         false_actionable.denominator,
         percent(false_actionable.rate),
-        false_cases.join(", "),
+        if false_cases.is_empty() {
+            "no case recorded".to_string()
+        } else {
+            false_cases.join(", ")
+        },
         authored_false_actionable.numerator,
         authored_false_actionable.denominator,
         percent(authored_false_actionable.rate)
@@ -2090,7 +2094,7 @@ fn agent_section(page: &mut Page, agent: &Value) -> Result<(), String> {
             "ripr commands to fix",
             "Tool steps to fix",
             "False weak findings after the fix",
-            "Gaps `--format agent` names before the fix",
+            "Gap or open lines `--format agent` names before the fix",
             "First `check` bytes: human / agent / JSON",
         ],
         &rows,
@@ -3444,7 +3448,7 @@ mod tests {
             page.0
         );
         assert!(
-            page.0.contains("72e613e"),
+            page.0.contains("ac01337"),
             "ranking lane revision missing: {}",
             page.0
         );

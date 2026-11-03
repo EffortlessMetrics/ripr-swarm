@@ -31,10 +31,12 @@ pub(in crate::cli) fn config(args: &[String]) -> Result<(), String> {
 fn parse_validate_root(args: &[String]) -> Result<PathBuf, String> {
     match args {
         [] => Ok(PathBuf::from(".")),
-        [flag] if flag == "--root" => Err("missing value for --root".to_string()),
+        [flag] if flag == "--root" => {
+            Err("missing value for --root; pass a value right after it".to_string())
+        }
         // `--root` is an option token here; `./--root` names the literal path.
         [flag, value, ..] if flag == "--root" && value == "--root" => {
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         }
         [flag, value] if flag == "--root" => Ok(PathBuf::from(value)),
         [flag, _value, extra, ..] if flag == "--root" => {
@@ -288,6 +290,40 @@ path = ".ripr/suppressions\u0000.toml"
     }
 
     #[test]
+    fn validate_reports_line_column_for_semantic_mode_error() -> Result<(), String> {
+        let root = temp_dir("semantic-line");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let source = "[analysis]\nmode = \"bad\"\n";
+        fs::write(root.join(CONFIG_FILE_NAME), source).map_err(|error| error.to_string())?;
+
+        let diagnostic = match crate::config::parse_config_diagnostic(source) {
+            Ok(_) => return Err("invalid mode must fail parse".to_string()),
+            Err(diagnostic) => diagnostic,
+        };
+        let location = diagnostic
+            .location
+            .as_ref()
+            .ok_or_else(|| "expected exact coordinates on invalid mode".to_string())?;
+
+        let result = validate_config(&root);
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        let error = match result {
+            Ok(message) => {
+                return Err(format!("invalid mode unexpectedly passed with {message}"));
+            }
+            Err(error) => error,
+        };
+        let first_line = error.lines().next().unwrap_or("");
+        let needle = format!(":{}:{}:", location.start.line, location.start.column);
+        if !first_line.contains(&needle) {
+            return Err(format!(
+                "expected semantic coordinates {needle} in {first_line}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn validate_returns_the_loader_error_for_invalid_toml() -> Result<(), String> {
         let root = temp_dir("invalid");
         fs::create_dir_all(&root).map_err(|error| error.to_string())?;
@@ -333,7 +369,7 @@ path = ".ripr/suppressions\u0000.toml"
         let cases = [
             (
                 args(&["validate", "--root"]),
-                "missing value for --root".to_string(),
+                "missing value for --root; pass a value right after it".to_string(),
             ),
             (
                 args(&["validate", "--wat"]),

@@ -1,5 +1,6 @@
 use super::{ResolvedIncludeParent, RustIncludeLimitation, RustIndex};
 use crate::analysis::syntax::rust_include_directives;
+use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
@@ -14,17 +15,32 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     let mut edge_limit_exceeded = false;
     let canonical_root = std::fs::canonicalize(root).ok();
 
-    'files: for (parent, facts) in &index.files {
-        if facts.used_lexical_fallback || !might_contain_include_macro(&facts.source) {
-            continue;
-        }
-        // This token-shaped check is only a cheap negative prefilter.
-        // Parser-backed macro nodes remain the semantic authority, so comments
-        // and strings cannot create include relationships.
-        let directives = match rust_include_directives(parent, &facts.source, MAX_INCLUDE_EDGES) {
+    let candidates: Vec<(&PathBuf, &str)> = index
+        .files
+        .iter()
+        .filter(|(_, facts)| {
+            !facts.used_lexical_fallback && might_contain_include_macro(&facts.source)
+        })
+        .map(|(parent, facts)| (parent, facts.source.as_ref()))
+        .collect();
+    // `collect` on a parallel iterator over a slice preserves input order, so
+    // each precomputed entry still matches the BTreeMap file order the serial
+    // loop used (#9214).
+    let precomputed: Vec<(PathBuf, Result<Vec<_>, String>)> = candidates
+        .par_iter()
+        .map(|(parent, source)| {
+            (
+                (*parent).clone(),
+                rust_include_directives(parent, source, MAX_INCLUDE_EDGES),
+            )
+        })
+        .collect();
+
+    'files: for (parent, directives) in precomputed {
+        let directives = match directives {
             Ok(directives) => directives,
             Err(reason_code) => {
-                limitations.push(limitation(parent, 0, "include!", &reason_code));
+                limitations.push(limitation(&parent, 0, "include!", &reason_code));
                 continue;
             }
         };
@@ -36,7 +52,7 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
             }
             if !directive.is_file_level {
                 limitations.push(limitation(
-                    parent,
+                    &parent,
                     directive.line,
                     &directive.expression,
                     "rust_include_nested_module_context",
@@ -45,16 +61,16 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
             }
             let Some(literal) = directive.literal_path else {
                 limitations.push(limitation(
-                    parent,
+                    &parent,
                     directive.line,
                     &directive.expression,
                     "rust_include_dynamic_expression",
                 ));
                 continue;
             };
-            let Some(candidate) = repository_relative_target(parent, &literal) else {
+            let Some(candidate) = repository_relative_target(&parent, &literal) else {
                 limitations.push(limitation(
-                    parent,
+                    &parent,
                     directive.line,
                     &directive.expression,
                     "rust_include_path_outside_repository",
@@ -66,7 +82,7 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
                 Ok(path) => path,
                 Err(_) => {
                     limitations.push(limitation(
-                        parent,
+                        &parent,
                         directive.line,
                         &directive.expression,
                         "rust_include_target_missing",
@@ -79,7 +95,7 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
                 .is_none_or(|root| !canonical_target.starts_with(root))
             {
                 limitations.push(limitation(
-                    parent,
+                    &parent,
                     directive.line,
                     &directive.expression,
                     "rust_include_symlink_escape",
@@ -88,7 +104,7 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
             }
             let Some(target_facts) = index.files.get(&candidate) else {
                 limitations.push(limitation(
-                    parent,
+                    &parent,
                     directive.line,
                     &directive.expression,
                     "rust_include_target_not_indexed",
@@ -97,7 +113,7 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
             };
             if !included_file_within_size_limit(&target_facts.source) {
                 limitations.push(limitation(
-                    parent,
+                    &parent,
                     directive.line,
                     &directive.expression,
                     "rust_include_file_too_large",
@@ -515,6 +531,309 @@ mod tests {
         assert_eq!(directives.len(), 2);
         assert!(!directives[0].requires_test);
         assert!(directives[1].requires_test);
+        Ok(())
+    }
+
+    use crate::analysis::facts::{FileFacts, RustIndex};
+    use std::fs;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+    fn include_resolution_snapshot(index: &RustIndex) -> IncludeResolutionSnapshot {
+        IncludeResolutionSnapshot {
+            include_parents: index.include_parents.clone(),
+            include_limitations: index.include_limitations.clone(),
+            include_targets: index.include_targets.clone(),
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct IncludeResolutionSnapshot {
+        include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
+        include_limitations: Vec<RustIncludeLimitation>,
+        include_targets: BTreeSet<PathBuf>,
+    }
+
+    fn manual_index(sources: &[(&str, &str)]) -> RustIndex {
+        let mut index = RustIndex::default();
+        for (relative, source) in sources {
+            let path = PathBuf::from(relative);
+            index.insert_file(
+                path.clone(),
+                FileFacts {
+                    path,
+                    source: Arc::from(*source),
+                    ..FileFacts::default()
+                },
+                true,
+            );
+        }
+        index
+    }
+
+    fn write_fixture(root: &Path, sources: &[(&str, &str)]) -> std::io::Result<()> {
+        for (relative, source) in sources {
+            let path = root.join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(path, source)?;
+        }
+        Ok(())
+    }
+
+    /// Pre-#9214 serial loop: parse each candidate file only when reached and
+    /// stop reading later files once the edge budget is exhausted.
+    fn resolve_repository_local_includes_serial_reference(root: &Path, index: &mut RustIndex) {
+        let mut limitations = Vec::new();
+        let mut edges = Vec::new();
+        let mut directive_count = 0;
+        let mut edge_limit_exceeded = false;
+        let canonical_root = std::fs::canonicalize(root).ok();
+
+        'files: for (parent, facts) in &index.files {
+            if facts.used_lexical_fallback || !might_contain_include_macro(&facts.source) {
+                continue;
+            }
+            let directives = match rust_include_directives(parent, &facts.source, MAX_INCLUDE_EDGES)
+            {
+                Ok(directives) => directives,
+                Err(reason_code) => {
+                    limitations.push(limitation(parent, 0, "include!", &reason_code));
+                    continue;
+                }
+            };
+            for directive in directives {
+                directive_count += 1;
+                if !include_edge_count_within_limit(directive_count) {
+                    edge_limit_exceeded = true;
+                    break 'files;
+                }
+                if !directive.is_file_level {
+                    limitations.push(limitation(
+                        parent,
+                        directive.line,
+                        &directive.expression,
+                        "rust_include_nested_module_context",
+                    ));
+                    continue;
+                }
+                let Some(literal) = directive.literal_path else {
+                    limitations.push(limitation(
+                        parent,
+                        directive.line,
+                        &directive.expression,
+                        "rust_include_dynamic_expression",
+                    ));
+                    continue;
+                };
+                let Some(candidate) = repository_relative_target(parent, &literal) else {
+                    limitations.push(limitation(
+                        parent,
+                        directive.line,
+                        &directive.expression,
+                        "rust_include_path_outside_repository",
+                    ));
+                    continue;
+                };
+                let full = root.join(&candidate);
+                let canonical_target = match std::fs::canonicalize(&full) {
+                    Ok(path) => path,
+                    Err(_) => {
+                        limitations.push(limitation(
+                            parent,
+                            directive.line,
+                            &directive.expression,
+                            "rust_include_target_missing",
+                        ));
+                        continue;
+                    }
+                };
+                if canonical_root
+                    .as_ref()
+                    .is_none_or(|root| !canonical_target.starts_with(root))
+                {
+                    limitations.push(limitation(
+                        parent,
+                        directive.line,
+                        &directive.expression,
+                        "rust_include_symlink_escape",
+                    ));
+                    continue;
+                }
+                let Some(target_facts) = index.files.get(&candidate) else {
+                    limitations.push(limitation(
+                        parent,
+                        directive.line,
+                        &directive.expression,
+                        "rust_include_target_not_indexed",
+                    ));
+                    continue;
+                };
+                if !included_file_within_size_limit(&target_facts.source) {
+                    limitations.push(limitation(
+                        parent,
+                        directive.line,
+                        &directive.expression,
+                        "rust_include_file_too_large",
+                    ));
+                    continue;
+                }
+                edges.push((
+                    candidate,
+                    parent.clone(),
+                    directive.line,
+                    directive.expression,
+                    directive.requires_test,
+                ));
+            }
+        }
+
+        edges.sort();
+        if edge_limit_exceeded {
+            limitations.push(limitation(
+                Path::new("."),
+                0,
+                "include!",
+                "rust_include_edge_limit_exceeded",
+            ));
+            index.include_parents.clear();
+            sort_limitations(&mut limitations);
+            index.include_limitations = limitations;
+            return;
+        }
+
+        let mut parents_by_child: BTreeMap<PathBuf, Vec<(PathBuf, usize, String, bool)>> =
+            BTreeMap::new();
+        index.include_targets = edges.iter().map(|(child, ..)| child.clone()).collect();
+        for (child, parent, line, expression, requires_test) in edges {
+            parents_by_child.entry(child).or_default().push((
+                parent,
+                line,
+                expression,
+                requires_test,
+            ));
+        }
+
+        let mut parents = BTreeMap::new();
+        for (child, owners) in parents_by_child {
+            let distinct = owners
+                .iter()
+                .map(|(parent, _, _, _)| parent)
+                .collect::<BTreeSet<_>>();
+            let requirements = owners
+                .iter()
+                .map(|(_, _, _, requires_test)| *requires_test)
+                .collect::<BTreeSet<_>>();
+            if distinct.len() != 1 {
+                for (parent, line, expression, _) in owners {
+                    limitations.push(limitation(
+                        &parent,
+                        line,
+                        &expression,
+                        "rust_include_ambiguous_parent",
+                    ));
+                }
+                continue;
+            }
+            if requirements.len() != 1 {
+                for (parent, line, expression, _) in owners {
+                    limitations.push(limitation(
+                        &parent,
+                        line,
+                        &expression,
+                        "rust_include_conflicting_cfg_requirement",
+                    ));
+                }
+                continue;
+            }
+            if let Some((parent, _, _, requires_test)) = owners.into_iter().next() {
+                parents.insert(
+                    child,
+                    ResolvedIncludeParent {
+                        parent,
+                        requires_test,
+                    },
+                );
+            }
+        }
+
+        let unsafe_children = cycle_or_depth_limited_children(&parents);
+        for child in &unsafe_children {
+            let parent = match parents.get(child) {
+                Some(edge) => edge.parent.as_path(),
+                None => Path::new("."),
+            };
+            limitations.push(limitation(
+                parent,
+                0,
+                &format!("include!({})", child.display()),
+                "rust_include_cycle_or_depth_limit",
+            ));
+        }
+        parents.retain(|child, _| !unsafe_children.contains(child));
+
+        index.include_parents = parents;
+        sort_limitations(&mut limitations);
+        index.include_limitations = limitations;
+        rebase_function_identities(index);
+    }
+
+    #[test]
+    fn parallel_include_resolution_matches_serial_reference()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-includes-parallel-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut files: Vec<(String, String)> = vec![
+            ("src/frag_a.rs".into(), "pub fn a() {}\n".into()),
+            ("src/frag_b.rs".into(), "pub fn b() {}\n".into()),
+            ("src/frag_c.rs".into(), "pub fn c() {}\n".into()),
+            (
+                "src/lib.rs".into(),
+                "include!(\"frag_a.rs\");\ninclude!(\"frag_b.rs\");\n".into(),
+            ),
+            ("src/other.rs".into(), "include!(\"frag_c.rs\");\n".into()),
+            (
+                "src/bad.rs".into(),
+                "mod inner { include!(\"frag_a.rs\"); }\ninclude!(\"missing.rs\");\n".into(),
+            ),
+        ];
+        let mut early = String::new();
+        for _ in 0..MAX_INCLUDE_EDGES {
+            early.push_str("include!(\"frag_a.rs\");\n");
+        }
+        files.push(("src/early.rs".into(), early));
+        files.push(("src/late.rs".into(), "include!(\"frag_b.rs\");\n".into()));
+
+        let borrowed: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(path, source)| (path.as_str(), source.as_str()))
+            .collect();
+        write_fixture(&root, &borrowed)?;
+
+        let mut parallel = manual_index(&borrowed);
+        resolve_repository_local_includes(&root, &mut parallel);
+        let parallel_snapshot = include_resolution_snapshot(&parallel);
+
+        let mut serial = manual_index(&borrowed);
+        resolve_repository_local_includes_serial_reference(&root, &mut serial);
+        let serial_snapshot = include_resolution_snapshot(&serial);
+
+        assert_eq!(parallel_snapshot, serial_snapshot);
+        assert!(
+            parallel_snapshot
+                .include_limitations
+                .iter()
+                .any(|limit| limit.reason_code == "rust_include_edge_limit_exceeded"),
+            "{:?}",
+            parallel_snapshot.include_limitations
+        );
+        fs::remove_dir_all(&root)?;
         Ok(())
     }
 }

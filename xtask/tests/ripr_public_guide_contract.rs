@@ -714,6 +714,7 @@ fn public_docs_only_pass_flags_the_command_help_lists() -> Result<(), String> {
 }
 
 const PORTABLE_TESTS: &[&str] = &[
+    "pilot_help_describes_limit_summary_without_inventing_a_quote",
     "init_ci_provider_errors_recover_near_misses",
     "init_ci_provider_valid_preview_keeps_workflow_contract",
     "workflow_help_lists_the_five_governed_identities",

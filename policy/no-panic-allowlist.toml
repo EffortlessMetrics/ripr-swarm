@@ -257,7 +257,7 @@ expires = "2027-06-30"
 kind = "method_call"
 container = "run_ripr"
 callee = "unwrap"
-receiver_fingerprint = "Command::new(bin).args(args).output()"
+receiver_fingerprint = "Command::new(bin) .args(args) .env(\"RIPR_PROGRESS\", \"1\") .output()"
 
 [allow.last_seen]
 line = 24
@@ -281,21 +281,6 @@ receiver_fingerprint = "Path::new(env!(\"CARGO_MANIFEST_DIR\")) .parent() .and_t
 [allow.last_seen]
 line = 227
 column = 5
-
-[[allow]]
-id = "panic-0030"
-path = "xtask/src/tests.rs"
-family = "unwrap"
-classification = "test_only"
-explanation = "Test harness: creates temporary directories for test isolation"
-owner = "test-infra"
-expires = "2027-06-30"
-
-[allow.selector]
-kind = "method_call"
-container = "temp_dir"
-callee = "unwrap"
-receiver_fingerprint = "fs::create_dir_all(&dir)"
 
 [[allow]]
 id = "panic-0031"

@@ -122,6 +122,7 @@ jobs:
           { echo "### Ripr Rust Small Router"; echo ""; echo "- repo: \`$REPOSITORY\`"; echo "- workflow: \`routed-rust\`"; echo "- run: \`$RUN_ID\`"; echo "- target: \`$target\`"; echo "- reason: \`$reason\`"; for row in "runner query:$runner_query" "runner command exit code:$runner_query_exit_code" "visible runners:$runner_total" "cx43 online:$cx43_online" "cx43 idle ready:$cx43_idle_ready" "cpx42 online:$cpx42_online" "cpx42 idle ready:$cpx42_idle_ready" "cx53 online:$cx53_online" "cx53 idle ready:$cx53_idle_ready"; do echo "- ${row%%:*}: \`${row#*:}\`"; done; } >> "$GITHUB_STEP_SUMMARY"
           if [ "$runner_query" = "failed" ]; then
             { echo '- inventory operation: `gh api --paginate orgs/EffortlessMetrics/actions/runners?per_page=100`'; echo "- attempts: \`$runner_query_attempts\` of 3"; echo "- last HTTP status reported by gh: \`$runner_query_http\` (\`none\` means gh printed none); command exit code is not an HTTP status, the underlying cause is not claimed and raw stderr is withheld."; } >> "$GITHUB_STEP_SUMMARY"
+            case "$runner_query_http" in 401|403) echo "::warning title=Runner inventory request refused::The runner inventory query was refused with HTTP $runner_query_http (an expired or under-scoped EM_RUNNER_READ_TOKEN, or API rate limiting; the cause is not established); routing fell back to the GitHub-hosted leg. The PR is not red for this: check the token expiry and organization self-hosted-runners read scope (#8858)." ;; esac
           fi
 
   detect-docs-only:
@@ -132,7 +133,7 @@ jobs:
     outputs:
       docs_only: ${{ steps.check.outputs.docs_only }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
       - name: Check whether every changed file is docs/spec/markdown
@@ -203,6 +204,7 @@ jobs:
       claim: ${{ steps.candidate.outputs.claim }}
       acceptance_delta: ${{ steps.candidate.outputs.acceptance_delta }}
       competing_prs: ${{ steps.candidate.outputs.competing_prs }}
+      concurrent_claims: ${{ steps.candidate.outputs.concurrent_claims }}
       changed_files: ${{ steps.candidate.outputs.changed_files }}
       changed_lines: ${{ steps.candidate.outputs.changed_lines }}
       labels: ${{ steps.entry.outputs.labels }}
@@ -211,7 +213,7 @@ jobs:
       queue_entry: ${{ steps.entry.outputs.queue_entry }}
       request: ${{ steps.entry.outputs.request }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Select trusted admission source
         id: trusted
         shell: bash
@@ -235,7 +237,7 @@ jobs:
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Check out trusted admission bundle
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ steps.trusted.outputs.sha }}
           path: .admission-trusted
@@ -461,6 +463,77 @@ jobs:
     with:
       artifact-name: ripr-rust-small-github
 
+  # #12252: the extension e2e is a job of this run, so the Result reads it as a
+  # `needs` result bound to this run id and request, with no cross-workflow
+  # correlation. Selection is the diff of the admitted PR against its base plus
+  # the `full-ci`/`vscode` labels; anything unclassifiable selects (#12122).
+  vscode-select:
+    name: vscode surface
+    needs: [admission]
+    if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      selected: ${{ steps.surface.outputs.selected }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Detect extension surface change
+        id: surface
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ needs.admission.outputs.head }}
+          LABELS: ${{ needs.admission.outputs.labels }}
+        run: |
+          selected=true reason=unclassified
+          classify() {
+            reason=label
+            case ",$LABELS," in *,full-ci,*|*,vscode,*) return 0 ;; esac
+            reason=missing_identity
+            [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ] || return 0
+            reason=invalid_identity
+            [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || return 0
+            reason=unavailable_history
+            if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+              git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || return 0
+            fi
+            # A three-dot diff picks one merge base. With several (criss-cross
+            # history) it can miss an extension change, so select instead.
+            reason=unavailable_merge_base
+            merge_bases="$(git merge-base --all "$BASE_SHA" "$HEAD_SHA" 2>/dev/null)" || return 0
+            [ -n "$merge_bases" ] || return 0
+            reason=ambiguous_merge_base
+            [[ "$merge_bases" != *$'\n'* ]] || return 0
+            reason=diff_failed
+            changed="$(mktemp)" || return 0
+            trap 'rm -f "$changed"' EXIT
+            # NUL records keep odd filenames intact; no rename collapsing hides a removed extension path.
+            git diff --no-renames --name-only -z "$BASE_SHA"..."$HEAD_SHA" > "$changed" 2>/dev/null || return 0
+            reason=empty_diff
+            [ -s "$changed" ] || return 0
+            reason=extension_surface
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                editors/vscode/*|.github/workflows/ci.yml|.github/workflows/vscode-e2e.yml|.github/workflows/routed-rust.yml) return 0 ;;
+              esac
+            done < "$changed"
+            selected=false reason=no_extension_surface
+          }
+          classify
+          echo "selected=$selected" >> "$GITHUB_OUTPUT"
+          { echo "### VS Code Surface Detection"; echo ""; echo "- selected: \`$selected\`"; echo "- reason: \`$reason\`"; } >> "$GITHUB_STEP_SUMMARY"
+
+  vscode-e2e:
+    name: vscode extension e2e
+    needs: [vscode-select]
+    if: ${{ !cancelled() && needs.vscode-select.result == 'success' && needs.vscode-select.outputs.selected == 'true' }}
+    uses: ./.github/workflows/vscode-e2e.yml
+
   docs-gate:
     name: Ripr Docs Gate
     needs: [admission, detect-docs-only]
@@ -468,7 +541,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
@@ -516,7 +589,7 @@ jobs:
           fi
       - name: Upload docs-gate reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ripr-docs-gate
           path: target/ripr/reports/
@@ -528,10 +601,10 @@ jobs:
     # merge-ready request. Any other pull_request label event is a nonrequest
     # under a different name so the required context is never satisfied by it.
     name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
-    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate]
+    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate, vscode-select, vscode-e2e]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Recheck initially admitted eligibility
         id: eligibility
@@ -551,6 +624,7 @@ jobs:
           # This does not authenticate the caller or establish G's composition.
           current_eligibility() {
             local pr frame cursor=null more page=0
+            why=admission_binding
             [ "$REPOSITORY" = EffortlessMetrics/ripr-swarm ] || return 1
             [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || return 1
             [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || return 1
@@ -607,7 +681,9 @@ jobs:
                   .repository.full_name == $repo and .id != $id and .run_number >= $number)] | length) == 0
               ' <<<"$all" >/dev/null
             }
+            why=pull_request_state
             read_pr || return
+            why=review_decision_and_threads
             while :; do
               page=$((page + 1)); [ "$page" -le 100 ] || return 1
               frame=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid reviewDecision mergeQueueEntry{id} reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor") || return
@@ -623,10 +699,34 @@ jobs:
               [ "$more" = true ] || break
               cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(type == "string" and length > 0)' <<<"$frame") || return
             done
+            why=pull_request_state_after_threads
             read_pr || return
+            why=same_head_succession
             read_succession
           }
+          # Name the refused stage in the job log. The step already fails closed;
+          # without this the log shows only an exit code (#8858).
+          why=before_check
+          trap 'rc=$?; [ "$rc" -eq 0 ] || echo "::error::eligibility recheck refused at stage $why (exit $rc) for PR #$PR_NUMBER head $EXPECTED_HEAD"; [ "$rc" -eq 0 ] || [ "$why" != admission_binding ] || [ "$GITHUB_RUN_ATTEMPT" -le 1 ] || { [ "$EVENT_NAME" = merge_group ] && echo "::error::this is attempt $GITHUB_RUN_ATTEMPT but the admitted request was minted by attempt 1: a re-run cannot pass. Re-queue the pull request to qualify a new merge group (#8858)." || echo "::error::this is attempt $GITHUB_RUN_ATTEMPT but the admitted request was minted by attempt 1: a re-run cannot pass. Remove and re-add merge-ready to start a fresh run (#8858)."; }' EXIT
           current_eligibility
+      - name: Require the extension e2e result for the admitted head
+        id: vscode
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'
+        env:
+          SELECT_RESULT: ${{ needs.vscode-select.result }}
+          SELECTED: ${{ needs.vscode-select.outputs.selected }}
+          E2E_RESULT: ${{ needs.vscode-e2e.result }}
+        run: |
+          set -euo pipefail
+          # #12252: both jobs belong to this run, so no other request's result can
+          # be read. A selection that did not succeed, a selected e2e that did not
+          # succeed, or an unselected e2e that ran all fail; only these pass.
+          [ "$SELECT_RESULT" = success ] || { echo "::error::the extension surface selection concluded '$SELECT_RESULT'"; exit 1; }
+          case "$SELECTED:$E2E_RESULT" in
+            true:success) echo "The extension e2e succeeded for the admitted head." ;;
+            false:skipped) echo "The extension e2e was not selected for the admitted head." ;;
+            *) echo "::error::extension e2e selected=$SELECTED result=$E2E_RESULT for the admitted head"; exit 1 ;;
+          esac
       - name: Summarize routed result
         if: always()
         env:
@@ -640,6 +740,7 @@ jobs:
           ADMISSION_CLAIM: ${{ needs.admission.outputs.claim }}
           ADMISSION_ACCEPTANCE_DELTA: ${{ needs.admission.outputs.acceptance_delta }}
           ADMISSION_COMPETING_PRS: ${{ needs.admission.outputs.competing_prs }}
+          ADMISSION_CONCURRENT_CLAIMS: ${{ needs.admission.outputs.concurrent_claims }}
           ADMISSION_CHANGED_FILES: ${{ needs.admission.outputs.changed_files }}
           ADMISSION_CHANGED_LINES: ${{ needs.admission.outputs.changed_lines }}
           TARGET: ${{ needs.route.outputs.router_target }}
@@ -674,6 +775,7 @@ jobs:
           DOCS_GATE_RESULT: ${{ needs.docs-gate.result }}
           WORKFLOW_REF: ${{ github.ref }}
           ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}
+          VSCODE_CHECK_RESULT: ${{ steps.vscode.outcome }}
         run: |
           status=pass message="selected implementation job succeeded"
           if [ "$EVENT_NAME" = "pull_request" ] && [ "${LABEL_NAME,,}" != "merge-ready" ]; then message="not a merge-ready request; named Merge-ready Nonrequest, never the required context"
@@ -684,6 +786,7 @@ jobs:
           elif [ "$ADMISSION_RESULT" != "success" ]; then status=fail; message="candidate admission result was $ADMISSION_RESULT: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif [ "$ADMISSION_STATUS" != "admitted" ] && [ "$ADMISSION_STATUS" != "not_applicable" ]; then status=fail; message="candidate admission status was ${ADMISSION_STATUS:-missing}: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$ELIGIBILITY_RESULT" != success ]; then status=fail; message="live eligibility no longer established for the initially admitted head/request"
+          elif [ "$EVENT_NAME" = pull_request ] && [ "$VSCODE_CHECK_RESULT" != success ]; then status=fail; message="the selected VS Code extension e2e did not succeed for the admitted head (see the vscode check step)"
           elif [ "$DOCS_DETECT_RESULT" != "success" ]; then
             status=fail
             message="docs-surface detection result was $DOCS_DETECT_RESULT"
@@ -738,7 +841,7 @@ jobs:
           fi
           echo "### Ripr Rust Small Result" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "github tests:$GITHUB_TESTS_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "runner command exit code:$RUNNER_QUERY_EXIT_CODE" "runner query attempts:$RUNNER_QUERY_ATTEMPTS" "runner query last HTTP status:$RUNNER_QUERY_HTTP" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
+          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "concurrent claims:$ADMISSION_CONCURRENT_CLAIMS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "github tests:$GITHUB_TESTS_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "runner command exit code:$RUNNER_QUERY_EXIT_CODE" "runner query attempts:$RUNNER_QUERY_ATTEMPTS" "runner query last HTTP status:$RUNNER_QUERY_HTTP" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
             echo "- ${row%%:*}: \`${row#*:}\`" >> "$GITHUB_STEP_SUMMARY"
           done
           [ "$status" = "pass" ]

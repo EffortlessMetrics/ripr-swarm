@@ -41,6 +41,8 @@ Linked issues:
 - #7266 (`ManifestInventory` skips a `[[test]]` whose `required-features`
   are unmet under cargo defaults; the same target stays live when those
   features are default-enabled)
+- #11810 (field assertions refuse a selected local literal macro export
+  imported through `#[macro_use]`, preserving existing benign imports)
 
 Linked PRs:
 
@@ -88,6 +90,33 @@ wrong in three shapes, each of which an earlier candidate credited:
    exit and never evaluates the changed `Ok(..)`.
 
 ## Behavior
+
+For field construction, a plain crate-root `#[macro_use] extern crate` that
+selects the assertion name withholds its assertion credit when every resolved
+consumer placement binds the same selected local library and that library root
+contains a literal unconditional `#[macro_export] macro_rules!` declaration of
+the name (#11810). The source crate identifier, dependency rename, library name
+and library path decide that binding; the extern crate's local alias does not.
+Exactly one plain `macro_use` selector is supported on that import.
+The refusal names the import and export location. It retains the existing
+analyzer-limit classification because the imported macro's behavior is not
+expanded. It supplies no functional or protection evidence.
+
+This witness enters the existing retained field-blocking rank and per-test
+query, so an earlier foreign glob cannot mask it. Withheld or incomplete scans
+remain blocking; a missing export witness never clears another ambiguity.
+The unchanged standard-alias, non-assertion proc-macro and glob-only field
+contracts remain. This bounded refusal does not establish that other external
+macro imports are safe: registry/git sources, conditional/generated exports,
+nested-module exports, reexports, ambiguous consumer placement and library roots
+larger than 256 KiB are outside the witness. Selected-snapshot source reads do
+not turn ignored dependency files into production subjects or bypass the native
+output-set input boundary.
+
+An unchanged-file index reuse refreshes this auxiliary manifest/export authority
+and its dependent assertion-site memos without reparsing or changing source roles.
+An exporter or selected manifest edit can therefore add or revoke this refusal
+even when the supplied indexed Rust files stay byte-for-byte unchanged.
 
 The bounded provider-backed proptest profile in RIPR-SPEC-0117 (#10839) may
 supply a generated test with a receipt for an ordinary-assertion interpretation.
@@ -661,8 +690,10 @@ wrong credits.
      re-export), raw identifiers, macro input, `include!`, Unicode
      whitespace inside a macro matcher and a prelude name can each put
      another value under the name, so any of them refuses. Items a derive
-     or attribute proc macro emits stay invisible, as for every other rule,
-     as do items an out-of-workspace `macro_rules!` invocation emits (#7160).
+     or attribute proc macro emits stay invisible, as for every other rule.
+     An item-position macro whose definition is not in the
+     indexed workspace text may emit unread items, so any such invocation
+     in the workspace refuses (#7160).
      An inline receiver `T::f(..).name(..)` is typed exactly as
      `let recv = T::f(..);` would be, so `Stack::new(1).depth()` pins
      `Stack::depth` under the same constructor-signature rules.
@@ -1588,11 +1619,92 @@ unless it has the named variant, and yield the payload, so
    (`ErrVariant`, or a field gate wrapped in `Err`) is the opposite direction,
    since the macro panics on that exit before any comparison.
 
-Accepted limitation: the import is read at file granularity, as `expect!`'s is.
-A `use claims::assert_ok;` inside one inner module admits the name for a test
-elsewhere in the file that has no such import in scope; such a subject does not
-compile, so the credit is for a test that cannot run. Scoping the import to the
-asserting test's module chain is a follow-up.
+Import scope (#12462): a `use` names its macro in its own module and in the
+test's own body, and a child module does not inherit it. So the claims import
+counts when it is in the test's own module, directly in the test's body, or in
+an ancestor module and every module between that ancestor and the test
+re-imports it with `use super::*;` or `use super::name;`. An import in another
+function, in a sibling module, in a nested block of the body, or in an
+ancestor whose child modules do not re-import it does not count. An import or
+re-import under any `cfg` or `cfg_attr` other than the plain `#[cfg(test)]`
+counts as compiled out, even when its predicate might be true: a gate that is
+not provably on is not credit. A doc example has no test span in its own
+source, so only its root-level imports count, and a span that places no test
+function credits nothing. The test side's binding scan reads the manifest
+verdict and shadowing as before.
+
+Accepted limitation: only `use super::*;` and `use super::name;` are read as
+re-imports. A re-import by another spelling (`use super::{assert_ok};`,
+`use crate::..`) leaves the macro unproven, which loses credit and never adds
+it. `expect!`'s import keeps its file-granular read.
+
+### Claims payload equality pins (#12304)
+
+claims' `assert_ok_eq!(call, expected)` and `assert_some_eq!(call, expected)`
+evaluate `call` once, panic unless it has the named variant and compare the
+payload with `expected`, so each reads as the unwrapped pin above
+(`assert_eq!(call.unwrap(), expected)` beside an `Ok`/`Some` tail).
+
+1. Trusted import. `assert_ok_eq` and `assert_some_eq` join the trusted
+   test-scoped claims macros of "Claims payload pins" rule 1 and are trusted
+   on exactly that terms: a `use claims::{..}` import under their own name
+   that the test's file carries, whose `claims` package is a plain registry
+   requirement on the same manifest terms as `pretty_assertions`. A rename,
+   another crate's import, a path-qualified invocation, a local
+   `macro_rules!`, a `path`, `git` or `package` dependency, a missing
+   dependency or no import at all leaves the macro opaque. Without verified
+   import evidence the macro earns no credit and no grade.
+2. Shape. One plain invocation whose first operand is exactly the owner call
+   and whose second operand is a literal (`4`, `-1.5`, `'x'`, `true`,
+   `"text"`, `String::from("text")`). Further arguments are the panic
+   message and decide nothing. An owner call in the second operand, a
+   non-literal expected operand (a binding, a constant, a call, a value
+   computed from the owner) and an owner call wrapped in anything refuse.
+3. The pin. The binding, expected-value and exit-gate rules are the unwrapped
+   pin's, applied to the synthesized `Ok(expected)` / `Some(expected)`.
+4. Direction. `assert_ok_eq!` reads only an `Ok` pin and `assert_some_eq!`
+   only a `Some` pin; a pin on the `Err` exit, or `assert_ok_eq!` on a
+   `Some` tail, is the opposite direction, since the macro panics on that
+   exit before any comparison. An owner file that binds `Ok`, `Err`, `Some`
+   or `None` as a value refuses, as for the unwrapped pin.
+5. Grade. The oracle extractor stays text-only and reads the line
+   `unknown` / none (RIPR-SPEC-0120). Reveal grades it `exact_value` /
+   strong for one probe, and only for the `return_value` family, when this
+   pin admits the assertion (RIPR-SPEC-0231 rule 10). The grade lives in the
+   finding's related test. Analyses that read the extracted oracle list
+   directly (test-grip evidence, the refusal notes) still see no oracle on
+   that line.
+
+The import is read at file granularity, with the same accepted limitation as
+"Claims payload pins".
+
+### Pinned literal neither owner version returns (#12716)
+
+An owner-return pin compares the owner's call with a literal. A literal equal
+to the value the owner returned before the diff, or to the value it returns
+after, tells the versions apart: the test passes on one and fails on the other.
+A literal that neither version returns fails on both, so it cannot notice the
+change.
+
+1. Closed subset. The owner, before and after the changed line, is a bare-name
+   `fn` whose parameters are plain `ident: <one integer type>`, whose body is
+   only `if COND { return RET; }` guards and a tail, and whose integers are
+   decimal literals and parameters joined by `+ - * / %`, unary `-` and
+   parentheses, in `Ok(..)`, `Some(..)`, `Err(..)`, `None` or bare. Every
+   intermediate value is checked in the parameter type; an overflow or division
+   by zero is not evaluable. The old version is the owner with the changed line
+   replaced by the diff's old text; a diff with no old line is not evaluable.
+2. The call. Its arguments are plain decimal literals (optionally negated) and
+   it is spelled exactly as the owner call: single-line or multi-line, bare, or
+   followed by `.unwrap()` when the pin unwraps.
+3. Withhold. When both versions, run on those arguments, return a bare
+   integer `a`, `Ok(a)` or `Some(a)` and the pin names the same shape with
+   another integer, or take an `Err(..)` or `None` exit that the pin names as
+   `Ok(..)` or `Some(..)`, the pin does not credit. This applies to `assert_eq!`, `matches!` and the
+   claims `assert_ok_eq!` / `assert_some_eq!` alike.
+4. Fail open to today's reading. A call or owner outside the subset, an
+   `Err(..)` payload, a wrapper mismatch the compiler would reject and every
+   pin either version agrees with keep their current result.
 
 ### Bool-owner pins
 
@@ -2265,6 +2377,12 @@ receiving call is itself resolved.
   #6950): the nested child test binds the parent module's own `Window`,
   so the pin is refused and the relation stays name-only
   (`weak_token_substring`).
+- Nested autodiscovered binary roots (#6916): `src/bin/NAME/main.rs` is a
+  recognized target root and manifest-established binary boundary, so a nested
+  binary's `#[macro_use] extern crate` site no longer refuses unrelated library
+  integration tests; pinned by
+  `a_nested_src_bin_main_target_does_not_reach_integration_tests` and
+  `binary_macro_boundaries_require_manifest_authority` (`src/bin/tool/main.rs`).
 - A fixture pins a single-file raw-identifier rename as non-exposed
   (`fixtures/owner_return_pin_single_file_raw_rename_shadow`, #7067):
   the test binds the renamed item through the plain spelling, so the
@@ -2396,9 +2514,9 @@ receiving call is itself resolved.
   `#![no_implicit_prelude]`, or a `macro_rules!` without `#[macro_export]`
   (a `macro` 2.0 item without visibility). Its crate is the root reached
   through resolved module edges, recognized only when that root is a Cargo
-  autodiscovered target (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, and
-  `tests/*.rs`, `benches/*.rs`, `examples/*.rs`, `build.rs` beside an
-  indexed `src/`). humantime's `benches/datetime_format.rs`
+  autodiscovered target (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`,
+  `src/bin/NAME/main.rs`, and `tests/*.rs`, `benches/*.rs`, `examples/*.rs`,
+  `build.rs` beside an indexed `src/`). humantime's `benches/datetime_format.rs`
   (`#[macro_use] extern crate bencher;`) no longer refuses the library's
   `tests/*.rs` assertions. An unresolved `#[macro_use] mod` may
   `#[macro_export]` its macros, so it stays workspace-wide like exported
@@ -2415,8 +2533,13 @@ receiving call is itself resolved.
   holds while any `#[path]` is unresolvable (`cfg_attr`, non-literal), which
   records no module edge for its target. A withheld file in the
   dependent scope is routed by root only when its own path is a `src/lib.rs`,
-  `src/main.rs` or `src/bin/*.rs` root, so named mode matches the full
-  closure; every other withheld site stays workspace-wide. Limits: a
+  `src/main.rs`, `src/bin/*.rs`, or `src/bin/NAME/main.rs` root, so named
+  mode matches the full closure; every other withheld site stays workspace-wide.
+  Named dependent-scope admission must recover the same disable signals from
+  withheld bytes: a withheld sibling that would use lexical fallback in the full
+  index, and composition spelled through attribute-head comments or non-ASCII
+  gap whitespace after `[`, so crate-root macro routing does not stay path-local
+  when the full index refuses it (#6919). Limits: a
   `[lib]`/`[[bin]]`/`[[test]]` `path` that moves a target is not read, so a
   file at a default target path that some other target includes through
   `#[path]` is still judged by its default root.
@@ -2765,6 +2888,15 @@ assertions. This repair shares the existing callback without that larger migrati
 
 ## Test Mapping
 
+- Claims payload equality pins (#12304):
+  `crates/ripr/tests/claims_payload_eq_owner_pin.rs` (the credited twins and
+  one negative control per refusal above, the early-`Err` and `None` exit
+  directions, the non-`return_value` families, and multi-line invocations: credited
+  when the closing line holds only the `;` and a comment, unknown otherwise).
+  The inventory rows `claims_assert_ok_eq` / `claims_assert_some_eq` in
+  `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs` use a
+  `predicate` probe and therefore stay `unknown` on purpose; the
+  return-value twins are in the test above.
 - Claims payload pins (#9619): `crates/ripr/tests/claims_payload_owner_pin.rs`
   (single and grouped import, trailing `assert_err!`, `assert_some!`
   positives; missing, foreign, renamed, locally redefined import, `mut`,
@@ -2990,6 +3122,9 @@ assertions. This repair shares the existing callback without that larger migrati
   layouts fail on a `4 + self.step()` mutant.
   `reexported_value_under_a_unit_struct_name_is_not_credited` imports a
   `pub use std::u32::MAX;` re-export over a unit struct `MAX`, and
+  `out_of_workspace_item_macro_emits_unread_unit_binding` (#7160) invokes a
+  dependency `macro_rules!` at item position that re-exports `MAX` without
+  naming it in the arguments; both keep the mutant green at `weakly_exposed`.
   `aliased_outside_module_beside_a_same_named_module_is_not_credited` globs
   `use std::u32 as nums;` beside an unrelated `mod nums`; in both the mutant
   passes and the finding reads `weakly_exposed`.
@@ -3329,8 +3464,23 @@ same value and keeps its credit.
 
 Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted by this path, and helper-transferred rows are not read (#9147). The shared producer's resolver (#9218, below) is more permissive for equality-boundary inputs; this path keeps its stricter rule.
 
-The shared owner call-value producer (`call_values_for_owner`, which feeds the equality-boundary reading `equality_observed`/`exact_rows` and the helper-transferred entry rows) reads a module-qualified free call of the owner's name only when its spelled path settles on the owner: through the same-named-rival call identity when the owner has rivals, otherwise through the owner-alone identity, which reads `crate`/`self`/`super`, in-file `mod` names, `use`-bound modules (`use crate::pricing; pricing::thr(..)`, renames included) and the owner crate's own name from another crate's test, and finally a path anchored at the owner's crate whose target module re-exports the owner through a top-level `pub use` item of the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file never counts), whose leaf is not renamed and whose path resolves to the owner's own module (`pub use internal::inner;`, `pub use crate::internal::*;`). Explicit leaves take precedence over globs (an explicit dependency export beats an owner glob and an explicit owner export beats a dependency glob), a dependency glob beside an owner glob is ambiguous and declines, and a leading `::`, an undeclared first segment, a nested-scope `use` or an unreadable tree does not qualify (`pub use other_dep::thr;`, `pub use other_dep::*;`). A `crate::` qualifier counts only from a test in the owner's own crate target. A bare call, a type-path call and a method call keep their reading; any other qualified spelling (`rival::thr(101)`, a module bound to something else, a dependency path, a glob-bound or unreadable qualifier, a `#[path]`-remapped package) supplies no input row (#9218).
+The shared owner call-value producer (`call_values_for_owner`, including
+helper-entry rows) admits a free call only when the shared call identity
+resolves it to the owner (#9218, #10046). Bare calls resolve through lexical
+imports as well as qualified paths. Workspace sibling functions with the same
+name cannot lend arguments merely because the owner has no same-package rival:
+the owner-alone identity still verifies the test's imports and workspace crate
+names. Qualified paths retain the existing module, crate-alias and verified
+owner re-export reading; type paths and methods retain their separate handling.
 
+Bare calls also consult memoized local pattern-binding facts at the captured
+call's file-absolute line. A local function pointer, closure, uninitialized
+binding later assigned a callable, or a loop/match/closure parameter cannot
+borrow an imported owner's identity. Raw identifiers share the normalized name.
+Bindings in another nested scope or on the same line as their initializer may
+conservatively withhold credit; this bounded scan does not model block lifetimes.
+A call before a later binding and a qualified owner call retain their reading.
+Withheld identity remains unknown, never a named missing-boundary gap.
 Grouped re-exports recurse through syntax-tree use groups, including nested
 `crate::{internal::{thr}}` leaves. A leading `::` belongs only to its leaf and
 descendants; an unrelated absolute sibling cannot invalidate a local owner leaf.
@@ -3341,13 +3491,20 @@ glob underneath it (#10047). The nested positive and dependency-glob, renamed-le
 and cfg controls are pinned in `returned_comparison_boundary` and the
 `rust_nested_use_*` fixtures; the conservative fixtures also join RIPR-SPEC-0108.
 These controls assert the infection-stage boundary summary and presence or absence
-of the exact `x == 101` input row, independently of final gap admission. On the
-current integrated main, the same-name path-qualifier false refusal (#10604)
-leaves all four fixture return-value findings `static_unknown` before and after
-the re-export repair and clears final missing-discriminator arrays. The fixtures
-use direct calls, not function values; their retained limitation is a known
-independent defect, not evidence that the qualifier names a function value.
+of the exact `x == 101` input row, independently of final gap admission. The
+three non-owner fixtures (`rust_nested_use_cfg`, `rust_nested_use_dependency_alias`,
+`rust_nested_use_dependency_glob`) classify their return-value findings
+`infection_unknown`, because call identity does not resolve to the owner;
+`rust_nested_use_owner` remains `static_unknown`. The fixtures use direct calls,
+not function values.
 
-Accepted tradeoff: a genuine owner call spelled through a path ripr cannot resolve is declined, so its input is not read and a missing-equality gap can stay open although a test exercises the boundary. That direction was chosen because crediting an unresolved qualified call lets another function's input suppress the gap and reads `Exposed` wrongly. The filter covers the direct owner calls and the helper-transferred entry rows (`chain_entry_rows`). It does not cover the computed-input continuation (`computed_input_parameters`), which reads calls by name and stays unfiltered because it is conservative (it only ever unresolves a boundary), nor the adaptor element-run reader (`sequence_runs`): dropping only some of its calls could remove the discriminating element and create an actionable gap. The call-value producer and the chain entry rows are the only consumers filtered. A re-export counts only from the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file is another crate) and only from a top-level `pub use` item whose leaf is not renamed; a `use` inside a nested module binds there and never counts.
+Accepted tradeoff: a genuine owner call spelled through a path ripr cannot resolve is declined, so its input is not read and a missing-equality gap can stay open although a test exercises the boundary. That direction was chosen because crediting an unresolved qualified call lets another function's input suppress the gap and reads `Exposed` wrongly. The filter covers the direct owner calls and the helper-transferred entry rows (`chain_entry_rows`). The computed-input continuation (`computed_input_parameters`) applies the same admission (below). It does not cover the adaptor element-run reader (`sequence_runs`): dropping only some of its calls could remove the discriminating element and create an actionable gap. A re-export counts only from the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file is another crate) and only from a top-level `pub use` item whose leaf is not renamed; a `use` inside a nested module binds there and never counts.
 
-Out of scope: a bare call whose name an import binds to a rival (`use rival::thr; thr(5)`) keeps the name-only reading it always had, because the resolver filters only module-qualified spellings; resolving bare imports is a separate change.
+`computed_input_parameters` uses the same admission for direct owner calls and
+helper-entry calls, and its entry-row precondition uses `chain_entry_rows`.
+A refused call supplies neither an exact owner row nor a computed-owner
+parameter. When no admitted discriminator resolves the boundary, withheld call
+identity is `infection_unknown`, never a fabricated missing-equality gap.
+Returned comparisons retain the same unresolved boundary reason as predicates.
+An admitted exact boundary input still supplies the discriminator. The adaptor
+element-run reader (`sequence_runs`) is unchanged.

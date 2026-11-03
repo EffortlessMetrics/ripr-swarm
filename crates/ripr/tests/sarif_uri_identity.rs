@@ -107,7 +107,10 @@ fn ordinary_escaping_controls() -> Result<(), Box<dyn std::error::Error>> {
     ] {
         let (uri, fingerprint) = artifact(&mut output, Path::new(path))?;
         assert_eq!(uri, expected, "{path:?}");
-        assert!(fingerprint.contains(&format!("|{}|", path.trim_start_matches("./"))));
+        assert_eq!(
+            fingerprint.rsplit('|').next(),
+            Some(path.trim_start_matches("./"))
+        );
     }
     Ok(())
 }
@@ -131,11 +134,12 @@ fn native_backslash_does_not_alias_directory() -> Result<(), Box<dyn std::error:
     assert_eq!(nested_uri, "src/a/b.rs");
     assert_ne!(literal_uri, nested_uri);
     assert_ne!(literal_fingerprint, nested_fingerprint);
-    assert!(literal_fingerprint.contains(r"|src/a\b.rs|"));
+    assert_eq!(literal_fingerprint.rsplit('|').next(), Some(r"src/a\b.rs"));
     // Drive-looking text remains a native Unix name, not a Windows path.
-    let (uri, fingerprint) = artifact(&mut output, Path::new(r"C:\path\to\a%b.rs"))?;
+    let drive_looking = r"C:\path\to\a%b.rs";
+    let (uri, fingerprint) = artifact(&mut output, Path::new(drive_looking))?;
     assert_eq!(uri, "C%3A%5Cpath%5Cto%5Ca%25b.rs");
-    assert!(fingerprint.contains(r"|C:\path\to\a%b.rs|"));
+    assert_eq!(fingerprint.rsplit('|').next(), Some(drive_looking));
     Ok(())
 }
 
@@ -145,6 +149,6 @@ fn native_windows_separators_are_slashes() -> Result<(), Box<dyn std::error::Err
     let (_dir, mut output) = fixture()?;
     let (uri, fingerprint) = artifact(&mut output, Path::new(r".\src\a b%2F.rs"))?;
     assert_eq!(uri, "src/a%20b%252F.rs");
-    assert!(fingerprint.contains("|src/a b%2F.rs|"));
+    assert_eq!(fingerprint.rsplit('|').next(), Some("src/a b%2F.rs"));
     Ok(())
 }

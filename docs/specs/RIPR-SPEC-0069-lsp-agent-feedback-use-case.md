@@ -354,6 +354,26 @@ actionability (RIPR-SPEC-0061) plus runtime completeness. It does
 not re-derive state from raw findings, and an empty diagnostic set
 is a scope statement, never an all-clear.
 
+### Empty-scope disclosure (#12416)
+
+When the session outcome is `no_scope`, `no_changed_lines`, or
+`no_behavioral_candidates` and the canonical item projection is empty,
+agent-facing LSP surfaces must carry the same not-all-clear fact MCP's
+`empty_scope_hint` names for committed refreshes, adapted to saved
+worktree authority:
+
+- `ripr/listActionableItems` adds `analysis_outcome` (the status payload's
+  typed outcome) and, under exactly that gate, a `scope_disclosure` sentence
+  naming the cause and the editor base/refresh recovery route. `status` stays
+  `ok`; `suppression_disclosure` remains the withheld-findings contract.
+- The refresh completion log appends `analysis_outcome={kind}` when typed,
+  and emits one deduplicated INFO scope sentence after commit.
+- No-evidence hover for those kinds renders the saved-worktree cause sentence
+  plus the set-a-base recovery instead of generic analyzed advice.
+
+Named-base cause wording says **saved diff** on LSP surfaces (the editor
+analyzes saved bytes) and **committed diff** on MCP committed snapshots only.
+
 ### Profile-withholding disclosure (#5276)
 
 The `actionable` profile deliberately excludes the `*_unknown` classes
@@ -415,6 +435,42 @@ and the eligible-diagnostic caps are unchanged. It exists only under the
 diagnostics instead), is replaced with the snapshot so it clears when no
 withheld preview gap remains, and is withdrawn with the document's other
 diagnostics while the buffer is quarantined.
+
+Static-gap withholding (#11798): the same discipline covers every other
+candidate-actionable finding of a gap class that the `actionable` profile does
+not publish, most visibly a changed Rust function that no test calls, whose
+`no_static_path` finding lacks the witness and fix site the profile requires.
+The withheld set is therefore generalised to "any candidate-actionable
+finding, of a `*_unknown` or gap class, whose canonical group the active
+profile does not publish", split into three disjoint shares that sum to the
+total: `*_unknown`, preview-language (`preview_count`) and static gap
+(`gap_count`). `ripr/analysisStatus` `withheld_findings.count` then reconciles
+with the candidate-current share of `analysis_outcome.counts.finding_count`
+minus the findings the profile published (a base-side finding, for example the
+deleted-line twin of an edited function, is historical context that only the
+`full` profile shows and is not a live obligation, so it is not counted as
+withheld), and the pull disclosure and completion log (`withheld_gap=N`) name
+the static-gap share, so `findings=N, diagnostics=0` is never the only word
+about a live finding. Eligibility, severity and which findings publish are
+unchanged; the `full` profile publishes these findings today and gets no
+marker.
+
+Marker choice: the static-gap disclosure reuses the existing governed
+`ripr-diagnostic-preview-withheld` code rather than adding a sibling code. The
+catalog entry, budget exemption, per-snapshot cap, snapshot consistency
+accounting and refresh-only action routing are all keyed on that code, so
+reuse inherits every bound and negative control without a second code that
+could drift from them, and a file never mixes preview and non-preview
+findings, so one marker per file still holds. The typed `data.kind`
+(`gap_findings_withheld`, limitation `actionable_profile_withheld_gap`)
+distinguishes it from `preview_findings_withheld`, and the message differs:
+`ripr: N changed-behavior finding(s) with no static test path found or weak
+static evidence not shown under the actionable profile; set diagnosticProfile:
+full or run `ripr check``. It uses static vocabulary only, names the count and
+the `full` escape hatch, and carries no finding identity, repair data,
+witness, `delivery_eligible` or `preview_actionability`; its only code action
+is refresh. The code name keeps its historical `preview` spelling; renaming a
+governed code is a catalog-breaking change and is not worth it for wording.
 
 ## Non-Goals
 

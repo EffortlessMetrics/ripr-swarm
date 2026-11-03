@@ -1,0 +1,23 @@
+# Registers the PostgreSQL/pgTAP SQL preview evidence contract (#5736) as normative
+# spec law before adapters or judged corpora land under #5602.
+[[behavior]]
+id = "RIPR-SPEC-0404"
+name = "PostgreSQL pgTAP dialect schema migration and database-state evidence contracts"
+spec = "docs/specs/RIPR-SPEC-0404-postgresql-pgtap-dialect-schema-migration-and-database-state-evidence-contracts.md"
+tests = []
+fixtures = [
+  "fixtures/rust-verdict-corpus/spec-scopes/RIPR-SPEC-0404.toml",
+  "fixtures/python-verdict-corpus/spec-scopes/RIPR-SPEC-0404.toml",
+  "fixtures/typescript-verdict-corpus/spec-scopes/RIPR-SPEC-0404.toml",
+  "fixtures/perl-verdict-corpus/spec-scopes/RIPR-SPEC-0404.toml",
+]
+code = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0404-postgresql-pgtap-dialect-schema-migration-and-database-state-evidence-contracts.md",
+  "docs/spec-index.d/RIPR-SPEC-0404.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0404.toml",
+]
+metrics = [
+  "sql_evidence_contract_registered",
+  "sql_capability_cell_index_complete",
+]

@@ -195,27 +195,39 @@ actor records its claim:
   timestamp>`, or reuse an existing owned-convergence comment by editing it.
   Keep one current claim comment per actor, edited at transitions — the same
   discipline as the PR-native continuation record above.
-- Treat any other actor's claim younger than 4 hours as ownership. While a
-  live claim is held, do not push to the branch, re-bless, or change labels.
-  This coordinates writers; it does not replace `stackable = false`,
-  `blocked_by`, review or qualification routes.
-- A claim alone does not keep ownership. Judge liveness from actual activity
-  (next subsection), and record a stale-claim takeover in the claim comment
-  you edit in.
+- Respect an existing actor's claim and any active work. While ownership is
+  held, do not push to the branch, re-bless, or change labels without an
+  accepted handoff. This coordinates writers; it does not replace
+  `stackable = false`, `blocked_by`, review or qualification routes.
+- A claim aged four hours warrants reconciliation, not automatic takeover;
+  reconcile sooner when other evidence warrants it. Check the
+  owner's disposition, current head, active qualification and accepted handoff
+  (next subsection); if activity or custody is unknown, preserve ownership
+  until the responsible owner or coordinator resolves it.
 - Before every push, run the runbook's writer guard: `git ls-remote` the head
   branch and reconcile a mismatch instead of pushing over it.
 
+Admission reads these claims: the `merge-ready` qualification run's candidate
+admission step fetches the PR's conversation comments (bounded latest-100
+read) and annotates any claim comment still inside the 4-hour youth window —
+detected by the `Converging this PR:` line prefix alone; the prose timestamp
+after the prefix is never parsed, and youth comes from the API-attested
+comment update time. A live claim renders as `live claims:` rows plus a
+`::warning::` in the admission summary and a `concurrent claims:` row in the
+Rust result report. It is observability only: the claim never refuses or
+delays qualification, and a PR with no claim comments annotates nothing.
+
 ### Judging activity
 
-The commits API is the truth signal: `commit.author.date` from
-`GET /repos/{owner}/{repo}/pulls/{number}/commits` shows the last real push.
-`updatedAt` is bot-polluted — any comment, label edit, review submission, or
-linked check event advances it with no writer action — so it overstates
-activity and can never establish that an actor went idle. Every PR sampled on
-the 2026-10-31 open board showed `updatedAt` minutes past its last commit
-(for example #11499: last commit 11:58:00Z, `updatedAt` 12:09:54Z). Use
-author dates and claim comments to judge activity; do not declare a rival
-idle from `updatedAt`.
+Commit author dates are object metadata, not publication timestamps or proof
+that a writer has released custody: an old commit can be pushed now, and an
+author date can be in the future. PR `updatedAt` can also reflect bots, labels,
+reviews or checks rather than writer activity. Use neither timestamp alone to
+declare a writer idle or transfer a claim. Reconcile the current head and the
+owner's latest disposition, including active tests or qualification, unique
+uncommitted work and any accepted handoff. An aged claim can prompt that
+inspection; it does not authorize replacement. Unknown activity or custody
+remains unknown until the responsible owner or coordinator resolves it.
 
 ### Yield on contact
 
@@ -372,7 +384,7 @@ cargo xtask route-quality [--attempt-ledger <path>]
 cargo xtask rust-conversion-candidates
 cargo xtask rust-repair-trust-report
 cargo xtask sarif-policy --current <path> [--baseline <path>]
-cargo xtask schema-producer-sweep [--rev REV] [--live-replay [--ripr BINARY]] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...
+cargo xtask schema-producer-sweep [--rev REV | --worktree] [--live-replay [--ripr BINARY]] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...
 cargo xtask shape
 cargo xtask specs next
 cargo xtask suggested-fixes
@@ -752,21 +764,18 @@ appends the fixture expected-output changelog. Bless from the Linux arbiter
 platform, never from a Windows host; the sanctioned route is documented in
 [Validation commands](agent-context/validation.md#golden-fixtures-and-the-blessing-platform).
 
-Human goldens (`human.txt`, `human-full.txt`) mask only the explanatory prose
-of the line `no repair start offered: <reason>`. Pinned: the line's presence and
-position, the fixed opening that identifies the refusal variant (no gap ID, no seam or no binding seam, several binding seams, Rust files only, seam
-budget, unreadable config, classification failure, static evidence incomplete,
-still missing, related test already reaches the boundary), and the
-`still missing:` / `It is also still missing:` evidence lists. Masked as
-`<reason>`: the wording around those pins, such as the trailing "follow the Next
-step" advice, the Rust-files-only explanation and the boundary-variant
-explanation. A reason that matches no known variant opening is compared
-verbatim, so a new or heavily reworded variant is drift to re-bless and add to
-`REPAIR_REFUSAL_RULES` in `xtask/src/reports/fixtures.rs`. `check.json` is never
-masked. The prose has focused tests of its own, and comparing it verbatim turned
-every rewording into one re-blessed line in hundreds of fixtures (#10702). A
-repair start that flips to a refusal, a refusal that appears or disappears, and
-a change of variant or missing-evidence list are still drift.
+Human goldens (`human.txt`, `human-full.txt`) compare the line
+`no repair start offered: <reason>` verbatim, including its fixed wording,
+advice and `still missing:` / `It is also still missing:` evidence lists, so
+rewording a refusal arm is drift to re-bless (#12003). Only values that move
+with unrelated code are masked as `<reason>`: everything after the opening of
+the seam-inventory arm (language and file) and of the classification-failure
+arm (the bound command), and the seam count of the "found N seams ... could not
+tie one" arm. An arm joins `REPAIR_REFUSAL_RULES` in
+`xtask/src/reports/fixtures.rs` only when its sentence embeds such a value. A
+reason that matches no rule is compared verbatim. `check.json` is never
+masked. A repair start that flips to a refusal, a refusal that appears or
+disappears, and a change of variant or wording are drift.
 
 Transitional (#10702): `xtask/src/reports/fixtures/transitional.rs` lists the
 exact `fixture/surface` human goldens (253) whose expected refusal opening is
@@ -1105,6 +1114,53 @@ cargo xtask check-pr-shape --body-env RIPR_PR_BODY
 
 Without a body argument, the existing advisory diff-shape behavior is
 unchanged.
+
+## User-text ordering rule for new fixture goldens
+
+A fixture golden is generated output, not authored prose: a new
+`fixtures/**/expected/human.txt` inherits the renderer's live wording at
+whichever commit renders it. The user-text plain-language gate keys its
+`golden-human` rows to that class: per `(path, term)`, a path absent at the
+merge-base has an implicit zero baseline, so every banned line a new golden
+renders violates by design — a rename that keeps old jargon must stay red
+(the safe direction). No baseline edit, PR-body declaration or exemption
+unblocks it: required checks bind to the head SHA, so a body claim is
+mutable after CI, and the zero baseline is what keeps a renamed path honest.
+Ordering, not gate weakening, is the fix.
+
+The detector is local: run `cargo xtask check-user-text` with `main` fetched,
+and it computes the same per-path delta against the merge-base, using the
+working tree as its head side and printing its gate mode (`Gate: golden-human
+rows compare per file against the merge-base ...`). Its fallback line
+`base unavailable: absolute-ceiling check only, no PR-relative no-growth
+established` means the base was unreadable — fetch `main` (deepen a shallow
+clone if needed) and rerun; it is not a pass.
+
+A red `new path, 0 at the merge-base` is a dependency, not a fixture bug. The
+golden cannot be worded around it, and the violation's own repair guidance
+(replace the term with the glossary wording, then re-bless) is main-side
+renderer work. In order:
+
+1. Name the owning reword as a dependency in this PR's body.
+2. Keep the PR as a draft until that reword lands on `main`.
+3. Merge `main` into the branch, re-render, re-bless the golden through the
+   sanctioned Linux route
+   ([validation: golden fixtures](agent-context/validation.md#golden-fixtures-and-the-blessing-platform)),
+   and rerun the detector; the delta is then judged against the new base.
+
+Pending-owner notes (open questions recorded from the investigation, not
+decisions):
+
+- Ownership of the remaining default-screen `discriminator` wording layer:
+  the recorded default is to reopen #12124, whose post-merge review comment
+  already enumerates those surfaces; no open issue owns the list today.
+- The end state for the script-facing gap ID that embeds a banned token on
+  the default view: fixtures for `static_unknown`-family findings render
+  that line today (within ceiling on `main`), nothing in the plain-wording
+  sweep owns a reword, and the candidate resolutions (default-view line
+  removal, a producer-side ID spelling change that breaks script consumers,
+  or a narrow exemption for exactly the labeled line with a negative
+  control) each need an owner ruling.
 
 ## Fix Kinds
 

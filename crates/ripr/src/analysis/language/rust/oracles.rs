@@ -398,16 +398,45 @@ pub(in crate::analysis) fn apply_complete_proximity_macro_limit(
     }
 }
 
+/// Leaf names of the numeric tolerance assertion macros of `approx` and
+/// `float-cmp` that pass when the values are within the tolerance. The name only
+/// selects the wording of the next step: it never classifies the macro, grades
+/// an oracle or earns credit (#6645).
+const TOLERANCE_EQ_ASSERTION_MACROS: [&str; 4] = [
+    "assert_relative_eq",
+    "assert_abs_diff_eq",
+    "assert_ulps_eq",
+    "assert_approx_eq",
+];
+
+/// The inequality forms pass when the values differ by more than the
+/// tolerance, so a tighter tolerance is the wrong advice for them.
+const TOLERANCE_NE_ASSERTION_MACROS: [&str; 3] =
+    ["assert_relative_ne", "assert_abs_diff_ne", "assert_ulps_ne"];
+
+/// The next step for a named macro limitation. A tolerance macro gets a
+/// numeric next step, because the open question is how the tolerance compares
+/// with the change, which static analysis cannot bound.
+fn macro_witness_next_step(macro_name: &str) -> String {
+    let leaf = macro_name.rsplit("::").next().unwrap_or(macro_name);
+    if matches!(leaf, "prop_assert" | "prop_assert_eq" | "prop_assert_ne") {
+        "Inspect the property assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.".to_string()
+    } else if TOLERANCE_EQ_ASSERTION_MACROS.contains(&leaf) {
+        format!(
+            "`{leaf}!` reads like a floating-point tolerance comparison that passes when the values are within the tolerance, but ripr cannot establish its tolerance semantics or bound how far this change moves the value. Check that the tolerance is tighter than the smallest difference the change can make, then run the existing test against the changed code."
+        )
+    } else if TOLERANCE_NE_ASSERTION_MACROS.contains(&leaf) {
+        format!(
+            "`{leaf}!` reads like a floating-point tolerance comparison that passes when the values differ by more than the tolerance, but ripr cannot establish its tolerance semantics or bound how far this change moves the value. Check that the original value stays outside the tolerance and the changed value would fall inside it, then run the existing test against the changed code."
+        )
+    } else {
+        "Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.".to_string()
+    }
+}
+
 fn apply_macro_assertion_witness(finding: &mut Finding, witness: RustMacroAssertionWitness) {
     finding.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
-    finding.recommended_next_step = Some(if matches!(
-        witness.macro_name.rsplit("::").next(),
-        Some("prop_assert" | "prop_assert_eq" | "prop_assert_ne")
-    ) {
-        "Inspect the property assertion macro's definition and run the existing test; its spelling does not establish assertion semantics."
-    } else {
-        "Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics."
-    }.to_string());
+    finding.recommended_next_step = Some(macro_witness_next_step(&witness.macro_name));
     finding.evidence.push(
         "A related Rust test uses an assertion-like macro that ripr does not classify as an oracle."
             .to_string(),
@@ -682,11 +711,17 @@ fn find_unresolved_assertion_macro_witness_among(
         }) {
             continue;
         }
+        let aliases = index
+            .files()
+            .get(&test.file)
+            .map(|file| assertion_macro_import_aliases(&file.source))
+            .unwrap_or_default();
         for (macro_name, macro_line) in unresolved_assertion_macro_invocations_among(
             &test.body,
             test.start_line,
             owner_in_arguments,
             credited,
+            &aliases,
         ) {
             candidates.push(RustMacroAssertionWitness {
                 test_name: test.name.clone(),
@@ -708,7 +743,7 @@ fn unresolved_assertion_macro_invocations(
     start_line: usize,
     owner_in_arguments: Option<&str>,
 ) -> Vec<(String, usize)> {
-    unresolved_assertion_macro_invocations_among(body, start_line, owner_in_arguments, &[])
+    unresolved_assertion_macro_invocations_among(body, start_line, owner_in_arguments, &[], &[])
 }
 
 fn unresolved_assertion_macro_invocations_among(
@@ -716,6 +751,7 @@ fn unresolved_assertion_macro_invocations_among(
     start_line: usize,
     owner_in_arguments: Option<&str>,
     credited: &[String],
+    aliases: &[String],
 ) -> Vec<(String, usize)> {
     let mut invocations = Vec::new();
     let masked_body = mask_rust_comments_and_strings(body);
@@ -748,7 +784,7 @@ fn unresolved_assertion_macro_invocations_among(
             // With credited macros the witness is the credited spelling, not
             // another assertion-like macro in the same test (#7089).
             let named = if credited.is_empty() {
-                is_unresolved_assertion_like_macro(&macro_name)
+                is_unresolved_assertion_like_macro(&macro_name) || aliases.contains(&macro_name)
             } else {
                 credited.contains(&macro_name)
             };
@@ -902,6 +938,51 @@ fn macro_name_before_bang(line: &str, bang: usize) -> Option<String> {
     }
 }
 
+/// Names a file binds to an assertion macro with `use path::assert_x as name;`
+/// (also inside a brace list). The rename hides the `assert_` spelling the
+/// limit keys on, so `ok_eq!(..)` under `use claims::assert_ok_eq as ok_eq;`
+/// would read as a plain gap although the test asserts (#12779). The alias only
+/// names a limit and never earns an oracle, and it is read file-wide, so a
+/// rename in another scope can only move a gap to the named limit, never the
+/// reverse.
+fn assertion_macro_import_aliases(source: &str) -> Vec<String> {
+    let masked = mask_rust_comments_and_strings(source);
+    let mut aliases = Vec::new();
+    let mut rest = masked.as_str();
+    while let Some(found) = rest.find("use ") {
+        let boundary = rest[..found]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
+        let after = &rest[found + 4..];
+        let end = after.find(';').unwrap_or(after.len());
+        if boundary {
+            let statement = &after[..end];
+            let words: Vec<&str> = statement
+                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .filter(|word| !word.is_empty())
+                .collect();
+            for pair in words.windows(3) {
+                if let [original, "as", alias] = pair
+                    && (*original == "assert"
+                        || original.starts_with("assert_")
+                        || matches!(
+                            *original,
+                            "prop_assert" | "prop_assert_eq" | "prop_assert_ne"
+                        ))
+                    && *alias != "_"
+                {
+                    aliases.push((*alias).to_string());
+                }
+            }
+        }
+        rest = &after[end..];
+    }
+    aliases.sort();
+    aliases.dedup();
+    aliases
+}
+
 fn is_unresolved_assertion_like_macro(macro_name: &str) -> bool {
     if is_known_rust_assertion_macro(macro_name) {
         return false;
@@ -971,6 +1052,59 @@ fn rust_macro_assertion_limitation_detail_lines(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_tolerance_macro_gets_a_numeric_next_step_and_nothing_else_changes() {
+        for name in [
+            "assert_relative_eq",
+            "approx::assert_abs_diff_eq",
+            "::approx::assert_ulps_eq",
+            "float_cmp::assert_approx_eq",
+        ] {
+            let step = super::macro_witness_next_step(name);
+            assert!(step.contains("floating-point tolerance"), "{name}: {step}");
+            assert!(step.contains("cannot establish"), "{name}: {step}");
+            assert!(!step.contains("custom assertion macro"), "{name}: {step}");
+            // An equality form needs a tighter tolerance than the change.
+            assert!(step.contains("within the tolerance"), "{name}: {step}");
+            assert!(step.contains("tighter than the smallest"), "{name}: {step}");
+        }
+        // An inequality form passes when the values differ by more than the
+        // tolerance, so tightening it is the wrong advice (Devin, #12248).
+        for name in [
+            "assert_abs_diff_ne",
+            "approx::assert_relative_ne",
+            "::approx::assert_ulps_ne",
+        ] {
+            let step = super::macro_witness_next_step(name);
+            assert!(
+                step.contains("differ by more than the tolerance"),
+                "{name}: {step}"
+            );
+            assert!(
+                step.contains("changed value would fall inside"),
+                "{name}: {step}"
+            );
+            assert!(
+                !step.contains("tighter than the smallest"),
+                "{name}: {step}"
+            );
+        }
+        // Everything else keeps its previous wording, including look-alikes.
+        let custom = "Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.";
+        for name in [
+            "assert_result",
+            "check_eq",
+            "my::assert_relative_eq_all",
+            "assert_approx",
+        ] {
+            assert_eq!(super::macro_witness_next_step(name), custom, "{name}");
+        }
+        assert!(
+            super::macro_witness_next_step("proptest::prop_assert_eq")
+                .starts_with("Inspect the property assertion macro's definition")
+        );
+    }
+
     #[test]
     fn only_a_plain_literal_expected_value_is_independent_of_the_owner() {
         for attribute in [
@@ -1112,9 +1246,10 @@ mod tests {
 
     use super::{
         apply_cross_language_limit, apply_rust_macro_wrapped_assertion_limit,
-        apply_wrapper_error_binding_limit, attr_is_ffi_binding, cross_language_limit_kind,
-        generates_assertion, is_known_rust_assertion_macro, is_unresolved_assertion_like_macro,
-        owner_has_ffi_attr, unresolved_assertion_macro_invocations,
+        apply_wrapper_error_binding_limit, assertion_macro_import_aliases, attr_is_ffi_binding,
+        cross_language_limit_kind, generates_assertion, is_known_rust_assertion_macro,
+        is_unresolved_assertion_like_macro, owner_has_ffi_attr,
+        unresolved_assertion_macro_invocations, unresolved_assertion_macro_invocations_among,
     };
     use crate::analysis::facts::{
         CallFact, FunctionSourceRole, FunctionSummary, LiteralFact, RustIndex, TestSummary,
@@ -1258,6 +1393,30 @@ mod tests {
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn assertion_import_aliases_read_plain_and_braced_renames_only() {
+        let source = "use claims::assert_ok_eq as ok_eq;\nuse claims::{assert_err, assert_some as some, helper as h};\nuse other::check as ck;\n// use claims::assert_none as commented;\nconst S: &str = \"use claims::assert_ok as quoted;\";\nfn note() { let user = 1; }\n";
+        assert_eq!(
+            assertion_macro_import_aliases(source),
+            vec!["ok_eq".to_string(), "some".to_string()]
+        );
+        assert!(assertion_macro_import_aliases("use claims::assert_ok_eq;").is_empty());
+        assert!(assertion_macro_import_aliases("use claims::assert_ok_eq as _;").is_empty());
+    }
+
+    #[test]
+    fn an_alias_is_named_only_when_the_import_binds_it() {
+        let body = "ok_eq!(owner(1), 2);\nother!(owner(1), 2);\n";
+        let aliases = vec!["ok_eq".to_string()];
+        let named: Vec<String> =
+            unresolved_assertion_macro_invocations_among(body, 10, None, &[], &aliases)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect();
+        assert_eq!(named, vec!["ok_eq".to_string()]);
+        assert!(unresolved_assertion_macro_invocations(body, 10, None).is_empty());
     }
 
     #[test]

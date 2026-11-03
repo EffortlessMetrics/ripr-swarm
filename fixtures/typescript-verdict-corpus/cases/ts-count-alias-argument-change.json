@@ -1,0 +1,44 @@
+{
+  "case_id": "ts-count-alias-argument-change",
+  "subject_id": "authored-ts-count-alias",
+  "diff": "cases/ts-count-alias-argument-change.diff",
+  "anchor": {
+    "file": "src/notify.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "call_argument",
+  "test_shape": "node_mock_alias",
+  "hard_case": "A count-only equality cannot see the changed call argument; the argument pin is the control.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test test/notify.test.ts",
+    "toolchain": "Node v24.19.0; node:test built in; full authored package run for the original, equivalent rewrite and wrong argument",
+    "mutants": [
+      {
+        "replacement": "sender.send(id + 1);",
+        "mutated_line": "sender.send(id + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: sends 5 instead of 8 for id=4"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The recorded argument distinguishes the edit; a count remains one in both executions.",
+  "labeling_observation": {
+    "ripr_commit": "1818f481c279b84634c32ee19e9c23d199459967",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

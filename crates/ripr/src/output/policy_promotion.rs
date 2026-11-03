@@ -223,7 +223,7 @@ pub(crate) fn render_policy_promotion_json(
         "non_goals": report.non_goals,
         "limits_note": LIMITS_NOTE,
     }))
-    .map_err(|err| format!("failed to render policy promotion JSON: {err}"))
+    .map_err(|err| format!("failed to render policy promotion JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_policy_promotion_markdown(report: &PolicyPromotionReport) -> String {

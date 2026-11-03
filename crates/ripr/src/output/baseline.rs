@@ -100,7 +100,7 @@ pub(crate) fn baseline_create_report_from_gate_decision_json(
     json_text: &str,
 ) -> Result<BaselineCreateReport, String> {
     let value = serde_json::from_str::<Value>(json_text)
-        .map_err(|err| format!("parse gate-decision JSON failed: {err}"))?;
+        .map_err(|err| format!("parse gate-decision JSON failed: {err}; regenerate the input with the command that wrote it, then rerun"))?;
     baseline_create_report_from_gate_decision_value(source_report, created_at, &value)
 }
 
@@ -119,7 +119,7 @@ pub(crate) fn baseline_create_report_from_check_json(
     json_text: &str,
 ) -> Result<BaselineCreateReport, String> {
     let value = serde_json::from_str::<Value>(json_text)
-        .map_err(|err| format!("parse check JSON failed: {err}; run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"))?;
+        .map_err(|err| format!("parse check JSON failed: {err}; run `ripr check --candidate-tree $(git rev-parse HEAD^{{tree}}) --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"))?;
     let decisions = check_findings_as_decisions(&value)?;
     let projected = json!({
         "schema_version": SCHEMA_VERSION,
@@ -153,14 +153,14 @@ fn check_findings_as_decisions(check: &Value) -> Result<Vec<Value>, String> {
     let schema = check
         .get("schema_version")
         .and_then(Value::as_str)
-        .ok_or_else(|| "check JSON missing schema_version; run `ripr check --candidate-tree HEAD^{tree} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file".to_string())?;
+        .ok_or_else(|| "check JSON missing schema_version; run `ripr check --candidate-tree $(git rev-parse HEAD^{tree}) --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file".to_string())?;
     if check.get("tool").and_then(Value::as_str) != Some("ripr") {
         return Err(format!(
-            "input is not a `ripr check` JSON artifact (schema_version `{schema}`); run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"
+            "input is not a `ripr check` JSON artifact (schema_version `{schema}`); run `ripr check --candidate-tree $(git rev-parse HEAD^{{tree}}) --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"
         ));
     }
     let outcome = check.pointer("/analysis_outcome").ok_or_else(|| {
-        "check JSON carries no analysis_outcome, so completeness is not established; run `ripr check --candidate-tree HEAD^{tree} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file".to_string()
+        "check JSON carries no analysis_outcome, so completeness is not established; run `ripr check --candidate-tree $(git rev-parse HEAD^{tree}) --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file".to_string()
     })?;
     let kind = outcome.pointer("/outcome/kind").and_then(Value::as_str);
     let complete = outcome.get("analysis_complete").and_then(Value::as_bool) == Some(true);
@@ -171,7 +171,7 @@ fn check_findings_as_decisions(check: &Value) -> Result<Vec<Value>, String> {
         )
     {
         return Err(format!(
-            "check analysis outcome is `{}` (analysis_complete = {complete}), not a complete whole-repository run; a partial run would baseline only part of the repository; run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file",
+            "check analysis outcome is `{}` (analysis_complete = {complete}), not a complete whole-repository run; a partial run would baseline only part of the repository; run `ripr check --candidate-tree $(git rev-parse HEAD^{{tree}}) --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file",
             kind.unwrap_or("unknown")
         ));
     }
@@ -181,7 +181,7 @@ fn check_findings_as_decisions(check: &Value) -> Result<Vec<Value>, String> {
         || crate::output::gate::discloses_bounded_analysis_document(check)
     {
         return Err(format!(
-            "check artifact discloses a findings-budget-bounded document (a prefix of the findings, not the whole set), so a baseline from it would be incomplete; re-run with `{}=0` for the full set; run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file",
+            "check artifact discloses a findings-budget-bounded document (a prefix of the findings, not the whole set), so a baseline from it would be incomplete; re-run with `{}=0` for the full set; run `ripr check --candidate-tree $(git rev-parse HEAD^{{tree}}) --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file",
             crate::output::json::CHECK_FINDINGS_BYTES_ENV
         ));
     }
@@ -189,7 +189,7 @@ fn check_findings_as_decisions(check: &Value) -> Result<Vec<Value>, String> {
     // as an input in every position the run state is disclosed.
     if crate::output::gate::discloses_limited_partial_scope(check) {
         return Err(
-            "check artifact discloses a partial-scope run (limited_partial_scope), so a baseline from it would cover only part of the repository; run `ripr check --candidate-tree HEAD^{tree} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"
+            "check artifact discloses a partial-scope run (limited_partial_scope), so a baseline from it would cover only part of the repository; run `ripr check --candidate-tree $(git rev-parse HEAD^{tree}) --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file"
         .to_string());
     }
     let base_tree = outcome
@@ -197,14 +197,14 @@ fn check_findings_as_decisions(check: &Value) -> Result<Vec<Value>, String> {
         .and_then(Value::as_str);
     if !base_tree.is_some_and(|tree| EMPTY_TREE_IDS.contains(&tree)) {
         return Err(format!(
-            "check artifact is not a whole-repository run (candidate base tree is {}); a diff-scoped artifact would baseline only the slice it saw; run `ripr check --candidate-tree HEAD^{{tree}} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file",
+            "check artifact is not a whole-repository run (candidate base tree is {}); a diff-scoped artifact would baseline only the slice it saw; run `ripr check --candidate-tree $(git rev-parse HEAD^{{tree}}) --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file",
             base_tree.map_or_else(|| "absent".to_string(), |tree| format!("`{tree}`"))
         ));
     }
     let findings = check
         .get("findings")
         .and_then(Value::as_array)
-        .ok_or_else(|| "check JSON missing findings array; run `ripr check --candidate-tree HEAD^{tree} --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file".to_string())?;
+        .ok_or_else(|| "check JSON missing findings array; run `ripr check --candidate-tree $(git rev-parse HEAD^{tree}) --format json > check.json` (the candidate tree is compared with the empty tree) and pass that file".to_string())?;
     Ok(findings.iter().map(check_finding_as_decision).collect())
 }
 
@@ -246,17 +246,17 @@ fn baseline_create_report_from_gate_decision_value(
     let schema_version = value
         .get("schema_version")
         .and_then(Value::as_str)
-        .ok_or_else(|| "gate-decision JSON missing schema_version".to_string())?;
+        .ok_or_else(|| "gate-decision JSON missing schema_version; regenerate the input with the command that wrote it, then rerun".to_string())?;
     if schema_version != SCHEMA_VERSION {
         return Err(format!(
-            "unsupported gate-decision schema_version `{schema_version}`; expected `{SCHEMA_VERSION}`"
+            "unsupported gate-decision schema_version `{schema_version}`; expected `{SCHEMA_VERSION}`; regenerate the input with the command that wrote it, then rerun"
         ));
     }
 
     let decisions = value
         .get("decisions")
         .and_then(Value::as_array)
-        .ok_or_else(|| "gate-decision JSON missing decisions array".to_string())?;
+        .ok_or_else(|| "gate-decision JSON missing decisions array; regenerate the input with the command that wrote it, then rerun".to_string())?;
     let mode = string_field(value.get("mode")).unwrap_or_else(|| "unknown".to_string());
     let root = string_field(value.get("root"));
     let subject_analyzer_version = string_field(value.pointer("/subject/analyzer_version"));
@@ -354,7 +354,7 @@ pub(crate) fn render_baseline_create_json(report: &BaselineCreateReport) -> Resu
         "warnings": report.warnings,
         "limits_note": LIMITS_NOTE,
     }))
-    .map_err(|err| format!("failed to render gate baseline JSON: {err}"))
+    .map_err(|err| format!("failed to render gate baseline JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn baseline_entry_count(report: &BaselineCreateReport) -> usize {
@@ -746,7 +746,7 @@ mod tests {
             assert!(error.contains(needle), "{name}: {error}");
             if name != "not json" {
                 assert!(
-                    error.contains("--candidate-tree HEAD^{tree}"),
+                    error.contains("--candidate-tree $(git rev-parse HEAD^{tree})"),
                     "{name}: {error}"
                 );
             }
@@ -1094,7 +1094,7 @@ mod tests {
         );
         assert_eq!(
             err,
-            Err("unsupported gate-decision schema_version `9.9`; expected `0.1`".to_string())
+            Err("unsupported gate-decision schema_version `9.9`; expected `0.1`; regenerate the input with the command that wrote it, then rerun".to_string())
         );
     }
 }

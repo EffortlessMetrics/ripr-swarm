@@ -78,7 +78,7 @@ pub(crate) fn render_swarm_ingest_json(
     root: &Path,
 ) -> Result<String, String> {
     let value: Value = serde_json::from_str(result_json)
-        .map_err(|err| format!("failed to parse swarm ingest result JSON: {err}"))?;
+        .map_err(|err| format!("failed to parse swarm ingest result JSON: {err}; regenerate the input with the command that wrote it, then rerun"))?;
     let facts = swarm_ingest_facts(&value, root);
     let classification = classify_swarm_result(&facts);
     let rendered = serde_json::json!({

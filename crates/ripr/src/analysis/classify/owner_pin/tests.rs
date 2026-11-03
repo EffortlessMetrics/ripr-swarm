@@ -676,6 +676,9 @@ fn unit_struct_value_admits_only_spellings_nothing_else_can_bind() {
         // #7083 round 5: one spelling in a macro body declares a struct per
         // invocation.
         "macro_rules! unit { () => { pub struct Other; }; }\nfn n() -> u32 {\n    Unit.advance()\n}\n",
+        // #7160: an out-of-workspace item macro may emit a rival value without
+        // naming it in the invocation arguments.
+        "other::make_unit!();\n",
     ] {
         assert!(!decide(rival), "{rival}");
     }
@@ -707,6 +710,76 @@ fn unit_struct_value_admits_only_spellings_nothing_else_can_bind() {
         Path::new(LIB),
         &foreign,
         &foreign_syntax
+    ));
+}
+
+/// #8782: a bare variant names the owner's enum value only when exactly one
+/// non-aliased `use` of that enum's glob or of the variant brings it in, the
+/// enum has one declaration, and nothing else can bind the spelling.
+#[test]
+fn imported_enum_variant_value_admits_only_the_single_unambiguous_import() {
+    const ENUM: &str = "pub enum Rule {\n    None,\n    Upper,\n    Tagged(u32),\n}\n";
+    let decide = |name: &str, test_file: &str| {
+        let index = index(&[(HELPERS, ENUM), (LIB, test_file)]);
+        imported_enum_variant_value(name, "Rule", Path::new(LIB), &index)
+    };
+    let glob = "use crate::Rule::*;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n";
+    assert!(decide("Upper", glob));
+    assert!(decide(
+        "Upper",
+        "use crate::Rule::Upper;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    // A prelude spelling, a tuple variant and an unknown name are refused.
+    assert!(!decide("None", glob));
+    assert!(!decide("Tagged", glob));
+    assert!(!decide("Missing", glob));
+    // No import, an aliased import, a second import and a macro are refused.
+    assert!(!decide(
+        "Upper",
+        "#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::Upper as Top;\n#[test]\nfn t() {}\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\nuse crate::Rule::Upper;\n#[test]\nfn t() {}\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\nuse other::Upper;\n#[test]\nfn t() {}\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\nmacro_rules! m { () => {}; }\n#[test]\nfn t() {}\n"
+    ));
+    // A local item of the same spelling shadows the glob.
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\n#[test]\nfn t() { let Upper = 1; }\n"
+    ));
+    // A second glob (file-wide use scan) or a same-named parameter keeps the
+    // spelling ambiguous.
+    assert!(!decide(
+        "Upper",
+        "use std::cmp::Ordering::*;\nuse crate::Rule::*;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\n#[test]\nfn t(Upper: u32) { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\n#[test]\nfn t() { let f = |Upper| Upper; f(1); }\n"
+    ));
+    // Two declarations of the enum make it ambiguous.
+    let two = index(&[(HELPERS, ENUM), (LIB, glob), ("src/other.rs", ENUM)]);
+    assert!(!imported_enum_variant_value(
+        "Upper",
+        "Rule",
+        Path::new(LIB),
+        &two
     ));
 }
 
@@ -3084,6 +3157,16 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
     ] {
         assert_eq!(value(items, body, operand), None, "{body}");
     }
+    // #8928: the paired control — holder init with no interior-mutable token
+    // in the initializer text stays admitted (documented under-credit limit).
+    assert_eq!(
+        value(
+            "struct Counter(AtomicUsize);\nimpl Counter {\n    fn new(n: u32) -> Self {\n        Counter(AtomicUsize::new(n * 3))\n    }\n}\nstatic EXPECTED: Counter = Counter::new(weight(4));",
+            "assert_eq!(weight(4), EXPECTED.0);",
+            "EXPECTED"
+        ),
+        Some("Counter::new(weight(4))".to_string())
+    );
 }
 
 #[test]
@@ -5474,6 +5557,162 @@ fn a_withheld_crate_roots_private_glob_is_routed_by_root() {
 }
 
 #[test]
+fn a_withheld_unparsable_sibling_disables_crate_root_routing() {
+    let packages = BTreeSet::from(["core".to_string()]);
+    let mut withheld = WithheldMacroBindings::default();
+    let root = Path::new("e/src/lib.rs");
+    assert!(!withheld.absorb(
+        root,
+        "use proptest::prelude::*;",
+        &packages,
+        &Default::default()
+    ));
+    assert!(
+        withheld
+            .by_root
+            .get(root)
+            .is_some_and(|names| names.contains("assert_eq"))
+    );
+    withheld.disable_crate_root_routing();
+    assert!(withheld.by_root.is_empty());
+    assert!(withheld.trusted.contains("assert_eq"));
+}
+
+#[test]
+fn a_withheld_first_glob_cannot_certify_field_macro_safety() {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let mut withheld = WithheldMacroBindings::default();
+    assert!(withheld.absorb(
+        Path::new("loose.rs"),
+        "use other::*;\n#[macro_use] extern crate exporter;\n",
+        &BTreeSet::new(),
+        &Default::default(),
+    ));
+    assert!(matches!(
+        withheld.sites.get("assert_eq").map(|(_, site)| &site.kind),
+        Some(MacroBindingKind::ForeignGlob(_))
+    ));
+    let syntax = OwnerPinSyntax::default().with_withheld(withheld);
+    assert!(
+        syntax
+            .field_blocking_macro_site(index.tests().at(0), 3, "assert_eq", &index)
+            .is_some()
+    );
+}
+
+#[test]
+fn unchanged_index_reuse_refreshes_a_warmed_field_macro_blocker() -> Result<(), String> {
+    use crate::analysis::facts::{
+        build_analysis_index_from_loaded_files, index_build_probe,
+        reuse_cached_index_with_loaded_files,
+    };
+    let manifest = "[package]\nname='consumer'\nversion='0.0.0'\nedition='2024'\n[dev-dependencies]\nother={path='target/other'}\n";
+    let no_dependency = "[package]\nname='consumer'\nversion='0.0.0'\nedition='2024'\n";
+    let exporter = "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\n";
+    let production = "pub fn value() -> u32 { 8 }\n";
+    let test_source = "#[macro_use] extern crate other;\n#[test]\nfn pins() { assert_eq!(consumer::value(), 8); }\n";
+    let root = crate::analysis::facts::drop_in::temp_workspace(
+        "field-macro-reuse",
+        &[
+            ("Cargo.toml", manifest),
+            ("src/lib.rs", production),
+            ("tests/pin.rs", test_source),
+            (
+                "target/other/Cargo.toml",
+                "[package]\nname='other'\nversion='0.0.0'\n",
+            ),
+            ("target/other/src/lib.rs", ""),
+        ],
+    )?;
+    let files = vec![
+        (PathBuf::from("src/lib.rs"), production.as_bytes().to_vec()),
+        (
+            PathBuf::from("tests/pin.rs"),
+            test_source.as_bytes().to_vec(),
+        ),
+    ];
+    let mut cached = build_analysis_index_from_loaded_files(&root, &files, &[])?;
+    let blocked = |index: &RustIndex| {
+        assert_eq!(index.tests().len(), 1, "the query must reach a real test");
+        index
+            .call_identity_memos
+            .receiver_pin_syntax
+            .field_blocking_macro_site(index.tests().at(0), 3, "assert_eq", index)
+            .is_some_and(|(_, site)| matches!(site.kind, MacroBindingKind::MacroUseExport { .. }))
+    };
+    assert!(!blocked(&cached.index));
+    assert_eq!(cached.index.call_identity_memos.receiver_scan_passes(), 1);
+    for (source, selected_manifest, expected) in [
+        (exporter, manifest, true),
+        (exporter, no_dependency, false),
+        (exporter, manifest, true),
+        ("", manifest, false),
+    ] {
+        std::fs::write(root.join("target/other/src/lib.rs"), source)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("Cargo.toml"), selected_manifest)
+            .map_err(|error| error.to_string())?;
+        // Do not clone: CallIdentityMemos::clone already clears its memos.
+        // The unchanged-files return itself must revoke the warmed scan.
+        let (reused, builds) = index_build_probe::observe(|| {
+            reuse_cached_index_with_loaded_files(cached, &root, &files, &[])
+        });
+        cached = reused?;
+        assert_eq!(builds, 0);
+        assert_eq!(blocked(&cached.index), expected);
+        assert_eq!(cached.index.call_identity_memos.receiver_scan_passes(), 1);
+        assert_eq!(cached.index.files().len(), files.len());
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn a_nested_src_bin_main_target_does_not_reach_integration_tests() {
+    let tests = r#"use demo::weight;
+#[test]
+fn weighs() { assert_eq!(weight(4), 12); }
+"#;
+    let main = (
+        "src/bin/tool/main.rs",
+        r#"#[macro_use]
+extern crate bencher;
+fn main() {}
+"#,
+    );
+    assert_eq!(
+        weight_refusal(tests, &[main]),
+        None,
+        "a nested binary root must confine its macro site"
+    );
+    let main_with_module = (
+        "src/bin/tool/main.rs",
+        r#"mod cli;
+#[macro_use]
+extern crate bencher;
+fn main() {}
+"#,
+    );
+    let cli = ("src/bin/tool/cli.rs", "pub fn run() {}\n");
+    assert_eq!(
+        weight_refusal(tests, &[main_with_module, cli]),
+        None,
+        "sibling modules under the nested binary root must not look like roots"
+    );
+    let files = vec![(LIB, WEIGHT_LIB), (TESTS, tests), main_with_module, cli];
+    let index = index(&files);
+    assert_eq!(
+        TargetRoots::new(&index).root(Path::new("src/bin/tool/main.rs"), &index),
+        Some(PathBuf::from("src/bin/tool/main.rs"))
+    );
+    assert_eq!(
+        TargetRoots::new(&index).root(Path::new("src/bin/tool/cli.rs"), &index),
+        Some(PathBuf::from("src/bin/tool/main.rs"))
+    );
+}
+
+#[test]
 fn a_crate_local_binding_in_another_target_does_not_reach_the_test() {
     let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
     // humantime's `benches/datetime_format.rs`: a bench is its own crate.
@@ -5955,6 +6194,28 @@ fn a_definition_confined_to_an_inline_module_refuses_only_tests_inside_it() {
     assert_eq!(weight_refusal(&after, &[]), None);
 }
 
+/// #5695: a sibling inline `mod` whose scoped import shares the test's line
+/// must not refuse the neighboring `#[test]`.
+#[test]
+fn a_same_line_sibling_module_import_does_not_refuse_sibling_test() {
+    let outside = "use demo::weight;\nmod helper { use other::assert_eq; } #[test] fn checks() { assert_eq!(weight(4), 12); }\n";
+    assert_eq!(
+        weight_refusal(outside, &[]),
+        None,
+        "same-line sibling import must not taint the test"
+    );
+    let inside = "use demo::weight;\nmod helper { use other::assert_eq; #[test] fn inner() { assert_eq!(weight(4), 12); } }\n";
+    assert!(
+        matches!(
+            weight_refusal(inside, &[]),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        ),
+        "nested test inside helper must stay refused"
+    );
+}
+
 #[test]
 fn a_private_import_confined_to_an_inline_module_refuses_only_tests_inside_it() {
     let outside = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
@@ -6347,6 +6608,59 @@ fn a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit() {
     }
 }
 
+/// #11543: a model-checking runner's closure is a limit of ripr's reading,
+/// never a shape that can keep the assertion from running, so it must not
+/// read as a test gap. Local closures stay real refusals.
+#[test]
+fn a_model_check_closure_is_an_analyzer_limit_and_other_closures_are_not() {
+    let refusal = |body: &str| {
+        weight_refusal(
+            &format!("use demo::weight;\n#[test]\nfn weighs() {{\n{body}\n}}\n"),
+            &[],
+        )
+    };
+    let pin = "assert_eq!(weight(4), 12);";
+    for runner in [
+        "loom::model(|| { PIN })",
+        "::loom::model(|| { PIN });",
+        "shuttle::check_random(|| { PIN }, 100);",
+        "shuttle::check_dfs(|| { PIN }, None);",
+    ] {
+        let body = runner.replace("PIN", pin);
+        let found = refusal(&body);
+        assert_eq!(
+            found,
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::ModelCheckClosure
+            )),
+            "{body}"
+        );
+        assert!(
+            found.is_some_and(|found| found.is_analyzer_limit()),
+            "{body}"
+        );
+    }
+    // Not a runner: a closure handed to an unknown function, a method named
+    // `model`, or a closure that is not the runner's first argument keeps the
+    // real-gap reading.
+    for runner in [
+        "run_it(|| { PIN });",
+        "loom.model(|| { PIN });",
+        "other::model(|| { PIN });",
+        "shuttle::check_random(100, || { PIN });",
+        "shuttle::replay(|| { PIN });",
+    ] {
+        let body = runner.replace("PIN", pin);
+        let found = refusal(&body);
+        assert!(
+            found
+                .as_ref()
+                .is_some_and(|found| !found.is_analyzer_limit()),
+            "{body}: {found:?}"
+        );
+    }
+}
+
 #[test]
 fn each_refusal_names_the_gate_that_failed() {
     let refusal = |body: &str, attrs: &str| {
@@ -6543,7 +6857,10 @@ fn a_macro_binding_refusal_points_at_its_site() {
     assert_eq!(site.line, 3);
     assert_eq!(
         site.kind,
-        MacroBindingKind::MacroUse("extern crate other;".to_string())
+        MacroBindingKind::ExternMacroUse {
+            item: "extern crate other;".to_string(),
+            krate: "other".to_string(),
+        }
     );
     assert_eq!(
         refusal.as_ref().map(AssertionRefusal::describe).as_deref(),
@@ -8108,6 +8425,112 @@ fn a_bare_assert_pins_a_bool_owner_to_true_or_false() {
     }
 }
 
+const BOOL_METHOD_LIB: &str = "pub struct Person { pub age: u32 }\n\nimpl Person {\n    pub fn is_adult(&self) -> bool {\n        self.age >= 18\n    }\n}\n";
+
+#[test]
+fn bool_owner_assert_pins_method_receiver_and_qualified_path_like_assert_eq() -> Result<(), String>
+{
+    let tests = "use demo::Person;\n\n#[test]\nfn pins() {\n    assert!(Person { age: 19 }.is_adult());\n    assert_eq!(Person { age: 19 }.is_adult(), true);\n    assert!(!Person { age: 17 }.is_adult());\n}\n";
+    let index = index(&[(LIB, BOOL_METHOD_LIB), (TESTS, tests)]);
+    let owner = owner(&index, "is_adult");
+    let pin = OwnerReturnPin::establish(&return_probe(owner, "self.age >= 18"), owner, &index)
+        .ok_or("bool method owner must establish a pin")?;
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec![
+            "assert!(Person { age: 19 }.is_adult());".to_string(),
+            "assert_eq!(Person { age: 19 }.is_adult(), true);".to_string(),
+            "assert!(!Person { age: 17 }.is_adult());".to_string(),
+        ]
+    );
+
+    let root = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-bool-9092",
+        &[
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"agecheck\", \"panel\"]\n",
+            ),
+            (
+                "agecheck/Cargo.toml",
+                "[package]\nname = \"agecheck\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "panel/Cargo.toml",
+                "[package]\nname = \"panel\"\nversion = \"0.1.0\"\n\n[dependencies]\nagecheck = { path = \"../agecheck\" }\n",
+            ),
+        ],
+    )?;
+    let lib = "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n";
+    let integration = "#[test]\nfn pins() {\n    assert!(agecheck::is_adult(18));\n    assert_eq!(agecheck::is_adult(18), true);\n    assert!(!agecheck::is_adult(17));\n}\n";
+    let mut index = RustIndex::default();
+    for (path, text) in [
+        ("agecheck/src/lib.rs", lib),
+        ("panel/src/lib.rs", "//! panel\n"),
+        ("panel/tests/integration.rs", integration),
+    ] {
+        let facts = summarize_file(PathBuf::from(path), text.to_string());
+        index.extend_functions(facts.functions.iter().cloned());
+        index.extend_tests(facts.tests.iter().cloned());
+        index.insert_file_only(PathBuf::from(path), facts);
+    }
+    index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root);
+    crate::analysis::facts::compose_fixture_source_roles(&mut index, &root);
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| {
+            function.name == "is_adult" && function.file == Path::new("agecheck/src/lib.rs")
+        })
+        .ok_or("cross-crate owner")?;
+    let pin = OwnerReturnPin::establish(&return_probe(owner, "age >= 18"), owner, &index)
+        .ok_or("cross-crate bool owner must establish a pin")?;
+    let syntax = OwnerPinSyntax::default();
+    let test = index.tests().at(0);
+    let admitted: Vec<_> = test
+        .assertions
+        .iter()
+        .filter(|assertion| {
+            pin.admits(
+                test,
+                assertion,
+                &index,
+                &|file, name| {
+                    index.files().get(file).is_some_and(|facts| {
+                        file_imports_foreign_callee_name(&facts.source, name, &index.package_names)
+                    })
+                },
+                &syntax,
+            )
+        })
+        .map(|assertion| assertion.text.clone())
+        .collect();
+    assert_eq!(
+        admitted,
+        vec![
+            "assert!(agecheck::is_adult(18));".to_string(),
+            "assert_eq!(agecheck::is_adult(18), true);".to_string(),
+            "assert!(!agecheck::is_adult(17));".to_string(),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn bool_owner_assert_refuses_disjunction_and_mutable_reassignment() {
+    const GATE2_LIB: &str = "pub fn gate(value: u32) -> bool {\n    value >= 18\n}\n";
+    let tests = "use demo::gate;\n\n#[test]\nfn weak() {\n    assert!(gate(19) || gate(17));\n    let mut hit = gate(19);\n    hit = gate(17);\n    assert!(hit);\n    assert_eq!(gate(19), true);\n}\n";
+    let index = index(&[(LIB, GATE2_LIB), (TESTS, tests)]);
+    let owner = owner(&index, "gate");
+    let pin = OwnerReturnPin::establish(&return_probe(owner, "value >= 18"), owner, &index);
+    assert!(pin.is_some());
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(gate(19), true);".to_string()]
+    );
+}
+
 #[test]
 fn a_bare_assert_pins_nothing_on_a_non_bool_owner() {
     let tests = "use demo::level;\n\n#[test]\nfn pins() {\n    assert!(level(1));\n    assert_eq!(level(1), 11);\n}\n";
@@ -8161,6 +8584,7 @@ fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
                     line: 3,
                     kind,
                     scope: None,
+                    scope_bytes: None,
                     crate_local: false,
                     module_local: false,
                 },
@@ -8404,7 +8828,10 @@ fn the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site()
         only_may_rebind,
         Some((
             PathBuf::from("src/a.rs"),
-            MacroBindingKind::MacroUse("extern crate other;".to_string())
+            MacroBindingKind::ExternMacroUse {
+                item: "extern crate other;".to_string(),
+                krate: "other".to_string(),
+            }
         ))
     );
 }
@@ -8466,7 +8893,10 @@ fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
         site_kind(&only_macro_use),
         Some((
             PathBuf::from("src/other.rs"),
-            MacroBindingKind::MacroUse("extern crate other;".to_string())
+            MacroBindingKind::ExternMacroUse {
+                item: "extern crate other;".to_string(),
+                krate: "other".to_string(),
+            }
         ))
     );
     assert!(only_macro_use.is_some_and(|refusal| refusal.is_analyzer_limit()));
@@ -11363,6 +11793,7 @@ fn test_crate_bindings_of_the_root_are_read_from_that_crate_only() {
 }
 
 mod claims_direction;
+mod claims_import_scope;
 mod expect_test_pins;
 mod helper_pins;
 #[cfg(test)]
@@ -12996,6 +13427,157 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
     Ok(())
 }
 
+const REGISTRY: &str = "registry+https://github.com/rust-lang/crates.io-index";
+
+/// A `Cargo.lock` locking each `(name, version, source)`; an empty source is
+/// a workspace-local package, as Cargo writes it.
+fn lock_of(packages: &[(&str, &str, &str)]) -> String {
+    let mut lock = String::from("version = 4\n");
+    for (name, version, source) in packages {
+        lock.push_str(&format!(
+            "\n[[package]]\nname = \"{name}\"\nversion = \"{version}\"\n"
+        ));
+        if !source.is_empty() {
+            lock.push_str(&format!("source = \"{source}\"\n"));
+        }
+    }
+    lock
+}
+
+/// The refusal of the `weighs` assertion with `sibling` in the same crate,
+/// the manifest `dependencies` and, when given, a `Cargo.lock` beside it.
+fn prelude_refusal(
+    label: &str,
+    dependencies: &str,
+    lock: Option<&str>,
+    sibling: &str,
+) -> Result<Option<AssertionRefusal>, String> {
+    let manifest = format!(
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}"
+    );
+    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let mut files = vec![("Cargo.toml", manifest.as_str())];
+    if let Some(lock) = lock {
+        files.push(("Cargo.lock", lock));
+    }
+    let root = crate::analysis::facts::drop_in::temp_workspace(label, &files)?;
+    let mut index = index(&[
+        (LIB, WEIGHT_LIB),
+        ("src/prelude_user.rs", sibling),
+        (TESTS, tests),
+    ]);
+    index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&root);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.file == Path::new(TESTS))
+        .ok_or("the fixture test must be indexed")?;
+    let assertion = test
+        .assertions
+        .iter()
+        .find(|assertion| assertion.text.starts_with("assert_eq!(weight(4)"))
+        .ok_or("the fixture assertion must be indexed")?;
+    Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
+}
+
+fn prelude_rebound(refusal: Option<AssertionRefusal>) -> bool {
+    matches!(
+        refusal,
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    )
+}
+
+/// RIPR-SPEC-0369 (audited versions only): the glob keeps assertion credit
+/// only when the lockfile locks the crate exactly once, from the registry, at
+/// an audited version. Every other lock state keeps the pre-#11703 refusal.
+#[test]
+fn verification_prelude_globs_credit_only_audited_locked_versions() -> Result<(), String> {
+    let audited = [
+        (
+            "creusot-std",
+            "0.14.0",
+            "creusot_std",
+            "creusot-std = \"0.14\"\n",
+            "use creusot_std::prelude::*;\n",
+        ),
+        (
+            "vstd",
+            "0.0.0-2026-10-25-0158",
+            "vstd",
+            "vstd = \"0.0.0-2026-10-25-0158\"\n",
+            "use vstd::prelude::*;\n",
+        ),
+        (
+            "prusti-contracts",
+            "0.3.3",
+            "prusti",
+            "prusti-contracts = \"0.3\"\n",
+            "use prusti_contracts::*;\n",
+        ),
+    ];
+    for (name, version, label, dependencies, glob) in audited {
+        let at = |label: &str, lock: Option<String>| {
+            prelude_refusal(
+                &format!("audit-{label}"),
+                dependencies,
+                lock.as_deref(),
+                glob,
+            )
+        };
+        let locked = |version: &str, source: &str| lock_of(&[(name, version, source)]);
+        // Audited version from the registry credits.
+        assert_eq!(
+            at(&format!("{label}-ok"), Some(locked(version, REGISTRY)))?,
+            None,
+            "{name}"
+        );
+        // Workspace member of the same name (no registry source) refuses.
+        assert!(
+            prelude_rebound(at(&format!("{label}-member"), Some(locked(version, "")))?),
+            "{name} member"
+        );
+        // Git source refuses.
+        assert!(
+            prelude_rebound(at(
+                &format!("{label}-git"),
+                Some(locked(version, "git+https://example.invalid/p#abc"))
+            )?),
+            "{name} git"
+        );
+        // Newer, older and unknown versions refuse.
+        for other in ["99.0.0", "0.0.1", "0.14.1-alpha"] {
+            assert!(
+                prelude_rebound(at(
+                    &format!("{label}-{other}"),
+                    Some(locked(other, REGISTRY))
+                )?),
+                "{name} {other}"
+            );
+        }
+        // No lockfile, and a lockfile that does not lock the crate, refuse.
+        assert!(
+            prelude_rebound(at(&format!("{label}-nolock"), None)?),
+            "{name} no lock"
+        );
+        assert!(
+            prelude_rebound(at(
+                &format!("{label}-unlocked"),
+                Some(lock_of(&[("other", "1.0.0", REGISTRY)]))
+            )?),
+            "{name} unlocked"
+        );
+        // Several locked versions of the crate refuse, even with the audited one present.
+        let both = lock_of(&[(name, version, REGISTRY), (name, "99.0.0", REGISTRY)]);
+        assert!(
+            prelude_rebound(at(&format!("{label}-multi"), Some(both))?),
+            "{name} multiple"
+        );
+    }
+    Ok(())
+}
+
 /// RIPR-SPEC-0369: the verification preludes of creusot-std, vstd and
 /// prusti-contracts export no assertion macro, so an exact glob of one, beside a
 /// plain registry dependency on it, keeps the standard assertion's meaning. The
@@ -13004,41 +13586,15 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
 #[test]
 fn verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crates()
 -> Result<(), String> {
-    let manifest = |dependencies: &str| {
-        format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}")
+    let lock = lock_of(&[
+        ("creusot-std", "0.14.0", REGISTRY),
+        ("vstd", "0.0.0-2026-10-25-0158", REGISTRY),
+        ("prusti-contracts", "0.3.3", REGISTRY),
+    ]);
+    let refusal_under = |label: &str, dependencies: &str, sibling: &str| {
+        prelude_refusal(label, dependencies, Some(&lock), sibling)
     };
-    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
-    let refusal_under = |label: &str, dependencies: &str, sibling: &str| -> Result<_, String> {
-        let root = crate::analysis::facts::drop_in::temp_workspace(
-            label,
-            &[("Cargo.toml", &manifest(dependencies))],
-        )?;
-        let mut index = index(&[
-            (LIB, WEIGHT_LIB),
-            ("src/prelude_user.rs", sibling),
-            (TESTS, tests),
-        ]);
-        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&root);
-        let test = index
-            .tests()
-            .iter()
-            .find(|test| test.file == Path::new(TESTS))
-            .ok_or("the fixture test must be indexed")?;
-        let assertion = test
-            .assertions
-            .iter()
-            .find(|assertion| assertion.text.starts_with("assert_eq!(weight(4)"))
-            .ok_or("the fixture assertion must be indexed")?;
-        Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
-    };
-    let rebound = |refusal: Option<AssertionRefusal>| {
-        matches!(
-            refusal,
-            Some(AssertionRefusal::Syntax(
-                AssertionContextRefusal::MacroBinding(_)
-            ))
-        )
-    };
+    let rebound = prelude_rebound;
     let creusot = "creusot-std = \"0.14\"\n";
     let vstd = "vstd = \"0.0.0-2026-10-25-0158\"\n";
     let prusti = "prusti-contracts = \"0.3\"\n";
@@ -13358,6 +13914,24 @@ fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() 
     assert!(!imported("use float_cmp::approx_eq::other;\n"));
     assert!(!imported("use float_cmp::{inner::approx_eq};\n"));
     assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
+}
+
+/// The crate roots a file imports are read through any whitespace or comment
+/// between the keyword and the path, so a spelling cannot hide a glob import.
+#[test]
+fn imported_crate_roots_read_through_whitespace_and_comments() {
+    for source in [
+        "use mac::*;",
+        "use\tmac::*;",
+        "use\nmac::*;",
+        "use/* note */mac::*;",
+        "use /* note */ mac::*;",
+        "extern\ncrate\nmac;",
+    ] {
+        let mut roots = BTreeSet::new();
+        imported_crate_roots(source, &mut roots);
+        assert!(roots.contains("mac"), "{source:?}: {roots:?}");
+    }
 }
 
 #[test]

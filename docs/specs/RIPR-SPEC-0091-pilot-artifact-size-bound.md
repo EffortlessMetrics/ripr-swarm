@@ -23,6 +23,7 @@ Linked issues:
 - #1170 — `ripr pilot` writes ~400 MB artifacts for a one-file change
 - #5861 — repo-exposure guidance must name the pilot budget that actually fired
 - #7186 — packet guidance must name the cap that actually fired
+- #11951 — the pilot packet file is 2-4 MB of mostly static-limitation packets
 
 Linked PRs:
 
@@ -126,7 +127,14 @@ routes as repo-exposure. A configured but inactive pilot budget does not change
 that identity. When both independent caps fire, packet limitations name both
 cuts and controls, with the outer inventory total. Packet admission remains independent
 of cap attribution: `packets_total` equals the rendered `packets` array length,
-which may be smaller than `seams_analyzed`.
+which may be smaller than `seams_analyzed`, and, when the packet bound cuts,
+smaller than the eligible count in `limitations[].packets_eligible`.
+
+When the cut drops `write_targeted_test` packets (more of them than the
+bound), the `pilot_packet_bound_applied` limitation also carries
+`actionable_packets_omitted` and `actionable_packets_message`, so a reader
+does not take the file to list every repairable seam (#12064). A cut that only
+drops the `inspect_static_limitation` tail carries neither field.
 
 When neither cap is applied, `"run_status": "complete"` is emitted with no
 cap limitation (mirroring the existing `repo-exposure.json` contract from
@@ -221,6 +229,13 @@ renderer retains its existing admission filter.
    `0/2` retains that cut. Controls `1/0` and `1/2` disclose the pilot cut.
    Controls `0/0` recover full output with no stale cap limitation. Default
    and configured renderer cases pin literal guidance and filtered packet counts.
+7. **Packet bound (#11951)**: a pilot run with 471 packet-eligible seams, all
+   but a few `inspect_static_limitation`, writes an `agent-seam-packets.json`
+   of 3 packets (actionable first), `run_status: "packet_bound_applied"`, and
+   a `pilot_packet_bound_applied` limitation with `packets_emitted: 3`,
+   `packets_eligible: 471`, `control: "RIPR_PILOT_PACKET_BUDGET"`.
+   `RIPR_PILOT_PACKET_BUDGET=0` writes all 471. The `next` block and every
+   kept packet equal the uncut document's.
 6. **Budget via help**: `ripr pilot --help` output names `RIPR_PILOT_SEAM_BUDGET`
    with its default, opt-out value, and disclosure explanation.
 
@@ -232,6 +247,10 @@ renderer retains its existing admission filter.
 - `crates/ripr/src/output/repo_exposure.rs::tests::inventory_limit_routes_remain_unchanged` — default/configured inventory repair routes.
 - `crates/ripr/src/app/pr_summary/json.rs::tests::pilot_budget_disclosure_is_preserved_in_pr_summary` — the summary consumer preserves the repair route and names the pilot presentation cap.
 
+- `crates/ripr/src/output/agent_seam_packets.rs::tests::pilot_packet_bound_cuts_the_static_limitation_tail_and_discloses_it`
+- `crates/ripr/src/output/agent_seam_packets.rs::tests::pilot_packet_bound_is_absent_when_everything_fits_or_unbounded`
+- `crates/ripr/src/output/agent_seam_packets.rs::tests::pilot_packet_bound_keeps_other_run_status_and_limitations`
+- `crates/ripr/src/analysis/seam_inventory.rs::tests::pilot_packet_budget_resolves_default_configured_and_opt_out`
 - `crates/ripr/src/analysis/seam_inventory.rs::tests::pilot_seam_budget_default_constant_is_smaller_than_repo_exposure_cap`
 - `crates/ripr/src/analysis/seam_inventory.rs::tests::pilot_seam_budget_env_zero_parses_as_unbounded`
 - `crates/ripr/src/analysis/seam_inventory.rs::tests::apply_pilot_seam_budget_inner_truncates_when_above_limit`
@@ -264,6 +283,11 @@ cut that stands in for the budget remains a single budget limitation.
   then passes that context to both artifact renderers.
 - `crates/ripr/src/cli/help/core.rs` — adds `RIPR_PILOT_SEAM_BUDGET` documentation
   to `PILOT_HELP`.
+- `crates/ripr/src/analysis/seam_inventory.rs` — `PILOT_PACKET_BUDGET_ENV`,
+  `DEFAULT_PILOT_PACKET_BUDGET` (3) and `pilot_packet_budget` (#11951).
+- `crates/ripr/src/output/agent_seam_packets.rs` — `PacketBound`; the pilot
+  renderer keeps actionable packets first, cuts the tail and discloses it.
+  `ripr check --format agent-seam-packets-json` passes no bound.
 
 ## Metrics
 

@@ -1,6 +1,6 @@
 //! Related test candidate discovery for the TypeScript preview adapter.
 
-use super::tsconfig::{TsAliasMap, TsOutDirMap, load_out_dir_map};
+use super::tsconfig::{TsAliasMap, TsOutDirMap, config_file_declares_paths, load_out_dir_map};
 use super::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -145,12 +145,37 @@ impl ReExportIndex {
     /// `alias_map` is forwarded to `normalized_relative_import_module` so that
     /// tsconfig.json-aliased sources (e.g. `@/owner`) can be followed through
     /// re-exports when `resolve_tsconfig_paths` is enabled.
+    #[cfg(test)]
     pub(crate) fn build(
         workspace_files: &[PathBuf],
         sources: &HashMap<PathBuf, String>,
         workspace_root: &Path,
         alias_map: Option<&TsAliasMap>,
         is_test: impl Fn(&Path) -> bool,
+    ) -> Self {
+        Self::build_with_known_facts(
+            workspace_files,
+            sources,
+            workspace_root,
+            alias_map,
+            is_test,
+            &HashMap::new(),
+        )
+    }
+
+    /// [`Self::build`] with the export facts the caller already derived this
+    /// run. The process-lifetime facts cache clears itself at its entry bound,
+    /// so on a workspace larger than that bound a lookup here re-parses every
+    /// file the clear dropped (VS Code: ~3,300 of 5,300 files, 55 s on a warm
+    /// run). A `known` entry is the facts of exactly the source in `sources`,
+    /// from a clean parse; a file without one falls back to the cache.
+    pub(crate) fn build_with_known_facts(
+        workspace_files: &[PathBuf],
+        sources: &HashMap<PathBuf, String>,
+        workspace_root: &Path,
+        alias_map: Option<&TsAliasMap>,
+        is_test: impl Fn(&Path) -> bool,
+        known: &HashMap<PathBuf, ModuleExportFacts>,
     ) -> Self {
         let mut entries: HashMap<(String, String), (String, String)> = HashMap::new();
         let mut star_edges: HashSet<(String, String)> = HashSet::new();
@@ -191,12 +216,14 @@ impl ReExportIndex {
             // that file instead of every non-test source in the workspace.
             // Facts depend on the workspace root and the tsconfig alias map,
             // both carried by the cache key.
-            let Some(file_facts) = super::extraction_cache::export_facts_cached(
-                relative,
-                source.as_str(),
-                workspace_root,
-                alias_map,
-            ) else {
+            let Some(file_facts) = known.get(relative).cloned().or_else(|| {
+                super::extraction_cache::export_facts_cached(
+                    relative,
+                    source.as_str(),
+                    workspace_root,
+                    alias_map,
+                )
+            }) else {
                 indexed_modules.remove(&module);
                 continue;
             };
@@ -1403,6 +1430,14 @@ pub(crate) fn same_package_root(
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Full `related_test_candidates` scans run on this thread: one owner's
+    /// line context must cost exactly one.
+    pub(crate) static RELATED_CANDIDATE_SCANS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 /// Collect related test candidates for `owner` from `all_tests`.
 ///
 /// `workspace_root` enables package-local ownership filtering when `Some`:
@@ -1438,6 +1473,8 @@ pub(crate) fn related_test_candidates<'a>(
     alias_map: Option<&TsAliasMap>,
     relation_index: &RelationIndex,
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
+    #[cfg(test)]
+    RELATED_CANDIDATE_SCANS.with(|count| count.set(count.get() + 1));
     let package_scope = workspace_root.map(|root| OwnerPackageScope::new(&owner.file, root));
     let in_owner_package = |test: &&TypeScriptTest| {
         package_scope
@@ -3804,7 +3841,7 @@ fn import_source_resolution(
     }
 }
 
-fn owner_name_shadowed_by_unrelated_import(
+pub(crate) fn owner_name_shadowed_by_unrelated_import(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
     alias_map: Option<&TsAliasMap>,
@@ -3939,6 +3976,74 @@ pub(crate) fn import_source_matches_owner(
         == ImportSourceResolution::OwnerModule
 }
 
+/// `true` when the importer lives under a nearer `tsconfig.json` /
+/// `jsconfig.json` that declares its own `compilerOptions.paths` (with or
+/// without `baseUrl` — TS 4.1+, #12760) and that config is NOT the workspace
+/// root one: the single root alias map must then be withheld for that
+/// importer, or it could credit the wrong owner (#12754 slice).
+///
+/// The walk starts at the importer's directory and climbs toward `root`
+/// (bounded, `MAX_NEARER_CONFIG_HOPS`); the nearest directory holding a
+/// declaring conventional config wins. A declaring root config — or no
+/// declaring config at all — keeps today's root fallback exactly. `extends`
+/// is not followed, `references` not consulted, and cross-directory bases
+/// not rebased: full per-config resolution remains out of scope.
+///
+/// Memoized for one analysis run beside the other resolver answers; outside
+/// a [`DirectoryModuleCacheScope`] every call probes afresh so no answer
+/// outlives the run that computed it.
+fn importer_has_nearer_paths_config(root: &Path, importer: &Path) -> bool {
+    // The verdict depends only on the importer's directory, so the run memo
+    // is keyed by it: every file in one directory shares one walk instead of
+    // re-reading the same configs per file.
+    let absolute = if importer.is_absolute() {
+        importer.to_path_buf()
+    } else {
+        root.join(importer)
+    };
+    let dir = absolute
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.to_path_buf());
+    run_memoized(
+        &(root.to_path_buf(), dir.clone()),
+        |cache| &mut cache.nearer_paths_withhold,
+        || nearer_paths_withhold_uncached(root, &dir),
+    )
+}
+
+/// Maximum directories climbed from the importer toward the workspace root
+/// looking for the nearest `paths`-declaring config.
+const MAX_NEARER_CONFIG_HOPS: usize = 32;
+
+fn nearer_paths_withhold_uncached(root: &Path, dir: &Path) -> bool {
+    // The importer is not under `root`: no nearer in-root config can own it,
+    // so the root map still applies. Check this before probing any config so
+    // an out-of-root (or differently spelled) directory is never treated as
+    // a nested config owner.
+    if dir.strip_prefix(root).is_err() {
+        return false;
+    }
+    let mut dir = dir.to_path_buf();
+    for _ in 0..MAX_NEARER_CONFIG_HOPS {
+        let ts_config = dir.join("tsconfig.json");
+        let js_config = dir.join("jsconfig.json");
+        let declares = (ts_config.is_file() && config_file_declares_paths(&ts_config))
+            || (js_config.is_file() && config_file_declares_paths(&js_config));
+        if declares {
+            return dir != root;
+        }
+        if dir == root {
+            return false;
+        }
+        let Some(parent) = dir.parent().map(Path::to_path_buf) else {
+            return false;
+        };
+        dir = parent;
+    }
+    false
+}
+
 /// Resolve an import specifier relative to `test_file` to a normalized module
 /// path string (no extension, forward-slash separated).
 ///
@@ -4023,7 +4128,19 @@ pub(crate) fn normalized_relative_import_module(
     // Non-relative specifier — consult alias map if available.
     let alias_map = alias_map?;
     let root = workspace_root?;
-    let _ = root; // root is captured by alias_map already
+    // Wrong-owner safeguard (#12754 slice): when the importer lives under a
+    // nearer config that declares its own `compilerOptions.paths`, the root
+    // map is not that importer's owner — withhold it for a specifier the
+    // root map would otherwise claim, and stay unresolved (the existing
+    // `typescript_path_alias_unresolved` gap discloses the miss). Root
+    // fallback is unchanged when no nearer config declares `paths`, and a
+    // specifier no root key owns still falls through to workspace packages.
+    if alias_map.has_tsconfig()
+        && alias_map.paths_key_matches(source)
+        && importer_has_nearer_paths_config(root, test_file)
+    {
+        return None;
+    }
     let resolved_path = run_cached_alias_resolution(alias_map, source)?;
     // Normalize the resolved workspace-relative path to a module string.
     let normalized = normalized_path(&resolved_path);
@@ -4117,6 +4234,10 @@ struct RunResolverCache {
     config_directories: HashMap<(PathBuf, bool), Option<bool>>,
     /// Tracked `*.snap` files per analysis root (`None`: unknown).
     tracked_snapshots: HashMap<PathBuf, Option<std::sync::Arc<HashSet<String>>>>,
+    /// Wrong-owner safeguard verdicts (#12754 slice), keyed by
+    /// `(workspace root, importer directory)`: `true` when the
+    /// importer lives under a nearer `paths`-declaring config.
+    nearer_paths_withhold: HashMap<(PathBuf, PathBuf), bool>,
     /// Per-body shadow indexes (#10925), keyed by the body text itself so a
     /// hit can never answer for different source. Bounded by
     /// `MAX_RUN_SHADOW_INDEXES`; past it bodies fall back to the exact
@@ -5078,11 +5199,16 @@ pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> Body
     let scopes = walk_body_lexical(body_text, |event| match event {
         BodyWalkEvent::DeclarationLine {
             line,
-            name_start,
+            line_start,
             scope,
         } => {
-            if declaration_line_declares_identifier(line, identifier) {
-                declarations.push(BodyDeclaration { name_start, scope });
+            for (name, offset) in declaration_line_declarators(line) {
+                if name == identifier {
+                    declarations.push(BodyDeclaration {
+                        name_start: line_start + offset,
+                        scope,
+                    });
+                }
             }
         }
         BodyWalkEvent::CodePosition { idx } => {
@@ -5115,11 +5241,17 @@ pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> Body
 
 /// An identifier-independent event from [`walk_body_lexical`].
 pub(super) enum BodyWalkEvent<'a> {
-    /// A line-leading `const|let|var|function` declaration line.
-    /// `name_start` is the first non-blank offset after the keyword.
+    /// A `const|let|var|function` declaration at a statement position: the
+    /// start of the body or the first token after a `{`, `}` or `;` (or a
+    /// line start, or a multi-line comment). `line` runs from the keyword to
+    /// the end of its physical line, continued over following lines while the
+    /// line ends in a top-level comma, so it may span several statements
+    /// (`const a = 1; const f = 2;`); a consumer reads each declarator up to
+    /// the first top-level `;`.
     DeclarationLine {
         line: &'a str,
-        name_start: usize,
+        /// Byte offset of `line` within the walked body.
+        line_start: usize,
         scope: Option<usize>,
     },
     /// A byte offset the walk visited in plain code (not a comment, string
@@ -5129,7 +5261,8 @@ pub(super) enum BodyWalkEvent<'a> {
 
 /// The conservative lexer shared by the per-identifier scan and the
 /// per-body shadow index (#10925): one definition of comments, strings,
-/// templates, brace scopes and line-start declarations, with the identifier
+/// templates, brace scopes and statement-position declarations (after `{`, `}`
+/// or `;`, not only at a line start), with the identifier
 /// left to the visitor. `DeclarationLine` fires before `CodePosition` for the
 /// same offset. Returns the scope table (see [`BodyLexicalScan::scopes`]).
 pub(super) fn walk_body_lexical<'a>(
@@ -5145,11 +5278,18 @@ pub(super) fn walk_body_lexical<'a>(
     // Depths whose closing `}` returns the walk from a template
     // interpolation (which opened a pseudo-scope) to its template literal.
     let mut interpolation_returns: Vec<usize> = Vec::new();
-    let mut at_line_start = true;
+    let mut at_declaration_start = true;
     let mut escaped = false;
     let mut pending_dollar = false;
     let mut block_comment_has_newline = false;
+    let mut comment_opened_at_statement_start = false;
+    let mut skip_comment_close_slash = false;
     for (idx, ch) in body_text.char_indices() {
+        if skip_comment_close_slash {
+            // The `/` of a closing `*/` is part of the comment, not code.
+            skip_comment_close_slash = false;
+            continue;
+        }
         if escaped {
             escaped = false;
             continue;
@@ -5160,16 +5300,21 @@ pub(super) fn walk_body_lexical<'a>(
         }
         if ch == '\n' {
             match state {
-                BodyScanState::LineComment => state = BodyScanState::Code,
+                BodyScanState::LineComment => {
+                    // The newline ends the comment and starts a statement
+                    // line (ASI), exactly as in plain code.
+                    state = BodyScanState::Code;
+                    at_declaration_start = true;
+                }
                 BodyScanState::SingleQuoted | BodyScanState::DoubleQuoted => {
                     // Unterminated string: recover instead of mis-scoping the
                     // remainder of the body.
                     state = BodyScanState::Code;
-                    at_line_start = true;
+                    at_declaration_start = true;
                 }
                 BodyScanState::BlockComment => block_comment_has_newline = true,
                 BodyScanState::Template => pending_dollar = false,
-                BodyScanState::Code => at_line_start = true,
+                BodyScanState::Code => at_declaration_start = true,
             }
             continue;
         }
@@ -5177,14 +5322,21 @@ pub(super) fn walk_body_lexical<'a>(
             BodyScanState::Code => match ch {
                 c if c.is_whitespace() => {}
                 '/' if body_text[idx + 1..].starts_with('/') => state = BodyScanState::LineComment,
-                '/' if body_text[idx + 1..].starts_with('*') => state = BodyScanState::BlockComment,
+                '/' if body_text[idx + 1..].starts_with('*') => {
+                    state = BodyScanState::BlockComment;
+                    comment_opened_at_statement_start = at_declaration_start;
+                    block_comment_has_newline = false;
+                }
                 '\'' => state = BodyScanState::SingleQuoted,
                 '"' => state = BodyScanState::DoubleQuoted,
                 '`' => state = BodyScanState::Template,
                 '{' => {
                     scopes.push((idx, usize::MAX));
                     open_scopes.push(scopes.len() - 1);
-                    at_line_start = false;
+                    // A `{` opens a statement position: a declaration that
+                    // follows on the SAME line (`test('x', () => { function f()
+                    // {...} ...`) binds exactly like one on its own line.
+                    at_declaration_start = true;
                 }
                 '}' => {
                     if interpolation_returns.last() == Some(&open_scopes.len()) {
@@ -5195,62 +5347,60 @@ pub(super) fn walk_body_lexical<'a>(
                     } else if let Some(frame) = open_scopes.pop() {
                         scopes[frame].1 = idx;
                     }
-                    at_line_start = false;
+                    // A `}` ends a statement/block, so a same-line declaration
+                    // after it is a statement start too.
+                    at_declaration_start = true;
+                }
+                ';' => {
+                    visit(BodyWalkEvent::CodePosition { idx });
+                    at_declaration_start = true;
                 }
                 _ => {
-                    if at_line_start
-                        && let Some(keyword) = ["const ", "let ", "var ", "function "]
+                    if at_declaration_start
+                        && ["const ", "let ", "var ", "function "]
                             .into_iter()
-                            .find(|keyword| body_text[idx..].starts_with(*keyword))
+                            .any(|keyword| body_text[idx..].starts_with(keyword))
                     {
-                        let line_end = body_text[idx..]
-                            .find('\n')
-                            .map_or(body_text.len(), |relative| idx + relative);
-                        // Skip the declaration's own name token when
-                        // collecting uses (leading whitespace after the
-                        // keyword included).
-                        let name_start = body_text[idx + keyword.len()..]
-                            .char_indices()
-                            .find(|(_, ch)| !ch.is_whitespace())
-                            .map_or(idx + keyword.len(), |(relative, _)| {
-                                idx + keyword.len() + relative
-                            });
+                        let line_end = declaration_extent_end(body_text, idx);
                         visit(BodyWalkEvent::DeclarationLine {
                             line: &body_text[idx..line_end],
-                            name_start,
+                            line_start: idx,
                             scope: open_scopes.last().copied(),
                         });
                     }
                     visit(BodyWalkEvent::CodePosition { idx });
-                    at_line_start = false;
+                    at_declaration_start = false;
                 }
             },
             BodyScanState::LineComment => {}
             BodyScanState::BlockComment => {
                 if ch == '*' && body_text[idx + 1..].starts_with('/') {
-                    // A multi-line comment counts as a statement break for the
-                    // line-start check (ASI), so a declaration following it is
-                    // still recognized as leading its line.
+                    // Preserve a preceding statement boundary and recognize
+                    // a declaration following a multiline comment (ASI).
                     state = BodyScanState::Code;
-                    at_line_start = block_comment_has_newline;
+                    skip_comment_close_slash = true;
+                    // A same-line comment is transparent: it keeps the
+                    // statement position it opened at (`; /* n */ const f`).
+                    at_declaration_start =
+                        block_comment_has_newline || comment_opened_at_statement_start;
                 }
             }
             BodyScanState::SingleQuoted => {
                 if ch == '\'' {
                     state = BodyScanState::Code;
-                    at_line_start = false;
+                    at_declaration_start = false;
                 }
             }
             BodyScanState::DoubleQuoted => {
                 if ch == '"' {
                     state = BodyScanState::Code;
-                    at_line_start = false;
+                    at_declaration_start = false;
                 }
             }
             BodyScanState::Template => {
                 if ch == '`' {
                     state = BodyScanState::Code;
-                    at_line_start = false;
+                    at_declaration_start = false;
                     pending_dollar = false;
                 } else if ch == '$' {
                     pending_dollar = true;
@@ -5269,15 +5419,39 @@ pub(super) fn walk_body_lexical<'a>(
     scopes
 }
 
-fn declaration_line_declares_identifier(line: &str, identifier: &str) -> bool {
-    declaration_line_declared_names(line).contains(&identifier)
+/// End of the declaration starting at `idx`: its line, continued over the
+/// following lines while the (masked) line ends in a top-level comma, because
+/// `const unused = 0,\n  total = () => 30;` declares `total` on a later line.
+fn declaration_extent_end(body_text: &str, idx: usize) -> usize {
+    let mut end = body_text[idx..]
+        .find('\n')
+        .map_or(body_text.len(), |relative| idx + relative);
+    while end < body_text.len() {
+        let masked = super::classifier::ts_mask_literals_and_comments(&body_text[idx..end]);
+        if !masked.trim_end().ends_with(',') {
+            break;
+        }
+        // The cut sits on the newline; the next line ends at its own newline.
+        end = body_text[end + 1..]
+            .find('\n')
+            .map_or(body_text.len(), |relative| end + 1 + relative);
+    }
+    end
 }
 
-/// Every name a declaration line declares through a PLAIN declarator;
+fn declaration_line_declares_identifier(line: &str, identifier: &str) -> bool {
+    declaration_line_declarators(line)
+        .iter()
+        .any(|(name, _)| *name == identifier)
+}
+
+/// Every name a declaration declares through a PLAIN declarator, with the byte
+/// offset of the declarator's name within `line`.
 /// `declaration_line_declares_identifier` is membership in this list, and the
 /// per-body shadow index (#10925) reads it once per line instead of once per
-/// candidate identifier.
-pub(super) fn declaration_line_declared_names(line: &str) -> Vec<&str> {
+/// candidate identifier. The offset keeps a declarator's own name from
+/// counting as a use of itself, including a non-first declarator.
+pub(super) fn declaration_line_declarators(line: &str) -> Vec<(&str, usize)> {
     // #7507: every PLAIN declarator of the list counts, not just the first:
     // `const x = 1, cost = (a) => 140` rebinds `cost` exactly like a
     // single-declarator `const cost = ...`. Destructuring patterns
@@ -5289,48 +5463,83 @@ pub(super) fn declaration_line_declared_names(line: &str) -> Vec<&str> {
     // would collapse an owner-module-anchored destructure into a shadow.
     ["const ", "let ", "var ", "function "]
         .into_iter()
-        .filter_map(|keyword| line.strip_prefix(keyword))
-        .flat_map(|after| {
+        .filter_map(|keyword| line.strip_prefix(keyword).map(|after| (keyword, after)))
+        .flat_map(|(keyword, after)| {
             // A pattern-led declaration (`{ cost } = ...`, `[cost] = ...`)
             // belongs to the source-aware destructure checks, not here.
             if after.trim_start().starts_with(['{', '[']) {
                 return Vec::new();
             }
+            // A declaration ends at its first top-level semicolon: a comma in
+            // the next statement on the same line declares nothing here.
+            let after = &after[..top_level_semicolon(after)];
+            // Comments are blanked so a `// note` between continued declarators
+            // is never read as a name; the masking keeps byte offsets.
+            let Some(masked) = super::tests_extract::byte_preserving_code_mask(after) else {
+                return Vec::new();
+            };
             split_top_level_declarators(after)
                 .into_iter()
                 .filter_map(|declarator| {
+                    // `declarator` is a subslice of `after`.
+                    let start = declarator.as_ptr() as usize - after.as_ptr() as usize;
+                    let code = masked.get(start..start + declarator.len())?;
                     // A declarator whose own pattern opens a destructuring
                     // (`x = 1, { cost } = h`) is source-aware too; only a
                     // plain leading identifier counts here. Cut at `(` as
                     // well so a `function price(a) {` declarator is not
                     // mistaken for a destructuring because of its body brace.
-                    let pattern = declarator
-                        .split(['=', ':', '('])
-                        .next()
-                        .unwrap_or("")
-                        .trim();
+                    let pattern = code.split(['=', ':', '(']).next().unwrap_or("").trim();
                     if pattern.starts_with(['{', '[']) {
                         return None;
                     }
-                    declarator
-                        .split(|ch: char| {
-                            ch == ':' || ch == '=' || ch == '(' || ch == ';' || ch.is_whitespace()
-                        })
-                        .find(|part| !part.is_empty())
+                    let is_separator = |ch: char| {
+                        ch == ':' || ch == '=' || ch == '(' || ch == ';' || ch.is_whitespace()
+                    };
+                    let name_start = code.find(|ch: char| !is_separator(ch))?;
+                    let name_len = code[name_start..]
+                        .find(is_separator)
+                        .unwrap_or(code.len() - name_start);
+                    let name = declarator.get(name_start..name_start + name_len)?;
+                    Some((name, keyword.len() + start + name_start))
                 })
                 .collect::<Vec<_>>()
         })
         .collect()
 }
 
+/// Byte offset of the first top-level `;` in `after`, or its length.
+fn top_level_semicolon(after: &str) -> usize {
+    // Byte-preserving, so a multibyte character in a string or comment keeps
+    // the returned offset valid for `after`.
+    let Some(masked) = super::tests_extract::byte_preserving_code_mask(after) else {
+        return after.len();
+    };
+    let mut depth = 0usize;
+    for (offset, ch) in masked.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => return offset,
+            _ => {}
+        }
+    }
+    after.len()
+}
+
 /// Split a `const|let|var` declaration remainder (`x = 1, cost = f, ...`)
 /// on top-level commas, so commas inside `()`, `[]`, `{}`, strings,
 /// templates and regexes never split a declarator.
 fn split_top_level_declarators(after: &str) -> Vec<&str> {
-    let masked = super::classifier::ts_mask_literals_and_comments(after);
+    // Byte-preserving, so offsets taken from the mask are valid slice
+    // boundaries of `after` even with multibyte characters in literals.
+    let Some(masked) = super::tests_extract::byte_preserving_code_mask(after) else {
+        return vec![after.trim()];
+    };
     let mut parts = Vec::new();
     let mut depth = 0usize;
     let mut start = 0usize;
+    let mut end = after.len();
     for (offset, c) in masked.char_indices() {
         match c {
             '(' | '[' | '{' => depth += 1,
@@ -5339,10 +5548,16 @@ fn split_top_level_declarators(after: &str) -> Vec<&str> {
                 parts.push(after[start..offset].trim());
                 start = offset + 1;
             }
+            // The declaration statement ends at a top-level `;`; a later
+            // comma expression (`; void 0, f(100)`) is not another declarator.
+            ';' if depth == 0 => {
+                end = offset;
+                break;
+            }
             _ => {}
         }
     }
-    parts.push(after[start..].trim());
+    parts.push(after[start..end].trim());
     parts.into_iter().filter(|part| !part.is_empty()).collect()
 }
 
@@ -5516,6 +5731,51 @@ mod spread_call_boundary_tests {
             let actual = contains_call_name(text, "steps");
             if actual != expected {
                 return Err(format!("{text}: expected call={expected}, got {actual}"));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod same_line_shadow_tests {
+    use super::local_identifier_declared_in_test_body;
+
+    #[test]
+    fn same_line_declarations_shadow_like_multiline_ones() -> Result<(), String> {
+        let shadows = [
+            "() => { function f(n) { return false; } expect(f(100)).toBe(false); }",
+            "() => { let f = (n) => false; expect(f(100)).toBe(false); }",
+            "() => { const f = function(n) { return false; }; expect(f(100)).toBe(false); }",
+            "() => { const a = 1; const f = () => false; expect(f(100)).toBe(false); }",
+            "() => {\n  function f(n) {\n return false; }\n  expect(f(100)).toBe(false);\n}",
+            // A same-line block comment keeps the statement position.
+            "() => { const a = 1; /* note */ const f = () => false; expect(f(100)).toBe(false); }",
+            "() => { /* a\n b */ /* c */ const f = () => false; expect(f(100)).toBe(false); }",
+        ];
+        for body in shadows {
+            if !local_identifier_declared_in_test_body(body, "f") {
+                return Err(format!("expected a shadow of f in: {body}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn same_line_declaration_in_another_block_or_name_does_not_shadow() -> Result<(), String> {
+        let clear = [
+            // Declared in a sibling block that closed before the use.
+            "() => { { function f() { return 1; } } expect(f(100)).toBe(true); }",
+            // A different name sharing a prefix.
+            "() => { function fx(n) { return false; } expect(f(100)).toBe(true); }",
+            // A comma expression after the statement is not a declarator.
+            "() => { const a = 1; void 0, f(100); expect(f(100)).toBe(90); }",
+            // The name only appears as a member and in a string.
+            "() => { const o = { f: 1 }; expect(f(100)).toBe(true); const s = 'function f()'; }",
+        ];
+        for body in clear {
+            if local_identifier_declared_in_test_body(body, "f") {
+                return Err(format!("unexpected shadow of f in: {body}"));
             }
         }
         Ok(())
@@ -5748,6 +6008,271 @@ mod module_extension_tests {
         if resolved == "src/cart" {
             return Err(format!(
                 "a different modern module must not resolve to the cart owner module {resolved}"
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod nested_config_withhold_tests {
+    //! Wrong-owner safeguard slice of #12754: the workspace-root alias map
+    //! must be withheld for an importer whose nearest `tsconfig.json` /
+    //! `jsconfig.json` declares its own `paths` (with or without `baseUrl` —
+    //! TS 4.1+, #12760). No expect/unwrap: every fallible step maps its error
+    //! into the `String` verdict (no-panic-family policy).
+    use super::super::tsconfig::load_alias_map;
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(label: &str) -> Result<PathBuf, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("system time: {err}"))?
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-ts-withhold-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("create_dir_all({}): {err}", dir.display()))?;
+        Ok(dir)
+    }
+
+    fn write(root: &Path, name: &str, content: &str) -> Result<(), String> {
+        let path = root.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("create_dir_all({}): {err}", parent.display()))?;
+        }
+        std::fs::write(&path, content).map_err(|err| format!("write({}): {err}", path.display()))
+    }
+
+    fn cleanup(root: &Path) {
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Shared disagreeing-config fixture: root `paths {"@/*": ["shared/*"]}`
+    /// plus `packages/a` with its own `paths {"@/*": [...]}` and a
+    /// same-named `owner.ts` in both trees.
+    fn disagreeing_fixture(nested_config_body: &str) -> Result<PathBuf, String> {
+        let root = temp_dir("disagree")?;
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["shared/*"]}}}"#,
+        )?;
+        write(&root, "shared/owner.ts", "export function owner() {}")?;
+        write(&root, "packages/a/tsconfig.json", nested_config_body)?;
+        write(
+            &root,
+            "packages/a/src/owner.ts",
+            "export function owner() {}",
+        )?;
+        write(
+            &root,
+            "packages/a/src/consumer.test.ts",
+            "import { owner } from '@/owner';\ntest('uses owner', () => { owner(); });\n",
+        )?;
+        Ok(root)
+    }
+
+    /// A nested config WITH `baseUrl` declaring the same `@/*` key must
+    /// withhold the root map: `@/owner` from package a stays unresolved
+    /// instead of crediting the root `shared/owner` file.
+    #[test]
+    fn root_map_withheld_under_nested_config_with_base_url() -> Result<(), String> {
+        let root = disagreeing_fixture(
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        match resolved {
+            Some(module) if module == "packages/a/src/owner" => Err(
+                "full per-package resolution is out of scope: the safeguard withholds, never remaps"
+                    .to_string(),
+            ),
+            Some(module) => Err(format!(
+                "@/owner from package a must not resolve through the root map, got {module} (wrong owner)"
+            )),
+            None => Ok(()),
+        }
+    }
+
+    /// A nested config with `paths` but NO `baseUrl` still declares (TS 4.1+,
+    /// #12760: `./`-relative templates resolve against the declaring config),
+    /// so the withhold applies there too — no reintroduced `baseUrl`
+    /// requirement.
+    #[test]
+    fn root_map_withheld_under_nested_config_without_base_url() -> Result<(), String> {
+        let root = disagreeing_fixture(r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#)?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        // Absolute importer spelling exercises the same walk as the
+        // workspace-relative one.
+        let importer = root.join("packages/a/src/consumer.test.ts");
+        let resolved =
+            normalized_relative_import_module(&importer, "@/owner", Some(&map), Some(&root));
+        cleanup(&root);
+        match resolved {
+            Some(module) if module == "packages/a/src/owner" => Err(
+                "full per-package resolution is out of scope: the safeguard withholds, never remaps"
+                    .to_string(),
+            ),
+            Some(module) => Err(format!(
+                "@/owner from package a must not resolve through the root map, got {module} (wrong owner)"
+            )),
+            None => Ok(()),
+        }
+    }
+
+    /// Root fallback is exactly today's behavior when no nearer config
+    /// declares `paths`: no nested config at all, a nested config without
+    /// `paths`, and an importer that does not live under the nested config.
+    #[test]
+    fn root_map_applies_without_nested_paths_declaration() -> Result<(), String> {
+        // Case 1: no nested config — the classic single-root shape.
+        let root = temp_dir("single-root")?;
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["shared/*"]}}}"#,
+        )?;
+        write(&root, "shared/owner.ts", "export function owner() {}")?;
+        write(
+            &root,
+            "packages/a/src/consumer.test.ts",
+            "import { owner } from '@/owner';\n",
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        if resolved.as_deref() != Some("shared/owner") {
+            return Err(format!(
+                "single-root shape must resolve through the root map, got {resolved:?}"
+            ));
+        }
+
+        // Case 2: a nested config that declares no `paths` changes nothing.
+        let root = temp_dir("nested-no-paths")?;
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["shared/*"]}}}"#,
+        )?;
+        write(&root, "shared/owner.ts", "export function owner() {}")?;
+        write(
+            &root,
+            "packages/a/tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","strict":true}}"#,
+        )?;
+        write(
+            &root,
+            "packages/a/src/consumer.test.ts",
+            "import { owner } from '@/owner';\n",
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        if resolved.as_deref() != Some("shared/owner") {
+            return Err(format!(
+                "a nested config without paths must keep the root fallback, got {resolved:?}"
+            ));
+        }
+
+        // Case 3: the importer lives at the root while a nested config
+        // disagrees elsewhere — the nearest declaring config is the root one.
+        let root = disagreeing_fixture(
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        )?;
+        write(
+            &root,
+            "tests/root.test.ts",
+            "import { owner } from '@/owner';\n",
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("tests/root.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        if resolved.as_deref() != Some("shared/owner") {
+            return Err(format!(
+                "a root-level importer must keep the root fallback, got {resolved:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The withhold is scoped to root-claimed non-relative specifiers: a
+    /// relative import from under a disagreeing nested config still resolves
+    /// lexically.
+    #[test]
+    fn relative_imports_unaffected_under_nested_config() -> Result<(), String> {
+        let root = disagreeing_fixture(
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "./owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        if resolved.as_deref() != Some("packages/a/src/owner") {
+            return Err(format!(
+                "a relative import must resolve lexically despite the nested config, got {resolved:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The withhold never fires for an importer outside the workspace root:
+    /// no nested in-root config can own it, so the root fallback applies even
+    /// when the importer's own directory declares `paths`.
+    #[test]
+    fn outside_root_importer_keeps_root_fallback() -> Result<(), String> {
+        let root = disagreeing_fixture(
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        )?;
+        // A directory outside the workspace root with its own declaring
+        // config; the importer lives there, not under `root`.
+        let outside = temp_dir("outside-root")?;
+        write(
+            &outside,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            &outside.join("src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        cleanup(&outside);
+        if resolved.as_deref() != Some("shared/owner") {
+            return Err(format!(
+                "an importer outside the root must keep the root fallback, got {resolved:?}"
             ));
         }
         Ok(())

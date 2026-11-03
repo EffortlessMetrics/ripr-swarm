@@ -103,6 +103,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "reports ci-summary",
     "reports gap-ledger",
     "reports index",
+    "reports kani",
     "reports ts-false-actionable",
     "reports ts-limitations",
     "rerun",
@@ -183,6 +184,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         | "reports ci-summary"
         | "reports gap-ledger"
         | "reports index"
+        | "reports kani"
         | "reports ts-false-actionable"
         | "reports ts-limitations" => REPORTS_HELP,
         "rerun" => RERUN_HELP,
@@ -903,9 +905,9 @@ mod tests {
     fn check_short_help_advertises_quiet_json_and_lean_route() {
         let short = super::CHECK_HELP_SHORT;
         assert!(short.contains("--json --quiet"));
-        assert!(short.contains("--json alone still prints progress"));
+        assert!(short.contains("--json on a pipe is already quiet"));
         let full = CHECK_HELP.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(full.contains("agents and scripts reading json should pass it"));
+        assert!(full.contains("`RIPR_PROGRESS=1` restores it"));
         assert!(
             !short.contains("--json alone silences"),
             "short help must not claim --json disables progress"
@@ -929,6 +931,7 @@ mod tests {
         assert!(CHECK_HELP.contains("--quiet"));
         assert!(CHECK_HELP.contains("ripr progress:"));
         assert!(CHECK_HELP.contains("percentage or ETA"));
+        assert!(CHECK_HELP.contains("processed_<n>_of_<total>"));
         assert!(CHECK_HELP.contains("does not mean analysis is faster"));
         assert!(CHECK_HELP.contains("json, sarif, github"));
         assert!(!CHECK_HELP.contains("json, sarif, markdown"));
@@ -941,7 +944,7 @@ mod tests {
         // #5065: CI authors who only read `--help` must not treat findings as
         // a nonzero lint. The typed contract is docs/EXIT_CODES.md.
         assert!(CHECK_HELP.contains("`exposed`"));
-        assert!(CHECK_HELP.contains("`weakly_exposed`"));
+        assert!(CHECK_HELP.contains("or weak"));
         assert!(CHECK_HELP.contains("A non-zero exit means the analysis did not"));
         assert!(CHECK_HELP.contains("`ripr gate evaluate`"));
         assert!(CHECK_HELP.contains("exit 3 on `blocked`"));
@@ -1013,6 +1016,7 @@ mod tests {
         assert!(INIT_HELP.starts_with("Write an optional repo policy file"));
         assert!(INIT_HELP.contains("Usage: ripr init"));
         assert!(INIT_HELP.contains("--ci github"));
+        assert!(INIT_HELP.contains("--ci gitlab") || INIT_HELP.contains("github|gitlab"));
         assert!(INIT_HELP.contains("--dry-run"));
         assert!(INIT_HELP.contains("--force"));
         // --force resets ripr.toml only for plain `ripr init`; with --ci/--mcp
@@ -1443,6 +1447,8 @@ mod tests {
     const DOCTOR_PARSER_RS: &str = include_str!("commands/doctor.rs");
     const GATE_PARSER_RS: &str = include_str!("commands/gate.rs");
     const INIT_PARSER_RS: &str = include_str!("commands/init.rs");
+    const KANI_REPORT_PARSER_RS: &str = include_str!("commands/kani_report.rs");
+    const LSP_PARSER_RS: &str = include_str!("commands/lsp.rs");
     const PILOT_PARSER_RS: &str = include_str!("commands/pilot.rs");
     const BASELINE_PARSER_RS: &str = include_str!("commands/baseline.rs");
     const CACHE_PARSER_RS: &str = include_str!("commands/cache.rs");
@@ -1460,6 +1466,9 @@ mod tests {
     const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("../app/impacted_evidence.rs");
     const RIPR_PLUS_PARSER_RS: &str = include_str!("../app/ripr_plus.rs");
     const FIRST_PR_PARSER_RS: &str = include_str!("../output/first_pr/options.rs");
+    const ASSISTANT_LOOP_PARSER_RS: &str = include_str!("commands/assistant_loop.rs");
+    const FIRST_ACTION_PARSER_RS: &str = include_str!("commands/first_action.rs");
+    const REPORTS_NAV_PARSER_RS: &str = include_str!("commands/reports.rs");
 
     /// Each registered command path and the function(s) in its parser source
     /// that accept argv flags.
@@ -1526,12 +1535,12 @@ mod tests {
         ),
         (
             "assistant-loop health",
-            CLI_COMMANDS_RS,
+            ASSISTANT_LOOP_PARSER_RS,
             &["parse_assistant_loop_health_options"],
         ),
         (
             "assistant-loop proof",
-            CLI_COMMANDS_RS,
+            ASSISTANT_LOOP_PARSER_RS,
             &["parse_assistant_loop_proof_options"],
         ),
         (
@@ -1601,7 +1610,7 @@ mod tests {
         ),
         (
             "first-action",
-            CLI_COMMANDS_RS,
+            FIRST_ACTION_PARSER_RS,
             &["parse_first_action_options"],
         ),
         ("first-pr", FIRST_PR_PARSER_RS, &["parse_options"]),
@@ -1612,7 +1621,7 @@ mod tests {
             &["run_impacted_evidence", "parse_options"],
         ),
         ("init", INIT_PARSER_RS, &["parse_init_options"]),
-        ("lsp", CLI_COMMANDS_RS, &["lsp_with_serve"]),
+        ("lsp", LSP_PARSER_RS, &["lsp_with_serve"]),
         ("mcp", MCP_PARSER_RS, &["run"]),
         ("outcome", CLI_COMMANDS_RS, &["parse_outcome_options"]),
         ("pilot", PILOT_PARSER_RS, &["parse_pilot_options"]),
@@ -1719,22 +1728,23 @@ mod tests {
         ),
         (
             "reports gap-ledger",
-            CLI_COMMANDS_RS,
+            REPORTS_NAV_PARSER_RS,
             &["parse_gap_decision_ledger_options"],
         ),
         (
             "reports index",
-            CLI_COMMANDS_RS,
+            REPORTS_NAV_PARSER_RS,
             &["parse_report_packet_index_options"],
         ),
+        ("reports kani", KANI_REPORT_PARSER_RS, &["parse_options"]),
         (
             "reports ts-false-actionable",
-            CLI_COMMANDS_RS,
+            REPORTS_NAV_PARSER_RS,
             &["parse_typescript_false_actionable_options"],
         ),
         (
             "reports ts-limitations",
-            CLI_COMMANDS_RS,
+            REPORTS_NAV_PARSER_RS,
             &["parse_typescript_limitations_options"],
         ),
         ("rerun", RERUN_PARSER_RS, &["parse_options"]),
@@ -2148,7 +2158,7 @@ fn parse_demo<'a>(xs: &'a str) {
     /// `*_suggests_the_nearest_flag_for_a_typo` in `commands/context.rs`,
     /// `commands/check.rs`, `commands/doctor.rs`, `commands/pilot.rs`,
     /// `commands/config.rs`, `commands/receipt.rs`, `commands/review_comments.rs`,
-    /// `commands.rs`, and
+    /// `commands/lsp.rs`, `commands.rs`, and
     /// `agent.rs`. The suggestion scoping tests in `suggest.rs` pin which of
     /// those flags belong to which sibling of a shared help body. Tightening
     /// this scanner to scrutinee position without a real Rust parser would

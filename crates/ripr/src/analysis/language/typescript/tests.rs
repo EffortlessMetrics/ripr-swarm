@@ -4222,7 +4222,7 @@ fn typescript_preview_weak_oracle_guidance_keeps_broad_error_advisory() -> Resul
         .as_deref()
         .ok_or_else(|| "expected recommended next step".to_string())?;
     assert!(
-        recommended.contains("broad error evidence does not establish missing discriminator")
+        recommended.contains("broad error evidence does not establish the missing check")
             && recommended.contains("no actionable repair packet is emitted"),
         "expected broad-error advisory recommendation, got {recommended:?}"
     );
@@ -4231,6 +4231,53 @@ fn typescript_preview_weak_oracle_guidance_keeps_broad_error_advisory() -> Resul
         "broad error preview guidance should not ask for an exact-value assertion: {recommended:?}"
     );
     Ok(())
+}
+
+/// #12124: the default check screen prints this text as the Next step, so
+/// every oracle kind names the gap as "the missing check" and none leaks the
+/// internal term; the packet boundary sentence stays.
+#[test]
+fn weak_oracle_recommendation_uses_plain_words_for_every_kind() {
+    for kind in [
+        OracleKind::Snapshot,
+        OracleKind::SmokeOnly,
+        OracleKind::BroadError,
+        OracleKind::ExactValue,
+    ] {
+        let recommended = weak_oracle_recommendation(&kind, "amount == threshold", None);
+        assert!(
+            recommended.contains("the missing check `amount == threshold`"),
+            "{kind:?}: {recommended}"
+        );
+        assert!(
+            !recommended.to_lowercase().contains("discriminator"),
+            "{kind:?}: {recommended}"
+        );
+        assert!(
+            recommended.contains("no actionable repair packet is emitted"),
+            "{kind:?}: {recommended}"
+        );
+    }
+    // Mock expectations have their own two wordings (no payload / payload).
+    for payload in [None, Some("toHaveBeenCalledWith(5)")] {
+        let recommended = weak_oracle_recommendation(
+            &OracleKind::MockExpectation,
+            "amount == threshold",
+            payload,
+        );
+        assert!(
+            recommended.contains("`amount == threshold`"),
+            "{recommended}"
+        );
+        assert!(
+            !recommended.to_lowercase().contains("discriminator"),
+            "{payload:?}: {recommended}"
+        );
+        assert!(
+            recommended.contains("no actionable repair packet is emitted"),
+            "{payload:?}: {recommended}"
+        );
+    }
 }
 
 #[test]
@@ -4274,7 +4321,7 @@ fn typescript_preview_weak_oracle_guidance_distinguishes_mock_payload_limits() -
         .as_deref()
         .ok_or_else(|| "expected recommended next step".to_string())?;
     assert!(
-        recommended.contains("mock payloads are not yet a safe discriminator"),
+        recommended.contains("mock payloads are not yet a safe check"),
         "expected mock-payload recommendation, got {recommended:?}"
     );
     assert!(
@@ -7626,6 +7673,191 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
         &RelationIndex::empty(),
     );
     assert_eq!(paths, vec!["./api".to_string()]);
+    // The line context projects the mock paths from the candidates it already
+    // computed: one relation scan per owner (#10925), and the same paths the
+    // standalone collector derives by scanning again.
+    assert!(
+        !related_test_candidates(
+            &owner,
+            &tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            &RelationIndex::empty()
+        )
+        .is_empty(),
+        "fixture must relate at least one test"
+    );
+    let before = related_tests::RELATED_CANDIDATE_SCANS.with(|count| count.get());
+    let context = owner_line_context(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        &RelationIndex::empty(),
+        None,
+    );
+    let scans = related_tests::RELATED_CANDIDATE_SCANS.with(|count| count.get()) - before;
+    assert_eq!(scans, 1, "owner_line_context must scan candidates once");
+    assert_eq!(context.mock_paths, paths);
+    // The workspace-root branch also runs the unresolved-ownership scan; it
+    // must enumerate through the relation index, not a second candidate scan.
+    let root = PathBuf::from("/ripr-no-such-workspace");
+    let before = related_tests::RELATED_CANDIDATE_SCANS.with(|count| count.get());
+    let rooted = owner_line_context(
+        &owner,
+        &tests,
+        Some(root.as_path()),
+        &ReExportIndex::empty(),
+        &RelationIndex::empty(),
+        None,
+    );
+    let scans = related_tests::RELATED_CANDIDATE_SCANS.with(|count| count.get()) - before;
+    assert_eq!(
+        scans, 1,
+        "rooted owner_line_context must scan candidates once"
+    );
+    assert_eq!(rooted.mock_paths, paths);
+}
+
+/// Independent reference for the mock-path projection: the original
+/// collector loop, inlined (candidate order, `mocks_in_file` order, dedup with
+/// `iter().any`, push in order).
+fn reference_mock_paths(candidates: &[TypeScriptRelatedCandidate<'_>]) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    for candidate in candidates {
+        for path in &candidate.test.mocks_in_file {
+            if !paths.iter().any(|existing| existing == path) {
+                paths.push(path.clone());
+            }
+        }
+    }
+    paths
+}
+
+#[test]
+fn mock_paths_projection_matches_reference_loop_in_order() {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/lib.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        default_object_member: false,
+        commonjs_default_export: false,
+        commonjs_whole_function: false,
+        module_entries: Vec::new(),
+        arity: None,
+        params: Vec::new(),
+        source_text: None,
+        imports: Default::default(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+    };
+    let make = |name: &str, line: usize, mocks: &[&str]| TypeScriptTest {
+        name: name.to_string(),
+        local_name: name.to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/lib.test.ts"),
+        line,
+        reach_body_text: None,
+        body_text: "applyDiscount(1, 2)".to_string(),
+        assertions: Vec::new(),
+        mocks_in_file: mocks
+            .iter()
+            .map(|path| path.to_string())
+            .collect::<Vec<_>>()
+            .into(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
+        factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }]
+        .into(),
+    };
+    let candidates_of = |tests: &[TypeScriptTest]| {
+        related_test_candidates(
+            &owner,
+            tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            &RelationIndex::empty(),
+        )
+        .iter()
+        .map(|candidate| candidate.test.name.clone())
+        .collect::<Vec<_>>()
+    };
+
+    // Overlapping, differently ordered lists across three candidates.
+    let tests = vec![
+        make("alpha", 1, &["./a", "./b"]),
+        make("beta", 2, &["./b", "./c", "./a"]),
+        make("gamma", 3, &["./d"]),
+    ];
+    assert_eq!(candidates_of(&tests), ["alpha", "beta", "gamma"]);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
+    let expected: Vec<String> = ["./a", "./b", "./c", "./d"]
+        .iter()
+        .map(|path| path.to_string())
+        .collect();
+    assert_eq!(reference_mock_paths(&candidates), expected);
+    assert_eq!(mock_paths_from_candidates(&candidates), expected);
+    let context = owner_line_context(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        &RelationIndex::empty(),
+        None,
+    );
+    assert_eq!(context.mock_paths, expected);
+
+    // No test declares a mock: the projection is empty.
+    let bare = vec![make("alpha", 1, &[]), make("beta", 2, &[])];
+    let candidates = related_test_candidates(
+        &owner,
+        &bare,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
+    assert_eq!(candidates.len(), 2, "fixture must relate both tests");
+    assert!(reference_mock_paths(&candidates).is_empty());
+    assert!(mock_paths_from_candidates(&candidates).is_empty());
+    let context = owner_line_context(
+        &owner,
+        &bare,
+        None,
+        &ReExportIndex::empty(),
+        &RelationIndex::empty(),
+        None,
+    );
+    assert!(context.mock_paths.is_empty());
 }
 
 #[test]
@@ -8667,6 +8899,39 @@ fn ava_not_assertion_extracts_relational_oracle() {
     assert_eq!(assertion.expected_value_or_variant.as_deref(), Some("8"));
     assert_eq!(assertion_oracle_text(assertion), "t.not(...)");
     assert!(!assertion.has_dynamic_matcher_arg);
+}
+
+/// Mocha passes a `done` callback, not an AVA `t` context; rendered oracle
+/// text must use the parameter name (#6594).
+#[test]
+fn execution_context_oracle_text_uses_the_callback_parameter_name() {
+    let source = "test('p', (done) => { done.is(price(150), 130); });";
+    let allocator = Allocator::default();
+    let parse_result = Parser::new(&allocator, source, SourceType::ts()).parse();
+    let call = parse_result
+        .program
+        .body
+        .iter()
+        .find_map(|stmt| match stmt {
+            Statement::ExpressionStatement(stmt) => match &stmt.expression {
+                Expression::CallExpression(call) => Some(call),
+                _ => None,
+            },
+            _ => None,
+        });
+    assert!(call.is_some(), "expected a test() call expression");
+    let Some(call) = call else { return };
+    let result = test_name_and_assertions_from_call(
+        call,
+        &SourceText::new(source),
+        &TypeScriptAssertionBindings::default(),
+    );
+    assert!(result.is_some(), "should recognize the test call");
+    let Some((_, assertions)) = result else {
+        return;
+    };
+    assert_eq!(assertions.len(), 1);
+    assert_eq!(assertion_oracle_text(&assertions[0]), "done.is(...)");
 }
 
 /// End-to-end: a full AVA `test('name', t => { t.is(...) })` call has its
@@ -14591,6 +14856,20 @@ fn spec_0027_ambiguous_fallback_is_never_exposed_and_punctuation_is_ignored() ->
         !discriminate.contains("predicate boundary"),
         "the discrimination summary must not claim a predicate boundary: {discriminate}"
     );
+    // RIPR-SPEC-0027: a strong check already exists, so the next step must not
+    // ask for another exact-value assertion.
+    let next_step = finding
+        .recommended_next_step
+        .as_deref()
+        .ok_or_else(|| "expected recommended next step".to_string())?;
+    assert!(
+        next_step.contains("already strong") && next_step.contains("input that flips it"),
+        "strong oracle next step must say the check is strong: {next_step}"
+    );
+    assert!(
+        !next_step.contains("exact-value assertion") && !next_step.contains("discriminator"),
+        "strong oracle next step must not ask for another assertion: {next_step}"
+    );
     let limitation = ts_predicate_boundary_limitation(
         &classify_probe_shape_detail("  n.value"),
         "  n.value",
@@ -20188,6 +20467,7 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
     assert!(!plain[0].exported_as_default);
 }
 
+mod async_matcher_completion_tests;
 mod ava_throws_message_tests;
 mod boolean_pin_tests;
 mod catch_arm_tests;
@@ -20206,6 +20486,7 @@ mod directory_specifier_tests;
 mod dropped_term_tests;
 mod enum_member_tests;
 mod error_payload_tests;
+mod floating_promise_tests;
 mod function_reference_callback_tests;
 mod gap_reach_config_tests;
 mod guard_entry_tests;
@@ -20233,6 +20514,8 @@ mod module_entry_tests;
 mod namespace_reexport_tests;
 mod nested_callback_tests;
 mod nullish_chain_tests;
+mod object_row_callback_comment_tests;
+mod object_row_tests;
 mod out_dir_specifier_tests;
 mod playwright_fixture_tests;
 mod playwright_unit_tests;

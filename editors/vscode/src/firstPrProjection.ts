@@ -23,6 +23,7 @@ import {
   isWindowsHost,
   redirectStaysInWorkspace,
   TEST_RUNNER_VERIFY_COMMAND_PREFIXES,
+  rootedTestRunnerVerifyCommandIsSafe,
   testRunnerCommandLeavesScope
 } from './packetJson';
 
@@ -63,6 +64,7 @@ export interface RiprFirstPrPacketStatus {
   repairRoute?: string;
   suggestedAssertion?: string;
   verifyCommand?: string;
+  verifyCommandClipboard?: string;
   receiptCommand?: string;
   receiptPath?: string;
   relatedTest?: string;
@@ -156,7 +158,7 @@ export function firstPrSummaryPacket(packet: RiprFirstPrPacketStatus): string {
     lines.push(`Current evidence strength: ${packet.currentEvidenceStrength}`);
   }
   if (packet.missingDiscriminator) {
-    lines.push(`Missing discriminator: ${packet.missingDiscriminator}`);
+    lines.push(`Missing check: ${packet.missingDiscriminator}`);
   }
   if (packet.focusedProofIntent) {
     lines.push(`Focused proof intent: ${packet.focusedProofIntent}`);
@@ -205,7 +207,7 @@ export function firstPrRepairPacket(packet: RiprFirstPrPacketStatus): string {
     lines.push(`Current evidence strength: ${packet.currentEvidenceStrength}`);
   }
   if (packet.missingDiscriminator) {
-    lines.push(`Missing discriminator: ${packet.missingDiscriminator}`);
+    lines.push(`Missing check: ${packet.missingDiscriminator}`);
   }
   if (packet.focusedProofIntent) {
     lines.push(`Focused proof intent: ${packet.focusedProofIntent}`);
@@ -317,7 +319,7 @@ export function firstPrTopRepairableGapLines(packet: RiprFirstPrPacketStatus): s
     lines.push(`Current evidence strength: ${packet.currentEvidenceStrength}`);
   }
   if (packet.missingDiscriminator) {
-    lines.push(`Missing discriminator: ${packet.missingDiscriminator}`);
+    lines.push(`Missing check: ${packet.missingDiscriminator}`);
   }
   if (packet.focusedProofIntent) {
     lines.push(`Focused proof intent: ${packet.focusedProofIntent}`);
@@ -581,6 +583,20 @@ export function validateFirstPrPacket(
       detail: 'first-pr selected command payload is not safe for editor projection'
     };
   }
+  const commandContext = objectField(selected, 'command_context');
+  const verifyForms = commandContext ? objectField(commandContext, 'verify') : undefined;
+  const verifyBash = verifyForms ? stringField(verifyForms, 'bash') : undefined;
+  if (
+    verifyBash &&
+    !rootedTestRunnerVerifyCommandIsSafe(verifyBash, redirectRoots) &&
+    !firstPrCommandIsSafe(verifyBash, redirectRoots)
+  ) {
+    return {
+      ...base,
+      state: 'unsafeCommand',
+      detail: 'first-pr selected verify context is not safe for editor projection'
+    };
+  }
   const repair = objectField(selected, 'repair');
   const relatedTest = repair ? stringField(repair, 'related_test') : undefined;
   const repairTarget = repair ? stringField(repair, 'target_file') : undefined;
@@ -618,6 +634,11 @@ export function validateFirstPrPacket(
     repairRoute: repair ? stringField(repair, 'route') : undefined,
     suggestedAssertion: repair ? stringField(repair, 'suggested_assertion') : undefined,
     verifyCommand: stringField(selected, 'verify_command'),
+    verifyCommandClipboard: (() => {
+      const context = objectField(selected, 'command_context');
+      const verifyForms = context ? objectField(context, 'verify') : undefined;
+      return verifyForms ? stringField(verifyForms, 'bash') : undefined;
+    })(),
     receiptCommand: stringField(selected, 'receipt_command'),
     receiptPath: stringField(selected, 'receipt_path'),
     relatedTest,

@@ -46,7 +46,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     }
                     None => {
                         return Err(CommandError::from(
-                            "missing value for --profile".to_string(),
+                            "missing value for --profile; pass a value right after it".to_string(),
                         ));
                     }
                 };
@@ -59,10 +59,16 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     // pre-#4318 parser answered `missing value for --root`
                     // here. Other dash-prefixed paths stay legitimate values.
                     Some("--help" | "-h" | "--json" | "--timings" | "--profile" | "--root") => {
-                        return Err(CommandError::from("missing value for --root".to_string()));
+                        return Err(CommandError::from(
+                            "missing value for --root; pass a value right after it".to_string(),
+                        ));
                     }
                     Some(value) => value,
-                    None => return Err(CommandError::from("missing value for --root".to_string())),
+                    None => {
+                        return Err(CommandError::from(
+                            "missing value for --root; pass a value right after it".to_string(),
+                        ));
+                    }
                 };
                 // #4318: a repeated documented flag is a usage mistake with a
                 // name of its own; accusing `--root` of being unknown sends
@@ -284,6 +290,7 @@ impl DoctorEnvironment {
                 detected_languages: detected_language_entries(
                     detected,
                     loaded.map(|config| config.languages().enabled()),
+                    loaded.is_some_and(|config| config.source_text().is_none()),
                 ),
                 unanalyzed_source_languages,
                 preview_language_gaps: preview_language_gaps(preview_enablement.as_ref()),
@@ -298,22 +305,64 @@ impl DoctorEnvironment {
     }
 }
 
+/// `auto_defaulted` is true when no `ripr.toml` was loaded, so the enabled list
+/// is the built-in default plus project-marker detection. Python and TypeScript
+/// are the languages that detection can enable; reporting them as explicitly
+/// configured would hide that origin, so they resolve with an unspecified
+/// intent and the when-detected policy (`auto_detected_enabled`).
 fn detected_language_entries(
     detected: &[LanguageId],
     enabled: Option<&[LanguageId]>,
+    auto_defaulted: bool,
 ) -> Vec<output::doctor::DoctorDetectedLanguage> {
+    use crate::domain::language_availability::{
+        AutoDetectionPolicy, ConfiguredIntent, LanguageAvailabilityInput,
+        resolve_language_availability,
+    };
     detected
         .iter()
-        .map(|id| output::doctor::DoctorDetectedLanguage {
-            language: id.as_str().to_string(),
-            status: language_status(*id),
-            adapter_available: id.is_available(),
+        .map(|id| {
             // JavaScript is analyzed by the `typescript` entry (and
             // `javascript` is accepted as its alias), so enablement is read
             // through the same
             // mapping the gaps path uses. `None` (no loaded configuration)
             // stays unknown rather than reading as disabled.
-            enabled: enabled.map(|list| list.contains(&config_entry(*id))),
+            let enabled = enabled.map(|list| list.contains(&config_entry(*id)));
+            let auto_enabled = auto_defaulted
+                && enabled == Some(true)
+                && matches!(
+                    config_entry(*id),
+                    LanguageId::Python | LanguageId::TypeScript
+                );
+            let report = resolve_language_availability(&LanguageAvailabilityInput {
+                project_detected: true,
+                configured: match enabled {
+                    Some(true) if !auto_enabled => ConfiguredIntent::Enabled,
+                    Some(false) => ConfiguredIntent::Disabled,
+                    _ => ConfiguredIntent::Unspecified,
+                },
+                auto_policy: if auto_enabled {
+                    AutoDetectionPolicy::WhenDetected
+                } else {
+                    AutoDetectionPolicy::Never
+                },
+                ..LanguageAvailabilityInput::for_language(*id)
+            });
+            output::doctor::DoctorDetectedLanguage {
+                language: id.as_str().to_string(),
+                status: language_status(*id),
+                adapter_available: id.is_available(),
+                enabled,
+                // Unloaded configuration leaves enablement unknown; the resolver
+                // has no unknown state, so publish none rather than a definite
+                // `not_enabled` plus an enable step the config may already satisfy.
+                availability_state: enabled.map(|_| report.state.as_str()),
+                remediation: if enabled.is_some() {
+                    report.remediation
+                } else {
+                    Vec::new()
+                },
+            }
         })
         .collect()
 }
@@ -3002,6 +3051,51 @@ fn preemptive_artifact_ignore(
     }
 }
 
+/// #11879: the same ignore verdict `ripr doctor` gives, for the first `ripr
+/// check` in a project. A newcomer who runs `check` before `doctor` otherwise
+/// meets `?? target/` in `git status` with no hint. Returns the warning only
+/// when git positively reports the artifact root unignored; a covered root,
+/// a missing repository or an unavailable git yield `None`. The default root
+/// is probed; a relocated cache dir is `doctor`'s to report.
+///
+/// #12432: when the artifact roots are not only unignored but ALREADY
+/// tracked, the ignore line alone cannot cure the trap — adding it silences
+/// this note while `git add -A` keeps refreshing committed files. The note
+/// then also names the exact bound untrack command, and only when the
+/// tracking probe positively reports `Tracked`: on a first run with nothing
+/// committed the command would fail with "did not match any files", and a
+/// wrong actionable repair signal is worse than a missed advisory.
+pub(crate) fn first_check_artifact_ignore_note(root: &Path) -> Option<String> {
+    use output::doctor::DoctorArtifactIgnore;
+    let roots = analysis::ripr_artifact_roots(root, &root.join("target/ripr/cache"), None);
+    let verdict = match ripr_artifact_ignore(root, &roots) {
+        DoctorArtifactIgnore::NoArtifacts => preemptive_artifact_ignore(root, &roots),
+        verdict => verdict,
+    };
+    match verdict {
+        DoctorArtifactIgnore::Unignored { warning } => Some(note_with_tracking_probe(
+            warning,
+            probe_artifact_tracking(root, &roots),
+            root,
+        )),
+        _ => None,
+    }
+}
+
+/// One clause on the unignored note when the tracked condition holds
+/// (#12432). `Untracked` keeps the note byte-identical; `NotChecked` keeps
+/// the entry advice without claiming a cure git could not establish.
+fn note_with_tracking_probe(warning: String, probe: ArtifactTrackingProbe, root: &Path) -> String {
+    match probe {
+        ArtifactTrackingProbe::Tracked(tracked_roots) => format!(
+            "{warning} These files are already tracked by git, so adding the line alone \
+             will not remove them; untrack them with: {}",
+            analysis::untrack_artifacts_command(root, &tracked_roots),
+        ),
+        ArtifactTrackingProbe::Untracked | ArtifactTrackingProbe::NotChecked => warning,
+    }
+}
+
 /// The typed evidence on whether git's index tracks files under ripr's
 /// artifact roots (#8276, relocated bases #8751). An ignore rule never
 /// untracks files committed earlier, so a repository can cover
@@ -3015,6 +3109,41 @@ fn ripr_artifact_tracking(
     artifact_roots: &[PathBuf],
 ) -> output::doctor::DoctorArtifactTracking {
     use output::doctor::DoctorArtifactTracking;
+    match probe_artifact_tracking(root, artifact_roots) {
+        ArtifactTrackingProbe::NotChecked => DoctorArtifactTracking::NotChecked,
+        ArtifactTrackingProbe::Untracked => DoctorArtifactTracking::Untracked,
+        ArtifactTrackingProbe::Tracked(tracked_roots) => {
+            let untrack = analysis::untrack_artifacts_command(root, &tracked_roots);
+            DoctorArtifactTracking::Tracked {
+                warning: format!(
+                    "~ ripr artifacts under {} are tracked by git; `git add -A` keeps \
+                     refreshing them and `ripr check` diffs them. Untrack them with: {untrack}",
+                    artifact_roots_display(
+                        &tracked_roots
+                            .iter()
+                            .map(|root| analysis::artifact_root_pathspec(root))
+                            .collect::<Vec<_>>()
+                    )
+                ),
+            }
+        }
+    }
+}
+
+/// What git's index establishes about files under ripr's artifact roots.
+/// `Tracked` carries only the roots the index actually names, so the cure
+/// built from them cannot fail with "did not match any files" (PR #8901
+/// review, devin #4). Shared by doctor's tracking fact and the
+/// first-`check` ignore note (#12432) so both surfaces answer from one
+/// probe.
+enum ArtifactTrackingProbe {
+    Tracked(Vec<PathBuf>),
+    Untracked,
+    NotChecked,
+}
+
+fn probe_artifact_tracking(root: &Path, artifact_roots: &[PathBuf]) -> ArtifactTrackingProbe {
+    use ArtifactTrackingProbe::*;
     // The index can name tracked files whose directory was deleted from the
     // worktree, so this probe does not depend on any artifact root existing.
     // Configured roots are literal paths, never git pathspec globs: a root
@@ -3048,13 +3177,13 @@ fn ripr_artifact_tracking(
         1024 * 1024,
     ) {
         Ok(probe) => probe,
-        Err(_) => return DoctorArtifactTracking::NotChecked,
+        Err(_) => return NotChecked,
     };
     if !probe.status.success() {
-        return DoctorArtifactTracking::NotChecked;
+        return NotChecked;
     }
     if probe.stdout.is_empty() {
-        return DoctorArtifactTracking::Untracked;
+        return Untracked;
     }
     // Keep only the roots the index actually names: `git rm --cached`
     // rejects a pathspec with no indexed matches, so an untracked default
@@ -3075,19 +3204,7 @@ fn ripr_artifact_tracking(
     if tracked_roots.is_empty() {
         tracked_roots = artifact_roots.to_vec();
     }
-    let untrack = untrack_artifacts_command(root, &tracked_roots);
-    DoctorArtifactTracking::Tracked {
-        warning: format!(
-            "~ ripr artifacts under {} are tracked by git; `git add -A` keeps \
-             refreshing them and `ripr check` diffs them. Untrack them with: {untrack}",
-            artifact_roots_display(
-                &tracked_roots
-                    .iter()
-                    .map(|root| analysis::artifact_root_pathspec(root))
-                    .collect::<Vec<_>>()
-            )
-        ),
-    }
+    Tracked(tracked_roots)
 }
 
 /// How the warning names the artifact roots: `a and b` for two, comma
@@ -3102,34 +3219,10 @@ fn artifact_roots_display(roots: &[String]) -> String {
     }
 }
 
-/// The untrack command doctor prints, bound to the selected root: pasted from
-/// another directory, a bare `git rm --cached` would untrack files in whatever
-/// repository the shell happens to be in (#8301 review). The default `.` root
-/// keeps the short form. The command pins the global `--literal-pathspecs`
-/// switch and passes each root PLAIN: shell quoting only protects the
-/// argument from the shell, while git pathspec magic (`*`, `?`, `[`)
-/// would otherwise wildcard-match a configured root like `build/cache*`
-/// against `build/cache1` (PR #8901 review, graphite finding) — and the
-/// earlier glob-escaped form (`build/cache\*`) does not match the
-/// literal-star directory's indexed descendants at all (verified against
-/// git 2.47; the escaped form fails both with and without
-/// `--literal-pathspecs`). Plain roots under `--literal-pathspecs` match
-/// literal-star directories and glob-free roots alike.
-fn untrack_artifacts_command(root: &Path, artifact_roots: &[PathBuf]) -> String {
-    let pathspecs = artifact_roots
-        .iter()
-        .map(|root| crate::agent::loop_commands::shell_arg(&analysis::artifact_root_pathspec(root)))
-        .collect::<Vec<_>>()
-        .join(" ");
-    if root == Path::new(".") {
-        format!("git --literal-pathspecs rm --cached -r -- {pathspecs}")
-    } else {
-        format!(
-            "git -C {} --literal-pathspecs rm --cached -r -- {pathspecs}",
-            crate::agent::loop_commands::shell_arg(&output::path::human_path(root))
-        )
-    }
-}
+// The untrack command doctor prints is the shared artifact-surface builder
+// `analysis::untrack_artifacts_command` (#12432): doctor's tracking fact,
+// the first-`check` ignore note, and the tracked-cache-base advisory spell
+// one cure through one owner.
 
 /// Why a cache entry could not be created under `cache_dir`, or `None` when
 /// one could. For every directory a production cache writes entries into,
@@ -3384,7 +3477,8 @@ fn generated_workflow_line(root: &Path, workflow: &str, current_version: &str) -
                 .iter()
                 .find_map(|word| word.strip_prefix("--version="))
         });
-    let refresh = super::init::workflow_refresh_guidance(root);
+    let refresh =
+        super::init::workflow_refresh_guidance(root, crate::cli::commands_options::InitCi::Github);
     match pinned {
         None => Some(format!(
             "{GENERATED_WORKFLOW_PATH} installs ripr without a version (the ripr 0.10-and-earlier template), so CI runs whatever release is newest against these steps; {refresh}"
@@ -5458,6 +5552,167 @@ mod tests {
     }
 
     #[test]
+    fn first_check_note_names_the_entry_only_while_unignored() -> Result<(), String> {
+        let root = unique_command_test_dir("artifact-first-check");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        let note = first_check_artifact_ignore_note(&root).ok_or("expected a note")?;
+        assert!(note.contains("/target/ripr/"), "{note}");
+        // Nothing under the roots is tracked here, so the note must not name
+        // a cure whose command would fail with "did not match any files"
+        // (#12432 wrong-repair-signal control).
+        assert!(
+            !note.contains("rm --cached"),
+            "untracked artifacts must not get the untrack clause: {note}"
+        );
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(first_check_artifact_ignore_note(&root), None);
+        // Outside a repository nothing is established, so nothing is said.
+        let bare = unique_command_test_dir("artifact-first-check-bare");
+        std::fs::create_dir_all(&bare).map_err(|error| error.to_string())?;
+        assert_eq!(first_check_artifact_ignore_note(&bare), None);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&bare);
+        Ok(())
+    }
+
+    /// A minimal Cargo scratch repository whose ignore rules cover nothing;
+    /// `commit_target` decides whether the index already holds a file under
+    /// `target/` — the trap's committed state (#12432).
+    fn cargo_scratch_repo(label: &str, commit_target: bool) -> Result<PathBuf, String> {
+        let root = unique_command_test_dir(label);
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("target/ripr/cache"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("target/ripr/cache/committed-entry.json"), "{}")
+            .map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init", "-b", "main"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        crate::git::run_git(&root, &["add", "Cargo.toml", "src/lib.rs"])
+            .map_err(|error| error.to_string())?;
+        if commit_target {
+            crate::git::run_git(&root, &["add", "--", "target"])
+                .map_err(|error| error.to_string())?;
+        }
+        crate::git::run_git(&root, &["commit", "-q", "-m", "base"])
+            .map_err(|error| error.to_string())?;
+        Ok(root)
+    }
+
+    /// #12432 red/green: with a file under `target/` already committed, the
+    /// first-`check` note keeps the entry advice AND names the exact bound
+    /// untrack command — adding the ignore line alone cannot cure the trap.
+    /// The shared builder's `--literal-pathspecs` + `--` shape is pinned here
+    /// because a bare `git rm -r --cached target` pasted from another
+    /// directory untracks the wrong repository (#8301).
+    #[test]
+    fn first_check_note_names_the_untrack_cure_once_artifacts_are_tracked() -> Result<(), String> {
+        let root = cargo_scratch_repo("artifact-first-check-tracked", true)?;
+        let note = first_check_artifact_ignore_note(&root).ok_or("expected a note")?;
+        assert!(
+            note.contains("Add this line to .gitignore: /target/"),
+            "{note}"
+        );
+        assert!(
+            note.contains("git -C ")
+                && note.contains("--literal-pathspecs rm --cached -r -- target/ripr"),
+            "{note}"
+        );
+        assert!(note.contains("already tracked by git"), "{note}");
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #12432 control: the same setup without the committed target file
+    /// keeps today's note — no untrack command, because on a first run
+    /// nothing is committed and the command would fail.
+    #[test]
+    fn first_check_note_without_tracked_artifacts_has_no_untrack_clause() -> Result<(), String> {
+        let root = cargo_scratch_repo("artifact-first-check-untracked", false)?;
+        let note = first_check_artifact_ignore_note(&root).ok_or("expected a note")?;
+        assert!(
+            note.contains("Add this line to .gitignore: /target/"),
+            "{note}"
+        );
+        assert!(
+            !note.contains("rm --cached"),
+            "untracked artifacts must not get the untrack clause: {note}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #12432 control matrix for the clause builder itself: only a positive
+    /// `Tracked` probe adds the cure; `Untracked` and `NotChecked` keep the
+    /// entry advice without claiming a fact the probe did not establish.
+    #[test]
+    fn note_cure_clause_follows_the_tracking_verdict() -> Result<(), String> {
+        let warning = "warning text".to_string();
+        assert_eq!(
+            note_with_tracking_probe(
+                warning.clone(),
+                ArtifactTrackingProbe::Tracked(vec![PathBuf::from("target")]),
+                Path::new("."),
+            ),
+            format!(
+                "{warning} These files are already tracked by git, so adding the line alone \
+                 will not remove them; untrack them with: git --literal-pathspecs rm \
+                 --cached -r -- target"
+            )
+        );
+        assert_eq!(
+            note_with_tracking_probe(
+                warning.clone(),
+                ArtifactTrackingProbe::Untracked,
+                Path::new("."),
+            ),
+            warning
+        );
+        assert_eq!(
+            note_with_tracking_probe(
+                warning.clone(),
+                ArtifactTrackingProbe::NotChecked,
+                Path::new("."),
+            ),
+            warning
+        );
+        Ok(())
+    }
+
+    #[test]
     fn preemptive_artifact_ignore_warns_before_the_first_write() -> Result<(), String> {
         use output::doctor::DoctorArtifactIgnore;
         let root = unique_command_test_dir("artifact-preemptive");
@@ -5657,16 +5912,16 @@ mod tests {
         // The default root keeps the short form: there is no other repository
         // to confuse it with.
         assert_eq!(
-            untrack_artifacts_command(Path::new("."), &default_roots),
+            analysis::untrack_artifacts_command(Path::new("."), &default_roots),
             "git --literal-pathspecs rm --cached -r -- target/ripr"
         );
         // Any other root is named, so the command cannot act elsewhere.
         assert_eq!(
-            untrack_artifacts_command(Path::new("other-repo"), &default_roots),
+            analysis::untrack_artifacts_command(Path::new("other-repo"), &default_roots),
             "git -C other-repo --literal-pathspecs rm --cached -r -- target/ripr"
         );
         // A root with spaces must stay one shell word.
-        let spaced = untrack_artifacts_command(Path::new("my repo"), &default_roots);
+        let spaced = analysis::untrack_artifacts_command(Path::new("my repo"), &default_roots);
         assert!(
             spaced.starts_with("git -C ") && !spaced.starts_with("git -C my repo "),
             "{spaced}"
@@ -5681,14 +5936,15 @@ mod tests {
             PathBuf::from(".ripr-cache"),
         ];
         assert_eq!(
-            untrack_artifacts_command(Path::new("."), &relocated),
+            analysis::untrack_artifacts_command(Path::new("."), &relocated),
             "git --literal-pathspecs rm --cached -r -- target/ripr .ripr-cache"
         );
         // PR #8901 security review (devin #9): shell metacharacters in a
         // configured root must stay inside one quoted shell word, so pasting
         // the printed remedy cannot execute injected text.
         let hostile = "build/cache;touch ripr-pwned";
-        let hostile_command = untrack_artifacts_command(Path::new("."), &[PathBuf::from(hostile)]);
+        let hostile_command =
+            analysis::untrack_artifacts_command(Path::new("."), &[PathBuf::from(hostile)]);
         let raw_suffix = format!("-- {hostile}");
         assert!(
             !hostile_command.ends_with(raw_suffix.as_str()),
@@ -6465,13 +6721,97 @@ mod tests {
             status: language_status(language),
             adapter_available,
             enabled: Some(true),
+            availability_state: Some("detected_compiled_enabled"),
+            remediation: Vec::new(),
         }
+    }
+
+    /// The doctor entry carries the shared availability state and its ordered
+    /// remediation, so a detected-but-disabled language names the enable step
+    /// and an unconfigured one stays unknown instead of reading as disabled.
+    #[test]
+    fn detected_entries_carry_the_shared_availability_state() {
+        // Rust is always compiled in, so the disabled branch is exercised on
+        // every feature set rather than only where the Python adapter exists.
+        let disabled =
+            detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Python]), false);
+        assert_eq!(
+            disabled[0].availability_state,
+            Some("detected_compiled_disabled")
+        );
+        assert!(
+            disabled[0]
+                .remediation
+                .iter()
+                .any(|step| step.contains("[languages]")),
+            "{:?}",
+            disabled[0].remediation
+        );
+        // JavaScript reads enablement through its `typescript` entry, so the
+        // availability state follows the same mapping as `enabled`.
+        if LanguageId::JavaScript.is_available() {
+            let js = detected_language_entries(
+                &[LanguageId::JavaScript],
+                Some(&[LanguageId::TypeScript]),
+                false,
+            );
+            assert_eq!(js[0].enabled, Some(true));
+            assert_eq!(js[0].availability_state, Some("detected_compiled_enabled"));
+        }
+        let enabled =
+            detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Rust]), false);
+        assert_eq!(
+            enabled[0].availability_state,
+            Some("detected_compiled_enabled")
+        );
+        assert!(enabled[0].remediation.is_empty());
+        let unknown = detected_language_entries(&[LanguageId::Rust], None, false);
+        assert_eq!(unknown[0].enabled, None);
+        // Unknown enablement publishes no state and no enable step.
+        assert_eq!(unknown[0].availability_state, None);
+        assert!(unknown[0].remediation.is_empty());
+    }
+
+    /// Without a loaded `ripr.toml` the enabled list is the built-in default plus
+    /// marker detection, so an enabled Python or TypeScript reads as
+    /// `auto_detected_enabled`. The same list from a real `ripr.toml` is explicit.
+    #[test]
+    fn auto_defaulted_python_reads_as_auto_detected_not_configured() {
+        if !LanguageId::Python.is_available() {
+            return;
+        }
+        let auto =
+            detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Python]), true);
+        assert_eq!(auto[0].enabled, Some(true));
+        assert_eq!(auto[0].availability_state, Some("auto_detected_enabled"));
+        let configured =
+            detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Python]), false);
+        assert_eq!(
+            configured[0].availability_state,
+            Some("detected_compiled_enabled")
+        );
+        // Rust is enabled by the built-in default, not by detection.
+        let rust = detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Rust]), true);
+        assert_eq!(
+            rust[0].availability_state,
+            Some("detected_compiled_enabled")
+        );
+        // A disabled entry stays disabled whatever the origin.
+        let disabled =
+            detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Rust]), true);
+        assert_eq!(
+            disabled[0].availability_state,
+            Some("detected_compiled_disabled")
+        );
     }
 
     #[test]
     fn detected_entries_map_javascript_to_its_typescript_entry() {
-        let entries =
-            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::TypeScript]));
+        let entries = detected_language_entries(
+            &[LanguageId::JavaScript],
+            Some(&[LanguageId::TypeScript]),
+            false,
+        );
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].language, "javascript");
         assert_eq!(
@@ -6480,7 +6820,7 @@ mod tests {
             "the typescript entry analyzes javascript, so it reads as enabled"
         );
         let entries =
-            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::Rust]));
+            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::Rust]), false);
         assert_eq!(
             entries[0].enabled,
             Some(false),
@@ -6490,7 +6830,8 @@ mod tests {
 
     #[test]
     fn detected_entries_stay_unknown_without_a_loaded_configuration() {
-        let entries = detected_language_entries(&[LanguageId::Rust, LanguageId::Python], None);
+        let entries =
+            detected_language_entries(&[LanguageId::Rust, LanguageId::Python], None, false);
         assert!(
             entries.iter().all(|entry| entry.enabled.is_none()),
             "an unloadable config must not read as disabled: {entries:?}"
@@ -6544,7 +6885,7 @@ mod tests {
         // same line; the typed `adapter_available` field is what says it in JSON.
         // The expectation follows the compiled features: `--all-features`
         // builds (like CI's JUnit job) compile the Perl adapter (#7137).
-        let unavailable = detected_language_entries(&[LanguageId::Perl], Some(&[]));
+        let unavailable = detected_language_entries(&[LanguageId::Perl], Some(&[]), false);
         let first = &detected_languages_lines(&unavailable, &[])[0];
         if cfg!(feature = "lang-perl") {
             assert!(unavailable[0].adapter_available);
@@ -7449,7 +7790,7 @@ mod tests {
         assert_eq!(
             doctor(&args(&["--root"])),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
     }
@@ -7683,7 +8024,7 @@ mod tests {
             assert_eq!(
                 doctor(&args(&["--root", flag])),
                 Err(CommandError::Failure(
-                    "missing value for --root".to_string()
+                    "missing value for --root; pass a value right after it".to_string()
                 )),
                 "a known flag cannot be the --root value: {flag}"
             );

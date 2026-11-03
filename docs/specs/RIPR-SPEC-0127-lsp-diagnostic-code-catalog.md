@@ -21,9 +21,12 @@ There is no single registry that lists every emitted code, so nothing
 mechanically checks that every emitted code is a known code or that an unknown
 code cannot be emitted.
 
-This is slice A of #1662. It establishes the typed registry and current-code
-inventory only. It does not add per-code documentation, `codeDescription` URIs,
-recovery metadata, or a renderer migration — those are later slices of #1662.
+This is slice A of #1662 plus the first #4675 / PR C slice. Slice A
+establishes the typed registry and current-code inventory. The first PR C
+slice adds producer-owned recovery, actionability, and profile metadata to
+each catalogued code. It does not add per-code documentation,
+`codeDescription` URIs, or a renderer migration — those remain later slices
+of #1662.
 
 ## Behavior
 
@@ -53,14 +56,53 @@ constructor that is the single source of truth for that family:
   language adapter is not enabled, so an empty list for it is not a clean
   result (served for every document of that language when the producer's file sample is incomplete);
   `ripr-diagnostic-preview-withheld` (#11296) is the Hint on a file whose
-  preview-language findings the actionable profile withheld, outside the
+  preview-language findings the actionable profile withheld, or (#11798) any
+  other gap-class finding it withheld, outside the
   delivery budget. These are not analyzer findings or actionable repairs.
 
 Each catalog entry carries the code identity used today: the stable `code` and
 the deprecated `aliases` that still resolve to it. Compatibility aliases are
 added only where current output already requires them; none are required today.
-Per-code human title, summary, category, and documentation are the metadata
-that later slices add as they consume it.
+Per-code human title, summary, category, and documentation remain later
+metadata.
+
+The first #4675 slice also records closed producer-owned metadata on every
+entry:
+
+```text
+actionability          default FixInstructionState (#1663)
+recovery_kinds         inspect / open / retry / refresh / setup / verify / repair
+unavailable_reason     typed when recovery_kinds is empty
+default_visibility     actionable_and_full / full_only / always
+severity_source        advisory_policy / severity_config / delivery_limitation
+default_severity       warning / information / hint
+preconditions          current_snapshot and/or completed_result
+non_claims             honesty bounds; never runtime proof or repair authority
+```
+
+`resolve(code)` and `metadata_for(code)` return that record. Client capability
+may omit optional presentation (`CatalogClientView`); it cannot change
+actionability, recovery, visibility, or severity source. Instance witness
+state may weaken the catalog default through `join_instruction_state` (stale
+and unavailable are instance-only). A requested recovery kind that is not
+catalogued stays typed unavailable — renderers must not guess a command.
+
+Named fixture families earn the following defaults:
+
+| Family | Representative codes | Default actionability | Recovery |
+| --- | --- | --- | --- |
+| actionable | `weakly_exposed`, `ripr-gap-MissingBoundaryAssertion` | `fix_site_ready` | `open_fix_site`, `inspect_evidence` |
+| inspect-only | `exposed`, `ripr-seam-strongly-gripped` | `inspect_only` | `inspect_evidence` |
+| static-limited | `static_unknown`, `ripr-gap-StaticLimitation` | `static_limitation` | typed `no_bounded_action` |
+| stale | any `current_snapshot` code + stale witness | join → `stale` | catalog kinds unchanged; instance freshness fails |
+| no-snapshot | `ripr-diagnostic-analysis-pending` | `inspect_only` | `refresh_analysis`, `repair_configuration`, `select_workspace_root` |
+| wrong-root | same pending code | `inspect_only` | `select_workspace_root` is allowed, not invented |
+| unsupported | `ripr-diagnostic-language-not-analyzed` | `inspect_only` | typed `no_bounded_action` |
+| overflowed | `ripr-scope-diff-oversized`, `ripr-diagnostic-budget-omitted` | `inspect_only` | `retrieve_overflow` |
+
+The emitted diagnostic wire `code` strings stay byte-identical. This slice
+does not attach the new fields to LSP `data`, change CLI/JSON/SARIF
+rendering, or migrate remaining renderer-local codes.
 
 `resolve(code)` maps a code — or a deprecated alias — to exactly one entry, and
 returns nothing for an unknown code.
@@ -110,16 +152,25 @@ they make no runtime-outcome or test-sufficiency claim.
 - The emitted diagnostic code strings for known kinds are byte-identical to the
   previous inline construction, so existing LSP diagnostic fixtures are
   unchanged.
+- Every catalog entry has closed actionability, recovery (or a typed
+  unavailable reason), profile visibility, severity source, and non-claims.
+- No catalog default is `stale`; stale is joined from instance witness state.
+- An unknown code or a recovery kind that is not listed on the entry does not
+  resolve to a guessed command.
+- Client capability can hide optional presentation and cannot change catalog
+  state.
 
 ## Non-Goals
 
 - No per-code title, summary, or category metadata (#1662 PR B).
 - No `codeDescription.href` projection or generated documentation pages (#1662
   PR B).
-- No typed recovery, actionability, or non-claim machine metadata (#1662 PR C).
-- No migration of renderer-local code strings outside the LSP diagnostics path
-  (#1662 PR D).
-- No analyzer classification, severity policy, or gate policy change.
+- No live attachment of catalog metadata onto LSP `data`, CLI, JSON, or SARIF
+  wire fields; later #4675 slices project those fields.
+- No complete producer migration or `check-diagnostic-catalog` conformance
+  gate (#4676 / #1662 PR D).
+- No analyzer classification, severity policy, support-tier, or gate policy
+  change.
 
 ## Acceptance Examples
 
@@ -132,16 +183,28 @@ they make no runtime-outcome or test-sufficiency claim.
    externally-sourced `MissingArtifact`, yields a code that resolves.
 4. Building the gap code for an unregistered kind returns nothing, and no
    `ripr-gap-*` diagnostic is emitted for it.
+5. `metadata_for("weakly_exposed")` is `fix_site_ready` with `open_fix_site`;
+   `metadata_for("ripr-gap-StaticLimitation")` is typed `no_bounded_action`.
+6. `metadata_for_client("weakly_exposed", MINIMAL)` omits optional
+   presentation and keeps the same actionability, recovery, and visibility.
+7. `join_instruction_state(fix_site_ready, stale)` is `stale`; joining
+   `static_limitation` with `fix_site_ready` stays `static_limitation`.
 
 ## Test Mapping
 
 - `diagnostic_catalog.rs` unit tests cover non-empty codes, global code/alias
   uniqueness, single-entry resolution, every emitted finding/seam/gap code
-  resolving, the gap constructor failing closed for an unknown kind, and
-  unknown codes not resolving.
-- `diagnostics.rs::tests::gap_record_diagnostic_fails_closed_for_unregistered_kind`
+  resolving, the gap constructor failing closed for an unknown kind, unknown
+  codes not resolving, closed recovery/actionability invariants, the named
+  fixture families, instance-only stale join, typed unavailable recovery, and
+  capability-invariant catalog state.
+- `diagnostics.rs::seam_diagnostic_tests::gap_record_diagnostic_fails_closed_for_unregistered_kind`
   covers the emission site itself: a gap record whose kind is not a governed
   code produces no diagnostic, while a registered kind still emits one.
+- `diagnostics.rs::seam_diagnostic_tests::emitted_named_family_codes_keep_catalog_metadata`
+  covers production constructors for pending, overflow, and unsupported
+  markers: they keep their existing wire recovery ids and resolve to the
+  catalog metadata for those families.
 - `lsp/tests.rs::hover_without_evidence_states_are_distinct_and_static` and
   the two `backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_*` tests pin the in-progress
   and clean-workspace hover states against their discriminating negatives
@@ -153,7 +216,7 @@ they make no runtime-outcome or test-sufficiency claim.
 
 | Surface | Responsibility |
 | --- | --- |
-| `crates/ripr/src/lsp/diagnostic_catalog.rs` | the governed registry, code constructors, resolution, and validation tests |
+| `crates/ripr/src/lsp/diagnostic_catalog.rs` | the governed registry, code constructors, resolution, recovery/actionability/profile metadata, and validation tests |
 | `crates/ripr/src/lsp/diagnostics.rs` | finding, seam, and gap diagnostics build their `code` through the catalog constructors; gap emission fails closed on an unregistered kind |
 | `crates/ripr/src/lsp.rs` | registers the `diagnostic_catalog` module |
 
@@ -164,8 +227,10 @@ they make no runtime-outcome or test-sufficiency claim.
 
 ## Claim boundary
 
-This contract establishes only that every RIPR LSP diagnostic code is a governed
-catalog entry, that unknown codes do not resolve, and that an unregistered gap
-kind is not emitted. It does not improve analyzer evidence, decide severity or
-gate policy, project documentation URIs, or claim that any suggested repair is
-correct.
+This contract establishes that every RIPR LSP diagnostic code is a governed
+catalog entry, that unknown codes do not resolve, that an unregistered gap
+kind is not emitted, and that registered codes carry producer-owned recovery,
+actionability, and profile defaults. It does not improve analyzer evidence,
+decide severity or gate policy, project documentation URIs, change rendered
+wire fields, prove every emitted code has migrated, or claim that any
+suggested recovery succeeds.

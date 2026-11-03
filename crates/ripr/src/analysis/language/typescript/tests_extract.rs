@@ -891,11 +891,17 @@ pub(crate) struct RegistrationScope {
     context: TypeScriptAdmissionContext,
     names: RegistrationNames,
     unshadowed_undefined: bool,
+    /// The object-row table loop this list is the body of (#11196).
+    row_loop: Option<RowLoop>,
 }
 
 impl RegistrationScope {
     fn of(scope: &TestScope, unshadowed_undefined: bool) -> Self {
         Self {
+            row_loop: scope
+                .row_loop
+                .clone()
+                .filter(|row_loop| row_loop.applies_at(scope.levels.len())),
             context: scope.admission.registration_context(),
             names: RegistrationNames::new(
                 scope
@@ -1205,7 +1211,12 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             scope.iterables.push(Vec::new());
             let inherited_strict = scope.admission.block_functions_are_lexical;
             scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
+            // #11196: a `for (const t of <object-row table>)` loop over one
+            // registration reads the registration once per row.
+            let inherited_row_loop = scope.row_loop.take();
+            scope.row_loop = row_loop_of(stmt, statements, body, source, scope.levels.len());
             collect_tests_from_statements(body, file, source, imports, scope, tests);
+            scope.row_loop = inherited_row_loop;
             scope.admission.block_functions_are_lexical = inherited_strict;
             scope.iterables.pop();
             scope.levels.pop();
@@ -1215,14 +1226,17 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         // re-declares an imported assertion binding shadows it for every test
         // inside (#4638 review). `levels[0]` is the file's own top level,
         // where the import itself lives.
-        let assertion_bindings = scope.assertion_bindings.without_shadowed(|name| {
-            scope
-                .levels
-                .iter()
-                .skip(1)
-                .flatten()
-                .any(|(bound, _, _)| bound == name)
-        });
+        let assertion_bindings = scope
+            .assertion_bindings
+            .without_shadowed(|name| {
+                scope
+                    .levels
+                    .iter()
+                    .skip(1)
+                    .flatten()
+                    .any(|(bound, _, _)| bound == name)
+            })
+            .with_block_function_scope(scope.admission.block_functions_are_lexical);
         let resolved = registration_scope
             .get_or_insert_with(|| RegistrationScope::of(scope, unshadowed_undefined));
         if let Some(mut test) = test_from_statement(
@@ -1452,6 +1466,8 @@ pub(crate) struct TestScope {
     guards: Vec<String>,
     /// The fixtures a Playwright `base.extend` constructs (SPEC-0243 rule 23).
     fixtures: Option<super::fixture_receivers::PlaywrightFixtures>,
+    /// The object-row table loop whose body is being walked (#11196).
+    row_loop: Option<RowLoop>,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -3054,7 +3070,7 @@ pub(super) fn collect_registration_scope_names(
     }
 }
 
-fn collect_hoisted_names(
+pub(super) fn collect_hoisted_names(
     statement: &Statement<'_>,
     out: &mut Vec<String>,
     block_functions_are_lexical: bool,
@@ -3840,10 +3856,24 @@ fn test_name_and_assertions_from_registration(
         bindings
     };
     let bindings = &bindings;
+    // #11196: a registration that is the whole body of a `for (const t of
+    // <object-row table>)` loop reads as one case per row.
+    if call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
+        && let Some(row_loop) = registration.and_then(|registration| registration.row_loop.as_ref())
+        && let Some(assertions) = row_loop_assertions(callback, row_loop, source, bindings)
+    {
+        return Some((name, assertions));
+    }
     // An inline literal `test.each` table reads as one concrete case per
     // row; any other table keeps the row-parameter assertions.
     if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
         && let Some(assertions) = table_row_assertions(call, callback, source, bindings)
+    {
+        return Some((name, assertions));
+    }
+    if let Argument::ArrowFunctionExpression(arrow) = callback
+        && let Some(assertions) =
+            collect_test_arrow_expression_assertions(arrow, source, receiver.as_deref(), bindings)
     {
         return Some((name, assertions));
     }
@@ -3854,6 +3884,11 @@ fn test_name_and_assertions_from_registration(
                 source,
                 receiver.as_deref(),
                 bindings,
+                referenced.is_none()
+                    && matches!(
+                        callback,
+                        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) if arrow.expression
+                    ),
             )
         })
         .unwrap_or_default();
@@ -4173,12 +4208,35 @@ fn each_declaration_callee<'a, 'b>(
     .then_some(each_call)
 }
 
+fn for_declaration_callee<'a, 'b>(
+    call: &'b oxc_ast::ast::CallExpression<'a>,
+    root: TestDeclarationRoot,
+) -> Option<&'b oxc_ast::ast::CallExpression<'a>> {
+    let Expression::CallExpression(for_call) = &call.callee else {
+        return None;
+    };
+    let Expression::StaticMemberExpression(member) = &for_call.callee else {
+        return None;
+    };
+    (member.property.name.as_str() == "for"
+        && expression_is_active_declaration(&member.object, root))
+    .then_some(for_call)
+}
+
 /// Zero rows register zero callbacks, unlike a single empty row (`[[]]`).
 /// Extra arguments may invoke tagged-table formatting; only the ordinary
 /// one-argument literal table is decided here. Other tables keep their
 /// existing unresolved-row behavior.
 fn each_table_is_empty(each_call: &oxc_ast::ast::CallExpression<'_>) -> bool {
-    let [table] = each_call.arguments.as_slice() else {
+    parameterized_table_is_empty(each_call)
+}
+
+fn for_table_is_empty(for_call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    parameterized_table_is_empty(for_call)
+}
+
+fn parameterized_table_is_empty(table_call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    let [table] = table_call.arguments.as_slice() else {
         return false;
     };
     table.as_expression().is_some_and(|table| {
@@ -4690,6 +4748,9 @@ pub(crate) fn qualified_test_name(describe_stack: &[String], name: &str) -> Stri
 /// - `` test.each`table`('name', fn) `` / `` it.each`table`('name', fn) `` —
 ///   tagged-template `.each` (the tagged template sits in callee position, so
 ///   the extractor's identifier/member callee check never recognizes it).
+/// - `test.for(rows)(title, fn)` / `it.for(rows)(title, fn)` — Vitest's
+///   parameterized `.for` chain (the inner `.for` table call and the outer
+///   title/callback call are not indexed by the syntax-first extractor).
 /// - `it(...)` / `test(...)` calls nested inside a body the extractor does not
 ///   walk: an `if`/`while`/`try` block, a helper function, or a callback other
 ///   than `describe(...)` (or `context(...)` / `suite(...)`) and `.forEach(...)`,
@@ -4730,6 +4791,20 @@ pub(crate) fn detect_partial_test_extraction_expanded(
     extracted: &[TypeScriptTest],
     expansion: Option<&super::suite_factory::SuiteFactoryExpansion>,
 ) -> Option<TypeScriptTestExtractionGap> {
+    try_detect_partial_test_extraction_expanded(file, source, extracted, expansion)
+        .ok()
+        .flatten()
+}
+
+/// [`detect_partial_test_extraction_expanded`] that tells a parse-worker
+/// failure from "nothing dropped": only `Ok` is a function of the bytes, so
+/// only `Ok` may be persisted.
+pub(crate) fn try_detect_partial_test_extraction_expanded(
+    file: &Path,
+    source: &str,
+    extracted: &[TypeScriptTest],
+    expansion: Option<&super::suite_factory::SuiteFactoryExpansion>,
+) -> Result<Option<TypeScriptTestExtractionGap>, String> {
     let source = expansion.map_or(source, |expansion| expansion.source.as_str());
     let covered = expansion.map(|expansion| expansion.covered.clone());
     let call_lines = expansion.map(|expansion| expansion.call_lines.clone());
@@ -4737,7 +4812,7 @@ pub(crate) fn detect_partial_test_extraction_expanded(
     // the parse closure is `'static` and cannot borrow `extracted`.
     let extracted_starts =
         extracted_span_starts(source, extracted, covered.as_deref().unwrap_or_default());
-    let Ok(gap) = parse_on_worker(file, source, move |file, source, allocator| {
+    parse_on_worker(file, source, move |file, source, allocator| {
         let ret = Parser::new(allocator, source, source_type_for(file)).parse();
         if !ret.errors.is_empty() {
             // Parse-error disclosure owns this case; do not double-report.
@@ -4771,10 +4846,7 @@ pub(crate) fn detect_partial_test_extraction_expanded(
                 snippet,
             },
         )
-    }) else {
-        return None;
-    };
-    gap
+    })
 }
 
 /// Recover the byte-offset span start for every extracted test from its
@@ -4957,6 +5029,17 @@ impl UnextractedTestFinder<'_> {
     ) -> bool {
         each_declaration_callee(call, root).is_some_and(|each_call| {
             !each_table_is_empty(each_call)
+                && declaration_options_are_active_with_undefined(call, self.unshadowed_undefined())
+        })
+    }
+
+    fn call_is_active_for_declaration(
+        &self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        root: TestDeclarationRoot,
+    ) -> bool {
+        for_declaration_callee(call, root).is_some_and(|for_call| {
+            !for_table_is_empty(for_call)
                 && declaration_options_are_active_with_undefined(call, self.unshadowed_undefined())
         })
     }
@@ -5145,7 +5228,8 @@ impl UnextractedTestFinder<'_> {
                     && let Expression::CallExpression(call) = &await_expr.argument
                     && !self.callee_is_parameter(&call.callee)
                     && ((self.call_is_active_declaration(call, TestDeclarationRoot::Test)
-                        || self.call_is_active_each_declaration(call, TestDeclarationRoot::Test))
+                        || self.call_is_active_each_declaration(call, TestDeclarationRoot::Test)
+                        || self.call_is_active_for_declaration(call, TestDeclarationRoot::Test))
                         && self
                             .admission
                             .registration_is_known(call, true, std::iter::empty())
@@ -5251,7 +5335,10 @@ impl UnextractedTestFinder<'_> {
         // inline callbacks as dropped active registrations.
         if [TestDeclarationRoot::Test, TestDeclarationRoot::Describe]
             .into_iter()
-            .any(|root| each_declaration_callee(call, root).is_some_and(each_table_is_empty))
+            .any(|root| {
+                each_declaration_callee(call, root).is_some_and(each_table_is_empty)
+                    || for_declaration_callee(call, root).is_some_and(for_table_is_empty)
+            })
         {
             for argument in &call.arguments {
                 if let Some(expression) = argument.as_expression() {
@@ -5305,11 +5392,17 @@ impl UnextractedTestFinder<'_> {
             }
             if !self.extracted_starts.contains(&(call.span.start as usize))
                 && (self.call_is_active_declaration(call, TestDeclarationRoot::Test)
-                    || self.call_is_active_each_declaration(call, TestDeclarationRoot::Test))
+                    || self.call_is_active_each_declaration(call, TestDeclarationRoot::Test)
+                    || self.call_is_active_for_declaration(call, TestDeclarationRoot::Test))
             {
-                let shape = match call.arguments.first() {
-                    Some(Argument::TemplateLiteral(_)) => "template-literal title",
-                    _ => "test/it call in loop/callback/nested body",
+                let shape = if self.call_is_active_for_declaration(call, TestDeclarationRoot::Test)
+                {
+                    "test.for registration"
+                } else {
+                    match call.arguments.first() {
+                        Some(Argument::TemplateLiteral(_)) => "template-literal title",
+                        _ => "test/it call in loop/callback/nested body",
+                    }
                 };
                 self.gap = Some((
                     self.source.line_for_offset(call.span.start as usize),

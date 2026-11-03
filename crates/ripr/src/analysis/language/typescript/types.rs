@@ -597,10 +597,65 @@ pub(crate) struct TypeScriptTestExtractionGap {
     pub(crate) file: PathBuf,
     pub(crate) sample_line: usize,
     /// Detected shape, one of `template-literal title`, `tagged-template .each`,
-    /// or `test/it call in loop/callback/nested body`.
+    /// `test.for registration`, or `test/it call in loop/callback/nested body`.
     pub(crate) shape: &'static str,
     /// Source snippet (single-line, bounded) of the unextracted registration.
     pub(crate) snippet: String,
+}
+
+/// A test file's partial-extraction verdict as persisted beside its facts.
+/// `gap` is `None` for a fully extracted file; the record exists so a warm run
+/// can tell "checked, nothing dropped" from "never checked".
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct PersistedPartialExtraction {
+    pub(crate) gap: Option<PersistedExtractionGap>,
+}
+
+/// [`TypeScriptTestExtractionGap`] without the file (the envelope's own path)
+/// and with the shape as text (the in-memory shape is a `&'static str`).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct PersistedExtractionGap {
+    pub(crate) sample_line: usize,
+    pub(crate) shape: String,
+    pub(crate) snippet: String,
+}
+
+impl PersistedPartialExtraction {
+    pub(crate) fn of(gap: Option<&TypeScriptTestExtractionGap>) -> Self {
+        Self {
+            gap: gap.map(|gap| PersistedExtractionGap {
+                sample_line: gap.sample_line,
+                shape: gap.shape.to_string(),
+                snippet: gap.snippet.clone(),
+            }),
+        }
+    }
+
+    /// The verdict for `file`. `None` when the recorded shape is not one this
+    /// build produces, so the caller recomputes instead of trusting it.
+    pub(crate) fn restore(
+        &self,
+        file: &std::path::Path,
+    ) -> Option<Option<TypeScriptTestExtractionGap>> {
+        let Some(gap) = &self.gap else {
+            return Some(None);
+        };
+        let shape = [
+            "template-literal title",
+            "tagged-template .each",
+            "test.for registration",
+            "test/it call in loop/callback/nested body",
+            "runner registration kind mismatch",
+        ]
+        .into_iter()
+        .find(|known| *known == gap.shape)?;
+        Some(Some(TypeScriptTestExtractionGap {
+            file: file.to_path_buf(),
+            sample_line: gap.sample_line,
+            shape,
+            snippet: gap.snippet.clone(),
+        }))
+    }
 }
 
 /// Owner-shaped construct the syntax-first owner extractor does not index
@@ -854,6 +909,39 @@ pub(crate) enum TypeScriptPredicateActivation {
     /// a computed or absent input, or an owner reference that is not a
     /// plain call. Never a missing input.
     Unresolved,
+}
+
+/// Whether one row's family-relevant assertion observes the changed sink,
+/// another resolved sink, or cannot be confirmed (#5528).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TypeScriptChangedSinkObservation {
+    /// A strong, family-matching assertion witnesses the changed sink.
+    ConfirmedChangedSink,
+    /// Positive evidence that the assertion observes a different sink or target.
+    AffirmativelyOtherSink,
+    /// Observation cannot be established (missing metadata, unresolved flow).
+    Unresolved,
+    /// The observation guard does not apply to this probe family.
+    NotApplicable,
+}
+
+impl TypeScriptChangedSinkObservation {
+    pub(crate) fn confirms(self) -> bool {
+        matches!(self, Self::ConfirmedChangedSink)
+    }
+
+    /// Combine assertion-level states for one candidate scan.
+    pub(crate) fn merge(self, other: Self) -> Self {
+        use TypeScriptChangedSinkObservation as S;
+        match (self, other) {
+            (S::ConfirmedChangedSink, _) | (_, S::ConfirmedChangedSink) => S::ConfirmedChangedSink,
+            (S::AffirmativelyOtherSink, _) | (_, S::AffirmativelyOtherSink) => {
+                S::AffirmativelyOtherSink
+            }
+            (S::Unresolved, _) | (_, S::Unresolved) => S::Unresolved,
+            _ => S::NotApplicable,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

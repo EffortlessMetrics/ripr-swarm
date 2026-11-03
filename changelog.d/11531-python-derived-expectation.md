@@ -1,0 +1,3 @@
+<!-- section: Fixed -->
+- Python: an exact comparison whose expected side is computed from the changed owner (a `setUp` attribute, class attribute, module constant or local bound to `f(2)`, a forwarder of the owner, `f(2) + 0`, `f(1) * 2`, or `f(2) - f(2)`) no longer reads `exposed`; it is a weak relational check like `assertEqual(f(2), f(2))`. Literal and independent-reference expectations keep their credit (#11531).
+- Python: a computed-expectation demotion now needs an owner call at the root of one side's value, so an input both sides read (`n = make_n(); assert f(n) == n * 2`) and a same-named method on an unknown receiver (`d.get('k')`, `''.join(..)`) keep their credit (#11531).

@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,6 +8,6 @@
+     match raw {
+         "" => Err(UnitError::Unknown),
+         "k" => Ok(1_000),
+-        _ => Err(UnitError::Unknown),
++        _ => Err(UnitError::Blank),
+     }
+ }

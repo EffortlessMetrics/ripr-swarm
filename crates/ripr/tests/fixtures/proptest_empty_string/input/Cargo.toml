@@ -1,0 +1,11 @@
+[package]
+name = "perl-position-tracking"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dev-dependencies]
+proptest = "=1.11.0"
+perl-test-generators = { path = "perl-test-generators" }

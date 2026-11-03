@@ -1,9 +1,11 @@
 //! Actual check-fast dispatch controls for RIPR-SPEC-0060 (#7528).
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::process::Output;
+use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
 
 const SPEC: &str = "docs/specs/RIPR-SPEC-9999-support-route-control.md";
 
@@ -40,8 +42,12 @@ fn fixture() -> Result<Fixture, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_nanos();
+    // Keep the private clone's path short: the fixture runs the real
+    // `cargo fmt --check`, which passes every test target's file path on one
+    // command line, and Windows refuses a line over 32,767 characters (os error
+    // 206) once the workspace has a few hundred test targets (#9272).
     let root =
-        std::env::temp_dir().join(format!("ripr-support-route-{}-{nonce}", std::process::id()));
+        std::env::temp_dir().join(format!("rsr{}-{:x}", std::process::id(), nonce & 0xff_ffff));
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let fixture = Fixture(root);
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -92,11 +98,9 @@ fn commit(root: &Path, message: &str) -> Result<(), String> {
 }
 
 fn run(root: &Path, command: &str) -> Result<Output, String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .current_dir(root)
-        .arg(command)
-        .output()
-        .map_err(|error| error.to_string())?;
+    let output = xtask_bin::output(|xtask| {
+        xtask.current_dir(root).arg(command);
+    })?;
     println!(
         "command={command}; native_exit={:?}; {}",
         output.status.code(),

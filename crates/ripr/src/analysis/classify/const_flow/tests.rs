@@ -669,3 +669,31 @@ fn a_trait_with_a_default_constant_or_a_helper_condition_is_not_evaluated() -> R
     assert_eq!(with_default(&helper)?, None);
     Ok(())
 }
+
+#[test]
+fn only_a_differently_evaluated_value_of_one_type_is_a_changed_value() {
+    let changes = |old: &str, new: &str| {
+        super::const_value_changes(&super::ConstChange {
+            old_declaration: old.to_string(),
+            new_declaration: new.to_string(),
+        })
+    };
+    assert!(changes("pub const N: u32 = 10;", "pub const N: u32 = 11;"));
+    assert!(changes(
+        "pub const G: &str = \"hello\";",
+        "pub const G: &str = \"hi\";"
+    ));
+    // Same value, other spelling or visibility; other type; other name.
+    assert!(!changes(
+        "pub const N: u32 = 10;",
+        "pub const N: u32 = 5 + 5;"
+    ));
+    assert!(!changes("const N: u32 = 10;", "pub const N: u32 = 10;"));
+    assert!(!changes("pub const N: u32 = 10;", "pub const N: u64 = 11;"));
+    assert!(!changes("pub const N: u32 = 10;", "pub const M: u32 = 11;"));
+    // A value the evaluator cannot read is not known to change.
+    assert!(!changes(
+        "pub const N: u32 = f(1);",
+        "pub const N: u32 = f(2);"
+    ));
+}
