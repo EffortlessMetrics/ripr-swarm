@@ -646,12 +646,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.144`: a file-backed insta snapshot whose committed `.snap` file is
 /// certainly missing no longer discriminates a seam, and the `.snap` listing is
 /// part of the key (#12189).
-/// `1.146`: an exact error-variant pin is no oracle on a returned-value seam it
-/// cannot see (#12722).
-///
 /// `1.145`: a same-file assertion on another function lends a returned value
 /// no oracle once a test that runs the owner is related (#12671).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.146";
+/// `1.146`: a bare `assert_*snapshot!` counts as insta's only when no workspace
+/// file defines a macro of that name (#12720).
+/// `1.147`: an exact error-variant pin is no oracle on a returned-value seam it
+/// cannot see (#12722).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.147";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -837,10 +838,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.146";
 /// `0.144`: same default-feature doctest rule as full `1.142` (#12230).
 /// `0.145`: same adapter-fed `Err(..)` relation as full `1.143` (#12610).
 /// `0.146`: same missing-committed-snapshot rule as full `1.144` (#12189).
-/// `0.148`: same error-pin refusal as full `1.146` (#12722).
-///
 /// `0.147`: same returned-value other-function refusal as full `1.145` (#12671).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.148";
+/// `0.148`: same shadowed-snapshot-macro rule as full `1.146` (#12720).
+/// `0.149`: same error-pin refusal as full `1.147` (#12722).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.149";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1028,10 +1029,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.148";
 /// `0.144`: same default-feature doctest rule as full `1.142` (#12230).
 /// `0.145`: same adapter-fed `Err(..)` relation as full `1.143` (#12610).
 /// `0.146`: same missing-committed-snapshot rule as full `1.144` (#12189).
-/// `0.148`: same error-pin refusal as full `1.146` (#12722).
-///
 /// `0.147`: same returned-value other-function refusal as full `1.145` (#12671).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.148";
+/// `0.148`: same shadowed-snapshot-macro rule as full `1.146` (#12720).
+/// `0.149`: same error-pin refusal as full `1.147` (#12722).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.149";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5890,8 +5891,9 @@ mod tests {
         // 1.142 -> 1.143: adapter-fed Err is a relation (#12610).
         // 1.143 -> 1.144: file-backed snapshot with no committed `.snap` (#12189).
         // 1.144 -> 1.145: returned-value seams refuse another function's oracle (#12671).
-        // 1.145 -> 1.146: an exact error-variant pin is no oracle on an Ok-value seam (#12722).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.146");
+        // 1.145 -> 1.146: shadowed bare snapshot macro (#12720).
+        // 1.146 -> 1.147: an exact error-variant pin is no oracle on an Ok-value seam (#12722).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.147");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -6018,9 +6020,10 @@ mod tests {
         // 0.144 -> 0.145: same adapter-fed Err relation as full 1.143 (#12610).
         // 0.145 -> 0.146: same missing-snapshot rule as full 1.144 (#12189).
         // 0.146 -> 0.147: same returned-value refusal as full 1.145 (#12671).
-        // 0.147 -> 0.148: same error-pin refusal as full 1.146 (#12722).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.148");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.148");
+        // 0.147 -> 0.148: same shadowed-macro rule as full 1.146 (#12720).
+        // 0.148 -> 0.149: same error-pin refusal as full 1.147 (#12722).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.149");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.149");
     }
 
     #[test]

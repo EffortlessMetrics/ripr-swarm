@@ -642,7 +642,9 @@ certain:
   body, unnamed or named by a string literal, on a macro whose first argument
   is a name (`assert_binary_snapshot!` is not resolved);
 - an unqualified macro counts only when the file imports it from `insta` and
-  defines no macro of that name;
+  no workspace Rust file defines a macro of that name (`macro_rules!`, any
+  spacing around the `!`): a `#[macro_use]` definition in another file shadows
+  the import (#12720);
 - the test file has no `snapshot_path`, `glob!` or `INSTA_` text and the test
   is not case-driven;
 - the workspace `.snap` listing is complete (readable, under its size limit,
@@ -657,7 +659,8 @@ Any other shape keeps its grade. An untracked `.snap` is not one CI sees
 Proof: `snapshot_without_an_expected_file_cannot_close_the_return_seam`,
 `an_untracked_expected_file_does_not_credit_the_return_seam`,
 `a_committed_binary_snapshot_keeps_the_return_seam_credit`,
-`a_non_utf8_name_makes_the_listing_unknown_and_never_demotes` (#12259), the resolver tests in
+`a_non_utf8_name_makes_the_listing_unknown_and_never_demotes` (#12259),
+`a_bare_snapshot_macro_defined_in_another_file_keeps_the_return_seam_credit` (#12720), the resolver tests in
 `rust_snapshot_files/tests.rs`, and `rust_field_snapshot_missing_expected_not_promoted`
 in the honesty corpus.
 

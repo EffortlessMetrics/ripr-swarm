@@ -586,14 +586,16 @@ struct ItemBindings {
 
 impl ItemBindings {
     fn read(source: &str, name: &str, import_is_other: impl Fn(&[String]) -> bool) -> Self {
-        use crate::analysis::syntax::{UseBinding, parse_clean_source_file, use_item_bindings};
+        use crate::analysis::syntax::{
+            UseBinding, parse_clean_source_file_memoized, use_item_bindings,
+        };
         use ra_ap_syntax::{
             AstNode,
             ast::{self, HasAttrs, HasName},
         };
 
         let mut result = Self::default();
-        let Some(parse) = parse_clean_source_file(source) else {
+        let Some(parse) = parse_clean_source_file_memoized(source) else {
             result.unreadable = true;
             return result;
         };
