@@ -20,8 +20,8 @@ Linked plan:
 
 Linked issues:
 
-- None yet. Defects found while writing this spec are to be filed
-  separately.
+- [#7851](https://github.com/EffortlessMetrics/ripr-swarm/issues/7851)
+  (rule 23: returned-list elements vs scalar and self-comparison).
 
 Linked PRs:
 
@@ -55,6 +55,9 @@ Support-tier impact:
   - rule 16: a `reachable_unrevealed` finding whose only bound oracle is
     `weak_broad` on a strong-eligible kind, on an owner-call relation, becomes `static_unknown` and loses
     its gap and suggested location.
+  - rule 23: an `exposed` finding whose only aligned strong oracle is a
+    scalar `is` on a returned-list element, or a self-comparison, moves
+    to `weakly_exposed`.
 - Every other rule, including rules 1, 10 and 14, changes no output.
   Claim boundaries remain governed by
   [support tiers](../status/SUPPORT_TIERS.md).
@@ -477,6 +480,46 @@ For each change, the first match wins:
     of a larger operand, so it over-withholds. These choices are meant to
     only withhold, but the read is not proven complete: a construct it does
     not know could still be read as a call.
+23. **A returned-list element is not observed by a scalar `is` or a
+    self-comparison (#7851).** Rule 9 aligns equal sink text. The producer
+    often copies the whole changed expression onto every strong oracle
+    (equal-fact promotion), so a Test::More `is(scalar LIST_CALL, LAST,
+    ...)` and an `is_deeply` whose first two operands are the same text
+    can carry the same `observed_sink` as a literal-list `is_deeply`.
+    Scalar context of an explicit list is the last value; a self-comparison
+    pins nothing. ripr therefore withholds alignment for:
+    - a Test::More / Test2 `is` (bare or `Test::More::` / `Test2::V0::` /
+      `Test2::V1::` qualified) whose got operand starts with the word
+      `scalar`, unless the equal sink text itself names `scalar` or
+      `wantarray` as a code word (not a variable, method, or longer name)
+      — that is the scalar arm of a context-sensitive return, as in
+      `perl-idiom-wantarray-exact`;
+    - an `is` or `is_deeply` whose first two comma-separated operands,
+      read inside the outermost parentheses with nested `()`, `[]`, `{}`
+      and quoted strings kept together, are the same text after the same
+      whitespace normalization as rule 9.
+    The change then reads `weakly_exposed` (no `perl_already_discriminated`),
+    with the ordinary advisory next step, so a literal-list `is_deeply`
+    remains the discriminator. This is a bounded lexical read of packet
+    strings the schema already carries (`expression`, `observed_sink`);
+    ripr does not parse Perl and adds no packet field.
+    A plain `is($got, 10)` with independent expected text, and a name that
+    only starts with `is` / `is_deeply`, keep rule 9.
+    Known limits, stated honestly: the read is lexical and approximate.
+    Rule 23 applies only when `changed_observable` is a numbered capture
+    (`$1`, `$2`, …), the shape #7851 uses for returned-list elements; a
+    scalar-return observable such as `$result` keeps scalar `is` alignment.
+    An `is` without parentheses, a `scalar` got operand written after a
+    comment or newline the scan does not treat as the first operand, and
+    a self-comparison whose two sides differ only in whitespace inside a
+    construct rule 9 refuses to normalize, are not recognized and keep
+    equal-text alignment (over-credit). A scalar `is` whose sink text
+    happens to name `scalar` or `wantarray` still aligns, even when the
+    assertion is about a last element rather than a `wantarray` arm
+    (the wantarray-exact producer row is the reason). A last-element
+    change observed only by `is(scalar ...)` with a capture sink such as
+    `$2` is withheld (missed credit). These choices are meant to only
+    withhold, except the documented wantarray-exact keep.
 
 ### Decisions
 
@@ -583,6 +626,19 @@ rejected alternative. Any can be reversed later without touching the rest.
     `observation_unconfirmed` miss by #5498, and the producer emits no sink for
     most oracles); and fixing it only in the producer, which cannot express a
     hash-field flow as sink text today.
+
+14. **Returned-list vs scalar/self oracles (#7851).** Adopted: withhold
+    rule 9 alignment when the oracle expression is a scalar `is` or a
+    self-comparison, by a bounded lexical read of packet strings already
+    on the schema (rule 23). Equal-fact promotion copies the whole changed
+    expression onto every strong oracle, so a last-element `is(scalar ...)`
+    and a tautological `is_deeply` were reading `exposed` for a directory
+    element they do not pin. Keep alignment when the equal sink text itself
+    names `scalar` or `wantarray`, so the existing
+    `perl-idiom-wantarray-exact` producer row stays credited. Rejected: a
+    new packet field (the pinned producer cannot emit one yet); a Perl
+    parser in ripr; skipping every `is(scalar ...)` including the wantarray
+    scalar arm (that moves a producer ideal to a gap).
 
 ## Required Evidence
 
@@ -739,8 +795,10 @@ cases.
   adds no numbered example: the corpus counts those),
   `closure_oracle_beside_an_unlinked_owner_call_is_unknown_not_a_gap` (rule 20)
   and `uncovered_top_level_line_beside_file_boundaries_is_a_stated_limit`
-  (rule 21), and `h2_changed_ordering_comparison_is_not_observed_by_equal_sink_text`
-  (rule 22), which add no numbered examples either,
+  (rule 21), and   `h2_changed_ordering_comparison_is_not_observed_by_equal_sink_text`
+  (rule 22) and
+  `list_element_equal_fact_does_not_promote_scalar_or_self_comparison`
+  (rule 23), which add no numbered examples either,
   `h2_producer_declared_absent_observable_is_unknown_not_a_gap` (rule 18,
   example 32), `h2_aligned_sink_on_another_tests_oracle_does_not_promote`
   (rules 5 and 9, example 28), `h1_ownerless_file_boundary_still_blocks`,
@@ -775,9 +833,9 @@ cases.
   - `PerlFactPacket::related_test_evidence_for_change`: rule 3;
   - `PerlFactPacket::classify_related_relation`: rules 4 to 7;
   - `PerlFactPacket::classify_change_from_related_tests`: rule 8;
-  - `sink_aligned_observation`: rules 5, 9 and 19 (`matches_a_pattern`), and
+  - `sink_aligned_observation`: rules 5, 9 and 19 (`matches_a_pattern`),
     rule 22 (its `boundary_input::boundary_input_for` branch, read again in
-    `packet_to_findings`);
+    `packet_to_findings`), and rule 23 (`list_element_oracle_does_not_pin`);
   - `boundary_input::boundary_input_for`: rule 22;
   - `packet_to_findings_with_currentness` (`coderef_unresolved`) and
     `PerlFactPacket::test_asserts_through_code_reference`: rule 20;
