@@ -323,8 +323,49 @@ pub(crate) fn expansion_declares_items(text: &str) -> bool {
         let item = ast::Item::can_cast(node.kind())
             && !top_level_fn
             && !ast::MacroCall::can_cast(node.kind());
-        item || binds_outside_a_let(&node)
+        item || opaque_macro_call(&node) || binds_outside_a_let(&node)
     })
+}
+
+/// Single-segment std macros that expand to expressions and bind no names.
+const NAME_FREE_STD_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "matches",
+    "format",
+    "vec",
+    "println",
+    "eprintln",
+    "print",
+    "eprint",
+    "panic",
+    "write",
+    "writeln",
+    "dbg",
+    "unreachable",
+    "unimplemented",
+    "todo",
+];
+
+/// A macro call in the generated body whose expansion cannot be seen: an
+/// external macro such as `helpers::bind!()` may expand to a `use` that
+/// rebinds a callee. Only the std expression macros above are exempt, and only
+/// as a bare name; a path call or any other name is treated as a possible
+/// declaration so the test borrows no invocation scopes (#12320).
+fn opaque_macro_call(node: &SyntaxNode) -> bool {
+    let Some(call) = ast::MacroCall::cast(node.clone()) else {
+        return false;
+    };
+    let Some(path) = call.path() else {
+        return true;
+    };
+    let single = path.qualifier().is_none();
+    let name = path.segment().map(|segment| segment.to_string());
+    !(single && name.is_some_and(|name| NAME_FREE_STD_MACROS.contains(&name.as_str())))
 }
 
 /// A binding pattern whose owner is not a plain `let` statement: a closure or
@@ -923,6 +964,22 @@ mod a { child_table!(case); } mod b { use demo::owner; #[test] fn case() { owner
         assert!(tree.is_some_and(|tree| {
             name_scopes_for_test_caller(&tree, &LineIndex::new(source), 2, "case", None).is_none()
         }));
+    }
+
+    #[test]
+    fn opaque_macro_calls_in_a_generated_body_may_declare() {
+        // `helpers::bind!()` may expand to a `use`; a bare name that is not a
+        // known std expression macro may too. Bare std assertions are exempt.
+        assert!(expansion_declares_items(
+            "fn t() { helpers::bind!(); owner(1); }"
+        ));
+        assert!(expansion_declares_items("fn t() { bind!(); owner(1); }"));
+        assert!(expansion_declares_items(
+            "fn t() { std::assert_eq!(1, 1); }"
+        ));
+        assert!(!expansion_declares_items(
+            "fn t() { assert_eq!(owner(1), 2); }"
+        ));
     }
 
     #[test]
