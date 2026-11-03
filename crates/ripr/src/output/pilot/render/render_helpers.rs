@@ -108,6 +108,7 @@ pub(super) fn push_markdown_recommendation(out: &mut String, entry: &ClassifiedS
         "- Assertion shape: `{}`\n",
         outline.assertion_shape
     ));
+    crate::output::placeholder_assertion::push_fill_in_note(out, "  ", &outline.assertion_shape);
     out.push_str("- Detailed work order:\n\n");
     out.push_str("```text\n");
     out.push_str(&targeted_test_brief_for_classified_seam(entry));
