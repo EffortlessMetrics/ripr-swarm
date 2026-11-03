@@ -1,7 +1,0 @@
-   Compiling ripr v0.11.0 (/home/user/w10666/crates/ripr)
-   Compiling xtask v0.1.0 (/home/user/w10666/xtask)
-    Finished `dev` profile [unoptimized] target(s) in 4m 28s
-     Running `target/debug/xtask check-evidence-promotion-honesty`
-$ cargo build -p ripr --quiet
-pass: corpus tiers valid; all charter members at expected class; no clean-guard case lost its findings; scope-guard cases kept report scope headers; no promoted case carries exposed; all controls retain exposed
-exit=0
