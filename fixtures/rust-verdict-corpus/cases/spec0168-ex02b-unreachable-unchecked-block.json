@@ -4,7 +4,7 @@
   "diff": "cases/spec0168-ex02b-unreachable-unchecked-block.diff",
   "anchor": {
     "file": "src/lib.rs",
-    "line": 2
+    "line": 5
   },
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "static_unknown_unsafe_block",
@@ -17,15 +17,15 @@
     "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
     "mutants": [
       {
-        "replacement": "if x > 1000 { unsafe { std::hint::unreachable_unchecked() } }",
-        "mutated_line": "if x > 1000 { unsafe { std::hint::unreachable_unchecked() } }",
+        "replacement": "std::process::abort();",
+        "mutated_line": "std::process::abort();",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: the changed value is not observed by any test that runs"
       },
       {
-        "replacement": "if x > 200 { unsafe { std::hint::unreachable_unchecked() } }",
-        "mutated_line": "if x > 200 { unsafe { std::hint::unreachable_unchecked() } }",
+        "replacement": "return 1;",
+        "mutated_line": "return 1;",
         "outcome": "tests_passed",
         "failing_test": null,
         "equivalence_review": "not equivalent: the changed value is not observed by any test that runs"
@@ -39,12 +39,12 @@
       "limited"
     ]
   },
-  "reasoning": "next_adds_one pins next(4) to 5 and never passes an input above 100, so no change to the new guard is observed. Spec cells: RIPR-SPEC-0168 example 2 (a function that gains an `unreachable_unchecked()` block reads `static_unknown`, `unsafe_obligation`).",
+  "reasoning": "large_inputs_are_refused only passes 200, which returns before the new statement, so any change to the statement is unobserved; the statement is never executed. Spec cells: RIPR-SPEC-0168 example 2 (a function that gains an `unreachable_unchecked()` block reads `static_unknown`, `unsafe_obligation`).",
   "labeling_observation": {
     "ripr_commit": "99b377f5",
-    "full_checkout_verdict": "gap",
+    "full_checkout_verdict": "limited",
     "full_checkout_classifications": [
-      "weakly_exposed"
+      "static_unknown"
     ],
     "excerpt_parity": "matched"
   },

@@ -1,5 +1,8 @@
 pub fn next(x: u32) -> u32 {
-    if x > 100 { return 0; }
+    if x > 100 {
+        return 0;
+    }
+    let _ = ();
     x + 1
 }
 
@@ -8,7 +11,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn next_adds_one() {
-        assert_eq!(next(4), 5);
+    fn large_inputs_are_refused() {
+        assert_eq!(next(200), 0);
     }
 }
