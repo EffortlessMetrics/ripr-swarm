@@ -120,10 +120,20 @@ impl Fixture {
         git(&dir, &["merge", "-q", "--no-ff", "-m", "merge", "pr"])?;
         let merge = git(&dir, &["rev-parse", "HEAD"])?;
         let tree = git(&dir, &["rev-parse", "HEAD^{tree}"])?;
-        // Parent order [head, base]: same tree, wrong order.
-        git(&dir, &["checkout", "-q", "pr"])?;
-        git(&dir, &["merge", "-q", "--no-ff", "-m", "swapped", "main"])?;
-        let swapped_merge = git(&dir, &["rev-parse", "HEAD"])?;
+        // Parent order [head, base]: same tree, wrong order, built with exactly those parents.
+        let swapped_merge = git(
+            &dir,
+            &[
+                "commit-tree",
+                &tree,
+                "-p",
+                &head,
+                "-p",
+                &base,
+                "-m",
+                "swapped",
+            ],
+        )?;
         git(&dir, &["checkout", "-q", "--detach", &merge])?;
         Ok(Self {
             dir,
