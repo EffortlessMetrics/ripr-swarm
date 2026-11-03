@@ -442,6 +442,10 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "import builtins as b\nchecks = [item for item in items if item is b.isinstance]\n\n\n",
         "import builtins as b\nlabel = \"for b.isinstance in items\"\n\n\n",
         "import builtins as b\nimport os as handle\nuse(b.isinstance)\n\n\n",
+        // #12728: the attribute inside a target but not as a store slot.
+        "import builtins as b\nfor items[b.isinstance] in rows:\n    pass\n\n\n",
+        "import builtins as b\nwith ctx() as items[b.isinstance]:\n    pass\n\n\n",
+        "import builtins as b\nfor item in rows: use(b.isinstance)\n\n\n",
     ] {
         let owner = format!("{harmless}{arm}");
         assert_eq!(
