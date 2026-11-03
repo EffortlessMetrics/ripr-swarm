@@ -2223,7 +2223,6 @@ code = [
   "crates/ripr/src/output/review_comments_receipt.rs",
   "xtask/src/reports/review_comments.rs",
   "crates/ripr/src/app/annotations.rs",
-  "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/cli/commands/review_comments.rs",
   "crates/ripr/src/cli/command.rs",
   "crates/ripr/src/cli/help.rs",
@@ -2827,7 +2826,7 @@ fixtures = [
 code = [
   "crates/ripr/src/output/test_oracle_assistant_proof.rs",
   "crates/ripr/src/cli/command.rs",
-  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/assistant_loop.rs",
   "crates/ripr/src/cli/execute.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/cli/parse.rs",
@@ -2882,7 +2881,7 @@ tests = [
   "crates/ripr/src/output/first_useful_action.rs::unreadable_receipt_asks_for_a_complete_receipt",
   "crates/ripr/tests/cli_smoke.rs::first_action_routes_live_unchanged_receipt_to_revise_focused_test",
   "crates/ripr/tests/cli_smoke.rs::first_action_cli_writes_actionable_report",
-  "crates/ripr/src/cli/commands.rs::first_action_cli_writes_gap_record_report",
+  "crates/ripr/src/cli/commands/first_action.rs::first_action_cli_writes_gap_record_report",
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_is_advisory",
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional",
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_matches_smoke_fixture",
@@ -2924,7 +2923,7 @@ code = [
   "crates/ripr/src/cli/commands_agent_support.rs",
   "crates/ripr/src/output/mod.rs",
   "crates/ripr/src/cli/command.rs",
-  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/first_action.rs",
   "crates/ripr/src/cli/execute.rs",
   "crates/ripr/src/cli/help.rs",
   "crates/ripr/src/cli/parse.rs",
@@ -3085,7 +3084,7 @@ code = [
   "xtask/src/main.rs",
   "crates/ripr/src/output/assistant_loop_health.rs",
   "crates/ripr/src/output/mod.rs",
-  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/assistant_loop.rs",
   "crates/ripr/src/cli/help.rs",
 ]
 outputs = [
@@ -5660,7 +5659,7 @@ tests = [
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::load_gap_ledger_records_binds_typed_routes_to_the_workspace_root",
   "crates/ripr/src/lsp/backend.rs::gap_record_context_tests::collect_context_packet_for_gap_id_reads_explicit_ledger",
   "crates/ripr/src/lsp/backend.rs::gap_record_context_tests::collect_context_packet_for_gap_id_matches_canonical_gap_id",
-  "crates/ripr/src/cli/commands.rs::tests::first_action_cli_writes_gap_record_report",
+  "crates/ripr/src/cli/commands/first_action.rs::tests::first_action_cli_writes_gap_record_report",
   "crates/ripr/src/cli/commands.rs::tests::pr_evidence_ledger_writes_json_and_markdown_reports",
   "crates/ripr/tests/cli_smoke.rs::check_repo_badge_json_can_use_gap_ledger_targets",
 ]
