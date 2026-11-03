@@ -5110,6 +5110,10 @@ mod tests {
         );
         // A closure parameter named `render` shadows the import without a
         // `let`; the expansion must not borrow the invocation-site scopes.
+        assert!(
+            index.tests().iter().any(|test| test.name == "closure_case"),
+            "the closure case must be indexed, or the assertion below is vacuous"
+        );
         assert_ne!(
             settle(&index, "/a.rs::render", "closure_case"),
             Some(CallTarget::Owner)

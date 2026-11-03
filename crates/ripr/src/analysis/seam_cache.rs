@@ -666,7 +666,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.152`: an exact pin of a one-field integer tuple struct's `.0` (or through
 /// a tuple-constructor receiver, under an imported std operator trait) now
 /// credits the changed `T(e)` tail (#12796).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.152";
+/// `1.153`: a macro-generated test borrows the module scopes at its invocation
+/// unless its expansion declares its own import, item or non-`let` binding
+/// (#12320). Old entries carry the earlier owner resolution.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.153";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -860,7 +863,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.152";
 /// `0.152`: same neither-version literal refusal as full `1.150` (#12716).
 /// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.154";
+/// `0.155`: same macro-generated-test invocation scopes as full `1.153` (#12320).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.155";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1056,7 +1060,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.154";
 /// `0.152`: same neither-version literal refusal as full `1.150` (#12716).
 /// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.154";
+/// `0.155`: same macro-generated-test invocation scopes as full `1.153` (#12320).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.155";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5962,8 +5967,8 @@ mod tests {
         // 1.148 -> 1.149: enclosing cfg gates on a doctest (#12453).
         // 1.149 -> 1.150: a pinned literal neither owner version returns does not credit (#12716).
         // 1.150 -> 1.151: renamed assertion-macro imports name the macro limit (#12779).
-        // 1.151 -> 1.152: a tuple `.0` pin credits the changed `T(e)` tail (#12796).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.152");
+        // 1.152 -> 1.153: macro-generated tests borrow invocation-site scopes (#12320).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.153");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -6096,9 +6101,9 @@ mod tests {
         // 0.150 -> 0.151: same enclosing-cfg doctest rule as full 1.149 (#12453).
         // 0.151 -> 0.152: same neither-version literal refusal as full 1.150 (#12716).
         // 0.152 -> 0.153: same renamed-assertion-import limit as full 1.151 (#12779).
-        // 0.153 -> 0.154: same tuple-projection pin as full 1.152 (#12796).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.154");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.154");
+        // 0.154 -> 0.155: same invocation-scope change as full 1.153 (#12320).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.155");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.155");
     }
 
     #[test]
