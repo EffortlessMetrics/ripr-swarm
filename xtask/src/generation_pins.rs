@@ -152,11 +152,7 @@ pub(crate) fn generations_next(args: &[String]) -> Result<(), String> {
             pin.family, pin.constant, pin.defining_file
         ));
     }
-    lines.extend(
-        CONSUMER_CHECKLIST
-            .iter()
-            .map(|line| line.to_string()),
-    );
+    lines.extend(CONSUMER_CHECKLIST.iter().map(|line| line.to_string()));
     println!("{}", lines.join("\n"));
     Ok(())
 }
@@ -239,8 +235,9 @@ fn evaluate_claim(head: &str, fork: &str, base_tip: &str) -> Result<ClaimVerdict
     }
     let head_value = parse_version(head)
         .map_err(|error| format!("head value `{head}` is not a usable generation: {error}"))?;
-    parse_version(fork)
-        .map_err(|error| format!("merge-base value `{fork}` is not a usable generation: {error}"))?;
+    parse_version(fork).map_err(|error| {
+        format!("merge-base value `{fork}` is not a usable generation: {error}")
+    })?;
     let base_tip_value = parse_version(base_tip).map_err(|error| {
         format!("base-tip value `{base_tip}` is not a usable generation: {error}")
     })?;
@@ -450,9 +447,7 @@ fn resolve_base(root: &Path, explicit: Option<&str>) -> Result<(String, String),
             .current_dir(root)
             .args(["merge-base", candidate, "HEAD"])
             .output()
-            .map_err(|error| {
-                format!("git merge-base {candidate} HEAD failed to spawn: {error}")
-            })?;
+            .map_err(|error| format!("git merge-base {candidate} HEAD failed to spawn: {error}"))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             let detail = if stderr.is_empty() {
@@ -494,7 +489,7 @@ fn is_sha(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaimVerdict, CONSUMER_CHECKLIST, GENERATION_PINS, claimed_generation_violations,
+        CONSUMER_CHECKLIST, ClaimVerdict, GENERATION_PINS, claimed_generation_violations,
         evaluate_claim, extract_constant, next_free, parse_generations_next_args, parse_version,
         resolve_base_with,
     };
@@ -551,7 +546,10 @@ mod tests {
 
     #[test]
     fn single_and_multi_component_values_compare_numerically() -> Result<(), String> {
-        assert_eq!(evaluate_claim("0.145", "0.144", "0.144")?, ClaimVerdict::FreshClaim);
+        assert_eq!(
+            evaluate_claim("0.145", "0.144", "0.144")?,
+            ClaimVerdict::FreshClaim
+        );
         assert_eq!(evaluate_claim("7", "6", "6")?, ClaimVerdict::FreshClaim);
         assert_eq!(evaluate_claim("19", "18", "18")?, ClaimVerdict::FreshClaim);
         assert_eq!(
@@ -625,8 +623,7 @@ mod tests {
     #[test]
     fn extraction_is_value_independent() -> Result<(), String> {
         for value in ["0.2", "6", "18", "1.142", "0.144"] {
-            let snippet =
-                format!("pub const COUNT_CACHE_SCHEMA_VERSION: &str = \"{value}\";\n");
+            let snippet = format!("pub const COUNT_CACHE_SCHEMA_VERSION: &str = \"{value}\";\n");
             let extracted = extract_constant(&snippet, "COUNT_CACHE_SCHEMA_VERSION")
                 .map_err(|error| format!("value {value} must extract: {error}"))?;
             assert_eq!(extracted, value);
@@ -656,9 +653,8 @@ mod tests {
         let root = repo_root()?;
         for pin in GENERATION_PINS {
             let path = root.join(pin.defining_file);
-            let text = std::fs::read_to_string(&path).map_err(|error| {
-                format!("read {}: {error}", pin.defining_file)
-            })?;
+            let text = std::fs::read_to_string(&path)
+                .map_err(|error| format!("read {}: {error}", pin.defining_file))?;
             let value = extract_constant(&text, pin.constant).map_err(|error| {
                 format!(
                     "registry row `{}` ({}) is stale in {}: {error}",
@@ -802,10 +798,7 @@ mod tests {
             texts
                 .entry(pin.defining_file)
                 .or_default()
-                .push(format!(
-                    "pub const {}: &str = \"{value}\";\n",
-                    pin.constant
-                ));
+                .push(format!("pub const {}: &str = \"{value}\";\n", pin.constant));
         }
         texts
             .into_iter()
@@ -883,8 +876,7 @@ mod tests {
                 Ok("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string())
             }
         };
-        let (base_ref, sha) =
-            resolve_base_with(&["origin/main", "main"], &resolver)?;
+        let (base_ref, sha) = resolve_base_with(&["origin/main", "main"], &resolver)?;
         assert_eq!(base_ref, "main");
         assert_eq!(sha, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         assert_eq!(
@@ -911,8 +903,7 @@ mod tests {
 
     #[test]
     fn base_resolution_rejects_malformed_sha_output() -> Result<(), String> {
-        let resolver =
-            |_candidate: &str| -> Result<String, String> { Ok("not-a-sha".to_string()) };
+        let resolver = |_candidate: &str| -> Result<String, String> { Ok("not-a-sha".to_string()) };
         let error = resolve_base_with(&["origin/main"], &resolver)
             .err()
             .ok_or("malformed merge-base output must fail closed")?;
@@ -939,10 +930,8 @@ mod tests {
 
     #[test]
     fn generations_next_parses_base_override_and_rejects_unknown_options() -> Result<(), String> {
-        let base = parse_generations_next_args(&[
-            "--base".to_string(),
-            "refs/heads/x".to_string(),
-        ])?;
+        let base =
+            parse_generations_next_args(&["--base".to_string(), "refs/heads/x".to_string()])?;
         assert_eq!(base.as_deref(), Some("refs/heads/x"));
         assert!(
             parse_generations_next_args(&["--base".to_string()]).is_err(),
@@ -971,11 +960,7 @@ mod tests {
         assert_eq!(GENERATION_PINS.len(), 10);
         let mut seen = std::collections::BTreeSet::new();
         for pin in GENERATION_PINS {
-            assert!(
-                seen.insert(pin.family),
-                "duplicate family `{}`",
-                pin.family
-            );
+            assert!(seen.insert(pin.family), "duplicate family `{}`", pin.family);
         }
     }
 }
