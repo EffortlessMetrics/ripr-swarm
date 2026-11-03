@@ -133,9 +133,6 @@ struct Element {
     kind: String,
     disposition: String,
     evidence: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    retirement: String,
 }
 
 pub(crate) fn check() -> Result<(), String> {
