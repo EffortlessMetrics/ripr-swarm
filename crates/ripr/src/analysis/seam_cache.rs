@@ -657,7 +657,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// cannot see (#12722).
 /// `1.149`: a doc example registers as a test only when no gate on an enclosing
 /// `mod`, `impl`, `trait` or `mod name;` declaration may leave it uncompiled (#12453).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.149";
+/// `1.150`: an exact error-variant pin on a returned-value seam it cannot see is
+/// one fact in every view: the discriminate stage skips it like the related-test
+/// record, which names it a different-arm pin and is not offered to imitate
+/// (#12733, #12734).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.150";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -848,7 +852,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.149";
 /// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
 /// `0.150`: same error-pin refusal as full `1.148` (#12722).
 /// `0.151`: same enclosing-cfg doctest rule as full `1.149` (#12453).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.151";
+/// `0.152`: same different-arm error-pin rule as full `1.150` (#12733, #12734).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.152";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1041,7 +1046,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.151";
 /// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
 /// `0.150`: same error-pin refusal as full `1.148` (#12722).
 /// `0.151`: same enclosing-cfg doctest rule as full `1.149` (#12453).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.151";
+/// `0.152`: same different-arm error-pin rule as full `1.150` (#12733, #12734).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.152";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5945,7 +5951,8 @@ mod tests {
         // 1.146 -> 1.147: multi-line claims payload-equality nomination (#12394).
         // 1.147 -> 1.148: an exact error-variant pin is no oracle on an Ok-value seam (#12722).
         // 1.148 -> 1.149: enclosing cfg gates on a doctest (#12453).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.149");
+        // 1.149 -> 1.150: different-arm error pin is one fact in every view (#12733, #12734).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.150");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -6076,8 +6083,9 @@ mod tests {
         // 0.148 -> 0.149: same multi-line claims nomination as full 1.147 (#12394).
         // 0.149 -> 0.150: same error-pin refusal as full 1.148 (#12722).
         // 0.150 -> 0.151: same enclosing-cfg doctest rule as full 1.149 (#12453).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.151");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.151");
+        // 0.151 -> 0.152: same different-arm error-pin rule as full 1.150 (#12733, #12734).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.152");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.152");
     }
 
     #[test]

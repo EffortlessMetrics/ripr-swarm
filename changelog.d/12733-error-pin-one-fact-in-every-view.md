@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A seam whose only related assertion is an exact error-variant pin on a different arm now reads the same in every view: the discriminate stage no longer reports a strong oracle (`kind-match false`) while the related-test record credits none, so such a seam reads `reachable_unrevealed` instead of `weakly_gripped` (#12733). The related test says its exact error-variant assertion pins a different arm than the seam's returned value instead of "no oracle in test body", and it is no longer offered as the nearest test to imitate (#12734).
