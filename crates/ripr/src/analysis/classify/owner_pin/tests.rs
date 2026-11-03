@@ -11797,6 +11797,7 @@ mod claims_direction;
 mod claims_import_scope;
 mod expect_test_pins;
 mod helper_pins;
+mod path_value_pin;
 #[cfg(test)]
 mod projected_workspace_memo;
 

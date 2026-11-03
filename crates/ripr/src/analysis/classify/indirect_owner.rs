@@ -396,7 +396,7 @@ fn identifier_offsets<'a>(code: &'a str, name: &'a str) -> impl Iterator<Item = 
 /// The test's code names `name` as a value: not called, not a macro, not a
 /// method, field label or definition, the test binds no local of that name,
 /// and a qualifying path (`other::inc`) can still name the owner.
-fn names_owner_as_value(
+pub(in crate::analysis::classify) fn names_owner_as_value(
     code: &str,
     owner: &FunctionFact,
     test: &TestFact,
