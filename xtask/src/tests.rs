@@ -30840,6 +30840,9 @@ fn command_catalog_pins_ci_enforced_classification() -> Result<(), String> {
     assert!(ci_enforced("precommit")?);
     assert!(ci_enforced("check-architecture")?);
     assert!(ci_enforced("check-doc-artifacts")?);
+    assert!(!ci_enforced(
+        "check-tool-capabilities [--as-of YYYY-MM-DD] [--registry <path>]"
+    )?);
     assert!(ci_enforced("markdown-links")?);
     assert!(!ci_enforced("goldens bless <name> --reason <reason>")?);
     assert!(!ci_enforced("check-supply-chain")?);

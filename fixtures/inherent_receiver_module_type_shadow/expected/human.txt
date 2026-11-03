@@ -31,7 +31,7 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach weak: No test is seen calling as_object; tests share only its file or a name token: decoy
+    - reach weak: No test is seen calling as_object; tests share only a name token
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full
 
