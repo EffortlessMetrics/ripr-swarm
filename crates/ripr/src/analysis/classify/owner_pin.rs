@@ -5487,7 +5487,10 @@ impl OwnerReturnPin {
                     && self.returns_scalar
                     && matches!(self.call, PinCall::Bare)
                     && matches!(self.path, ReturnPathGate::Any)
-                    && (test.start_line..=test.end_line).contains(&assertion.line))
+                    && (test.start_line..=test.end_line).contains(&assertion.line)
+                    // Only a `.map(owner)` chain can substitute; skip the owner
+                    // lookup for every other assertion.
+                    && operands.iter().any(|operand| operand.contains("map")))
                 .then(|| {
                     index.functions().iter().find(|function| {
                         function.name == self.name

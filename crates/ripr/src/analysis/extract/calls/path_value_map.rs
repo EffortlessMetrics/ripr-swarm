@@ -78,7 +78,7 @@ pub(in crate::analysis::extract) fn synthetic_calls_in_line(line: &str) -> Vec<(
 }
 
 /// Parse a bounded iterator chain when `.map(` starts at `map_at`.
-pub(in crate::analysis) fn parse_chain_at(line: &str, map_at: usize) -> Option<IteratorChain> {
+fn parse_chain_at(line: &str, map_at: usize) -> Option<IteratorChain> {
     let after_map = &line[map_at + ".map(".len()..];
     let close = after_map.find(')')?;
     let owner_path = after_map[..close].trim();

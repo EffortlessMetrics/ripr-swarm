@@ -8,9 +8,8 @@
 //! - **function value**: the test names the owner without calling it
 //!   (`.map(owner)`, an untyped `let f = owner; f(2)`), so the call
 //!   happens inside machinery ripr does not follow; a typed
-//!   `let f: fn(..) -> .. = owner;` binding and a bounded
-//!   `.map(owner).collect::<Vec..>()` chain are left to the owner-pin
-//!   readings (RIPR-SPEC-0115/0197, #9478);
+//!   `let f: fn(..) -> .. = owner;` binding is left to the typed
+//!   function-pointer reading (RIPR-SPEC-0115, #9478);
 //! - **generated owner**: the changed line is an item-position macro
 //!   invocation (`def_add!(add_five, 2 + 3);`) that defines the owner, and the
 //!   expansion is not source ripr reads;
@@ -23,7 +22,6 @@
 //! only withholds, so the actionability flip stays fail-closed.
 
 use super::gap_admission::{is_ignored, withhold_gap};
-use super::owner_pin::path_value::map_path_value_mention;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionContainer, FunctionFact, TestFact};
 use crate::analysis::rust_index::{RustIndex, is_test_file};
@@ -398,25 +396,11 @@ fn identifier_offsets<'a>(code: &'a str, name: &'a str) -> impl Iterator<Item = 
 /// The test's code names `name` as a value: not called, not a macro, not a
 /// method, field label or definition, the test binds no local of that name,
 /// and a qualifying path (`other::inc`) can still name the owner.
-fn names_owner_as_value(
+pub(in crate::analysis::classify) fn names_owner_as_value(
     code: &str,
     owner: &FunctionFact,
     test: &TestFact,
     index: &RustIndex,
-) -> bool {
-    names_owner_value(code, owner, test, index, |at| {
-        map_path_value_mention(code, at, owner, test, index)
-    })
-}
-
-/// [`names_owner_as_value`] with a caller-supplied exclusion for mentions that
-/// another reading owns (a bounded `.map(owner)` chain, #9478).
-pub(in crate::analysis::classify) fn names_owner_value(
-    code: &str,
-    owner: &FunctionFact,
-    test: &TestFact,
-    index: &RustIndex,
-    skip_at: impl Fn(usize) -> bool,
 ) -> bool {
     use super::call_identity::{CallTarget, shared_owner_call_identity};
 
@@ -435,7 +419,6 @@ pub(in crate::analysis::classify) fn names_owner_value(
                     identity.resolve_call(test, index, qualifier) == CallTarget::Other
                 })
         },
-        skip_at,
     )
 }
 
@@ -445,16 +428,12 @@ fn names_value(
     name: &str,
     owner_names: &[String],
     import_is_other: impl Fn(&[String]) -> bool,
-    skip_at: impl Fn(usize) -> bool,
 ) -> bool {
     if is_bound_locally(code, name) {
         return false;
     }
     let items = ItemBindings::read(source, name, import_is_other);
     identifier_offsets(code, name).any(|at| {
-        if skip_at(at) {
-            return false;
-        }
         let reference_at = code[..at].strip_suffix("r#").map_or(at, str::len);
         let before = code[..reference_at].trim_end();
         if items.declaration_at(at)
@@ -481,7 +460,7 @@ fn names_value(
 /// Path segments that identify where the owner lives: `self`, `super` and
 /// `crate`, the components of its file path (module and crate directory names,
 /// `-` read as `_`), and the self type and trait of an impl it sits in.
-pub(in crate::analysis::classify) fn owner_path_names(owner: &FunctionFact) -> Vec<String> {
+fn owner_path_names(owner: &FunctionFact) -> Vec<String> {
     let mut names: Vec<String> = ["self", "super", "crate", "Self"]
         .into_iter()
         .map(String::from)
@@ -517,10 +496,7 @@ pub(in crate::analysis::classify) fn owner_path_names(owner: &FunctionFact) -> V
 /// `other::inc`) can still be the owner's: no qualifier, or one whose first or
 /// last segment is among the names that locate the owner. A qualifier that
 /// names neither is a different entity with the same leaf name.
-pub(in crate::analysis::classify) fn qualifier_may_name_owner(
-    before: &str,
-    owner_names: &[String],
-) -> bool {
+fn qualifier_may_name_owner(before: &str, owner_names: &[String]) -> bool {
     let Some(path) = before.strip_suffix("::") else {
         return true;
     };
@@ -964,7 +940,6 @@ mod tests {
             name,
             &owner_names(),
             |_| false,
-            |_| false,
         )
     }
 
@@ -974,7 +949,6 @@ mod tests {
             &mask_comments_and_strings(source),
             name,
             &owner_names(),
-            |_| false,
             |_| false,
         )
     }

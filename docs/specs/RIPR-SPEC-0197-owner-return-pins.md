@@ -3189,9 +3189,11 @@ the path resolves to the owner by the same owner-identity gates as a direct
 call (a qualified path must resolve through the shared call identity); and the
 owner body folds each input to exactly the expected literal elements. Unresolved,
 shadowed, foreign same-name, non-literal, closure, generic-adapter and
-non-matching chains are refused, and the bounded-chain exception to the
-function-value limit (RIPR-SPEC-0240) applies only to a chain this rule admits.
-Implementation: `substitute_owner_call` and `map_path_value_mention`.
+non-matching chains are refused. A refused chain keeps the function-value limit
+(RIPR-SPEC-0240): the owner pin credits before that limit is consulted, so the
+limit never needs a bounded-chain exception and a chain the pin refuses reads
+`static_unknown`, never a repairable gap.
+Implementation: `substitute_owner_call`.
 
 ## Implementation Mapping
 

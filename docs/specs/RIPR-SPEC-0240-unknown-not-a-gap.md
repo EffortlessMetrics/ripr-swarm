@@ -725,11 +725,11 @@ under `rust_indirect_owner_call_unresolved`:
 - **function value**: a non-ignored test with an assertion, in the owner's file
   or an integration test, names the owner without calling it: an argument
   (`.map(inc)`) or an untyped binding (`let f = inc; f(2)`; a typed `fn` pointer binding is left to RIPR-SPEC-0115).
-  A bounded `.map(owner)` chain whose bare path resolves to
-  the owner and whose `assert_eq!` names the matching literal collection is left
-  to RIPR-SPEC-0197 (#9478 slice A); unresolved paths, shadowed bindings and
-  qualified paths to a different same-leaf function keep the gap or stay
-  uncredited. A call
+  A bounded `.map(owner)` chain that the owner pin credits (RIPR-SPEC-0197,
+  #9478 slice A) is `exposed` before this limit is consulted; a chain the pin
+  refuses (unresolved paths, shadowed bindings, qualified paths to a different
+  same-leaf function, async or method owners, non-matching or non-literal
+  expectations) keeps this limit. A call
   `inc(..)`, a macro `inc!`, a method `.inc`, a `use` declaration, a field label
   `inc:`, a `fn inc` definition and a test that binds a local or parameter
   named `inc` are not value uses. A mention only in production code keeps the
