@@ -3660,6 +3660,12 @@ while `call_effect` remains the fallback for other observable calls.
 - `propagation_evidence_unknown`
 - `static_probe_unknown`
 
+Reserved wire values (RIPR-SPEC-0411, #5514): `max_depth_reached`,
+`external_crate_boundary`, and `feature_unknown` stay valid JSON tokens with
+human glosses and next-step guidance, but no production classifier on current
+main pushes them onto a finding. A future spec slice must name the trigger
+before any emitter lands.
+
 `agent_card_refusal_kind` values:
 
 - `seam_not_found`

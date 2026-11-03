@@ -21529,6 +21529,28 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0411"
+name = "Stop reason emission contract"
+spec = "docs/specs/RIPR-SPEC-0411-stop-reason-contract.md"
+tests = [
+  "crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::stop_reason_contract_registry_is_exhaustive_and_unique",
+  "crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::reserved_wire_stop_reasons_have_no_production_push_sites",
+  "crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::stop_reason_contract_spec_documents_every_wire_value",
+]
+code = [
+  "crates/ripr/src/analysis/classify/stop_reason_contract.rs",
+  "crates/ripr/src/analysis/classify/decision.rs",
+  "crates/ripr/src/domain/probe.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0411-stop-reason-contract.md",
+  "docs/OUTPUT_SCHEMA.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0401"
 name = "R preview package testthat numerical data boundaries"
 spec = "docs/specs/RIPR-SPEC-0401-r-preview-package-testthat-numerical-data-boundaries.md"
