@@ -263,9 +263,9 @@ impl From<&SeamLimitInfo> for CachedSeamLimitInfo {
 
 pub(crate) fn seam_facts_cache_miss_message(compact: bool) -> &'static str {
     if compact {
-        "ripr: no usable compact seam-facts cache entry for this workspace state; running the full compact classified walk"
+        "ripr: no usable compact cache entry for this workspace state; running the full compact classified walk"
     } else {
-        "ripr: no usable seam-facts cache entry for this workspace state; running the full classified walk"
+        "ripr: no usable cache entry for this workspace state; running the full classified walk"
     }
 }
 
