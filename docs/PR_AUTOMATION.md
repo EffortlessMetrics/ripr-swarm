@@ -205,6 +205,16 @@ actor records its claim:
 - Before every push, run the runbook's writer guard: `git ls-remote` the head
   branch and reconcile a mismatch instead of pushing over it.
 
+Admission reads these claims: the `merge-ready` qualification run's candidate
+admission step fetches the PR's conversation comments (bounded latest-100
+read) and annotates any claim comment still inside the 4-hour youth window —
+detected by the `Converging this PR:` line prefix alone; the prose timestamp
+after the prefix is never parsed, and youth comes from the API-attested
+comment update time. A live claim renders as `live claims:` rows plus a
+`::warning::` in the admission summary and a `concurrent claims:` row in the
+Rust result report. It is observability only: the claim never refuses or
+delays qualification, and a PR with no claim comments annotates nothing.
+
 ### Judging activity
 
 The commits API is the truth signal: `commit.author.date` from
