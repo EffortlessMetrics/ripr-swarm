@@ -143,27 +143,31 @@ fn check_reports(
 pub(super) fn check_report_cache_schemas(violations: &mut Vec<String>) -> Result<(), String> {
     let corpus_path = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS);
     let corpus = read_evidence_promotion_corpus(corpus_path)?;
-    let current = current_cache_schema_version(
-        &std::fs::read_to_string(SEAM_CACHE_SOURCE)
-            .map_err(|error| format!("failed to read {SEAM_CACHE_SOURCE}: {error}"))?,
-    )?;
     let Some(parent) = corpus_path.parent() else {
         return Ok(());
     };
     let reports_dir = parent.join("reports");
-    let mut reports = Vec::new();
-    let entries = std::fs::read_dir(&reports_dir)
-        .map_err(|error| format!("failed to read {}: {error}", reports_dir.display()))?;
     let mut paths = Vec::new();
-    for entry in entries {
-        let path = entry
-            .map_err(|error| format!("failed to list {}: {error}", reports_dir.display()))?
-            .path();
-        if path.extension().is_some_and(|ext| ext == "json") {
-            paths.push(path);
+    // A corpus without a `reports` directory has no captures to date. Only an
+    // absent directory is optional: any other failure is an error.
+    match std::fs::read_dir(&reports_dir) {
+        Ok(entries) => {
+            for entry in entries {
+                let path = entry
+                    .map_err(|error| format!("failed to list {}: {error}", reports_dir.display()))?
+                    .path();
+                if path.extension().is_some_and(|ext| ext == "json") {
+                    paths.push(path);
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!("failed to read {}: {error}", reports_dir.display()));
         }
     }
     paths.sort();
+    let mut reports = Vec::new();
     for path in paths {
         let display = super::normalize_path(&path);
         let text = std::fs::read_to_string(&path)
@@ -173,6 +177,13 @@ pub(super) fn check_report_cache_schemas(violations: &mut Vec<String>) -> Result
         reports.push((display, report));
     }
     let pins = read_pins(&corpus, violations);
+    if reports.is_empty() && pins.is_empty() {
+        return Ok(());
+    }
+    let current = current_cache_schema_version(
+        &std::fs::read_to_string(SEAM_CACHE_SOURCE)
+            .map_err(|error| format!("failed to read {SEAM_CACHE_SOURCE}: {error}"))?,
+    )?;
     check_reports(&reports, &current, &pins, violations);
     Ok(())
 }
