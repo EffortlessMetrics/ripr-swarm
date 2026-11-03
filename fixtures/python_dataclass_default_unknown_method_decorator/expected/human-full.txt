@@ -33,6 +33,7 @@ Language
 
 Static exposure
   static_unknown (note, confidence 0.20)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `Invoice`
@@ -53,6 +54,7 @@ Static limitation
   decorator_indirection — A decorator wraps the changed owner, so ripr cannot statically confirm a test exercises the underlying behavior.
   Next: Test the undecorated function directly, and assert on the decorated result with an exact value so a wrong result fails.
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_dataclass_default_unknown_method_decorator/input --diff <cwd>/fixtures/python_dataclass_default_unknown_method_decorator/diff.patch --mode fast probe:models.py:python_preview:ce25b095
   ripr context --root <cwd>/fixtures/python_dataclass_default_unknown_method_decorator/input --diff <cwd>/fixtures/python_dataclass_default_unknown_method_decorator/diff.patch --mode fast --at probe:models.py:python_preview:ce25b095
 
