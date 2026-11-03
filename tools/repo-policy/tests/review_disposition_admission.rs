@@ -88,7 +88,7 @@ fn review_disposition_self_test_passes() -> Result<(), String> {
 #[test]
 fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
     let head = "a".repeat(40);
-    let cases: [(&str, bool); 70] = [
+    let cases: [(&str, bool); 91] = [
         ("SOURCE_REVIEW_READY", true),
         ("REVIEW_INCOMPLETE", false),
         (
@@ -195,6 +195,27 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
         ("REVIEW_READY\nBlocked.", false),
         ("REVIEW_READY\nStale", false),
         ("REVIEW_READY\nI do not approve", false),
+        ("REVIEW_READY \u{2014} not-ready change", false),
+        ("REVIEW_READY \u{2014} on-hold change", false),
+        ("REVIEW_READY \u{2014} do-not change", false),
+        ("REVIEW_READY \u{2014} pending-fix change", false),
+        ("REVIEW_READY \u{2014} \u{4fdd}\u{7559}", false),
+        ("REVIEW_READY \u{2014} \u{043d}\u{043e}", false),
+        ("REVIEW_READY \u{2014} \u{274c}", false),
+        ("REVIEW_READY \u{2014} ?", false),
+        ("REVIEW_READY \u{2014} merge after final review", false),
+        ("REVIEW_READY \u{2014} then merge", false),
+        ("REVIEW_READY \u{2014} admin bypass", false),
+        ("REVIEW_READY \u{2014} bypass the gate", false),
+        ("REVIEW_READY \u{2014} deadbeef1", false),
+        ("REVIEW_READY\nDo **not** merge", false),
+        ("REVIEW_READY\nDo\u{a0}not merge", false),
+        ("REVIEW_READY\nNever merge", false),
+        ("REVIEW_READY\nWon't merge", false),
+        ("REVIEW_READY\nReject", false),
+        ("REVIEW_READY\nStatus: blocked", false),
+        ("REVIEW_READY\nreview incomplete", false),
+        ("REVIEW_READY\nDo&nbsp;not merge", false),
         ("", false),
     ];
     for (body, expected) in cases {

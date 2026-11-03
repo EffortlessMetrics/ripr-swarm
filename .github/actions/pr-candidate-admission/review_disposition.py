@@ -23,6 +23,7 @@ allowlist and a later native review superseding the comment.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import re
 import subprocess
@@ -48,11 +49,11 @@ TAIL_VOCABULARY = frozenset(
     installed ordinary final fresh normal landed tree expected exact hash layout head source
     native proof findings integration qualification review complete completed squash protected
     enforcement refresh reconciliation issue subject unchanged gate conversation pr check
-    thread snapshot after release auto merge settings bypass admin""".split()
+    thread snapshot after""".split()
 )
 TAIL_LITERALS = (
     re.compile(r"\bno[ \t]+admin[ \t]+bypass,?[ \t]+settings[ \t]+change,?[ \t]+release[ \t]+or[ \t]+auto-merge\b", re.IGNORECASE),
-    re.compile(r"\b[a-z0-9]+(?:-[a-z0-9]+)+[ \t]+change\b", re.IGNORECASE),
+    re.compile(r"\bhash-layout[ \t]+change\b", re.IGNORECASE),
 )
 # Any line that speaks about disposition or readiness state. After the first line,
 # such a line is only allowed when it is itself an exact positive line.
@@ -70,13 +71,15 @@ NEGATION = re.compile(
     r"|\bno[ \t]+longer[ \t]+(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
     r"|\b(?:repairs?|changes?|fixes)[ \t]+(?:(?:is|are)[ \t]+)?(?:still[ \t]+)?(?:required|needed)\b"
     r"|\bneeds?[ \t]+(?:work|a[ \t]+fix|fix|fixes|repair|changes|rework)\b"
-    r"|\b(?:do(?:es)?[ \t]+not|dont|don't|cannot|can't)[ \t]+(?:merge|approve|ship|land)\b"
+    r"|\b(?:do(?:es)?[ \t]+not(?:[ \t]+yet)?|dont|don't|cannot|can't)[ \t]+(?:merge|approve|ship|land)\b"
     r"|\btake[ \t]+(?:it|that)[ \t]+back\b|\bretract(?:ing|ed|s)?\b|\bwithdr(?:aw|awn|awing)\b"
     r"|\b(?:is|are|remains?|still)[ \t]+blocked\b|\bblocked[ \t]+(?:on|by)\b"
     r"|\bblockers?[ \t]+(?:found|remains?|remaining|open|still|exists?)\b"
     r"|\btests?[ \t]+(?:fail|fails|failed|failing)\b|\bci[ \t]+(?:is[ \t]+)?red\b"
     r"|\bon[ \t]+hold\b|\bhold[ \t]+(?:the[ \t]+)?merge\b|\bchanges[ \t]+requested\b"
-    r"|^\W*(?:wait|hold|stop|stale|blocked|revoked|superseded)\b",
+    r"|\b(?:never|won't|will[ \t]+not|should[ \t]+not|must[ \t]+not|shouldn't|mustn't)[ \t]+(?:merge|approve|ship|land)\b"
+    r"|\bstatus:[ \t]*(?:blocked|not[ \t]+ready|incomplete|rejected)\b|\breview[ \t]+incomplete\b"
+    r"|^\W*(?:wait|hold|stop|stale|blocked|revoked|superseded|reject(?:ed)?|nack)\b",
     re.IGNORECASE | re.MULTILINE,
 )
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -87,7 +90,9 @@ TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
 def normalize_body(body: str) -> str:
     text = (body or "").replace("\r\n", "\n").replace("\r", "\n")
-    return text.replace("\u2019", "'").replace("\u2018", "'")
+    text = html.unescape(text).replace("\u2019", "'").replace("\u2018", "'")
+    text = re.sub(r"[^\S\n]", " ", text)  # nbsp and other unicode spaces
+    return text.replace("**", "").replace("__", "")
 
 
 def split_body(body: str) -> tuple[list[str], list[str]] | None:
@@ -125,11 +130,19 @@ def tail_allowed(tail: str) -> bool:
     text = tail
     for literal in TAIL_LITERALS:
         text = literal.sub(" ", text)
+    # ASCII charset gate: any other character (CJK, emoji, "?", "!") refuses. The
+    # leading em/en dash is the only non-ASCII character a real tail uses.
+    if not re.fullmatch(r"[A-Za-z0-9 \t,.;:\-`'()/_\u2014\u2013]*", text):
+        return False
+    previous = ""
     for word in re.findall(r"[A-Za-z0-9]+", text):
-        if re.fullmatch(r"[0-9a-fA-F]{7,40}", word):
-            continue  # a commit sha, as in "\u2014 head <sha>"
-        if word.lower() not in TAIL_VOCABULARY:
+        lowered = word.lower()
+        if re.fullmatch(r"[0-9a-f]{7,40}", lowered):
+            if previous != "head":  # a commit sha, only as "head <sha>"
+                return False
+        elif lowered not in TAIL_VOCABULARY:
             return False
+        previous = lowered
     return True
 
 
