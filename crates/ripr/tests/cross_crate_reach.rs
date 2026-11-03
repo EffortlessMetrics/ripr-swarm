@@ -1258,6 +1258,20 @@ fn an_attribute_that_can_remove_the_function_stops_the_module_path() -> Result<(
         pricing_with_prefix("#[cfg_attr(unix, cfg(feature = \"x\"))]\n", 1, 3),
         NO_PATH,
     )?;
+    assert_not_noticed(
+        "raw-identifier cfg",
+        pricing_with_prefix("#[r#cfg(feature = \"x\")]\n", 1, 3),
+        NO_PATH,
+    )?;
+    assert_not_noticed(
+        "nested cfg_attr that adds a cfg",
+        pricing_with_prefix(
+            "#[cfg_attr(unix, cfg_attr(test, cfg(feature = \"x\")))]\n",
+            1,
+            3,
+        ),
+        NO_PATH,
+    )?;
     // A `cfg_attr` that only documents does not change presence.
     assert_noticed(
         "cfg_attr that only documents",

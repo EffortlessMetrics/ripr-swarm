@@ -196,15 +196,28 @@ fn declared_once(container: &SyntaxNode, name: &str) -> bool {
 /// a `#[cfg_attr(.., cfg(..))]` that adds one. A `cfg_attr` that only adds
 /// documentation or lint attributes (`#[cfg_attr(docsrs, doc(..))]`) does not.
 fn presence_may_change(function: &ast::Fn) -> bool {
-    function.attrs().any(|attr| match attr.meta() {
-        Some(ast::Meta::CfgMeta(_)) => true,
-        Some(ast::Meta::CfgAttrMeta(_)) => attr
+    function.attrs().any(|attr| {
+        // The attribute path, with a raw-identifier spelling (`r#cfg`) read
+        // as the name it stands for.
+        let path = attr
+            .path()
+            .map(|path| path.syntax().text().to_string())
+            .unwrap_or_default();
+        let name = path.trim_start_matches("r#");
+        let adds_cfg = attr
             .syntax()
             .text()
             .to_string()
             .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-            .any(|word| word == "cfg"),
-        _ => false,
+            .any(|word| word == "cfg");
+        match name {
+            "cfg" => true,
+            "cfg_attr" => adds_cfg,
+            _ => {
+                matches!(attr.meta(), Some(ast::Meta::CfgMeta(_)))
+                    || (matches!(attr.meta(), Some(ast::Meta::CfgAttrMeta(_))) && adds_cfg)
+            }
+        }
     })
 }
 
@@ -317,6 +330,31 @@ mod tests {
                 vec![(
                     "wscore/src/lib.rs",
                     format!("#[cfg_attr(unix, cfg(test))]\n{FN}"),
+                )],
+            ),
+            (
+                "raw-identifier cfg on the function",
+                vec![("wscore/src/lib.rs", format!("#[r#cfg(test)]\n{FN}"))],
+            ),
+            (
+                "nested cfg_attr that adds a cfg",
+                vec![(
+                    "wscore/src/lib.rs",
+                    format!("#[cfg_attr(unix, cfg_attr(test, cfg(test)))]\n{FN}"),
+                )],
+            ),
+            (
+                "inner cfg on an inline module",
+                vec![(
+                    "wscore/src/lib.rs",
+                    format!("pub mod pricing {{\n    #![cfg(test)]\n    {FN}}}\n"),
+                )],
+            ),
+            (
+                "cfg_attr on a parent module",
+                vec![(
+                    "wscore/src/lib.rs",
+                    format!("#[cfg_attr(unix, path = \"x.rs\")]\npub mod pricing {{\n    {FN}}}\n"),
                 )],
             ),
             (

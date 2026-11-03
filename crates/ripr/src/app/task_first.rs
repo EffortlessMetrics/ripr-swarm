@@ -1267,15 +1267,18 @@ fn call_may_cross_a_crate(
 
 /// Whether `line` opens `pub [const] [async] [unsafe] [extern "abi"] fn <name>`.
 fn declares_public_fn(line: &str, name: &str) -> bool {
-    let Some(mut rest) = line.strip_prefix("pub ") else {
+    let Some(mut rest) = line
+        .strip_prefix("pub")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+    else {
         return false;
     };
     loop {
         rest = rest.trim_start();
-        if let Some(after) = ["const ", "async ", "unsafe "]
-            .iter()
-            .find_map(|word| rest.strip_prefix(word))
-        {
+        if let Some(after) = ["const", "async", "unsafe"].iter().find_map(|word| {
+            rest.strip_prefix(word)
+                .filter(|tail| tail.starts_with(char::is_whitespace))
+        }) {
             rest = after;
         } else if let Some(after) = rest.strip_prefix("extern") {
             let after = after.trim_start();
@@ -1290,7 +1293,8 @@ fn declares_public_fn(line: &str, name: &str) -> bool {
             break;
         }
     }
-    rest.strip_prefix("fn ")
+    rest.strip_prefix("fn")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
         .map(str::trim_start)
         .and_then(|rest| rest.strip_prefix(name))
         .is_some_and(|tail| tail.starts_with(['(', '<']))
@@ -4239,6 +4243,10 @@ pub(crate) mod tests {
             "discount"
         ));
         assert!(declares_public_fn("pub async fn discount()", "discount"));
+        assert!(declares_public_fn("pub\tfn discount()", "discount"));
+        assert!(declares_public_fn("pub\tconst\tfn\tdiscount()", "discount"));
+        assert!(!declares_public_fn("pubfn discount()", "discount"));
+        assert!(!declares_public_fn("pub fndiscount()", "discount"));
         assert!(!declares_public_fn("pub(crate) fn discount()", "discount"));
         assert!(!declares_public_fn("pub fn discounted()", "discount"));
         assert!(!declares_public_fn("fn discount()", "discount"));
@@ -4260,6 +4268,15 @@ pub(crate) mod tests {
         ));
         assert!(!call_may_cross_a_crate(
             &root,
+            &entry_for(&absolute, "discount"),
+            &alone
+        ));
+        // A root spelled differently from the seam path (relative here)
+        // cannot be stripped: the pre-test then keeps the full path as the
+        // package directory, which can only answer "may cross" (fail-safe),
+        // never wrongly "cannot".
+        assert!(call_may_cross_a_crate(
+            Path::new("relative-root"),
             &entry_for(&absolute, "discount"),
             &alone
         ));
