@@ -1157,8 +1157,9 @@ fn arm_is_side_effect_only(arm: &str) -> bool {
     if arm.is_empty() {
         return true;
     }
-    // A block tail expression (`{ one() }`) carries a value, not a discarded call.
-    if !arm.contains(';') {
+    // A trailing expression without `;` (`one()` or `log(); compute()`) is the
+    // arm's value, not a discarded call, so only arms ending in `;` qualify.
+    if !arm.ends_with(';') {
         return false;
     }
     arm.split(';').all(|stmt| {
@@ -1180,7 +1181,46 @@ fn statement_is_unit_side_effect(stmt: &str) -> bool {
     {
         return false;
     }
-    for method in [".push(", ".insert(", ".extend(", ".remove("] {
+    for method in [
+        ".push(",
+        ".push_str(",
+        ".push_back(",
+        ".push_front(",
+        ".insert(",
+        ".extend(",
+        ".extend_from_slice(",
+        ".append(",
+        ".remove(",
+        ".swap_remove(",
+        ".pop(",
+        ".pop_back(",
+        ".pop_front(",
+        ".clear(",
+        ".truncate(",
+        ".retain(",
+        ".retain_mut(",
+        ".drain(",
+        ".dedup(",
+        ".dedup_by(",
+        ".dedup_by_key(",
+        ".sort(",
+        ".sort_by(",
+        ".sort_by_key(",
+        ".sort_unstable(",
+        ".sort_unstable_by(",
+        ".sort_unstable_by_key(",
+        ".reverse(",
+        ".resize(",
+        ".resize_with(",
+        ".split_off(",
+        ".swap(",
+        ".fill(",
+        ".entry(",
+        ".get_mut(",
+        ".iter_mut(",
+        ".take(",
+        ".replace(",
+    ] {
         if lower.contains(method) {
             return false;
         }
@@ -2341,6 +2381,28 @@ mod tests {
                 .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
             "mutating branch calls must not suppress the return sink: {sinks:?}"
         );
+    }
+
+    #[test]
+    fn arm_with_value_tail_or_local_mutation_is_not_side_effect_only() {
+        assert!(arm_is_side_effect_only("log(1);"));
+        assert!(arm_is_side_effect_only("log(1); audit(2);"));
+        // The tail expression after the last `;` is the arm's value.
+        assert!(!arm_is_side_effect_only("log(1); compute()"));
+        assert!(!arm_is_side_effect_only("compute()"));
+        // Local-state mutators change a value the function may later return.
+        for mutator in [
+            "items.clear();",
+            "s.push_str(\"x\");",
+            "v.pop();",
+            "v.truncate(1);",
+            "v.append(&mut w);",
+            "v.retain(|x| *x > 0);",
+            "v.sort();",
+            "v.push_back(1);",
+        ] {
+            assert!(!arm_is_side_effect_only(mutator), "{mutator}");
+        }
     }
 
     #[test]
