@@ -150,6 +150,7 @@ jobs:
           shard=${{ matrix.shard }}
           : "${JOB_CAP_SECS:=4800}" "${UPLOAD_RESERVE_SECS:=480}" "${WATCHDOG_POLLS:=264}" "${POLL_SECS:=10}"
           start=${JOB_START:-$(date +%s)}; remain=$((JOB_CAP_SECS - ($(date +%s) - start) - UPLOAD_RESERVE_SECS)); [ "$remain" -ge "$POLL_SECS" ] || remain=$POLL_SECS; polls=$(( (remain + POLL_SECS - 1) / POLL_SECS )); [ "$polls" -le "$WATCHDOG_POLLS" ] || polls=$WATCHDOG_POLLS
+          deadline=$(( $(date +%s) + polls * POLL_SECS ))
           bash -c 'rc=0; for pkg in "-p xtask" "--workspace --exclude xtask"; do cargo nextest run --profile windows-advisory $pkg --no-fail-fast --test-threads 2 --partition count:$0/4 -E "not $ACL_TESTS" || rc=$?; done; exit $rc' "$shard" > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
           tail -n +1 -F target/shard-$shard.log &
@@ -161,6 +162,9 @@ jobs:
               sleep "$POLL_SECS"
               kill -0 "$nextest_pid" 2> /dev/null || exit 0
               { echo "heartbeat poll=$i/$polls"; sed -E 's/\x1b\[[0-9;]*m//g' target/shard-$shard.log 2>/dev/null | grep -aE "SLOW|TIMEOUT|FAIL" | tail -5; } | tee target/shard-$shard.heartbeat
+              # Wall-clock bound: the heartbeat pipeline and slow process spawns make a poll
+              # take longer than POLL_SECS, so the count alone would fire late.
+              [ "$(date +%s)" -lt "$deadline" ] || break
             done
             if [ -z "$winpid" ]; then
               echo "fired unmapped msys_pid=$nextest_pid; no native PID, no taskkill" > target/shard-$shard.watchdog

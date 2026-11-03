@@ -142,6 +142,8 @@ fn shard_workflow_keeps_cancel_upload_and_heartbeat_contract() -> Result<(), Str
         "UPLOAD_RESERVE_SECS:=480",
         "WATCHDOG_POLLS:=264",
         "POLL_SECS:=10",
+        "deadline=$(( $(date +%s) + polls * POLL_SECS ))",
+        "[ \"$(date +%s)\" -lt \"$deadline\" ] || break",
         "JOB_START",
         "target/shard-$shard.heartbeat",
         "target/shard-${{ matrix.shard }}.heartbeat",
