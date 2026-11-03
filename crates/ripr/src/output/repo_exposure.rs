@@ -1568,7 +1568,10 @@ fn push_classified_json(
     let _ = writeln!(
         out,
         "        \"discriminate\": \"{}\"",
-        evidence.discriminate.state.as_str()
+        crate::output::gap_vocabulary::seam_discriminate_evidence_token(
+            entry.class,
+            &evidence.discriminate.state,
+        )
     );
     out.push_str("      },\n");
 
@@ -1880,7 +1883,10 @@ fn push_top_gap_md(out: &mut String, entry: &ClassifiedSeam) {
     ));
     out.push_str(&format!(
         "  - discriminate: {}\n",
-        evidence.discriminate.state.as_str()
+        crate::output::gap_vocabulary::seam_discriminate_evidence_token(
+            entry.class,
+            &evidence.discriminate.state,
+        )
     ));
 
     if !evidence.related_tests.is_empty() {
@@ -2664,7 +2670,7 @@ pub(crate) mod tests {
             "\"grip_class\": \"weakly_gripped\"",
             "\"headline_eligible\": true",
             "\"reach\": \"yes\"",
-            "\"discriminate\": \"yes\"",
+            "\"discriminate\": \"weak\"",
             "\"evidence_record\":",
             "\"schema_version\":\"0.1\"",
             "\"canonical_gap_id\":\"gap:",
@@ -2683,6 +2689,30 @@ pub(crate) mod tests {
         ] {
             assert!(json.contains(needle), "missing {needle:?} in json:\n{json}");
         }
+    }
+
+    /// The keep-yes control for the #12415 reconcile: a `strongly_gripped`
+    /// seam with an empty missing list must still render the raw `yes`
+    /// oracle grade through this emitter (the agent packet surface never
+    /// queues strongly-gripped seams, so this is the unit-level witness).
+    #[test]
+    fn json_keeps_discriminate_yes_for_strongly_gripped_seam() {
+        let mut strongly = classified_at(
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            42,
+            SeamGripClass::StronglyGripped,
+        );
+        strongly.evidence.missing_discriminators.clear();
+        let json = render_repo_exposure_json(&[strongly], None, None, None);
+        assert!(
+            json.contains("\"grip_class\": \"strongly_gripped\""),
+            "missing strongly_gripped class in json:\n{json}"
+        );
+        assert!(
+            json.contains("\"discriminate\": \"yes\""),
+            "strongly_gripped must keep the bare yes grade in json:\n{json}"
+        );
     }
 
     #[test]

@@ -1908,6 +1908,14 @@ owner = "product-analysis"
 standalone_reason = "Issue #8999 records the out-parameter oracle contract: an assert_eq! on the very local a direct call of the changed method received as &mut, bound once and asserted after the call in the same test, is an oracle for that call, and every other shape fails closed."
 
 [[artifact]]
+id = "RIPR-SPEC-0407"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0407-rust-cross-crate-call-reach.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #11401 records the cross-crate call reach contract: a call spelled through a manifest-resolved workspace dependency carries reach and the boundary input across the crate edge, and every other shape keeps the earlier answer."
+
+[[artifact]]
 id = "RIPR-SPEC-0353"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0353-boolean-truth-table-infection.md"

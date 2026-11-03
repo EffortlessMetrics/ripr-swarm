@@ -1658,14 +1658,21 @@ pub(crate) fn targeted_test_brief_outline_for_classified_seam(
         .into_iter()
         .next()
         .map(|value| value.value);
-    let assertion_shape = assertion_shape_for_entry(entry);
+    // #12711: a route that proposes a pushed collection's contents check
+    // names that check here too, so the brief does not suggest a
+    // `_full_contents` test while asking for observer setup.
+    let assertion_shape = crate::analysis::repair_route::collection_contents_check_suggestion(
+        entry,
+        &eligibility.readiness,
+    )
+    .unwrap_or_else(|| assertion_shape_for_entry(entry).human_summary());
 
     TargetedTestBriefOutline {
         suggested_file: recommended.file,
         suggested_name: recommended.name,
         suggested_reason: recommended.reason,
         candidate_value,
-        assertion_shape: assertion_shape.human_summary(),
+        assertion_shape,
     }
 }
 
@@ -2543,7 +2550,10 @@ fn push_packet_json(
     ));
     out.push_str(&format!(
         "\"discriminate\": \"{}\"",
-        evidence.discriminate.state.as_str()
+        crate::output::gap_vocabulary::seam_discriminate_evidence_token(
+            entry.class,
+            &evidence.discriminate.state,
+        )
     ));
     out.push_str("},\n");
 
@@ -2931,6 +2941,13 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
             "producer-owned route readiness is not eligible for a repair target",
         );
     }
+    // #12711: the new test for a pushed collection checks its full contents,
+    // so its suggested name does not call it an observer.
+    let name = if readiness.proposes_collection_contents_check(entry.class) {
+        crate::analysis::repair_route::collection_contents_test_name(owner_short)
+    } else {
+        name
+    };
     let selected_target = match &readiness.target_selection {
         RepairTargetSelection::Existing(selected_target) => selected_target,
         RepairTargetSelection::Proposed(proposal) => {
@@ -4235,6 +4252,32 @@ mod tests {
     }
 
     #[test]
+    fn outline_names_the_contents_check_not_observer_setup_for_a_ready_push() -> Result<(), String>
+    {
+        // #12711: the outline's assertion guidance agrees with the suggested
+        // `_full_contents` name for a ready pushed collection, and a parked
+        // route keeps its not-applicable outline.
+        use crate::analysis::repair_route::marked_push_seam_for_tests;
+        let ready = marked_push_seam_for_tests(SeamGripClass::WeaklyGripped);
+        let outline = targeted_test_brief_outline_for_classified_seam(&ready);
+        if !outline.assertion_shape.contains("full contents of `buf`")
+            || outline.assertion_shape.contains("observer")
+            || !outline.suggested_name.ends_with("_full_contents")
+        {
+            return Err(format!(
+                "ready push outline: {} / {}",
+                outline.suggested_name, outline.assertion_shape
+            ));
+        }
+        let parked = marked_push_seam_for_tests(SeamGripClass::Suppressed);
+        let outline = targeted_test_brief_outline_for_classified_seam(&parked);
+        if !outline.is_not_applicable() || outline.assertion_shape != "not_applicable" {
+            return Err(format!("parked push outline: {}", outline.assertion_shape));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn targeted_outline_accessor_identifies_limited_routes() {
         let limited = TargetedTestBriefOutline {
             suggested_file: "not_applicable".to_string(),
@@ -4494,6 +4537,29 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn weakly_gripped_packet_evidence_discriminate_is_not_yes() -> Result<(), String> {
+        let json = render_agent_seam_packets_json(&[weakly_gripped_classified()], None);
+        if json.contains("\"discriminate\": \"yes\"") {
+            return Err(format!(
+                "discriminate must not be yes for weakly_gripped packet: {json}"
+            ));
+        }
+        if !json.contains("\"discriminate\": \"weak\"") {
+            return Err(format!(
+                "expected reconciled weak discriminate token: {json}"
+            ));
+        }
+        Ok(())
+    }
+
+    // No strongly-gripped keep-yes test at this surface: strongly-gripped
+    // seams are not repair-queue-visible, so packets never carry one
+    // (`given_strongly_gripped_seam_when_packets_are_requested_then_no_actionable_packet_is_emitted`).
+    // The keep-yes control lives on the repo-exposure surface
+    // (`json_keeps_discriminate_yes_for_strongly_gripped_seam`) and in the
+    // shared-token unit tests in `gap_vocabulary`.
 
     #[test]
     fn missing_discriminators_carry_value_and_reason_objects() -> Result<(), String> {
