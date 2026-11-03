@@ -593,7 +593,7 @@ fn hosted_build_metrics_keep_commands_and_the_existing_artifact_root() -> Result
 /// selection, status and evidence handling, not GNU time or a hosted Rust build.
 #[cfg(target_os = "linux")]
 mod hosted_build_metrics {
-    use super::{test_build_script, SHARDS};
+    use super::{SHARDS, test_build_script};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
