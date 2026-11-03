@@ -1,0 +1,1 @@
+tools/repo-policy/tests/review_disposition_admission.rs|Command::new|3|ci/admission|Test runs the stdlib-Python review disposition verifier as a subprocess, for its self-test, the #8157 controls and the fake-gh live read (#8157).

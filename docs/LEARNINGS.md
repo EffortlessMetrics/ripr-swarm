@@ -3407,6 +3407,33 @@ Durable rules:
   fixture shape, or the negative can pass because the comparison is
   unsatisfiable.
 
+## 2026-11-02: Experiential feel-checks are a distinct oracle from code review
+
+Round 11 of the convergence campaign ran six experiential lanes — real
+subjects, verbatim output quotes, wall-clock timings, gut ratings, and an
+honesty lens over the rendered results — and filed nine issues, among them
+two analyzer-semantic defects: contradictory-fold withholding lost under
+file-mate composition, where unrelated tests flipped `infection_unknown` to
+`exposed(1.00)` while citing the self-contradictory test as a strong oracle
+(fixed along the #12412/#12559 line, with the composed case graduated into
+the RIPR-SPEC-0108 honesty corpus), and inserted-guard diffs recommending a
+boundary value that discriminated nothing (`amount == 0` passed on both
+sides, #12414). The same lanes surfaced projection and inconsistency defects
+across the JSON, human, LSP and MCP surfaces. The exact-head review sweeps
+over the same period read more than 120 PRs and did not surface this class.
+
+Reviews read diffs; feel lanes exercise the product and record what it
+actually says. Different oracles find different defect classes — the
+repository's own reviewers-add-value-through-different-oracles principle,
+applied to the product itself.
+
+Durable rules:
+
+- Run experiential lanes between feature waves, not only after a defect is
+  already suspected; do not substitute review coverage for feel coverage
+  when certifying a wave.
+- Treat a rendered-surface claim (JSON field, human line, LSP diagnostic,
+  MCP payload) as unverified until some oracle has quoted the actual bytes.
 ## 2026-11-01: Premises rot at fleet velocity
 
 The Oct 29 – Nov 2 convergence campaign (~140 agent-lane merges) measured how
