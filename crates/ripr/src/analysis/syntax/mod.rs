@@ -42,7 +42,8 @@ pub(crate) use owner_pin::{
     trusted_macro_binding_sites, use_rebinds_crate_name,
 };
 pub(crate) use owner_pin::{
-    CLAIMS_PAYLOAD_MACRO_NAMES, decimal_u8, literal_check_syntax, literal_owner_syntax,
+    ClaimsMacroKind, claims_macro_names, claims_payload_variant, decimal_u8,
+    is_test_scoped_trusted_macro, literal_check_syntax, literal_owner_syntax,
 };
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};
 pub(crate) mod ra;
