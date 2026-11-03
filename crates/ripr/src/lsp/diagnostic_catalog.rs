@@ -52,154 +52,120 @@ pub(crate) struct CatalogEntry {
     pub(crate) non_claims: &'static [CatalogNonClaim],
 }
 
-/// Closed recovery vocabulary for catalogued diagnostics (#1662 PR C).
-/// Kinds name an inspect / open / retry / refresh / setup / verify / repair
-/// route. Absence of a kind is represented by an empty `recovery_kinds`
-/// list plus [`CatalogUnavailableReason`], not by guessing a command.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CatalogRecoveryKind {
-    InspectEvidence,
-    InspectFullProfile,
-    OpenFixSite,
-    RefreshAnalysis,
-    Retry,
-    SelectWorkspaceRoot,
-    RepairConfiguration,
-    RetrieveOverflow,
-    RunVerification,
-    RecordReceipt,
+/// Declares a closed diagnostic vocabulary from one list of
+/// `Variant => "label"` pairs. The enum, its `as_str` match and the `LABELS`
+/// list the well-formedness check reads are all generated from that list, so a
+/// variant cannot exist without its label being checked (#12853).
+macro_rules! closed_vocabulary {
+    (
+        $(#[$meta:meta])*
+        $vis:vis enum $name:ident {
+            $($variant:ident => $label:literal,)+
+        }
+    ) => {
+        $(#[$meta])*
+        $vis enum $name {
+            $($variant,)+
+        }
+
+        impl $name {
+            pub(crate) const fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $label,)+
+                }
+            }
+
+            /// Every wire label of this vocabulary, one per variant.
+            pub(crate) const LABELS: &'static [&'static str] = &[$($label,)+];
+
+            /// Every variant, generated from the same list as `LABELS`.
+            #[cfg(test)]
+            pub(crate) const ALL: &'static [Self] = &[$(Self::$variant,)+];
+        }
+    };
 }
 
-impl CatalogRecoveryKind {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::InspectEvidence => "inspect_evidence",
-            Self::InspectFullProfile => "inspect_full_profile",
-            Self::OpenFixSite => "open_fix_site",
-            Self::RefreshAnalysis => "refresh_analysis",
-            Self::Retry => "retry",
-            Self::SelectWorkspaceRoot => "select_workspace_root",
-            Self::RepairConfiguration => "repair_configuration",
-            Self::RetrieveOverflow => "retrieve_overflow",
-            Self::RunVerification => "run_verification",
-            Self::RecordReceipt => "record_receipt",
-        }
+closed_vocabulary! {
+    /// Closed recovery vocabulary for catalogued diagnostics (#1662 PR C).
+    /// Kinds name an inspect / open / retry / refresh / setup / verify / repair
+    /// route. Absence of a kind is represented by an empty `recovery_kinds`
+    /// list plus [`CatalogUnavailableReason`], not by guessing a command.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) enum CatalogRecoveryKind {
+        InspectEvidence => "inspect_evidence",
+        InspectFullProfile => "inspect_full_profile",
+        OpenFixSite => "open_fix_site",
+        RefreshAnalysis => "refresh_analysis",
+        Retry => "retry",
+        SelectWorkspaceRoot => "select_workspace_root",
+        RepairConfiguration => "repair_configuration",
+        RetrieveOverflow => "retrieve_overflow",
+        RunVerification => "run_verification",
+        RecordReceipt => "record_receipt",
     }
 }
 
-/// Why a catalog entry has no bounded recovery. Used only when
-/// `recovery_kinds` is empty so missing recovery stays typed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CatalogUnavailableReason {
-    NoBoundedAction,
-    MissingProducerEvidence,
-    UnsafeWithoutRefresh,
-}
-
-impl CatalogUnavailableReason {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::NoBoundedAction => "no_bounded_action",
-            Self::MissingProducerEvidence => "missing_producer_evidence",
-            Self::UnsafeWithoutRefresh => "unsafe_without_refresh",
-        }
+closed_vocabulary! {
+    /// Why a catalog entry has no bounded recovery. Used only when
+    /// `recovery_kinds` is empty so missing recovery stays typed.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) enum CatalogUnavailableReason {
+        NoBoundedAction => "no_bounded_action",
+        MissingProducerEvidence => "missing_producer_evidence",
+        UnsafeWithoutRefresh => "unsafe_without_refresh",
     }
 }
 
-/// Default profile membership for a catalogued code. Client capability may
-/// hide presentation; it cannot change this membership.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CatalogProfileVisibility {
-    /// Shown in the default actionable profile and in full.
-    ActionableAndFull,
-    /// Structural / inspect-only evidence reserved for the full profile.
-    FullOnly,
-    /// Delivery and lifecycle markers served regardless of profile.
-    Always,
-}
-
-impl CatalogProfileVisibility {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::ActionableAndFull => "actionable_and_full",
-            Self::FullOnly => "full_only",
-            Self::Always => "always",
-        }
+closed_vocabulary! {
+    /// Default profile membership for a catalogued code. Client capability may
+    /// hide presentation; it cannot change this membership.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) enum CatalogProfileVisibility {
+        ActionableAndFull => "actionable_and_full",
+        FullOnly => "full_only",
+        Always => "always",
     }
 }
 
-/// Authority that owns the default severity. The catalog records the source;
-/// it does not replace RIPR-SPEC-0076 or `SeverityConfig`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CatalogSeveritySource {
-    AdvisoryPolicy,
-    SeverityConfig,
-    DeliveryLimitation,
-}
-
-impl CatalogSeveritySource {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::AdvisoryPolicy => "advisory_policy",
-            Self::SeverityConfig => "severity_config",
-            Self::DeliveryLimitation => "delivery_limitation",
-        }
+closed_vocabulary! {
+    /// Authority that owns the default severity. The catalog records the source;
+    /// it does not replace RIPR-SPEC-0076 or `SeverityConfig`.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) enum CatalogSeveritySource {
+        AdvisoryPolicy => "advisory_policy",
+        SeverityConfig => "severity_config",
+        DeliveryLimitation => "delivery_limitation",
     }
 }
 
-/// Default LSP severity class the code earns before instance policy.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CatalogDefaultSeverity {
-    Warning,
-    Information,
-    Hint,
-}
-
-impl CatalogDefaultSeverity {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Warning => "warning",
-            Self::Information => "information",
-            Self::Hint => "hint",
-        }
+closed_vocabulary! {
+    /// Default LSP severity class the code earns before instance policy.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) enum CatalogDefaultSeverity {
+        Warning => "warning",
+        Information => "information",
+        Hint => "hint",
     }
 }
 
-/// Freshness or completed-result precondition for catalog recovery.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CatalogPrecondition {
-    CurrentSnapshot,
-    CompletedResult,
-}
-
-impl CatalogPrecondition {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::CurrentSnapshot => "current_snapshot",
-            Self::CompletedResult => "completed_result",
-        }
+closed_vocabulary! {
+    /// Freshness or completed-result precondition for catalog recovery.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) enum CatalogPrecondition {
+        CurrentSnapshot => "current_snapshot",
+        CompletedResult => "completed_result",
     }
 }
 
-/// Honesty bounds that a catalogued code must not be read as proving.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CatalogNonClaim {
-    RuntimeProof,
-    TestAdequacy,
-    RepairAuthorization,
-    CleanWorkspace,
-    SupportPromotion,
-}
-
-impl CatalogNonClaim {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::RuntimeProof => "not_runtime_proof",
-            Self::TestAdequacy => "not_test_adequacy",
-            Self::RepairAuthorization => "not_repair_authorization",
-            Self::CleanWorkspace => "not_clean_workspace",
-            Self::SupportPromotion => "not_support_promotion",
-        }
+closed_vocabulary! {
+    /// Honesty bounds that a catalogued code must not be read as proving.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) enum CatalogNonClaim {
+        RuntimeProof => "not_runtime_proof",
+        TestAdequacy => "not_test_adequacy",
+        RepairAuthorization => "not_repair_authorization",
+        CleanWorkspace => "not_clean_workspace",
+        SupportPromotion => "not_support_promotion",
     }
 }
 
@@ -651,61 +617,17 @@ const fn bytes_equal(a: &[u8], b: &[u8]) -> bool {
     true
 }
 
-const RECOVERY_KIND_LABELS: [&str; 10] = [
-    CatalogRecoveryKind::InspectEvidence.as_str(),
-    CatalogRecoveryKind::InspectFullProfile.as_str(),
-    CatalogRecoveryKind::OpenFixSite.as_str(),
-    CatalogRecoveryKind::RefreshAnalysis.as_str(),
-    CatalogRecoveryKind::Retry.as_str(),
-    CatalogRecoveryKind::SelectWorkspaceRoot.as_str(),
-    CatalogRecoveryKind::RepairConfiguration.as_str(),
-    CatalogRecoveryKind::RetrieveOverflow.as_str(),
-    CatalogRecoveryKind::RunVerification.as_str(),
-    CatalogRecoveryKind::RecordReceipt.as_str(),
-];
-const UNAVAILABLE_REASON_LABELS: [&str; 3] = [
-    CatalogUnavailableReason::NoBoundedAction.as_str(),
-    CatalogUnavailableReason::MissingProducerEvidence.as_str(),
-    CatalogUnavailableReason::UnsafeWithoutRefresh.as_str(),
-];
-const VISIBILITY_LABELS: [&str; 3] = [
-    CatalogProfileVisibility::ActionableAndFull.as_str(),
-    CatalogProfileVisibility::FullOnly.as_str(),
-    CatalogProfileVisibility::Always.as_str(),
-];
-const SEVERITY_SOURCE_LABELS: [&str; 3] = [
-    CatalogSeveritySource::AdvisoryPolicy.as_str(),
-    CatalogSeveritySource::SeverityConfig.as_str(),
-    CatalogSeveritySource::DeliveryLimitation.as_str(),
-];
-const DEFAULT_SEVERITY_LABELS: [&str; 3] = [
-    CatalogDefaultSeverity::Warning.as_str(),
-    CatalogDefaultSeverity::Information.as_str(),
-    CatalogDefaultSeverity::Hint.as_str(),
-];
-const PRECONDITION_LABELS: [&str; 2] = [
-    CatalogPrecondition::CurrentSnapshot.as_str(),
-    CatalogPrecondition::CompletedResult.as_str(),
-];
-const NON_CLAIM_LABELS: [&str; 5] = [
-    CatalogNonClaim::RuntimeProof.as_str(),
-    CatalogNonClaim::TestAdequacy.as_str(),
-    CatalogNonClaim::RepairAuthorization.as_str(),
-    CatalogNonClaim::CleanWorkspace.as_str(),
-    CatalogNonClaim::SupportPromotion.as_str(),
-];
-
 /// Every closed vocabulary has distinct, non-empty snake_case labels and the
 /// client views still differ on optional presentation. Evaluated at compile
 /// time by [`catalog`]; a collapsed or duplicated label fails the build.
 const fn closed_vocabulary_is_well_formed() -> bool {
-    labels_are_distinct_snake_case(&RECOVERY_KIND_LABELS)
-        && labels_are_distinct_snake_case(&UNAVAILABLE_REASON_LABELS)
-        && labels_are_distinct_snake_case(&VISIBILITY_LABELS)
-        && labels_are_distinct_snake_case(&SEVERITY_SOURCE_LABELS)
-        && labels_are_distinct_snake_case(&DEFAULT_SEVERITY_LABELS)
-        && labels_are_distinct_snake_case(&PRECONDITION_LABELS)
-        && labels_are_distinct_snake_case(&NON_CLAIM_LABELS)
+    labels_are_distinct_snake_case(CatalogRecoveryKind::LABELS)
+        && labels_are_distinct_snake_case(CatalogUnavailableReason::LABELS)
+        && labels_are_distinct_snake_case(CatalogProfileVisibility::LABELS)
+        && labels_are_distinct_snake_case(CatalogSeveritySource::LABELS)
+        && labels_are_distinct_snake_case(CatalogDefaultSeverity::LABELS)
+        && labels_are_distinct_snake_case(CatalogPrecondition::LABELS)
+        && labels_are_distinct_snake_case(CatalogNonClaim::LABELS)
         && CatalogClientView::FULL.supports_diagnostic_data
         && !CatalogClientView::MINIMAL.supports_diagnostic_data
 }
@@ -923,6 +845,49 @@ mod tests {
         assert!(!labels_are_distinct_snake_case(&["trail_"]));
         assert!(!labels_are_distinct_snake_case(&["dou__ble"]));
         assert!(closed_vocabulary_is_well_formed());
+    }
+
+    #[test]
+    fn closed_vocabulary_labels_cover_every_variant() {
+        fn check<T: Copy>(all: &[T], labels: &[&str], as_str: fn(T) -> &'static str) {
+            let rendered: Vec<&str> = all.iter().map(|variant| as_str(*variant)).collect();
+            assert_eq!(rendered, labels);
+        }
+        check(
+            CatalogRecoveryKind::ALL,
+            CatalogRecoveryKind::LABELS,
+            CatalogRecoveryKind::as_str,
+        );
+        check(
+            CatalogUnavailableReason::ALL,
+            CatalogUnavailableReason::LABELS,
+            CatalogUnavailableReason::as_str,
+        );
+        check(
+            CatalogProfileVisibility::ALL,
+            CatalogProfileVisibility::LABELS,
+            CatalogProfileVisibility::as_str,
+        );
+        check(
+            CatalogSeveritySource::ALL,
+            CatalogSeveritySource::LABELS,
+            CatalogSeveritySource::as_str,
+        );
+        check(
+            CatalogDefaultSeverity::ALL,
+            CatalogDefaultSeverity::LABELS,
+            CatalogDefaultSeverity::as_str,
+        );
+        check(
+            CatalogPrecondition::ALL,
+            CatalogPrecondition::LABELS,
+            CatalogPrecondition::as_str,
+        );
+        check(
+            CatalogNonClaim::ALL,
+            CatalogNonClaim::LABELS,
+            CatalogNonClaim::as_str,
+        );
     }
 
     #[test]
