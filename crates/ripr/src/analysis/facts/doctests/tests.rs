@@ -834,6 +834,37 @@ fn a_gate_on_an_enclosing_mod_gates_the_example() -> Result<(), Box<dyn Error>> 
     }
     // Control: no gate at all.
     assert_eq!(registered_in_lib(&format!("pub mod m {{\n{WIRE}}}\n"))?, 1);
+    // Nested: the inner gate sits on the inner module only.
+    assert_eq!(
+        registered_in_lib(&format!(
+            "pub mod outer {{\npub mod inner {{\n#![cfg(feature = \"extra\")]\n{WIRE}}}\n}}\n"
+        ))?,
+        0
+    );
+    // And on the outer module, around a clean inner one.
+    assert_eq!(
+        registered_in_lib(&format!(
+            "pub mod outer {{\n#![cfg(feature = \"extra\")]\npub mod inner {{\n{WIRE}}}\n}}\n"
+        ))?,
+        0
+    );
+    // An inner `#![cfg(..)]` gates the module as an outer one does.
+    for gate in REFUSING_GATES {
+        let inner = gate.replacen("#[", "#![", 1);
+        assert_eq!(
+            registered_in_lib(&format!("pub mod m {{\n{inner}\n{WIRE}}}\n"))?,
+            0,
+            "{inner}"
+        );
+    }
+    for gate in ADMITTING_GATES {
+        let inner = gate.replacen("#[", "#![", 1);
+        assert_eq!(
+            registered_in_lib(&format!("pub mod m {{\n{inner}\n{WIRE}}}\n"))?,
+            1,
+            "{inner}"
+        );
+    }
     Ok(())
 }
 
@@ -856,6 +887,13 @@ fn a_gate_on_an_enclosing_impl_gates_the_example() -> Result<(), Box<dyn Error>>
     assert_eq!(
         registered_in_lib(&format!("pub struct S;\nimpl S {{\n{WIRE}}}\n"))?,
         1
+    );
+    // An inner gate in the impl body gates it too.
+    assert_eq!(
+        registered_in_lib(&format!(
+            "pub struct S;\nimpl S {{\n#![cfg(feature = \"extra\")]\n{WIRE}}}\n"
+        ))?,
+        0
     );
     Ok(())
 }
@@ -910,14 +948,22 @@ fn a_gate_on_the_mod_declaration_that_reaches_the_file_gates_the_example()
 }
 
 #[test]
-fn a_gate_on_a_declaring_file_or_its_inline_wrapper_gates_the_example() -> Result<(), Box<dyn Error>>
-{
+fn a_gate_on_a_declaring_file_or_a_chained_declaration_gates_the_example()
+-> Result<(), Box<dyn Error>> {
     // Two levels: lib.rs declares `outer`, `outer.rs` declares `inner`.
     let dir = temp_dir("doctest-enclosing-chain")?;
     package(&dir.0, ENCLOSING_FEATURES, "mod outer;\n")?;
     fs::create_dir_all(dir.0.join("src/outer"))?;
     fs::write(dir.0.join("src/outer/inner.rs"), WIRE)?;
-    let files = ["src/lib.rs", "src/outer.rs", "src/outer/inner.rs"];
+    // A resolved sibling, so a same-line `mod a;` is a real neighbour rather
+    // than an unresolved edge that would refuse everything.
+    fs::write(dir.0.join("src/outer/a.rs"), "")?;
+    let files = [
+        "src/lib.rs",
+        "src/outer.rs",
+        "src/outer/inner.rs",
+        "src/outer/a.rs",
+    ];
     for (outer, expected) in [
         ("mod inner;\n", 1),
         // A gate on the declaration of `inner` inside `outer.rs`.
@@ -925,21 +971,12 @@ fn a_gate_on_a_declaring_file_or_its_inline_wrapper_gates_the_example() -> Resul
         // An inner gate on the declaring file.
         ("#![cfg(feature = \"extra\")]\nmod inner;\n", 0),
         ("#![cfg(feature = \"alloc\")]\nmod inner;\n", 1),
-        // A gated inline module that holds the declaration.
-        (
-            "#[cfg(feature = \"extra\")]\nmod wrap {\n    mod inner;\n}\n",
-            0,
-        ),
+        // Another `mod` on the same line must not stand in for the gated one.
+        ("mod a; #[cfg(feature = \"extra\")] mod inner;\n", 0),
+        ("#[cfg(feature = \"extra\")] mod a; mod inner;\n", 1),
     ] {
         fs::write(dir.0.join("src/outer.rs"), outer)?;
-        let found = doctests(&dir.0, &files)?.len();
-        // The wrapper form moves `inner` under `wrap/`, which the module
-        // resolver may leave unresolved; it must never register.
-        if expected == 0 {
-            assert_eq!(found, 0, "{outer}");
-        } else {
-            assert_eq!(found, 1, "{outer}");
-        }
+        assert_eq!(doctests(&dir.0, &files)?.len(), expected, "{outer}");
     }
     Ok(())
 }

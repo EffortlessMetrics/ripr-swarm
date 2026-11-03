@@ -15,7 +15,8 @@ use super::{
 };
 use crate::analysis::facts::RustIndex;
 use crate::analysis::syntax::parse_clean_source_file;
-use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, TextSize, ast};
+use ra_ap_syntax::ast::HasName;
+use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, TextRange, TextSize, ast};
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -39,21 +40,31 @@ pub(super) fn enclosing_gate_refuses(
             return true;
         };
         file_has_inner_cfg_gate(&parent.data.source, defaults)
-            || line_enclosing_refuses(
-                &parent.data.source,
-                edge.line,
-                defaults,
-                Anchor::OutOfLineMod,
-            )
+            || declared_mod_name(&edge.declaration).is_none_or(|name| {
+                line_enclosing_refuses(
+                    &parent.data.source,
+                    edge.line,
+                    defaults,
+                    Anchor::OutOfLineMod(name),
+                )
+            })
     })
 }
 
 /// What the recorded line names: the documented function, or the
-/// out-of-line `mod name;` item of a module edge.
+/// out-of-line `mod name;` item of a module edge. The module is found by its
+/// declared name, so another `mod` on the same line is never taken for it.
 #[derive(Clone, Copy)]
-enum Anchor {
+enum Anchor<'a> {
     Function,
-    OutOfLineMod,
+    OutOfLineMod(&'a str),
+}
+
+/// The module name in an edge's `mod name;` declaration text.
+fn declared_mod_name(declaration: &str) -> Option<&str> {
+    let mut words = declaration.split(|c: char| !(c.is_alphanumeric() || c == '_'));
+    words.by_ref().find(|word| *word == "mod")?;
+    words.find(|word| !word.is_empty())
 }
 
 /// Whether any gate on the item that starts on `line`, or on an item that
@@ -62,7 +73,7 @@ fn line_enclosing_refuses(
     source: &str,
     line: usize,
     defaults: Option<&BTreeSet<String>>,
-    anchor: Anchor,
+    anchor: Anchor<'_>,
 ) -> bool {
     let Some(parse) = parse_clean_source_file(source) else {
         return true;
@@ -75,25 +86,55 @@ fn line_enclosing_refuses(
         // The item's own gates are read between the comment and the item.
         Anchor::Function => ancestors_refuse(&item, defaults, false),
         // A module edge's own `#[cfg]` is the gate being asked about.
-        Anchor::OutOfLineMod => ancestors_refuse(&item, defaults, true),
+        Anchor::OutOfLineMod(_) => ancestors_refuse(&item, defaults, true),
     }
 }
 
-/// The function or out-of-line module whose head is on 1-based `line`.
+/// The function whose head is on 1-based `line`, or the out-of-line module
+/// of the declared name that overlaps it.
 fn item_on_line(
     root: &SyntaxNode,
     source: &str,
     line: usize,
-    anchor: Anchor,
+    anchor: Anchor<'_>,
 ) -> Option<SyntaxNode> {
-    let start = line_code_offset(source, line)?;
-    let token = root.token_at_offset(start).right_biased()?;
-    token.parent_ancestors().find(|node| match anchor {
-        Anchor::Function => ast::Fn::can_cast(node.kind()),
-        Anchor::OutOfLineMod => {
-            ast::Module::cast(node.clone()).is_some_and(|module| module.item_list().is_none())
+    match anchor {
+        Anchor::Function => {
+            let start = line_code_offset(source, line)?;
+            let token = root.token_at_offset(start).right_biased()?;
+            token
+                .parent_ancestors()
+                .find(|node| ast::Fn::can_cast(node.kind()))
         }
-    })
+        Anchor::OutOfLineMod(name) => {
+            let span = line_range(source, line)?;
+            root.descendants().find(|node| {
+                ast::Module::cast(node.clone()).is_some_and(|module| {
+                    module.item_list().is_none()
+                        && module
+                            .name()
+                            .is_some_and(|declared| declared.text() == name)
+                        && node.text_range().intersect(span).is_some()
+                })
+            })
+        }
+    }
+}
+
+/// The byte range of 1-based `line`, without its line break.
+fn line_range(source: &str, line: usize) -> Option<TextRange> {
+    let mut offset = 0usize;
+    for (index, text) in source.split_inclusive('\n').enumerate() {
+        if index + 1 == line {
+            let end = offset + text.trim_end_matches(['\n', '\r']).len();
+            return Some(TextRange::new(
+                TextSize::try_from(offset).ok()?,
+                TextSize::try_from(end).ok()?,
+            ));
+        }
+        offset += text.len();
+    }
+    None
 }
 
 /// The offset of the first non-blank character on 1-based `line`.
@@ -128,11 +169,25 @@ fn ancestors_refuse(
     })
 }
 
-/// Whether any outer attribute of `node` may leave it uncompiled.
+/// Whether any attribute that gates `node` may leave it uncompiled: its outer
+/// attributes, and the inner `#![cfg(..)]` attributes that rust-analyzer
+/// places in the item list of an inline `mod`, `impl`, `trait` or `extern`
+/// block rather than on the item itself.
 fn attributes_refuse(node: &SyntaxNode, defaults: Option<&BTreeSet<String>>) -> bool {
     node.children()
+        .flat_map(|child| {
+            let list = matches!(
+                child.kind(),
+                SyntaxKind::ITEM_LIST | SyntaxKind::ASSOC_ITEM_LIST | SyntaxKind::EXTERN_ITEM_LIST
+            );
+            let inner: Vec<SyntaxNode> = if list {
+                child.children().collect()
+            } else {
+                Vec::new()
+            };
+            std::iter::once(child).chain(inner)
+        })
         .filter_map(ast::Attr::cast)
-        .filter(|attr| attr.excl_token().is_none())
         .any(|attr| attribute_refuses(&attr.syntax().text().to_string(), defaults))
 }
 
