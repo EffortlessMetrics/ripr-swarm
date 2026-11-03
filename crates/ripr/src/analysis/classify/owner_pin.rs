@@ -78,16 +78,19 @@ use crate::analysis::facts::{
 };
 use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
+use crate::analysis::syntax::ra::LineIndex;
 use crate::analysis::syntax::{
-    AssertionContextRefusal, GeneratedTestPins, HelperLoan, ItemNesting, MacroBindingCandidates,
-    MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, RootShadow,
-    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, cfg_if_module_name,
-    drop_in_assertion_leaf, empty_macro_binding_ambiguities, err_return_guard_key,
-    generated_test_pins, local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
-    owner_pin_matches_assertions, parse_clean_source_file, pattern_pins, qualified_matches_paths,
-    returns_leave_the_function, source_binds_value_name, source_declares_value_name,
-    source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
+    AssertionContextRefusal, CLAIMS_PAYLOAD_MACRO_NAMES, GeneratedTestPins, HelperLoan,
+    ItemNesting, MacroBindingCandidates, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
+    PatternPins, RootShadow, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
+    cfg_if_module_name, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
+    err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
+    owner_pin_assertions, owner_pin_matches_assertions, parse_clean_source_file, pattern_pins,
+    qualified_matches_paths, returns_leave_the_function, source_binds_value_name,
+    source_declares_value_name, source_imported_claims_macros, trusted_macro_binding_site_sets,
+    trusted_macro_binding_sites,
 };
+use crate::analysis::workspace::declared_crate_root_paths_from_manifest;
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
@@ -708,8 +711,9 @@ impl WithheldMacroBindings {
 }
 
 /// A withheld file is not indexed, so its module edges are unknown; only a
-/// file that is itself a `src/lib.rs`, `src/main.rs` or `src/bin/*.rs` crate
-/// root has a root known from its path, matching [`target_root`] for it.
+/// file that is itself a `src/lib.rs`, `src/main.rs`, `src/bin/*.rs` or
+/// `src/bin/NAME/main.rs` crate root has a root known from its path, matching
+/// [`target_root`] for it.
 /// Any other withheld file keeps its sites workspace-wide (fails closed).
 fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
     let names: Vec<&str> = path
@@ -718,7 +722,9 @@ fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
         .collect();
     let recognized = matches!(
         names.as_slice(),
-        [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _]
+        [.., "src", "lib.rs" | "main.rs"]
+            | [.., "src", "bin", _]
+            | [.., "src", "bin", _, "main.rs"]
     );
     (recognized && path.extension().is_some_and(|extension| extension == "rs"))
         .then(|| path.to_path_buf())
@@ -1162,11 +1168,13 @@ impl OwnerPinSyntax {
         // rebinding; it outranks a workspace site that only may
         // rebind the name, or the refusal would read as an analyzer
         // limit (RIPR-SPEC-0240) for a macro that is really replaced.
+        let bytes = SiteCoverBytes::for_assertion(self, index, test, assertion_line);
         let local = test_macro_binding_site(
             name,
             test,
             assertion_line,
             index,
+            bytes,
             &self.test_file_macro_sites,
             self.target_roots(index),
             &resolved,
@@ -1206,6 +1214,7 @@ impl OwnerPinSyntax {
             })
             .or_else(|| {
                 let facts = index.files().get(&test.file)?;
+                let bytes = SiteCoverBytes::for_assertion(self, index, test, assertion_line);
                 self.test_file_macro_sites
                     .borrow_mut()
                     .entry((name.to_string(), test.file.clone()))
@@ -1222,7 +1231,8 @@ impl OwnerPinSyntax {
                     })
                     .iter()
                     .find(|(_, site)| {
-                        site_covers_assertion(site, test, assertion_line) && field_site_blocks(site)
+                        site_covers_assertion(site, test, assertion_line, bytes)
+                            && field_site_blocks(site)
                     })
                     .map(|(_, site)| (test.file.clone(), site.clone()))
             })
@@ -1489,7 +1499,7 @@ impl OwnerPinSyntax {
                 None => self.trusted_macro_ambiguities(index).contains(name),
             }
             && !self
-                .scoped_names_for(test, line)
+                .scoped_names_for(test, line, index)
                 .iter()
                 .any(|candidate| candidate == name)
             && !self
@@ -1945,7 +1955,7 @@ impl OwnerPinSyntax {
         {
             ambiguous.insert("json".to_string());
         }
-        ambiguous.extend(self.scoped_names_for(test, line));
+        ambiguous.extend(self.scoped_names_for(test, line, index));
         ambiguous.extend(self.crate_names_for(test, index));
         ambiguous.extend(self.module_names_for(test, index));
         Ok(ambiguous)
@@ -2609,9 +2619,10 @@ fn merge_macro_site_rank<'a>(
 /// fragment, and the fragment's module children, looking like a root.
 #[derive(Clone, Debug)]
 struct TargetRoots {
-    /// An unresolved `include!`, or an unresolvable `#[path]` (which
-    /// records no module edge for its target), may compile any file into
-    /// another crate, so no file is charged to one root.
+    /// An unresolved `include!`, an unresolvable `#[path]` (which records
+    /// no module edge for its target), or an unindexed member that may
+    /// mount other crates that way, may compile any file into another
+    /// crate, so no file is charged to one root.
     disabled: bool,
     /// Every indexed `<package>/src` directory, for the `tests/`, `benches/`,
     /// `examples/` and `build.rs` roots beside one.
@@ -2623,11 +2634,103 @@ struct TargetRoots {
     binary_macro_roots: SyncMemo<BTreeMap<PathBuf, Option<BTreeSet<PathBuf>>>>,
 }
 
+/// Draft/Fast indexes omit members that are not the changed package or its
+/// reverse path-dependents. An omitted member is an unseen compilation
+/// *target* of indexed files only when it may mount them (`include!` or
+/// `#[path]`): that is the #10149 generated-B case. A namesake sibling
+/// with no such mount is not a target of the receiver, so indexed members
+/// across packages stay placeable.
+fn unindexed_member_is_unseen_compilation_target(index: &RustIndex) -> bool {
+    let Some(root) = index
+        .workspace_authority
+        .as_ref()
+        .map(|authority| authority.root.as_path())
+    else {
+        return false;
+    };
+    index.workspace_member_dirs.iter().any(|member_dir| {
+        let member_canon = member_dir
+            .canonicalize()
+            .unwrap_or_else(|_| member_dir.to_path_buf());
+        let Some(relative) = member_canon.strip_prefix(root).ok() else {
+            return false;
+        };
+        let indexed = index.files().iter().any(|(path, _)| {
+            let path = path.as_path();
+            let path = path.strip_prefix("./").unwrap_or(path);
+            path.starts_with(relative)
+        });
+        !indexed && unindexed_member_may_mount_foreign_files(&member_canon)
+    })
+}
+
+const UNINDEXED_MEMBER_ROOTS: &[&str] =
+    &["src/lib.rs", "src/main.rs", "build.rs", "lib.rs", "main.rs"];
+const UNINDEXED_MEMBER_SOURCE_BYTES: usize = 256 * 1024;
+
+/// Whether an unindexed member's crate-root sources look like they could
+/// compile another crate's files. Unreadable, oversized, or missing crate
+/// roots fail closed: the member exists and its compilation effect is
+/// unknown. A readable crate root with no `include!` / `#[path]` is not a
+/// mount, so a namesake dependency of an indexed test crate does not
+/// disable placement.
+fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
+    let mut candidates: BTreeSet<PathBuf> = UNINDEXED_MEMBER_ROOTS
+        .iter()
+        .map(|candidate| member_dir.join(candidate))
+        .collect();
+    match std::fs::read_to_string(member_dir.join("Cargo.toml")) {
+        Ok(manifest) => {
+            for relative in declared_crate_root_paths_from_manifest(&manifest, member_dir) {
+                candidates.insert(member_dir.join(relative));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return true,
+    }
+    let mut inspected = false;
+    for path in candidates {
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                if bytes.len() > UNINDEXED_MEMBER_SOURCE_BYTES {
+                    return true;
+                }
+                let Ok(source) = std::str::from_utf8(&bytes) else {
+                    return true;
+                };
+                inspected = true;
+                if source_may_mount_foreign_files(source) {
+                    return true;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return true,
+        }
+    }
+    !inspected
+}
+
+fn source_may_mount_foreign_files(source: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    whole_word_offsets(&masked, "include")
+        .into_iter()
+        .any(|offset| {
+            masked
+                .get(offset + "include".len()..)
+                .is_some_and(|rest| rest.trim_start().starts_with('!'))
+        })
+        || {
+            let compact: String = masked.chars().filter(|ch| !ch.is_whitespace()).collect();
+            compact.contains("#[path") || compact.contains("#![path")
+        }
+}
+
 impl TargetRoots {
     fn new(index: &RustIndex) -> Self {
         // A lexical-fallback file records no module declarations, so its
         // children get no edge either.
         let disabled = !index.include_limitations.is_empty()
+            || unindexed_member_is_unseen_compilation_target(index)
             || index.files().iter().any(|(_, facts)| {
                 facts.used_lexical_fallback
                     || facts
@@ -2741,7 +2844,7 @@ impl TargetRoots {
 }
 
 /// The crate root file `file` composes under: a recognized Cargo target root
-/// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, an integration test, bench,
+/// (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`, `src/bin/NAME/main.rs`, an integration test, bench,
 /// example or build script), or `None` when composition is unresolved, goes
 /// through `include!`, or ends at an unrecognized file.
 pub(super) fn target_root(
@@ -2788,7 +2891,9 @@ fn recognized_target_root(root: &Path, src_dirs: &BTreeSet<PathBuf>) -> bool {
         src_dirs.contains(&prefix)
     };
     let recognized = match names.as_slice() {
-        [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _] => true,
+        [.., "src", "lib.rs" | "main.rs"]
+        | [.., "src", "bin", _]
+        | [.., "src", "bin", _, "main.rs"] => true,
         [package @ .., "tests" | "benches" | "examples", _] => package_has_src(package),
         [package @ .., "build.rs"] => package_has_src(package),
         _ => false,
@@ -2871,14 +2976,20 @@ impl OwnerPinSyntax {
     /// check helper lends (#6482) sits in the helper's body, whose scoped
     /// bindings never overlap the test's span. Filled by the workspace scan
     /// in `refusal`.
-    fn scoped_names_for(&self, test: &TestSummary, assertion_line: usize) -> Vec<String> {
+    fn scoped_names_for(
+        &self,
+        test: &TestSummary,
+        assertion_line: usize,
+        index: &RustIndex,
+    ) -> Vec<String> {
+        let bytes = SiteCoverBytes::for_assertion(self, index, test, assertion_line);
         self.scoped_macro_bindings
             .borrow()
             .as_ref()
             .and_then(|scoped| scoped.get(&test.file))
             .into_iter()
             .flatten()
-            .filter(|(_, site)| site_covers_assertion(site, test, assertion_line))
+            .filter(|(_, site)| site_covers_assertion(site, test, assertion_line, bytes))
             .map(|(name, _)| name.clone())
             .collect()
     }
@@ -2887,23 +2998,174 @@ impl OwnerPinSyntax {
 /// Whether a scoped site may reach the invocation at `assertion_line` in
 /// `test`: it overlaps the test, or (for an assertion a check helper lends,
 /// #6482) its scope holds the assertion's own line in the helper's body.
+#[derive(Clone, Copy)]
+struct SiteCoverBytes {
+    test: Option<(u32, u32)>,
+    assertion: Option<(u32, u32)>,
+}
+
+impl SiteCoverBytes {
+    fn for_assertion(
+        syntax: &OwnerPinSyntax,
+        index: &RustIndex,
+        test: &TestSummary,
+        assertion_line: usize,
+    ) -> Self {
+        let needs = syntax
+            .scoped_macro_bindings
+            .borrow()
+            .as_ref()
+            .and_then(|scoped| {
+                scoped.get(&test.file).map(|sites| {
+                    sites.iter().any(|(_, site)| {
+                        site_cover_needs_test_fn_bytes(site, test)
+                            || site_cover_needs_assertion_bytes(site, assertion_line)
+                    })
+                })
+            });
+        let needs = needs.unwrap_or(false);
+        if !needs {
+            return Self {
+                test: None,
+                assertion: None,
+            };
+        }
+        Self {
+            test: test_fn_byte_range(syntax, index, test),
+            assertion: assertion_byte_range(index, test, assertion_line),
+        }
+    }
+}
+
+/// Byte containment is required only when a scoped site records `scope_bytes`
+/// and the same-line disambiguation path applies (#5695).
+fn site_cover_needs_test_fn_bytes(site: &MacroBindingSite, test: &TestSummary) -> bool {
+    site.scope_bytes.is_some()
+        && site.scope.is_some_and(|(start, end)| {
+            start == end && test.start_line == test.end_line && test.start_line == start
+        })
+}
+
+fn site_cover_needs_assertion_bytes(site: &MacroBindingSite, assertion_line: usize) -> bool {
+    site.scope_bytes.is_some()
+        && site
+            .scope
+            .is_some_and(|(start, end)| start == end && assertion_line == start)
+}
+
 fn site_covers_assertion(
     site: &MacroBindingSite,
     test: &TestSummary,
     assertion_line: usize,
+    bytes: SiteCoverBytes,
 ) -> bool {
-    site_covers(site, test)
-        || site
-            .scope
-            .is_some_and(|(start, end)| (start..=end).contains(&assertion_line))
+    if site_covers(site, test, bytes.test) {
+        return true;
+    }
+    let Some((start, end)) = site.scope else {
+        return false;
+    };
+    if !(start..=end).contains(&assertion_line) {
+        return false;
+    }
+    let same_line_scope = start == end && assertion_line == start;
+    if !same_line_scope {
+        return true;
+    }
+    match (site.scope_bytes, bytes.assertion) {
+        (Some((scope_start, scope_end)), Some((assert_start, assert_end))) => {
+            scope_start <= assert_start && assert_end <= scope_end
+        }
+        (None, _) => true,
+        // A borrowed oracle (a check helper lends its own assertion, #6482)
+        // never resolves to bytes: `assertion_byte_range` reads only the
+        // test's own assertions. With no range to contain, keep the pre-#5695
+        // conservative cover instead of dropping the shadow and admitting a
+        // possibly replaced macro's expansion as a genuine check (#12461).
+        (Some(_), None) => true,
+    }
 }
 
-/// Whether a scoped site may reach `test`: any overlap of their line spans.
-/// A `use` in the test's own body is scoped to the body block, which starts
-/// after the `fn` line when the signature wraps, so containment would miss it.
-fn site_covers(site: &MacroBindingSite, test: &TestSummary) -> bool {
-    site.scope
-        .is_some_and(|(start, end)| start <= test.end_line && test.start_line <= end)
+/// Whether a scoped site may reach `test`: line spans must overlap, and when
+/// byte spans are available the test function must sit inside the scoped item
+/// (#5695). A `use` in the test's own body is scoped to the body block, which
+/// starts after the `fn` line when the signature wraps, so containment would
+/// miss it; [`site_covers_assertion`] also matches the assertion line.
+fn site_covers(
+    site: &MacroBindingSite,
+    test: &TestSummary,
+    test_bytes: Option<(u32, u32)>,
+) -> bool {
+    let Some((start, end)) = site.scope else {
+        return false;
+    };
+    if test.start_line > end || test.end_line < start {
+        return false;
+    }
+    let same_line_scope =
+        start == end && test.start_line == test.end_line && test.start_line == start;
+    if !same_line_scope {
+        return true;
+    }
+    match (site.scope_bytes, test_bytes) {
+        (Some((scope_start, scope_end)), Some((test_start, test_end))) => {
+            scope_start <= test_start && test_end <= scope_end
+        }
+        (Some(_), None) => false,
+        _ => true,
+    }
+}
+
+fn test_fn_byte_range(
+    syntax: &OwnerPinSyntax,
+    index: &RustIndex,
+    test: &TestSummary,
+) -> Option<(u32, u32)> {
+    index.files().get(&test.file)?;
+    let name = test.name.trim_start_matches("r#");
+    if let Some(scopes) = syntax.file_scopes(index, &test.file)
+        && let Some(function) = scopes
+            .fns
+            .iter()
+            .find(|function| function.name == name && function.start_line == test.start_line)
+    {
+        return Some((function.start, function.end));
+    }
+    let tree = index.source_syntax.get(index, &test.file)?.tree()?;
+    build_file_scopes(&tree)
+        .fns
+        .into_iter()
+        .find(|function| function.name == name && function.start_line == test.start_line)
+        .map(|function| (function.start, function.end))
+}
+
+fn assertion_byte_range(index: &RustIndex, test: &TestSummary, line: usize) -> Option<(u32, u32)> {
+    let facts = index.files().get(&test.file)?;
+    let oracle = test
+        .assertions
+        .iter()
+        .find(|assertion| assertion.line == line)?;
+    let tree = index.source_syntax.get(index, &test.file)?.tree()?;
+    let lines = LineIndex::new(&facts.source);
+    // The oracle text keeps its statement terminator while the `MacroCall`
+    // node's text stops before it; strip one trailing `;` so the test's own
+    // invocation still resolves to bytes (#12461).
+    let needle = oracle.text.trim().trim_end_matches(';').trim_end();
+    if needle.is_empty() {
+        return None;
+    }
+    for call in tree.syntax().descendants().filter_map(ast::MacroCall::cast) {
+        let range = call.syntax().text_range();
+        if lines.line(range.start()) != line {
+            continue;
+        }
+        let invoked = call.syntax().text().to_string();
+        let invoked = invoked.trim();
+        if invoked == needle || invoked.contains(needle) {
+            return Some((u32::from(range.start()), u32::from(range.end())));
+        }
+    }
+    None
 }
 
 /// Why an `assert_eq!` was not credited as executing the standard macro.
@@ -3326,11 +3588,16 @@ fn rebinds(site: &MacroBindingSite) -> bool {
 }
 
 /// The scoped site in the test's own file that covers the test.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "macro-site lookup threads memo, roots, module resolution and byte cover context"
+)]
 fn test_macro_binding_site(
     name: &str,
     test: &TestSummary,
     assertion_line: usize,
     index: &RustIndex,
+    bytes: SiteCoverBytes,
     memo: &SyncMemo<TestFileMacroSites>,
     roots: &TargetRoots,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
@@ -3353,7 +3620,7 @@ fn test_macro_binding_site(
             )
         })
         .iter()
-        .find(|(_, site)| site_covers_assertion(site, test, assertion_line))
+        .find(|(_, site)| site_covers_assertion(site, test, assertion_line, bytes))
         .map(|(_, site)| (test.file.clone(), site.clone()))
 }
 
@@ -4912,6 +5179,28 @@ impl OwnerReturnPin {
         self.admits_spelled(test, assertion, index, imports_foreign, syntax, "assert_eq")
     }
 
+    /// RIPR-SPEC-0197 claims payload equality: whether `assert_ok_eq!(call,
+    /// literal)` or `assert_some_eq!(call, literal)` pins the owner under every
+    /// gate [`Self::admits`] applies to the unwrapped `assert_eq!` pin, on a
+    /// verified `use claims::..` import under the macro's own name. The text
+    /// only nominates the macro; this decision (import, direction, literal
+    /// expected operand, owner identity) is the only authority, so a refusal
+    /// leaves the oracle `unknown`.
+    pub(in crate::analysis) fn admits_claims_payload_eq(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        CLAIMS_EQ_MACROS.into_iter().any(|name| {
+            assertion.text.contains(name)
+                && claims_eq_operands(&assertion.text, name).is_some()
+                && self.admits_spelled(test, assertion, index, imports_foreign, syntax, name)
+        })
+    }
+
     /// #8051: whether a bare `debug_assert_eq!` would pin the owner under
     /// every gate [`Self::admits`] applies to `assert_eq!`. It runs only
     /// where debug assertions are on, so this is never credit: the
@@ -5006,19 +5295,35 @@ impl OwnerReturnPin {
         // guard reads only its condition, never a macro inside its body,
         // since the syntax gate admits the guard's path, not the body's.
         let is_guard = err_return_guard_twin(&assertion.text).is_some();
+        // RIPR-SPEC-0197 claims payload equality pins: `assert_ok_eq!(call,
+        // literal)` is its own reading, never the `assert_eq!` ones below. Its
+        // operands are read once here; a shape that is not exactly one plain
+        // two-operand invocation refuses (fail closed).
+        let claims_eq = matches!(spelling, "assert_ok_eq" | "assert_some_eq");
+        let claims_operands = if claims_eq {
+            match claims_eq_operands(&assertion.text, spelling) {
+                Some(operands) if !is_guard => Some(operands),
+                _ => return false,
+            }
+        } else {
+            None
+        };
         // A nested `format!` is read only as a rendered scalar pin, and a
         // nested `vec!` only as a single-element index.
-        let renders = !is_guard && is_assert_eq_over(&assertion.text, spelling, "format");
-        let indexes = !is_guard && is_assert_eq_over(&assertion.text, spelling, "vec");
+        let renders =
+            !claims_eq && !is_guard && is_assert_eq_over(&assertion.text, spelling, "format");
+        let indexes =
+            !claims_eq && !is_guard && is_assert_eq_over(&assertion.text, spelling, "vec");
         let reads_assert_eq = renders
             || indexes
-            || (!is_guard
+            || (!claims_eq
+                && !is_guard
                 && if spelling == "assert_eq" {
                     is_plain_or_std_macro(&assertion.text, spelling)
                 } else {
                     is_plain_macro(&assertion.text, spelling)
                 });
-        let equality = if reads_assert_eq {
+        let equality = if reads_assert_eq || claims_eq {
             None
         } else {
             equality_condition_operands(&assertion.text)
@@ -5091,6 +5396,35 @@ impl OwnerReturnPin {
             };
             substituted_expected = expected;
             (call, substituted_expected.as_str(), call_text)
+        } else if let Some([first, second]) = claims_operands {
+            // The macro panics unless `first` holds the named variant and
+            // compares that payload with `second`, so it reads as
+            // `assert_eq!(first.unwrap(), second)` (the unwrapped pin) and only
+            // on the verified `use claims::..` import under its own name, in a
+            // test's own file (a doc example is its own crate).
+            // The opposite exit panics the macro before any comparison, so
+            // only a pin on the macro's own variant reads.
+            let direction = matches!(
+                (spelling, unwrap_wrapper),
+                ("assert_ok_eq", Some("Ok")) | ("assert_some_eq", Some("Some"))
+            );
+            // Only a literal expected operand is a discriminator. The cheap
+            // refusals come first: the import check parses the whole file.
+            if !direction
+                || helper_arguments::expected_literal(second, index).is_none()
+                || doctest.is_some()
+                || !index.files().get(&test.file).is_some_and(|facts| {
+                    source_imported_claims_macros(&facts.source, (test.start_line, test.end_line))
+                        .contains(&spelling)
+                })
+            {
+                return false;
+            }
+            let Some(call) = self.awaited_call_shape(poll_context, first, &self.name) else {
+                return false;
+            };
+            unwrapped = true;
+            (call, second, Some(first))
         } else if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
@@ -5273,10 +5607,23 @@ impl OwnerReturnPin {
                                     // on a verified `use claims::..` import.
                                     .or_else(|| {
                                         let (name, call) = claims_payload_call(initializer)?;
-                                        let imported =
-                                            index.files().get(&test.file).is_some_and(|facts| {
-                                                source_imported_claims_macros(&facts.source)
-                                                    .contains(&name)
+                                        // #12462: the example's own synthetic source when
+                                        // the test is a doc example (its test fn opens on
+                                        // the fence line, so the span is valid there), the
+                                        // holding file otherwise.
+                                        let imported = doctest
+                                            .or_else(|| {
+                                                index
+                                                    .files()
+                                                    .get(&test.file)
+                                                    .map(|facts| facts.data().source.as_ref())
+                                            })
+                                            .is_some_and(|source| {
+                                                source_imported_claims_macros(
+                                                    source,
+                                                    (test.start_line, test.end_line),
+                                                )
+                                                .contains(&name)
                                             });
                                         // The macro panics on the other variant and yields
                                         // the payload, so only a pin on that same payload
@@ -5384,7 +5731,8 @@ impl OwnerReturnPin {
                 expect_operands[1].as_str(),
                 Some(expect_operands[0].as_str()),
             )
-        } else if !is_guard && self.returns_bool && is_plain_macro(&assertion.text, "assert") {
+        } else if !is_guard && self.returns_bool && is_plain_or_std_macro(&assertion.text, "assert")
+        {
             // `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
             // `assert!(!owner(..))` is `assert_eq!(owner(..), false)`. The
             // message arguments never decide whether the test fails.
@@ -5734,8 +6082,11 @@ impl OwnerReturnPin {
         // (the syntax admission settles the manifest and shadowing): they
         // evaluate their operand and bind nothing, so an owner call inside
         // one is no rebinding.
+        // #12462: scoped to the asserting test (a doc example reads its own
+        // synthetic source, whose test fn opens on the fence line).
+        let claims_span = (test.start_line, test.end_line);
         let claims_macros: Vec<&str> = test_source
-            .map(source_imported_claims_macros)
+            .map(|source| source_imported_claims_macros(source, claims_span))
             .unwrap_or_default();
         match (&self.call, call) {
             // #7082: a cfg on the owner or an enclosing module may compile
@@ -7057,6 +7408,27 @@ pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
     )
 }
 
+/// A method receiver written inline in the assertion operand: a struct
+/// literal or one parenthesized subexpression, not a binding name (#9092).
+fn inline_method_receiver(receiver: &str) -> bool {
+    let receiver = receiver.trim();
+    if let Some(inner) = group_inner(receiver, '(', ')') {
+        return inline_method_receiver(inner);
+    }
+    let Some(open) = receiver.find('{') else {
+        return false;
+    };
+    let head = receiver[..open].trim();
+    if !head.is_empty() && !is_plain_identifier(head) {
+        return false;
+    }
+    let masked = mask_comments_and_strings(receiver);
+    let Some(closing) = matching_close(&masked, open, b'{', b'}') else {
+        return false;
+    };
+    receiver[closing + 1..].trim().is_empty()
+}
+
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`
 /// with a plain identifier receiver and nothing chained after the call.
 fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
@@ -7091,18 +7463,22 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
             .is_empty()
             .then_some(CallShape::Associated(type_name));
     }
-    let call_start = if operand.starts_with(name) {
-        0
+    let (call_start, constructed) = if operand.starts_with(name) {
+        (0, false)
     } else {
         let dot = operand.find('.')?;
-        let receiver = &operand[..dot];
-        if !is_plain_identifier(receiver) || receiver == "self" {
+        let receiver = operand[..dot].trim();
+        if receiver == "self" || !operand[dot + 1..].starts_with(name) {
             return None;
         }
-        if !operand[dot + 1..].starts_with(name) {
+        let constructed = if is_plain_identifier(receiver) {
+            false
+        } else if inline_method_receiver(receiver) {
+            true
+        } else {
             return None;
-        }
-        dot + 1
+        };
+        (dot + 1, constructed)
     };
     let after_name = &operand[call_start + name.len()..];
     if !after_name.starts_with('(') {
@@ -7116,6 +7492,8 @@ fn owner_call_shape<'a>(operand: &'a str, name: &str) -> Option<CallShape<'a>> {
     }
     Some(if call_start == 0 {
         CallShape::Bare
+    } else if constructed {
+        CallShape::Constructed(&operand[..call_start - 1])
     } else {
         CallShape::Method(&operand[..call_start - 1])
     })
@@ -7188,6 +7566,100 @@ fn bound_owner_initializer<'a>(
     test.body.get(equals + 1..end)
 }
 
+/// The claims macros that compare an `Ok`/`Some` payload with an expected
+/// operand (RIPR-SPEC-0197 claims payload equality pins).
+const CLAIMS_EQ_MACROS: [&str; 2] = ["assert_ok_eq", "assert_some_eq"];
+
+/// Whether `text` is exactly one plain `assert_ok_eq!(..)` /
+/// `assert_some_eq!(..)` statement. Text only nominates a candidate; the
+/// owner pin's verified-import decision grades it.
+pub(in crate::analysis) fn is_claims_payload_eq_text(text: &str) -> bool {
+    CLAIMS_EQ_MACROS
+        .into_iter()
+        .any(|name| claims_eq_operands(text, name).is_some())
+}
+
+/// Single-line plain `assert_ok_eq!(..)` / `assert_some_eq!(..)` statements of
+/// `test` that extraction did not list. Extraction stays text-only and lists
+/// no oracle for these macros (RIPR-SPEC-0120), so reveal nominates them here
+/// as `unknown` / none candidates and keeps one only when the owner pin
+/// admits it. A multi-line invocation is not nominated (fail closed).
+pub(in crate::analysis) fn claims_payload_eq_candidates(test: &TestSummary) -> Vec<OracleFact> {
+    if !CLAIMS_EQ_MACROS.iter().any(|name| test.body.contains(name)) {
+        return Vec::new();
+    }
+    let mut candidates: Vec<OracleFact> = test
+        .body
+        .lines()
+        .enumerate()
+        .filter_map(|(offset, line)| {
+            let text = line.trim();
+            let at = test.start_line + offset;
+            // The invocation alone, with its statement `;`: a trailing comment
+            // is not part of the key the syntax admission looks up.
+            let masked = mask_comments_and_strings(text);
+            let close = masked.rfind(')')?;
+            let terminated = masked[close + 1..].contains(';');
+            let mut call = text.get(..=close)?.to_string();
+            if terminated {
+                call.push(';');
+            }
+            let text = call.as_str();
+            (is_claims_payload_eq_text(text) && !test.assertions.iter().any(|fact| fact.line == at))
+                .then(|| OracleFact {
+                    line: at,
+                    text: text.to_string(),
+                    kind: crate::domain::OracleKind::Unknown,
+                    strength: crate::domain::OracleStrength::None,
+                    observed_tokens: crate::analysis::extract::extract_identifier_tokens(text),
+                    ok_value_observed: None,
+                })
+        })
+        .collect();
+    // The statements extraction drops as never run (after `panic!`, `todo!`,
+    // `return`, ...) are not nominated either; the owner pin does not read the
+    // diverging macros, so this is the only gate for them.
+    crate::analysis::extract::retain_reached_oracles(&mut candidates, &test.body, test.start_line);
+    candidates
+}
+
+/// RIPR-SPEC-0197 claims payload equality: the two compared operands of one
+/// plain `assert_ok_eq!(left, right[, message..])` / `assert_some_eq!(..)`
+/// invocation named `spelling`. `left` is evaluated once and must hold the
+/// named variant; its payload is compared with `right`. Message arguments
+/// decide nothing. `None` for a path-qualified invocation, extra
+/// invocations in the statement or fewer than two arguments, so the caller
+/// refuses. The caller verifies the `claims` import.
+fn claims_eq_operands<'a>(text: &'a str, spelling: &str) -> Option<[&'a str; 2]> {
+    if !is_plain_macro(text, spelling) {
+        return None;
+    }
+    let masked = mask_comments_and_strings(text);
+    let start = masked.find(spelling)?;
+    let after_bang = masked[start + spelling.len()..]
+        .trim_start()
+        .strip_prefix('!')?
+        .trim_start();
+    let open = masked.len() - after_bang.len();
+    if masked.as_bytes().get(open) != Some(&b'(') {
+        return None;
+    }
+    let close = matching_close(&masked, open, b'(', b')')?;
+    // Whatever follows the call is at most the statement's `;`.
+    if !masked[close + 1..]
+        .trim()
+        .trim_start_matches(';')
+        .trim()
+        .is_empty()
+    {
+        return None;
+    }
+    match split_top_level_arguments(&text[open + 1..close])?.as_slice() {
+        [left, right, ..] => Some([left.trim(), right.trim()]),
+        _ => None,
+    }
+}
+
 /// The claims macro name and operand call when `operand` is exactly
 /// `assert_ok!(<call>)` or `assert_some!(<call>)`: each evaluates its operand
 /// once, panics on the other variant and yields the payload, so a passing
@@ -7196,7 +7668,7 @@ fn bound_owner_initializer<'a>(
 fn claims_payload_call(operand: &str) -> Option<(&'static str, &str)> {
     let operand = operand.trim();
     let masked = mask_comments_and_strings(operand);
-    let name = ["assert_ok", "assert_some"]
+    let name = CLAIMS_PAYLOAD_MACRO_NAMES
         .into_iter()
         .find(|name| masked.starts_with(name))?;
     let after_bang = masked[name.len()..]
@@ -7957,7 +8429,9 @@ const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &[
     "assert_err",
     "assert_none",
     "assert_ok",
+    "assert_ok_eq",
     "assert_some",
+    "assert_some_eq",
     "expect",
     "expect_file",
 ];
@@ -10899,6 +11373,7 @@ struct ScopeFn {
     name: String,
     start: u32,
     end: u32,
+    start_line: usize,
 }
 
 /// #7097: one module scope: its inline-module stack from the file top
@@ -10984,6 +11459,8 @@ impl OwnerPinSyntax {
 /// #7097: the scope table of `source`, or `None` when it does not parse.
 fn build_file_scopes(tree: &ast::SourceFile) -> FileScopes {
     let end: u32 = tree.syntax().text_range().end().into();
+    let source = tree.syntax().text().to_string();
+    let lines = LineIndex::new(&source);
     let mut scopes = FileScopes::default();
     scopes.push_scope(tree.syntax(), Vec::new(), 0, end);
     for func in tree.syntax().descendants().filter_map(ast::Fn::cast) {
@@ -10996,6 +11473,7 @@ fn build_file_scopes(tree: &ast::SourceFile) -> FileScopes {
                 name: strip_raw(&text).to_string(),
                 start,
                 end,
+                start_line: lines.line(range.start()),
             });
         }
     }
@@ -14803,6 +15281,9 @@ struct UnitStructFacts {
     /// Some file's `macro_rules!` matcher takes an `:ident` or `:tt`
     /// fragment, which could declare any name it is given.
     macro_takes_name: bool,
+    /// Some file invokes a macro at item position whose
+    /// definition is outside the indexed file text (#7160).
+    external_defining_macro: bool,
     /// Files whose masked source mentions `macro_rules!`: only these can
     /// refuse a name by spelling it in a macro definition. Complete only
     /// while [`Self::refused`] is false: the scan stops at the first
@@ -14822,12 +15303,20 @@ impl UnitStructFacts {
         let mut glob_outside = false;
         let mut spliced = false;
         let mut macro_takes_name = false;
+        let mut external_defining_macro = false;
         let mut macro_files = BTreeSet::new();
         for (file, facts) in index.files().iter() {
             // Once any refusal verdict holds, the remaining files cannot
             // change it, and the caller refuses before reading
             // `macro_files`; stop paying for their masking.
-            if glob_outside || spliced || macro_takes_name {
+            if glob_outside || spliced || macro_takes_name || external_defining_macro {
+                break;
+            }
+            external_defining_macro |=
+                super::macro_item_names::file_has_non_local_defining_macro_invocation(
+                    &facts.source,
+                );
+            if external_defining_macro {
                 break;
             }
             let masked = mask_comments_and_strings(&facts.source);
@@ -14858,13 +15347,14 @@ impl UnitStructFacts {
             glob_outside,
             spliced,
             macro_takes_name,
+            external_defining_macro,
             macro_files,
         }
     }
 
     /// Whether the workspace-wide scans refuse every name.
     fn refused(&self) -> bool {
-        self.glob_outside || self.spliced || self.macro_takes_name
+        self.glob_outside || self.spliced || self.macro_takes_name || self.external_defining_macro
     }
 }
 
@@ -14892,8 +15382,9 @@ impl UnitStructFacts {
 ///   splice in text the scan never reads.
 ///
 /// Items a derive or attribute proc macro emits stay invisible, as for
-/// every other pin rule, as do items an out-of-workspace `macro_rules!`
-/// invocation emits (#7160).
+/// every other pin rule. An item- or statement-position macro whose
+/// definition is not in the indexed workspace text may emit unread items,
+/// so the workspace-wide scan refuses (#7160).
 pub(super) fn unit_struct_value(
     name: &str,
     test_file: &Path,

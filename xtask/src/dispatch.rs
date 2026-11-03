@@ -135,6 +135,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::LspCockpitReport => super::reports::lsp_cockpit_report(),
         XtaskCommand::OperatorCockpitReport => super::reports::operator_cockpit_report(),
         XtaskCommand::ReleaseReadiness(args) => super::reports::release_readiness(&args),
+        XtaskCommand::ReadinessSnapshot(args) => super::readiness_snapshot::run(&args),
         XtaskCommand::ReleaseNegativeCorpus(args) => super::reports::release_negative_corpus(&args),
         XtaskCommand::ReleaseManifestProposal(args) => {
             super::reports::release_manifest_proposal(&args)
@@ -159,6 +160,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::reports::release_server::release_upload_assets(&args)
         }
         XtaskCommand::TargetedTestOutcome(args) => super::reports::targeted_test_outcome(&args),
+        XtaskCommand::NativeLibtest(args) => super::native_libtest::run(&args),
         XtaskCommand::MutationCalibration(args) => super::reports::mutation_calibration(&args),
         XtaskCommand::BunUbCalibration(args) => super::reports::bun_ub_calibration(&args),
         XtaskCommand::BunUbPreviewSummary(args) => super::reports::bun_ub_preview_summary(&args),
@@ -224,6 +226,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckPublicApi => super::check_public_api(),
         XtaskCommand::CheckOutputContracts => super::check_output_contracts(),
         XtaskCommand::CheckIdentityRegistry => super::identity_registry::check_identity_registry(),
+        XtaskCommand::CheckToolCapabilities(args) => super::tool_capabilities::run(&args),
         XtaskCommand::CheckDocArtifacts => super::check_doc_artifacts(),
         XtaskCommand::CheckSupportTiers => super::check_support_tiers(),
         XtaskCommand::CheckCapabilityProducers(args) => {
@@ -258,6 +261,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
                 super::schema_producer_sweep::contract_subjects_owned_by_corpus_gate,
             )
         }
+        XtaskCommand::CheckRiprAgentDisposition => super::ripr_agent_disposition::check(),
         XtaskCommand::SchemaProducerSweep(args) => {
             super::schema_producer_sweep::schema_producer_sweep(&args)
         }

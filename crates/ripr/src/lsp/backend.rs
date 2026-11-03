@@ -2479,11 +2479,7 @@ impl Backend {
     /// screen, so a user who opened a second repository learns why it has no
     /// evidence.
     async fn disclose_kept_root(&self, root: &Path, others: &[PathBuf]) {
-        let listed = others
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let listed = super::workspace_folder_bounds::bounded_path_list_phrase(others);
         let message = format!(
             "ripr keeps analyzing {}. Not analyzed by this server: {listed}. ripr analyzes one workspace root per server; open another repository in its own editor session to analyze it.",
             root.display()
@@ -2722,6 +2718,8 @@ impl Backend {
         } else {
             None
         };
+        let (candidate_roots_listed, candidate_roots_omitted) =
+            super::workspace_folder_bounds::bounded_path_list_entries(&root.candidate_roots);
         serde_json::json!({
             "schema_version": "0.1",
             "tool": "ripr",
@@ -2788,11 +2786,8 @@ impl Backend {
                 .effective_root
                 .as_ref()
                 .map(|path| path.to_string_lossy().to_string()),
-            "candidate_roots": root
-                .candidate_roots
-                .iter()
-                .map(|path| path.to_string_lossy().to_string())
-                .collect::<Vec<_>>(),
+            "candidate_roots": candidate_roots_listed,
+            "candidate_roots_omitted_count": candidate_roots_omitted,
             "root_input_identity": root.input_identity(),
             "root_detail": root.detail,
             "root_recovery_route": root_recovery_route(&root.state),
@@ -5819,12 +5814,8 @@ fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
     let folders = if root.candidate_roots.is_empty() {
         String::new()
     } else {
-        let listed = root
-            .candidate_roots
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let listed =
+            super::workspace_folder_bounds::bounded_path_list_phrase(&root.candidate_roots);
         // Removed and changed roots carry the previous root, not the
         // folders the client sent.
         let label = match root.state {
@@ -6395,8 +6386,9 @@ impl LanguageServer for Backend {
         // Retain the canonical workspace-folder set (#2036, RIPR-SPEC-0139)
         // so `didChangeWorkspaceFolders` deltas apply to stored state
         // instead of being discarded. The root resolution is unchanged.
+        let (folder_set, folder_rejection) = workspace_folder_set_from_initialize_params(&params);
         if let Ok(mut set) = self.workspace_folders.lock() {
-            *set = workspace_folder_set_from_initialize_params(&params);
+            *set = folder_set;
         }
         let (repo_config, config_error) = match &resolution {
             WorkspaceRootResolution::Selected(root) if root.is_dir() => {
@@ -6418,6 +6410,11 @@ impl LanguageServer for Backend {
             "initial workspace root resolution pending",
         ));
         self.apply_workspace_root_resolution(resolution).await;
+        if let Some(rejection) = folder_rejection {
+            let previous = self.workspace_root_authority();
+            self.reject_workspace_folder_update(rejection).await;
+            self.disclose_blocked_root_transition(&previous).await;
+        }
         if let Some(error) = config_error {
             // Commit the owning config failure before the optional client
             // disclosures (#3802): the state transition must not depend on a
@@ -7831,7 +7828,7 @@ impl Backend {
             "invalidation_reason": reason,
             "recovery_route": REFRESH_COMMAND,
             "recovery_command": REFRESH_COMMAND,
-            "limits_note": "Static editor evidence only; refresh before using seam context or repair guidance.",
+            "limits_note": "Static editor evidence only; refresh before using gap context or repair guidance.",
         })
     }
 
@@ -8278,7 +8275,9 @@ fn withheld_static_gap_summary(snapshot: &AnalysisSnapshot) -> (usize, Vec<&'sta
     let withheld =
         super::diagnostics::withheld_gap_findings(snapshot.diagnostic_profile, &snapshot.findings)
             .into_iter()
-            .filter(|finding| !super::diagnostics::finding_is_withheld_preview_gap(finding))
+            .filter(|finding| {
+                !super::diagnostics::finding_is_withheld_preview_profile_finding(finding)
+            })
             .collect::<Vec<_>>();
     let classes = withheld
         .iter()
@@ -9411,13 +9410,13 @@ fn top_limitation_dto(
             "seams_deferred",
             "seams_deferred",
             "deferred",
-            "interactive analysis deferred the expensive seam inventory".to_string(),
+            "interactive analysis deferred the full gap list".to_string(),
             "refresh",
             Vec::new(),
             1,
             1,
             vec![
-                "seam evidence is incomplete",
+                "gap evidence is incomplete",
                 "not test adequacy",
                 "not runtime evidence",
             ],

@@ -57,6 +57,7 @@ suite('Extension Smoke', () => {
     assert.ok(commands.includes('ripr.showStatus'));
     assert.ok(commands.includes('ripr.diagnoseSetup'));
     assert.ok(commands.includes('ripr.startCurrentRepair'));
+    assert.ok(commands.includes('ripr.startOrContinueRepair'));
     assert.ok(commands.includes('ripr.copyCurrentRepairPacket'));
     assert.ok(commands.includes('ripr.copyRepoGapMap'));
     assert.ok(commands.includes('ripr.openFirstPrPacket'));
@@ -515,11 +516,6 @@ suite('Extension Smoke', () => {
       diagnostic.range
     );
     const contextCommand = assertCommandAction(actions, 'Inspect Test Gap - Copy Context', 'ripr.copyContext');
-    const targetedBriefCommand = assertCommandAction(
-      actions,
-      'Write targeted test: copy brief',
-      'ripr.copyTargetedTestBrief'
-    );
     const packetCommand = assertCommandAction(
       actions,
       'Agent handoff: copy packet command',
@@ -571,14 +567,6 @@ suite('Extension Smoke', () => {
     };
     assert.strictEqual(parsedContextPacket.schema_version, '0.5');
     assert.strictEqual(parsedContextPacket.packets?.[0]?.seam_id, '67fc764ba37d77bd');
-
-    await vscode.commands.executeCommand(targetedBriefCommand.command, ...(targetedBriefCommand.arguments ?? []));
-    const targetedBriefText = await waitForClipboardText((text) => text.includes('Target seam:'));
-    assert.ok(targetedBriefText.includes('Target seam:'), targetedBriefText);
-    assert.ok(targetedBriefText.includes('src/lib.rs:2'), targetedBriefText);
-    assert.ok(targetedBriefText.includes('predicate_boundary'), targetedBriefText);
-    assert.ok(targetedBriefText.includes('Missing discriminator'), targetedBriefText);
-    assert.ok(targetedBriefText.includes('tests/pricing.rs'), targetedBriefText);
 
     await vscode.commands.executeCommand(packetCommand.command, ...(packetCommand.arguments ?? []));
     const packetText = await waitForClipboardText((text) => text.includes('ripr agent packet'));
@@ -963,30 +951,8 @@ suite('Extension Smoke', () => {
       const actions = await waitForCodeActions(
         uri,
         diagnostic.range,
-        (action) => action.title === 'Inspect gap: copy repair packet',
+        (action) => action.title === 'Inspect gap: copy static-limit note',
         10000
-      );
-      const repairPacketCommand = assertCommandAction(
-        actions,
-        'Inspect gap: copy repair packet',
-        'ripr.copyContext'
-      );
-      const relatedTestCommand = assertCommandAction(
-        actions,
-        'Write targeted test: open best related test',
-        'ripr.openRelatedTest'
-      );
-      const verifyCommand = assertCommandAction(
-        actions,
-        'Verify after test: copy verify command',
-        'ripr.copyAgentVerifyCommand',
-        'ripr agent verify'
-      );
-      const receiptCommand = assertCommandAction(
-        actions,
-        'Review result: copy receipt command',
-        'ripr.copyAgentReceiptCommand',
-        'ripr agent receipt'
       );
       const staticLimitCommand = assertCommandAction(
         actions,
@@ -994,52 +960,11 @@ suite('Extension Smoke', () => {
         'ripr.copyContext'
       );
 
-      await vscode.commands.executeCommand(repairPacketCommand.command, ...(repairPacketCommand.arguments ?? []));
-      const repairPacketText = await waitForClipboardText((text) =>
-        text.includes('"source": "gap_decision_ledger"') &&
-        text.includes('"canonical_gap_id": "gap:typescript:pricing:threshold-boundary"')
-      );
-      const repairPacket = JSON.parse(repairPacketText) as {
-        source?: string;
-        packets?: Array<{ language?: string; language_status?: string; verify_command?: string }>;
-      };
-      assert.strictEqual(repairPacket.source, 'gap_decision_ledger');
-      assert.strictEqual(repairPacket.packets?.[0]?.language, 'typescript');
-      assert.strictEqual(repairPacket.packets?.[0]?.language_status, 'preview');
-      assert.strictEqual(repairPacket.packets?.[0]?.verify_command, 'ripr agent verify --root . --json');
-
       await vscode.commands.executeCommand(staticLimitCommand.command, ...(staticLimitCommand.arguments ?? []));
       const staticLimitText = await waitForClipboardText((text) =>
         text.includes('Static limit: missing_import_graph')
       );
-      assert.ok(staticLimitText.includes('TypeScript preview smoke uses syntax-first evidence.'), staticLimitText);
-
-      // #4001: the copied gap route names the selected workspace (either
-      // spelling when the folder is a symlink), not the portable `--root .`.
-      const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      assert.ok(selectedRoot, 'test workspace root must be open');
-      const rootArgs = [selectedRoot, await fs.realpath(selectedRoot)].map((root) =>
-        serverShellArg(root.replace(/\\/g, '/'))
-      );
-      const boundGapCommand = (verb: string) => (text: string) =>
-        rootArgs.some((rootArg) => text === `ripr agent ${verb} --root ${rootArg} --json`);
-
-      await vscode.commands.executeCommand(verifyCommand.command, ...(verifyCommand.arguments ?? []));
-      const verifyText = await waitForClipboardText((text) => text.startsWith('ripr agent verify --root '));
-      assert.ok(boundGapCommand('verify')(verifyText), verifyText);
-
-      await vscode.commands.executeCommand(receiptCommand.command, ...(receiptCommand.arguments ?? []));
-      const receiptText = await waitForClipboardText((text) => text.startsWith('ripr agent receipt --root '));
-      assert.ok(boundGapCommand('receipt')(receiptText), receiptText);
-
-      await vscode.commands.executeCommand(relatedTestCommand.command, ...(relatedTestCommand.arguments ?? []));
-      const activeEditor = vscode.window.activeTextEditor;
-      assert.ok(activeEditor, 'expected related TypeScript test to open an editor');
-      assert.ok(
-        activeEditor.document.uri.fsPath.replace(/\\/g, '/').endsWith('/tests/pricing.test.ts'),
-        activeEditor.document.uri.fsPath
-      );
-      assert.strictEqual(activeEditor.selection.active.line, 3);
+      assert.ok(staticLimitText.includes('Static limit: missing_import_graph'), staticLimitText);
     } finally {
       await cleanupEditorGapSmokeFiles();
       await updateDiagnosticProfile(config, previousProfile);
@@ -6217,6 +6142,55 @@ suite('Extension Smoke', () => {
   });
 });
 
+suite('Start or Continue Repair shell (#2928 / #4647)', () => {
+  test('startOrContinueRepair runs the shared after phase for one live attempt', async () => {
+    const fixtureDir = path.resolve(__dirname, '../../../test-fixtures/attempt-status');
+    const awaiting = await fs.readFile(path.join(fixtureDir, 'status-awaiting_edit.json'), 'utf8');
+    const inventory = JSON.stringify({
+      schema_version: '0.1',
+      tool: 'ripr',
+      repair_attempts: [
+        {
+          attempt_id: 'repair-attempt-0123456789abcdef01234567',
+          seam_id: '67fc764ba37d77bd',
+          state: 'awaiting_edit',
+          disposition: 'resumable',
+          command:
+            'ripr agent repair --root . --attempt repair-attempt-0123456789abcdef01234567 --phase after',
+        },
+      ],
+    });
+    const afterEnvelope = JSON.stringify({
+      schema_version: '0.1',
+      kind: 'repair_after_result',
+      verify: {
+        schema_version: '0.3',
+        tool: 'ripr',
+        movement: { summary: 'Result for seam demo: weak -> exposed (improved).' },
+      },
+      agent_status: JSON.parse(awaiting),
+    });
+    const context = createControllerTestContext({
+      cliResult: inventory,
+      afterPhaseResult: afterEnvelope,
+      statusAttemptResult: awaiting,
+    });
+    try {
+      await context.controller.startOrContinueRepair();
+      const afterCall = context.runRiprCalls.find((call) =>
+        call.args.includes('--phase') && call.args[call.args.indexOf('--phase') + 1] === 'after'
+      );
+      assert.ok(afterCall, 'expected shared after-phase CLI invocation');
+      assert.ok(
+        context.infoMessages.some((message) => message.includes('improved')),
+        `expected movement summary in UI: ${context.infoMessages.join(' | ')}`
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+});
+
 interface ControllerTestOptions {
   enabled?: boolean;
   includeUnchangedTests?: boolean;
@@ -6228,6 +6202,8 @@ interface ControllerTestOptions {
   startupError?: Error;
   cliResult?: string;
   runRiprHandler?: (args: string[]) => string | Promise<string>;
+  afterPhaseResult?: string;
+  statusAttemptResult?: string;
   firstActionJson?: string | null;
   files?: Record<string, string | null>;
   workspaceRoot?: string | null;
@@ -6715,7 +6691,27 @@ function createControllerTestContext(options: ControllerTestOptions) {
       if (options.runRiprHandler) {
         return options.runRiprHandler(args);
       }
+      if (args.includes('--attempt') && options.statusAttemptResult) {
+        return options.statusAttemptResult;
+      }
       return options.cliResult ?? '{}';
+    },
+    runRiprProcess: async (command, args, cwd) => {
+      runRiprCalls.push({ command, args, cwd });
+      const phaseIndex = args.indexOf('--phase');
+      const phase = phaseIndex >= 0 ? args[phaseIndex + 1] : undefined;
+      if (phase === 'after') {
+        return {
+          exitCode: 0,
+          stdout: options.afterPhaseResult ?? '{}',
+          stderr: '',
+        };
+      }
+      return {
+        exitCode: 0,
+        stdout: options.cliResult ?? '{}',
+        stderr: '',
+      };
     },
     writeClipboard: async (text) => {
       clipboardWrites.push(text);

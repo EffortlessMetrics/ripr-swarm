@@ -312,7 +312,7 @@ fn overlap_signature(finding: &Finding) -> Option<String> {
     let object = value.as_object_mut()?;
     object.remove("id");
     object.remove("canonical_gap");
-    let probe = object.get_mut("probe")?.as_object_mut()?;
+    let probe = object.get_mut("probe")?.as_object_mut()?; // user-text-exempt: JSON key of the finding, not shown
     for field in [
         "id",
         "family",
@@ -1749,9 +1749,13 @@ pub(super) fn finding_is_withheld_gap(finding: &Finding) -> bool {
     finding.is_candidate_actionable() && is_actionable_gap_class(&finding.class)
 }
 
-/// The preview-language share of [`finding_is_withheld_gap`] (#11296).
-pub(super) fn finding_is_withheld_preview_gap(finding: &Finding) -> bool {
-    finding.language_status == Some(LanguageStatus::Preview) && finding_is_withheld_gap(finding)
+/// Every preview-language finding the actionable profile withholds from
+/// diagnostics (#11296), including gap-class, `*_unknown`, and
+/// static-limited preview evidence.
+pub(super) fn finding_is_withheld_preview_profile_finding(finding: &Finding) -> bool {
+    finding.language_status == Some(LanguageStatus::Preview)
+        && finding.is_candidate_actionable()
+        && !finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, finding)
 }
 
 /// The raw findings of unpublished canonical groups that are withheld gaps
@@ -1772,14 +1776,19 @@ pub(super) fn withheld_gap_findings(
         .collect()
 }
 
-/// The preview-language subset of [`withheld_gap_findings`] (#11296).
+/// The preview-language findings the actionable profile withholds (#11296).
 pub(super) fn withheld_preview_gap_findings(
     profile: LspDiagnosticProfile,
     findings: &[Finding],
 ) -> Vec<&Finding> {
-    withheld_gap_findings(profile, findings)
+    if profile != LspDiagnosticProfile::Actionable {
+        return Vec::new();
+    }
+    canonical_group_members(findings)
         .into_iter()
-        .filter(|finding| finding_is_withheld_preview_gap(finding))
+        .filter(|(primary, _)| !finding_is_visible_in_profile(profile, primary))
+        .flat_map(|(_, members)| members)
+        .filter(|finding| finding_is_withheld_preview_profile_finding(finding))
         .collect()
 }
 
@@ -1803,6 +1812,15 @@ fn append_withheld_preview_diagnostics(
 ) {
     let mut by_file = BTreeMap::<PathBuf, Vec<&Finding>>::new();
     for finding in withheld_gap_findings(config.diagnostic_profile, findings) {
+        by_file
+            .entry(finding.probe.location.file.clone())
+            .or_default()
+            .push(finding);
+    }
+    for finding in withheld_preview_gap_findings(config.diagnostic_profile, findings) {
+        if finding_is_withheld_gap(finding) {
+            continue;
+        }
         by_file
             .entry(finding.probe.location.file.clone())
             .or_default()
@@ -1834,7 +1852,7 @@ fn append_withheld_preview_diagnostics(
         let count = members.len();
         let recovery = "set diagnosticProfile: full or run `ripr check`";
         let path = display_repo_path(root, &file).to_string();
-        let marker = if finding_is_withheld_preview_gap(first) {
+        let marker = if finding_is_withheld_preview_profile_finding(first) {
             withheld_preview_diagnostic(anchor.range, language, count, recovery, &path)
         } else {
             let mut classes = members
@@ -3533,6 +3551,7 @@ fn diagnostic_for_classified_seam_with_causal(
     let line = seam.display_line().saturating_sub(1) as u32;
     let range = crate::lsp::position::line_span_range(line);
     let diagnostic_id = stable_diagnostic_id(
+        // user-text-exempt: machine id seed hashed into the diagnostic id, never shown
         "seam",
         [
             seam.owner(),
@@ -6726,8 +6745,8 @@ mod diagnostic_policy_tests {
 
     /// #11296 negative controls: the full profile publishes the real
     /// finding diagnostics instead of a duplicate marker, and a non-preview
-    /// hidden gap, an `*_unknown` preview finding, or a non-current finding
-    /// gets no marker.
+    /// hidden gap or a non-current finding gets no marker. Preview
+    /// `*_unknown` and static-limited findings still get the passive marker.
     #[test]
     fn withheld_preview_marker_stays_silent_for_every_other_case() {
         let preview = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:p");
@@ -6738,19 +6757,44 @@ mod diagnostic_policy_tests {
 
         let mut unknown = preview.clone();
         unknown.class = ExposureClass::StaticUnknown;
-        assert!(
-            withheld_markers(LspDiagnosticProfile::Actionable, &[unknown]).is_empty(),
-            "*_unknown preview findings keep their own disclosure"
+        assert_eq!(
+            withheld_markers(LspDiagnosticProfile::Actionable, &[unknown])
+                .values()
+                .flatten()
+                .count(),
+            1,
+            "*_unknown preview findings must disclose on the pull channel"
+        );
+
+        let mut limited = preview.clone();
+        limited.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
+        assert_eq!(
+            withheld_markers(LspDiagnosticProfile::Actionable, &[limited])
+                .values()
+                .flatten()
+                .count(),
+            1,
+            "static-limited preview findings must disclose on the pull channel"
         );
 
         // Positive control for the same input, so the silences above are not
         // a vacuous fixture.
         assert_eq!(
-            withheld_markers(LspDiagnosticProfile::Actionable, &[preview])
-                .values()
-                .flatten()
-                .count(),
+            withheld_markers(
+                LspDiagnosticProfile::Actionable,
+                std::slice::from_ref(&preview)
+            )
+            .values()
+            .flatten()
+            .count(),
             1
+        );
+
+        let mut stale = preview;
+        stale.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        assert!(
+            withheld_markers(LspDiagnosticProfile::Actionable, &[stale]).is_empty(),
+            "non-current preview findings stay silent"
         );
     }
 

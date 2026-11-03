@@ -134,6 +134,15 @@ pub(crate) fn decide_repair_start(
         "several_eligible_seams"
     };
     let head = facts.head.map(str::to_string);
+    let item_candidate_labels = if single {
+        Vec::new()
+    } else {
+        facts
+            .candidate_notes
+            .iter()
+            .map(|note| format!("{} `{}`", note.location, note.code))
+            .collect()
+    };
     let action = select_canonical_next_action(&NextActionInput {
         producer: NextActionProducer::RepairStart,
         root: facts.root_display.to_string(),
@@ -144,6 +153,7 @@ pub(crate) fn decide_repair_start(
         check_item: None,
         card_item: None,
         item_candidates: candidates,
+        item_candidate_labels,
         attempts: Vec::new(),
         // The evidence was just gathered at this HEAD: expected and observed
         // bind together, like the card's snapshot. An unreadable HEAD stays
@@ -1788,6 +1798,32 @@ impl RepairStartGate {
             }
         }
     }
+
+    /// A short `file:line` label for one seam id when the inventory is loaded,
+    /// for select_item human rendering (#9006).
+    pub(crate) fn select_item_label_for_seam(&self, seam_id: &str) -> Option<String> {
+        if super::gap_bound_repair::is_gap_bound_subject(seam_id) {
+            return None;
+        }
+        #[cfg(test)]
+        if matches!(self.state.get(), Some(GateState::Open)) {
+            return None;
+        }
+        let state = self.state.get_or_init(|| load_gate_state(&self.root));
+        let GateState::Loaded { classified, .. } = state else {
+            return None;
+        };
+        classified
+            .iter()
+            .find(|entry| entry.seam.id().as_str() == seam_id)
+            .map(|entry| {
+                format!(
+                    "{}:{}",
+                    crate::analysis::stable_path_text(entry.seam.file()),
+                    entry.seam.display_line()
+                )
+            })
+    }
 }
 
 fn load_gate_state(root: &Path) -> GateState {
@@ -2400,6 +2436,20 @@ pub(crate) fn check_repair_route(
             // #10622: a related test already reaching the boundary input
             // makes the weak oracle, not the input, the remaining work.
             boundary_input_observed: finding.boundary_input_observed_with_weak_oracle(),
+        });
+    }
+    // #11402: the shared start gate also requires a test file the repair may
+    // edit. Bare `ripr repair` refuses a seam without one (no test route), so
+    // the check screen must not offer that start either; it names the same
+    // gate's reason the agent card shows.
+    if !crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry)
+        && let Some(refusal) = repair_start_refusal_for_entry(root, entry, policy)
+    {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::Ineligible {
+            reason: refusal.reason,
+            kind: refusal.kind,
+            missing: Vec::new(),
+            boundary_input_observed: false,
         });
     }
     if static_limited {

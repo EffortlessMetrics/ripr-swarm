@@ -44,6 +44,7 @@ mod kani_lane;
 mod public_proof;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
+mod exact_candidate_harness;
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
 mod gh_pr_status_snapshot;
@@ -53,10 +54,12 @@ mod issue_lifecycle_attempt;
 mod issue_lifecycle_contract_plan;
 mod issue_lifecycle_intake;
 mod issue_lifecycle_real_rows;
+mod native_libtest;
 mod no_panic;
 mod orchestration_attempt;
 mod output_enum_contracts;
 mod package_qualification;
+mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
@@ -67,10 +70,13 @@ mod python_judged_panel;
 mod python_judged_panel_feedback;
 mod python_judged_panel_replay;
 mod python_judged_panel_report;
+mod readiness_snapshot;
 mod repo_readiness;
+mod ripr_agent_disposition;
 mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
+mod tool_capabilities;
 mod types;
 mod warm_ab;
 mod work_adapter_identity;
@@ -621,6 +627,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-generated",
     "check-badge-diff-policy",
     "check-generated-clean",
+    "check-ripr-agent-disposition",
     "check-proof-packs",
     "check-release-targets",
     "check-dependencies",
@@ -629,6 +636,10 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-lint-policy",
     "check-user-text",
 ];
+
+fn check_ripr_agent_disposition() -> Result<(), String> {
+    ripr_agent_disposition::check()
+}
 
 fn check_identity_registry() -> Result<(), String> {
     identity_registry::check_identity_registry()
@@ -748,6 +759,7 @@ fn precommit_policy_remaining(
     check_generated()?;
     check_badge_diff_policy()?;
     check_generated_clean()?;
+    check_ripr_agent_disposition()?;
     check_proof_packs()?;
     check_release_targets()?;
     check_dependencies()?;
@@ -5796,7 +5808,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-doc-roles`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n- `cargo xtask check-user-text`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-doc-roles`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-ripr-agent-disposition`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n- `cargo xtask check-user-text`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -19752,6 +19764,9 @@ fn proof_pack_command_is_known(command: &str) -> bool {
 
 fn check_dependencies() -> Result<(), String> {
     policy::check_dependency_suppression_expiry(Path::new("deny.toml"))?;
+    policy::check_post_0_11_dependency_defer_tracking(Path::new(
+        "docs/releases/0.11.0-dependency-graphs.md",
+    ))?;
     let allowlist = read_glob_allowlist("policy/dependency_allowlist.txt")?;
     let mut violations = Vec::new();
 

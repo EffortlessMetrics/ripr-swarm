@@ -31,11 +31,12 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach weak: No test is seen calling parse; tests share only its file or a name token: config_strict_parse_reports_length
+    - reach weak: No test is seen calling parse; tests share only a name token
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_adversarial_free_function_receiver/input --diff <cwd>/fixtures/rust_adversarial_free_function_receiver/diff.patch --mode fast probe:src_lib.rs:return_value:5518343a
   ripr context --root <cwd>/fixtures/rust_adversarial_free_function_receiver/input --diff <cwd>/fixtures/rust_adversarial_free_function_receiver/diff.patch --mode fast --at probe:src_lib.rs:return_value:5518343a
   no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that checks the changed return value; a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`

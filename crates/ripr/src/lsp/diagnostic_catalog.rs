@@ -135,6 +135,7 @@ pub(crate) fn finding_code(class: &ExposureClass) -> String {
 /// `SeamGripClass` is a closed enum whose every label is a governed code, so
 /// this is infallible.
 pub(crate) fn seam_code(class: SeamGripClass) -> String {
+    // user-text-exempt: machine diagnostic code, not prose
     format!("ripr-seam-{}", class.as_str().replace('_', "-"))
 }
 
