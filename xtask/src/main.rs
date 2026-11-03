@@ -70,6 +70,7 @@ mod python_judged_panel;
 mod python_judged_panel_feedback;
 mod python_judged_panel_replay;
 mod python_judged_panel_report;
+mod readiness_snapshot;
 mod repo_readiness;
 mod ripr_agent_disposition;
 mod schema_pattern;
