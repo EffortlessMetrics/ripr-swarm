@@ -118,10 +118,24 @@ reached the caller.
   `repo-badge-*`, `repo-seams-*`, `repo-exposure-md`, and
   `repo-exposure-summary-json` — write
   nothing to stdout and put the prose diagnostic on stderr for now; that
-  gap is a named limitation, not a clean result. These machine formats and
-  usage-class errors keep stdout empty. Usage-class errors include argv
-  errors and `context`/`explain` selector misses or ambiguity; their guidance
-  and retry listing stay on stderr (RIPR-SPEC-0003).
+  gap is a named limitation, not a clean result. Those formats keep stdout
+  empty.
+  Every `check --json` refusal document, scope-guard or typed, also carries
+  the shared refusal block (#11584): `status: "refused"` and
+  `error: {code, message, next}`, where `code` equals
+  `run_limitations[0].category`, `message` is the stderr diagnostic, and
+  `next` is the one command to run (`{purpose, command}`) or `null`. A
+  completed run carries neither key, so a consumer can branch on `status`
+  instead of inferring refusal from an empty `findings` list.
+  Usage-class errors — argv errors (`unknown_argument`, `unknown_value`,
+  `unknown_command`) and `context` selector misses or ambiguity
+  (`selector_miss`) — write the standalone `cli_refusal` document
+  (`schemas/ripr/cli-refusal.schema.json`) to stdout when argv requests JSON
+  (`--json`, or a `--format` of `json` or a `*-json` family; `context` emits
+  JSON only, so it always does). The exit stays `2` and the guidance and
+  retry listing stay on stderr (RIPR-SPEC-0003). Without a JSON request,
+  usage-class errors keep stdout empty. `explain` has no JSON output, so
+  `explain --json` is an `unknown_argument` refusal.
   Fresh selector misses also retain producer-owned language limitations for
   that run, with the configured-off or unavailable-binary recovery. These
   describe analysis scope rather than prove why the selector missed;
@@ -230,8 +244,13 @@ reached the caller.
   visible); several eligible seams, or a start the selector will not
   bind, so no item is selected (the canonical next-action block and a
   retry command); and a card render that fails after the before phase
-  already published an attempt (#7032). In every case stdout stays
-  empty and stderr names the cause. The post-publication card path is a
+  already published an attempt (#7032). A start whose seam has no test
+  file ripr can edit safely, or several inline test modules and no way to
+  choose one, is the same refusal: exit `3`, not `2` (#11584). In every case stdout stays
+  empty and stderr names the cause; with `--json`, stdout instead carries
+  one `cli_refusal` document (`code: repair_not_started`, `next` is
+  `ripr pilot`) and an operational failure is `repair_failed` (exit `2`).
+  The post-publication card path is a
   deliberate asymmetry with `ripr agent card`: even an operational card
   failure is remapped to exit `3` because the attempt exists, and
   recovery inspects or continues that same attempt
@@ -245,9 +264,14 @@ reached the caller.
   unavailable, or compatibility-only); no current attempt under the
   selected root; and several current attempts, so none is selected (a
   bounded list and a retry command). Stdout stays empty; stderr carries
-  the cause and, for an ended attempt, the status facts. A continue that
+  the cause and, for an ended attempt, the status facts. With `--json`,
+  stdout carries one `cli_refusal` document instead (`code:
+  continue_declined`, `next` is `ripr status`; an operational failure is
+  `continue_failed`, exit `2`). A continue that
   has selected a current attempt then follows the same
-  `ripr agent repair --phase after` refusals above.
+  `ripr agent repair --phase after` refusals above, whose documents
+  (`repair_after_refusal`, `repair_after_failure`, each carrying
+  `attempt_id`) are what `continue --json` prints.
 
 - **Typed reason codes for `repair` and `continue` (#11597)**: beside the
   unchanged prose, the `ripr repair` / `ripr continue` refusals listed in the

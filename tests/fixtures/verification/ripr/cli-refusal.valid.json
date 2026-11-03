@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1",
+  "kind": "cli_refusal",
+  "tool": "ripr",
+  "status": "refused",
+  "command": "check",
+  "exit_code": 2,
+  "error": {
+    "code": "unknown_argument",
+    "message": "unknown check argument \"--bogus\".",
+    "next": {
+      "purpose": "recover",
+      "command": "ripr check --help --all"
+    }
+  }
+}

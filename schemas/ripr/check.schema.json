@@ -44,6 +44,14 @@
       "items": { "$ref": "#/$defs/language_run" }
     },
     "analysis_scope": { "type": "object" },
+    "status": {
+      "description": "Present only on a refusal document (the run did not analyze): the discriminator an empty `findings` list cannot be. A completed run omits `status` and `error` (#11584).",
+      "const": "refused"
+    },
+    "error": {
+      "description": "Present with `status: refused`: the closed reason code (equal to `run_limitations[0].category`), the human message, and the one command to run next.",
+      "$ref": "#/$defs/refusal_error"
+    },
     "run_limitations": {
       "type": "array",
       "items": { "$ref": "#/$defs/run_limitation" }
@@ -102,8 +110,31 @@
     "source_subject": { "$ref": "#/$defs/source_subject" },
     "canonical_next_action": { "$ref": "#/$defs/canonical_next_action" }
   },
+  "dependentRequired": {
+    "status": ["error"],
+    "error": ["status"]
+  },
   "$defs": {
     "nullable_string": { "type": ["string", "null"] },
+    "refusal_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "next"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "next": {
+          "description": "The one command that recovers, or null when no single honest command exists. The key is always present.",
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["purpose", "command"],
+          "properties": {
+            "purpose": { "const": "recover" },
+            "command": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
     "canonical_next_action": {
       "description": "Bounded primary next action from the shared selector (canonical_next_action.v1, #7258). Present on the public navigation-aware `ripr check --format json` adapter. Absent from the generic JSON renderer and unbounded pr-evidence path, which lack navigation/provenance context and must not invent a committed-source default or executable route.",
       "type": "object",

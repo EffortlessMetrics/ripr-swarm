@@ -66,9 +66,12 @@ and parse location, no TOML source excerpt) per RIPR-SPEC-0007. No other
 caller-unsupplied value enters the document.
 
 Argv usage errors (an unknown flag, a missing value, two disagreeing
-output selections) stay prose-only: exit `2`, empty stdout, the cause on
-stderr. There is no successfully parsed invocation to echo, so no envelope
-exists.
+output selections) have no successfully parsed invocation to echo, so no check
+envelope exists. Without a JSON request they stay prose-only: exit `2`, empty
+stdout, the cause on stderr. Under a JSON request (#11584) the classified ones
+(unknown argument, unknown value, unknown command) write the standalone
+`cli_refusal` document instead of an envelope; exit `2` and the stderr prose
+are unchanged, and an error no usage builder classified stays prose-only.
 
 ## Required Evidence
 
@@ -116,7 +119,7 @@ exists.
 - `crates/ripr/tests/cli_smoke.rs::check_json_unmigrated_analysis_failure_emits_analysis_failed`
 - `crates/ripr/tests/cli_smoke.rs::check_json_timeout_and_bad_base_have_distinct_identities`
 - `crates/ripr/tests/cli_smoke.rs::check_json_success_carries_no_refusal_shape`
-- `crates/ripr/tests/cli_smoke.rs::check_json_argv_usage_errors_stay_prose_only`
+- `crates/ripr/tests/cli_smoke.rs::check_json_argv_usage_errors_write_the_refusal_document`
 - `crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::python_stdin_artifact_refusal_preserves_named_recovery`
 - `crates/ripr/tests/cli_smoke/check_artifact_stdin.rs::javascript_stdin_artifact_refusal_preserves_named_recovery`
 - `crates/ripr/src/cli/commands/check.rs::config_load_refusal_without_any_config_entry_falls_back`
@@ -192,7 +195,9 @@ machine-readable `check` formats carry their own refusal documents:
   context); `scope` is `"diff"` for diff-scoped commands and `"repo"` for
   agent brief and agent packet; agent brief echoes the caller-supplied
   `--base` when its working set selected one. Exit stays `2`, prose stays on
-  stderr, and argv usage errors stay prose-only with empty stdout.
+  stderr, and argv usage errors never carry the check envelope (#11584: under a
+  JSON request they write the standalone `cli_refusal` document, otherwise
+  empty stdout).
 - The closed identity vocabulary includes eight members. All but
   `analysis_timeout` and `analysis_worker_stopped` make no claim that analysis
   ran; `analysis_timeout` (#5369) means the wall-clock budget expired before
@@ -287,8 +292,9 @@ repair route. Unmigrated loader failures retain `analysis_failed`; no message
 parsing or new failure family is introduced. The context envelope uses version
 `1.1`, as established by RIPR-SPEC-0284.
 
-Selector misses and ambiguity remain usage-class under RIPR-SPEC-0003: exit 2,
-empty stdout, and recovery guidance on stderr. Supplied-artifact refusals retain
+Selector misses and ambiguity remain usage-class under RIPR-SPEC-0003: exit 2
+and recovery guidance on stderr; stdout is empty except that `context` (JSON
+only) writes the standalone `cli_refusal` document (#11584). Supplied-artifact refusals retain
 `check_artifact_unusable`. Public String-returning library compatibility wrappers
 keep their existing error text.
 

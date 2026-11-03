@@ -70,6 +70,12 @@ pub(crate) fn render_diff_scope_limited_check_json(
             "changed_files_by_language": []
         },
         "findings": [],
+        "status": crate::output::cli_refusal::REFUSED_STATUS,
+        "error": crate::output::cli_refusal::error_block(
+            run_status,
+            error,
+            crate::output::cli_refusal::next_command_for_route(repair_route),
+        ),
         "analysis_scope": {
             "scope": scope,
             "run_status": run_status,
@@ -165,6 +171,12 @@ fn refusal_envelope_value(context: &RefusalEnvelopeContext<'_>, error: &CoreErro
             "changed_files_by_language": []
         },
         "findings": [],
+        "status": crate::output::cli_refusal::REFUSED_STATUS,
+        "error": crate::output::cli_refusal::error_block(
+            identity,
+            &message,
+            crate::output::cli_refusal::next_command_for_route(repair_route),
+        ),
         "analysis_scope": {
             "scope": context.scope,
             "run_status": identity,

@@ -114,7 +114,9 @@ fn selector_recovery_replays_committed_worktree_and_supplied_diff_scopes() -> Re
             }
             args.push("probe:no-such-finding");
             let miss = run_ripr(&args);
-            if miss.status.code() != Some(2) || !miss.stdout.is_empty() {
+            if miss.status.code() != Some(2)
+                || !selector_miss_stdout_matches_contract(command, &miss.stdout)
+            {
                 return Err(format!("{label} {command} miss contract changed: {miss:?}"));
             }
             let stderr = String::from_utf8_lossy(&miss.stderr);
@@ -361,7 +363,10 @@ fn committed_context_from_nested_cwd_selects_the_check_finding() -> Result<(), S
         &fixture.committed,
     ])?;
     assert_eq!(missed.status.code(), Some(2));
-    assert!(missed.stdout.is_empty());
+    assert!(selector_miss_stdout_matches_contract(
+        "context",
+        &missed.stdout
+    ));
     ignore_remove_dir_all(&fixture.root);
     Ok(())
 }
@@ -429,7 +434,10 @@ fn composed_recovery_choices(staged: bool) -> Result<(), String> {
             args.push(missing);
             let miss = run(&args)?;
             assert_eq!(miss.status.code(), Some(2), "{label}: {miss:?}");
-            assert!(miss.stdout.is_empty(), "{label}: {miss:?}");
+            assert!(
+                selector_miss_stdout_matches_contract(command, &miss.stdout),
+                "{label}: {miss:?}"
+            );
             let stderr = String::from_utf8_lossy(&miss.stderr);
             let emitted: Vec<_> = stderr
                 .split('`')

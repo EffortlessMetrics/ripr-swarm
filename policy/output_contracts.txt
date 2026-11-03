@@ -46,6 +46,7 @@ ingest_reason|missing_verify|Swarm-ingest classifier reason: verify evidence abs
 ingest_reason|movement_without_snapshot_provenance|Swarm-ingest classifier reason: movement claimed without before/after sha256 artifact provenance.
 ingest_reason|stale_packet|Swarm-ingest classifier reason: packet marked stale; movement claim discarded.
 kind|agent_card_refusal|Typed refusal envelope of the ripr agent card handoff failure states (#5007, schema 0.1).
+kind|cli_refusal|Standalone machine refusal document of a command with no result document of its own: argv usage errors, context selector misses, repair/continue façade refusals (#11584, schema 0.1).
 kind|python_repair_driver_binding|Prepare binding and apply record for the governed Python repair driver (schema 0.1).
 kind|python_repair_verification_check_report|Structural check report for Python repair verification receipts (schema 0.1).
 kind|python_repair_verification_receipt|Immutable Python repair verification candidate receipt (schema 0.1).

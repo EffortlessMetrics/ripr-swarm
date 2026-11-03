@@ -30,6 +30,27 @@ fn prepared_stdout_refusal_json(document: String) -> String {
     }
 }
 
+/// Refuse a `context` selector miss with the shared refusal document on
+/// stdout (#11584), then return the unchanged prose error for stderr. The
+/// miss stays usage-class (exit 2); only the machine answer is new, because
+/// `context` emits JSON only and an empty stdout read as "no output".
+pub(super) fn refuse_selector_miss(command: &str, error: &crate::core_error::CoreError) -> String {
+    let notice = error.refusal_notice();
+    let delivered =
+        crate::output::cli_refusal::render_cli_refusal(&crate::output::cli_refusal::CliRefusal {
+            command: Some(command),
+            exit_code: crate::cli::EXIT_COULD_NOT_COMPLETE,
+            code: notice.identity,
+            message: &notice.message,
+            next_command: crate::output::cli_refusal::next_command_for_route(notice.repair_route),
+        })
+        .and_then(write_stdout_refusal_json);
+    match delivered {
+        Ok(()) => error.to_string(),
+        Err(failure) => failure,
+    }
+}
+
 /// Map a producer outcome after its original report has reached stdout.
 /// Only the typed unsupported-input result fails; usable partial evidence
 /// stays advisory. The caller must not append a refusal to the report.
