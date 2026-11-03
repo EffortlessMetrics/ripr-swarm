@@ -15,10 +15,10 @@ name: Rust Test Shards
 on:
   workflow_call:
     inputs:
-      artifact-name:
-        description: Prefix for the retained per-shard and summary artifacts.
-        required: true
-        type: string
+ check, and a swap setup failure is logged and the build still runs.artifact-name:
+ check, and a swap setup failure is logged and the build still runs.  description: Prefix for the retained per-shard and summary artifacts.
+ check, and a swap setup failure is logged and the build still runs.  required: true
+ check, and a swap setup failure is logged and the build still runs.  type: string
 
 permissions:
   contents: read
@@ -29,160 +29,160 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
+ check, and a swap setup failure is logged and the build still runs.fail-fast: false
+ check, and a swap setup failure is logged and the build still runs.matrix:
+ check, and a swap setup failure is logged and the build still runs.  shard: [1, 2, 3, 4]
     steps:
-      # Full history, like the unsharded step: base-resolving tests refuse on a
-      # shallow clone (#10344).
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          fetch-depth: 0
-          persist-credentials: false
+ check, and a swap setup failure is logged and the build still runs.# Full history, like the unsharded step: base-resolving tests refuse on a
+ check, and a swap setup failure is logged and the build still runs.# shallow clone (#10344).
+ check, and a swap setup failure is logged and the build still runs.- uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+ check, and a swap setup failure is logged and the build still runs.  with:
+ check, and a swap setup failure is logged and the build still runs.    fetch-depth: 0
+ check, and a swap setup failure is logged and the build still runs.    persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
-        with:
-          toolchain: 1.95.0
-          components: llvm-tools-preview
+ check, and a swap setup failure is logged and the build still runs.- uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
+ check, and a swap setup failure is logged and the build still runs.  with:
+ check, and a swap setup failure is logged and the build still runs.    toolchain: 1.95.0
+ check, and a swap setup failure is logged and the build still runs.    components: llvm-tools-preview
 
-      - name: Install CI tools
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
-        with:
-          tool: nextest
+ check, and a swap setup failure is logged and the build still runs.- name: Install CI tools
+ check, and a swap setup failure is logged and the build still runs.  uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+ check, and a swap setup failure is logged and the build still runs.  with:
+ check, and a swap setup failure is logged and the build still runs.    tool: nextest
 
-      # Separate key from the gates job's cache: only the test-binary build is
-      # worth keeping from here, and one shard on main is enough to write it.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: ripr-swarm-rust-shards-${{ runner.os }}
-          save-if: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 }}
+ check, and a swap setup failure is logged and the build still runs.# Separate key from the gates job's cache: only the test-binary build is
+ check, and a swap setup failure is logged and the build still runs.# worth keeping from here, and one shard on main is enough to write it.
+ check, and a swap setup failure is logged and the build still runs.- uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+ check, and a swap setup failure is logged and the build still runs.  with:
+ check, and a swap setup failure is logged and the build still runs.    shared-key: ripr-swarm-rust-shards-${{ runner.os }}
+ check, and a swap setup failure is logged and the build still runs.    save-if: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 }}
 
-      - name: Prepare locked owner-return fixture dependencies
-        run: |
-          cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
-          cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
-          cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
+ check, and a swap setup failure is logged and the build still runs.- name: Prepare locked owner-return fixture dependencies
+ check, and a swap setup failure is logged and the build still runs.  run: |
+ check, and a swap setup failure is logged and the build still runs.    cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+ check, and a swap setup failure is logged and the build still runs.    cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+ check, and a swap setup failure is logged and the build still runs.    cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
-      # The policy tests spawn `cargo test --no-run -p xtask` themselves; warming it
-      # keeps that build off the clock, as the gates job's policy preflight does.
-      - name: Warm the cargo builds the policy tests spawn
-        timeout-minutes: 20
-        run: cargo xtask check-covered-by
+ check, and a swap setup failure is logged and the build still runs.# The policy tests spawn `cargo test --no-run -p xtask` themselves; warming it
+ check, and a swap setup failure is logged and the build still runs.# keeps that build off the clock, as the gates job's policy preflight does.
+ check, and a swap setup failure is logged and the build still runs.- name: Warm the cargo builds the policy tests spawn
+ check, and a swap setup failure is logged and the build still runs.  timeout-minutes: 20
+ check, and a swap setup failure is logged and the build still runs.  run: cargo xtask check-covered-by
 
-      # The verify job runs `cargo xtask verify-test-shards`. Compiling xtask there
-      # cost about 2.4 minutes after the last shard finished; the warm build above
-      # already produced the same binary from this checkout, so one shard hands it
-      # over (stripped of debug sections) and the verifier starts at once. The
-      # attempt suffix keeps a re-run from colliding with an earlier upload.
-      - name: Retain the xtask binary for the verify job
-        if: matrix.shard == 1
-        run: |
-          mkdir -p target/xtask-binary
-          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask
+ check, and a swap setup failure is logged and the build still runs.# The verify job runs `cargo xtask verify-test-shards`. Compiling xtask there
+ check, and a swap setup failure is logged and the build still runs.# cost about 2.4 minutes after the last shard finished; the warm build above
+ check, and a swap setup failure is logged and the build still runs.# already produced the same binary from this checkout, so one shard hands it
+ check, and a swap setup failure is logged and the build still runs.# over (stripped of debug sections) and the verifier starts at once. The
+ check, and a swap setup failure is logged and the build still runs.# attempt suffix keeps a re-run from colliding with an earlier upload.
+ check, and a swap setup failure is logged and the build still runs.- name: Retain the xtask binary for the verify job
+ check, and a swap setup failure is logged and the build still runs.  if: matrix.shard == 1
+ check, and a swap setup failure is logged and the build still runs.  run: |
+ check, and a swap setup failure is logged and the build still runs.    mkdir -p target/xtask-binary
+ check, and a swap setup failure is logged and the build still runs.    strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask
 
-      - name: Upload the xtask binary
-        if: matrix.shard == 1
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}
-          path: target/xtask-binary/xtask
-          if-no-files-found: error
-          retention-days: 1
+ check, and a swap setup failure is logged and the build still runs.- name: Upload the xtask binary
+ check, and a swap setup failure is logged and the build still runs.  if: matrix.shard == 1
+ check, and a swap setup failure is logged and the build still runs.  uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+ check, and a swap setup failure is logged and the build still runs.  with:
+ check, and a swap setup failure is logged and the build still runs.    name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}
+ check, and a swap setup failure is logged and the build still runs.    path: target/xtask-binary/xtask
+ check, and a swap setup failure is logged and the build still runs.    if-no-files-found: error
+ check, and a swap setup failure is logged and the build still runs.    retention-days: 1
 
-      # Hosted shard losses ("runner received a shutdown signal", exit 143, or "lost
-      # communication") happened inside the test-profile compile of
-      # `cargo nextest run --workspace`, which builds the `ripr` lib test and the
-      # `xtask` bin test at the same time. Each rustc peaks at roughly 9-11 GB; on a
-      # 4 CPU / 16 GB hosted runner (the same shape, where it reproduced as kernel
-      # OOM kills) the pair starves the runner agent. Build the workspace without
-      # xtask first, then add xtask, so the two never overlap. The test step below
-      # still runs the full unchanged nextest command; a build failure here fails
-      # the shard, and `verify` still requires every shard green. The sampler
-      # leaves a memory trace in the log for the next incident.
-      # The split alone left 1.1-2.2 GB free at peak (#12719). The `ripr` lib test is
-      # one rustc over a 1.4M-line crate: about 11 GB resident before codegen starts
-      # (frontend 3.7 GB, MIR borrowck +4.3 GB, monomorphisation +1.8 GB) and 13-14
-      # GB at its peak, whatever the build parallelism (local 16 GB runs with 2 jobs,
-      # or with the lib test built alone first, were still OOM-killed). Scheduling
-      # cannot lower that floor, so give the runner 8 GB of swap so a spike pages out
-      # instead of starving the runner agent. This only adds memory; it relaxes no
-      # check, and a swap setup failure is logged and the build still runs.
-      - name: Add swap headroom for the test build
-        run: |
-          swapfile=/mnt/swapfile
-          if [ ! -d /mnt ]; then swapfile=/swapfile; fi
-          if sudo fallocate -l 8G "$swapfile" && sudo chmod 600 "$swapfile" && sudo mkswap "$swapfile" > /dev/null && sudo swapon "$swapfile"; then
-            echo "swap enabled:"; swapon --show
-          else
-            echo "::warning::could not enable swap; the build runs without extra headroom (#12719)"
-          fi
-          free -m
+ check, and a swap setup failure is logged and the build still runs.# Hosted shard losses ("runner received a shutdown signal", exit 143, or "lost
+ check, and a swap setup failure is logged and the build still runs.# communication") happened inside the test-profile compile of
+ check, and a swap setup failure is logged and the build still runs.# `cargo nextest run --workspace`, which builds the `ripr` lib test and the
+ check, and a swap setup failure is logged and the build still runs.# `xtask` bin test at the same time. Each rustc peaks at roughly 9-11 GB; on a
+ check, and a swap setup failure is logged and the build still runs.# 4 CPU / 16 GB hosted runner (the same shape, where it reproduced as kernel
+ check, and a swap setup failure is logged and the build still runs.# OOM kills) the pair starves the runner agent. Build the workspace without
+ check, and a swap setup failure is logged and the build still runs.# xtask first, then add xtask, so the two never overlap. The test step below
+ check, and a swap setup failure is logged and the build still runs.# still runs the full unchanged nextest command; a build failure here fails
+ check, and a swap setup failure is logged and the build still runs.# the shard, and `verify` still requires every shard green. The sampler
+ check, and a swap setup failure is logged and the build still runs.# leaves a memory trace in the log for the next incident.
+ check, and a swap setup failure is logged and the build still runs.# The split alone left 1.1-2.2 GB free at peak (#12719). The `ripr` lib test is
+ check, and a swap setup failure is logged and the build still runs.# one rustc over a 1.4M-line crate: about 11 GB resident before codegen starts
+ check, and a swap setup failure is logged and the build still runs.# (frontend 3.7 GB, MIR borrowck +4.3 GB, monomorphisation +1.8 GB) and 13-14
+ check, and a swap setup failure is logged and the build still runs.# GB at its peak, whatever the build parallelism (local 16 GB runs with 2 jobs,
+ check, and a swap setup failure is logged and the build still runs.# or with the lib test built alone first, were still OOM-killed). Scheduling
+ check, and a swap setup failure is logged and the build still runs.# cannot lower that floor, so give the runner 8 GB of swap so a spike pages out
+ check, and a swap setup failure is logged and the build still runs.# instead of starving the runner agent. This only adds memory; it relaxes no
+ check, and a swap setup failure is logged and the build still runs.# check, and a swap setup failure is logged and the build still runs.
+ check, and a swap setup failure is logged and the build still runs.- name: Add swap headroom for the test build
+ check, and a swap setup failure is logged and the build still runs.  run: |
+ check, and a swap setup failure is logged and the build still runs.    swapfile=/mnt/ci-swapfile-8g
+ check, and a swap setup failure is logged and the build still runs.    if [ ! -d /mnt ]; then swapfile=/ci-swapfile-8g; fi
+ check, and a swap setup failure is logged and the build still runs.    if sudo fallocate -l 8G "$swapfile" && sudo chmod 600 "$swapfile" && sudo mkswap "$swapfile" > /dev/null && sudo swapon "$swapfile"; then
+ check, and a swap setup failure is logged and the build still runs.      echo "swap enabled:"; swapon --show
+ check, and a swap setup failure is logged and the build still runs.    else
+ check, and a swap setup failure is logged and the build still runs.      echo "::warning::could not enable swap; the build runs without extra headroom (#12719)"
+ check, and a swap setup failure is logged and the build still runs.    fi
+ check, and a swap setup failure is logged and the build still runs.    free -m
 
-      - name: Build the test binaries one memory-heavy crate at a time
-        timeout-minutes: 30
-        env:
-          CARGO_BUILD_JOBS: "3"
-        run: |
-          ( while true; do echo "$(date +%T) $(free -m | awk '/^Mem:/{print "used_mb="$3" available_mb="$7}') $(free -m | awk '/^Swap:/{print "swap_used_mb="$3}')"; sleep 5; done ) > "$RUNNER_TEMP/memory.log" &
-          sampler=$!
-          trap 'kill "$sampler" 2>/dev/null || true; echo "peak memory sample:"; awk "{split(\$2,u,\"=\"); if (u[2]+0>m) {m=u[2]+0; l=\$0}} END{print l}" "$RUNNER_TEMP/memory.log"' EXIT
-          cargo test --no-run --locked --workspace --exclude xtask
-          cargo test --no-run --locked --workspace
+ check, and a swap setup failure is logged and the build still runs.- name: Build the test binaries one memory-heavy crate at a time
+ check, and a swap setup failure is logged and the build still runs.  timeout-minutes: 30
+ check, and a swap setup failure is logged and the build still runs.  env:
+ check, and a swap setup failure is logged and the build still runs.    CARGO_BUILD_JOBS: "3"
+ check, and a swap setup failure is logged and the build still runs.  run: |
+ check, and a swap setup failure is logged and the build still runs.    ( while true; do echo "$(date +%T) $(free -m | awk '/^Mem:/{print "used_mb="$3" available_mb="$7}') $(free -m | awk '/^Swap:/{print "swap_used_mb="$3}')"; sleep 5; done ) > "$RUNNER_TEMP/memory.log" &
+ check, and a swap setup failure is logged and the build still runs.    sampler=$!
+ check, and a swap setup failure is logged and the build still runs.    trap 'kill "$sampler" 2>/dev/null || true; echo "peak memory sample:"; awk "{split(\$2,u,\"=\"); if (u[2]+0>m) {m=u[2]+0; l=\$0}} END{print l}" "$RUNNER_TEMP/memory.log"' EXIT
+ check, and a swap setup failure is logged and the build still runs.    cargo test --no-run --locked --workspace --exclude xtask
+ check, and a swap setup failure is logged and the build still runs.    cargo test --no-run --locked --workspace
 
-      - name: Required Rust tests (shard ${{ matrix.shard }} of 4)
-        id: rust-test-shard
-        timeout-minutes: 40
-        run: |
-          mkdir -p target/nextest/ci
-          rm -f target/nextest/ci/junit.xml target/nextest/ci/run-context.txt target/nextest/ci/shard-*.status target/nextest/ci/list-*.txt
-          checkout_sha="$(git rev-parse HEAD)"
-          {
-            printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
-            printf 'profile=ci\nshard=%s/4\ncommand=cargo nextest run --workspace --profile ci --partition count:%s/4\n' "${{ matrix.shard }}" "${{ matrix.shard }}"
-            cargo nextest --version
-            rustc --version
-            cargo --version
-            printf 'input_blobs (Cargo.lock, nextest.toml, rust-gates.yml, rust-test-shards.yml):\n'
-            git hash-object Cargo.lock .config/nextest.toml .github/workflows/rust-gates.yml .github/workflows/rust-test-shards.yml
-          } > target/nextest/ci/run-context.txt
-          set +e
-          cargo nextest run --workspace --profile ci --partition count:${{ matrix.shard }}/4
-          test_exit=$?
-          set -e
-          printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
-          printf '%s\n' "$test_exit" > target/nextest/ci/shard-${{ matrix.shard }}.status
-          # The partition lists let `verify` prove the shards are a disjoint cover.
-          # Listing reuses the build above; shard 1 also lists the whole workspace.
-          cargo nextest list --workspace --profile ci --partition count:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
-          if [ "${{ matrix.shard }}" = 1 ]; then
-            cargo nextest list --workspace --profile ci --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
-          fi
-          if [ "$test_exit" -eq 0 ] && ! grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml; then
-            echo "::error::nextest shard ${{ matrix.shard }} succeeded without a fresh JUnit report naming at least one test"
-            exit 1
-          fi
-          exit "$test_exit"
+ check, and a swap setup failure is logged and the build still runs.- name: Required Rust tests (shard ${{ matrix.shard }} of 4)
+ check, and a swap setup failure is logged and the build still runs.  id: rust-test-shard
+ check, and a swap setup failure is logged and the build still runs.  timeout-minutes: 40
+ check, and a swap setup failure is logged and the build still runs.  run: |
+ check, and a swap setup failure is logged and the build still runs.    mkdir -p target/nextest/ci
+ check, and a swap setup failure is logged and the build still runs.    rm -f target/nextest/ci/junit.xml target/nextest/ci/run-context.txt target/nextest/ci/shard-*.status target/nextest/ci/list-*.txt
+ check, and a swap setup failure is logged and the build still runs.    checkout_sha="$(git rev-parse HEAD)"
+ check, and a swap setup failure is logged and the build still runs.    {
+ check, and a swap setup failure is logged and the build still runs.      printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+ check, and a swap setup failure is logged and the build still runs.      printf 'profile=ci\nshard=%s/4\ncommand=cargo nextest run --workspace --profile ci --partition count:%s/4\n' "${{ matrix.shard }}" "${{ matrix.shard }}"
+ check, and a swap setup failure is logged and the build still runs.      cargo nextest --version
+ check, and a swap setup failure is logged and the build still runs.      rustc --version
+ check, and a swap setup failure is logged and the build still runs.      cargo --version
+ check, and a swap setup failure is logged and the build still runs.      printf 'input_blobs (Cargo.lock, nextest.toml, rust-gates.yml, rust-test-shards.yml):\n'
+ check, and a swap setup failure is logged and the build still runs.      git hash-object Cargo.lock .config/nextest.toml .github/workflows/rust-gates.yml .github/workflows/rust-test-shards.yml
+ check, and a swap setup failure is logged and the build still runs.    } > target/nextest/ci/run-context.txt
+ check, and a swap setup failure is logged and the build still runs.    set +e
+ check, and a swap setup failure is logged and the build still runs.    cargo nextest run --workspace --profile ci --partition count:${{ matrix.shard }}/4
+ check, and a swap setup failure is logged and the build still runs.    test_exit=$?
+ check, and a swap setup failure is logged and the build still runs.    set -e
+ check, and a swap setup failure is logged and the build still runs.    printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
+ check, and a swap setup failure is logged and the build still runs.    printf '%s\n' "$test_exit" > target/nextest/ci/shard-${{ matrix.shard }}.status
+ check, and a swap setup failure is logged and the build still runs.    # The partition lists let `verify` prove the shards are a disjoint cover.
+ check, and a swap setup failure is logged and the build still runs.    # Listing reuses the build above; shard 1 also lists the whole workspace.
+ check, and a swap setup failure is logged and the build still runs.    cargo nextest list --workspace --profile ci --partition count:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
+ check, and a swap setup failure is logged and the build still runs.    if [ "${{ matrix.shard }}" = 1 ]; then
+ check, and a swap setup failure is logged and the build still runs.      cargo nextest list --workspace --profile ci --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
+ check, and a swap setup failure is logged and the build still runs.    fi
+ check, and a swap setup failure is logged and the build still runs.    if [ "$test_exit" -eq 0 ] && ! grep -Eq '<testsuites [^>]*tests="[1-9][0-9]*"' target/nextest/ci/junit.xml; then
+ check, and a swap setup failure is logged and the build still runs.      echo "::error::nextest shard ${{ matrix.shard }} succeeded without a fresh JUnit report naming at least one test"
+ check, and a swap setup failure is logged and the build still runs.      exit 1
+ check, and a swap setup failure is logged and the build still runs.    fi
+ check, and a swap setup failure is logged and the build still runs.    exit "$test_exit"
 
-      # A failed or aborted shard keeps its context and status but must not inherit
-      # a stale XML; `verify` treats a missing status file as a failed shard.
-      - name: Upload shard results
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ inputs.artifact-name }}-nextest-shard-${{ matrix.shard }}-${{ github.run_attempt }}
-          path: |
-            target/nextest/ci/junit.xml
-            target/nextest/ci/run-context.txt
-            target/nextest/ci/shard-${{ matrix.shard }}.status
-            target/nextest/ci/list-*.txt
-            target/ripr/reports/discarded-matcher-cli-5713/
-            target/nextest/ci/python-symlink-source-admission-cli-${{ github.run_id }}-${{ github.run_attempt }}.txt
-            target/ripr/reports/repair-card-usability.json
-            target/ripr/reports/repair-card-usability.md
-            target/ripr/reports/blind-journey-execute.json
-            target/ripr/reports/blind-journey-execute.md
-          if-no-files-found: warn
-          retention-days: 5
+ check, and a swap setup failure is logged and the build still runs.# A failed or aborted shard keeps its context and status but must not inherit
+ check, and a swap setup failure is logged and the build still runs.# a stale XML; `verify` treats a missing status file as a failed shard.
+ check, and a swap setup failure is logged and the build still runs.- name: Upload shard results
+ check, and a swap setup failure is logged and the build still runs.  if: ${{ !cancelled() }}
+ check, and a swap setup failure is logged and the build still runs.  uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+ check, and a swap setup failure is logged and the build still runs.  with:
+ check, and a swap setup failure is logged and the build still runs.    name: ${{ inputs.artifact-name }}-nextest-shard-${{ matrix.shard }}-${{ github.run_attempt }}
+ check, and a swap setup failure is logged and the build still runs.    path: |
+ check, and a swap setup failure is logged and the build still runs.      target/nextest/ci/junit.xml
+ check, and a swap setup failure is logged and the build still runs.      target/nextest/ci/run-context.txt
+ check, and a swap setup failure is logged and the build still runs.      target/nextest/ci/shard-${{ matrix.shard }}.status
+ check, and a swap setup failure is logged and the build still runs.      target/nextest/ci/list-*.txt
+ check, and a swap setup failure is logged and the build still runs.      target/ripr/reports/discarded-matcher-cli-5713/
+ check, and a swap setup failure is logged and the build still runs.      target/nextest/ci/python-symlink-source-admission-cli-${{ github.run_id }}-${{ github.run_attempt }}.txt
+ check, and a swap setup failure is logged and the build still runs.      target/ripr/reports/repair-card-usability.json
+ check, and a swap setup failure is logged and the build still runs.      target/ripr/reports/repair-card-usability.md
+ check, and a swap setup failure is logged and the build still runs.      target/ripr/reports/blind-journey-execute.json
+ check, and a swap setup failure is logged and the build still runs.      target/ripr/reports/blind-journey-execute.md
+ check, and a swap setup failure is logged and the build still runs.    if-no-files-found: warn
+ check, and a swap setup failure is logged and the build still runs.    retention-days: 5
 
   rust-test-shards-verify:
     name: Rust test shards verify
@@ -191,65 +191,65 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          persist-credentials: false
+ check, and a swap setup failure is logged and the build still runs.- uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+ check, and a swap setup failure is logged and the build still runs.  with:
+ check, and a swap setup failure is logged and the build still runs.    persist-credentials: false
 
-      # No toolchain or cache here: the verifier is the xtask binary shard 1 built
-      # from this same checkout, so this job never compiles anything.
-      # A partial "re-run failed jobs" uploads fresh artifacts only for the
-      # re-run shards (#10605), so the download cannot be limited to the
-      # current attempt: every attempt's shard artifacts come down, and
-      # `verify-test-shards` reads each shard's latest attempt at or below the
-      # verifying one (its run-context check binds the choice to this run,
-      # checkout, and partition).
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          pattern: ${{ inputs.artifact-name }}-nextest-shard-*
-          path: shards
+ check, and a swap setup failure is logged and the build still runs.# No toolchain or cache here: the verifier is the xtask binary shard 1 built
+ check, and a swap setup failure is logged and the build still runs.# from this same checkout, so this job never compiles anything.
+ check, and a swap setup failure is logged and the build still runs.# A partial "re-run failed jobs" uploads fresh artifacts only for the
+ check, and a swap setup failure is logged and the build still runs.# re-run shards (#10605), so the download cannot be limited to the
+ check, and a swap setup failure is logged and the build still runs.# current attempt: every attempt's shard artifacts come down, and
+ check, and a swap setup failure is logged and the build still runs.# `verify-test-shards` reads each shard's latest attempt at or below the
+ check, and a swap setup failure is logged and the build still runs.# verifying one (its run-context check binds the choice to this run,
+ check, and a swap setup failure is logged and the build still runs.# checkout, and partition).
+ check, and a swap setup failure is logged and the build still runs.- uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+ check, and a swap setup failure is logged and the build still runs.  with:
+ check, and a swap setup failure is logged and the build still runs.    pattern: ${{ inputs.artifact-name }}-nextest-shard-*
+ check, and a swap setup failure is logged and the build still runs.    path: shards
 
-      # A partial re-run that skips shard 1 leaves the binary in an earlier attempt's
-      # artifact (same commit), so take the newest one present.
-      # One match extracts straight into the path; several each get a directory.
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          pattern: ${{ inputs.artifact-name }}-xtask-*
-          path: xtask-binary
+ check, and a swap setup failure is logged and the build still runs.# A partial re-run that skips shard 1 leaves the binary in an earlier attempt's
+ check, and a swap setup failure is logged and the build still runs.# artifact (same commit), so take the newest one present.
+ check, and a swap setup failure is logged and the build still runs.# One match extracts straight into the path; several each get a directory.
+ check, and a swap setup failure is logged and the build still runs.- uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+ check, and a swap setup failure is logged and the build still runs.  with:
+ check, and a swap setup failure is logged and the build still runs.    pattern: ${{ inputs.artifact-name }}-xtask-*
+ check, and a swap setup failure is logged and the build still runs.    path: xtask-binary
 
-      # `verify-test-shards` accepts the shards only as conservation of the one
-      # unpartitioned run: each shard's status, run context (repository, checkout,
-      # run, attempt, profile, partition, exit) and JUnit report (complete, no
-      # failures, testcases equal to its partition list) must be green for the
-      # shard's latest attempt at or below the verifying attempt, and the
-      # partition lists must be a disjoint cover of the workspace list. It
-      # writes the combined junit.xml and run-context.txt the unpartitioned step
-      # retains, so consumers of `<artifact>-nextest-<attempt>` read the same
-      # files; a partial re-run is disclosed as `verified_attempts` in the
-      # combined context.
-      - name: Check the shards are a complete, disjoint, green cover
-        run: |
-          xtask="$(find xtask-binary -type f -name xtask | sort -V | tail -n 1)"
-          test -n "$xtask" || { echo "::error::no xtask binary artifact from shard 1"; exit 1; }
-          chmod +x "$xtask"
-          "$xtask" verify-test-shards \
-            --dir shards \
-            --artifact "${{ inputs.artifact-name }}" \
-            --attempt "${{ github.run_attempt }}" \
-            --repository "$GITHUB_REPOSITORY" \
-            --sha "$(git rev-parse HEAD)" \
-            --run-id "$GITHUB_RUN_ID" \
-            --shards 4 \
-            --out target/nextest/ci
-          cat target/nextest/ci/shards-summary.txt >> "$GITHUB_STEP_SUMMARY"
+ check, and a swap setup failure is logged and the build still runs.# `verify-test-shards` accepts the shards only as conservation of the one
+ check, and a swap setup failure is logged and the build still runs.# unpartitioned run: each shard's status, run context (repository, checkout,
+ check, and a swap setup failure is logged and the build still runs.# run, attempt, profile, partition, exit) and JUnit report (complete, no
+ check, and a swap setup failure is logged and the build still runs.# failures, testcases equal to its partition list) must be green for the
+ check, and a swap setup failure is logged and the build still runs.# shard's latest attempt at or below the verifying attempt, and the
+ check, and a swap setup failure is logged and the build still runs.# partition lists must be a disjoint cover of the workspace list. It
+ check, and a swap setup failure is logged and the build still runs.# writes the combined junit.xml and run-context.txt the unpartitioned step
+ check, and a swap setup failure is logged and the build still runs.# retains, so consumers of `<artifact>-nextest-<attempt>` read the same
+ check, and a swap setup failure is logged and the build still runs.# files; a partial re-run is disclosed as `verified_attempts` in the
+ check, and a swap setup failure is logged and the build still runs.# combined context.
+ check, and a swap setup failure is logged and the build still runs.- name: Check the shards are a complete, disjoint, green cover
+ check, and a swap setup failure is logged and the build still runs.  run: |
+ check, and a swap setup failure is logged and the build still runs.    xtask="$(find xtask-binary -type f -name xtask | sort -V | tail -n 1)"
+ check, and a swap setup failure is logged and the build still runs.    test -n "$xtask" || { echo "::error::no xtask binary artifact from shard 1"; exit 1; }
+ check, and a swap setup failure is logged and the build still runs.    chmod +x "$xtask"
+ check, and a swap setup failure is logged and the build still runs.    "$xtask" verify-test-shards \
+ check, and a swap setup failure is logged and the build still runs.      --dir shards \
+ check, and a swap setup failure is logged and the build still runs.      --artifact "${{ inputs.artifact-name }}" \
+ check, and a swap setup failure is logged and the build still runs.      --attempt "${{ github.run_attempt }}" \
+ check, and a swap setup failure is logged and the build still runs.      --repository "$GITHUB_REPOSITORY" \
+ check, and a swap setup failure is logged and the build still runs.      --sha "$(git rev-parse HEAD)" \
+ check, and a swap setup failure is logged and the build still runs.      --run-id "$GITHUB_RUN_ID" \
+ check, and a swap setup failure is logged and the build still runs.      --shards 4 \
+ check, and a swap setup failure is logged and the build still runs.      --out target/nextest/ci
+ check, and a swap setup failure is logged and the build still runs.    cat target/nextest/ci/shards-summary.txt >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload combined test results
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ inputs.artifact-name }}-nextest-${{ github.run_attempt }}
-          path: |
-            target/nextest/ci/junit.xml
-            target/nextest/ci/run-context.txt
-            target/nextest/ci/shards-summary.txt
-          if-no-files-found: warn
-          retention-days: 5
+ check, and a swap setup failure is logged and the build still runs.- name: Upload combined test results
+ check, and a swap setup failure is logged and the build still runs.  if: ${{ !cancelled() }}
+ check, and a swap setup failure is logged and the build still runs.  uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+ check, and a swap setup failure is logged and the build still runs.  with:
+ check, and a swap setup failure is logged and the build still runs.    name: ${{ inputs.artifact-name }}-nextest-${{ github.run_attempt }}
+ check, and a swap setup failure is logged and the build still runs.    path: |
+ check, and a swap setup failure is logged and the build still runs.      target/nextest/ci/junit.xml
+ check, and a swap setup failure is logged and the build still runs.      target/nextest/ci/run-context.txt
+ check, and a swap setup failure is logged and the build still runs.      target/nextest/ci/shards-summary.txt
+ check, and a swap setup failure is logged and the build still runs.    if-no-files-found: warn
+ check, and a swap setup failure is logged and the build still runs.    retention-days: 5
