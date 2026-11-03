@@ -53,6 +53,7 @@ Static limitation
   decorator_indirection — A decorator wraps the changed owner, so ripr cannot statically confirm a test exercises the underlying behavior.
   Next: Test the undecorated function directly, and assert on the decorated result with an exact value so a wrong result fails.
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_dataclass_default_unknown_method_decorator/input --diff <cwd>/fixtures/python_dataclass_default_unknown_method_decorator/diff.patch --mode fast probe:models.py:python_preview:ce25b095
   ripr context --root <cwd>/fixtures/python_dataclass_default_unknown_method_decorator/input --diff <cwd>/fixtures/python_dataclass_default_unknown_method_decorator/diff.patch --mode fast --at probe:models.py:python_preview:ce25b095
 
