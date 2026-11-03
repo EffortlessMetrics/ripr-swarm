@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
@@ -91,6 +92,15 @@ TEMPLATE_LINES = {
     "claim": "Governing issue or accepted claim:",
     "delta": "Acceptance delta (one sentence):",
 }
+# Ownership claims (#11736 Proposal B v1, observability-only). The machine
+# contract is only the casefolded line prefix `Converging this PR:`; the prose
+# timestamp after it is free text and is never parsed (#12404's malformed
+# `started2026-11-02` example). Liveness comes from the API-attested comment
+# `updated_at`, refreshed by the documented edit-at-transitions discipline.
+CLAIM_MARKER_PREFIX = "converging this pr:"
+CLAIM_WINDOW = timedelta(hours=4)
+# Bound on the free-text holder rendered into outputs and summaries.
+CLAIM_ACTOR_MAX_CHARS = 200
 
 
 def normalize(value: str) -> str:
@@ -111,6 +121,83 @@ def extract_fields(body: str) -> dict[str, str]:
                 if folded.startswith(prefix):
                     found[key] = line[len(prefix) :].strip()
                     break
+    return found
+
+
+def claim_carrier(body: str) -> str:
+    """The body line carrying the claim marker, or ""."""
+    for raw_line in (body or "").splitlines():
+        line = raw_line.strip()
+        if line.casefold().startswith(CLAIM_MARKER_PREFIX):
+            return line
+    return ""
+
+
+def claim_actor(body: str) -> str:
+    """Free text after the claim prefix on its line. The prose timestamp is
+    never interpreted (#12404): detection reads only the prefix, so any
+    framework's claim line is understood."""
+    carrier = claim_carrier(body)
+    if not carrier:
+        return ""
+    return carrier[len(CLAIM_MARKER_PREFIX) :].strip()[:CLAIM_ACTOR_MAX_CHARS]
+
+
+def claim_time(value: Any) -> datetime | None:
+    """API-attested instant of a comment timestamp, or None when missing or
+    malformed. GitHub emits `...Z`; normalize for older Pythons."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def live_claims(
+    comments: Any, now: datetime
+) -> list[dict[str, Any]]:
+    """Ownership claims still inside the 4-hour youth window, newest first.
+
+    Reads conversation (issue) comments only. A review-comment payload means
+    the fetch used the wrong endpoint (`pulls/{n}/comments`), which must
+    detect nothing rather than half of something, so entries carrying
+    review-comment-only keys are ignored. A comment without a usable
+    API-attested `updated_at` cannot prove youth and is ignored: this field
+    annotates, it never fabricates evidence."""
+    found: list[dict[str, Any]] = []
+    for comment in comments or []:
+        if not isinstance(comment, dict):
+            continue
+        if any(
+            comment.get(key) is not None
+            for key in ("pull_request_review_id", "diff_hunk", "path")
+        ):
+            continue
+        body = comment.get("body") or ""
+        if not claim_carrier(body):
+            continue
+        updated = claim_time(comment.get("updated_at"))
+        if updated is None:
+            continue
+        age = now - updated
+        if age < timedelta(0):
+            age = timedelta(0)  # clock skew: a future-dated edit is the youngest
+        if age >= CLAIM_WINDOW:
+            continue
+        found.append(
+            {
+                "actor": claim_actor(body),
+                "login": str((comment.get("user") or {}).get("login") or "unknown"),
+                "updated_at": str(comment.get("updated_at") or ""),
+                "age_minutes": int(age.total_seconds() // 60),
+            }
+        )
+    found.sort(key=lambda claim: (claim["updated_at"], claim["login"]), reverse=True)
     return found
 
 
@@ -414,6 +501,7 @@ def refusal(
     detail: str = "",
     generated_files: int = 0,
     generated_lines: int = 0,
+    concurrent_claims: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     # Same reviewable totals as an admitted decision, so the published scope
     # fields mean one thing whatever the outcome.
@@ -431,6 +519,7 @@ def refusal(
         "claim": normalize(fields.get("claim", "")),
         "acceptance_delta": normalize(fields.get("delta", "")),
         "competing_prs": peers or [],
+        "concurrent_claims": list(concurrent_claims or []),
         "changed_files": changed_files,
         "changed_lines": changed_lines,
         "max_changed_files": max_files,
@@ -448,12 +537,14 @@ def decide(
     generated_files: int = 0,
     generated_lines: int = 0,
     max_generated_lines: int = DEFAULT_MAX_GENERATED_LINES,
+    concurrent_claims: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     fields = effective_fields(current)
     actual_head = ((current.get("head") or {}).get("sha") or "")
+    claims = list(concurrent_claims or [])
     refuse = lambda reason, peers=None, detail="": refusal(  # noqa: E731
         reason, current, fields, max_files, max_lines, peers, detail,
-        generated_files, generated_lines,
+        generated_files, generated_lines, claims,
     )
     if not expected_head or not SHA_RE.fullmatch(expected_head):
         return refuse(
@@ -523,6 +614,7 @@ def decide(
         "claim": claim,
         "acceptance_delta": delta,
         "competing_prs": [],
+        "concurrent_claims": claims,
         "changed_files": changed_files,
         "changed_lines": changed_lines,
         "max_changed_files": max_files,
@@ -959,6 +1051,94 @@ def self_test() -> None:
     bot = fixture(number=10, body="", head=head, **bump)
     assert run(bot, [bot, matching])["reason"] == "competing_candidate"
     assert run(matching, [bot, matching], "c" * 40)["reason"] == "competing_candidate"
+
+    # Ownership claims (#11736 Proposal B v1): detection reads only the
+    # casefolded line prefix; youth comes from the API-attested updated_at,
+    # never the prose timestamp.
+    now = datetime(2026, 11, 2, 8, 0, 0, tzinfo=timezone.utc)
+
+    def claim(
+        body: str = "Converging this PR: rival lane",
+        login: str = "rival",
+        created: str = "2026-11-02T07:00:00Z",
+        updated: str = "2026-11-02T07:50:00Z",
+        **extra: Any,
+    ) -> dict[str, Any]:
+        entry = {
+            "body": body,
+            "user": {"login": login},
+            "created_at": created,
+            "updated_at": updated,
+        }
+        entry.update(extra)
+        return entry
+
+    # The #12404 real-world line: malformed prose timestamp, intact prefix.
+    malformed = claim(
+        "Converging this PR: root delivery session, started2026-11-02 03:25 UTC.",
+        login="EffortlessSteven",
+        updated="2026-11-02T07:50:00Z",
+    )
+    claims = live_claims([malformed], now)
+    assert len(claims) == 1, claims
+    assert claims[0]["actor"] == "root delivery session, started2026-11-02 03:25 UTC."
+    assert claims[0]["login"] == "EffortlessSteven"
+    assert claims[0]["age_minutes"] == 10
+    annotated = run(fixture(body=fixture_body(), head=head), [])
+    assert annotated["status"] == "admitted"
+    assert annotated["concurrent_claims"] == []
+    annotated = decide(fixture(body=fixture_body(), head=head), [], head, False, max_files, max_lines, 0, 0, DEFAULT_MAX_GENERATED_LINES, claims)
+    assert annotated["status"] == "admitted", "a live claim annotates, it never refuses"
+    assert annotated["concurrent_claims"] == claims
+    refused_annotated = run(
+        fixture(body="", head=head), [], head
+    )  # refusal result carries the same additive field
+    assert refused_annotated["concurrent_claims"] == []
+    # Youth is windowed: at and past 4 hours the claim is no longer live.
+    assert live_claims([claim(updated="2026-11-02T04:00:00Z")], now) == [], "at the boundary"
+    assert live_claims([claim(updated="2026-11-02T03:59:59Z")], now) == []
+    # The edit-at-transitions discipline refreshes youth: an old comment
+    # edited minutes ago is live.
+    refreshed = live_claims(
+        [claim(created="2026-10-27T07:00:00Z", updated="2026-11-02T07:58:00Z")], now
+    )
+    assert len(refreshed) == 1 and refreshed[0]["age_minutes"] == 2, refreshed
+    # Prose without the prefix is not a claim, even mid-line or near-miss.
+    for prose in (
+        "I plan on converging this PR: soon",
+        "see Converging this PR: above",
+        "Converging the PR: other work",
+        "",
+    ):
+        assert live_claims([claim(prose)], now) == [], prose
+    # The prefix is case-insensitive; the actor stays free text.
+    folded = live_claims([claim("converging this PR: lane B")], now)
+    assert len(folded) == 1 and folded[0]["actor"] == "lane B", folded
+    # A review-comment payload is the wrong endpoint and detects nothing,
+    # even when its body carries the prefix.
+    review_shaped = claim(
+        "Converging this PR: wrong endpoint",
+        pull_request_review_id=7,
+        diff_hunk="@@ -1 +1 @@",
+    )
+    assert live_claims([review_shaped], now) == []
+    assert live_claims([claim("Converging this PR: x", path="src/lib.rs")], now) == []
+    # A comment without a usable API-attested updated_at cannot prove youth.
+    assert live_claims([claim("Converging this PR: x", updated="")], now) == []
+    assert live_claims([claim("Converging this PR: x", updated="not-a-time")], now) == []
+    assert live_claims([{"user": {"login": "rival"}}], now) == []
+    assert live_claims([], now) == []
+    # Two live claims: both listed, newest first, each with its holder.
+    pair = live_claims(
+        [
+            claim("Converging this PR: lane A", login="actor-a", updated="2026-11-02T07:40:00Z"),
+            claim("Converging this PR: lane B", login="actor-b", updated="2026-11-02T07:55:00Z"),
+        ],
+        now,
+    )
+    assert [c["actor"] for c in pair] == ["lane B", "lane A"], pair
+    assert {c["login"] for c in pair} == {"actor-a", "actor-b"}
+
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -1095,6 +1275,11 @@ def main() -> int:
     parser.add_argument("--expected-head")
     parser.add_argument("--pr-files", type=Path)
     parser.add_argument(
+        "--comments",
+        type=Path,
+        help="PR conversation (issue) comments JSON; live ownership claims annotate the decision without refusing it",
+    )
+    parser.add_argument(
         "--generated-attributes",
         type=Path,
         help=".gitattributes text from the PR's base commit; the only source of generated paths",
@@ -1125,6 +1310,9 @@ def main() -> int:
         parser.error("qualification limits must be positive")
     current = load_json(args.current)
     repository = os.environ.get("ADMISSION_REPOSITORY", "")
+    claims = live_claims(
+        load_json(args.comments) if args.comments else [], datetime.now(timezone.utc)
+    )
     generated_files, generated_lines = generated_from_files(
         current,
         args.pr_files,
@@ -1145,6 +1333,7 @@ def main() -> int:
         generated_files,
         generated_lines,
         args.max_generated_lines,
+        claims,
     )
     print(json.dumps(result, sort_keys=True))
     return 1 if result["status"] == "refused" else 0
