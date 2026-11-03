@@ -701,12 +701,15 @@ pub(crate) fn capture_output_measured_after_readiness(
 /// For callers whose child may legitimately run longer than any fixed
 /// host-dependent cutoff, such as a cold Cargo/Clippy build in precommit
 /// (#4150).  The child is still spawned through the shared owned-subprocess
-/// authority and the post-exit pipe drain remains bounded by
-/// `POST_KILL_DRAIN_GRACE`, so a direct child that exits while a
-/// pipe-inheriting descendant survives cannot block the caller for the
-/// descendant's lifetime: the output is truncated with a named diagnostic
-/// instead.  A genuinely hung child still waits until an operator cancels
-/// the run; the hosted job bounds are the only automated stop.
+/// authority. After a normal primary exit the remaining owned tree is ended
+/// before the pipe drain (#9323 F3), matching `run_doctor_tool`, so a
+/// Windows Job Object descendant cannot hold the capture for the drain
+/// grace. The post-exit drain remains bounded by `POST_KILL_DRAIN_GRACE`:
+/// Unix `terminate_tree` after a post-reap primary is a no-op without
+/// group ownership, so a pipe-inheriting descendant there is still truncated
+/// with a named diagnostic instead of blocking for its lifetime. A
+/// genuinely hung child still waits until an operator cancels the run; the
+/// hosted job bounds are the only automated stop.
 pub(crate) fn capture_output_without_timeout(
     program: &str,
     args: &[String],
@@ -858,14 +861,14 @@ fn capture_output_sampled_owned(
     let wait_outcome =
         wait_for_child_sampled(&mut child, started, deadline, sample_rss, error_context)?;
 
-    // Always use the bounded drain.  On a normal process exit the pipe
-    // write-ends are already closed, so the reader threads finish promptly and
-    // the grace timeout is never reached — behavior is identical to an
-    // unbounded join.  On a timed-out kill the grace timeout caps the drain if
-    // a descendant escaped the process-group kill and still holds the pipe open,
-    // guaranteeing the function returns in bounded time regardless.  The same
-    // grace bounds the no-deadline path when the direct child exits but a
-    // pipe-inheriting descendant survives it.
+    let tree_cleanup = end_tree_after_normal_primary_exit(&mut child, wait_outcome.timed_out);
+
+    // Always use the bounded drain. Ending the remaining tree first closes
+    // leftover Windows job members so the readers reach EOF promptly. On a
+    // timed-out kill the grace timeout still caps the drain if a descendant
+    // escaped the process-group kill and holds the pipe open. The same grace
+    // is the Unix #4150 bound when the direct child exits but a pipe-inheriting
+    // descendant survives a post-reap no-op `terminate_tree`.
     let stdout = drain_stream_reader_bounded(
         stdout_rx,
         stdout_handle,
@@ -880,6 +883,11 @@ fn capture_output_sampled_owned(
         "stderr",
         error_context,
     )?;
+    if let Err(cleanup) = tree_cleanup {
+        return Err(format!(
+            "{error_context}: incomplete tree cleanup after primary exit: {cleanup}; stdout={stdout}; stderr={stderr}"
+        ));
+    }
 
     #[cfg(all(test, target_os = "linux"))]
     if let CaptureDeadline::AfterReadiness(phase) = &*deadline
@@ -1330,6 +1338,26 @@ fn publish_stdout_capture(
             stdout_path.display()
         )
     })
+}
+
+/// End leftover descendants after the primary has already been reaped without
+/// a timeout, before joining pipe readers. Matches `run_doctor_tool`.
+///
+/// Timeout paths already terminated the tree in `wait_for_child_sampled`.
+/// After a normal Unix reap, `terminate_tree` is a no-op unless the group was
+/// owned before reap, so the #4150 truncation diagnostic remains the bound
+/// for a pipe-holding descendant. On Windows the still-open Job Object is
+/// terminated here so those descendants cannot hold the drain for the grace
+/// period (#9323 F3).
+fn end_tree_after_normal_primary_exit(
+    child: &mut OwnedProcess,
+    timed_out: bool,
+) -> Result<(), String> {
+    if timed_out {
+        Ok(())
+    } else {
+        child.terminate_tree()
+    }
 }
 
 fn wait_for_child_with_deadline(
@@ -2072,9 +2100,7 @@ mod tests {
     use std::process::{Command, Stdio};
     use std::sync::mpsc;
     use std::thread;
-    use std::time::Duration;
-    #[cfg(unix)]
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     #[cfg(unix)]
     use std::os::unix::process::CommandExt;
@@ -2549,16 +2575,79 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn sampled_capture_ends_tree_after_normal_primary_exit_before_drain() -> Result<(), String> {
+        let src = include_str!("run.rs");
+        let body = src
+            .split("fn capture_output_sampled_owned(")
+            .nth(1)
+            .and_then(|rest| {
+                rest.split("\npub(crate) fn capture_bytes_in_dir_with_timeout")
+                    .next()
+            })
+            .ok_or_else(|| {
+                "capture_output_sampled_owned must sit immediately before capture_bytes_in_dir_with_timeout"
+                    .to_string()
+            })?;
+        let wait = body
+            .find("wait_for_child_sampled(")
+            .ok_or_else(|| "capture_output_sampled_owned must wait for the child".to_string())?;
+        let end_tree = body
+            .find("let tree_cleanup = end_tree_after_normal_primary_exit(")
+            .ok_or_else(|| {
+                "capture_output_sampled_owned must end the owned tree after a normal primary exit"
+                    .to_string()
+            })?;
+        let drain = body
+            .find("let stdout = drain_stream_reader_bounded(")
+            .ok_or_else(|| "capture_output_sampled_owned must drain after the wait".to_string())?;
+        if wait >= end_tree || end_tree >= drain {
+            return Err(
+                "capture_output_sampled_owned must terminate leftover descendants after the primary wait and before draining"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn tree_end_after_normal_exit_skips_when_timeout_already_ended_the_tree() -> Result<(), String>
+    {
+        let src = include_str!("run.rs");
+        let body = src
+            .split("fn end_tree_after_normal_primary_exit(")
+            .nth(1)
+            .and_then(|rest| rest.split("\nfn wait_for_child_with_deadline(").next())
+            .ok_or_else(|| {
+                "end_tree_after_normal_primary_exit must sit immediately before wait_for_child_with_deadline"
+                    .to_string()
+            })?;
+        let timeout_guard = body
+            .find("if timed_out")
+            .ok_or_else(|| "timeout path must skip a second tree end".to_string())?;
+        let terminate = body
+            .find("terminate_tree")
+            .ok_or_else(|| "normal-exit path must terminate the remaining tree".to_string())?;
+        if timeout_guard >= terminate {
+            return Err(
+                "a recorded timeout must not issue a second terminate_tree before the drain"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn capture_output_without_timeout_returns_after_direct_child_exit_with_lingering_pipe_descendant()
     -> Result<(), String> {
         let _cwd_guard = acquire_test_cwd_read_guard();
         // The direct `sh` child exits 0 immediately; the backgrounded `sleep`
-        // inherits the captured stdout/stderr pipes and outlives it.  The
-        // no-deadline runner must still return bounded by the post-exit drain
-        // grace instead of waiting for the descendant (#4150 review control),
-        // and it must not report a step timeout.
+        // inherits the captured stdout/stderr pipes and outlives it. Post-reap
+        // `terminate_tree` cannot signal that group (#9895 recyclable pgid),
+        // so the no-deadline runner must still return bounded by the post-exit
+        // drain grace instead of waiting for the descendant (#4150 review
+        // control), and it must not report a step timeout.
         let args = vec!["-c".to_string(), "sleep 60 & exit 0".to_string()];
         let output =
             capture_output_without_timeout("sh", &args, &[], "post-exit descendant drain")?;
@@ -2587,13 +2676,13 @@ mod tests {
     fn capture_output_without_timeout_returns_after_direct_child_exit_with_lingering_pipe_descendant()
     -> Result<(), String> {
         let _cwd_guard = acquire_test_cwd_read_guard();
-        // Same control as the Unix variant: the direct `cmd` child exits 0
-        // immediately after `start /b`-ing a longer-lived ping descendant that
-        // inherits the captured stdout/stderr pipes.  The owned-subprocess Job
-        // Object does not fire (no step timeout), so only the bounded
-        // post-exit drain keeps the call from waiting out the descendant.
-        // `cmd`/`ping` are used instead of PowerShell so the control does not
-        // depend on a heavyweight shell under a loaded host.
+        // Same setup as the Unix #4150 truncation control: the direct `cmd`
+        // child exits 0 immediately after `start /b`-ing a longer-lived ping
+        // descendant that inherits the captured stdout/stderr pipes. After that
+        // normal primary exit the owned Job Object is ended before the drain
+        // (#9323 F3), so the descendant cannot hold the pipes for the grace
+        // period. `cmd`/`ping` are used instead of PowerShell so the control
+        // does not depend on a heavyweight shell under a loaded host.
         let script = "start /b ping -n 60 127.0.0.1 >NUL & exit /b 0";
         let args = vec![
             "/d".to_string(),
@@ -2613,13 +2702,12 @@ mod tests {
             !output.timed_out,
             "the no-deadline path must never report a step timeout"
         );
-        // The truncation diagnostic is only written when the drain grace gave
-        // up on the pipe-holding descendant, which is the bounded return.
-        assert!(
-            output.stderr.contains("output truncated"),
-            "truncated-capture diagnostic missing from stderr: {:?}",
-            output.stderr
-        );
+        for (stream, text) in [("stdout", &output.stdout), ("stderr", &output.stderr)] {
+            assert!(
+                !text.contains("output truncated"),
+                "{stream} drain was abandoned after a normal primary exit, so the pipe-holding descendant outlived the job: {text:?}"
+            );
+        }
         Ok(())
     }
 

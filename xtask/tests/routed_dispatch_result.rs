@@ -426,6 +426,33 @@ fn hard_cut_refusal_of_admitted_candidate_names_the_cut_reason() -> Result<(), S
     Ok(())
 }
 
+/// #11736 Proposal B v1: the result report carries the live ownership claims
+/// next to the competing PRs row, without failing an admitted qualification.
+#[test]
+fn live_ownership_claims_surface_in_the_result_report() -> Result<(), String> {
+    let claims = "root (@steven), updated 40m";
+    let (success, report) = run_result(
+        &workflow()?,
+        "pull_request",
+        "refs/pull/10/merge",
+        "success",
+        "admitted",
+        &[
+            ("ADMISSION_REASON", "candidate_current_unique_bounded"),
+            ("ADMISSION_CONCURRENT_CLAIMS", claims),
+        ],
+    )?;
+    assert!(
+        success,
+        "a live ownership claim annotates the run, it must not fail it: {report}"
+    );
+    assert!(
+        report.contains(&format!("- concurrent claims: `{claims}`")),
+        "result summary must carry the concurrent claims row next to competing PRs, got: {report}"
+    );
+    Ok(())
+}
+
 #[test]
 fn manual_admission_producer_does_not_supply_pr_qualification() -> Result<(), String> {
     let scratch = Scratch::new()?;
