@@ -315,6 +315,12 @@ validates memberships before compaction and observes cancellation before return.
 Complete corpus/source facts still scale with input size; this ownership contract
 is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage claim.
 
+Cross-type executable-test payload sharing (#5127) is a separate follow-through from
+this flat/file arena repair (#5026): it shares the common body/call/literal/attribute/shadow
+fields between a `FunctionFact` and its paired executable `TestFact` via generation-owned
+`SharedFactSlice` backing without reopening flat/file ownership or broad identifier interning
+(#1924 remains profile-gated).
+
 ## Required Evidence
 
 - A changed Cargo bench seeds no production probes but stays in

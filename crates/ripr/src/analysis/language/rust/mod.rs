@@ -7821,12 +7821,12 @@ fn absent_delimiter_boundary_returns_head() {
             start_line: 12,
             end_line: 18,
             body: r#"Command::new(env!("CARGO_BIN_EXE_worker")).output().unwrap();"#.into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         });
         assert!(is_binary_source_path(Path::new("src/main.rs")));
         assert!(super::find_subprocess_binary_test(&index, Path::new("src/main.rs")).is_some());
@@ -10219,14 +10219,14 @@ fn absent_delimiter_boundary_returns_head() {
             start_line: 1,
             end_line: 5,
             body: "pub fn exported_fn(raw: &str) -> Result<(), Box<dyn std::error::Error>> { try_parse(raw).map_err(Into::into) }".into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         };
@@ -10246,7 +10246,7 @@ fn absent_delimiter_boundary_returns_head() {
         ffi_finding.static_limit_kind = None;
         ffi_finding.evidence.clear();
         let mut ffi_owner = rust_owner;
-        ffi_owner.attrs = vec!["#[no_mangle]".to_string()];
+        ffi_owner.attrs = vec!["#[no_mangle]".to_string()].into();
         let ffi_index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![ffi_owner],
             ..Default::default()

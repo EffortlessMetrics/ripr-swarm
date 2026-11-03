@@ -6330,8 +6330,11 @@ mod tests {
         // Explicit synthesized e290-shaped predecessor, not an execution of
         // an old parser. The separate retained CLI receipt owns that capture.
         let mut favorable = current.clone();
-        let restore_old_text = |calls: &mut Vec<crate::analysis::facts::CallFact>| {
+        let restore_old_text = |calls: &mut crate::analysis::facts::SharedFactSlice<
+            crate::analysis::facts::CallFact,
+        >| {
             for call in calls
+                .make_mut()
                 .iter_mut()
                 .filter(|call| call.name == "discounted_total" && call.line == old_offset + 1)
             {

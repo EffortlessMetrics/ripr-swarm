@@ -1,4 +1,6 @@
-use crate::analysis::facts::{FileFacts, FunctionFact, FunctionSourceRole, SourceText, TestFact};
+use crate::analysis::facts::{
+    FileFacts, FunctionFact, FunctionSourceRole, SharedFactSlice, SourceText, TestFact,
+};
 use crate::analysis::rust_index::{
     extract_assertions_in, extract_call_facts, extract_literal_facts, extract_return_facts,
 };
@@ -110,6 +112,8 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
             let linked_body = SourceText::owned(body.as_str());
             file_returns.extend(returns.clone());
             file_literals.extend(literals.clone());
+            let shared_calls = SharedFactSlice::from_vec(calls.clone());
+            let shared_literals = SharedFactSlice::from_vec(literals.clone());
             let function = FunctionFact {
                 // Same stable projection as the parser producer: lossy
                 // display would merge distinct raw-byte filenames in the
@@ -123,9 +127,9 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                 start_line,
                 end_line,
                 body: linked_body.clone(),
-                calls: calls.clone(),
+                calls: shared_calls.clone(),
                 returns: returns.clone(),
-                literals: literals.clone(),
+                literals: shared_literals.clone(),
                 // Lexical fallback: the scanner only sees exact test-defining
                 // attribute prefixes, so it grants the executable-test role
                 // and never a cfg-test-module membership. The parser-fallback
@@ -138,15 +142,15 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                 // Lexical fallback path: no parser, no AST attrs
                 // iterator, so attrs stay empty. Value-extraction-v2's
                 // rstest support is parser-only.
-                attrs: Vec::new(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
                 impl_attrs: Vec::new(),
                 // #3727 Slice A: shadow facts are parser-only, mirroring
                 // probe_shapes. Consumers route this file's shadow decisions
                 // through the lexical scanners because
                 // `used_lexical_fallback` is true — the flag, not the
                 // emptiness, is the discriminator.
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 // #4478: the item container is parser-only; `Unknown` makes
                 // every consumer that needs it fail closed.
                 item: crate::analysis::facts::FunctionItemFact::default(),
@@ -159,15 +163,15 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                     file: path.clone(),
                     start_line,
                     end_line,
-                    body: linked_body.clone(),
-                    calls,
+                    body: linked_body,
+                    calls: shared_calls,
                     assertions: property_safe_lexical_assertions(&body, start_line, &file_decls),
-                    literals,
-                    attrs: Vec::new(),
+                    literals: shared_literals,
+                    attrs: crate::analysis::facts::SharedFactSlice::empty(),
                     // Parser-only shadow facts (#3727 Slice A): empty under
                     // the lexical fallback, like `FunctionFact` above.
-                    nested_fn_names: Vec::new(),
-                    let_bindings: Vec::new(),
+                    nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                    let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 });
             }
             functions.push(function);

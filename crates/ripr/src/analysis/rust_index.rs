@@ -25,7 +25,8 @@ pub(crate) use super::facts::validated_file_wide_harness_targets;
 pub use super::facts::{CallFact, FileFacts, LiteralFact, ReturnFact};
 pub use super::facts::{
     FileFactsView, FunctionFact, FunctionSummary, OracleFact, ProbeShapeFact, ProbeShapeKind,
-    RustIndex, SourceText, TestFact, TestSummary, build_index, build_index_with_test_harnesses,
+    RustIndex, SharedFactSlice, SourceText, TestFact, TestSummary, build_index,
+    build_index_with_test_harnesses,
 };
 pub(crate) use super::facts::{
     build_analysis_index_from_loaded_files, build_index_from_paths_with_cache_and_test_harnesses,
