@@ -1,0 +1,9 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,4 +1,4 @@
+-pub fn bump(x: u32) -> u32 { x + 1 }
++pub unsafe fn bump(x: u32) -> u32 { x + 1 }
+ 
+ pub fn run(x: u32) -> u32 {
+     unsafe { bump(x) }

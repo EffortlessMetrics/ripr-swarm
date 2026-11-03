@@ -339,7 +339,7 @@
       "status": "not_measured"
     }
   ],
-  "revision": "72e613e3b57a73af62a28af98c4ed382a2d07e96",
+  "revision": "ac0133758f5bdfa5575684500237083706444a8e",
   "rollup": {
     "below_target": 9,
     "comparison_failed": 0,
@@ -348,7 +348,7 @@
     "not_measured": 0,
     "regressed": 0
   },
-  "runner_class": "local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-80ghz",
+  "runner_class": "github-hosted-linux-x86_64-4cpu-intel-r-xeon-r-platinum-8370c-cpu-2-80ghz",
   "schema_version": "ripr-dx-scoreboard-v1",
   "tool": "ripr"
 }

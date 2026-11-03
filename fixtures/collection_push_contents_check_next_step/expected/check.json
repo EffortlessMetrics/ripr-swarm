@@ -1,0 +1,201 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/collection_push_contents_check_next_step/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":1,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"conflicting_expressions":1,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:ec00e20209f36310ed36c29228f42af94e1f57761c22cd0bcf6ef460271bed1a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:call_deletion:5314f62a",
+      "canonical_gap_id": "gap:rust:src/lib.rs:log_line:call_deletion:call_deletion:buf.push_msg.to_string+lit",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:log_line:call_deletion:call_deletion:buf.push_msg.to_string+lit",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "log_line",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "buf.push_msg.to_string+lit"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:call_deletion:5314f62a",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "buf.push(msg.to_string() + \"\")"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach log_line: log_line_records_one_line"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches state write: buf.push(msg.to_string() + \"\")"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach log_line: log_line_records_one_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches state write: buf.push(msg.to_string() + \"\")", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches state write: buf.push(msg.to_string() + \"\") (line 2)", "related test src/lib.rs:10 log_line_records_one_line uses strong exact value oracle: assert_eq!(buf.len(), 1);", "source function argument value msg = \"hello\" at line 12", "source assertion argument value 1 at line 13"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"buf.push(msg.to_string() + \"\")","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches state write: buf.push(msg.to_string() + \"\")", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach log_line: log_line_records_one_line", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "12": "log_line(&mut buf, \"hello\");",
+        "13": "assert_eq!(buf.len(), 1);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 12,
+            "value": "msg = \"hello\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 13,
+            "value": "1",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 12,
+          "value": "msg = \"hello\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 13,
+          "value": "1",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "log_line_records_one_line",
+          "file": "src/lib.rs",
+          "line": 10,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(buf.len(), 1);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:side_effect:74cc5567",
+      "canonical_gap_id": "gap:rust:src/lib.rs:log_line:side_effect:side_effect:buf.push_msg.to_string+lit",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:log_line:side_effect:side_effect:buf.push_msg.to_string+lit",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "log_line",
+        "behavior_kind": "side_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": "buf.push_msg.to_string+lit"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:side_effect:74cc5567",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "buf.push(msg.to_string() + \"\")"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach log_line: log_line_records_one_line"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches state write: buf.push(msg.to_string() + \"\")"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach log_line: log_line_records_one_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches state write: buf.push(msg.to_string() + \"\")", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: buf.push(msg.to_string() + \"\") (line 2)", "related test src/lib.rs:10 log_line_records_one_line uses strong exact value oracle: assert_eq!(buf.len(), 1);", "source function argument value msg = \"hello\" at line 12", "source assertion argument value 1 at line 13"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"buf.push(msg.to_string() + \"\")","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches state write: buf.push(msg.to_string() + \"\")", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach log_line: log_line_records_one_line"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "12": "log_line(&mut buf, \"hello\");",
+        "13": "assert_eq!(buf.len(), 1);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 12,
+            "value": "msg = \"hello\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 13,
+            "value": "1",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 12,
+          "value": "msg = \"hello\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 13,
+          "value": "1",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "log_line_records_one_line",
+          "file": "src/lib.rs",
+          "line": 10,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(buf.len(), 1);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add an exact check of the full contents the test reads back after the call.",
+      "suggested_next_action": "Add an exact check of the full contents the test reads back after the call.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

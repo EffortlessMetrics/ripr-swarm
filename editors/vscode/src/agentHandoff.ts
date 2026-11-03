@@ -14,7 +14,8 @@ import {
   hasUnsafeShellMetacharacter,
   redirectTargetMatches,
   serverShellArg,
-  isWindowsHost
+  isWindowsHost,
+  rootedTestRunnerVerifyCommandIsSafe
 } from './packetJson';
 import type { RiprConfig } from './config';
 import type { ResolvedServer } from './serverResolver';
@@ -56,6 +57,10 @@ export interface AgentHandoffHost {
   warnWithOutput(message: string): void;
   setupRepairBlocker(): string | undefined;
   isRiprFileDocument(document: vscode.TextDocument): boolean;
+  tryStartSharedRepairBefore(
+    editor: vscode.TextEditor,
+    actions: Array<vscode.CodeAction | vscode.Command>
+  ): Promise<boolean>;
 }
 
 const DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE =
@@ -439,6 +444,9 @@ export function validatedAgentLoopCommand(
     return body === prefix || body.startsWith(`${prefix} `);
   });
   if (rootArg === undefined) {
+    if (label === 'gap_verify' && rootedTestRunnerVerifyCommandIsSafe(command, redirectRoots)) {
+      return command;
+    }
     return undefined;
   }
   const portableBody = body.replace(`--root ${rootArg}`, '--root .');
@@ -841,6 +849,10 @@ export class AgentHandoffController {
       return;
     }
 
+    if (await this.host.tryStartSharedRepairBefore(editor, actions ?? [])) {
+      return;
+    }
+
     const candidates = startRepairActions(actions ?? []);
     if (candidates.length === 0) {
       this.host.runtime.showInformationMessage('No bounded ripr repair action is available for the current gap. Refresh saved-workspace analysis if this looks stale.');
@@ -1052,9 +1064,13 @@ export class AgentHandoffController {
       this.host.runtime.showInformationMessage('No verify command available.');
       return;
     }
-    const verifyCommand = typeof packet['verify_command'] === 'string'
-      ? packet['verify_command'].trim()
+    const clipboardCommand = typeof packet['verify_command_clipboard'] === 'string'
+      ? packet['verify_command_clipboard'].trim()
       : '';
+    const verifyCommand = clipboardCommand
+      || (typeof packet['verify_command'] === 'string'
+        ? packet['verify_command'].trim()
+        : '');
     if (!verifyCommand) {
       this.host.runtime.showInformationMessage('No verify command available.');
       return;

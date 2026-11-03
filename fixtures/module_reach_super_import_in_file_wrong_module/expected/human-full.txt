@@ -67,6 +67,7 @@ Limitation detail
 Next step
   Tests cannot close this static-analysis limitation: ripr cannot trace entry `order_discount` -> owner `is_bulk` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast probe:src_lib.rs:predicate:41e056ec
   ripr context --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast --at probe:src_lib.rs:predicate:41e056ec
 
@@ -123,5 +124,6 @@ Limitation detail
 Next step
   Tests cannot close this static-analysis limitation: ripr cannot trace entry `order_discount` -> owner `is_bulk` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast probe:src_lib.rs:return_value:cc17bcd3
   ripr context --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast --at probe:src_lib.rs:return_value:cc17bcd3

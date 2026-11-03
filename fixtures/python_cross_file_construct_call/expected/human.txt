@@ -17,6 +17,7 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: exposed (severity: info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
   Gap ID (for scripts): gap:python:src/formatter.py:Formatter.__call__:predicate_boundary:predicate:any_c<for_c_in_key
   Changed behavior: if any(c < " " for c in key):
   Check (observed, advisory): Related Python test reaches `__call__` with an `exact_error_variant`
@@ -39,6 +40,7 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_cross_file_construct_call/input --diff <cwd>/fixtures/python_cross_file_construct_call/diff.patch --mode fast probe:src_formatter.py:python_preview:v1-9b65c2a2
   ripr context --root <cwd>/fixtures/python_cross_file_construct_call/input --diff <cwd>/fixtures/python_cross_file_construct_call/diff.patch --mode fast --at probe:src_formatter.py:python_preview:v1-9b65c2a2
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
