@@ -22,10 +22,15 @@ pub(crate) struct VerifiedContentDigest(String);
 impl VerifiedContentDigest {
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
         let Some(hex) = value.strip_prefix(SHA256_PREFIX) else {
-            return Err(format!("digest must start with `{SHA256_PREFIX}`"));
+            return Err(format!(
+                "digest must start with `{SHA256_PREFIX}`; pass `{SHA256_PREFIX}` followed by 64 hex characters"
+            ));
         };
         if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err("digest hex must be 64 characters".to_string());
+            return Err(
+                "digest hex must be 64 characters; pass exactly 64 hex digits after the prefix"
+                    .to_string(),
+            );
         }
         Ok(Self(format!("{SHA256_PREFIX}{}", hex.to_ascii_lowercase())))
     }
