@@ -796,18 +796,95 @@ fn ts_effect_call_callee_is_foreign(
             .any(|binding| binding.name == callee)
 }
 
-/// The callee of `expr` when it is a plain bare-callee call (`name(...)`,
-/// with optional whitespace before the paren). Member calls (`recv.name(`),
-/// bare identifiers, and every other shape resolve to `None` — those keep the
-/// side-channel confirmation.
+/// The callee of `expr` when it is a single bare-callee call spanning the
+/// whole expression (`name(...)`, with optional whitespace before the paren
+/// and after the call). Member calls (`recv.name(`), bare identifiers, and
+/// any call with trailing expression text (`formatDate(now) &&
+/// sideEffectLog`, which also reads the channel) resolve to `None` — those
+/// keep the side-channel confirmation.
 fn ts_effect_bare_call_callee(expr: &str) -> Option<&str> {
     let trimmed = expr.trim();
     let open = trimmed.find('(')?;
+    // The call must span the whole expression: trailing operators or
+    // operands mean the assertion reads past the call, so the expression
+    // is not a foreign-call observation.
+    if !ts_effect_call_spans_expression(open, trimmed) {
+        return None;
+    }
     let callee = trimmed[..open].trim_end();
     // A member segment (`recv.name`) is not a bare identifier, so member
     // calls (including `?.` / `!.` chains, whose punctuation survives the
     // trim) are excluded here, not by the caller.
     ts_effect_is_bare_identifier(callee).then_some(callee)
+}
+
+/// `true` when the `(` at byte offset `open` in `text` closes (depth returns
+/// to zero) with only whitespace after the match. String literals, template
+/// spans, and comments are skipped so a paren inside one cannot close (or
+/// unbalance) the scan; an unterminated construct fails closed by returning
+/// `false`, keeping the side-channel confirmation.
+fn ts_effect_call_spans_expression(open: usize, text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' | b'`' => {
+                let quote = bytes[i];
+                i += 1;
+                let mut closed = false;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                    } else if bytes[i] == quote {
+                        closed = true;
+                        i += 1;
+                        break;
+                    } else {
+                        i += 1;
+                    }
+                }
+                if !closed {
+                    return false;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                let mut closed = false;
+                while i + 1 < bytes.len() {
+                    if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        closed = true;
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+                if !closed {
+                    return false;
+                }
+            }
+            b'(' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' => {
+                depth = depth.saturating_sub(1);
+                i += 1;
+                if depth == 0 {
+                    return text[i..].trim().is_empty();
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    false
 }
 
 /// One-hop local aliasing credit for the value-family observation guard.

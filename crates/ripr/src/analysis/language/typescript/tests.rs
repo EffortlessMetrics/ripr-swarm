@@ -11239,6 +11239,111 @@ fn ts_sideeffect_imported_callee_observation_stays_exposed() -> Result<(), Strin
     Ok(())
 }
 
+/// Compound-expression control (#11244 staged-(b) follow-up): a strong
+/// assertion that reads BOTH a foreign call and the effect channel —
+/// `expect(formatDate(now) && sideEffectLog).toBe(true)` — observes the
+/// effect through the channel conjunct, so the foreign call is not the whole
+/// observation. The callee extractor only credits a call spanning the whole
+/// expression; trailing operators keep the side-channel confirmation and the
+/// finding MUST stay `class:exposed, discriminate:yes`.
+#[test]
+fn ts_sideeffect_compound_foreign_and_channel_observation_stays_exposed() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/discount.ts"),
+        start_line: 1,
+        end_line: 10,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        commonjs_default_export: false,
+        commonjs_whole_function: false,
+        default_object_member: false,
+        module_entries: Vec::new(),
+        arity: None,
+        params: Vec::new(),
+        source_text: None,
+        imports: Default::default(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+    };
+    let test = TypeScriptTest {
+        name: "discount side checks".to_string(),
+        local_name: "discount side checks".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/discount.test.ts"),
+        line: 1,
+        reach_body_text: None,
+        body_text: "applyDiscount(100, 10);\nexpect(formatDate(now) && sideEffectLog).toBe(true);"
+            .to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            // Compound: a foreign call AND the channel conjunct.
+            observed_expression: Some("formatDate(now) && sideEffectLog".to_string()),
+            expected_value_or_variant: Some("true".to_string()),
+            has_dynamic_matcher_arg: false,
+            dynamic_expected_text: None,
+            oracle_confidence: OracleConfidence::High,
+            rendered_call: None,
+            loose_number_expected: false,
+            expected_object_const: None,
+            compares_reference_identity: false,
+        }],
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
+        factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }]
+        .into(),
+    };
+    // Changed line: SideEffect (console.log call)
+    let finding = classify_change(
+        Path::new("src/discount.ts"),
+        4,
+        "    console.log(\"audit\", amount * 9);",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // MUST stay exposed — the assertion also reads the effect channel.
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "expected Exposed (compound foreign call plus channel observation), got {:?}",
+        finding.class
+    );
+    assert!(
+        matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "expected discriminate==Yes, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    Ok(())
+}
+
 /// Effect-seam mirror of `ts_returnvalue_unrelated_strong_assertion_downgrades`
 /// (#11244 staged-(b) first slice): a SideEffect seam (`console.log` change)
 /// whose only strong assertion observes an affirmatively FOREIGN call —
