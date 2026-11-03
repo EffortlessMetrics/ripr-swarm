@@ -166,3 +166,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — out_parameter_empty_expected_no_promote (14)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless out_parameter_empty_expected_no_promote --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

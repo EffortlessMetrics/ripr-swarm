@@ -51,6 +51,7 @@ Stop reasons:
 Next step
   Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_where_bound_declarations/input --diff <cwd>/fixtures/rust_where_bound_declarations/diff.patch --mode fast probe:src_lib.rs:static_unknown:78296eca
   ripr context --root <cwd>/fixtures/rust_where_bound_declarations/input --diff <cwd>/fixtures/rust_where_bound_declarations/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:78296eca
 
@@ -82,5 +83,6 @@ Evidence
   - source assertion argument value 7 at line 20
   - source function argument value value = 7_ at line 20
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_where_bound_declarations/input --diff <cwd>/fixtures/rust_where_bound_declarations/diff.patch --mode fast probe:src_lib.rs:field_construction:80fa882b
   ripr context --root <cwd>/fixtures/rust_where_bound_declarations/input --diff <cwd>/fixtures/rust_where_bound_declarations/diff.patch --mode fast --at probe:src_lib.rs:field_construction:80fa882b

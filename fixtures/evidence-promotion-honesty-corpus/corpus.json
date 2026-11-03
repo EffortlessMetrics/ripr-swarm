@@ -3,6 +3,141 @@
   "kind": "evidence_promotion_honesty_corpus",
   "spec": "RIPR-SPEC-0108",
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
+  "report_cache_schema_pins": [
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json",
+      "cache_schema_version": "1.78",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json",
+      "cache_schema_version": "1.78",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json",
+      "cache_schema_version": "1.78",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json",
+      "cache_schema_version": "1.78",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json",
+      "cache_schema_version": "1.78",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json",
+      "cache_schema_version": "1.78",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json",
+      "cache_schema_version": "1.78",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json",
+      "cache_schema_version": "1.77",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json",
+      "cache_schema_version": "1.77",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
+      "cache_schema_version": "1.74",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json",
+      "cache_schema_version": "1.74",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json",
+      "cache_schema_version": "1.74",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
+      "cache_schema_version": "1.74",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
+      "cache_schema_version": "1.74",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json",
+      "cache_schema_version": "1.74",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json",
+      "cache_schema_version": "1.74",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
+      "cache_schema_version": "1.74",
+      "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
+    }
+  ],
+  "report_digest_exemptions": [
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    }
+  ],
+  "report_digest_required": [
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json"
+  ],
   "cases": [
     {
       "id": "typescript_mock_count_alias",
@@ -11109,6 +11244,15 @@
           "file": "src/lib.rs",
           "oracle_strength": "none",
           "relation_reason": "assertion_target_affinity"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::consume",
+          "expression": "wait < 5",
+          "test": "reduce_over",
+          "file": "src/lib.rs",
+          "oracle_strength": "none",
+          "relation_reason": "same_test_file"
         }
       ]
     },
@@ -11133,6 +11277,49 @@
           "expression": "Err(Fault::Even)",
           "grip_class": "strongly_gripped",
           "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::parse_masked",
+          "expression": "n % 2 == 1",
+          "test": "masked_odd",
+          "file": "src/lib.rs",
+          "oracle_strength": "weak",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_masked",
+          "expression": "Ok(n)",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::parse_masked",
+          "expression": "Ok(n)",
+          "test": "pinned_even",
+          "file": "src/lib.rs",
+          "oracle_strength": "none",
+          "relation_reason": "same_test_file"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::parse_pinned",
+          "expression": "Ok(n)",
+          "test": "masked_odd",
+          "file": "src/lib.rs",
+          "oracle_strength": "none",
+          "relation_reason": "same_test_file"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::parse_pinned",
+          "expression": "Ok(n)",
+          "test": "pinned_even",
+          "file": "src/lib.rs",
+          "oracle_strength": "none",
+          "relation_reason": "direct_owner_call"
         }
       ]
     },
@@ -12684,6 +12871,13 @@
           "expression": "items: count + 0",
           "grip_class": "weakly_gripped",
           "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::make_record",
+          "expression": "record",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
         }
       ]
     },
@@ -12911,6 +13105,21 @@
       "source_fixture": "fixtures/rust_array_sibling_exit_field",
       "vector": "sibling_element_field_may_exit_before_indexed_pin_assertion",
       "probe_family": "field_construction",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_array_sibling_exit_field_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_array_sibling_exit_field",
+      "vector": "sibling_element_field_may_exit_before_return_value_oracle",
+      "probe_family": "return_value",
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "expected_finding_count", "count": 1 },
@@ -13348,6 +13557,139 @@
         { "type": "must_promote" },
         { "type": "expected_class", "class": "exposed" },
         { "type": "expected_oracle", "kind": "snapshot", "strength": "strong" }
+      ]
+    },
+    {
+      "id": "ts_effect_snapshot_owner_result_control",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_snapshot_effect_owner_result_control",
+      "vector": "snapshot_of_the_owner_call_result_confirms_the_effect_seam",
+      "control": "must_stay_exposed",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "ts_effect_snapshot_method_owner_result_control",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_snapshot_effect_method_owner_result_control",
+      "vector": "snapshot_of_the_method_owner_call_result_confirms_the_effect_seam",
+      "control": "must_stay_exposed",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "ts_effect_snapshot_unrelated_subject_cannot_confirm_the_seam",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_snapshot_effect_unrelated_subject",
+      "vector": "inline_snapshot_of_an_unrelated_local_is_not_the_owner_result",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "ts_effect_snapshot_unrelated_committed_cannot_confirm_the_seam",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_snapshot_effect_unrelated_committed",
+      "vector": "committed_snapshot_entry_of_an_unrelated_local_is_not_the_owner_result",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "ts_effect_snapshot_rebound_local_cannot_confirm_the_seam",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_snapshot_effect_rebound_local",
+      "vector": "owner_result_local_rewritten_by_destructuring_before_the_snapshot",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "ts_effect_snapshot_receiver_redeclared_cannot_confirm_the_seam",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_snapshot_effect_receiver_redeclared",
+      "vector": "receiver_name_redeclared_in_an_inner_block_is_not_the_owner_class",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "ts_effect_snapshot_spy_calls_cannot_confirm_the_seam",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_snapshot_effect_spy_calls_weak",
+      "vector": "snapshot_of_a_spy_recorded_calls_is_not_the_owner_result",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "ts_effect_snapshot_unrelated_import_cannot_confirm_the_seam",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_snapshot_effect_unrelated_import_binding",
+      "vector": "owner_name_bound_to_another_module_is_not_the_owner_call",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "ts_effect_snapshot_conditional_receiver_cannot_confirm_the_seam",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_snapshot_effect_conditional_receiver",
+      "vector": "receiver_initializer_that_only_contains_new_owner_class_is_not_an_instance",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
