@@ -683,3 +683,137 @@ fn implicit_root_rebinds_to_the_enclosing_workspace_from_a_member_directory() ->
     }
     Ok(())
 }
+
+// ── #12417: the repair-lifecycle discovery gate ─────────────────────────────
+
+/// A directory no project encloses, for the unanchored-gate controls. `TMPDIR`
+/// can sit inside a checkout (an anchored root, where the gate is silent), so
+/// fall back to the process temp dir and `/tmp`, and fail loudly if none is
+/// free of markers: a silent early return would leave the gate unchecked.
+/// Unix-only: the tests that use it are (the temp parent must hold no
+/// manifest or repo).
+#[cfg(unix)]
+fn marker_free_temp_base() -> Result<PathBuf, String> {
+    let anchored = |dir: &Path| {
+        dir.ancestors().any(|ancestor| {
+            [
+                "Cargo.toml",
+                ".git",
+                "package.json",
+                "pyproject.toml",
+                "setup.py",
+                "setup.cfg",
+            ]
+            .iter()
+            .any(|name| ancestor.join(name).exists())
+        })
+    };
+    let candidates = [
+        std::env::var_os("TMPDIR").map(PathBuf::from),
+        Some(std::env::temp_dir()),
+        Some(PathBuf::from("/tmp")),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .filter_map(|dir| dir.canonicalize().ok())
+        .find(|dir| !anchored(dir))
+        .ok_or_else(|| {
+            "no temp directory outside every project was found for the unanchored control"
+                .to_string()
+        })
+}
+
+/// A marker-free directory the guard removes on drop.
+#[cfg(unix)]
+struct UnanchoredDir(PathBuf);
+
+#[cfg(unix)]
+impl UnanchoredDir {
+    fn new(label: &str) -> Result<Self, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            marker_free_temp_base()?.join(format!("ripr-{label}-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        Ok(Self(dir))
+    }
+}
+
+#[cfg(unix)]
+impl Drop for UnanchoredDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// #12417: the repair-lifecycle gate refuses an unanchored directory with the
+/// discovery cause, while the ordinary resolution keeps retaining it
+/// (check/pilot/context/rerun behavior) and an explicit `--root` skips the
+/// gate. Unix-only like the other implicit-root controls (the temp parent
+/// must hold no manifest or repo).
+#[cfg(unix)]
+#[test]
+fn unanchored_gate_refuses_while_the_plain_walk_retains_and_explicit_root_skips() {
+    let _cwd = cwd_lock::hold_cwd();
+    let guard = UnanchoredDir::new("gate-refusal").expect("unanchored control dir");
+    let original = std::env::current_dir().expect("current dir");
+    let _restore = CwdRestore(original);
+    std::env::set_current_dir(&guard.0).expect("set cwd");
+
+    let cause = unanchored_implicit_root_cause()
+        .expect("an unanchored directory must produce a refusal cause");
+    assert!(
+        cause.contains("no workspace, package or Git repository was found"),
+        "cause must name the discovery outcome: {cause}"
+    );
+
+    // The gate itself: refuse, naming the cause.
+    let error = resolve_implicit_command_root_refusing(&mut PathBuf::from("."), false)
+        .expect_err("the refusing resolution must refuse an unanchored directory");
+    assert_eq!(error, cause);
+
+    // check/pilot/context/rerun keep retain-start: the plain walk answers Ok
+    // and leaves the root as typed.
+    let mut retained = PathBuf::from(".");
+    resolve_implicit_command_root(&mut retained, false)
+        .expect("the plain walk must keep retain-start");
+    assert_eq!(retained, PathBuf::from("."), "retain-start keeps the root");
+
+    // An explicit --root skips the gate.
+    let mut explicit = PathBuf::from(".");
+    resolve_implicit_command_root_refusing(&mut explicit, true)
+        .expect("an explicit --root must skip the gate");
+    assert_eq!(explicit, PathBuf::from("."));
+}
+
+/// #12417, #12480: a standalone `package.json` project without Git or Cargo
+/// still reads as unanchored to `resolve_project_root`, but the gate keeps it
+/// anchored: it is a project.
+#[cfg(unix)]
+#[test]
+fn a_plain_package_manifest_keeps_the_gate_anchored() {
+    let _cwd = cwd_lock::hold_cwd();
+    let guard = UnanchoredDir::new("gate-plain-package").expect("unanchored control dir");
+    std::fs::write(guard.0.join("package.json"), "{\"name\":\"shop\"}")
+        .expect("write package.json");
+    let original = std::env::current_dir().expect("current dir");
+    let _restore = CwdRestore(original);
+    std::env::set_current_dir(&guard.0).expect("set cwd");
+
+    // The walk itself still finds no anchor; the ordinary manifest is what
+    // keeps the gate silent.
+    assert!(
+        matches!(resolve_project_root(Path::new(".")), Ok(None)),
+        "a plain package.json without workspaces must not anchor the walk"
+    );
+    assert!(
+        unanchored_implicit_root_cause().is_none(),
+        "a plain package project must not be refused"
+    );
+    let mut root = PathBuf::from(".");
+    resolve_implicit_command_root_refusing(&mut root, false)
+        .expect("the gate must keep a plain package project");
+}
