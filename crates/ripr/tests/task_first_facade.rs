@@ -4310,8 +4310,12 @@ fn help_surfaces_stay_task_first() -> Result<(), String> {
         assert!(row["accepts_json_flag"].is_null(), "{id} has no JSON flag");
     }
     let status = find("cmd:status")?;
-    assert_eq!(status["exit"]["kind"], "completed_or_failed");
+    // #12417: the unanchored discovery refusal is a typed decision, so both
+    // status spellings advertise decision exits beside their 0/2 outcomes.
+    assert_eq!(status["exit"]["kind"], "decision_or_refusal");
     assert_eq!(status["accepts_json_flag"], "--json");
+    let agent_status = find("cmd:agent.status")?;
+    assert_eq!(agent_status["exit"]["kind"], "decision_or_refusal");
     for id in ["cmd:agent.repair", "cmd:agent.status"] {
         let row = find(id)?;
         assert_eq!(row["class"], "advanced", "{id} must be advanced");
