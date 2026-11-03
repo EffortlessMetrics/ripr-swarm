@@ -168,6 +168,11 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      reason. An exemption is judged too: it must name a committed capture that
      really carries no digest, and is a violation once the capture gains one or
      is removed (#12745).
+     Content alone cannot tell a stamped capture stripped of `artifact` and
+     `source_subject.corpus` from a trimmed projection, so the corpus also
+     lists in `report_digest_required` every report that carries a digest, and
+     each listed report must still carry one; an entry naming no committed
+     report fails (#12816).
      Scope of the guarantee: the digest is recomputed from the file's own
      bytes, so anyone who can recompute it can bless an edit. The check
      detects a stale or hand-edited capture. It is not a tamper-proof seal and

@@ -365,6 +365,46 @@ fn stamp_problems(
     }
 }
 
+/// The reports the corpus requires to stay stamped, whatever markers the file
+/// still carries. Content alone cannot tell a stamped capture that lost both
+/// `artifact` and `source_subject.corpus` from a trimmed projection, so the
+/// ones that carry a digest today are listed (#12816). An entry that names no
+/// committed report, or a report without a digest, is a violation.
+fn required_digest_problems(
+    corpus: &Value,
+    reports: &[(String, Value)],
+    violations: &mut Vec<String>,
+) {
+    let Some(entries) = corpus
+        .get("report_digest_required")
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    for entry in entries {
+        let Some(path) = entry
+            .as_str()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        else {
+            violations.push(
+                "report_digest_required: every entry must be a non-empty report path (#12816)"
+                    .to_string(),
+            );
+            continue;
+        };
+        match reports.iter().find(|(label, _)| label == path) {
+            None => violations.push(format!(
+                "report_digest_required: `{path}` names no committed report; remove the entry (#12816)"
+            )),
+            Some((_, report)) if !carries_digest(report) => violations.push(format!(
+                "{path}: the corpus requires this capture to carry `artifact.content_sha256`, but it has none (the field or its `artifact` block was removed). Recapture it with `ripr check --mode draft --format repo-exposure-json` (#12816)"
+            )),
+            Some(_) => {}
+        }
+    }
+}
+
 /// Verify the self-digest of every committed report in the corpus (#12602).
 /// The regeneration guard above judges seams only and ignores the producer
 /// stamps, so a hand edit of a stamp left the digest stale with every gate green.
@@ -394,6 +434,7 @@ pub(super) fn check_report_digests(violations: &mut Vec<String>) -> Result<(), S
     let corpus = read_evidence_promotion_corpus(Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS))?;
     let exemptions = read_digest_exemptions(&corpus, violations);
     stamp_problems(&parsed, &exemptions, violations);
+    required_digest_problems(&corpus, &parsed, violations);
     Ok(())
 }
 
@@ -586,6 +627,25 @@ mod tests {
         assert!(stamp_violations(&[("d.json", capture(false))], &["d.json"]).is_empty());
         let projection = json!({"scope": {}, "seams": []});
         assert!(stamp_violations(&[("e.json", projection)], &[]).is_empty());
+    }
+
+    #[test]
+    fn a_required_capture_cannot_lose_every_marker() {
+        let corpus = json!({"report_digest_required": ["a.json", "gone.json", ""]});
+        let stripped = json!({"scope": {}, "seams": []});
+        let reports = vec![("a.json".to_string(), stripped)];
+        let mut violations = Vec::new();
+        required_digest_problems(&corpus, &reports, &mut violations);
+        assert_eq!(violations.len(), 3, "{violations:?}");
+        // The same report with its digest passes.
+        let stamped = vec![("a.json".to_string(), capture(true))];
+        let mut clean = Vec::new();
+        required_digest_problems(
+            &json!({"report_digest_required": ["a.json"]}),
+            &stamped,
+            &mut clean,
+        );
+        assert!(clean.is_empty(), "{clean:?}");
     }
 
     #[test]
