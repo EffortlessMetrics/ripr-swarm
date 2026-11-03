@@ -500,6 +500,11 @@ impl ClosedChange {
         changed_line: usize,
         before: &str,
     ) -> Option<Self> {
+        // One old line replaces one physical line; a multi-line old text could
+        // build an owner unrelated to the real one.
+        if before.trim().is_empty() || before.contains('\n') {
+            return None;
+        }
         let mut lines: Vec<&str> = definition.lines().collect();
         *lines.get_mut(changed_line)? = before.trim_end();
         Some(Self {
@@ -690,5 +695,11 @@ mod tests {
         assert!(unpinned("Ok(9)"));
         // an old line outside the subset reads no evidence
         assert!(ClosedChange::read(DIV, "checked_div", 4, "    Ok(a.pow(2))").is_none());
+        // a multi-line or empty old text is not one replaced line
+        assert!(
+            ClosedChange::read(DIV, "checked_div", 4, "    let c = 1;\n    Ok(a / b + c)")
+                .is_none()
+        );
+        assert!(ClosedChange::read(DIV, "checked_div", 4, "  ").is_none());
     }
 }
