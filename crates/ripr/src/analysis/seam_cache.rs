@@ -5967,6 +5967,7 @@ mod tests {
         // 1.148 -> 1.149: enclosing cfg gates on a doctest (#12453).
         // 1.149 -> 1.150: a pinned literal neither owner version returns does not credit (#12716).
         // 1.150 -> 1.151: renamed assertion-macro imports name the macro limit (#12779).
+        // 1.151 -> 1.152: a tuple `.0` pin credits the changed `T(e)` tail (#12796).
         // 1.152 -> 1.153: macro-generated tests borrow invocation-site scopes (#12320).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.153");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
@@ -6101,6 +6102,7 @@ mod tests {
         // 0.150 -> 0.151: same enclosing-cfg doctest rule as full 1.149 (#12453).
         // 0.151 -> 0.152: same neither-version literal refusal as full 1.150 (#12716).
         // 0.152 -> 0.153: same renamed-assertion-import limit as full 1.151 (#12779).
+        // 0.153 -> 0.154: same tuple-projection pin as full 1.152 (#12796).
         // 0.154 -> 0.155: same invocation-scope change as full 1.153 (#12320).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.155");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.155");
