@@ -596,13 +596,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&workspace_root);
         std::fs::create_dir_all(&workspace_root).map_err(|err| err.to_string())?;
         let format = OutputFormat::RepoExposureJson;
-        let cold = format
-            .repo_audit_path_disclosure(&workspace_root)
-            .ok_or("missing disclosure")?;
-        assert!(
-            cold.contains("no seam-facts cache present yet"),
-            "cold disclosure: {cold}"
-        );
         let cache = crate::analysis::seam_cache::RepoSeamFactCache::at(&workspace_root);
         // `RIPR_CACHE_DIR` can point the cache at a shared directory; this
         // test writes probe entries, so it only runs against a cache that is
@@ -612,6 +605,13 @@ mod tests {
             let _ = std::fs::remove_dir_all(&workspace_root);
             return Ok(());
         }
+        let cold = format
+            .repo_audit_path_disclosure(&workspace_root)
+            .ok_or("missing disclosure")?;
+        assert!(
+            cold.contains("no seam-facts cache present yet"),
+            "cold disclosure: {cold}"
+        );
         // Leftovers of a skipped or failed store are not entries (#12505
         // review): a publication lock and an empty key directory.
         for (dir, sharded) in cache.entry_dirs() {
