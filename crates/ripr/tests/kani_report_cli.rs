@@ -320,7 +320,8 @@ impl Fixture {
     }
 
     fn report_path(&self, extension: &str) -> PathBuf {
-        self.root.join(format!("target/ripr/reports/kani.{extension}"))
+        self.root
+            .join(format!("target/ripr/reports/kani.{extension}"))
     }
 
     fn close(mut self) -> TestResult {
@@ -402,10 +403,16 @@ impl Fixture {
             .filter_map(|line| line.strip_prefix("    "))
             .collect::<Vec<_>>()
             .join("\n");
-        assert_eq!(embedded, json.trim_end(), "{} Markdown observation", case.id);
-        assert!(markdown.contains(
-            "Import succeeded. Native verification outcomes are listed separately"
-        ));
+        assert_eq!(
+            embedded,
+            json.trim_end(),
+            "{} Markdown observation",
+            case.id
+        );
+        assert!(
+            markdown
+                .contains("Import succeeded. Native verification outcomes are listed separately")
+        );
         assert!(markdown.contains("external, unattested"));
         assert!(markdown.lines().any(|line| {
             line.starts_with("| `")
@@ -487,7 +494,10 @@ fn given_native_capture_inventory_when_imported_then_all_eight_observations_rema
     assert_eq!(provenance["source"]["retained_file"], "proof.rs.txt");
     assert_eq!(provenance["source"]["native_filename"], "proof.rs");
     assert_eq!(provenance["unmatched_selector"]["process_exit_code"], 1);
-    assert_eq!(provenance["unmatched_selector"]["native_export_exists"], false);
+    assert_eq!(
+        provenance["unmatched_selector"]["native_export_exists"],
+        false
+    );
     for case in &CAPTURE_CASES {
         let fixture = Fixture::new(case)?;
         let report = fixture.assert_imported(case)?;
@@ -495,7 +505,10 @@ fn given_native_capture_inventory_when_imported_then_all_eight_observations_rema
         assert_eq!(native["kani_commit"], provenance["producer"]["commit"]);
         assert_eq!(native["kani_commit_dirty"], false);
         let harness = &native["harnesses"][0];
-        if matches!(case.id, "bounded-success" | "insufficient-bound" | "partial") {
+        if matches!(
+            case.id,
+            "bounded-success" | "insufficient-bound" | "partial"
+        ) {
             assert_eq!(harness["resolved_unwind"], 3);
             // This native flag describes automatic argument generation, not
             // whether the proof used a finite loop-unwind bound.
@@ -506,7 +519,10 @@ fn given_native_capture_inventory_when_imported_then_all_eight_observations_rema
                 harness["checks"]["unreachable"],
                 json!(["c_vacuous.assertion.1"])
             );
-            assert_eq!(harness["covers"]["unreachable"], json!(["c_vacuous.cover.1"]));
+            assert_eq!(
+                harness["covers"]["unreachable"],
+                json!(["c_vacuous.cover.1"])
+            );
             assert_eq!(harness["covers"]["satisfied"], json!([]));
         }
         if matches!(case.id, "insufficient-bound" | "partial") {
@@ -629,8 +645,8 @@ fn given_invalid_binding_when_imported_then_no_report_is_written() -> TestResult
 }
 
 #[test]
-fn given_output_aliases_when_importing_then_inputs_sources_and_reports_are_unchanged()
--> TestResult {
+fn given_output_aliases_when_importing_then_inputs_sources_and_reports_are_unchanged() -> TestResult
+{
     let fixture = Fixture::new(&CAPTURE_CASES[0])?;
     fs::create_dir(fixture.root.join("nested"))?;
     for (name, reason) in [
