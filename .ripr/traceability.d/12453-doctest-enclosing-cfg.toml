@@ -1,0 +1,9 @@
+# Reads cfg gates on items that enclose a documented function (#12453) under RIPR-SPEC-0279.
+[[extend]]
+id = "RIPR-SPEC-0279"
+tests = [
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::a_gate_on_an_enclosing_mod_gates_the_example",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::a_gate_on_an_enclosing_impl_gates_the_example",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::a_gate_on_the_mod_declaration_that_reaches_the_file_gates_the_example",
+  "crates/ripr/src/analysis/facts/doctests/tests.rs::a_gate_on_a_declaring_file_or_its_inline_wrapper_gates_the_example",
+]
