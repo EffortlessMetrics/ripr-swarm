@@ -3527,3 +3527,53 @@ red/green pair: a red test that fails before (unrelated assertion downgrades)
 and a green control that must not move (bare-local channel keeps confirming)
 — the pair, not the golden count, is what proves the boundary moved the
 right way.
+
+## 2026-11-03: A stale issue body re-runs a rejected experiment; check all-state PRs first (#11594)
+
+#11594's body still said "Not started; no code written" after PR #11861 had
+measured the nextest-archive experiment and #11968 had removed the steps with
+an explicit stop decision. An agent following the body alone would re-run a
+rejected ~6.5 GiB experiment. Before starting any issue-prescribed
+experiment, check all-state PRs and comments for prior measurement or stop
+decisions; when step outcomes land, reconcile the governing body (done for
+#11594 on 2026-11-03). Evidence: PR #11861 (measurement), PR #11968
+(removal with stop conditions).
+
+## 2026-11-03: Windows-local binary sizes do not transfer to Linux-hosted (#11594)
+
+`x86_64-pc-windows-msvc` splits debuginfo into `.pdb` (local sample: 2.7-5.3
+MB PDB next to 0.7-1.3 MB EXE) while Linux ELF carries DWARF inline, and
+whether PDBs ride in a nextest archive is undecidable from nextest 0.9.132
+help (no include knob; later verified: zero `.pdb` entries in the local
+archive). Treat local numbers as relative-only (binary ranking, zstd curve
+shape); absolute GiB and strip/debug deltas need Linux-hosted confirmation.
+
+## 2026-11-03: Nextest count: partitions are deprecated upstream; hash: won on measured evidence (#12777, #12784)
+
+`count:` is per-binary round-robin (uneven, unstable). Upstream nextest docs
+recommend `slice:` (global round-robin) or `hash:` (stable placement), but a
+same-day lane settled it with stronger evidence: #12777 projected
+count/slice/hash from run 41553610419's real JUnit using nextest 0.9.149's
+pinned partitioner source (`xxh64(test_name) % 4`) — slowest shard slice
+1336 s (the two longest cases stay together), hash 1302 s (they separate),
+count 1589 s — and #12784 qualified native `hash:N/4` on a real hosted run
+(merged 2026-11-03). Do not propose `slice:` over `hash:` without beating
+that measurement. Switch touch list (as executed): `rust-test-shards.yml`,
+`verify_test_shards.rs` + tests (exact-command contract now refuses
+non-hash modes), `rust_gate_workflow_contract.rs`, help/allowlist/docs
+wording; `linux-nextest-shards.yml` (count: timing baseline) and
+`windows-advisory-shards.yml` (different profile) stayed out.
+
+## 2026-11-03: There is no [profile.test] section; test inherits dev (#12726)
+
+`Cargo.toml:171-221` has no `[profile.test]`; test inherits dev
+(`debug=line-tables-only`, `opt-level=0`, default `codegen-units=256`,
+incremental on, strip none) plus `dev.package.*` opt overrides. No
+policy/workflow pins test debuginfo, size, or backtraces, so profile
+experiments need no policy change. Note dev's default 256 codegen units also
+inflates peak rustc memory, linking archive-size work to the #12726
+compiler-memory work. Self-profile attribution (2026-11-03, same head):
+mir_borrowck is diffuse (115 s over 76,536 bodies), mono breadth is 673,763
+instances — no single hotspot, so targeted simplification (option 3) is
+contraindicated as the primary lever; the ~5 GB gap to ≤8 GB must come from
+cfg(test) extraction and/or the crate split.
