@@ -869,7 +869,7 @@ fn snapshot_alias_lookup_is_root_scoped_unique_and_exact_preferred() -> Result<(
     std::os::unix::fs::symlink(&fixture.file, &inner_link)
         .map_err(|error| format!("create in-workspace lexical alias: {error}"))?;
     let inner_uri = file_uri_for_path(&fixture.alias.join("src/linked.rs"))?;
-    snapshot.diagnostics_by_uri.clear();
+    snapshot.diagnostics_by_uri.to_mut().clear();
     snapshot
         .diagnostics_by_uri
         .insert(inner_uri.clone(), vec![first.clone()]);
@@ -997,7 +997,7 @@ fn snapshot_alias_index_refuses_changed_roots_and_same_count_keys() -> Result<()
     std::os::unix::fs::symlink(&fixture.root, &second_alias)
         .map_err(|error| format!("create replacement alias: {error}"))?;
     let replacement = file_uri_for_path(&second_alias.join("src/lib.rs"))?;
-    snapshot.diagnostics_by_uri.clear();
+    snapshot.diagnostics_by_uri.to_mut().clear();
     snapshot
         .diagnostics_by_uri
         .insert(replacement, vec![diagnostic.clone()]);

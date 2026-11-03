@@ -31,6 +31,7 @@ Start here:
     - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/match_arm_positive/input --diff <cwd>/fixtures/match_arm_positive/diff.patch --mode fast probe:src_lib.rs:predicate:c2e7eb02
   ripr context --root <cwd>/fixtures/match_arm_positive/input --diff <cwd>/fixtures/match_arm_positive/diff.patch --mode fast --at probe:src_lib.rs:predicate:c2e7eb02
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)

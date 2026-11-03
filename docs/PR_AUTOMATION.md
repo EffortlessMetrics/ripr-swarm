@@ -205,6 +205,16 @@ actor records its claim:
 - Before every push, run the runbook's writer guard: `git ls-remote` the head
   branch and reconcile a mismatch instead of pushing over it.
 
+Admission reads these claims: the `merge-ready` qualification run's candidate
+admission step fetches the PR's conversation comments (bounded latest-100
+read) and annotates any claim comment still inside the 4-hour youth window —
+detected by the `Converging this PR:` line prefix alone; the prose timestamp
+after the prefix is never parsed, and youth comes from the API-attested
+comment update time. A live claim renders as `live claims:` rows plus a
+`::warning::` in the admission summary and a `concurrent claims:` row in the
+Rust result report. It is observability only: the claim never refuses or
+delays qualification, and a PR with no claim comments annotates nothing.
+
 ### Judging activity
 
 The commits API is the truth signal: `commit.author.date` from
@@ -1102,6 +1112,53 @@ cargo xtask check-pr-shape --body-env RIPR_PR_BODY
 
 Without a body argument, the existing advisory diff-shape behavior is
 unchanged.
+
+## User-text ordering rule for new fixture goldens
+
+A fixture golden is generated output, not authored prose: a new
+`fixtures/**/expected/human.txt` inherits the renderer's live wording at
+whichever commit renders it. The user-text plain-language gate keys its
+`golden-human` rows to that class: per `(path, term)`, a path absent at the
+merge-base has an implicit zero baseline, so every banned line a new golden
+renders violates by design — a rename that keeps old jargon must stay red
+(the safe direction). No baseline edit, PR-body declaration or exemption
+unblocks it: required checks bind to the head SHA, so a body claim is
+mutable after CI, and the zero baseline is what keeps a renamed path honest.
+Ordering, not gate weakening, is the fix.
+
+The detector is local: run `cargo xtask check-user-text` with `main` fetched,
+and it computes the same per-path delta against the merge-base, using the
+working tree as its head side and printing its gate mode (`Gate: golden-human
+rows compare per file against the merge-base ...`). Its fallback line
+`base unavailable: absolute-ceiling check only, no PR-relative no-growth
+established` means the base was unreadable — fetch `main` (deepen a shallow
+clone if needed) and rerun; it is not a pass.
+
+A red `new path, 0 at the merge-base` is a dependency, not a fixture bug. The
+golden cannot be worded around it, and the violation's own repair guidance
+(replace the term with the glossary wording, then re-bless) is main-side
+renderer work. In order:
+
+1. Name the owning reword as a dependency in this PR's body.
+2. Keep the PR as a draft until that reword lands on `main`.
+3. Merge `main` into the branch, re-render, re-bless the golden through the
+   sanctioned Linux route
+   ([validation: golden fixtures](agent-context/validation.md#golden-fixtures-and-the-blessing-platform)),
+   and rerun the detector; the delta is then judged against the new base.
+
+Pending-owner notes (open questions recorded from the investigation, not
+decisions):
+
+- Ownership of the remaining default-screen `discriminator` wording layer:
+  the recorded default is to reopen #12124, whose post-merge review comment
+  already enumerates those surfaces; no open issue owns the list today.
+- The end state for the script-facing gap ID that embeds a banned token on
+  the default view: fixtures for `static_unknown`-family findings render
+  that line today (within ceiling on `main`), nothing in the plain-wording
+  sweep owns a reword, and the candidate resolutions (default-view line
+  removal, a producer-side ID spelling change that breaks script consumers,
+  or a narrow exemption for exactly the labeled line with a negative
+  control) each need an owner ruling.
 
 ## Fix Kinds
 

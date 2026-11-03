@@ -1,0 +1,150 @@
+{
+  "schema_version": "0.1",
+  "kind": "dotnet_evidence_contract_corpus",
+  "spec": "RIPR-SPEC-0393-dotnet-shared-project-and-language-evidence-contracts.md",
+  "description": "Normative acceptance fixtures for .NET project facts and separate C#/F#/VB evidence contracts (#5632).",
+  "cases": [
+    {
+      "id": "multi_targeting_disjoint_contexts",
+      "expect": "accept",
+      "topic": "Multi-targeting retains per-TFM context; no universal claim",
+      "project_facts": {
+        "schema_version": "ripr-dotnet-project-facts.v1",
+        "projects": [
+          {
+            "project_id": "src/App.csproj",
+            "target_frameworks": ["net8.0", "net48"]
+          }
+        ]
+      },
+      "semantic": {
+        "language": "csharp",
+        "probe_context": "src/App.csproj#Debug#net48",
+        "limit_if_universal_claim": "target_framework_unknown"
+      }
+    },
+    {
+      "id": "generated_member_requires_generator_scope",
+      "expect": "accept",
+      "topic": "Source-generated members carry generator scope or source_generator_opaque",
+      "compile_item": {
+        "path": "obj/G/generated.cs",
+        "role": "generated",
+        "generator": "MyGenerator"
+      },
+      "reject": "owner_id_without_generator_scope"
+    },
+    {
+      "id": "csharp_overload_signatures_separate",
+      "expect": "accept",
+      "topic": "Overload credit requires resolved signature",
+      "language": "csharp",
+      "owners": [
+        "csharp:src/Pricing.cs::App.ApplyDiscount(System.Int32)",
+        "csharp:src/Pricing.cs::App.ApplyDiscount(System.Int32,System.String)"
+      ],
+      "call_site": "ApplyDiscount(1)",
+      "reject_oracle_on": "csharp:src/Pricing.cs::App.ApplyDiscount(System.Int32,System.String)"
+    },
+    {
+      "id": "property_probe_excludes_backing_field",
+      "expect": "accept",
+      "topic": "Property change probes use property span, not backing field",
+      "language": "csharp",
+      "changed_span_owner": "property:Total",
+      "reject_probe_span": "field:_total"
+    },
+    {
+      "id": "theory_registration_without_activation",
+      "expect": "accept",
+      "topic": "Theory rows stay registered_only until activation established",
+      "language": "csharp",
+      "test": {
+        "framework": "xunit",
+        "attributes": ["Theory", "InlineData"],
+        "case_kind": "registered_only",
+        "activation": "unknown",
+        "oracle_eligible": false,
+        "limitation": "test_activation_unestablished"
+      }
+    },
+    {
+      "id": "cross_language_call_without_edge",
+      "expect": "accept",
+      "topic": "Project reference alone does not expose cross-language owner",
+      "reference": {
+        "kind": "project",
+        "from": "App.csproj",
+        "to": "Lib.fsproj"
+      },
+      "edge_registered": false,
+      "reject_class": "exposed"
+    },
+    {
+      "id": "fsharp_inference_unresolved",
+      "expect": "accept",
+      "topic": "Unresolved F# inference emits inference_unresolved",
+      "language": "fsharp",
+      "limitation": "inference_unresolved",
+      "reject": "fabricated_owner_id"
+    },
+    {
+      "id": "visualbasic_late_binding",
+      "expect": "accept",
+      "topic": "Late binding under Option Strict Off",
+      "language": "visualbasic",
+      "option_strict": "Off",
+      "limitation": "late_binding",
+      "reject": "static_owner_reach"
+    },
+    {
+      "id": "package_reference_without_lock",
+      "expect": "accept",
+      "topic": "Unresolved package version is unknown, not invented",
+      "reference": {
+        "kind": "package",
+        "id": "Contoso.Api",
+        "version": ""
+      },
+      "currentness": "unknown",
+      "limitation": "package_version_unknown"
+    },
+    {
+      "id": "mstest_language_scoped_identities",
+      "expect": "accept",
+      "topic": "Same MSTest attribute shape preserves language wire code",
+      "tests": [
+        {
+          "language": "visualbasic",
+          "file": "Tests/Unit.vb",
+          "framework": "mstest"
+        },
+        {
+          "language": "csharp",
+          "file": "Tests/Unit.cs",
+          "framework": "mstest"
+        }
+      ],
+      "reject": "merged_language_identity"
+    },
+    {
+      "id": "reject_synthetic_dotnet_semantic_language",
+      "expect": "reject",
+      "topic": "Semantic findings must not use language=dotnet",
+      "finding": {
+        "language": "dotnet"
+      },
+      "error": "invalid_semantic_language_code"
+    },
+    {
+      "id": "reject_unresolved_target_universal_claim",
+      "expect": "reject",
+      "topic": "Unresolved TFM cannot back a universal exposed claim",
+      "claim": {
+        "class": "exposed",
+        "contexts": ["unknown"]
+      },
+      "error": "target_framework_unknown"
+    }
+  ]
+}

@@ -175,12 +175,10 @@ This section completes RIPR-SPEC-0230 for a seam with no related test.
   names `rust_macro_reach_unresolved`. Trait dispatch reads
   `(trait dispatch)`. Owner unresolved reads `(owner unresolved)`.
 - R4. Witness cache. The per-run cache key for the transitive and macro
-  answers is the owner's display path plus its name
-  (`name:{file}::{owner}`), not the name alone. The witness search itself
-  stays name-based (RIPR-SPEC-0114), so the answer for two same-named
-  owners is still the same today (c10); the key only stops a later
-  path-aware search from leaking one owner's witness to another. Trait
-  dispatch answers stay keyed by owner id.
+  answers is the owner's stable function id (`owner:{id}`), not the name alone
+  or file plus name. The witness search is path-aware when same-package rivals
+  share a name (#6621), so each owner keeps its own cached answer (c10). Trait
+  dispatch answers stay keyed by owner id as well.
 - R5. When no witness fires and the owner resolved, reach is `no` with the
   summary "No static test path found for seam owner `X`".
 
@@ -288,10 +286,10 @@ rejected alternative. Any can be reversed later without touching the rest.
 3. **Unresolved owner.** Adopted: reach `opaque` (rule R1), because
    RIPR-SPEC-0230 requires an established negative for `ungripped` and no
    path was searched. Rejected: keep reach `no`.
-4. **Witness cache key.** Adopted: owner file plus name (rule R4).
-   Rejected: name only, which is correct today only because the witness
-   search is name-based. A path-aware witness search is a separate
-   precision change, out of scope here.
+4. **Witness cache key.** Adopted: owner function id (rule R4), so path-aware
+   witness answers for same-named owners do not share a cache entry (#6621).
+   Rejected: name only or file plus name alone, which collides for inline
+   sibling modules in one file.
 5. **Reach limitation category.** Adopted: a typed source tag mapped to
    `opaque_static_evidence`, as RIPR-SPEC-0230 already states. Rejected:
    parse the `(kind)` prefix of the summary, which is still text coupling;

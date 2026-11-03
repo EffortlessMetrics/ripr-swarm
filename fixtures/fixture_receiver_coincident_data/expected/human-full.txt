@@ -59,6 +59,7 @@ Limitation detail
 Next step
   `exact_columns_total` (src/equal_components.rs:14) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/fixture_receiver_coincident_data/input --diff <cwd>/fixtures/fixture_receiver_coincident_data/diff.patch --mode fast probe:src_equal_components.rs:return_value:a3735aac
   ripr context --root <cwd>/fixtures/fixture_receiver_coincident_data/input --diff <cwd>/fixtures/fixture_receiver_coincident_data/diff.patch --mode fast --at probe:src_equal_components.rs:return_value:a3735aac
 
@@ -109,6 +110,7 @@ Limitation detail
 Next step
   `exact_single_total` (src/single_product_sum.rs:14) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/fixture_receiver_coincident_data/input --diff <cwd>/fixtures/fixture_receiver_coincident_data/diff.patch --mode fast probe:src_single_product_sum.rs:return_value:5eeeabdd
   ripr context --root <cwd>/fixtures/fixture_receiver_coincident_data/input --diff <cwd>/fixtures/fixture_receiver_coincident_data/diff.patch --mode fast --at probe:src_single_product_sum.rs:return_value:5eeeabdd
 
@@ -159,5 +161,6 @@ Limitation detail
 Next step
   `exact_zero_total` (src/zero_product_sum.rs:14) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/fixture_receiver_coincident_data/input --diff <cwd>/fixtures/fixture_receiver_coincident_data/diff.patch --mode fast probe:src_zero_product_sum.rs:return_value:e0eed6a5
   ripr context --root <cwd>/fixtures/fixture_receiver_coincident_data/input --diff <cwd>/fixtures/fixture_receiver_coincident_data/diff.patch --mode fast --at probe:src_zero_product_sum.rs:return_value:e0eed6a5
