@@ -603,57 +603,130 @@ pub(crate) const DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE: &str =
 /// actionability, and sits outside the delivery budget.
 pub(crate) const DIAGNOSTIC_PREVIEW_WITHHELD_CODE: &str = "ripr-diagnostic-preview-withheld";
 
-const fn closed_vocabulary_is_populated() -> bool {
-    CatalogRecoveryKind::InspectEvidence.as_str().len()
-        + CatalogRecoveryKind::InspectFullProfile.as_str().len()
-        + CatalogRecoveryKind::OpenFixSite.as_str().len()
-        + CatalogRecoveryKind::RefreshAnalysis.as_str().len()
-        + CatalogRecoveryKind::Retry.as_str().len()
-        + CatalogRecoveryKind::SelectWorkspaceRoot.as_str().len()
-        + CatalogRecoveryKind::RepairConfiguration.as_str().len()
-        + CatalogRecoveryKind::RetrieveOverflow.as_str().len()
-        + CatalogRecoveryKind::RunVerification.as_str().len()
-        + CatalogRecoveryKind::RecordReceipt.as_str().len()
-        + CatalogUnavailableReason::NoBoundedAction.as_str().len()
-        + CatalogUnavailableReason::MissingProducerEvidence
-            .as_str()
-            .len()
-        + CatalogUnavailableReason::UnsafeWithoutRefresh
-            .as_str()
-            .len()
-        + CatalogProfileVisibility::ActionableAndFull.as_str().len()
-        + CatalogProfileVisibility::FullOnly.as_str().len()
-        + CatalogProfileVisibility::Always.as_str().len()
-        + CatalogSeveritySource::AdvisoryPolicy.as_str().len()
-        + CatalogSeveritySource::SeverityConfig.as_str().len()
-        + CatalogSeveritySource::DeliveryLimitation.as_str().len()
-        + CatalogDefaultSeverity::Warning.as_str().len()
-        + CatalogDefaultSeverity::Information.as_str().len()
-        + CatalogDefaultSeverity::Hint.as_str().len()
-        + CatalogPrecondition::CurrentSnapshot.as_str().len()
-        + CatalogPrecondition::CompletedResult.as_str().len()
-        + CatalogNonClaim::RuntimeProof.as_str().len()
-        + CatalogNonClaim::TestAdequacy.as_str().len()
-        + CatalogNonClaim::RepairAuthorization.as_str().len()
-        + CatalogNonClaim::CleanWorkspace.as_str().len()
-        + CatalogNonClaim::SupportPromotion.as_str().len()
-        + if CatalogClientView::FULL.supports_diagnostic_data {
-            1
-        } else {
-            0
+/// A closed vocabulary is usable on the wire only when every label is
+/// non-empty snake_case and no two labels collide. Takes the label list so a
+/// negative test can feed a violating vocabulary.
+const fn labels_are_distinct_snake_case(labels: &[&str]) -> bool {
+    let mut i = 0;
+    while i < labels.len() {
+        let bytes = labels[i].as_bytes();
+        if bytes.is_empty() {
+            return false;
         }
-        + if CatalogClientView::MINIMAL.supports_diagnostic_data {
-            0
-        } else {
-            1
+        let mut k = 0;
+        while k < bytes.len() {
+            let b = bytes[k];
+            if !(b.is_ascii_lowercase() || b == b'_') {
+                return false;
+            }
+            // No leading, trailing or doubled underscore.
+            if b == b'_' && (k == 0 || k + 1 == bytes.len() || bytes[k + 1] == b'_') {
+                return false;
+            }
+            k += 1;
         }
-        > 0
+        let mut j = i + 1;
+        while j < labels.len() {
+            if bytes_equal(bytes, labels[j].as_bytes()) {
+                return false;
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+    true
+}
+
+const fn bytes_equal(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+const RECOVERY_KIND_LABELS: [&str; 10] = [
+    CatalogRecoveryKind::InspectEvidence.as_str(),
+    CatalogRecoveryKind::InspectFullProfile.as_str(),
+    CatalogRecoveryKind::OpenFixSite.as_str(),
+    CatalogRecoveryKind::RefreshAnalysis.as_str(),
+    CatalogRecoveryKind::Retry.as_str(),
+    CatalogRecoveryKind::SelectWorkspaceRoot.as_str(),
+    CatalogRecoveryKind::RepairConfiguration.as_str(),
+    CatalogRecoveryKind::RetrieveOverflow.as_str(),
+    CatalogRecoveryKind::RunVerification.as_str(),
+    CatalogRecoveryKind::RecordReceipt.as_str(),
+];
+const UNAVAILABLE_REASON_LABELS: [&str; 3] = [
+    CatalogUnavailableReason::NoBoundedAction.as_str(),
+    CatalogUnavailableReason::MissingProducerEvidence.as_str(),
+    CatalogUnavailableReason::UnsafeWithoutRefresh.as_str(),
+];
+const VISIBILITY_LABELS: [&str; 3] = [
+    CatalogProfileVisibility::ActionableAndFull.as_str(),
+    CatalogProfileVisibility::FullOnly.as_str(),
+    CatalogProfileVisibility::Always.as_str(),
+];
+const SEVERITY_SOURCE_LABELS: [&str; 3] = [
+    CatalogSeveritySource::AdvisoryPolicy.as_str(),
+    CatalogSeveritySource::SeverityConfig.as_str(),
+    CatalogSeveritySource::DeliveryLimitation.as_str(),
+];
+const DEFAULT_SEVERITY_LABELS: [&str; 3] = [
+    CatalogDefaultSeverity::Warning.as_str(),
+    CatalogDefaultSeverity::Information.as_str(),
+    CatalogDefaultSeverity::Hint.as_str(),
+];
+const PRECONDITION_LABELS: [&str; 2] = [
+    CatalogPrecondition::CurrentSnapshot.as_str(),
+    CatalogPrecondition::CompletedResult.as_str(),
+];
+const NON_CLAIM_LABELS: [&str; 5] = [
+    CatalogNonClaim::RuntimeProof.as_str(),
+    CatalogNonClaim::TestAdequacy.as_str(),
+    CatalogNonClaim::RepairAuthorization.as_str(),
+    CatalogNonClaim::CleanWorkspace.as_str(),
+    CatalogNonClaim::SupportPromotion.as_str(),
+];
+
+/// Every closed vocabulary has distinct, non-empty snake_case labels and the
+/// client views still differ on optional presentation. Evaluated at compile
+/// time by [`catalog`]; a collapsed or duplicated label fails the build.
+const fn closed_vocabulary_is_well_formed() -> bool {
+    labels_are_distinct_snake_case(&RECOVERY_KIND_LABELS)
+        && labels_are_distinct_snake_case(&UNAVAILABLE_REASON_LABELS)
+        && labels_are_distinct_snake_case(&VISIBILITY_LABELS)
+        && labels_are_distinct_snake_case(&SEVERITY_SOURCE_LABELS)
+        && labels_are_distinct_snake_case(&DEFAULT_SEVERITY_LABELS)
+        && labels_are_distinct_snake_case(&PRECONDITION_LABELS)
+        && labels_are_distinct_snake_case(&NON_CLAIM_LABELS)
+        && CatalogClientView::FULL.supports_diagnostic_data
+        && !CatalogClientView::MINIMAL.supports_diagnostic_data
+}
+
+/// An entry's recovery declaration is coherent when every listed kind is
+/// allowed, no kind repeats, and an empty list carries a typed unavailable
+/// reason while a non-empty list carries none.
+pub(crate) fn recovery_is_coherent(entry: &CatalogEntry) -> bool {
+    let kinds = entry.recovery_kinds;
+    for (index, kind) in kinds.iter().enumerate() {
+        if allow_recovery(entry, *kind).is_none() || kinds[..index].contains(kind) {
+            return false;
+        }
+    }
+    kinds.is_empty() == entry.unavailable_reason.is_some()
 }
 
 /// The governed catalog of diagnostic codes.
 pub(crate) fn catalog() -> &'static [CatalogEntry] {
     const {
-        assert!(closed_vocabulary_is_populated());
+        assert!(closed_vocabulary_is_well_formed());
     }
     CATALOG
 }
@@ -669,10 +742,10 @@ pub(crate) fn resolve(code: &str) -> Option<&'static CatalogEntry> {
 fn emit_catalog_code(code: &str) -> Option<String> {
     let entry = resolve(code)?;
     let projection = metadata_for(code)?;
-    // Fail closed if an entry lists a recovery it would not allow — the
-    // constructor must not emit a code whose catalog recovery is incoherent.
-    for kind in projection.recovery_kinds {
-        allow_recovery(entry, *kind)?;
+    // Fail closed if the entry's recovery declaration is incoherent: the
+    // constructor must not emit a code whose catalog recovery is malformed.
+    if !recovery_is_coherent(entry) {
+        return None;
     }
     Some(projection.code.to_string())
 }
@@ -837,6 +910,62 @@ mod tests {
             metadata_for("ripr-bogus-code").is_none(),
             "unknown codes must not receive guessed catalog metadata"
         );
+    }
+
+    #[test]
+    fn vocabulary_check_rejects_empty_duplicate_and_non_snake_labels() {
+        assert!(labels_are_distinct_snake_case(&["a_b", "c"]));
+        assert!(!labels_are_distinct_snake_case(&["a", ""]));
+        assert!(!labels_are_distinct_snake_case(&["a", "b", "a"]));
+        assert!(!labels_are_distinct_snake_case(&["Upper"]));
+        assert!(!labels_are_distinct_snake_case(&["has-dash"]));
+        assert!(!labels_are_distinct_snake_case(&["_lead"]));
+        assert!(!labels_are_distinct_snake_case(&["trail_"]));
+        assert!(!labels_are_distinct_snake_case(&["dou__ble"]));
+        assert!(closed_vocabulary_is_well_formed());
+    }
+
+    #[test]
+    fn recovery_check_rejects_incoherent_entries() {
+        let meta = |kinds: &'static [CatalogRecoveryKind],
+                    reason: Option<CatalogUnavailableReason>| CatalogMeta {
+            actionability: FixInstructionState::InspectOnly,
+            recovery_kinds: kinds,
+            unavailable_reason: reason,
+            default_visibility: CatalogProfileVisibility::Always,
+            severity_source: CatalogSeveritySource::AdvisoryPolicy,
+            default_severity: CatalogDefaultSeverity::Hint,
+            preconditions: &[],
+            non_claims: &[],
+        };
+        let ok = entry("x", meta(&[CatalogRecoveryKind::Retry], None));
+        assert!(recovery_is_coherent(&ok));
+        let none_typed = entry(
+            "x",
+            meta(&[], Some(CatalogUnavailableReason::NoBoundedAction)),
+        );
+        assert!(recovery_is_coherent(&none_typed));
+        let none_untyped = entry("x", meta(&[], None));
+        assert!(!recovery_is_coherent(&none_untyped));
+        let both = entry(
+            "x",
+            meta(
+                &[CatalogRecoveryKind::Retry],
+                Some(CatalogUnavailableReason::NoBoundedAction),
+            ),
+        );
+        assert!(!recovery_is_coherent(&both));
+        let duplicate = entry(
+            "x",
+            meta(
+                &[CatalogRecoveryKind::Retry, CatalogRecoveryKind::Retry],
+                None,
+            ),
+        );
+        assert!(!recovery_is_coherent(&duplicate));
+        for catalogued in catalog() {
+            assert!(recovery_is_coherent(catalogued), "{}", catalogued.code);
+        }
     }
 
     #[test]
