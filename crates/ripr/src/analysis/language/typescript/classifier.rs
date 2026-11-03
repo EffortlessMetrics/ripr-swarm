@@ -752,13 +752,18 @@ fn ts_effect_single_declaration_initializer(test: &TypeScriptTest, ident: &str) 
 /// that is affirmatively foreign: the callee names neither the owner, an
 /// admitted alias, nor a changed token (whole-identifier,
 /// [`ts_references_identifier`]), and the test never binds it — no body-local
-/// declaration ([`local_identifier_declared_in_test_body`]) and no
-/// enclosing-scope binding (`scope_bindings`).
+/// declaration ([`local_identifier_declared_in_test_body`]), no
+/// enclosing-scope binding (`scope_bindings`), and no import of that name
+/// (`imports_in_file`).
+///
+/// An import binds the callee in the test file, so it is never affirmative
+/// foreign evidence: a renamed same-named import from another module is the
+/// classic effect-channel shape (`support.emitReceipt as discount` reading
+/// the captured log), and static reading cannot see through it
+/// (`unrelated_or_shadowed_imports_remain_real_effect_observers`).
 ///
 /// Narrow by construction: member calls (`logger.format(...)`), bare
-/// identifiers, and calls whose callee the test binds keep confirming. An
-/// import resolving the callee to another module is itself foreign evidence,
-/// so `imports_in_file` never withholds the downgrade.
+/// identifiers, and calls whose callee the test binds keep confirming.
 fn ts_effect_call_callee_is_foreign(
     expr: &str,
     owner_names: &[&str],
@@ -774,6 +779,13 @@ fn ts_effect_call_callee_is_foreign(
         || changed_tokens
             .iter()
             .any(|tok| ts_references_identifier(callee, tok))
+    {
+        return false;
+    }
+    if test
+        .imports_in_file
+        .iter()
+        .any(|import| import.local == callee)
     {
         return false;
     }

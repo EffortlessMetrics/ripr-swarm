@@ -11123,6 +11123,122 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
     Ok(())
 }
 
+/// Import-bound callee control (#11244 staged-(b) narrowing,
+/// `unrelated_or_shadowed_imports_remain_real_effect_observers`): an
+/// observed call whose callee the test file IMPORTS keeps confirming, even
+/// when the import comes from another module under another name. A renamed
+/// same-named import (`support.emitReceipt as discount`) reading the
+/// captured log is the classic effect-channel shape, and static reading
+/// cannot see through it — so an import binding is never affirmative
+/// foreign evidence. The test calls the owner (`emitReceipt(100)`) and
+/// asserts the imported call (`expect(discount()).toBe(900)`); the finding
+/// MUST stay `class:exposed, discriminate:yes`.
+#[test]
+fn ts_sideeffect_imported_callee_observation_stays_exposed() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "emitReceipt".to_string(),
+        file: PathBuf::from("src/receipt.ts"),
+        start_line: 1,
+        end_line: 10,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        commonjs_default_export: false,
+        commonjs_whole_function: false,
+        default_object_member: false,
+        module_entries: Vec::new(),
+        arity: None,
+        params: Vec::new(),
+        source_text: None,
+        imports: Default::default(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+    };
+    let test = TypeScriptTest {
+        name: "audit contract".to_string(),
+        local_name: "audit contract".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/receipt.test.ts"),
+        line: 1,
+        reach_body_text: None,
+        body_text: "emitReceipt(100);\nexpect(discount()).toBe(900);".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            // Import-bound callee from another module: not owner, not alias,
+            // but bound — never affirmative foreign evidence.
+            observed_expression: Some("discount()".to_string()),
+            expected_value_or_variant: Some("900".to_string()),
+            has_dynamic_matcher_arg: false,
+            dynamic_expected_text: None,
+            oracle_confidence: OracleConfidence::High,
+            rendered_call: None,
+            loose_number_expected: false,
+            expected_object_const: None,
+            compares_reference_identity: false,
+        }],
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
+        factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
+        imports_in_file: vec![
+            TypeScriptImport {
+                source: "../src/receipt".to_string(),
+                imported: Some("emitReceipt".to_string()),
+                local: "emitReceipt".to_string(),
+                namespace: false,
+            },
+            TypeScriptImport {
+                source: "../src/support".to_string(),
+                imported: Some("emitReceipt".to_string()),
+                local: "discount".to_string(),
+                namespace: false,
+            },
+        ]
+        .into(),
+    };
+    // Changed line: SideEffect (console.log call)
+    let finding = classify_change(
+        Path::new("src/receipt.ts"),
+        4,
+        "    console.log(\"audit\", amount * 9);",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // MUST stay exposed — the imported callee may read the effect channel.
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "expected Exposed (import-bound callee keeps confirmation), got {:?}",
+        finding.class
+    );
+    assert!(
+        matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "expected discriminate==Yes, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    Ok(())
+}
+
 /// Effect-seam mirror of `ts_returnvalue_unrelated_strong_assertion_downgrades`
 /// (#11244 staged-(b) first slice): a SideEffect seam (`console.log` change)
 /// whose only strong assertion observes an affirmatively FOREIGN call —
