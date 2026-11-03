@@ -1070,7 +1070,7 @@ fn resolve_multi_caller(
     if callers.len() > MAX_MULTI_CALLER_BINDINGS {
         return declined("");
     }
-    let mut reached: Vec<HelperChain> = Vec::new();
+    let mut reached: Vec<(HelperChain, bool)> = Vec::new();
     for caller in callers {
         let chain = chain_through_caller(caller, callee_name, index, workspace_complete, visited);
         let mut entries: Vec<String> = vec![caller.name.clone()];
@@ -1084,10 +1084,23 @@ fn resolve_multi_caller(
         entries.extend(above.iter().map(|hop| hop.caller.name.clone()));
         // A test that calls the callee itself reaches it by a path of its
         // own, so it counts as reached (a test is never a hop).
-        if caller.source_role.registers_executable_test() || tests_call_any(index, &entries) {
-            reached.push(chain);
+        let is_test = caller.source_role.registers_executable_test();
+        if is_test || tests_call_any(index, &entries) {
+            reached.push((chain, is_test));
         }
     }
+    // #11401: a test that calls the owner directly reaches it by a path of
+    // its own and says nothing about which function a test in another crate
+    // enters through. When exactly one non-test caller is reached and its
+    // chain crosses a crate edge, that chain stands; the direct test keeps its
+    // own relation and rows. Any other mix stays ambiguous, as before.
+    let mut non_test = reached.iter().filter(|(_, is_test)| !is_test);
+    if let (Some((chain, _)), None) = (non_test.next(), non_test.next())
+        && chain.hops.iter().any(|hop| hop.crate_qualifier.is_some())
+    {
+        return chain.clone();
+    }
+    let mut reached: Vec<HelperChain> = reached.into_iter().map(|(chain, _)| chain).collect();
     match reached.len() {
         0 => declined("; no related test reaches any of them"),
         1 => reached.remove(0),
