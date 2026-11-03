@@ -204,6 +204,7 @@ jobs:
       claim: ${{ steps.candidate.outputs.claim }}
       acceptance_delta: ${{ steps.candidate.outputs.acceptance_delta }}
       competing_prs: ${{ steps.candidate.outputs.competing_prs }}
+      concurrent_claims: ${{ steps.candidate.outputs.concurrent_claims }}
       changed_files: ${{ steps.candidate.outputs.changed_files }}
       changed_lines: ${{ steps.candidate.outputs.changed_lines }}
       labels: ${{ steps.entry.outputs.labels }}
@@ -739,6 +740,7 @@ jobs:
           ADMISSION_CLAIM: ${{ needs.admission.outputs.claim }}
           ADMISSION_ACCEPTANCE_DELTA: ${{ needs.admission.outputs.acceptance_delta }}
           ADMISSION_COMPETING_PRS: ${{ needs.admission.outputs.competing_prs }}
+          ADMISSION_CONCURRENT_CLAIMS: ${{ needs.admission.outputs.concurrent_claims }}
           ADMISSION_CHANGED_FILES: ${{ needs.admission.outputs.changed_files }}
           ADMISSION_CHANGED_LINES: ${{ needs.admission.outputs.changed_lines }}
           TARGET: ${{ needs.route.outputs.router_target }}
@@ -839,7 +841,7 @@ jobs:
           fi
           echo "### Ripr Rust Small Result" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "github tests:$GITHUB_TESTS_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "runner command exit code:$RUNNER_QUERY_EXIT_CODE" "runner query attempts:$RUNNER_QUERY_ATTEMPTS" "runner query last HTTP status:$RUNNER_QUERY_HTTP" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
+          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "concurrent claims:$ADMISSION_CONCURRENT_CLAIMS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "github tests:$GITHUB_TESTS_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "runner command exit code:$RUNNER_QUERY_EXIT_CODE" "runner query attempts:$RUNNER_QUERY_ATTEMPTS" "runner query last HTTP status:$RUNNER_QUERY_HTTP" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
             echo "- ${row%%:*}: \`${row#*:}\`" >> "$GITHUB_STEP_SUMMARY"
           done
           [ "$status" = "pass" ]
