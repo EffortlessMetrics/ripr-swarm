@@ -10,7 +10,7 @@ mod test_case_arrow;
 mod text;
 
 pub(in crate::analysis) use calls::path_value_map::{
-    IteratorChain, parse_chain_at, parse_iterator_chain,
+    IteratorChain, integer_element, parse_chain_at, parse_iterator_chain,
 };
 pub(crate) use calls::{
     MAX_CALL_FACTS_PER_LINE, attribute_ranges, call_name_bounds_before_paren, extract_call_facts,

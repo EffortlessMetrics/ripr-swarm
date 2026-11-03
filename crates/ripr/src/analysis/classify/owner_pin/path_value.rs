@@ -6,7 +6,9 @@ use crate::analysis::classify::indirect_owner::{
     names_owner_value, owner_path_names, qualifier_may_name_owner,
 };
 use crate::analysis::extract::mask_comments_and_strings;
-use crate::analysis::extract::{IteratorChain, parse_chain_at, parse_iterator_chain};
+use crate::analysis::extract::{
+    IteratorChain, integer_element, parse_chain_at, parse_iterator_chain,
+};
 use crate::analysis::facts::{FunctionFact, RustIndex, TestSummary};
 use crate::analysis::test_grip_evidence::fold_owner_body_at;
 
@@ -76,22 +78,6 @@ fn value_path_names_owner(
     };
     mentions_map(path)
         || (path.contains("::") && mentions_map(path.rsplit("::").next().unwrap_or(path)))
-}
-
-fn integer_element(text: &str) -> Option<i128> {
-    let text = text.trim();
-    let negative = text.starts_with('-');
-    let digits: String = text
-        .trim_start_matches('-')
-        .chars()
-        .take_while(|ch| ch.is_ascii_digit() || *ch == '_')
-        .filter(|ch| *ch != '_')
-        .collect();
-    if digits.is_empty() {
-        return None;
-    }
-    let value: i128 = digits.parse().ok()?;
-    Some(if negative { -value } else { value })
 }
 
 /// Whether the owner name at `name_at` sits in a bounded `.map(owner)` chain

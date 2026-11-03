@@ -161,18 +161,30 @@ fn simple_value_path(path: &str) -> bool {
     })
 }
 
-fn integer_element(text: &str) -> Option<i128> {
+/// A whole element read as a decimal integer literal: digits and `_`
+/// separators, an optional leading `-`, and an optional integer type suffix.
+/// Anything else (`0x10`, `1e3`, `1.5`, `2 * 3`) is not read, so the owner is
+/// never folded on an input the test did not write.
+pub(in crate::analysis) fn integer_element(text: &str) -> Option<i128> {
+    const SUFFIXES: [&str; 12] = [
+        "i128", "u128", "isize", "usize", "i16", "i32", "i64", "u16", "u32", "u64", "i8", "u8",
+    ];
     let text = text.trim();
-    let negative = text.starts_with('-');
-    let digits: String = text
-        .trim_start_matches('-')
-        .chars()
-        .take_while(|ch| ch.is_ascii_digit() || *ch == '_')
-        .filter(|ch| *ch != '_')
-        .collect();
-    if digits.is_empty() {
+    let (negative, body) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest.trim_start()),
+        None => (false, text),
+    };
+    let numeric = SUFFIXES
+        .iter()
+        .find_map(|suffix| body.strip_suffix(suffix))
+        .unwrap_or(body);
+    if !numeric.starts_with(|ch: char| ch.is_ascii_digit()) {
         return None;
     }
+    if !numeric.chars().all(|ch| ch.is_ascii_digit() || ch == '_') {
+        return None;
+    }
+    let digits: String = numeric.chars().filter(|ch| *ch != '_').collect();
     let value: i128 = digits.parse().ok()?;
     Some(if negative { -value } else { value })
 }
@@ -272,6 +284,18 @@ mod tests {
             literal_sequence("[1, 2] "),
             Some(vec!["1".to_string(), "2".to_string()])
         );
+    }
+
+    #[test]
+    fn integer_elements_are_whole_decimal_literals_only() {
+        assert_eq!(integer_element("1_000"), Some(1000));
+        assert_eq!(integer_element("-7"), Some(-7));
+        assert_eq!(integer_element("1u32"), Some(1));
+        for unread in [
+            "0x10", "1e3", "1.5", "2 * 3", "1 << 3", "1u3", "", "-", "u8",
+        ] {
+            assert_eq!(integer_element(unread), None, "{unread}");
+        }
     }
 
     #[test]
