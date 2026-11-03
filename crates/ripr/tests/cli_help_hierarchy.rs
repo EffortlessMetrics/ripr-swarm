@@ -47,7 +47,6 @@ fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
     for (value, suggestion) in [
         ("githb", " Did you mean `github`?"),
         ("githbu", " Did you mean `github`?"),
-        ("gitlab", " Did you mean `github`?"),
         ("gitlab-ci", ""),
         ("zzzzzzzzzzzz", ""),
     ] {
@@ -56,10 +55,17 @@ fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
         assert!(output.stdout.is_empty(), "provider {value:?}: {output:?}");
         assert_eq!(
             String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
-            format!("ripr: unknown init --ci provider {value:?}.{suggestion} Accepted: github.\n"),
+            format!(
+                "ripr: unknown init --ci provider {value:?}.{suggestion} Accepted: github, gitlab.\n"
+            ),
             "provider {value:?}"
         );
     }
+    let gitlab = run_ripr(&["init", "--ci", "gitlab", "--dry-run", "--force"])?;
+    assert!(gitlab.status.success(), "{gitlab:?}");
+    let stdout = String::from_utf8_lossy(&gitlab.stdout);
+    assert!(stdout.contains(".gitlab-ci.yml"), "{stdout}");
+    assert!(stdout.contains("allow_failure: true"), "{stdout}");
     let missing = run_ripr(&["init", "--ci"])?;
     assert_eq!(missing.status.code(), Some(2));
     assert!(missing.stdout.is_empty());
@@ -1751,6 +1757,7 @@ const CHECK_REFERENCE_FORMATS: &[&str] = &[
     "agent-seam-packets-json",
 ];
 const CHECK_REFERENCE_ENVIRONMENT: &[&str] = &[
+    "RIPR_MAX_DIFF_CHANGED_LINES",
     "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
     "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES",
     "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES",

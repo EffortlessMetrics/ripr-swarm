@@ -144,6 +144,8 @@ pub(crate) struct CallIdentityMemos {
     /// Test-only scaling probe: repeated probes must not rescan.
     #[cfg(test)]
     rebound_scans: std::sync::atomic::AtomicUsize,
+    /// #8917: whether a type name carries a unique workspace `Default` derive.
+    pub(in crate::analysis) type_derives_default: Mutex<BTreeMap<String, bool>>,
 }
 
 impl CallIdentityMemos {
@@ -2834,6 +2836,16 @@ pub(super) fn name_bound_outside_owner_crate(
             // integration test, a binary) they bind that crate's items.
             let crate_relative = matches!(first.as_str(), "crate" | "self");
             if crate_relative && !in_owner_crate {
+                if first == "self"
+                    && super::owner_pin::integration_test_relative_import_delivers_entry(
+                        index,
+                        test,
+                        &path.join("::"),
+                        owner,
+                    )
+                {
+                    return false;
+                }
                 return true;
             }
             first != "crate"

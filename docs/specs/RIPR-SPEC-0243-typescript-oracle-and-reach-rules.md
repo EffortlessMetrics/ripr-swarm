@@ -441,7 +441,10 @@ row, `row[key]`, `row?.key`, an assignment, a declaration or shadowing
 parameter is refused. Every `row.key` read, scalar or container, resolves only when the
 callback is exactly one `expect(..).matcher(..)` statement and the read is
 a direct argument of the call that is the whole argument of `expect(` or of
-the matcher call. A second statement, or a read wrapped in parentheses, a
+the matcher call. A complete `//` or `/* */` comment before, after or
+between the parts of that one statement is not code and does not count as a
+second statement (#12494); a comment inside the call's brackets, or an
+unterminated one, still refuses. A second statement, or a read wrapped in parentheses, a
 comma list, `void`, `delete`, an array, an operator, a further member
 (`t.out.toString()`, `(t.input).pop()`) or an argument of any other call
 (`Object.assign(t.input, ..)`, `fix(t.input)`) refuses the table. A
@@ -2181,6 +2184,19 @@ keys); do not take the next number.
   statement in the loop). `app/tests/typescript_table_row_packets.rs` runs the
   production `check` path; fixtures `ts_table_row_expected_credit` and
   `ts_table_row_expected_refused` pin the credited and refused sets.
+
+- #12253 (rule 11, quoted words): the table-row text guard refuses `eval`,
+  `with`, `Function`, `arguments` and `this` as code. A text that parses is
+  judged on its syntax tree (identifiers, property names, `this`,
+  `new.target`, `with`), so the same words in a title, string or comment no
+  longer unresolve the table; a text that does not parse keeps the
+  whole-word check, which refuses them anywhere. A computed member key
+  (`globalThis["eval"]`, `globalThis["eval" + ""]`) is a route when a string
+  or template text inside it holds one of the words. `for...of` tables keep
+  the raw-text statement-list and loop-body guards (#12572). Unit
+  `row_text_guard_refuses_hidden_mutation_routes_outside_quotes`; fixture
+  `ts_table_row_quoted_words_credited` pins a credited quoted-word title and a
+  refused real `this`.
 
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row
