@@ -952,6 +952,11 @@ fn probe_records_ignored_and_deleted_snapshot_inputs() -> Result<(), String> {
         "test/__snapshots__/price.test.ts.snap",
         "// Jest Snapshot v1\n\nexports[`price 1`] = `1`;\n",
     )?;
+    // The directory is ignored, so the tracked snapshot needs a forced add.
+    git(
+        &repo.0,
+        &["add", "-f", "test/__snapshots__/price.test.ts.snap"],
+    )?;
     commit_all(&repo.0, "tracked snap")?;
     write(
         &repo.0,
