@@ -21190,6 +21190,46 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0407"
+name = "A call spelled through a manifest-resolved workspace dependency carries reach and the boundary input across the crate edge, and every other shape keeps the earlier answer"
+spec = "docs/specs/RIPR-SPEC-0407-rust-cross-crate-call-reach.md"
+tests = [
+  "crates/ripr/tests/cross_crate_reach.rs::boundary_pin_through_another_crates_function_is_noticed_by_check",
+  "crates/ripr/tests/cross_crate_reach.rs::narrow_check_modes_that_leave_the_test_out_claim_nothing",
+  "crates/ripr/tests/cross_crate_reach.rs::bare_repair_keeps_its_earlier_refusal_for_the_audit_case",
+  "crates/ripr/tests/cross_crate_reach.rs::an_argument_the_intermediate_function_changes_is_not_noticed",
+  "crates/ripr/tests/cross_crate_reach.rs::a_result_the_intermediate_function_changes_is_not_noticed",
+  "crates/ripr/tests/cross_crate_reach.rs::a_loose_check_is_not_an_exact_pin",
+  "crates/ripr/tests/cross_crate_reach.rs::an_input_off_the_boundary_is_not_noticed",
+  "crates/ripr/tests/cross_crate_reach.rs::a_renamed_dependency_keeps_the_earlier_no_path_answer",
+  "crates/ripr/tests/cross_crate_reach.rs::a_dev_dependency_edge_keeps_the_earlier_no_path_answer",
+  "crates/ripr/tests/cross_crate_reach.rs::a_same_named_function_in_another_crate_keeps_the_earlier_no_path_answer",
+  "crates/ripr/tests/cross_crate_reach.rs::a_bare_import_of_the_function_is_not_followed_yet",
+  "crates/ripr/tests/cross_crate_reach.rs::a_local_module_named_like_the_dependency_keeps_the_earlier_no_path_answer",
+  "crates/ripr/tests/cross_crate_reach.rs::a_call_that_is_not_the_whole_tail_is_not_followed_as_a_forward",
+  "crates/ripr/tests/cross_crate_reach.rs::a_wrapper_in_the_same_member_package_is_noticed_through_its_own_crate_name",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::a_normal_path_dependency_names_the_library",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::build_dependency_renames_and_other_packages_name_nothing",
+  "crates/ripr/src/analysis/classify/helper_transfer/cross_crate_hop.rs::tests::only_an_unrestricted_pub_fn_at_the_file_root_is_nameable_by_the_crate_path",
+  "crates/ripr/src/analysis/classify/helper_transfer/cross_crate_hop.rs::tests::only_a_sole_call_spelled_through_the_crate_name_binds",
+  "crates/ripr/src/analysis/classify/helper_transfer/cross_crate_hop.rs::tests::a_module_named_like_the_crate_is_seen_but_a_longer_name_is_not",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/classify/helper_transfer/cross_crate_hop.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
+  "crates/ripr/src/analysis/facts/member_crates.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0407-rust-cross-crate-call-reach.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0360"
 name = "A changed update of a zero-initialized loop accumulator the owner returns is credited only by a pin that walks a non-empty literal input and pins a nonzero total"
 spec = "docs/specs/RIPR-SPEC-0360-rust-loop-accumulator-update.md"
