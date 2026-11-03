@@ -1904,6 +1904,28 @@ fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Re
     Ok(staging.strip_prefix(stem).is_some_and(is_staging_suffix))
 }
 
+/// True when `directory` holds a `<name>.tmp-<pid>-<nonce>` staging name, the
+/// residue of a publication stopped between its link and its removal. A
+/// directory that cannot be read counts as having residue: currentness fails
+/// closed.
+pub(crate) fn directory_has_staged_publication_residue(directory: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        match fs::read_dir(directory) {
+            Ok(entries) => entries.into_iter().any(|entry| match entry {
+                Ok(entry) => entry.file_name().to_str().is_none_or(is_staging_name),
+                Err(_) => true,
+            }),
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        false
+    }
+}
+
 #[cfg(unix)]
 fn is_staging_name(name: &str) -> bool {
     name.rsplit_once(".tmp-")
@@ -5064,6 +5086,24 @@ mod tests {
             &fixture.root,
             "target/ripr/artifacts/after.check-findings.tmp-441-3"
         )?);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_publication_residue_is_reported_for_currentness() -> Result<(), String> {
+        let fixture = git_fixture("staged-publication-residue")?;
+        let dir = fixture.root.join("target/ripr/artifacts");
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
+        let destination = dir.join("after.check-findings.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::write(dir.join("notes.tmp-x-1"), "{}\n").map_err(|err| format!("write: {err}"))?;
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-441-3"))
+            .map_err(|err| format!("link staging name: {err}"))?;
+        assert!(directory_has_staged_publication_residue(&dir));
         Ok(())
     }
 

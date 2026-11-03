@@ -600,6 +600,30 @@ fn recompute_after_verdict_binding(
     manifest: &RepairAttemptManifest,
     after: &RepairAttemptAfter,
 ) -> Result<(crate::edit_cage::EditCageVerdict, bool), String> {
+    let (verdict, holds) = recompute_after_verdict_binding_of_delta(root, manifest, after)?;
+    // The edit cage accepts the staged publication pair an interrupted writer
+    // leaves (#12791) so a later capture is not ambiguous, but a finished
+    // attempt whose artifacts directory still holds such a staging name has a
+    // partly retained publication: it is not current until the residue is gone.
+    if holds {
+        let artifacts = root
+            .join(manifest_relative_path(manifest))
+            .parent()
+            .map(|attempt| attempt.join("artifacts"));
+        if let Some(artifacts) = artifacts
+            && crate::edit_cage::directory_has_staged_publication_residue(&artifacts)
+        {
+            return Ok((verdict, false));
+        }
+    }
+    Ok((verdict, holds))
+}
+
+fn recompute_after_verdict_binding_of_delta(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+    after: &RepairAttemptAfter,
+) -> Result<(crate::edit_cage::EditCageVerdict, bool), String> {
     if after.delta_binding.as_deref() != Some("path-state-v1") {
         return Err("repair attempt has no post-change path identity binding; currentness cannot be established, so start a new attempt with `ripr agent repair`".to_string());
     }
