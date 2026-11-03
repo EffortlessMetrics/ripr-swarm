@@ -505,7 +505,7 @@ fn inventory_classified_seams_report_collect(
     }
     let compute_started = Instant::now();
     trace_latency_phase("cold_compute", "start", Duration::ZERO);
-    let (classified, limit_info, lexical_fallback_files) =
+    let (classified, limit_info, lexical_fallback_files, compact_classified) =
         match inventory_classified_seams_from_state_with_config(
             &state,
             config,
@@ -535,18 +535,19 @@ fn inventory_classified_seams_report_collect(
         ),
         Duration::ZERO,
     );
-    let store_status = match cache.store_classified_seams_with_limit_and_fallback(
-        &key,
-        &classified,
-        cached_limit_info.as_ref(),
-        &lexical_fallback_files,
-        store_limit,
-    ) {
+    let (store_status, classified_store_stored) = match cache
+        .store_classified_seams_with_limit_and_fallback(
+            &key,
+            &classified,
+            cached_limit_info.as_ref(),
+            &lexical_fallback_files,
+            store_limit,
+        ) {
         Ok(status) => {
             if let Some(advisory) = &status.advisory {
                 eprintln!("ripr: {advisory}");
             }
-            status.label
+            (status.label, true)
         }
         Err(reason) => {
             eprintln!("ripr: repo seam cache store ignored ({reason})");
@@ -558,10 +559,19 @@ fn inventory_classified_seams_report_collect(
                     message: reason,
                 },
             );
-            label
+            (label, false)
         }
     };
     trace_latency_phase("cache_store", &store_status, store_started.elapsed());
+    // #12506 dual publication: publish the compact-classified family the
+    // summary renderer reads, derived inside this same cold walk, so a
+    // classified run leaves summary-json's warm path populated instead of
+    // forcing it to re-derive every seam. Best-effort like the classified
+    // store; it runs only when the classified store stored, per the
+    // plan's ordering.
+    if classified_store_stored && let Some(compact_classified) = compact_classified {
+        publish_compact_classified_family(root, &key, compact_classified, &lexical_fallback_files);
+    }
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
@@ -573,6 +583,46 @@ fn inventory_classified_seams_report_collect(
         naming_only_skips,
         declined_rust_files: rust_index::declined_rust_files_at(root, &lexical_fallback_files),
     })
+}
+
+/// Publish the compact-classified family derived inside a classified cold
+/// walk (#12506). Best-effort like the classified store: a failure does not
+/// fail analysis and keeps the ordinary stderr sentence the compact cold
+/// walk itself prints, and an invalid compact store-limit override reads as
+/// that same ignored-store state instead of failing the classified run.
+fn publish_compact_classified_family(
+    root: &Path,
+    key: &RepoSeamCacheKey,
+    compact_classified: Vec<ClassifiedSeam>,
+    lexical_fallback_files: &[PathBuf],
+) {
+    let compact_cache = RepoSeamFactCache::at_compact_classified(root);
+    let store_started = Instant::now();
+    trace_latency_phase(
+        "compact_cache_store",
+        &format!("start_classified_derived_{}", compact_classified.len()),
+        Duration::ZERO,
+    );
+    let status = match compact_classified_seam_cache_store_limit().and_then(|compact_store_limit| {
+        compact_cache.store_compact_classified_seams_with_limit_and_fallback(
+            key,
+            &compact_classified,
+            lexical_fallback_files,
+            compact_store_limit,
+        )
+    }) {
+        Ok(status) => {
+            if let Some(advisory) = &status.advisory {
+                eprintln!("ripr: {advisory}");
+            }
+            status.label
+        }
+        Err(reason) => {
+            eprintln!("ripr: compact repo seam cache store ignored ({reason})");
+            cache_store_status_label(&reason)
+        }
+    };
+    trace_latency_phase("compact_cache_store", &status, store_started.elapsed());
 }
 
 /// Return the workspace cache identity used by the full classified inventory.
@@ -1064,22 +1114,43 @@ fn inventory_compact_classified_seams_from_state_with_config(
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
     let seams = inventory_seams_from_index(&production_files, &cached.index);
-    let context = test_grip_evidence::CompactGripContext::new(&cached.index);
-    let mut classified = Vec::with_capacity(seams.len());
-    for seam in seams {
-        cancellation::checkpoint()?;
-        let evidence = test_grip_evidence::compact_evidence_for_seam(&seam, &context);
-        let class = seam_classification::classify_seam(&seam, &evidence);
-        classified.push(ClassifiedSeam {
-            evidence,
-            seam,
-            class,
-        });
-    }
+    let classified = compact_classified_seams_from_seams(&seams, &cached.index)?;
     Ok((classified, lexical_fallback_files))
 }
 
-type ClassifiedSeamInventory = (Vec<ClassifiedSeam>, Option<SeamLimitInfo>, Vec<PathBuf>);
+/// Classify `seams` with the compact evidence projection against `index`.
+///
+/// The exact per-seam projection the compact cold walk uses, shared with the
+/// classified cold walk's dual publication (#12506) so both paths store
+/// records the compact family serves identically.
+fn compact_classified_seams_from_seams<'a>(
+    seams: impl IntoIterator<Item = &'a RepoSeam>,
+    index: &RustIndex,
+) -> Result<Vec<ClassifiedSeam>, String> {
+    let seams = seams.into_iter();
+    let context = test_grip_evidence::CompactGripContext::new(index);
+    let mut classified = Vec::with_capacity(seams.size_hint().0);
+    for seam in seams {
+        cancellation::checkpoint()?;
+        let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+        let class = seam_classification::classify_seam(seam, &evidence);
+        classified.push(ClassifiedSeam {
+            evidence,
+            seam: seam.clone(),
+            class,
+        });
+    }
+    Ok(classified)
+}
+
+type ClassifiedSeamInventory = (
+    Vec<ClassifiedSeam>,
+    Option<SeamLimitInfo>,
+    Vec<PathBuf>,
+    // Compact-classified records derived for the same seams (#12506), or
+    // `None` when this run cannot publish a complete compact family.
+    Option<Vec<ClassifiedSeam>>,
+);
 
 fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
@@ -1159,7 +1230,35 @@ fn inventory_classified_seams_from_state_with_config(
     );
     cancellation::checkpoint()?;
     trace_latency_phase("classify_seams", "ok", classify_started.elapsed());
-    Ok((classified, limit_info, lexical_fallback_files))
+    // #12506: derive the compact-classified records while the index is
+    // still in memory, through the same per-seam projection the compact
+    // cold walk uses, so this run can publish the compact family
+    // summary-json reads. A capped run retained only a prefix of the
+    // seams and publishes nothing: the compact family must stay a
+    // complete inventory.
+    let compact_classified = match limit_info {
+        Some(_) => None,
+        None => {
+            let compact_started = Instant::now();
+            trace_latency_phase(
+                "compact_classify_seams",
+                &format!("start_seams_{}", classified.len()),
+                Duration::ZERO,
+            );
+            let compact = compact_classified_seams_from_seams(
+                classified.iter().map(|entry| &entry.seam),
+                &cached.index,
+            )?;
+            trace_latency_phase("compact_classify_seams", "ok", compact_started.elapsed());
+            Some(compact)
+        }
+    };
+    Ok((
+        classified,
+        limit_info,
+        lexical_fallback_files,
+        compact_classified,
+    ))
 }
 
 #[derive(Clone, Debug)]
@@ -6516,6 +6615,136 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 workspace_cache_key_at_with_config(&root, &raw_changed)?.config_hash
             );
         }
+        Ok(())
+    }
+
+    /// #12506: a classified cold walk must publish the compact-classified
+    /// cache family `repo-exposure-summary-json` reads. Before dual-publish
+    /// the classified run wrote only the full classified family, so a
+    /// following summary-json run found no compact entry, cold-walked every
+    /// seam on a workspace whose sibling formats were already warm, and
+    /// re-derived the file facts behind the re-emitted advisories.
+    #[test]
+    fn classified_cold_run_publishes_compact_family_and_summary_json_hits_warm()
+    -> Result<(), String> {
+        let root = make_tempdir("compact-dual-publish")?;
+        struct OwnedRoot(PathBuf);
+        impl Drop for OwnedRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _owned = OwnedRoot(root.clone());
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = 'shop'\nversion = '0.1.0'\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
+pub fn surcharge(total: i32) -> Result<i32, String> {
+    if total > 100 { Ok(total) } else { Err(String::from("too small")) }
+}
+#[cfg(test)] mod tests {
+    use super::{discount, surcharge};
+    #[test] fn asserts_discount_boundary() { assert!(discount(12, 10)); }
+    #[test] fn asserts_surcharge_value() { assert_eq!(surcharge(200), Ok(200)); }
+}
+"#,
+        )?;
+        // Enough production files that the cold walk pays real parse and
+        // evidence work, so the warm hit's latency receipt separates from
+        // scheduler noise.
+        for i in 0..80 {
+            write_file(
+                &root.join(format!("src/gen_{i:03}.rs")),
+                &format!("pub fn gen_{i}(value: i32) -> bool {{ value > {i} }}\n"),
+            )?;
+        }
+        let config = RiprConfig::default();
+
+        // Cold-walk baseline: summary-json renders from a compact cold
+        // walk on a cache-free tree. The walk itself stores a compact
+        // entry, so every cache family is reset afterwards.
+        let cold_started = std::time::Instant::now();
+        let baseline_seams = inventory_compact_classified_seams_at_with_config(&root, &config)?;
+        let baseline_summary = crate::output::repo_exposure::render_repo_exposure_summary_json(
+            &baseline_seams,
+            &root,
+            None,
+            "check",
+        );
+        let cold_elapsed = cold_started.elapsed();
+        assert!(
+            !baseline_summary.is_empty(),
+            "cold-walk baseline summary must render"
+        );
+        let cache_root = root.join("target").join("ripr").join("cache");
+        std::fs::remove_dir_all(&cache_root)
+            .map_err(|err| format!("reset cache {}: {err}", cache_root.display()))?;
+
+        // The classified cold walk. It must now publish the compact
+        // family it previously never wrote.
+        let classified = inventory_classified_seams_report_at_with_config(&root, &config)?;
+        assert!(
+            !classified.classified.is_empty(),
+            "fixture must retain classified seams"
+        );
+        assert_eq!(
+            list_cache_entries(&root)?.len(),
+            1,
+            "classified cold walk must store its own classified entry"
+        );
+        let compact_entries = list_compact_cache_entries(&root)?;
+        assert_eq!(
+            compact_entries.len(),
+            1,
+            "classified cold walk must publish exactly one compact-family entry, found {compact_entries:?}"
+        );
+
+        // Warm summary-json: the compact hit renders the byte-identical
+        // summary, and the latency receipt shows the hit inside a bounded
+        // budget (the cold walk rebuilt an index; the hit decodes one
+        // entry). The first warm run absorbs process-lazy costs, the
+        // measured steady-state hit runs twice, and the smaller receipt
+        // is the one bounded against the cold walk.
+        let warm_first_started = std::time::Instant::now();
+        let warm_seams = inventory_compact_classified_seams_at_with_config(&root, &config)?;
+        let warm_summary = crate::output::repo_exposure::render_repo_exposure_summary_json(
+            &warm_seams,
+            &root,
+            None,
+            "check",
+        );
+        let warm_first = warm_first_started.elapsed();
+        let warm_second_started = std::time::Instant::now();
+        let warm_seams_again = inventory_compact_classified_seams_at_with_config(&root, &config)?;
+        let warm_summary_again = crate::output::repo_exposure::render_repo_exposure_summary_json(
+            &warm_seams_again,
+            &root,
+            None,
+            "check",
+        );
+        let warm_second = warm_second_started.elapsed();
+        let warm_elapsed = warm_first.min(warm_second);
+        assert_eq!(
+            list_compact_cache_entries(&root)?.len(),
+            1,
+            "warm hit must load the published entry, not re-store"
+        );
+        assert_eq!(
+            warm_summary, baseline_summary,
+            "warm compact hit must render the byte-identical summary"
+        );
+        assert_eq!(
+            warm_summary_again, baseline_summary,
+            "steady-state warm compact hit must render the byte-identical summary"
+        );
+        assert!(
+            warm_elapsed < cold_elapsed,
+            "warm compact hit must complete inside a bounded latency receipt (cold={cold_elapsed:?} warm_first={warm_first:?} warm_second={warm_second:?})"
+        );
         Ok(())
     }
 
