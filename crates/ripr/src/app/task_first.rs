@@ -926,12 +926,16 @@ pub(crate) fn resolve_repair_start(
     // #11401: the seam producer cannot follow a call into another workspace
     // crate, but `ripr check` can. A changed seam that check reads as noticed
     // is not an open gap here either, so the two commands cannot disagree.
-    let manifest_dirs = crate::analysis::seam_cache::workspace_manifest_dir_prefixes(root);
+    let manifest_dirs: std::cell::OnceCell<Vec<String>> = std::cell::OnceCell::new();
     let refusals = notice_what_check_notices(
         refusals,
         &classified,
         |entry| matches!(scope, Some(ChangeScope::TouchesSeams(_))) && !off_change(entry),
-        |entry| call_may_cross_a_crate(root, entry, &manifest_dirs),
+        |entry| {
+            let dirs = manifest_dirs
+                .get_or_init(|| crate::analysis::seam_cache::workspace_manifest_dir_prefixes(root));
+            call_may_cross_a_crate(root, entry, dirs)
+        },
         || {
             super::gap_bound_repair::default_check_output(root, base, &config)
                 .ok()
@@ -4134,6 +4138,18 @@ pub(crate) mod tests {
         let private = entry_for("wscore/src/lib.rs", "hidden");
         assert!(call_may_cross_a_crate(&root, &public, &both));
         assert!(!call_may_cross_a_crate(&root, &public, &alone));
+        // A virtual workspace root (empty prefix) is a manifest besides the
+        // owner's own; so is a nested one.
+        assert!(call_may_cross_a_crate(
+            &root,
+            &public,
+            &["".to_string(), "wscore/".to_string()]
+        ));
+        assert!(call_may_cross_a_crate(
+            &root,
+            &public,
+            &["wscore/".to_string(), "fuzz/".to_string()]
+        ));
         assert!(!call_may_cross_a_crate(&root, &private, &both));
         let _ = std::fs::remove_dir_all(&root);
         Ok(())

@@ -159,11 +159,12 @@ refusal as the seam producer made it.
 The check analysis is expensive on a large repository, so it is bounded. It
 runs at most once per `resolve_repair_start` call, which both bare `ripr
 repair` and the `ripr continue` start suggestion use, and only when an open
-seam on the changed lines passes a cheap pre-test: the workspace holds a
-package manifest besides the owner's own (path-only scan), and the owner is a
+seam on the changed lines passes a cheap pre-test: there is a `Cargo.toml`
+besides the owner's own (path-only scan; a virtual workspace root counts, and
+so does a nested manifest such as `fuzz/Cargo.toml`), and the owner is a
 top-level `pub fn` of its package's `src/lib.rs`, the shape another crate can
-name as `<crate>::<fn>`. A single-package repository never runs it, and an
-unreadable owner file counts as passing. Refusals the pre-test excludes (a
+name as `<crate>::<fn>`. A repository whose only manifest is the owner's own
+never runs it, and an unreadable owner file counts as passing. Refusals the pre-test excludes (a
 private owner, a method, a same-crate wrapper) keep the seam producer's
 answer.
 
@@ -183,8 +184,9 @@ repair names the noticed change; neither starts. An explicit `ripr repair
   changed lines, and an explicit `ripr repair <id>` start, use the seam
   producer alone.
 - Repair runs the default check analysis a second time only under the
-  pre-test above; a same-crate wrapper that check reads as noticed is outside
-  it, so repair keeps its earlier "not ready" there.
+  pre-test above; a changed method or non-`pub` function, or a function outside
+  a package's `src/lib.rs`, is outside it, so repair keeps the seam producer's
+  answer there.
 - `--no-unchanged-tests` and `--mode instant` leave the unchanged `app` test
   out of check's evidence, so check keeps the earlier no-path reading there
   (repair, which has no mode, reads the workspace whole).
@@ -235,8 +237,9 @@ repair names the noticed change; neither starts. An explicit `ripr repair
    the dependency renamed or the argument changed, check reads a partial gap
    and both commands start the same repair.
 5. `checkout` and `discount` both in one member package whose integration test
-   does `use wscore::checkout;` reads as noticed in a virtual workspace (bare repair keeps its own answer
-   there: no other package, so the check run is not made).
+   does `use wscore::checkout;` reads as noticed in a virtual workspace, and bare repair agrees (the virtual
+   workspace root is a manifest besides `wscore`'s own and `discount` is a
+   top-level `pub fn` of `wscore/src/lib.rs`, so the check run is made).
 
 ## Test Mapping
 

@@ -577,5 +577,8 @@ fn a_wrapper_in_the_same_member_package_is_noticed_through_its_own_crate_name() 
             "a same-package wrapper pin must read noticed:\n{check}"
         ));
     }
-    Ok(())
+    // The virtual workspace root is a manifest besides `wscore`'s own, and
+    // `discount` is a top-level `pub fn` of `wscore/src/lib.rs`, so the
+    // pre-test passes and repair agrees with check.
+    assert_repair_says_noticed("same package", &repo)
 }
