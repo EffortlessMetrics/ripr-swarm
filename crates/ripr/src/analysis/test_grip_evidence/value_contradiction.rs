@@ -901,7 +901,8 @@ pub(super) fn bare_owner_call_is_shadowed(
 /// crate already trusts for item scope (#10162).
 fn body_declares_same_name_fn(test: &TestSummary, owner_name: &str) -> bool {
     use ra_ap_syntax::{ast, ast::HasName};
-    let Some(parse) = parse_clean_source_file(test.body.as_str()) else {
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(test.body.as_str())
+    else {
         return false;
     };
     parse.tree().syntax().descendants().any(|node| {

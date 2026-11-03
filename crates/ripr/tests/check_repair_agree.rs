@@ -213,6 +213,38 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     Ok(())
 }
 
+#[test]
+fn untied_count_does_not_claim_gripped_sibling_is_repairable() -> Result<(), String> {
+    let sibling = "\npub fn doubled(x: i32) -> i32 {\n    x * 2\n}\n";
+    let old = format!(
+        "pub fn label(n: u32) -> &'static str {{\n    match n {{\n        0 => \"zero\",\n        1 => \"one\",\n        _ => \"many\",\n    }}\n}}\n{sibling}"
+    );
+    let new = old.replace("1 => \"one\"", "1 => \"uno\"");
+    let repo = Repo::create_uncommitted(
+        &old,
+        &new,
+        // Only `doubled` is gripped; the changed `label` arm has no matching
+        // test input, so check counts untied spots in the file while repair
+        // counts the gripped sibling outside the changed lines.
+        "use ar::doubled;\n\n#[test]\nfn doubled_works() {\n    assert_eq!(doubled(2), 4);\n}\n",
+    )?;
+    let repair = repo.ripr(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains("outside your changed lines is already noticed by existing tests"),
+        "gripped sibling precondition:\n{repair}"
+    );
+    let check = repo.ripr(&["check", "--base", "HEAD"])?;
+    assert!(
+        check.contains("spots in this finding's file, but could not tie one"),
+        "unbound precondition:\n{check}"
+    );
+    assert!(
+        !check.contains("repairable spots in this finding's file"),
+        "count must not assert eligibility:\n{check}"
+    );
+    Ok(())
+}
+
 const GRIPPED_BOUNDARY_OLD: &str =
     "pub fn f(x: i32) -> i32 {\n    let y = if x > 10 { 1 } else { 2 };\n    y\n}\n";
 const GRIPPED_BOUNDARY_NEW: &str =
@@ -496,6 +528,13 @@ const WS_CORE_TOML: &str =
 const WS_APP_SRC: &str = "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n";
 const WS_OLD: &str = "pub fn discount(price: u32) -> u32 {\n    if price > 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";
 const WS_NEW: &str = "pub fn discount(price: u32) -> u32 {\n    if price >= 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";
+/// #11401: the unreached fixture. A plain `wscore::discount(price)` call now
+/// reads noticed in `ripr check` (RIPR-SPEC-0407), so the dependency is
+/// renamed here: `disc::discount(..)` is a crate edge ripr does not resolve
+/// yet, which keeps the change without a static path.
+const WS_RENAMED_APP_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ndisc = { path = \"../wscore\", package = \"wscore\" }\n";
+const WS_RENAMED_APP_SRC: &str =
+    "pub fn checkout(price: u32) -> u32 {\n    disc::discount(price)\n}\n";
 const WS_CORE_TEST: &str = "use wscore::discount;\n\n#[test]\nfn discount_at_boundary() {\n    assert_eq!(discount(100), 90);\n    assert_eq!(discount(50), 50);\n}\n";
 const WS_APP_TEST: &str = "use app::checkout;\n\n#[test]\nfn checkout_at_boundary() {\n    assert_eq!(checkout(100), 90);\n}\n";
 
@@ -513,6 +552,23 @@ fn workspace_repo(core_tests: bool, commit_change: bool) -> Result<Repo, String>
         files.push(("app/tests/t.rs", WS_APP_TEST));
     }
     Repo::create_workspace(&files, WS_NEW, commit_change)
+}
+
+/// The workspace whose only test is in `app` and reaches `wscore` through a
+/// renamed dependency ripr does not resolve: no static path (#11401).
+fn unreached_workspace_repo(commit_change: bool) -> Result<Repo, String> {
+    Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_RENAMED_APP_TOML),
+            ("app/src/lib.rs", WS_RENAMED_APP_SRC),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", WS_OLD),
+            ("app/tests/t.rs", WS_APP_TEST),
+        ],
+        WS_NEW,
+        commit_change,
+    )
 }
 
 /// The repair text for a fixture, with the refusal asserted (exit 3).
@@ -740,7 +796,7 @@ fn limited_generic_change_is_not_called_gripped_by_repair() -> Result<(), String
 
 #[test]
 fn unreached_workspace_change_is_not_called_gripped_by_repair() -> Result<(), String> {
-    let committed = workspace_repo(false, true)?;
+    let committed = unreached_workspace_repo(true)?;
     let check = committed.ripr(&["check", "--base", "HEAD~1"])?;
     assert!(
         check.contains("Static exposure: no path")
@@ -756,7 +812,7 @@ fn unreached_workspace_change_is_not_called_gripped_by_repair() -> Result<(), St
         "the class refusal must be plain and name what ripr could not establish:\n{unscoped}"
     );
 
-    let repo = workspace_repo(false, false)?;
+    let repo = unreached_workspace_repo(false)?;
     let check = repo.ripr(&["check"])?;
     assert!(
         check.contains("Static exposure: no path"),

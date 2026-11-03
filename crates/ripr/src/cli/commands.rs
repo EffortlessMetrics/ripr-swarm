@@ -47,8 +47,8 @@ mod swarm_command;
 mod task_first;
 
 pub(super) use agent::{
-    agent, before_phase_stdout, resolve_agent_repair_root, run_before_repair_with_identity,
-    translate_agent_repair_seam_id,
+    SeamIdSurface, SeamIdTranslateError, agent, before_phase_stdout, resolve_agent_repair_root,
+    run_before_repair_with_identity, translate_agent_repair_seam_id, translate_seam_id_for,
 };
 pub(super) use context::context;
 // Flag-documenting help bodies live beside their parsers so `cli::help`
@@ -144,6 +144,7 @@ pub(super) use check::{bind_member_selector_file, resolve_implicit_command_root}
 
 #[path = "commands/review_comments.rs"]
 mod review_comments;
+mod review_guidance_index_handoff;
 pub(super) use review_comments::review_comments;
 
 #[path = "commands/capabilities.rs"]

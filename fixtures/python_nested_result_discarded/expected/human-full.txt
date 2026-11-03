@@ -78,6 +78,7 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `an assertion on a value computed from the result of `tally.inner``
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_nested_result_discarded/input --diff <cwd>/fixtures/python_nested_result_discarded/diff.patch --mode fast probe:src_tally.py:python_preview:24c935dc
   ripr context --root <cwd>/fixtures/python_nested_result_discarded/input --diff <cwd>/fixtures/python_nested_result_discarded/diff.patch --mode fast --at probe:src_tally.py:python_preview:24c935dc
 

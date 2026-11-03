@@ -389,3 +389,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_rebound_constant_boundary_limit (33)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless python_rebound_constant_boundary_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
