@@ -282,7 +282,19 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
                 identity.resolve_call(test, index, qualifier) == CallTarget::Other
             })
     };
-    let items = ItemBindings::read(source, name, import_is_other);
+    // Only an `fn name` item or a `use` item can declare or shadow the owner
+    // here. A body with neither has no declaration or shadow to read, so the
+    // per-assertion tree walk is skipped (it ran once per oracle of every
+    // naming test and dominated the large-workspace cold pilot). The parse
+    // still decides readability.
+    let items = if body_has_no_owner_item_syntax(source, name) {
+        ItemBindings {
+            unreadable: crate::analysis::syntax::parse_clean_source_file_memoized(source).is_none(),
+            ..ItemBindings::default()
+        }
+    } else {
+        ItemBindings::read(source, name, import_is_other)
+    };
     if items.unreadable {
         return None;
     }
@@ -561,6 +573,22 @@ fn is_bound_locally(code: &str, name: &str) -> bool {
                 && !after.starts_with("::")
                 && code[..at].trim_end().ends_with(['(', ',', '|'])
         })
+}
+
+/// Whether `source` holds no syntax that [`ItemBindings::read`] turns into a
+/// declaration or a shadow of `name`: no `use` item and no `fn` item (or raw
+/// identifier) spelled with `name`. Conservative: any doubt reads the tree.
+fn body_has_no_owner_item_syntax(source: &str, name: &str) -> bool {
+    if identifier_offsets(source, "use").next().is_some() {
+        return false;
+    }
+    !identifier_offsets(source, name).any(|at| {
+        let before = source[..at].trim_end();
+        before.ends_with("r#")
+            || before
+                .strip_suffix("fn")
+                .is_some_and(|rest| rest.chars().next_back().is_none_or(|ch| !is_ident_char(ch)))
+    })
 }
 
 /// Declaration ranges and hoisted item bindings in the test's real lexical
@@ -846,6 +874,34 @@ fn call_end(code: &str, open: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn owner_item_syntax_is_detected_conservatively() {
+        assert!(body_has_no_owner_item_syntax(
+            "let x = inc(1); assert_eq!(x, 2);",
+            "inc"
+        ));
+        // A same-name fn item, a raw-identifier fn and any use item all read the tree.
+        assert!(!body_has_no_owner_item_syntax("fn inc() {} inc();", "inc"));
+        assert!(!body_has_no_owner_item_syntax(
+            "fn r#inc() {} inc();",
+            "inc"
+        ));
+        assert!(!body_has_no_owner_item_syntax(
+            "use other::inc; inc();",
+            "inc"
+        ));
+        // `fn` inside a longer identifier is not a declaration.
+        assert!(body_has_no_owner_item_syntax(
+            "let gfn = 1; gfn_inc(inc());",
+            "inc"
+        ));
+        // A different fn name does not shadow the owner.
+        assert!(body_has_no_owner_item_syntax(
+            "fn helper() {} inc();",
+            "inc"
+        ));
+    }
+
     use super::*;
 
     fn owner_names() -> Vec<String> {
