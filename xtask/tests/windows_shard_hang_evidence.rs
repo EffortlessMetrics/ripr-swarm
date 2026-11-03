@@ -49,6 +49,22 @@ fn tests_run_block(text: &str) -> Result<String, String> {
     Ok(lines.join("\n").replace("${{ matrix.shard }}", "1"))
 }
 
+/// The shipped nextest launch line: the backgrounded command that redirects
+/// into the shard log (a `bash -c` loop over the xtask and workspace runs).
+fn shipped_launch(block: &str) -> Result<String, String> {
+    let launches: Vec<&str> = block
+        .lines()
+        .filter(|line| line.ends_with("> target/shard-$shard.log 2>&1 &"))
+        .collect();
+    match launches.as_slice() {
+        [line] if line.contains("cargo nextest run") => Ok((*line).to_string()),
+        other => Err(format!(
+            "expected exactly one nextest launch line, got {}:\n{block}",
+            other.len()
+        )),
+    }
+}
+
 fn polls_math_script(block: &str) -> Result<String, String> {
     let mut chosen = Vec::new();
     for line in block.lines() {
@@ -137,6 +153,11 @@ fn shard_workflow_keeps_cancel_upload_and_heartbeat_contract() -> Result<(), Str
         if !text.contains(needle) {
             return Err(format!("workflow lost `{needle}`"));
         }
+    }
+    // After a watchdog fire the real-ACL step must not spend the summarize and
+    // upload reserve (20-minute step cap, shard 1 only).
+    if !text.contains("hashFiles('target/shard-1.watchdog') == ''") {
+        return Err("real-ACL step must skip after the watchdog fired".to_string());
     }
     if text.contains("seq 1 264") {
         return Err(
@@ -233,12 +254,9 @@ fn fixed_step_start_watchdog_would_not_shorten_after_warmup() -> Result<(), Stri
 #[test]
 fn remaining_time_watchdog_leaves_heartbeat_and_status_for_upload() -> Result<(), String> {
     let mut block = tests_run_block(&repo_file(SHARDS)?)?;
-    let cargo = "cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 -E \"not $ACL_TESTS\" > target/shard-$shard.log 2>&1 &";
-    if !block.contains(cargo) {
-        return Err(format!("did not find the shipped nextest launch:\n{block}"));
-    }
+    let cargo = shipped_launch(&block)?;
     block = block.replace(
-        cargo,
+        &cargo,
         "bash target/fixture.sh > target/shard-$shard.log 2>&1 &",
     );
 
@@ -302,12 +320,9 @@ fn remaining_time_watchdog_leaves_heartbeat_and_status_for_upload() -> Result<()
 #[test]
 fn ordinary_exit_does_not_write_a_watchdog_marker() -> Result<(), String> {
     let mut block = tests_run_block(&repo_file(SHARDS)?)?;
-    let cargo = "cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 -E \"not $ACL_TESTS\" > target/shard-$shard.log 2>&1 &";
-    if !block.contains(cargo) {
-        return Err(format!("did not find the shipped nextest launch:\n{block}"));
-    }
+    let cargo = shipped_launch(&block)?;
     block = block.replace(
-        cargo,
+        &cargo,
         "bash target/fixture.sh > target/shard-$shard.log 2>&1 &",
     );
     let dir = std::env::temp_dir().join(format!(

@@ -80,12 +80,13 @@ jobs:
       # (and the 6-minute kill fires). Running the same spawns here warms them.
       #
       # `check-covered-by` alone is not enough (#12035): `check-file-policy`,
-      # which `policy_checker_facade_runs_current_repo_checks` runs, issues a
-      # combined `cargo test --no-run -p ripr -p xtask --bin xtask --test ...`
-      # that `check-covered-by` never makes. Measured on windows-latest after
-      # `check-covered-by` had run twice: first `check-file-policy` 745 s,
-      # second 175 s, and the facade test 140 s once warm. Left cold, that
-      # first build ran inside the test and hit its 300 s child cap.
+      # which `policy_checker_facade_runs_current_repo_checks` runs, issues
+      # combined `cargo test --no-run` builds, one per package set (`-p xtask`
+      # and `-p ripr`, #12245), that `check-covered-by` never makes. Measured
+      # on windows-latest after `check-covered-by` had run twice, before the
+      # per-package split: first `check-file-policy` 745 s, second 175 s, and
+      # the facade test 140 s once warm. Left cold, that first build ran
+      # inside the test and hit its 300 s child cap.
       - name: Warm the cargo builds the policy tests spawn
         timeout-minutes: 45
         shell: bash
@@ -122,6 +123,17 @@ jobs:
       # runner tears the job down. The MSYS PID of the background job is not a
       # native PID. Only a PID read from /proc/<pid>/winpid reaches taskkill; with
       # no mapping the watchdog records that and kills the MSYS job only.
+      #
+      # Two nextest runs per shard, `-p xtask` then `--workspace --exclude xtask`
+      # (#12245). A build that selects `ripr` in test mode and an xtask-only build
+      # leave Cargo's fingerprints in different states, so each alternation
+      # recompiles the `xtask` binary (about 83 s) and some dependencies. One
+      # workspace run left the facade test's own `cargo test -p xtask` spawns to
+      # pay that inside the capped test. Running `-p xtask` first keeps those
+      # spawns in the state nextest built. The workspace run goes last because
+      # the real-ACL step below builds `--workspace` and timed out at 20 minutes
+      # when `-p xtask` was last (run 41448247627). Each run is partitioned by
+      # `count:$shard/4`, so the four shards still cover every test once.
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
         timeout-minutes: 55
         shell: bash
@@ -135,7 +147,7 @@ jobs:
           shard=${{ matrix.shard }}
           : "${JOB_CAP_SECS:=4800}" "${UPLOAD_RESERVE_SECS:=480}" "${WATCHDOG_POLLS:=264}" "${POLL_SECS:=10}"
           start=${JOB_START:-$(date +%s)}; remain=$((JOB_CAP_SECS - ($(date +%s) - start) - UPLOAD_RESERVE_SECS)); [ "$remain" -ge "$POLL_SECS" ] || remain=$POLL_SECS; polls=$(( (remain + POLL_SECS - 1) / POLL_SECS )); [ "$polls" -le "$WATCHDOG_POLLS" ] || polls=$WATCHDOG_POLLS
-          cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 -E "not $ACL_TESTS" > target/shard-$shard.log 2>&1 &
+          bash -c 'rc=0; for pkg in "-p xtask" "--workspace --exclude xtask"; do cargo nextest run --profile windows-advisory $pkg --no-fail-fast --partition count:$0/4 -E "not $ACL_TESTS" || rc=$?; done; exit $rc' "$shard" > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
           tail -n +1 -F target/shard-$shard.log &
           tail_pid=$!
@@ -168,18 +180,31 @@ jobs:
       # pwsh starts with both privileges disabled and its children inherit that,
       # so the deny is enforced and the tests establish their precondition. A
       # filter that matches nothing makes nextest exit nonzero.
+      # Two runs, the same package selections as the shard step above and in the
+      # reverse order (#12659). One `--workspace` run unifies features differently
+      # from `--workspace --exclude xtask` and rebuilt the workspace for 17 of this
+      # step's 20 minutes (run 41458879302), then timed out (run 41508421254). The
+      # workspace-minus-xtask run goes first because the shard step ended on it.
+      # The ripr tests matching ACL_TESTS and the xtask ones are both non-empty on
+      # Windows, so neither run is an empty filter.
       - name: Run the real-ACL tests outside bash (shard 1 only)
-        if: ${{ !cancelled() && matrix.shard == 1 }}
+        # Skipped once the watchdog fired: the remaining job time is the summarize and
+        # upload reserve, which this 20-minute step would otherwise spend (#12338).
+        if: ${{ !cancelled() && matrix.shard == 1 && hashFiles('target/shard-1.watchdog') == '' }}
         shell: pwsh
         # A step timeout fails only this step, so the Summarize and Upload steps
         # still run; a stall under the 80-minute job cap would cancel them and
         # lose acl.log.
         timeout-minutes: 20
         run: |
-          cargo nextest run --profile windows-advisory --workspace --no-fail-fast -E $env:ACL_TESTS *> target/acl.log
+          cargo nextest run --profile windows-advisory --workspace --exclude xtask --no-fail-fast -E $env:ACL_TESTS *> target/acl.log
           $code = $LASTEXITCODE
           # A failed spawn leaves $LASTEXITCODE null, which would exit 0.
           if ($null -eq $code) { $code = 1 }
+          cargo nextest run --profile windows-advisory -p xtask --no-fail-fast -E $env:ACL_TESTS *>> target/acl.log
+          $code2 = $LASTEXITCODE
+          if ($null -eq $code2) { $code2 = 1 }
+          if ($code -eq 0) { $code = $code2 }
           Set-Content target/acl.status $code
           Get-Content target/acl.log
           exit $code
