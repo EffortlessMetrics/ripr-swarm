@@ -33,9 +33,9 @@ failed qualification, remove and re-apply `merge-ready` for a fresh run on the
 exact head; do not re-apply the label on an unchanged head while a required run
 is queued or running, because it cancels that run.
 
-The cancellation rides the workflow's concurrency group, so a fresh trigger
-from any other actor — a re-fired `merge-ready` label or any `routed-rust`
-event — cancels your in-flight qualification run. An in-flight run that
+Cancellation is routed through the workflow's concurrency group, so a fresh
+trigger from any other actor — a re-fired `merge-ready` label or any
+`routed-rust` event — cancels your in-flight qualification run. An in-flight run that
 disappears is usually someone else's fresh run, not an infrastructure
 failure; check the newest run on the head before re-firing the label again
 (observed on #10647).
