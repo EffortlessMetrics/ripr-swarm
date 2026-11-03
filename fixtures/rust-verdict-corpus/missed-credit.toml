@@ -318,11 +318,11 @@ reason = "Tests discriminate the change; the row reads limited (RIPR-SPEC-0352) 
 
 [[entry]]
 case = "serde-format-u8-hundreds"
-reason = "Tests discriminate the change but ripr abstains because the boundary shape has no literal or same-file constant ripr can read, or macro/call identity does not resolve to the owner (#12775; parent #12766). Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains because the infection stage is weak: the tests carry literals [0, 0, 3, 1] but no value at the changed boundary, so ripr cannot place a test input on it (#12775; parent #12766). Delete this entry when the row credits."
 
 [[entry]]
 case = "serde-format-u8-tens"
-reason = "Tests discriminate the change but ripr abstains because the boundary shape has no literal or same-file constant ripr can read, or macro/call identity does not resolve to the owner (#12775; parent #12766). Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains because the infection stage is weak: the tests carry literals [0, 0, 3, 1] but no value at the changed boundary, so ripr cannot place a test input on it (#12775; parent #12766). Delete this entry when the row credits."
 
 [[entry]]
 case = "shape-drop-impl-side-effect"
