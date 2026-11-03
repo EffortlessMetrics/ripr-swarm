@@ -109,13 +109,21 @@ cause.
   the variant brings it in, the enum has one declaration, the spelling is not a
   prelude value and no macro or same-named item can rebind it (#8782); then
   only the placement input is missing and this rule withholds the gap.
-- Unexercised guards, not claimed proved here (the hardening follow-up, #10666
-  and PR3, adds their controls and mutation experiments): the own-scope
-  negatives for a `#[path]` mount, glob or explicit import of a dependency
-  macro and a renamed dependency behind a decoy directory; the `#[ignore]`
-  exclusion, the own-related-tests filter, each manifest rename/mismatch arm,
-  crate-local and scoped names under trust, the reach-every-package rules and
-  the `toml::Table` parse-failure arm.
+- Own-scope controls (PR3): a mounted file, a `#[macro_use]` module, a literal
+  `#[path]` into another package, a nested `src`, and files with no package
+  keep the bare-assertion gap; so do a glob or explicit import, `extern crate`,
+  a renamed dependency, a directory holding another crate, and a crate named
+  differently from its directory. An `#[ignore]` test, a same-named type in
+  another crate and a call outside the assertion do not trigger the withhold.
+  Mutation experiments (one guard disabled, a control must fail): mounted-file
+  scope, unnameable-package scope, import-root scan, manifest rename/mismatch
+  check and unmatched-name reach-every-package each fail a control, as does the
+  `#[ignore]` exclusion.
+- Still unexercised: the duplicate-directory clause of the reach-every-package
+  rule, crate-local and scoped names under trust, and the own-related-tests
+  filter. The `toml::Table` parse-failure arm is equivalent to the name-mismatch
+  arm below it (an unparsable manifest declares no name), so no control can
+  tell them apart.
 - Known open: when the owner call sits outside the assertion the relation is
   already direct and only the oracle row is refused, so the finding stays a gap.
   The withhold checks relation and oracle strength, not that the trusted
