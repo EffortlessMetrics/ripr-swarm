@@ -650,7 +650,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// no oracle once a test that runs the owner is related (#12671).
 /// `1.146`: a bare `assert_*snapshot!` counts as insta's only when no workspace
 /// file defines a macro of that name (#12720).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.146";
+/// `1.147`: a doc example registers as a test only when no gate on an enclosing
+/// `mod`, `impl`, `trait` or `mod name;` declaration may leave it uncompiled (#12453).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.147";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -838,7 +840,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.146";
 /// `0.146`: same missing-committed-snapshot rule as full `1.144` (#12189).
 /// `0.147`: same returned-value other-function refusal as full `1.145` (#12671).
 /// `0.148`: same shadowed-snapshot-macro rule as full `1.146` (#12720).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.148";
+/// `0.149`: same enclosing-cfg doctest rule as full `1.147` (#12453).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.149";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1028,7 +1031,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.148";
 /// `0.146`: same missing-committed-snapshot rule as full `1.144` (#12189).
 /// `0.147`: same returned-value other-function refusal as full `1.145` (#12671).
 /// `0.148`: same shadowed-snapshot-macro rule as full `1.146` (#12720).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.148";
+/// `0.149`: same enclosing-cfg doctest rule as full `1.147` (#12453).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.149";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5888,7 +5892,8 @@ mod tests {
         // 1.143 -> 1.144: file-backed snapshot with no committed `.snap` (#12189).
         // 1.144 -> 1.145: returned-value seams refuse another function's oracle (#12671).
         // 1.145 -> 1.146: shadowed bare snapshot macro (#12720).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.146");
+        // 1.146 -> 1.147: enclosing cfg gates on a doctest (#12453).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.147");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -6016,8 +6021,9 @@ mod tests {
         // 0.145 -> 0.146: same missing-snapshot rule as full 1.144 (#12189).
         // 0.146 -> 0.147: same returned-value refusal as full 1.145 (#12671).
         // 0.147 -> 0.148: same shadowed-macro rule as full 1.146 (#12720).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.148");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.148");
+        // 0.148 -> 0.149: same enclosing-cfg doctest rule as full 1.147 (#12453).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.149");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.149");
     }
 
     #[test]
