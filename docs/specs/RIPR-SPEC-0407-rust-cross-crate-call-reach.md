@@ -70,11 +70,13 @@ chain hop when every link is exact:
 
 1. `callee` is the only function of its name in a workspace-complete index
    (the existing chain rule), a body-carrying free `fn` declared `pub`
-   (unrestricted) at the top level of a file, outside every module block and
-   impl.
+   (unrestricted) that another crate names by a public path: at the top level
+   of the library root file, or in a chain of public modules below it (see
+   "A callee in a public module"). Never in an impl, a block or a binary
+   target.
 2. The manifests give exactly one name for `callee`'s library in `caller`'s
-   package (`MemberCrates::library_dependency_name`): `callee` is in the
-   library root file of its package, the two packages differ, and the
+   package (`MemberCrates::library_dependency_name`): the library the callee
+   is exported from has its root file at its package's `src/lib.rs`, the two packages differ, and the
    caller's `[dependencies]` (or `[target.*.dependencies]`) holds a path
    entry on the callee's package. The name is the entry's key: the callee's
    own library identifier, or the new name a `package = ".."` rename gives it
@@ -87,9 +89,10 @@ chain hop when every link is exact:
    mentions and any unreadable or unexpected manifest give no name, exactly as
    they refuse the import authority this extends.
 3. `caller` is production code (not a test, not under `tests/`) and mentions
-   `callee` once, in one call fact, spelled `<crate>::<callee>(..)` with
-   exactly that one qualifier segment: no method call, longer path, leading
-   `::` or generic argument. The one other spelling is a bare `callee(..)`
+   `callee` once, in one call fact, spelled `<crate>::<callee>(..)` (or
+   `<crate>::<module>::..::<callee>(..)` with exactly the public modules the
+   callee is in) with no other qualifier segment: no method call, longer path,
+   leading `::` or generic argument. The one other spelling is a bare `callee(..)`
    after an import by name, below.
 4. Nothing can rebind `<crate>`. In the caller's own file there is no `use`
    of the name, alias, glob, block-local item, or macro or `include` that
@@ -99,9 +102,10 @@ chain hop when every link is exact:
 5. `caller` invokes no macro that could hide an early return or a rebinding.
 
 The hop is `module_qualified` (so every consumer without a cross-crate proof
-keeps refusing it) and carries `crate_qualifier`. Only the tail-forwarding
-rule reads that name: the hop forwards the callee's result when the caller's
-tail is exactly `<crate>::<callee>(..)` with no early `return`, no `?` and no
+keeps refusing it) and carries `crate_qualifier`, the path the call is spelled
+through (`wscore`, or `wscore::pricing` for a callee in a public module). Only
+the tail-forwarding rule reads it: the hop forwards the callee's result when
+the caller's tail is exactly `<qualifier>::<callee>(..)` with no early `return`, no `?` and no
 other shape (`+ 1`, a bound-then-shifted result, a branch). Argument binding
 down the hop is the existing positional binder, so an argument the caller
 computes (`price + 1`) binds nothing and the boundary input is not credited.
@@ -122,24 +126,76 @@ all of these hold in addition to rules 1, 2 and 5 above:
   exactly once in its body, in one direct call;
 - exactly one `use` in the file mentions the callee name. It is a top-level
   `use` with no attribute (`#[cfg(..)]`) and no visibility (`pub use`), whose
-  path is `<crate>::<callee>` or whose list holds the bare `callee` under
-  `<crate>`. An alias (`as d`), a glob, a longer path
-  (`wscore::pricing::discount`), a leading `::`, an import of the name from
-  another crate, an import inside a function or module, and a second import
-  of the name all refuse;
+  path is `<qualifier>::<callee>` or whose list holds the bare `callee` under
+  `<qualifier>` (`use wscore::pricing::discount;` and
+  `use wscore::pricing::{self, discount};` for a callee in `pricing`; the
+  qualifier is the crate name and the callee's public modules, exactly). An
+  alias (`as d`), a glob, a path with other or missing modules, a nested
+  list (`use wscore::{pricing::discount}`), a leading `::`, an import of the
+  name from another crate, an import inside a function or module, and a second
+  import of the name all refuse;
 - the file declares nothing named `callee` (function, binding, parameter,
   closure parameter, item or macro; a struct field of that name is not a
   declaration in the namespace and does not refuse) and holds no
   `extern crate`, `include` or macro that could splice items in;
-- nothing in the file can rebind `<crate>`: no other `use` that names it
-  (`use legacy as wscore;`, `use crate::shim as wscore;`), no glob import,
-  and no item named `<crate>` (`struct wscore;`, `enum wscore`), which is the
-  rule 4 scan applied to the import form;
+- nothing in the file can rebind `<crate>`, which is the rule 4 scan applied
+  to the import form: no glob import, no item named `<crate>`
+  (`struct wscore;`, `enum wscore`), and in every `use` (the import itself
+  included) the crate name appears at most once, as the first segment of its
+  path. So `use legacy as wscore;`, `use crate::shim::wscore;`,
+  `use wscore::inner as wscore;` and an in-group rebind
+  (`use wscore::{discount, inner as wscore}`) refuse, while a plain sibling
+  `use wscore::other;` beside the import does not;
 - no file of the caller's package declares `mod <crate>`.
 
 A glob import (`use wscore::*;`) never names the callee, so a bare call after
 only a glob stays unreached. The tail rule accepts the bare call as the whole
 tail for such a hop; the single admitted mention is what is checked.
+
+### A callee in a public module
+
+`wscore::pricing::discount(..)` names a callee that sits in a module of
+`wscore`. The path is read from the declarations (`cross_crate_path::public_path`),
+never from the spelled call, and every link must be exact:
+
+- the callee is a plain `pub fn` (not `pub(crate)`, `pub(super)`, `pub(in ..)`
+  or any restricted form; `const`, `async`, `unsafe` and `extern` qualifiers
+  are fine) with no attribute that can remove it (a `#[cfg(..)]`, or a
+  `#[cfg_attr(.., cfg(..))]` that adds one; a `cfg_attr` that only adds
+  documentation or lint attributes, such as `#[cfg_attr(docsrs, doc(..))]`,
+  does not refuse), and is the only function of its name in its file, directly in
+  the library root file, an inline module, or a module file;
+- every module between the library root (`src/lib.rs`) and it is a plain
+  `pub mod` with no attribute at all (no `#[cfg]`, `#[cfg_attr]`, `#[path]`,
+  `#[macro_use]`) and whose own file, when it is a module file, has no inner
+  attribute (`#![cfg(..)]` gates the whole module; the library root keeps its
+  crate-level inner attributes),
+  declared exactly once among its siblings, inline or out of line in the file
+  layout it names (`pricing.rs` or `pricing/mod.rs`, exactly one of them
+  existing; an inline module in the middle of a file chain refuses);
+- no file of the chain may splice items in (a macro definition, an item-position
+  macro or an `include!`), so the declarations read are the declarations that
+  compile.
+
+A private or `pub(crate)` module, an attribute on any link, a second
+declaration, a missing or doubled module file, a call that leaves a module out
+or names another, and an import of the module alone (`use wscore::pricing;`)
+keep the earlier no-path reading. A re-export (`pub use`) is not followed: a
+function in a private module re-exported at the root is not named by its
+declaration path.
+
+### Calls over more than one crate
+
+`app::run` calls `mid::checkout`, which calls `wscore::discount`. Each edge is
+its own hop with its own manifest name (`app` depends on `mid`, `mid` on
+`wscore`; `app` need not depend on `wscore`), admitted by exactly the rules
+above, and the existing chain rule joins them: the chain's callers are the
+unique callers of each function, bounded by the existing hop limit. Every hop
+must forward (the tail of each caller is exactly its one call), and the
+argument binder carries the test's literal down both edges. A transformed
+argument or result at either hop, a `[dev-dependencies]`-only edge at either
+edge, or a middle name that exists twice in the workspace keeps the earlier
+reading.
 
 ### A test of the entry's own package
 
@@ -195,9 +251,13 @@ runs at most once per `resolve_repair_start` call, which both bare `ripr
 repair` and the `ripr continue` start suggestion use, and only when an open
 seam on the changed lines passes a cheap pre-test: there is a `Cargo.toml`
 besides the owner's own (path-only scan; a virtual workspace root counts, and
-so does a nested manifest such as `fuzz/Cargo.toml`), and the owner is a
-top-level `pub fn` of its package's `src/lib.rs`, the shape another crate can
-name as `<crate>::<fn>`. A repository whose only manifest is the owner's own
+so does a nested manifest such as `fuzz/Cargo.toml`), and the owner is declared
+as `pub fn` (`pub`, optionally `const`, `async`, `unsafe` or `extern`, with any
+whitespace between the words) at the top level or in an inline module of a
+library source file of its package (`src/lib.rs` or a module file under `src/`;
+not `src/main.rs` or `src/bin/`). These are the shapes another crate can name
+as `<crate>::<fn>` or `<crate>::<module>::<fn>`. Whether the path is really public is check's
+decision, not the pre-test's. A repository whose only manifest is the owner's own
 never runs it, and an unreadable owner file counts as passing. Refusals the pre-test excludes (a
 private owner, a method, a same-crate wrapper) keep the seam producer's
 answer.
@@ -219,15 +279,17 @@ repair names the noticed change; neither starts. An explicit `ripr repair
   producer alone.
 - Repair runs the default check analysis a second time only under the
   pre-test above; a changed method or non-`pub` function, or a function outside
-  a package's `src/lib.rs`, is outside it, so repair keeps the seam producer's
+  a package's library sources, is outside it, so repair keeps the seam producer's
   answer there.
 - `--no-unchanged-tests` and `--mode instant` leave the unchanged `app` test
   out of check's evidence, so check keeps the earlier no-path reading there
   (repair, which has no mode, reads the workspace whole).
-- Not followed: a glob import, an aliased or nested import, a submodule path (`wscore::pricing::discount`), a method or associated
-  function, more than one crate edge in a chain beyond what the existing
-  chain bound allows, and a return-value probe whose exact pin needs the
-  same-crate identity proof (the hop is `module_qualified`).
+- Not followed: a glob import, an aliased or nested import, a re-exported
+  path (`pub use`), a module path through a non-public or attributed module, a
+  method or associated function, a chain longer than the existing hop bound
+  allows, a library whose root is not the default `src/lib.rs`, and a
+  return-value probe whose exact pin needs the same-crate identity proof (the
+  hop is `module_qualified`).
 - Static evidence only. Real mutation testing remains a later authority.
 
 ## Required Evidence
@@ -244,8 +306,8 @@ repair names the noticed change; neither starts. An explicit `ripr repair
 ## Non-Goals
 
 - Teaching the seam producer to follow a call into another crate.
-- Resolving a bare `use`d function, a renamed dependency, a submodule path or
-  a method across a crate edge.
+- Resolving a re-export, a glob or aliased import or a method across a crate
+  edge.
 - Any runtime claim, test generation or change to the actionability flip.
 
 ## Acceptance Examples
@@ -283,6 +345,24 @@ repair names the noticed change; neither starts. An explicit `ripr repair
    workspace root is a manifest besides `wscore`'s own and `discount` is a
    top-level `pub fn` of `wscore/src/lib.rs`, so the check run is made).
 
+6. With `wscore/src/lib.rs` holding `pub mod pricing;` and `discount` in
+   `wscore/src/pricing.rs` (or `pricing/mod.rs`, a deeper `pricing/rules.rs`,
+   or an inline `pub mod pricing { .. }`), `app` calling
+   `wscore::pricing::discount(price)`, or `use wscore::pricing::discount;`
+   (also under a rename: `disc::pricing::discount`) and a bare call, reads as
+   noticed like example 1. With the module private, `pub(crate)`, `cfg`-gated,
+   `#[path]`-remapped, declared twice, behind a macro, or with the call leaving
+   the module out or naming another, the earlier no-path reading stays. With a
+   crate-visible function it also stays.
+7. `app::run` returns `mid::checkout(price)`, `mid::checkout` returns
+   `wscore::discount(price)` (any hop may import by name instead), and the
+   test in `app` pins `run(100) == 90`: noticed, and bare repair does not
+   start. A transformed argument or result at either hop, a dev-only edge, or
+   a duplicate `checkout` keeps the earlier reading.
+8. `use wscore::{discount, inner as wscore};`, `use crate::shim::wscore;`
+   beside the import, or an item `struct wscore;` keeps the earlier reading;
+   a plain `use wscore::other;` beside `use wscore::discount;` does not.
+
 ## Test Mapping
 
 - `crates/ripr/tests/cross_crate_reach.rs`.
@@ -291,7 +371,8 @@ repair names the noticed change; neither starts. An explicit `ripr repair
   `[dev-dependencies]`-only edge as its unreached fixture).
 - `crates/ripr/src/analysis/facts/member_crates.rs` (`library_dependency_name`
   tests) and `crates/ripr/src/analysis/classify/helper_transfer/cross_crate_hop.rs`
-  (declaration, call-shape and module-name tests).
+  (call-shape, module-name and import tests) and `cross_crate_path.rs`
+  (public module path tests).
 
 ## Implementation Mapping
 
@@ -299,10 +380,14 @@ repair names the noticed change; neither starts. An explicit `ripr repair
   `MemberCrates::library_dependency_name`, the `[dependencies]`-only,
   cross-package variant of the manifest import authority; a `package` rename
   is named by its key.
+- `crates/ripr/src/analysis/classify/helper_transfer/cross_crate_path.rs`:
+  `public_path`, the one reader of a callee's public module path; `admit` in
+  `cross_crate_hop.rs` calls it for both call spellings and passes its library
+  root to `library_dependency_name`.
 - `crates/ripr/src/analysis/classify/helper_transfer/cross_crate_hop.rs`:
   `cross_crate_free_hop`, reached from `chain_through_caller` after the
-  own-crate qualified route. `HelperHop::crate_qualifier` carries the crate
-  name; `hops_forward_owner_result_with` reads it for the tail rule.
+  own-crate qualified route. `HelperHop::crate_qualifier` carries the
+  crate name and public modules the call is spelled through; `hops_forward_owner_result_with` reads it for the tail rule.
   `cross_crate_imported_free_hop` is the bare-call-after-import variant,
   reached from `chain_through_caller` where a bare call between two member
   packages was refused.

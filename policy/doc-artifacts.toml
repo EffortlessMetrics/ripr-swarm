@@ -1397,6 +1397,14 @@ owner = "product-analysis"
 standalone_reason = "Registers each runnable fenced example in a Rust library's function docs as a test of its file, read from its own synthetic source: its exact assertion on the owner, called through the library's import name, pins the owner's return; ignored and non-running fences, crate-relative paths and method calls are refused."
 
 [[artifact]]
+id = "RIPR-SPEC-0411"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0411-stop-reason-contract.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Documents every StopReason wire value (trigger, class impact, owning spec), reserves three tokens that current main never emits, and enforces the registry with unit tests (#5514)."
+
+[[artifact]]
 id = "RIPR-SPEC-0319"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0319-classification-keyed-guidance.md"

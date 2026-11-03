@@ -1107,6 +1107,19 @@ pub(crate) fn resolve_repair_start(
     }
     let (reasons, reasons_total) =
         collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
+    // #12831: several eligible seams on the change, but `ripr check` names
+    // one repair start for it. Check's choice is the recommendation, so the
+    // bare start takes it instead of asking the user to repeat it. Only a
+    // seam among the eligible ones is taken; no first or newest pick.
+    if eligible_ids.len() > 1
+        && matches!(scope, Some(ChangeScope::TouchesSeams(_)))
+        && let Some(chosen) = check_recommended_start(root, base, &config, &eligible_ids)
+        && let Some(position) = eligible_ids.iter().position(|id| *id == chosen)
+    {
+        let note = candidate_notes.swap_remove(position);
+        eligible_ids = vec![chosen];
+        candidate_notes = vec![note];
+    }
     let head = current_git_head(root).ok();
     let spec = if eligible_ids.len() == 1 {
         Some(repair_start_command_spec(&bound, &eligible_ids[0]))
@@ -1124,6 +1137,27 @@ pub(crate) fn resolve_repair_start(
         start_spec: spec.as_ref(),
         change,
     })
+}
+
+/// The seam of the one repair start the default `ripr check` prints for the
+/// change, when it is among `eligible_ids` and needs no commit first. `None`
+/// when check names no start, names another seam, or cannot run (fail-closed:
+/// the caller keeps its selection prompt).
+fn check_recommended_start(
+    root: &Path,
+    base: Option<&str>,
+    config: &crate::config::RiprConfig,
+    eligible_ids: &[String],
+) -> Option<String> {
+    let output = super::gap_bound_repair::default_check_output(root, base, config).ok()?;
+    match check_repair_route(root, config, &output, &mut None) {
+        crate::app::CheckRepairRoute::Route(route)
+            if route.uncommitted_target.is_none() && eligible_ids.contains(&route.seam_id) =>
+        {
+            Some(route.seam_id)
+        }
+        _ => None,
+    }
 }
 
 /// Why a changed spot needs no repair when `ripr check` already reads it as
@@ -1198,29 +1232,51 @@ fn notice_what_check_notices<'a>(
 /// check could read this seam as noticed through a call from another crate,
 /// the one thing the seam producer cannot follow. True only when the workspace
 /// holds a package manifest besides the owner's own (`manifest_dirs`, from
-/// the path-only workspace scan) and the owner is a top-level `pub fn` of its
-/// package's library root, the shape another crate can name as
-/// `<crate>::<fn>`. A source that cannot be read answers true.
+/// the path-only workspace scan) and the owner is a `pub fn` declared in a
+/// library source file of its package (the library root or one of its
+/// modules, inline or in a file), the shapes another crate can name as
+/// `<crate>::<fn>` or `<crate>::<module>::<fn>`. Whether the module path is
+/// really public is check's decision, not this pre-test's. A source that
+/// cannot be read answers true.
 fn call_may_cross_a_crate(
     root: &Path,
     entry: &crate::analysis::ClassifiedSeam,
     manifest_dirs: &[String],
 ) -> bool {
     let file = entry.seam.file();
-    let owner_dir = file
-        .parent()
-        .and_then(Path::parent)
-        .map(crate::analysis::stable_path_text)
-        .unwrap_or_default();
+    // The manifest prefixes are workspace-relative; a seam file may be
+    // spelled absolute under the root.
+    let relative = file.strip_prefix(root).unwrap_or(file);
+    let components: Vec<_> = relative
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    // The package directory is everything above the last `src` directory; the
+    // library target is any file there but `main.rs` and `src/bin/`.
+    let Some(src_at) = components
+        .iter()
+        .take(components.len().saturating_sub(1))
+        .rposition(|part| part == "src")
+    else {
+        return false;
+    };
+    let below_src = &components[src_at + 1..];
+    if below_src.first().is_some_and(|first| first == "bin") || below_src == ["main.rs".to_string()]
+    {
+        return false;
+    }
+    let owner_dir = components[..src_at]
+        .iter()
+        .filter(|part| part.as_str() != "." && part.as_str() != "/")
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("/");
     let owner_prefix = if owner_dir.is_empty() {
         String::new()
     } else {
         format!("{owner_dir}/")
     };
     if !manifest_dirs.iter().any(|dir| *dir != owner_prefix) {
-        return false;
-    }
-    if !file.ends_with("src/lib.rs") {
         return false;
     }
     let name = entry
@@ -1238,15 +1294,44 @@ fn call_may_cross_a_crate(
     let Ok(source) = std::fs::read_to_string(path) else {
         return true;
     };
-    source.lines().any(|line| {
-        line.strip_prefix("pub fn ")
-            .or_else(|| line.strip_prefix("pub async fn "))
-            .or_else(|| line.strip_prefix("pub const fn "))
-            .is_some_and(|rest| {
-                rest.strip_prefix(name.as_str())
-                    .is_some_and(|tail| tail.starts_with(['(', '<']))
-            })
-    })
+    source
+        .lines()
+        .any(|line| declares_public_fn(line.trim_start(), &name))
+}
+
+/// Whether `line` opens `pub [const] [async] [unsafe] [extern "abi"] fn <name>`.
+fn declares_public_fn(line: &str, name: &str) -> bool {
+    let Some(mut rest) = line
+        .strip_prefix("pub")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+    else {
+        return false;
+    };
+    loop {
+        rest = rest.trim_start();
+        if let Some(after) = ["const", "async", "unsafe"].iter().find_map(|word| {
+            rest.strip_prefix(word)
+                .filter(|tail| tail.starts_with(char::is_whitespace))
+        }) {
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("extern") {
+            let after = after.trim_start();
+            rest = match after
+                .strip_prefix('"')
+                .and_then(|quoted| quoted.split_once('"'))
+            {
+                Some((_, tail)) => tail,
+                None => after,
+            };
+        } else {
+            break;
+        }
+    }
+    rest.strip_prefix("fn")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map(str::trim_start)
+        .and_then(|rest| rest.strip_prefix(name))
+        .is_some_and(|tail| tail.starts_with(['(', '<']))
 }
 
 /// Why an already-gripped spot needs no repair, naming its limits.
@@ -4151,6 +4236,99 @@ pub(crate) mod tests {
             &["wscore/".to_string(), "fuzz/".to_string()]
         ));
         assert!(!call_may_cross_a_crate(&root, &private, &both));
+        // A module file of the library, an inline module's function, and a
+        // binary target.
+        std::fs::create_dir_all(root.join("wscore/src/pricing")).map_err(|e| e.to_string())?;
+        std::fs::write(
+            root.join("wscore/src/pricing/rules.rs"),
+            "pub fn discount(price: u32) -> u32 {\n    price\n}\n",
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(
+            root.join("wscore/src/main.rs"),
+            "pub fn discount(price: u32) -> u32 {\n    price\n}\n",
+        )
+        .map_err(|e| e.to_string())?;
+        assert!(call_may_cross_a_crate(
+            &root,
+            &entry_for("wscore/src/pricing/rules.rs", "discount"),
+            &both
+        ));
+        assert!(!call_may_cross_a_crate(
+            &root,
+            &entry_for("wscore/src/pricing/rules.rs", "discount"),
+            &["wscore/".to_string()]
+        ));
+        assert!(!call_may_cross_a_crate(
+            &root,
+            &entry_for("wscore/src/main.rs", "discount"),
+            &both
+        ));
+        assert!(declares_public_fn(
+            "pub unsafe fn discount(p: u32)",
+            "discount"
+        ));
+        assert!(declares_public_fn(
+            "pub const unsafe fn discount<T>()",
+            "discount"
+        ));
+        assert!(declares_public_fn(
+            "pub extern \"C\" fn discount()",
+            "discount"
+        ));
+        assert!(declares_public_fn("pub async fn discount()", "discount"));
+        assert!(declares_public_fn("pub\tfn discount()", "discount"));
+        assert!(declares_public_fn("pub\tconst\tfn\tdiscount()", "discount"));
+        assert!(!declares_public_fn("pubfn discount()", "discount"));
+        assert!(!declares_public_fn("pub fndiscount()", "discount"));
+        assert!(!declares_public_fn("pub(crate) fn discount()", "discount"));
+        assert!(!declares_public_fn("pub fn discounted()", "discount"));
+        assert!(!declares_public_fn("fn discount()", "discount"));
+        // A seam file spelled absolute under the root reads as its relative
+        // form: the owner's own manifest is not "another" one.
+        let absolute = root
+            .join("wscore/src/lib.rs")
+            .to_string_lossy()
+            .into_owned();
+        std::fs::write(
+            root.join("wscore/src/lib.rs"),
+            "pub fn discount(price: u32) -> u32 {\n    price\n}\n",
+        )
+        .map_err(|e| e.to_string())?;
+        assert!(call_may_cross_a_crate(
+            &root,
+            &entry_for(&absolute, "discount"),
+            &both
+        ));
+        assert!(!call_may_cross_a_crate(
+            &root,
+            &entry_for(&absolute, "discount"),
+            &alone
+        ));
+        // A root spelled differently from the seam path (relative here)
+        // cannot be stripped: the pre-test then keeps the full path as the
+        // package directory, which can only answer "may cross" (fail-safe),
+        // never wrongly "cannot".
+        assert!(call_may_cross_a_crate(
+            Path::new("relative-root"),
+            &entry_for(&absolute, "discount"),
+            &alone
+        ));
+        assert!(!call_may_cross_a_crate(
+            &root,
+            &entry_for("wscore/examples/lib.rs", "discount"),
+            &both
+        ));
+        std::fs::write(
+            root.join("wscore/src/lib.rs"),
+            "pub mod pricing {\n    pub fn inner(price: u32) -> u32 {\n        price\n    }\n}\n",
+        )
+        .map_err(|e| e.to_string())?;
+        assert!(call_may_cross_a_crate(
+            &root,
+            &entry_for("wscore/src/lib.rs", "inner"),
+            &both
+        ));
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }

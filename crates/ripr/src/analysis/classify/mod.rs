@@ -38,6 +38,7 @@ mod operand_pin;
 mod out_parameter;
 mod owner_pin;
 mod owner_shape;
+mod owner_value;
 mod pinned_shape;
 mod poll_helper;
 mod propagation_witness;
@@ -47,6 +48,8 @@ mod related_tests;
 mod reveal;
 mod scanner_transfer;
 mod slice_boundary;
+#[cfg(test)]
+mod stop_reason_contract;
 mod targeted_calls;
 mod text;
 mod transitive_reach;
