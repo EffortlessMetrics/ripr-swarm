@@ -1,3 +1,4 @@
+pub(crate) mod analysis_execution_identity;
 mod candidate_relation;
 mod canonical_item;
 mod causal_delta;
@@ -37,6 +38,9 @@ mod test_evidence_identity;
 mod test_evidence_summary;
 mod verification_result;
 
+pub(crate) use analysis_execution_identity::{
+    AnalysisAttemptId, CompletedAnalysisSnapshotId, ContinuationId, DiagnosticResultId,
+};
 pub use candidate_relation::CandidateRelation;
 pub use canonical_item::{CanonicalItemId, CanonicalItemParseError};
 pub use causal_delta::{

@@ -223,6 +223,48 @@ fn require_nullable_nonempty_string(
     }
 }
 
+fn require_nullable_analysis_attempt_id(
+    value: serde_json::Value,
+    field: &'static str,
+) -> Result<RiprAgentRequiredNullable<String>, String> {
+    match require_nullable_nonempty_string(value, field)? {
+        RiprAgentRequiredNullable::Null => Ok(RiprAgentRequiredNullable::Null),
+        RiprAgentRequiredNullable::Value(text) => {
+            crate::domain::AnalysisAttemptId::parse_agent_snapshot_id(&text)
+                .map(|id| RiprAgentRequiredNullable::Value(id.as_str().to_string()))
+                .map_err(|error| format!("{field}: {error}"))
+        }
+    }
+}
+
+fn require_nullable_continuation_id(
+    value: serde_json::Value,
+    field: &'static str,
+) -> Result<RiprAgentRequiredNullable<String>, String> {
+    match require_nullable_nonempty_string(value, field)? {
+        RiprAgentRequiredNullable::Null => Ok(RiprAgentRequiredNullable::Null),
+        RiprAgentRequiredNullable::Value(text) => {
+            crate::domain::ContinuationId::parse_request(&text)
+                .map(|id| RiprAgentRequiredNullable::Value(id.as_str().to_string()))
+                .map_err(|error| format!("{field}: {error}"))
+        }
+    }
+}
+
+fn require_nullable_continuation_success_alias(
+    value: serde_json::Value,
+    field: &'static str,
+) -> Result<RiprAgentRequiredNullable<String>, String> {
+    match require_nullable_nonempty_string(value, field)? {
+        RiprAgentRequiredNullable::Null => Ok(RiprAgentRequiredNullable::Null),
+        RiprAgentRequiredNullable::Value(text) => {
+            crate::domain::ContinuationId::parse_success_alias(&text)
+                .map(|id| RiprAgentRequiredNullable::Value(id.as_str().to_string()))
+                .map_err(|error| format!("{field}: {error}"))
+        }
+    }
+}
+
 fn readiness_from_execution_mode(mode: CommandExecutionMode) -> RiprAgentRouteReadiness {
     match mode {
         CommandExecutionMode::Direct => RiprAgentRouteReadiness::TypedDirect,
@@ -577,8 +619,8 @@ impl TryFrom<RiprAgentRequestEnvelopeWire> for RiprAgentRequestEnvelope {
             request: value.request,
             mode: value.mode,
             profile: require_nullable(value.profile, "profile")?,
-            snapshot_id: require_nullable_nonempty_string(value.snapshot_id, "snapshot_id")?,
-            continuation_id: require_nullable_nonempty_string(
+            snapshot_id: require_nullable_analysis_attempt_id(value.snapshot_id, "snapshot_id")?,
+            continuation_id: require_nullable_continuation_id(
                 value.continuation_id,
                 "continuation_id",
             )?,
@@ -905,7 +947,7 @@ impl TryFrom<RiprAgentSuccessEnvelopeWire> for RiprAgentSuccessEnvelope {
             request: value.request,
             kind: value.kind,
             status: value.status,
-            snapshot_id: require_nullable_nonempty_string(value.snapshot_id, "snapshot_id")?,
+            snapshot_id: require_nullable_analysis_attempt_id(value.snapshot_id, "snapshot_id")?,
             input_identity: require_nullable_nonempty_string(
                 value.input_identity,
                 "input_identity",
@@ -930,7 +972,7 @@ impl TryFrom<RiprAgentSuccessEnvelopeWire> for RiprAgentSuccessEnvelope {
                 value.complete_evidence_identity,
                 "complete_evidence_identity",
             )?,
-            continuation_identity: require_nullable_nonempty_string(
+            continuation_identity: require_nullable_continuation_success_alias(
                 value.continuation_identity,
                 "continuation_identity",
             )?,
@@ -992,7 +1034,7 @@ impl TryFrom<RiprAgentErrorWire> for RiprAgentError {
             kind: value.kind,
             retryable: value.retryable,
             recovery_route: require_nullable(value.recovery_route, "recovery_route")?,
-            snapshot_id: require_nullable_nonempty_string(value.snapshot_id, "snapshot_id")?,
+            snapshot_id: require_nullable_analysis_attempt_id(value.snapshot_id, "snapshot_id")?,
         })
     }
 }
@@ -1081,7 +1123,7 @@ mod tests {
           "request": "ripr/listActionableItems",
           "kind": "actionable_items",
           "status": "ok",
-          "snapshot_id": "snapshot:abc",
+          "snapshot_id": "snapshot:1",
           "input_identity": "input:def",
           "root_identity": "root:ghi",
           "config_identity": "config:jkl",
@@ -1209,7 +1251,7 @@ mod tests {
             request: RiprAgentRequest::ListActionableItems,
             kind: RiprAgentResponseKind::ActionableItems,
             status: RiprAgentSuccessStatus::Ok,
-            snapshot_id: RiprAgentRequiredNullable::Value("snapshot:abc".to_string()),
+            snapshot_id: RiprAgentRequiredNullable::Value("snapshot:1".to_string()),
             input_identity: RiprAgentRequiredNullable::Value("input:def".to_string()),
             root_identity: RiprAgentRequiredNullable::Value("root:ghi".to_string()),
             config_identity: RiprAgentRequiredNullable::Value("config:jkl".to_string()),
@@ -1249,7 +1291,7 @@ mod tests {
             "kind": "stale_snapshot",
             "retryable": true,
             "recovery_route": "refresh",
-            "snapshot_id": "snapshot:old"
+            "snapshot_id": "snapshot:0"
           },
           "allowed_edit_surface": "read_only",
           "must_not_change": ["source_edits", "workspace_edit", "autonomous_repair"]
@@ -2136,13 +2178,13 @@ mod tests {
         }
 
         let missing_success_field =
-            success_fixture().replace("          \"snapshot_id\": \"snapshot:abc\",\n", "");
+            success_fixture().replace("          \"snapshot_id\": \"snapshot:1\",\n", "");
         if serde_json::from_str::<RiprAgentSuccessEnvelope>(&missing_success_field).is_ok() {
             return Err("success accepted an omitted nullable snapshot_id".to_string());
         }
 
         let missing_error_field = error_fixture().replace(
-            "            \"recovery_route\": \"refresh\",\n            \"snapshot_id\": \"snapshot:old\"\n",
+            "            \"recovery_route\": \"refresh\",\n            \"snapshot_id\": \"snapshot:0\"\n",
             "            \"recovery_route\": \"refresh\"\n",
         );
         if serde_json::from_str::<RiprAgentErrorEnvelope>(&missing_error_field).is_ok() {
