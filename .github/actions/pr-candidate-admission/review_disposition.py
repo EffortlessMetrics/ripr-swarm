@@ -21,65 +21,78 @@ import sys
 from typing import Any
 
 READINESS_MARKERS = ("SOURCE_REVIEW_READY", "REVIEW_READY")
-FIRST_LINE_MARKER = re.compile(
-    r"^ {0,3}(SOURCE_REVIEW_READY|REVIEW_READY)([^A-Za-z0-9_]|$)"
+POSITIVE_LINE = re.compile(
+    r"^ {0,3}(?:disposition:[ \t]*)?(SOURCE_REVIEW_READY|REVIEW_READY)[ \t]*$", re.IGNORECASE
 )
-DISPOSITION_LINE = re.compile(r"^disposition:[ \t]*(.*)[ \t]*$", re.IGNORECASE)
+# Any line that speaks about disposition or readiness state. After the first line,
+# such a line is only allowed when it is itself an exact positive line.
+STATE_MENTION = re.compile(
+    r"disposition|(?:SOURCE_)?REVIEW_(?:READY|INCOMPLETE|BLOCKED)|REPAIR_REQUIRED"
+    r"|NOT_READY|WITHDRAWN|SUPERSEDED|CHANGES_REQUESTED",
+    re.IGNORECASE,
+)
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 DECISIVE_STATES = frozenset({"APPROVED", "CHANGES_REQUESTED", "DISMISSED"})
+TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
 
 def normalize_body(body: str) -> str:
     return (body or "").replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _fence_char(opening: str) -> tuple[str, int]:
-    return opening[0], len(opening)
+def visible_lines(body: str) -> list[str] | None:
+    """Return review-body lines outside fenced examples and HTML comments.
 
-
-def visible_lines(body: str) -> list[str]:
-    """Return review-body lines that may carry disposition, masking fenced blocks."""
-    lines = normalize_body(body).split("\n")
+    Returns ``None`` when the body is structurally ambiguous (unclosed fence or
+    unclosed HTML comment); callers must refuse.
+    """
+    text = HTML_COMMENT.sub("", normalize_body(body))
+    if "<!--" in text:
+        return None
     visible: list[str] = []
     fence: tuple[str, int] | None = None
-    for line in lines:
+    for line in text.split("\n"):
         if fence is not None:
             char, size = fence
             if re.fullmatch(rf"^ {{0,3}}{re.escape(char)}{{{size},}}[ \t]*$", line):
                 fence = None
             continue
-        if not line.strip():
-            visible.append(line)
-            continue
         match = FENCE_OPEN.match(line)
         if match:
-            fence = _fence_char(match.group(1))
-            continue
-        if re.match(r"^( {4}|\t)", line):
+            fence = (match.group(1)[0], len(match.group(1)))
             continue
         visible.append(line)
+    if fence is not None:
+        return None
     return visible
 
 
 def comment_body_ready(body: str) -> bool:
-    """Whether a COMMENT review body carries a current positive source disposition."""
-    dispositions: list[str] = []
-    first = True
-    for line in visible_lines(body):
-        if not line.strip():
-            continue
-        if first and FIRST_LINE_MARKER.match(line):
-            dispositions.append("positive")
-        if DISPOSITION_LINE.match(line):
-            token = DISPOSITION_LINE.match(line)
-            assert token is not None
-            value = token.group(1).strip().upper()
-            if value in READINESS_MARKERS:
-                dispositions.append("positive")
-            else:
-                dispositions.append("refuse")
-        first = False
-    return bool(dispositions) and all(item == "positive" for item in dispositions)
+    """Whether a COMMENT review body carries a current positive source disposition.
+
+    The first substantive line must be exactly a readiness marker (optionally as
+    ``disposition: MARKER``). Any later line that mentions disposition or a readiness
+    state must itself be an exact positive line; everything else refuses.
+    """
+    lines = visible_lines(body)
+    if lines is None:
+        return False
+    substantive = [line for line in lines if line.strip()]
+    if not substantive or not POSITIVE_LINE.match(substantive[0]):
+        return False
+    return all(
+        POSITIVE_LINE.match(line) or not STATE_MENTION.search(line)
+        for line in substantive[1:]
+    )
+
+
+def _order(review: dict[str, Any]) -> tuple[str, int]:
+    return (str(review.get("submitted_at") or ""), int(review.get("id") or 0))
+
+
+def _trusted(review: dict[str, Any]) -> bool:
+    return str(review.get("author_association") or "").upper() in TRUSTED_ASSOCIATIONS
 
 
 def _latest_by_login(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -89,8 +102,7 @@ def _latest_by_login(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not login:
             continue
         current = by_login.get(login)
-        submitted = str(review.get("submitted_at") or "")
-        if current is None or submitted >= str(current.get("submitted_at") or ""):
+        if current is None or _order(review) >= _order(current):
             by_login[login] = review
     return list(by_login.values())
 
@@ -104,18 +116,21 @@ def reviews_allow_source_attestation(
     reviews: list[dict[str, Any]], *, head: str, author: str | None = None
 ) -> bool:
     """Whether review evidence admits qualification for ``head``."""
-    del author  # same-account COMMENT attestation is allowed; identity is out of scope here.
+    del author  # same-account COMMENT attestation is allowed; trust comes from author_association.
     native = _latest_decisive(reviews)
     if any(str(r.get("state") or "") == "CHANGES_REQUESTED" for r in native):
         return False
     if any(
-        str(r.get("commit_id") or "") == head and str(r.get("state") or "") == "APPROVED"
+        str(r.get("commit_id") or "") == head
+        and str(r.get("state") or "") == "APPROVED"
+        and _trusted(r)
         for r in native
     ):
         return True
     for review in _latest_by_login(reviews):
         if (
             str(review.get("commit_id") or "") == head
+            and _trusted(review)
             and str(review.get("state") or "") == "COMMENTED"
             and comment_body_ready(str(review.get("body") or ""))
         ):
@@ -174,6 +189,21 @@ def self_test() -> None:
         ("disposition: REVIEW_READY\ndisposition: REPAIR_REQUIRED", False),
         ("`SOURCE_REVIEW_READY`", False),
         ("> SOURCE_REVIEW_READY", False),
+        ("REVIEW_READY\n\nChecked the diff and the oracle.", True),
+        ("REVIEW_READY was withdrawn", False),
+        ("REVIEW_READY: no", False),
+        ("SOURCE_REVIEW_READY, but repairs required", False),
+        ("REVIEW_READY\nREPAIR_REQUIRED", False),
+        ("REVIEW_READY\nREVIEW_INCOMPLETE", False),
+        ("REVIEW_READY\n  disposition: REPAIR_REQUIRED", False),
+        ("REVIEW_READY\n- disposition: REPAIR_REQUIRED", False),
+        ("REVIEW_READY\n> disposition: REPAIR_REQUIRED", False),
+        ("REVIEW_READY\n**disposition: REPAIR_REQUIRED**", False),
+        ("REVIEW_READY\n```\ndisposition: REPAIR_REQUIRED", False),
+        ("<!--\ndisposition: REVIEW_READY\n-->", False),
+        ("<!-- unclosed\nREVIEW_READY", False),
+        ("REVIEW_READY\n<!-- note -->\ndisposition: REVIEW_READY", True),
+        ("", False),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)
@@ -181,7 +211,30 @@ def self_test() -> None:
 
     head = "a" * 40
     other = "b" * 40
-    review = lambda **kw: {"user": {"login": "reviewer"}, **kw}
+    review = lambda **kw: {
+        "user": {"login": "reviewer"},
+        "author_association": "MEMBER",
+        **kw,
+    }
+    assert not reviews_allow_source_attestation(
+        [
+            review(
+                state="COMMENTED",
+                commit_id=head,
+                submitted_at="2026-10-15T01:00:01Z",
+                body="SOURCE_REVIEW_READY",
+                author_association="NONE",
+            )
+        ],
+        head=head,
+    )
+    assert not reviews_allow_source_attestation(
+        [review(state="APPROVED", commit_id=head, author_association="CONTRIBUTOR")],
+        head=head,
+    )
+    assert reviews_allow_source_attestation(
+        [review(state="APPROVED", commit_id=head)], head=head
+    )
 
     assert reviews_allow_source_attestation(
         [
@@ -275,10 +328,11 @@ def main() -> int:
         reviews = parse_paginated(args.check_reviews.read())
     if not reviews_allow_source_attestation(reviews, head=args.head, author=args.author):
         print(
-            "::error::source review attestation refused: post a current-head COMMENT with a "
-            "column-zero SOURCE_REVIEW_READY/REVIEW_READY marker or an explicit "
-            "disposition: SOURCE_REVIEW_READY field, or obtain native APPROVED on the head; "
-            "narrative tokens and quoted examples do not count (#8157)",
+            "::error::source review attestation refused: a trusted reviewer "
+            "(OWNER/MEMBER/COLLABORATOR) must post a current-head COMMENT whose first line is "
+            "exactly SOURCE_REVIEW_READY or REVIEW_READY (or disposition: of either) with no "
+            "contradicting disposition text, or a native APPROVED on the head; narrative "
+            "tokens and quoted examples do not count (#8157)",
             file=sys.stderr,
         )
         return 1

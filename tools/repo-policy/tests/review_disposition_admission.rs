@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
 const SCRIPT: &str = ".github/actions/pr-candidate-admission/review_disposition.py";
+const REFUSED: &str = "source review attestation refused";
 
 fn script() -> Result<PathBuf, String> {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -16,8 +17,9 @@ fn script() -> Result<PathBuf, String> {
 
 fn check_reviews(reviews: &serde_json::Value, head: &str) -> Result<Output, String> {
     let mut child = Command::new("python3")
+        .arg("-I")
         .arg(script()?)
-        .args(["--check-reviews", "/dev/stdin", "--head", head])
+        .args(["--check-reviews", "-", "--head", head])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -34,9 +36,30 @@ fn check_reviews(reviews: &serde_json::Value, head: &str) -> Result<Output, Stri
         .map_err(|e| format!("wait for verifier: {e}"))
 }
 
+/// Admit means exit 0; refuse means exit 1 with the refusal line and no crash.
+fn expect_outcome(output: &Output, admit: bool, what: &str) -> Result<(), String> {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let ok = if admit {
+        output.status.code() == Some(0)
+    } else {
+        output.status.code() == Some(1) && stderr.contains(REFUSED) && !stderr.contains("Traceback")
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "{what}: expected {} got {:?} stderr={stderr}",
+            if admit { "admit" } else { "refusal" },
+            output.status.code()
+        ))
+    }
+}
+
 fn review(login: &str, state: &str, head: &str, at: &str, body: &str) -> serde_json::Value {
     serde_json::json!({
+        "id": 1,
         "user": {"login": login},
+        "author_association": "MEMBER",
         "state": state,
         "commit_id": head,
         "submitted_at": at,
@@ -47,6 +70,7 @@ fn review(login: &str, state: &str, head: &str, at: &str, body: &str) -> serde_j
 #[test]
 fn review_disposition_self_test_passes() -> Result<(), String> {
     let output = Command::new("python3")
+        .arg("-I")
         .arg(script()?)
         .arg("--self-test")
         .output()
@@ -62,9 +86,9 @@ fn review_disposition_self_test_passes() -> Result<(), String> {
 }
 
 #[test]
-fn issue_8157_literal_controls_refuse_narrative_false_positives() -> Result<(), String> {
+fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
     let head = "a".repeat(40);
-    let cases: [(&str, bool); 8] = [
+    let cases: [(&str, bool); 22] = [
         ("SOURCE_REVIEW_READY", true),
         ("REVIEW_INCOMPLETE", false),
         (
@@ -82,6 +106,21 @@ fn issue_8157_literal_controls_refuse_narrative_false_positives() -> Result<(), 
             "disposition: REVIEW_READY\ndisposition: REPAIR_REQUIRED",
             false,
         ),
+        // Review-of-record regressions on the first head of this PR.
+        ("REVIEW_READY was withdrawn", false),
+        ("REVIEW_READY: no", false),
+        ("SOURCE_REVIEW_READY, but repairs required", false),
+        ("REVIEW_READY\nREPAIR_REQUIRED", false),
+        ("REVIEW_READY\nREVIEW_INCOMPLETE", false),
+        ("REVIEW_READY\n  disposition: REPAIR_REQUIRED", false),
+        ("REVIEW_READY\n- disposition: REPAIR_REQUIRED", false),
+        ("REVIEW_READY\n> disposition: REPAIR_REQUIRED", false),
+        ("REVIEW_READY\n**disposition: REPAIR_REQUIRED**", false),
+        ("REVIEW_READY\n```\ndisposition: REPAIR_REQUIRED", false),
+        ("<!--\ndisposition: REVIEW_READY\n-->", false),
+        ("<!-- unclosed\nREVIEW_READY", false),
+        ("REVIEW_READY\n\nChecked the diff and the oracle.", true),
+        ("", false),
     ];
     for (body, expected) in cases {
         let reviews = serde_json::json!([review(
@@ -91,51 +130,107 @@ fn issue_8157_literal_controls_refuse_narrative_false_positives() -> Result<(), 
             "2026-10-15T01:00:01Z",
             body
         )]);
-        let output = check_reviews(&reviews, &head)?;
-        if output.status.success() != expected {
-            return Err(format!(
-                "body={body:?} expected={expected} stderr={}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+        expect_outcome(
+            &check_reviews(&reviews, &head)?,
+            expected,
+            &format!("{body:?}"),
+        )?;
     }
     Ok(())
 }
 
 #[test]
-fn wrong_head_and_changes_requested_controls_keep_their_results() -> Result<(), String> {
+fn wrong_head_changes_requested_and_identity_controls() -> Result<(), String> {
     let head = "a".repeat(40);
     let other = "b".repeat(40);
-    let wrong_head = serde_json::json!([review(
-        "r",
-        "COMMENTED",
-        &other,
-        "2026-10-15T01:00:01Z",
-        "SOURCE_REVIEW_READY"
-    )]);
-    let blocked = serde_json::json!([
-        review("r", "CHANGES_REQUESTED", &head, "2026-10-15T01:00:01Z", ""),
-        review(
-            "r2",
-            "COMMENTED",
-            &head,
-            "2026-10-15T01:00:02Z",
-            "SOURCE_REVIEW_READY"
+    let at = "2026-10-15T01:00:01Z";
+    let mut untrusted = review("r", "COMMENTED", &head, at, "SOURCE_REVIEW_READY");
+    untrusted["author_association"] = serde_json::json!("NONE");
+    let mut untrusted_approval = review("r", "APPROVED", &head, at, "");
+    untrusted_approval["author_association"] = serde_json::json!("CONTRIBUTOR");
+    let controls = [
+        (
+            "wrong head",
+            serde_json::json!([review("r", "COMMENTED", &other, at, "SOURCE_REVIEW_READY")]),
+            false,
         ),
-    ]);
-    let approved = serde_json::json!([review("r", "APPROVED", &head, "2026-10-15T01:00:01Z", "")]);
-    for (name, reviews, expected) in [
-        ("wrong head", wrong_head, false),
-        ("changes requested", blocked, false),
-        ("approved on head", approved, true),
-    ] {
-        let output = check_reviews(&reviews, &head)?;
-        if output.status.success() != expected {
-            return Err(format!(
-                "{name}: expected={expected} stderr={}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+        (
+            "changes requested",
+            serde_json::json!([
+                review("r", "CHANGES_REQUESTED", &head, at, ""),
+                review(
+                    "r2",
+                    "COMMENTED",
+                    &head,
+                    "2026-10-15T01:00:02Z",
+                    "SOURCE_REVIEW_READY"
+                ),
+            ]),
+            false,
+        ),
+        (
+            "approved on head",
+            serde_json::json!([review("r", "APPROVED", &head, at, "")]),
+            true,
+        ),
+        ("untrusted comment", serde_json::json!([untrusted]), false),
+        (
+            "untrusted approval",
+            serde_json::json!([untrusted_approval]),
+            false,
+        ),
+    ];
+    for (name, reviews, expected) in controls {
+        expect_outcome(&check_reviews(&reviews, &head)?, expected, name)?;
     }
     Ok(())
+}
+
+/// The `--repository/--pr` path reads every page through `gh` and fails closed on error.
+#[cfg(unix)]
+#[test]
+fn live_read_merges_pages_and_fails_closed_on_gh_error() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("review-disposition-gh-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    let head = "a".repeat(40);
+    let page1 = serde_json::json!([review(
+        "r",
+        "CHANGES_REQUESTED",
+        &head,
+        "2026-10-15T01:00:01Z",
+        ""
+    )]);
+    let page2 = serde_json::json!([review("q", "APPROVED", &head, "2026-10-15T01:00:02Z", "")]);
+    let run = |gh_body: String| -> Result<Output, String> {
+        let gh = dir.join("gh");
+        std::fs::write(&gh, gh_body).map_err(|e| format!("write gh: {e}"))?;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("chmod gh: {e}"))?;
+        let path = format!(
+            "{}:{}",
+            dir.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        Command::new("python3")
+            .arg("-I")
+            .arg(script()?)
+            .args(["--repository", "o/r", "--pr", "1", "--head", &head])
+            .env("PATH", path)
+            .output()
+            .map_err(|e| format!("spawn verifier: {e}"))
+    };
+    // A CHANGES_REQUESTED on page one must still refuse when page two approves.
+    let two_pages = format!("#!/bin/sh\nprintf '%s\\n%s\\n' '{page1}' '{page2}'\n");
+    expect_outcome(&run(two_pages)?, false, "changes requested on page one")?;
+    // An API error after a valid page must not admit.
+    let failing = format!("#!/bin/sh\nprintf '%s\\n' '{page2}'\nexit 1\n");
+    let output = run(failing)?;
+    let result = if output.status.success() {
+        Err("gh failure was admitted".to_string())
+    } else {
+        Ok(())
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+    result
 }
