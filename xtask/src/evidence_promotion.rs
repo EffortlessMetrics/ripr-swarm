@@ -4217,6 +4217,8 @@ pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), St
     // The repo-seam reports are hand-captured; regenerate each from its
     // subject so a stale capture or an analyzer regression turns red (#12144).
     repo_seam_reports::check_regenerated_reports(&mut pure_violations)?;
+    // Each committed report's own `content_sha256` must still match its bytes (#12602).
+    repo_seam_reports::check_report_digests(&mut pure_violations)?;
     // A capture must also record the analyzer's current cache generation,
     // or be pinned older with a reason (#12293).
     report_cache_schema::check_report_cache_schemas(&mut pure_violations)?;
