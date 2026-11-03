@@ -44,6 +44,7 @@ mod kani_lane;
 mod public_proof;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
+mod exact_candidate_harness;
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
 mod gh_pr_status_snapshot;
@@ -53,6 +54,7 @@ mod issue_lifecycle_attempt;
 mod issue_lifecycle_contract_plan;
 mod issue_lifecycle_intake;
 mod issue_lifecycle_real_rows;
+mod native_libtest;
 mod no_panic;
 mod orchestration_attempt;
 mod output_enum_contracts;

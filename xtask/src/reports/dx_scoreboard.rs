@@ -476,7 +476,7 @@ pub(crate) fn validate_corpus(corpus: &[CorpusEntry]) -> Result<(), String> {
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
         }) {
             return Err(format!(
-                "corpus `{}` expected_partial must name a static limit in snake_case",
+                "corpus `{}` expected_partial must name a static limit or typed limitation kind in snake_case",
                 entry.id
             ));
         }
