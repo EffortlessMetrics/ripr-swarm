@@ -266,4 +266,44 @@ mod tests {
         }
         Ok(())
     }
+
+    /// The producer (`xtask ripr-pr`) withholds a snapshot that repeats a gap
+    /// id (#12727); this keeps the consumer's matching refusal in force, so
+    /// neither side can admit what the other rejects.
+    #[test]
+    fn duplicate_canonical_gap_ids_are_rejected() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-causal-projection-duplicate-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| format!("clock before epoch: {error}"))?
+                .as_nanos()
+        ));
+        let path = root.join(DEFAULT_CANONICAL_DELTA);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| format!("create fixture: {error}"))?;
+        }
+        let row = r#"{
+              "canonical_gap_id":"gap:a",
+              "delta_attribution":"resolved_by_change",
+              "base_state":null,
+              "head_state":null,
+              "attribution_basis":[],
+              "comparison_confidence":"high"
+            }"#;
+        fs::write(
+            &path,
+            format!(
+                r#"{{"schema_version":"0.1","coverage":{{"base_items":2,"head_items":1,"matched_items":1,"ambiguous_items":0,"unknown_items":0}},"deltas":[{row},{row}]}}"#
+            ),
+        )
+        .map_err(|error| format!("write fixture: {error}"))?;
+        let result = CausalDeltaArtifact::load(&root);
+        fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
+        match result {
+            Err(message) if message.contains("duplicate canonical_gap_id") => Ok(()),
+            Err(message) => Err(format!("unexpected refusal: {message}")),
+            Ok(_) => Err("duplicate canonical_gap_id was admitted".to_string()),
+        }
+    }
 }
