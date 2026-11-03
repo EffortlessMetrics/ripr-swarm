@@ -68,6 +68,7 @@ fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> 
 
 mod shared_macro_scan;
 mod shared_target_context;
+mod tuple_projection;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
     let source = "mod production {\nstruct Widget;\nimpl Widget { fn read() {} }\n#[test] fn subject() {}\nmod nested { struct Widget; trait Render {}\n#[test] fn subject() {}\n}\n}\nmod peer { struct Widget;\n#[test] fn subject() {}\n}\n";
