@@ -26,6 +26,15 @@ const ROOT_TOML: &str = "[workspace]\nmembers = [\"wscore\", \"app\"]\nresolver 
 const WSCORE_TOML: &str = "[package]\nname = \"wscore\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
 const APP_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n";
 
+const RENAMED_APP_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ndisc = { path = \"../wscore\", package = \"wscore\" }\n";
+const RENAMED_APP_LIB: &str =
+    "pub fn checkout(price: u32) -> u32 {\n    disc::discount(price)\n}\n";
+
+/// The audit caller with the callee imported by name and called bare.
+fn bare_lib(import: &str) -> String {
+    format!("{import}\n\npub fn checkout(price: u32) -> u32 {{\n    discount(price)\n}}\n")
+}
+
 const WSCORE_OLD: &str = "pub fn discount(price: u32) -> u32 {\n    if price > 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";
 const WSCORE_NEW: &str = "pub fn discount(price: u32) -> u32 {\n    if price >= 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";
 const APP_LIB: &str = "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n";
@@ -356,19 +365,19 @@ fn an_unrelated_test_beside_a_loose_cross_crate_check_still_starts_the_same_repa
 }
 
 #[test]
-fn an_unrelated_test_beside_a_renamed_dependency_still_starts_the_same_repair() -> Result<(), String>
-{
+fn an_unrelated_test_beside_a_renamed_loose_check_still_starts_the_same_repair()
+-> Result<(), String> {
+    // The renamed dependency is followed now; one change from the noticed
+    // renamed case below (the pin is loose) keeps the gap and the start.
     assert_open_gap_starts(
-        "renamed dependency",
+        "renamed dependency, loose check",
         Case::audit()
             .with("wscore/tests/other.rs", OWNER_PACKAGE_TEST)
+            .with("app/Cargo.toml", RENAMED_APP_TOML)
+            .with("app/src/lib.rs", RENAMED_APP_LIB)
             .with(
-                "app/Cargo.toml",
-                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ndisc = { path = \"../wscore\", package = \"wscore\" }\n",
-            )
-            .with(
-                "app/src/lib.rs",
-                "pub fn checkout(price: u32) -> u32 {\n    disc::discount(price)\n}\n",
+                "app/tests/t.rs",
+                "use app::checkout;\n\n#[test]\nfn checkout_discounts() {\n    assert!(checkout(100) > 0);\n}\n",
             ),
     )
 }
@@ -444,18 +453,69 @@ fn an_input_off_the_boundary_is_not_noticed() -> Result<(), String> {
 }
 
 #[test]
-fn a_renamed_dependency_keeps_the_earlier_no_path_answer() -> Result<(), String> {
+fn a_renamed_dependency_is_noticed_by_check_and_repair() -> Result<(), String> {
+    // `disc = { path = "../wscore", package = "wscore" }`: the call is spelled
+    // through the key, `disc::discount(price)`.
+    let repo = Repo::create(
+        &Case::audit()
+            .with("app/Cargo.toml", RENAMED_APP_TOML)
+            .with("app/src/lib.rs", RENAMED_APP_LIB),
+    )?;
+    let check = repo.check(&[])?;
+    assert_changed_subject("renamed dependency", &check)?;
+    if !check.contains(NOTICED) || !check.contains("Static exposure: exposed") {
+        return Err(format!("a renamed dependency must read noticed:\n{check}"));
+    }
+    assert_no_repair_start("renamed dependency", &repo, &check)?;
+    assert_repair_says_noticed("renamed dependency", &repo)
+}
+
+#[test]
+fn a_renamed_dependency_spelled_by_its_package_name_is_not_followed() -> Result<(), String> {
+    // Same renamed manifest, but the call still says `wscore::`, which the
+    // rename removed from the caller's namespace.
     assert_not_noticed(
-        "renamed dependency",
+        "package name after rename",
+        Case::audit().with("app/Cargo.toml", RENAMED_APP_TOML),
+        NO_PATH,
+    )
+}
+
+#[test]
+fn a_dependency_reachable_under_two_names_is_ambiguous() -> Result<(), String> {
+    assert_not_noticed(
+        "two names for one package",
         Case::audit()
             .with(
                 "app/Cargo.toml",
-                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ndisc = { path = \"../wscore\", package = \"wscore\" }\n",
+                &format!("{APP_TOML}disc = {{ path = \"../wscore\", package = \"wscore\" }}\n"),
+            )
+            .with("app/src/lib.rs", RENAMED_APP_LIB),
+        NO_PATH,
+    )
+}
+
+#[test]
+fn a_rename_that_points_at_another_package_is_not_followed() -> Result<(), String> {
+    // `disc` is the other crate; `wscore` is not in the caller's namespace as
+    // the changed package.
+    assert_not_noticed(
+        "rename to another package",
+        Case::audit()
+            .with(
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"wscore\", \"app\", \"legacy\"]\nresolver = \"2\"\n",
             )
             .with(
-                "app/src/lib.rs",
-                "pub fn checkout(price: u32) -> u32 {\n    disc::discount(price)\n}\n",
-            ),
+                "legacy/Cargo.toml",
+                "[package]\nname = \"legacy\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )
+            .with("legacy/src/lib.rs", "pub fn other() {}\n")
+            .with(
+                "app/Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ndisc = { path = \"../legacy\", package = \"legacy\" }\n",
+            )
+            .with("app/src/lib.rs", RENAMED_APP_LIB),
         NO_PATH,
     )
 }
@@ -495,15 +555,152 @@ fn a_same_named_function_in_another_crate_keeps_the_earlier_no_path_answer() -> 
 }
 
 #[test]
-fn a_bare_import_of_the_function_is_not_followed_yet() -> Result<(), String> {
-    // `use wscore::discount;` then `discount(price)` is a later slice: the bare
-    // name is not callee identity across a crate edge.
+fn a_bare_call_after_a_use_by_name_is_noticed_by_check_and_repair() -> Result<(), String> {
+    for (label, import) in [
+        ("single use", "use wscore::discount;"),
+        ("list use", "use wscore::{self, discount};"),
+    ] {
+        let repo = Repo::create(&Case::audit().with("app/src/lib.rs", &bare_lib(import)))?;
+        let check = repo.check(&[])?;
+        assert_changed_subject(label, &check)?;
+        if !check.contains(NOTICED) || !check.contains("Static exposure: exposed") {
+            return Err(format!(
+                "{label}: the imported bare call must read noticed:\n{check}"
+            ));
+        }
+        assert_no_repair_start(label, &repo, &check)?;
+        assert_repair_says_noticed(label, &repo)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_bare_call_after_a_use_of_a_renamed_dependency_is_noticed() -> Result<(), String> {
+    let repo = Repo::create(
+        &Case::audit()
+            .with("app/Cargo.toml", RENAMED_APP_TOML)
+            .with("app/src/lib.rs", &bare_lib("use disc::discount;")),
+    )?;
+    let check = repo.check(&[])?;
+    assert_changed_subject("renamed and imported", &check)?;
+    if !check.contains(NOTICED) {
+        return Err(format!("renamed + imported must read noticed:\n{check}"));
+    }
+    assert_repair_says_noticed("renamed and imported", &repo)
+}
+
+#[test]
+fn an_imported_bare_call_keeps_the_argument_and_pin_rules() -> Result<(), String> {
+    let lib = bare_lib("use wscore::discount;");
+    let shifted = lib.replace("discount(price)\n", "discount(price + 1)\n");
+    assert_ne!(lib, shifted, "the fixture must change the argument");
     assert_not_noticed(
-        "bare import",
+        "imported, transformed argument",
+        Case::audit().with("app/src/lib.rs", &shifted),
+        "1 found",
+    )?;
+    assert_not_noticed(
+        "imported, off the boundary",
+        Case::audit().with("app/src/lib.rs", &lib).with(
+            "app/tests/t.rs",
+            "use app::checkout;\n\n#[test]\nfn checkout_discounts() {\n    assert_eq!(checkout(150), 140);\n}\n",
+        ),
+        "1 found",
+    )
+}
+
+#[test]
+fn a_glob_import_does_not_name_the_function() -> Result<(), String> {
+    assert_not_noticed(
+        "glob import",
+        Case::audit().with("app/src/lib.rs", &bare_lib("use wscore::*;")),
+        NO_PATH,
+    )
+}
+
+#[test]
+fn an_aliased_or_nested_import_does_not_name_the_function() -> Result<(), String> {
+    for (label, lib) in [
+        (
+            "alias",
+            "use wscore::discount as disc;\n\npub fn checkout(price: u32) -> u32 {\n    disc(price)\n}\n".to_string(),
+        ),
+        (
+            "alias, original name called",
+            bare_lib("use wscore::discount as disc;"),
+        ),
+        (
+            "import inside the function",
+            "pub fn checkout(price: u32) -> u32 {\n    use wscore::discount;\n    discount(price)\n}\n".to_string(),
+        ),
+        (
+            "import under cfg",
+            bare_lib("#[cfg(test)]\nuse wscore::discount;"),
+        ),
+    ] {
+        assert_not_noticed(label, Case::audit().with("app/src/lib.rs", &lib), NO_PATH)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_local_function_of_the_same_name_shadows_the_import() -> Result<(), String> {
+    // The call may mean the local `discount`, which `price` never reaches
+    // `wscore` through.
+    assert_not_noticed(
+        "local shadow",
         Case::audit().with(
             "app/src/lib.rs",
-            "use wscore::discount;\n\npub fn checkout(price: u32) -> u32 {\n    discount(price)\n}\n",
+            &format!(
+                "{}\nfn discount(price: u32) -> u32 {{\n    price\n}}\n",
+                bare_lib("use wscore::discount;")
+            ),
         ),
+        NO_PATH,
+    )?;
+    // A local binding of the name inside the caller.
+    assert_not_noticed(
+        "local binding",
+        Case::audit().with(
+            "app/src/lib.rs",
+            "use wscore::discount;\n\npub fn checkout(price: u32) -> u32 {\n    let discount = |p: u32| p;\n    discount(price)\n}\n",
+        ),
+        NO_PATH,
+    )
+}
+
+#[test]
+fn a_name_that_exists_in_two_crates_is_ambiguous_even_when_imported() -> Result<(), String> {
+    assert_not_noticed(
+        "same name elsewhere, imported",
+        Case::audit()
+            .with("app/src/lib.rs", &bare_lib("use wscore::discount;"))
+            .with(
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"wscore\", \"app\", \"legacy\"]\nresolver = \"2\"\n",
+            )
+            .with(
+                "legacy/Cargo.toml",
+                "[package]\nname = \"legacy\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )
+            .with(
+                "legacy/src/lib.rs",
+                "pub fn discount(price: u32) -> u32 {\n    price\n}\n",
+            ),
+        NO_PATH,
+    )
+}
+
+#[test]
+fn an_import_of_the_function_from_an_undeclared_dependency_is_not_followed() -> Result<(), String> {
+    assert_not_noticed(
+        "import without dependency edge",
+        Case::audit()
+            .with("app/src/lib.rs", &bare_lib("use wscore::discount;"))
+            .with(
+                "app/Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dev-dependencies]\nwscore = { path = \"../wscore\" }\n",
+            ),
         NO_PATH,
     )
 }

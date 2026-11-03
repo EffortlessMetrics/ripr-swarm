@@ -76,17 +76,21 @@ chain hop when every link is exact:
    package (`MemberCrates::library_dependency_name`): `callee` is in the
    library root file of its package, the two packages differ, and the
    caller's `[dependencies]` (or `[target.*.dependencies]`) holds a path
-   entry on the callee's package whose key is the callee's own library
-   identifier. A `[dev-dependencies]` or `[build-dependencies]` entry is not
-   visible to library code and gives no name. A `package = ".."` rename gives
-   no name here (the key would differ from the library identifier). Registry
+   entry on the callee's package. The name is the entry's key: the callee's
+   own library identifier, or the new name a `package = ".."` rename gives it
+   (`disc = { path = "../wscore", package = "wscore" }` names the crate
+   `disc`). Two entries naming the package (`wscore` and `disc`), or a key
+   that another entry binds to a different package, are ambiguous and give no
+   name. A `[dev-dependencies]` or `[build-dependencies]` entry is not
+   visible to library code and gives no name. Registry
    and git entries, `[patch]` and `[replace]` of the name, Cargo config
    mentions and any unreadable or unexpected manifest give no name, exactly as
    they refuse the import authority this extends.
 3. `caller` is production code (not a test, not under `tests/`) and mentions
    `callee` once, in one call fact, spelled `<crate>::<callee>(..)` with
-   exactly that one qualifier segment: no bare call, method call, longer
-   path, leading `::` or generic argument.
+   exactly that one qualifier segment: no method call, longer path, leading
+   `::` or generic argument. The one other spelling is a bare `callee(..)`
+   after an import by name, below.
 4. Nothing can rebind `<crate>`. In the caller's own file there is no `use`
    of the name, alias, glob, block-local item, or macro or `include` that
    could splice an item in. In every other file of the caller's package there
@@ -102,10 +106,35 @@ other shape (`+ 1`, a bound-then-shifted result, a branch). Argument binding
 down the hop is the existing positional binder, so an argument the caller
 computes (`price + 1`) binds nothing and the boundary input is not credited.
 
-A bare call between two different member packages is never a hop
-(`use wscore::discount; discount(price)` stays as before for lack of identity;
-the root package keeps its existing reading), so the member-package entry fix
-below cannot expose it by accident.
+A bare call between two different member packages is a hop only through the
+import below; otherwise it is never a hop (the root package keeps its
+existing reading), so the member-package entry fix below cannot expose it by
+accident.
+
+### A bare call after an import by name
+
+`use wscore::discount;` and `use wscore::{discount, ..}` (also
+`use wscore::{self, discount}`) make a bare `discount(price)` the same hop,
+under the same manifest name (renamed included: `use disc::discount;`), when
+all of these hold in addition to rules 1, 2 and 5 above:
+
+- `caller` is a top-level function of its file, and the bare name appears
+  exactly once in its body, in one direct call;
+- exactly one `use` in the file mentions the callee name. It is a top-level
+  `use` with no attribute (`#[cfg(..)]`) and no visibility (`pub use`), whose
+  path is `<crate>::<callee>` or whose list holds the bare `callee` under
+  `<crate>`. An alias (`as d`), a glob, a longer path
+  (`wscore::pricing::discount`), a leading `::`, an import of the name from
+  another crate, an import inside a function or module, and a second import
+  of the name all refuse;
+- the file declares nothing named `callee` (function, binding, parameter,
+  closure parameter, item or macro) and holds no `extern crate`, `include` or
+  macro that could splice items in;
+- no file of the caller's package declares `mod <crate>`.
+
+A glob import (`use wscore::*;`) never names the callee, so a bare call after
+only a glob stays unreached. The tail rule accepts the bare call as the whole
+tail for such a hop; the single admitted mention is what is checked.
 
 ### A test of the entry's own package
 
@@ -190,8 +219,7 @@ repair names the noticed change; neither starts. An explicit `ripr repair
 - `--no-unchanged-tests` and `--mode instant` leave the unchanged `app` test
   out of check's evidence, so check keeps the earlier no-path reading there
   (repair, which has no mode, reads the workspace whole).
-- Not followed: a bare `use wscore::discount;` call, a renamed dependency, a
-  submodule path (`wscore::pricing::discount`), a method or associated
+- Not followed: a glob import, an aliased or nested import, a submodule path (`wscore::pricing::discount`), a method or associated
   function, more than one crate edge in a chain beyond what the existing
   chain bound allows, and a return-value probe whose exact pin needs the
   same-crate identity proof (the hop is `module_qualified`).
@@ -227,14 +255,23 @@ repair names the noticed change; neither starts. An explicit `ripr repair
    `wscore::discount(price) + 1` (and the pin moved to 91), with
    `assert!(checkout(100) > 0)`, or with `checkout(150)` is not read as
    noticed.
-3. The same workspace with the dependency renamed, declared only under
-   `[dev-dependencies]`, shadowed by a local `mod wscore`, called through
-   `use wscore::discount;`, or with a second `discount` in a third crate keeps
-   the earlier no-path reading.
+3. The same workspace declared only under `[dev-dependencies]`, shadowed by a
+   local `mod wscore`, with the call still spelled `wscore::` after a rename,
+   with the package reachable under two names, with a rename that points at
+   another package, imported by glob (`use wscore::*;`) or by alias, imported
+   inside the function or under `#[cfg]`, shadowed by a local `fn discount`
+   or binding, or with a second `discount` in a third crate keeps the earlier
+   no-path reading.
+3a. The same workspace with `disc = { path = "../wscore", package = "wscore" }`
+   and `disc::discount(price)`, or with `use wscore::discount;` /
+   `use wscore::{self, discount};` / `use disc::discount;` and a bare
+   `discount(price)`, reads as noticed like example 1, and bare repair does not
+   start. With `discount(price + 1)` after the import, or the pin moved to
+   `checkout(150)`, it is not read as noticed.
 4. With an extra `wscore/tests/other.rs` asserting `discount(5) == 5`, check
    still reads the change as noticed, and bare repair does not start. With the
    `app` pin moved to `checkout(150)`, loosened to `assert!(checkout(100) > 0)`,
-   the dependency renamed or the argument changed, check reads a partial gap
+   the pin loosened under a renamed dependency or the argument changed, check reads a partial gap
    and both commands start the same repair.
 5. `checkout` and `discount` both in one member package whose integration test
    does `use wscore::checkout;` reads as noticed in a virtual workspace, and bare repair agrees (the virtual
@@ -245,8 +282,8 @@ repair names the noticed change; neither starts. An explicit `ripr repair
 
 - `crates/ripr/tests/cross_crate_reach.rs`.
 - `crates/ripr/tests/check_repair_agree.rs`
-  (`unreached_workspace_change_is_not_called_gripped_by_repair` now uses a
-  renamed dependency as its unreached fixture).
+  (`unreached_workspace_change_is_not_called_gripped_by_repair` uses a
+  `[dev-dependencies]`-only edge as its unreached fixture).
 - `crates/ripr/src/analysis/facts/member_crates.rs` (`library_dependency_name`
   tests) and `crates/ripr/src/analysis/classify/helper_transfer/cross_crate_hop.rs`
   (declaration, call-shape and module-name tests).
@@ -255,11 +292,15 @@ repair names the noticed change; neither starts. An explicit `ripr repair
 
 - `crates/ripr/src/analysis/facts/member_crates.rs`:
   `MemberCrates::library_dependency_name`, the `[dependencies]`-only,
-  unrenamed, cross-package variant of the manifest import authority.
+  cross-package variant of the manifest import authority; a `package` rename
+  is named by its key.
 - `crates/ripr/src/analysis/classify/helper_transfer/cross_crate_hop.rs`:
   `cross_crate_free_hop`, reached from `chain_through_caller` after the
   own-crate qualified route. `HelperHop::crate_qualifier` carries the crate
   name; `hops_forward_owner_result_with` reads it for the tail rule.
+  `cross_crate_imported_free_hop` is the bare-call-after-import variant,
+  reached from `chain_through_caller` where a bare call between two member
+  packages was refused.
 - `crates/ripr/src/app/task_first.rs`: `notice_what_check_notices`, called by
   `resolve_repair_start` between the shared gate (`repair_refusal`) and the
   refusal presentation; the binding is
