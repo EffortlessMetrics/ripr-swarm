@@ -78,6 +78,7 @@ TypeScript repair packet (advisory)
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_call_removal_multiple_calls/input --diff <cwd>/fixtures/typescript_call_removal_multiple_calls/diff.patch --mode fast probe:src_audit.ts:typescript_preview:a853f862
   ripr context --root <cwd>/fixtures/typescript_call_removal_multiple_calls/input --diff <cwd>/fixtures/typescript_call_removal_multiple_calls/diff.patch --mode fast --at probe:src_audit.ts:typescript_preview:a853f862
 
@@ -135,6 +136,7 @@ TypeScript repair packet (advisory)
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_call_removal_multiple_calls/input --diff <cwd>/fixtures/typescript_call_removal_multiple_calls/diff.patch --mode fast probe:src_audit.ts:typescript_preview:fe5718af
   ripr context --root <cwd>/fixtures/typescript_call_removal_multiple_calls/input --diff <cwd>/fixtures/typescript_call_removal_multiple_calls/diff.patch --mode fast --at probe:src_audit.ts:typescript_preview:fe5718af
 

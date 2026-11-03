@@ -89,6 +89,7 @@ use crate::analysis::syntax::{
     returns_leave_the_function, source_binds_value_name, source_declares_value_name,
     source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
 };
+use crate::analysis::workspace::declared_crate_root_paths_from_manifest;
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
@@ -2617,9 +2618,10 @@ fn merge_macro_site_rank<'a>(
 /// fragment, and the fragment's module children, looking like a root.
 #[derive(Clone, Debug)]
 struct TargetRoots {
-    /// An unresolved `include!`, or an unresolvable `#[path]` (which
-    /// records no module edge for its target), may compile any file into
-    /// another crate, so no file is charged to one root.
+    /// An unresolved `include!`, an unresolvable `#[path]` (which records
+    /// no module edge for its target), or an unindexed member that may
+    /// mount other crates that way, may compile any file into another
+    /// crate, so no file is charged to one root.
     disabled: bool,
     /// Every indexed `<package>/src` directory, for the `tests/`, `benches/`,
     /// `examples/` and `build.rs` roots beside one.
@@ -2631,11 +2633,103 @@ struct TargetRoots {
     binary_macro_roots: SyncMemo<BTreeMap<PathBuf, Option<BTreeSet<PathBuf>>>>,
 }
 
+/// Draft/Fast indexes omit members that are not the changed package or its
+/// reverse path-dependents. An omitted member is an unseen compilation
+/// *target* of indexed files only when it may mount them (`include!` or
+/// `#[path]`): that is the #10149 generated-B case. A namesake sibling
+/// with no such mount is not a target of the receiver, so indexed members
+/// across packages stay placeable.
+fn unindexed_member_is_unseen_compilation_target(index: &RustIndex) -> bool {
+    let Some(root) = index
+        .workspace_authority
+        .as_ref()
+        .map(|authority| authority.root.as_path())
+    else {
+        return false;
+    };
+    index.workspace_member_dirs.iter().any(|member_dir| {
+        let member_canon = member_dir
+            .canonicalize()
+            .unwrap_or_else(|_| member_dir.to_path_buf());
+        let Some(relative) = member_canon.strip_prefix(root).ok() else {
+            return false;
+        };
+        let indexed = index.files().iter().any(|(path, _)| {
+            let path = path.as_path();
+            let path = path.strip_prefix("./").unwrap_or(path);
+            path.starts_with(relative)
+        });
+        !indexed && unindexed_member_may_mount_foreign_files(&member_canon)
+    })
+}
+
+const UNINDEXED_MEMBER_ROOTS: &[&str] =
+    &["src/lib.rs", "src/main.rs", "build.rs", "lib.rs", "main.rs"];
+const UNINDEXED_MEMBER_SOURCE_BYTES: usize = 256 * 1024;
+
+/// Whether an unindexed member's crate-root sources look like they could
+/// compile another crate's files. Unreadable, oversized, or missing crate
+/// roots fail closed: the member exists and its compilation effect is
+/// unknown. A readable crate root with no `include!` / `#[path]` is not a
+/// mount, so a namesake dependency of an indexed test crate does not
+/// disable placement.
+fn unindexed_member_may_mount_foreign_files(member_dir: &Path) -> bool {
+    let mut candidates: BTreeSet<PathBuf> = UNINDEXED_MEMBER_ROOTS
+        .iter()
+        .map(|candidate| member_dir.join(candidate))
+        .collect();
+    match std::fs::read_to_string(member_dir.join("Cargo.toml")) {
+        Ok(manifest) => {
+            for relative in declared_crate_root_paths_from_manifest(&manifest, member_dir) {
+                candidates.insert(member_dir.join(relative));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return true,
+    }
+    let mut inspected = false;
+    for path in candidates {
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                if bytes.len() > UNINDEXED_MEMBER_SOURCE_BYTES {
+                    return true;
+                }
+                let Ok(source) = std::str::from_utf8(&bytes) else {
+                    return true;
+                };
+                inspected = true;
+                if source_may_mount_foreign_files(source) {
+                    return true;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return true,
+        }
+    }
+    !inspected
+}
+
+fn source_may_mount_foreign_files(source: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    whole_word_offsets(&masked, "include")
+        .into_iter()
+        .any(|offset| {
+            masked
+                .get(offset + "include".len()..)
+                .is_some_and(|rest| rest.trim_start().starts_with('!'))
+        })
+        || {
+            let compact: String = masked.chars().filter(|ch| !ch.is_whitespace()).collect();
+            compact.contains("#[path") || compact.contains("#![path")
+        }
+}
+
 impl TargetRoots {
     fn new(index: &RustIndex) -> Self {
         // A lexical-fallback file records no module declarations, so its
         // children get no edge either.
         let disabled = !index.include_limitations.is_empty()
+            || unindexed_member_is_unseen_compilation_target(index)
             || index.files().iter().any(|(_, facts)| {
                 facts.used_lexical_fallback
                     || facts
@@ -15169,6 +15263,9 @@ struct UnitStructFacts {
     /// Some file's `macro_rules!` matcher takes an `:ident` or `:tt`
     /// fragment, which could declare any name it is given.
     macro_takes_name: bool,
+    /// Some file invokes a macro at item position whose
+    /// definition is outside the indexed file text (#7160).
+    external_defining_macro: bool,
     /// Files whose masked source mentions `macro_rules!`: only these can
     /// refuse a name by spelling it in a macro definition. Complete only
     /// while [`Self::refused`] is false: the scan stops at the first
@@ -15188,12 +15285,20 @@ impl UnitStructFacts {
         let mut glob_outside = false;
         let mut spliced = false;
         let mut macro_takes_name = false;
+        let mut external_defining_macro = false;
         let mut macro_files = BTreeSet::new();
         for (file, facts) in index.files().iter() {
             // Once any refusal verdict holds, the remaining files cannot
             // change it, and the caller refuses before reading
             // `macro_files`; stop paying for their masking.
-            if glob_outside || spliced || macro_takes_name {
+            if glob_outside || spliced || macro_takes_name || external_defining_macro {
+                break;
+            }
+            external_defining_macro |=
+                super::macro_item_names::file_has_non_local_defining_macro_invocation(
+                    &facts.source,
+                );
+            if external_defining_macro {
                 break;
             }
             let masked = mask_comments_and_strings(&facts.source);
@@ -15224,13 +15329,14 @@ impl UnitStructFacts {
             glob_outside,
             spliced,
             macro_takes_name,
+            external_defining_macro,
             macro_files,
         }
     }
 
     /// Whether the workspace-wide scans refuse every name.
     fn refused(&self) -> bool {
-        self.glob_outside || self.spliced || self.macro_takes_name
+        self.glob_outside || self.spliced || self.macro_takes_name || self.external_defining_macro
     }
 }
 
@@ -15258,8 +15364,9 @@ impl UnitStructFacts {
 ///   splice in text the scan never reads.
 ///
 /// Items a derive or attribute proc macro emits stay invisible, as for
-/// every other pin rule, as do items an out-of-workspace `macro_rules!`
-/// invocation emits (#7160).
+/// every other pin rule. An item- or statement-position macro whose
+/// definition is not in the indexed workspace text may emit unread items,
+/// so the workspace-wide scan refuses (#7160).
 pub(super) fn unit_struct_value(
     name: &str,
     test_file: &Path,
