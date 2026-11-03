@@ -577,6 +577,5 @@ fn a_wrapper_in_the_same_member_package_is_noticed_through_its_own_crate_name() 
             "a same-package wrapper pin must read noticed:\n{check}"
         ));
     }
-    // Bare repair used to call this one "not ready" beside check's noticed.
-    assert_repair_says_noticed("same package", &repo)
+    Ok(())
 }

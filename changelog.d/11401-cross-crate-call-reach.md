@@ -15,3 +15,7 @@
 - A test in a workspace member's own `tests/` folder that imports its crate's
   function (`use wscore::checkout;`) is no longer read as an import from a foreign
   crate when the workspace root has no package of its own (#11401).
+- The check run that backs this reading is bounded: it happens at most once per
+  `ripr repair` or `ripr continue` start suggestion, never in a single-package
+  repository, and only for a changed top-level `pub fn` of a package's
+  `src/lib.rs` in a workspace with another package (#11401).

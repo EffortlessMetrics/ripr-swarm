@@ -154,13 +154,24 @@ family and line, most-specific claimant only) to a finding that check reads as
 
 This only ever closes a start. A seam is never made startable, a seam off the
 changed lines is not consulted, and a check that cannot run keeps every
-refusal as the seam producer made it. Repair takes no check mode, so it reads
-the whole workspace like the default check does: in `--no-unchanged-tests`
-and `--mode instant`, where check leaves the unchanged `app` test out and
-claims nothing, repair still names the noticed change and starts nothing.
-A same-crate wrapper that check already read as noticed, and repair called
-"not ready", now agrees too. An explicit `ripr repair <id>` start goes
-through the seam gate alone and is unchanged.
+refusal as the seam producer made it.
+
+The check analysis is expensive on a large repository, so it is bounded. It
+runs at most once per `resolve_repair_start` call, which both bare `ripr
+repair` and the `ripr continue` start suggestion use, and only when an open
+seam on the changed lines passes a cheap pre-test: the workspace holds a
+package manifest besides the owner's own (path-only scan), and the owner is a
+top-level `pub fn` of its package's `src/lib.rs`, the shape another crate can
+name as `<crate>::<fn>`. A single-package repository never runs it, and an
+unreadable owner file counts as passing. Refusals the pre-test excludes (a
+private owner, a method, a same-crate wrapper) keep the seam producer's
+answer.
+
+Repair takes no check mode, so it reads the whole workspace like the default
+check does. In `--no-unchanged-tests` and `--mode instant`, check leaves the
+unchanged `app` test out, prints "no test path" and offers no start, while
+repair names the noticed change; neither starts. An explicit `ripr repair
+<id>` start goes through the seam gate alone and is unchanged.
 
 ## Known limits
 
@@ -171,8 +182,9 @@ through the seam gate alone and is unchanged.
   repair gets the answer from check for the changed lines only. A seam off the
   changed lines, and an explicit `ripr repair <id>` start, use the seam
   producer alone.
-- Repair runs the default check analysis a second time when an open seam sits
-  on the changed lines.
+- Repair runs the default check analysis a second time only under the
+  pre-test above; a same-crate wrapper that check reads as noticed is outside
+  it, so repair keeps its earlier "not ready" there.
 - `--no-unchanged-tests` and `--mode instant` leave the unchanged `app` test
   out of check's evidence, so check keeps the earlier no-path reading there
   (repair, which has no mode, reads the workspace whole).
@@ -223,7 +235,8 @@ through the seam gate alone and is unchanged.
    the dependency renamed or the argument changed, check reads a partial gap
    and both commands start the same repair.
 5. `checkout` and `discount` both in one member package whose integration test
-   does `use wscore::checkout;` reads as noticed in a virtual workspace, and bare repair agrees.
+   does `use wscore::checkout;` reads as noticed in a virtual workspace (bare repair keeps its own answer
+   there: no other package, so the check run is not made).
 
 ## Test Mapping
 

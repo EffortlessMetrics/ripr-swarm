@@ -21228,6 +21228,8 @@ tests = [
   "crates/ripr/tests/cross_crate_reach.rs::a_local_module_named_like_the_dependency_keeps_the_earlier_no_path_answer",
   "crates/ripr/tests/cross_crate_reach.rs::a_call_that_is_not_the_whole_tail_is_not_followed_as_a_forward",
   "crates/ripr/tests/cross_crate_reach.rs::a_wrapper_in_the_same_member_package_is_noticed_through_its_own_crate_name",
+  "crates/ripr/src/app/task_first.rs::tests::check_runs_only_when_it_could_close_a_start_and_a_failed_run_changes_nothing",
+  "crates/ripr/src/app/task_first.rs::tests::the_pre_test_needs_another_package_and_a_nameable_public_function",
   "crates/ripr/src/analysis/facts/member_crates.rs::tests::a_normal_path_dependency_names_the_library",
   "crates/ripr/src/analysis/facts/member_crates.rs::tests::build_dependency_renames_and_other_packages_name_nothing",
   "crates/ripr/src/analysis/classify/helper_transfer/cross_crate_hop.rs::tests::only_an_unrestricted_pub_fn_at_the_file_root_is_nameable_by_the_crate_path",
