@@ -46,7 +46,12 @@ For the audited heavy Rust qualification route, use `scripts/guarded_merge.py`
 for the expected-head squash after completing that final judgment. It does not
 establish substantive review or every other gate. A guard refusal, including
 failed or ambiguous evidence, remains blocked until the evidence is reconciled;
-do not treat it as permission to use another merge path. If the qualification
+do not treat it as permission to use another merge path. Before invoking, compare the
+`routed-rust.yml`, `rust-gates.yml` and `rust-test-shards.yml` blob ids on the
+candidate's workflow source with `AUDITED_WORKFLOW_TUPLES` in the script; a tuple
+that is not listed has not been audited, so the route is unsupported and no guard
+refusal occurred. Report the unaudited tuple on the audit-refresh issue (#12817) rather
+than adding it unreviewed. If the qualification
 route was independently established as unsupported before guard invocation,
 follow its existing ordinary protected exact-head procedure with current required
 Result, review and other gates; do not claim the guard passed. An unknown or
