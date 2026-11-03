@@ -73,6 +73,7 @@ pub(super) fn qualified_free_hop(
         receiver: None,
         through_macro: false,
         module_qualified: true,
+        crate_qualifier: None,
         transparent_macros_rebound: super::transparent_macro_name_rebound(&caller.body, index),
         diverging_handlers: Vec::new(),
     })
@@ -182,7 +183,7 @@ fn resolve_qualifier(
 
 /// Conservatively refuse imports, aliases, generic parameters and block-local
 /// declarations that can give a bare module segment a different identity.
-fn namespace_may_rebind(source: &str, name: &str) -> bool {
+pub(super) fn namespace_may_rebind(source: &str, name: &str) -> bool {
     use ra_ap_syntax::{AstNode, SyntaxKind, ast, ast::HasName};
     if call_identity::source_may_splice_items(source, true) {
         return true;

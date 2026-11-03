@@ -458,12 +458,14 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
 }
 
 /// Whether a test that pins another function lends this seam no oracle
-/// (#12060 match arms, #12434 predicate boundaries). Both kinds read a value
-/// another indexed function also produces, so an assertion on that function
-/// says nothing about the owner's branch.
+/// (#12060 match arms, #12434 predicate boundaries, #12600/#12671 returned
+/// values). All three kinds read a value another indexed function also
+/// produces, so an assertion on that function says nothing about the owner's
+/// branch.
 ///
-/// A predicate boundary refuses only when some related test is tied to the
-/// owner by a relation that establishes reach. With no such test every
+/// A predicate boundary or returned value refuses only when some related test
+/// is tied to the owner by a relation that establishes reach. With no such
+/// test every
 /// related test is proximity-only, activation stays unknown, and stripping
 /// the lent oracle would move the seam from `activation_unknown` to
 /// `reachable_unrevealed` (rule 4 of seam classification), claiming tests run
@@ -476,7 +478,7 @@ fn refuses_other_function_oracle(
 ) -> bool {
     match seam.kind() {
         SeamKind::MatchArm => true,
-        SeamKind::PredicateBoundary => relations
+        SeamKind::PredicateBoundary | SeamKind::ReturnValue => relations
             .into_iter()
             .any(|reason| reason.establishes_reach(owner_is_function)),
         _ => false,
@@ -4324,6 +4326,15 @@ fn oracle_discriminates_seam_in_test(
         && matches!(oracle.kind, OracleKind::Snapshot)
         && let Some(owner) = owner
         && !snapshot_owner_binding::snapshot_observes_owner_result(&owner.name, oracle, test)
+    {
+        return false;
+    }
+    // #12189: a file-backed insta assertion whose committed `.snap` file is
+    // certainly missing fails on its first run, so it notices nothing. An
+    // inline snapshot, or a shape whose file name is not certain, keeps its
+    // grade.
+    if matches!(oracle.kind, OracleKind::Snapshot)
+        && crate::analysis::rust_snapshot_files::file_backed_snapshot_missing(index, test, oracle)
     {
         return false;
     }

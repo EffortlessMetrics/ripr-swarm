@@ -39,6 +39,10 @@ use super::drop_in::{config_mentions, normalized, patches};
 /// Dependency tables whose crates a test target can import. Build
 /// dependencies reach only the build script.
 const TEST_DEPENDENCY_TABLES: &[&str] = &["dependencies", "dev-dependencies", "dev_dependencies"];
+/// Dependency tables whose crates a library target can import. A
+/// `[dev-dependencies]` entry is visible to tests, examples and benches only,
+/// and `[build-dependencies]` to the build script only (#11401).
+const LIBRARY_DEPENDENCY_TABLES: &[&str] = &["dependencies"];
 
 /// Import names per (test file directory, owner crate root).
 type ImportNames = BTreeMap<(PathBuf, PathBuf), Vec<String>>;
@@ -55,6 +59,9 @@ type ImportedMacroExports = BTreeMap<(PathBuf, String), Option<Arc<LibraryMacroE
 pub(crate) struct MemberCrates {
     root: Option<PathBuf>,
     names: Arc<Mutex<ImportNames>>,
+    /// Per (caller file directory, owner crate root): the name a library
+    /// caller spells the owner's crate with (#11401).
+    library_names: Arc<Mutex<ImportNames>>,
     /// Per (crate root, item name): whether the library may export a
     /// foreign item of that name, computed by the classifier.
     foreign_exports: Arc<Mutex<ForeignExports>>,
@@ -71,6 +78,7 @@ impl MemberCrates {
         Self {
             root: Some(root.to_path_buf()),
             names: Arc::default(),
+            library_names: Arc::default(),
             foreign_exports: Arc::default(),
             library_roots: Arc::default(),
             imported_macro_exports: Arc::default(),
@@ -133,11 +141,54 @@ impl MemberCrates {
         {
             return names;
         }
-        let names = resolve(&root, test_dir, owner_dir, &owner_root, false).unwrap_or_default();
+        let names =
+            resolve(&root, test_dir, owner_dir, &owner_root, false, false).unwrap_or_default();
         if let Ok(mut cache) = self.names.lock() {
             cache.insert(key, names.clone());
         }
         names
+    }
+
+    /// The one crate identifier through which the library of the package
+    /// holding `caller_file` imports the library whose crate root is
+    /// `owner_root` (#11401), or `None` when that edge is not established.
+    ///
+    /// Stricter than [`Self::import_names`] on purpose: only a `[dependencies]`
+    /// entry counts (a `[dev-dependencies]` or `[build-dependencies]` entry is
+    /// not visible to library code), the caller and the owner must be
+    /// different packages, and the entry must not rename the crate (the key
+    /// is the owner's own library identifier). Everything `import_names`
+    /// refuses is refused here too.
+    pub(crate) fn library_dependency_name(
+        &self,
+        caller_file: &Path,
+        owner_root: &Path,
+    ) -> Option<String> {
+        let root = lexical(self.root.as_ref()?);
+        let caller_file = lexical(&root.join(caller_file));
+        let owner_root = lexical(&root.join(owner_root));
+        let (caller_dir, owner_dir) = (caller_file.parent()?, owner_root.parent()?);
+        let key = (caller_dir.to_path_buf(), owner_root.clone());
+        let cached = self
+            .library_names
+            .lock()
+            .ok()
+            .and_then(|names| names.get(&key).cloned());
+        let names = match cached {
+            Some(names) => names,
+            None => {
+                let names = resolve(&root, caller_dir, owner_dir, &owner_root, false, true)
+                    .unwrap_or_default();
+                if let Ok(mut cache) = self.library_names.lock() {
+                    cache.insert(key, names.clone());
+                }
+                names
+            }
+        };
+        match names.as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        }
     }
 
     /// A selected local library that this consumer imports as `krate`, with
@@ -207,8 +258,15 @@ impl MemberCrates {
             let owner_directory = absolute.parent()?;
             // Unlike import_names' worktree convenience query, this uses the
             // selected manifest epoch, including configuration substitutions.
-            if resolve(root, consumer_directory, owner_directory, &absolute, true)
-                .is_some_and(|names| names.iter().any(|name| name == krate))
+            if resolve(
+                root,
+                consumer_directory,
+                owner_directory,
+                &absolute,
+                true,
+                false,
+            )
+            .is_some_and(|names| names.iter().any(|name| name == krate))
             {
                 if selected.is_some() {
                     return None;
@@ -497,7 +555,7 @@ impl MemberCrates {
         {
             return false;
         }
-        resolve(&root, test_dir, owner_dir, &macro_absolute, true).is_some_and(|names| {
+        resolve(&root, test_dir, owner_dir, &macro_absolute, true, false).is_some_and(|names| {
             names
                 .iter()
                 .any(|bound| bound == name.trim_start_matches("r#"))
@@ -1099,6 +1157,7 @@ fn resolve(
     owner_dir: &Path,
     owner_root: &Path,
     snapshot: bool,
+    library_edge: bool,
 ) -> Option<Vec<String>> {
     let (owner, owner_chain) = nearest_package_snapshot(root, owner_dir, snapshot)?;
     let (test, test_chain) = nearest_package_snapshot(root, test_dir, snapshot)?;
@@ -1126,8 +1185,13 @@ fn resolve(
         return None;
     }
     if test.directory == owner.directory {
+        // A library edge is a dependency between two packages; the same
+        // package needs no edge and is not this question (#11401).
+        if library_edge {
+            return None;
+        }
         // A dependency keyed by the library's own name would shadow it.
-        let shadowed = test_dependency_tables(&test.manifest)
+        let shadowed = test_dependency_tables(&test.manifest, false)
             .iter()
             .any(|table| table.keys().any(|key| normalized(key) == library));
         return (!shadowed).then(|| vec![library]);
@@ -1150,7 +1214,7 @@ fn resolve(
     // read without their predicates, so a name bound to the owner on one
     // target and elsewhere on another is ambiguous and admitted nowhere.
     let mut elsewhere = Vec::new();
-    for table in test_dependency_tables(&test.manifest) {
+    for table in test_dependency_tables(&test.manifest, library_edge) {
         for (key, spec) in table {
             match import_name(
                 key,
@@ -1167,6 +1231,10 @@ fn resolve(
         }
     }
     names.retain(|name| !elsewhere.contains(name));
+    if library_edge {
+        // No rename: the key is the owner's own library identifier.
+        names.retain(|name| *name == library);
+    }
     names.sort();
     names.dedup();
     Some(names)
@@ -1410,8 +1478,13 @@ fn is_library_root(package: &Package, owner_root: &Path) -> bool {
     stays_inside && owner_root == package.directory.join(relative)
 }
 
-fn test_dependency_tables(manifest: &toml::Table) -> Vec<&toml::Table> {
-    let direct = TEST_DEPENDENCY_TABLES
+fn test_dependency_tables(manifest: &toml::Table, library_edge: bool) -> Vec<&toml::Table> {
+    let tables = if library_edge {
+        LIBRARY_DEPENDENCY_TABLES
+    } else {
+        TEST_DEPENDENCY_TABLES
+    };
+    let direct = tables
         .iter()
         .filter_map(|name| manifest.get(*name).and_then(toml::Value::as_table));
     let targets = manifest
@@ -1421,7 +1494,7 @@ fn test_dependency_tables(manifest: &toml::Table) -> Vec<&toml::Table> {
         .flat_map(|targets| targets.values())
         .filter_map(toml::Value::as_table)
         .flat_map(|target| {
-            TEST_DEPENDENCY_TABLES
+            tables
                 .iter()
                 .filter_map(|name| target.get(*name).and_then(toml::Value::as_table))
         });
@@ -2553,6 +2626,109 @@ mod tests {
             files.extend(extra.iter().map(|(path, text)| (*path, text.as_str())));
             assert_eq!(names(&files, test, owner)?, Vec::<String>::new(), "{label}");
         }
+        Ok(())
+    }
+    /// #11401: the one name a library caller uses for another package's
+    /// library, from `[dependencies]` only, never renamed, never the same
+    /// package.
+    fn library_name(
+        files: &[(&str, &str)],
+        caller: &str,
+        owner: &str,
+    ) -> Result<Option<String>, String> {
+        let root = temp_workspace("library-edge", files)?;
+        let name =
+            MemberCrates::new(&root).library_dependency_name(Path::new(caller), Path::new(owner));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(name)
+    }
+
+    const LIB_ROOT: &str = "[workspace]\nmembers = [\"wscore\", \"app\"]\n";
+    const LIB_WSCORE: &str = "[package]\nname = \"wscore\"\nversion = \"0.1.0\"\n";
+
+    fn app(dependencies: &str) -> String {
+        format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n{dependencies}")
+    }
+
+    #[test]
+    fn a_normal_path_dependency_names_the_library() -> Result<(), String> {
+        let manifest = app("[dependencies]\nwscore = { path = \"../wscore\" }\n");
+        let files = [
+            ("Cargo.toml", LIB_ROOT),
+            ("wscore/Cargo.toml", LIB_WSCORE),
+            ("app/Cargo.toml", manifest.as_str()),
+        ];
+        assert_eq!(
+            library_name(&files, "app/src/lib.rs", "wscore/src/lib.rs")?,
+            Some("wscore".to_string())
+        );
+        // The same files answer nothing for a dev-dependency, so the fixture
+        // is what makes the answer above.
+        let dev = app("[dev-dependencies]\nwscore = { path = \"../wscore\" }\n");
+        let files = [
+            ("Cargo.toml", LIB_ROOT),
+            ("wscore/Cargo.toml", LIB_WSCORE),
+            ("app/Cargo.toml", dev.as_str()),
+        ];
+        assert_eq!(
+            library_name(&files, "app/src/lib.rs", "wscore/src/lib.rs")?,
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn build_dependency_renames_and_other_packages_name_nothing() -> Result<(), String> {
+        let cases = [
+            (
+                "build-dependency",
+                app("[build-dependencies]\nwscore = { path = \"../wscore\" }\n"),
+                "app/src/lib.rs",
+            ),
+            (
+                "renamed",
+                app("[dependencies]\ndisc = { path = \"../wscore\", package = \"wscore\" }\n"),
+                "app/src/lib.rs",
+            ),
+            (
+                "other path",
+                app("[dependencies]\nwscore = { path = \"../elsewhere\" }\n"),
+                "app/src/lib.rs",
+            ),
+            (
+                "registry",
+                app("[dependencies]\nwscore = \"1\"\n"),
+                "app/src/lib.rs",
+            ),
+        ];
+        for (label, manifest, caller) in cases {
+            let files = [
+                ("Cargo.toml", LIB_ROOT),
+                ("wscore/Cargo.toml", LIB_WSCORE),
+                ("app/Cargo.toml", manifest.as_str()),
+            ];
+            assert_eq!(
+                library_name(&files, caller, "wscore/src/lib.rs")?,
+                None,
+                "{label}"
+            );
+        }
+        // A caller inside the owner's own package is no dependency edge.
+        let manifest = app("[dependencies]\nwscore = { path = \"../wscore\" }\n");
+        let files = [
+            ("Cargo.toml", LIB_ROOT),
+            ("wscore/Cargo.toml", LIB_WSCORE),
+            ("app/Cargo.toml", manifest.as_str()),
+        ];
+        assert_eq!(
+            library_name(&files, "wscore/src/other.rs", "wscore/src/lib.rs")?,
+            None
+        );
+        // The owner must be the library root file itself.
+        assert_eq!(
+            library_name(&files, "app/src/lib.rs", "wscore/src/pricing.rs")?,
+            None
+        );
         Ok(())
     }
 }
