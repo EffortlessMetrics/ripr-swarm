@@ -519,7 +519,10 @@ the arm, instead of claiming no assertion names it.
 Proof: `match_arm_proximity_test_cannot_confirm_beside_reaching_test`, the
 `match_arm_proximity_confirmation_not_credited` fixture, and its control
 `match_arm_proximity_wrapper_confirms` (a same-file test of a public wrapper
-keeps `exposed`), both registered in the honesty corpus.
+keeps `exposed`), both registered in the honesty corpus. The production-path
+two-state pin `editing_from_str_fortnight_does_not_flip_the_seconds_arm`
+runs both of the issue's `from_str_fortnight` assertion shapes through
+`check_workspace` and requires the same `weakly_exposed` class.
 
 A test related only by file or module is also withheld when one of its
 assertions calls an indexed function with no call or `macro_rules!` path to the
@@ -540,6 +543,22 @@ Proof: `match_arm_proximity_test_pinning_another_function_cannot_confirm`, the
 `match_arm_proximity_other_function_not_credited` and
 `match_arm_proximity_bound_other_function_not_credited` fixtures; the wrapper control
 above shows a call that reaches the owner is not withheld.
+
+The repo-seam grip view applies the same refusal to a `predicate_boundary` seam
+(#12434), gated differently. A related test whose only relation is proximity
+(`same_test_file`, `same_module`, and the other relations that do not establish
+reach) lends the seam no oracle strength when its assertion pins another
+indexed function, but only once some related test establishes reach of the
+owner (a direct or helper owner call, or a followed re-export). With no such
+test the proximity test keeps its credit and the seam stays
+`activation_unknown`, because the refusal would otherwise turn a missing reach
+into a `reachable_unrevealed` verdict. The gate reads every related test, not
+only the rank-limited set that is published. `match_arm` seams refuse
+unconditionally (#12132).
+
+Proof: `proximity_test_pinning_another_function_lends_a_predicate_boundary_no_oracle`
+and the `rust_repo_exposure_proximity_other_function` honesty case, whose
+`wait < 5` boundary pin is `none` beside the `same_test_file` relation.
 
 ## Owner-scoped tokens and self-computed expected values (#5830)
 
@@ -609,6 +628,41 @@ caller-walk tests in `classifier/evidence.rs` (including the six-hop bound),
 `self_computed_expected_helper` fixtures registered in the honesty corpus, and the
 `checkout-tax-self-computed-expected` and `ledger-sku-variant-unsafe`
 verdict-corpus rows.
+
+## File-backed snapshot with no committed expected file (#12189)
+
+A file-backed `insta` assertion compares a value with a committed `.snap`
+file. With no such file it fails on its first run, so it cannot be the
+discriminator that would notice a wrong value. The repo-seam grader therefore
+does not count that assertion as discriminating (the seam reads
+`weakly_gripped`, as the field seam already did), but only when the absence is
+certain:
+
+- the assertion is the one `insta::assert_*snapshot!` call in the test's own
+  body, unnamed or named by a string literal, on a macro whose first argument
+  is a name (`assert_binary_snapshot!` is not resolved);
+- an unqualified macro counts only when the file imports it from `insta` and
+  no workspace Rust file defines a macro of that name (`macro_rules!`, any
+  spacing around the `!`): a `#[macro_use]` definition in another file shadows
+  the import (#12720);
+- the test file has no `snapshot_path`, `glob!` or `INSTA_` text and the test
+  is not case-driven;
+- the workspace `.snap` listing is complete (readable, under its size limit,
+  with every directory and file name valid UTF-8, and without a differing
+  committed-history snapshot input) and no tracked
+  `.snap` carries the test's snapshot name, allowing a module prefix, a `-N`
+  counter and an `@suffix`.
+
+Any other shape keeps its grade. An untracked `.snap` is not one CI sees
+(#7708). The listing is part of the analysis cache key.
+
+Proof: `snapshot_without_an_expected_file_cannot_close_the_return_seam`,
+`an_untracked_expected_file_does_not_credit_the_return_seam`,
+`a_committed_binary_snapshot_keeps_the_return_seam_credit`,
+`a_non_utf8_name_makes_the_listing_unknown_and_never_demotes` (#12259),
+`a_bare_snapshot_macro_defined_in_another_file_keeps_the_return_seam_credit` (#12720), the resolver tests in
+`rust_snapshot_files/tests.rs`, and `rust_field_snapshot_missing_expected_not_promoted`
+in the honesty corpus.
 
 ## Test Mapping
 

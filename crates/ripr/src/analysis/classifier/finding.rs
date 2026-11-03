@@ -778,17 +778,37 @@ fn refused_assertion_next_step(
         format!("the standard `{macro_name}!`")
     };
     match note {
-        Some(note) if note.calls_owner && note.is_analyzer_limit => format!(
-            "ripr did not credit the {}; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
-            note.location
-        ),
+        Some(note) if note.calls_owner && note.is_analyzer_limit => {
+            if crate::domain::guard_refusal_kind(&note.reason)
+                == Some(crate::domain::GuardRefusalKind::ValueGuard)
+            {
+                format!(
+                    "ripr did not credit the {}; the \"not credited\" note says why. If the assertion runs on the executed path, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
+                    note.location
+                )
+            } else {
+                format!(
+                    "ripr did not credit the {}; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
+                    note.location
+                )
+            }
+        }
         // #6903: an ignored, cfg-off, conditional or rebound assertion is
         // not a limit of ripr's reading, so offering a static-limit
         // reading would let the reader dismiss a real gap.
-        Some(note) if note.calls_owner => format!(
-            "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as {standard_macro}, in a test expected to pass.",
-            note.location
-        ),
+        Some(note) if note.calls_owner => {
+            if crate::domain::guard_refusal_kind(&note.reason).is_some() {
+                format!(
+                    "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change: move the check before the conditional return or onto a path that always runs.",
+                    note.location
+                )
+            } else {
+                format!(
+                    "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as {standard_macro}, in a test expected to pass.",
+                    note.location
+                )
+            }
+        }
         _ => format!(
             "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the {subject}."
         ),

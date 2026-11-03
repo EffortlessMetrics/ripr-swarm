@@ -48,6 +48,7 @@ Weakness
 Next step
   Strengthen the related assertion so it discriminates the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_array_element_drop_exit/input --diff <cwd>/fixtures/rust_array_element_drop_exit/diff.patch --mode fast probe:src_lib.rs:field_construction:d6d7c327
   ripr context --root <cwd>/fixtures/rust_array_element_drop_exit/input --diff <cwd>/fixtures/rust_array_element_drop_exit/diff.patch --mode fast --at probe:src_lib.rs:field_construction:d6d7c327
 
@@ -86,5 +87,6 @@ Weakness
 Next step
   The related test `pins_second_row` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_array_element_drop_exit/input --diff <cwd>/fixtures/rust_array_element_drop_exit/diff.patch --mode fast probe:src_lib.rs:return_value:3877e241
   ripr context --root <cwd>/fixtures/rust_array_element_drop_exit/input --diff <cwd>/fixtures/rust_array_element_drop_exit/diff.patch --mode fast --at probe:src_lib.rs:return_value:3877e241

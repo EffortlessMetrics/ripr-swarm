@@ -46,6 +46,7 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_unreached_match_arm/input --diff <cwd>/fixtures/python_unreached_match_arm/diff.patch --mode fast probe:src_kind.py:python_preview:5f2246ab
   ripr context --root <cwd>/fixtures/python_unreached_match_arm/input --diff <cwd>/fixtures/python_unreached_match_arm/diff.patch --mode fast --at probe:src_kind.py:python_preview:5f2246ab
   no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/kind.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command

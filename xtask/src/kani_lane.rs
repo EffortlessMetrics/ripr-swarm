@@ -350,24 +350,49 @@ fn matches_harness(qualified: &str, harness: &Harness) -> bool {
     qualified == harness.name || qualified.ends_with(&format!("::{}", harness.name))
 }
 
-/// Joins discovered harnesses to Kani's result blocks. A harness with no block
-/// is `NOT-ESTABLISHED`, never assumed verified.
+/// Joins discovered harnesses to Kani's result blocks. A missing or ambiguous
+/// name-based relationship is `NOT-ESTABLISHED`, never assumed verified.
+/// Source paths do not establish native module identity.
 pub(crate) fn results_from_output(harnesses: &[Harness], output: &str) -> Vec<HarnessResult> {
     let blocks = split_harness_blocks(output);
     harnesses
         .iter()
         .map(|harness| {
-            let block = blocks
+            let duplicate_name = harnesses
                 .iter()
-                .find(|(name, _)| matches_harness(name, harness));
-            let (status, time) = match block {
-                Some((_, text)) => (classify_output(text), verification_time(text)),
-                None => (
+                .filter(|other| other.name == harness.name)
+                .nth(1)
+                .is_some();
+            let mut matching = blocks
+                .iter()
+                .filter(|(name, _)| matches_harness(name, harness));
+            let first = matching.next();
+            let (status, time) = if duplicate_name {
+                (
                     HarnessStatus::NotEstablished(
-                        "kani printed no result block for this harness".to_string(),
+                        "multiple discovered harnesses share this name; result identity is ambiguous"
+                            .to_string(),
                     ),
                     "n/a".to_string(),
-                ),
+                )
+            } else if matching.next().is_some() {
+                (
+                    HarnessStatus::NotEstablished(
+                        "kani printed multiple matching result blocks; result identity is ambiguous"
+                            .to_string(),
+                    ),
+                    "n/a".to_string(),
+                )
+            } else {
+                match first {
+                    Some((_, text)) => (classify_output(text), verification_time(text)),
+                    None => (
+                        HarnessStatus::NotEstablished(
+                            "kani printed no result block for this harness".to_string(),
+                        ),
+                        "n/a".to_string(),
+                    ),
+                }
             };
             HarnessResult {
                 harness: harness.clone(),
@@ -620,6 +645,133 @@ mod tests {
             Some(HarnessStatus::NotEstablished(_))
         ));
         assert_eq!(results.first().map(|r| r.time.as_str()), Some("0.5s"));
+    }
+
+    #[test]
+    fn duplicate_source_names_never_share_a_native_result() {
+        let success =
+            "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
+        let failure = "Checking harness b::same...\nVERIFICATION:- FAILED\n";
+        let unique = "Checking harness m::unique...\nVERIFICATION:- SUCCESSFUL\n";
+        // Duplicate names in separate files and in one file are both ambiguous:
+        // the current discovery model does not carry native module identities.
+        for second_file in ["a.rs", "b.rs"] {
+            let harnesses = [
+                Harness {
+                    file: "a.rs".to_string(),
+                    name: "same".to_string(),
+                },
+                Harness {
+                    file: second_file.to_string(),
+                    name: "same".to_string(),
+                },
+                Harness {
+                    file: "unique.rs".to_string(),
+                    name: "unique".to_string(),
+                },
+            ];
+            for output in [
+                format!("{success}{unique}"),
+                format!("{success}{failure}{unique}"),
+                format!("{failure}{success}{unique}"),
+            ] {
+                let results = results_from_output(&harnesses, &output);
+                assert_eq!(results.len(), 3);
+                for (row, expected) in results.iter().zip(&harnesses).take(2) {
+                    assert_eq!(&row.harness, expected);
+                    assert_eq!(
+                        row.status,
+                        HarnessStatus::NotEstablished(
+                            "multiple discovered harnesses share this name; result identity is ambiguous"
+                                .to_string(),
+                        ),
+                    );
+                    assert_eq!(row.time, "n/a");
+                }
+                assert!(matches!(
+                    results.get(2).map(|row| &row.status),
+                    Some(HarnessStatus::Verified)
+                ));
+                for allow_empty in [false, true] {
+                    assert!(lane_verdict(&results, true, allow_empty).is_err());
+                }
+                let report = render_report(&results, "");
+                assert!(report.contains("| `same` | `a.rs` | NOT-ESTABLISHED |"));
+                assert!(
+                    report.contains(&format!("| `same` | `{second_file}` | NOT-ESTABLISHED |"))
+                );
+                assert!(!report.contains("| `same` | `a.rs` | VERIFIED |"));
+                assert!(report.contains("| `unique` | `unique.rs` | VERIFIED |"));
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_native_blocks_are_not_first_match_wins() {
+        let harnesses = [Harness {
+            file: "one.rs".to_string(),
+            name: "same".to_string(),
+        }];
+        let success =
+            "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
+        let other_failure = "Checking harness b::same...\nVERIFICATION:- FAILED\n";
+        let repeated_failure = "Checking harness a::same...\nVERIFICATION:- FAILED\n";
+        for output in [
+            format!("{success}{other_failure}"),
+            format!("{other_failure}{success}"),
+            format!("{success}{repeated_failure}"),
+            format!("{repeated_failure}{success}"),
+            format!("{success}{success}"),
+        ] {
+            let results = results_from_output(&harnesses, &output);
+            assert_eq!(results.len(), 1);
+            assert_eq!(
+                results.first().map(|row| &row.status),
+                Some(&HarnessStatus::NotEstablished(
+                    "kani printed multiple matching result blocks; result identity is ambiguous"
+                        .to_string(),
+                )),
+            );
+            assert_eq!(results.first().map(|row| row.time.as_str()), Some("n/a"));
+            assert!(lane_verdict(&results, true, false).is_err());
+        }
+    }
+
+    #[test]
+    fn unique_native_join_retains_status_time_and_separator_boundary() {
+        let harnesses = [Harness {
+            file: "one.rs".to_string(),
+            name: "same".to_string(),
+        }];
+        for selector in ["same", "m::same"] {
+            let output = format!(
+                "Checking harness {selector}...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n"
+            );
+            let results = results_from_output(&harnesses, &output);
+            assert_eq!(results.len(), 1);
+            assert!(matches!(
+                results.first().map(|row| &row.status),
+                Some(HarnessStatus::Verified)
+            ));
+            assert_eq!(results.first().map(|row| row.time.as_str()), Some("0.5s"));
+            assert_eq!(lane_verdict(&results, true, false).err(), None);
+        }
+        for selector in ["not_same", "m::notsame", "same::nested"] {
+            let output = format!("Checking harness {selector}...\nVERIFICATION:- SUCCESSFUL\n");
+            let results = results_from_output(&harnesses, &output);
+            assert!(matches!(
+                results.first().map(|row| &row.status),
+                Some(HarnessStatus::NotEstablished(_))
+            ));
+            assert!(lane_verdict(&results, true, false).is_err());
+        }
+        let output = "Checking harness m::same...\nVERIFICATION:- FAILED\nCBMC timed out\n";
+        let results = results_from_output(&harnesses, output);
+        assert!(matches!(
+            results.first().map(|row| &row.status),
+            Some(HarnessStatus::NotEstablished(_))
+        ));
+        assert!(lane_verdict(&results, true, false).is_err());
     }
 
     #[test]

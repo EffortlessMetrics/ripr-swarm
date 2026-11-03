@@ -524,4 +524,95 @@ suite('RiprClientController Lifecycle', () => {
     assert.strictEqual(disposed[0], 2, 'failed session registrations dispose once');
     assert.strictEqual(disposed[1], 2, 'replacement registrations dispose on its own stop');
   });
+
+  test('a generation-invalidated start does not publish queued status afterward', async () => {
+    const startGate = deferred();
+    const startEntered = deferred();
+    const statusHistory: string[] = [];
+    let statusTextValue = '';
+    const statusBar = {
+      text: '',
+      show: () => undefined
+    } as unknown as vscode.StatusBarItem;
+    Object.defineProperty(statusBar, 'text', {
+      get: () => statusTextValue,
+      set: (value: string) => {
+        statusTextValue = value;
+        statusHistory.push(value);
+      },
+      configurable: true
+    });
+    const runtime = trustedRuntime(() => ({
+      onNotification: () => ({ dispose: () => undefined }),
+      sendRequest: async () => undefined,
+      setTrace: () => undefined,
+      start: async () => {
+        startEntered.resolve();
+        await startGate.promise;
+      },
+      stop: async () => undefined
+    }));
+    runtime.getConfig = () => ({ ...trustedConfig(), serverVersion: '0.11.0' });
+    const controller = new RiprClientController(
+      {} as vscode.ExtensionContext,
+      outputChannel([]),
+      runtime,
+      statusBar
+    );
+
+    const start = controller.start();
+    await startEntered.promise;
+    const stop = controller.stop();
+    startGate.resolve();
+    await Promise.all([start, stop]);
+
+    assert.strictEqual(
+      statusHistory.filter((text) => text.includes('queued')).length,
+      0,
+      'stale start must not publish queued status after stop() invalidated its generation'
+    );
+    assert.strictEqual(controller.isRunning(), false);
+  });
+
+  test('removal experiment: bypassing startup settle calls client.stop before start settles', async () => {
+    const startGate = deferred();
+    const startEntered = deferred();
+    const stopEntered = deferred();
+    let stopCalls = 0;
+    const bypassStartupSettle: RiprClientLifecycleWait = async () => {
+      // Removal experiment (#2822): if stop() does not await the captured start
+      // promise, client.stop() runs while the language client is still Starting.
+    };
+    const runtime = trustedRuntime(() => ({
+      onNotification: () => ({ dispose: () => undefined }),
+      sendRequest: async () => undefined,
+      setTrace: () => undefined,
+      start: async () => {
+        startEntered.resolve();
+        await startGate.promise;
+      },
+      stop: async () => {
+        stopCalls += 1;
+        stopEntered.resolve();
+      }
+    }), bypassStartupSettle);
+    const controller = new RiprClientController(
+      {} as unknown as vscode.ExtensionContext,
+      outputChannel([]),
+      runtime
+    );
+
+    const start = controller.start();
+    await startEntered.promise;
+    void controller.stop();
+    await stopEntered.promise;
+
+    assert.strictEqual(
+      stopCalls,
+      1,
+      'removal experiment: without startup settle, stop() reaches client.stop() too early'
+    );
+    startGate.resolve();
+    await start.catch(() => undefined);
+  });
 });

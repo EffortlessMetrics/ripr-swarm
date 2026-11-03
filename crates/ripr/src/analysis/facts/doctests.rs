@@ -32,10 +32,13 @@
 //!   not wrapped) and parses cleanly;
 //! - no `#[cfg(..)]` or `#[cfg_attr(..)]` sits between the comment and the
 //!   item except `#[cfg(doctest)]`, which is active when rustdoc runs
-//!   doctests, and the file carries no inner `#![cfg(..)]` gate.
+//!   doctests, and a gate that is provably true under the package's default
+//!   features ([`gate_is_provably_true`]); the file carries no inner
+//!   `#![cfg(..)]` gate that is not.
 //!
-//! Feature, target and custom cfg values are not resolved here: any cfg gate
-//! on the item or the crate root is refused rather than guessed.
+//! Target, custom cfg and non-default feature values are not resolved here:
+//! any other cfg gate on the item or the crate root is refused rather than
+//! guessed (#8639), and a negation is never resolved (#12230).
 //!
 //! A doctest is its own crate: call identity reads its scopes from the
 //! synthetic text and names the library by its import names, never through
@@ -44,7 +47,8 @@
 use super::cfg_predicates::rust_ident_name;
 use super::{FunctionSourceRole, RustIndex, SourceRoleProvenanceEdgeKind, TestFact};
 use crate::analysis::syntax::ra::summarize_file_with_parser;
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// The synthetic function name the parser sees; the registered test takes
@@ -94,12 +98,20 @@ impl DocExample {
 pub(super) fn register_doctests(index: &mut RustIndex) {
     let mut generated: Vec<(TestFact, Arc<str>)> = Vec::new();
     for (path, file) in &index.files {
-        if file_has_inner_cfg_gate(&file.data.source) {
+        // Most files hold no fenced example; check that before the manifest.
+        if !file.data.source.contains("```") {
             continue;
         }
-        // Most files hold no fenced example; check that before the manifest.
-        let examples = doc_examples(&file.data.source);
-        if examples.is_empty() || !composes_under_doctested_library(index, path) {
+        let Some(root) = doctested_library_root(index, path) else {
+            continue;
+        };
+        let defaults = index.member_crates.default_library_features(&root);
+        let defaults = defaults.as_ref();
+        if file_has_inner_cfg_gate(&file.data.source, defaults) {
+            continue;
+        }
+        let examples = doc_examples(&file.data.source, defaults);
+        if examples.is_empty() {
             continue;
         }
         for example in examples {
@@ -162,12 +174,11 @@ pub(super) fn register_doctests(index: &mut RustIndex) {
     }
 }
 
-/// Whether `path` composes, through resolved `mod` edges only, under a
-/// package's default library root whose manifest runs doctests.
-fn composes_under_doctested_library(index: &RustIndex, path: &Path) -> bool {
-    let Some(file) = index.files.get(path) else {
-        return false;
-    };
+/// The library root `path` composes under, through resolved `mod` edges
+/// only, when that root is a package's default library root whose manifest
+/// runs doctests.
+fn doctested_library_root(index: &RustIndex, path: &Path) -> Option<PathBuf> {
+    let file = index.files.get(path)?;
     let provenance = &file.data.role_provenance;
     if provenance.earliest_unresolved_reason.is_some()
         || index.include_targets.contains(path)
@@ -177,14 +188,15 @@ fn composes_under_doctested_library(index: &RustIndex, path: &Path) -> bool {
                 || index.include_targets.contains(&edge.parent)
         })
     {
-        return false;
+        return None;
     }
     let root = provenance
         .edges
         .first()
         .map_or(path, |edge| edge.parent.as_path());
-    root.ends_with(Path::new("src").join("lib.rs"))
-        && index.member_crates.runs_library_doctests(root)
+    (root.ends_with(Path::new("src").join("lib.rs"))
+        && index.member_crates.runs_library_doctests(root))
+    .then(|| root.to_path_buf())
 }
 
 /// Whether the item on `item_line` is a public production function of
@@ -252,7 +264,7 @@ fn declared_fn_name(line: &str) -> Option<&str> {
 }
 
 /// Every runnable fenced example in the file's `///` comment runs.
-pub(super) fn doc_examples(source: &str) -> Vec<DocExample> {
+pub(super) fn doc_examples(source: &str, defaults: Option<&BTreeSet<String>>) -> Vec<DocExample> {
     // Most files hold no fence at all; skip the line scan for them.
     if !source.contains("```") {
         return Vec::new();
@@ -269,7 +281,7 @@ pub(super) fn doc_examples(source: &str) -> Vec<DocExample> {
         while index < lines.len() && outer_doc_text(lines[index]).is_some() {
             index += 1;
         }
-        let item_line = item_after(&lines, index);
+        let item_line = item_after(&lines, index, defaults);
         // rustdoc joins every doc fragment on an item into one document, so
         // a run that shares its item with another `///` run or a `#[doc]`
         // attribute may sit inside a fence opened elsewhere: refuse it.
@@ -306,10 +318,10 @@ fn outer_doc_text(line: &str) -> Option<&str> {
 /// whole-line attribute, a blank line nor a plain comment: the documented
 /// item. `#[inline] pub fn f` on one line is the item line itself, which
 /// then reads as no function head and registers nothing.
-fn item_after(lines: &[&str], from: usize) -> Option<usize> {
+fn item_after(lines: &[&str], from: usize, defaults: Option<&BTreeSet<String>>) -> Option<usize> {
     for (position, line) in lines.iter().enumerate().skip(from) {
         let trimmed = line.trim_start();
-        if between_doc_and_item_cfg_refuses(trimmed) {
+        if between_doc_and_item_cfg_refuses(trimmed, defaults) {
             return None;
         }
         if !is_between_doc_and_item(line) {
@@ -329,7 +341,7 @@ fn is_between_doc_and_item(line: &str) -> bool {
 
 /// Whether the file is gated by an inner `#![cfg(..)]` attribute rustdoc
 /// may not satisfy in the default library build.
-fn file_has_inner_cfg_gate(source: &str) -> bool {
+fn file_has_inner_cfg_gate(source: &str, defaults: Option<&BTreeSet<String>>) -> bool {
     for line in source.lines() {
         let trimmed = line.trim_start();
         if trimmed.is_empty() || trimmed.starts_with("//") {
@@ -337,7 +349,7 @@ fn file_has_inner_cfg_gate(source: &str) -> bool {
         }
         // Only `#![cfg(..)]` gates the file; `#![cfg_attr(docsrs, ..)]` and
         // `#![cfg_attr(not(test), no_std)]` are ordinary crate-root headers.
-        if trimmed.starts_with("#![") && inner_attribute_may_gate_file(trimmed) {
+        if trimmed.starts_with("#![") && inner_attribute_may_gate_file(trimmed, defaults) {
             return true;
         }
         if !trimmed.starts_with('#') {
@@ -350,9 +362,9 @@ fn file_has_inner_cfg_gate(source: &str) -> bool {
 /// `#![cfg(..)]`, or an inner `#![cfg_attr(.., cfg(..))]` that can add a
 /// `cfg` gate. A `cfg_attr` that only sets other attributes
 /// (`no_std`, `feature(doc_cfg)`) does not gate the file.
-fn inner_attribute_may_gate_file(trimmed: &str) -> bool {
+fn inner_attribute_may_gate_file(trimmed: &str, defaults: Option<&BTreeSet<String>>) -> bool {
     match attribute_cfg_family(trimmed) {
-        AttributeCfgFamily::Cfg => true,
+        AttributeCfgFamily::Cfg => !attribute_gate_is_provably_true(trimmed, defaults),
         AttributeCfgFamily::CfgAttr => attribute_path_and_optional_args(trimmed)
             .and_then(|(_, args)| args)
             .is_some_and(|args| {
@@ -365,15 +377,106 @@ fn inner_attribute_may_gate_file(trimmed: &str) -> bool {
 
 /// A `#[cfg(..)]` other than `#[cfg(doctest)]`, or any `#[cfg_attr(..)]`,
 /// between the doc comment and the item: rustdoc may not run the example.
-fn between_doc_and_item_cfg_refuses(trimmed: &str) -> bool {
+fn between_doc_and_item_cfg_refuses(trimmed: &str, defaults: Option<&BTreeSet<String>>) -> bool {
     if !whole_line_attribute(trimmed) {
         return false;
     }
     match attribute_cfg_family(trimmed) {
         AttributeCfgFamily::CfgAttr => true,
-        AttributeCfgFamily::Cfg => !attribute_is_cfg_doctest(trimmed),
+        AttributeCfgFamily::Cfg => {
+            !attribute_is_cfg_doctest(trimmed)
+                && !attribute_gate_is_provably_true(trimmed, defaults)
+        }
         AttributeCfgFamily::Other => false,
     }
+}
+
+/// Whether the `#[cfg(..)]` / `#![cfg(..)]` attribute `trimmed` is provably
+/// true in a plain `cargo test` of the package (RIPR-SPEC-0279, #12230).
+fn attribute_gate_is_provably_true(trimmed: &str, defaults: Option<&BTreeSet<String>>) -> bool {
+    let Some(defaults) = defaults else {
+        return false;
+    };
+    attribute_path_and_optional_args(trimmed)
+        .filter(|(path, _)| *path == "cfg")
+        .and_then(|(_, args)| args)
+        .is_some_and(|args| gate_is_provably_true(args, defaults))
+}
+
+/// Whether the cfg predicate `predicate` is true when exactly the `defaults`
+/// features are on. Only "provably true" answers; every other result,
+/// unparsable text included, is false. `not(..)` is never true: a feature
+/// outside the default set can be switched on by a workspace sibling or
+/// `--features`, and one inside it off by `--no-default-features`, so no
+/// negation is resolved (#8639 false-clean risk).
+fn gate_is_provably_true(predicate: &str, defaults: &BTreeSet<String>) -> bool {
+    let predicate = predicate.trim();
+    if predicate == "doctest" {
+        return true;
+    }
+    let paren = predicate.find('(').unwrap_or(predicate.len());
+    if let Some((key, value)) = predicate
+        .split_once('=')
+        .filter(|(key, _)| key.len() < paren)
+    {
+        let (key, value) = (key.trim(), value.trim());
+        return key == "feature"
+            && value
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .is_some_and(|name| {
+                    !name.is_empty() && !name.contains(['"', '\\']) && defaults.contains(name)
+                });
+    }
+    let Some((function, rest)) = predicate.split_once('(') else {
+        return false;
+    };
+    let Some(operands) = rest.trim_end().strip_suffix(')') else {
+        return false;
+    };
+    let Some(operands) = split_top_level_operands(operands) else {
+        return false;
+    };
+    match function.trim() {
+        "all" => {
+            !operands.is_empty()
+                && operands
+                    .iter()
+                    .all(|operand| gate_is_provably_true(operand, defaults))
+        }
+        "any" => operands
+            .iter()
+            .any(|operand| gate_is_provably_true(operand, defaults)),
+        _ => false,
+    }
+}
+
+/// The comma-separated operands of an `all(..)` / `any(..)` list at the top
+/// nesting level; `None` for unbalanced parentheses or a quote that does not
+/// close. A trailing comma is allowed, an empty operand elsewhere is not.
+fn split_top_level_operands(text: &str) -> Option<Vec<&str>> {
+    let mut operands = Vec::new();
+    let (mut depth, mut start, mut in_quote) = (0usize, 0usize, false);
+    for (position, ch) in text.char_indices() {
+        match ch {
+            '"' => in_quote = !in_quote,
+            '(' if !in_quote => depth += 1,
+            ')' if !in_quote => depth = depth.checked_sub(1)?,
+            ',' if !in_quote && depth == 0 => {
+                operands.push(text.get(start..position)?.trim());
+                start = position + 1;
+            }
+            _ => {}
+        }
+    }
+    if in_quote || depth != 0 {
+        return None;
+    }
+    let last = text.get(start..)?.trim();
+    if !last.is_empty() {
+        operands.push(last);
+    }
+    (!operands.iter().any(|operand| operand.is_empty())).then_some(operands)
 }
 
 enum AttributeCfgFamily {
@@ -384,7 +487,20 @@ enum AttributeCfgFamily {
 
 fn attribute_cfg_family(trimmed: &str) -> AttributeCfgFamily {
     let Some((path, _)) = attribute_path_and_optional_args(trimmed) else {
-        return AttributeCfgFamily::Other;
+        // An attribute whose arguments do not balance is not read; one that
+        // starts like a cfg gate is refused rather than let through.
+        let body = attribute_bracket_body(trimmed).unwrap_or(trimmed);
+        let body = body
+            .trim_start()
+            .trim_start_matches(['#', '!', '['])
+            .trim_start();
+        return if body.starts_with("cfg_attr") {
+            AttributeCfgFamily::CfgAttr
+        } else if body.starts_with("cfg") {
+            AttributeCfgFamily::Cfg
+        } else {
+            AttributeCfgFamily::Other
+        };
     };
     match path {
         "cfg" => AttributeCfgFamily::Cfg,
