@@ -258,7 +258,12 @@ mod tests {
     fn the_current_generation_is_read_from_the_constant() -> Result<(), String> {
         let source = "/// doc\npub(crate) const CACHE_SCHEMA_VERSION: &str = \"1.146\";\n";
         assert_eq!(current_cache_schema_version(source)?, "1.146");
-        assert!(current_cache_schema_version("const OTHER: &str = \"1\";").is_err());
+        assert_eq!(
+            current_cache_schema_version("const OTHER: &str = \"1\";"),
+            Err(format!(
+                "could not read `CACHE_SCHEMA_VERSION` from {SEAM_CACHE_SOURCE}"
+            ))
+        );
         Ok(())
     }
 }
