@@ -1107,6 +1107,19 @@ pub(crate) fn resolve_repair_start(
     }
     let (reasons, reasons_total) =
         collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
+    // #12831: several eligible seams on the change, but `ripr check` names
+    // one repair start for it. Check's choice is the recommendation, so the
+    // bare start takes it instead of asking the user to repeat it. Only a
+    // seam among the eligible ones is taken; no first or newest pick.
+    if eligible_ids.len() > 1
+        && matches!(scope, Some(ChangeScope::TouchesSeams(_)))
+        && let Some(chosen) = check_recommended_start(root, base, &config, &eligible_ids)
+        && let Some(position) = eligible_ids.iter().position(|id| *id == chosen)
+    {
+        let note = candidate_notes.swap_remove(position);
+        eligible_ids = vec![chosen];
+        candidate_notes = vec![note];
+    }
     let head = current_git_head(root).ok();
     let spec = if eligible_ids.len() == 1 {
         Some(repair_start_command_spec(&bound, &eligible_ids[0]))
@@ -1124,6 +1137,27 @@ pub(crate) fn resolve_repair_start(
         start_spec: spec.as_ref(),
         change,
     })
+}
+
+/// The seam of the one repair start the default `ripr check` prints for the
+/// change, when it is among `eligible_ids` and needs no commit first. `None`
+/// when check names no start, names another seam, or cannot run (fail-closed:
+/// the caller keeps its selection prompt).
+fn check_recommended_start(
+    root: &Path,
+    base: Option<&str>,
+    config: &crate::config::RiprConfig,
+    eligible_ids: &[String],
+) -> Option<String> {
+    let output = super::gap_bound_repair::default_check_output(root, base, config).ok()?;
+    match check_repair_route(root, config, &output, &mut None) {
+        crate::app::CheckRepairRoute::Route(route)
+            if route.uncommitted_target.is_none() && eligible_ids.contains(&route.seam_id) =>
+        {
+            Some(route.seam_id)
+        }
+        _ => None,
+    }
 }
 
 /// Why a changed spot needs no repair when `ripr check` already reads it as

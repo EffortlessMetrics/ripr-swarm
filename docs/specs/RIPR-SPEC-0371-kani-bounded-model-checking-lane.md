@@ -89,6 +89,15 @@ agree. They do not borrow a verification time. An unrelated unique row keeps
 its own result. This is conservative name-based attribution, not a claim that
 the source path establishes the native module identity.
 
+The native process exit is checked separately from each text verdict. A nonzero
+or absent exit status or a whole-run timeout cannot produce a successful
+aggregate even if every parsed row looks verified. On a partial run, separately
+observed complete rows retain their results while unfinished or absent rows
+remain NOT-ESTABLISHED; the report discloses the process-level problem. Native
+failure does not convert a failed harness into an unobserved timeout or upgrade
+a successful-looking row into complete-run assurance. This does not establish
+native-source provenance or inventory completeness.
+
 The command exits nonzero when any harness is `FAILED` or `NOT-ESTABLISHED`,
 when `cargo kani` is not runnable, and when no harness is found unless
 `--allow-empty` is passed. `--allow-empty` is a local opt-out for sparse
@@ -164,6 +173,9 @@ It does not claim:
   `blocks_join_to_harnesses_and_a_missing_block_is_not_established`,
   `duplicate_source_names_never_share_a_native_result`,
   `duplicate_native_blocks_are_not_first_match_wins`,
+  `native_process_error_cannot_be_hidden_by_verified_rows`,
+  `partial_timeout_preserves_completed_rows_but_never_passes`,
+  `mixed_failure_and_absent_results_keep_distinct_dispositions`,
   `unique_native_join_retains_status_time_and_separator_boundary`,
   `lane_never_passes_by_absence`,
   `arguments_parse_and_reject_unknown_flags`,

@@ -750,9 +750,20 @@ extra shell tokens, and ambiguous quoting fail closed. The separate gap command
 labels retain their own bounded legacy contract. Copying a command is advisory;
 it does not execute the command or grant edit authority.
 
+## Amendment (#12831): bare repair takes the start check recommends
+
+When bare `ripr repair` finds more than one eligible seam on the changed lines
+and the default `ripr check` for the same change prints a repair start whose
+seam is one of them (and needs no commit first), bare repair starts that seam.
+`ripr check` stays the single authority on which start is recommended; repair
+never picks by position or recency. When check prints no start, prints one for
+a seam that is not eligible, cannot run, or the change cannot be scoped to
+changed lines, the selection prompt (`several_eligible_seams`) is unchanged.
+
 ## Test Mapping
 
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
+- `crates/ripr/tests/repair_check_recommended_start.rs::boundary_change_starts_the_seam_check_recommends` (#12831; with the error-variant guard, the no-start and unscoped negatives)
 - `crates/ripr/tests/cli_smoke/repair_orderfile.rs::repair_completes_despite_user_orderfile`
 - `crates/ripr/tests/cli_smoke/repair_orderfile.rs::dirty_production_requires_recovery_despite_user_orderfile`
 
