@@ -1,0 +1,217 @@
+//! #12831: when several repair starts are eligible for the change and
+//! `ripr check` names one of them, bare `ripr repair` starts that one instead
+//! of asking the user to repeat check's choice. Real-binary tests on feature
+//! branches (so the change is scoped), with discriminating negatives.
+
+use std::path::{Path, PathBuf};
+use std::process::Output;
+
+struct Repo {
+    root: PathBuf,
+}
+
+impl Drop for Repo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn git(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .args([
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+        ])
+        .args(args)
+        .output()
+        .map_err(|error| format!("spawn git {args:?}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn ripr(root: &Path, args: &[&str]) -> Result<Output, String> {
+    std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(root)
+        .args(args)
+        .output()
+        .map_err(|error| format!("spawn ripr {args:?}: {error}"))
+}
+
+fn text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// A repository whose `main` holds `base` and whose current branch holds
+/// `changed` (`feature_branch`) or whose change is committed on `main`.
+fn repo(
+    label: &str,
+    base: &str,
+    changed: &str,
+    test: &str,
+    feature_branch: bool,
+) -> Result<Repo, String> {
+    let root = std::env::temp_dir().join(format!("ripr-recstart-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+    let repo = Repo { root: root.clone() };
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|e| e.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), base).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("tests/t.rs"), test).map_err(|e| e.to_string())?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["config", "core.autocrlf", "false"])?;
+    git(&root, &["branch", "-M", "main"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "base"])?;
+    if feature_branch {
+        git(&root, &["checkout", "-q", "-b", "feature"])?;
+    }
+    std::fs::write(root.join("src/lib.rs"), changed).map_err(|e| e.to_string())?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "change"])?;
+    Ok(repo)
+}
+
+const BOUNDARY_BASE: &str = "pub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n";
+const BOUNDARY_NEW: &str = "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n";
+const BOUNDARY_TEST: &str =
+    "use fx::is_adult;\n\n#[test]\nfn adult_far_above() {\n    assert!(is_adult(40));\n}\n";
+
+const ERR_BASE: &str = "#[derive(Debug, PartialEq)]\npub enum ParseError {\n    Empty,\n    TooLong,\n}\n\npub fn parse(s: &str) -> Result<usize, ParseError> {\n    if s.is_empty() {\n        return Err(ParseError::Empty);\n    }\n    if s.len() > 10 {\n        return Err(ParseError::Empty);\n    }\n    Ok(s.len())\n}\n";
+const ERR_TEST: &str = "use fx::parse;\n\n#[test]\nfn long_input_is_error() {\n    assert!(parse(\"abcdefghijklmnop\").is_err());\n}\n";
+
+const FLIP_BASE: &str =
+    "pub fn can_ship(stock: u32, blocked: bool) -> bool {\n    stock > 0 && !blocked\n}\n";
+const FLIP_NEW: &str =
+    "pub fn can_ship(stock: u32, blocked: bool) -> bool {\n    stock > 0 && blocked\n}\n";
+const FLIP_TEST: &str = "use fx::can_ship;\n\n#[test]\nfn ships_when_in_stock() {\n    assert!(can_ship(3, false));\n}\n";
+
+/// The seam id of the `ripr repair <id> --root ..` line check prints.
+fn check_start_id(root: &Path) -> Result<Option<String>, String> {
+    let check = ripr(root, &["check", "--base", "main"])?;
+    Ok(text(&check.stdout).lines().find_map(|line| {
+        let mut words = line.split_whitespace();
+        (words.next() == Some("ripr") && words.next() == Some("repair"))
+            .then(|| words.next().map(str::to_string))
+            .flatten()
+    }))
+}
+
+fn attempts(root: &Path) -> usize {
+    std::fs::read_dir(root.join("target/ripr/repair-attempts"))
+        .map(|dir| {
+            dir.flatten()
+                .filter(|entry| entry.path().join("attempt.json").is_file())
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+fn assert_starts_check_recommendation(repo: &Repo, label: &str) -> Result<(), String> {
+    let root = &repo.root;
+    let id = check_start_id(root)?.ok_or_else(|| format!("{label}: check printed no start"))?;
+    let repair = ripr(root, &["repair"])?;
+    let (out, err) = (text(&repair.stdout), text(&repair.stderr));
+    if repair.status.code() != Some(0) {
+        return Err(format!("{label}: bare repair must start:\n{out}\n{err}"));
+    }
+    if !out.contains("Ready to repair") || err.contains("several_eligible_seams") {
+        return Err(format!("{label}: not a started repair:\n{out}\n{err}"));
+    }
+    if attempts(root) != 1 {
+        return Err(format!(
+            "{label}: expected one attempt, found {}",
+            attempts(root)
+        ));
+    }
+    // The started attempt is the seam check recommended, not another one.
+    let attempt_dir = std::fs::read_dir(root.join("target/ripr/repair-attempts"))
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .find(|entry| entry.path().join("attempt.json").is_file())
+        .ok_or_else(|| format!("{label}: no attempt directory"))?
+        .path();
+    let attempt = std::fs::read_to_string(attempt_dir.join("attempt.json"))
+        .map_err(|e| format!("{label}: attempt.json: {e}"))?;
+    if !attempt.contains(&id) {
+        return Err(format!(
+            "{label}: attempt does not name check's seam {id}:\n{attempt}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn boundary_change_starts_the_seam_check_recommends() -> Result<(), String> {
+    let repo = repo("boundary", BOUNDARY_BASE, BOUNDARY_NEW, BOUNDARY_TEST, true)?;
+    assert_starts_check_recommendation(&repo, "boundary-weak")
+}
+
+#[test]
+fn error_variant_change_starts_the_changed_branch_check_recommends() -> Result<(), String> {
+    let changed = ERR_BASE.replace(
+        "if s.len() > 10 {\n        return Err(ParseError::Empty);",
+        "if s.len() > 10 {\n        return Err(ParseError::TooLong);",
+    );
+    let repo = repo("errvariant", ERR_BASE, &changed, ERR_TEST, true)?;
+    assert_starts_check_recommendation(&repo, "error-variant-weak")
+}
+
+/// Negative: check names no start for the change (it reads `unknown`), so
+/// repair keeps asking; nothing is picked by position.
+#[test]
+fn a_change_check_offers_no_start_for_keeps_the_selection() -> Result<(), String> {
+    let repo = repo("flip", FLIP_BASE, FLIP_NEW, FLIP_TEST, true)?;
+    let root = &repo.root;
+    if let Some(id) = check_start_id(root)? {
+        return Err(format!(
+            "precondition: check must offer no start, offered {id}"
+        ));
+    }
+    let repair = ripr(root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3) || !err.contains("code=several_eligible_seams") {
+        return Err(format!("must keep the selection prompt:\n{err}"));
+    }
+    if attempts(root) != 0 {
+        return Err("no attempt may start without a selection".to_string());
+    }
+    Ok(())
+}
+
+/// Negative: with the change committed on the default branch there is no
+/// diff to scope to, so check's recommendation does not apply to bare repair
+/// and the prompt stays.
+#[test]
+fn an_unscoped_change_keeps_the_selection() -> Result<(), String> {
+    let repo = repo(
+        "unscoped",
+        BOUNDARY_BASE,
+        BOUNDARY_NEW,
+        BOUNDARY_TEST,
+        false,
+    )?;
+    let root = &repo.root;
+    let repair = ripr(root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3) || !err.contains("code=several_eligible_seams") {
+        return Err(format!("unscoped bare repair must keep the prompt:\n{err}"));
+    }
+    if attempts(root) != 0 {
+        return Err("no attempt may start without a selection".to_string());
+    }
+    Ok(())
+}
