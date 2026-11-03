@@ -154,6 +154,48 @@
       }
     },
     {
+      "id": "verified_exit_without_attempt",
+      "expect_control_violations": ["control_1"],
+      "inputs": {
+        "schema_version": "first_hour_repair_funnel_inputs.v1",
+        "case_id": "verified_exit_without_attempt",
+        "cohort": "governed_real_repository_attempt",
+        "funnel_exit": "verified_improvement"
+      }
+    },
+    {
+      "id": "verified_exit_with_unchanged_movement",
+      "expect_control_violations": ["control_2"],
+      "inputs": {
+        "schema_version": "first_hour_repair_funnel_inputs.v1",
+        "case_id": "verified_exit_with_unchanged_movement",
+        "cohort": "governed_real_repository_attempt",
+        "funnel_exit": "verified_improvement",
+        "repair_attempt": {
+          "verify_command": "cargo xtask check-pr",
+          "verify_result": "pass",
+          "verify_executed": true,
+          "static_movement": "unchanged"
+        }
+      }
+    },
+    {
+      "id": "verified_exit_with_failed_verification",
+      "expect_control_violations": ["control_3"],
+      "inputs": {
+        "schema_version": "first_hour_repair_funnel_inputs.v1",
+        "case_id": "verified_exit_with_failed_verification",
+        "cohort": "governed_real_repository_attempt",
+        "funnel_exit": "verified_closure",
+        "repair_attempt": {
+          "verify_command": "cargo xtask check-pr",
+          "verify_result": "fail",
+          "verify_executed": true,
+          "static_movement": "improved"
+        }
+      }
+    },
+    {
       "id": "incompatible_clocks",
       "inputs": {
         "schema_version": "first_hour_repair_funnel_inputs.v1",

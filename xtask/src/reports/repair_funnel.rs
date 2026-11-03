@@ -534,22 +534,25 @@ fn validate_controls(
         .any(|s| s.stage == "verified_improvement_or_closure");
     let verification_ran = attempt.is_some_and(verify_executed);
 
-    // 1. Later receipt without verification must not claim verified-improvement stage.
-    if has_verified_stage && !verification_ran {
-        violations.push("control_1: verified_improvement stage without verification".into());
+    // A row claims verification-backed success via the derived stage or via
+    // the exit label it asserts; both are checked, so an asserted label cannot
+    // bypass the controls.
+    let claims_verified_exit = matches!(funnel_exit, "verified_improvement" | "verified_closure");
+    let claims_verified = has_verified_stage || claims_verified_exit;
+    let verification_passed = verification_ran && attempt.is_some_and(verify_passed);
+    // 1. A verified claim needs executed, declared project verification.
+    if claims_verified && !verification_ran {
+        violations.push("control_1: verified claim without executed verification".into());
     }
-    // 2. Passing verification with unchanged/regressed static movement is not improvement.
-    if has_verified_stage
-        && attempt.is_some_and(verify_passed)
-        && matches!(movement, Some("unchanged") | Some("regressed"))
+    // 2. Passing verification without improved/closed static movement is not improvement.
+    if claims_verified
+        && verification_passed
+        && !matches!(movement, Some("improved") | Some("closed"))
     {
-        violations.push("control_2: verified_improvement with unchanged/regressed movement".into());
+        violations.push("control_2: verified claim without improved/closed movement".into());
     }
-    // 3. Static gap closed but verification failed/not-run.
-    if matches!(movement, Some("improved") | Some("closed"))
-        && attempt.is_some_and(|a| !verify_passed(a))
-        && matches!(funnel_exit, "verified_improvement" | "verified_closure")
-    {
+    // 3. A verified exit over a failed verification.
+    if claims_verified_exit && verification_ran && !verification_passed {
         violations.push("control_3: verified exit without passing verification".into());
     }
     // 4. Hidden assistance poisons blind success.
