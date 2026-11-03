@@ -2158,9 +2158,17 @@ impl RustAdapter {
                 .filter(|file| self.accepts_path(&file.path))
                 .filter(|file| generated_sources.contains(&file.path))
                 .count();
+            // Registered harnesses keep their identities (no subjects were
+            // indexed), exactly as an index with no harness facts projects.
+            let harness_projections = options
+                .test_harnesses
+                .iter()
+                .map(super::super::harness_projection::TestHarnessProjection::from_registration)
+                .collect();
             return Ok(LanguageDiffResult {
                 skipped_files,
                 partial_scope,
+                harness_projections,
                 ..LanguageDiffResult::default()
             });
         }

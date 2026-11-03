@@ -61,6 +61,31 @@ fn options(root: &Path, mode: AnalysisMode) -> AnalysisOptions {
     }
 }
 
+#[test]
+fn skipped_walk_keeps_registered_harness_identities() -> Result<(), String> {
+    let fixture = crate_fixture("harness-identity")?;
+    let mut opts = options(&fixture.0, AnalysisMode::Instant);
+    opts.test_harnesses = vec![crate::config::TestHarnessRegistration {
+        registration_id: "mimic-suite".to_string(),
+        target: PathBuf::from("src/price_mimic.rs"),
+        kind: crate::config::TestHarnessKind::CustomHarnessTarget,
+        adapter: crate::config::TestHarnessAdapter::LibtestMimicV1,
+        marker: "libtest_mimic".to_string(),
+    }];
+    let (result, walks) = crate::analysis::workspace::discover_probe::observe(|| {
+        RustAdapter.analyze_diff(&opts, &OraclePolicy::default(), &docs_diff())
+    });
+    let result = result?;
+    assert_eq!(walks, 0, "docs-only Instant must not walk");
+    assert_eq!(
+        result.harness_projections.len(),
+        opts.test_harnesses.len(),
+        "each registration keeps its projection when the walk is skipped"
+    );
+    assert_eq!(result.harness_projections[0].registration_id, "mimic-suite");
+    Ok(())
+}
+
 fn analyze(
     root: &Path,
     mode: AnalysisMode,
