@@ -156,9 +156,9 @@ impl MemberCrates {
     /// Stricter than [`Self::import_names`] on purpose: only a `[dependencies]`
     /// entry counts (a `[dev-dependencies]` or `[build-dependencies]` entry is
     /// not visible to library code), the caller and the owner must be
-    /// different packages, and the entry must not rename the crate (the key
-    /// is the owner's own library identifier). Everything `import_names`
-    /// refuses is refused here too.
+    /// different packages, and exactly one name must result. A `package = ".."`
+    /// rename is followed: the name is then the entry's key. Everything
+    /// `import_names` refuses is refused here too.
     pub(crate) fn library_dependency_name(
         &self,
         caller_file: &Path,
@@ -1231,10 +1231,6 @@ fn resolve(
         }
     }
     names.retain(|name| !elsewhere.contains(name));
-    if library_edge {
-        // No rename: the key is the owner's own library identifier.
-        names.retain(|name| *name == library);
-    }
     names.sort();
     names.dedup();
     Some(names)
@@ -2629,7 +2625,7 @@ mod tests {
         Ok(())
     }
     /// #11401: the one name a library caller uses for another package's
-    /// library, from `[dependencies]` only, never renamed, never the same
+    /// library, from `[dependencies]` only, never the same
     /// package.
     fn library_name(
         files: &[(&str, &str)],
@@ -2678,16 +2674,40 @@ mod tests {
     }
 
     #[test]
-    fn build_dependency_renames_and_other_packages_name_nothing() -> Result<(), String> {
+    fn a_renamed_dependency_is_named_by_its_key_unless_another_name_competes() -> Result<(), String>
+    {
+        let renamed =
+            app("[dependencies]\ndisc = { path = \"../wscore\", package = \"wscore\" }\n");
+        let both = app(
+            "[dependencies]\nwscore = { path = \"../wscore\" }\ndisc = { path = \"../wscore\", package = \"wscore\" }\n",
+        );
+        let elsewhere =
+            app("[dependencies]\ndisc = { path = \"../wscore\", package = \"other\" }\n");
+        for (label, manifest, expected) in [
+            ("renamed", &renamed, Some("disc")),
+            ("two names", &both, None),
+            ("renamed to another package", &elsewhere, None),
+        ] {
+            let files = [
+                ("Cargo.toml", LIB_ROOT),
+                ("wscore/Cargo.toml", LIB_WSCORE),
+                ("app/Cargo.toml", manifest.as_str()),
+            ];
+            assert_eq!(
+                library_name(&files, "app/src/lib.rs", "wscore/src/lib.rs")?,
+                expected.map(str::to_string),
+                "{label}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn build_dependencies_and_other_packages_name_nothing() -> Result<(), String> {
         let cases = [
             (
                 "build-dependency",
                 app("[build-dependencies]\nwscore = { path = \"../wscore\" }\n"),
-                "app/src/lib.rs",
-            ),
-            (
-                "renamed",
-                app("[dependencies]\ndisc = { path = \"../wscore\", package = \"wscore\" }\n"),
                 "app/src/lib.rs",
             ),
             (

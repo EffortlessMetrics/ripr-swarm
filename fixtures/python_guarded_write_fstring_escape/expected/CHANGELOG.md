@@ -141,3 +141,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_guarded_write_fstring_escape (12)
+
+Reason:
+RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
+
+Command:
+`cargo xtask goldens bless python_guarded_write_fstring_escape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

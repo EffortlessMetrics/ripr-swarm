@@ -102,3 +102,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_dataclass_default_unknown_method_decorator (9)
+
+Reason:
+RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
+
+Command:
+`cargo xtask goldens bless python_dataclass_default_unknown_method_decorator --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
