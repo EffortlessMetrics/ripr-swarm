@@ -3433,3 +3433,52 @@ build gate standing in for the oracle.
 Durable rule: after any compile repair or test enablement, execute the
 affected tests, not just the compile. `--no-run` proves the code compiles; it
 proves nothing about the assertions inside it.
+
+## 2026-11-07: A re-requested CI run can test a stale merge - read the merge ref (#11875)
+
+A PR's hosted qualification failed identically across three `merge-ready`
+re-requests on a Python test its one-file comment/test diff could not
+affect. The cause was not flake: GitHub kept testing merge-ref
+`refs/pull/11875/merge` pinned at an old main (`9230fe145`), which predated
+the owning repair (#11918) even though main already contained it. Re-requests
+do not always recompute the test merge.
+
+Durable rules: (1) when a failure survives re-requests unchanged, fetch the
+PR's merge ref and check the expected fix is an ancestor of its main side
+before attributing anything; (2) merging latest main into the candidate
+refreshes the head and forces recomputation — behind-only merges are still
+discouraged in general, but a provably stale test merge is a concrete reason,
+not unrelated movement; (3) verify the owned repair is actually in the merge
+tree under test, not merely landed on main.
+
+## 2026-11-07: PR admission checks literal template lines - validate the body first (#11875)
+
+The `merge-ready` qualification refused admission with
+`claim_identity_missing` because a shortened PR body dropped the template's
+`Governing issue or accepted claim:` and `Acceptance delta (one sentence):`
+lines — even though the same information existed elsewhere in the body. The
+checker parses lines, not meaning.
+
+Durable rule: before requesting CI on a new PR, confirm the body contains the
+exact required template lines (copy from `.github/pull_request_template.md`);
+a reworded equivalent fails closed.
+
+## 2026-11-07: Downgrade guard rules only on affirmative foreign evidence (#11244)
+
+The TypeScript effect-branch observation guard confirmed any strong assertion
+whose observed expression merely did not name the owner (`classifier.rs`
+side-channel arm) — including assertions on genuinely unrelated values —
+while the value branch explicitly failed closed on the same shape. The
+asymmetry was spec-blessed ("may be a side channel"), which made the tests
+pass and the heuristic wrong in exactly one direction (false clean).
+
+Durable rules: (1) a confirm-on-absence rule ("does not name X, therefore
+observes") needs an affirmative-foreignness gate before it can downgrade —
+downgrade only on positive foreign evidence (foreign callee, foreign-bound
+initializer), never on mere absence of linkage; (2) unit-test-only signals
+cannot be downgrade requirements — `scope_bindings` is empty in unit tests,
+so absence there must keep confirming; (3) every guard tightening ships as a
+red/green pair: a red test that fails before (unrelated assertion downgrades)
+and a green control that must not move (bare-local channel keeps confirming)
+— the pair, not the golden count, is what proves the boundary moved the
+right way.
