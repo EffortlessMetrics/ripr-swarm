@@ -11123,6 +11123,119 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
     Ok(())
 }
 
+/// Effect-seam mirror of `ts_returnvalue_unrelated_strong_assertion_downgrades`
+/// (#11244 staged-(b) first slice): a SideEffect seam (`console.log` change)
+/// whose only strong assertion observes an affirmatively FOREIGN call —
+/// `expect(formatDate(now)).toBe(...)` names neither the owner, a changed
+/// token, nor an admitted alias, and `formatDate` is bound nowhere in the
+/// test. The side-channel theory (closure-local / captured-mock observer)
+/// does not cover a call to an unbound non-owner callee, so the guard MUST
+/// fail closed and downgrade to `weakly_exposed` with a
+/// `propagation_unknown` limitation.
+#[test]
+fn ts_sideeffect_unrelated_strong_assertion_downgrades() -> Result<(), String> {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/discount.ts"),
+        start_line: 1,
+        end_line: 10,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        commonjs_default_export: false,
+        commonjs_whole_function: false,
+        default_object_member: false,
+        module_entries: Vec::new(),
+        arity: None,
+        params: Vec::new(),
+        source_text: None,
+        imports: Default::default(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+    };
+    let test = TypeScriptTest {
+        name: "discount side checks".to_string(),
+        local_name: "discount side checks".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/discount.test.ts"),
+        line: 1,
+        reach_body_text: None,
+        body_text: "applyDiscount(100, 10);\nexpect(formatDate(now)).toBe('2024-01-01');"
+            .to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            // Foreign call: no owner name, no changed token, unbound callee.
+            observed_expression: Some("formatDate(now)".to_string()),
+            expected_value_or_variant: Some("'2024-01-01'".to_string()),
+            has_dynamic_matcher_arg: false,
+            dynamic_expected_text: None,
+            oracle_confidence: OracleConfidence::High,
+            rendered_call: None,
+            loose_number_expected: false,
+            expected_object_const: None,
+            compares_reference_identity: false,
+        }],
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
+        factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/discount".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }]
+        .into(),
+    };
+    // Changed line: SideEffect (console.log call)
+    let finding = classify_change(
+        Path::new("src/discount.ts"),
+        4,
+        "    console.log(\"audit\", amount * 9);",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    // MUST downgrade: the strong assertion observes a foreign call, not the
+    // changed effect.
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "expected WeaklyExposed (unrelated strong assertion on SideEffect), got {:?}",
+        finding.class
+    );
+    assert!(
+        !matches!(finding.ripr.reveal.discriminate.state, StageState::Yes),
+        "discriminate must not be Yes after effect-sink observation guard, got {:?}",
+        finding.ripr.reveal.discriminate.state
+    );
+    let all_text: String = finding.missing.join("\n");
+    assert!(
+        all_text.contains("propagation_unknown"),
+        "expected propagation_unknown in missing, got: {all_text:?}"
+    );
+    Ok(())
+}
+
 /// FieldConstruction control (RIPR-SPEC-0098 §fixture-4): a FieldConstruction
 /// change where the changed FIELD NAME appears in a strong `toEqual`
 /// assertion's `observed_expression` — the token match confirms.  The finding

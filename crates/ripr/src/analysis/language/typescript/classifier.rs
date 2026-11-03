@@ -537,23 +537,48 @@ pub(crate) fn ts_candidate_changed_sink_observation(
             // owner's value. Resolve both named and default locals even
             // when another call wins relation ranking. Method relations
             // must not borrow a same-named free export's identity.
-            let observes_owner_alias = matches!(
+            let mut effect_owner_names: Vec<&str> = vec![owner_name];
+            if matches!(
                 candidate.relation,
                 TypeScriptRelationKind::DirectOwnerCall
                     | TypeScriptRelationKind::ImportAliasOwnerCall
                     | TypeScriptRelationKind::ImportedOwnerCall
-            ) && (import_alias_owner_locals(
-                candidate.test,
-                owner,
-                alias_map,
-                workspace_root,
-            )
-            .into_iter()
-            .any(|name| observed.contains(name))
-                || default_import_owner_locals(candidate.test, owner, alias_map, workspace_root)
-                    .into_iter()
-                    .any(|name| observed.contains(name)));
+            ) {
+                effect_owner_names.extend(import_alias_owner_locals(
+                    candidate.test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                ));
+                effect_owner_names.extend(default_import_owner_locals(
+                    candidate.test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                ));
+            }
+            let observes_owner_alias = effect_owner_names[1..]
+                .iter()
+                .any(|name| observed.contains(name));
             if !observes_owner_alias {
+                // #11244 staged-(b): the side-channel theory above over-claims
+                // when the expression affirmatively observes a DIFFERENT sink:
+                // a call to a non-owner/non-alias callee the test never binds
+                // (`expect(formatDate(now)).toBe(...)`), or a bare local whose
+                // single-declaration initializer is such a call. Downgrade
+                // those fail-closed via `AffirmativelyOtherSink`. Bare locals
+                // (and any other shape) with no resolvable foreign linkage —
+                // the `sideEffectLog` channel-candidate shape — keep
+                // confirming; absence of linkage is never foreign evidence.
+                if ts_effect_observed_is_affirmatively_foreign(
+                    observed,
+                    &effect_owner_names,
+                    &changed_tokens,
+                    candidate.test,
+                ) {
+                    merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
+                    continue;
+                }
                 return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
             }
         }
@@ -656,6 +681,121 @@ fn ts_value_assertion_affirmatively_other_sink(
     !owner_names
         .iter()
         .any(|name| ts_references_identifier(&observed_code, name))
+}
+
+/// Affirmative foreignness for the effect-branch side-channel check (#11244,
+/// staged-(b) first slice).
+///
+/// The effect branch confirms when a strong assertion's observed expression
+/// names neither the owner, a changed token, nor an admitted alias — on the
+/// theory that it observes the effect through a side channel (a closure-local
+/// variable, a captured mock result). That theory over-claims when the
+/// expression affirmatively observes a DIFFERENT sink: a call to a
+/// non-owner/non-alias callee the test never binds (`formatDate(now)`), or a
+/// bare local whose single-declaration initializer is such a call
+/// (`const other = formatDate(now); expect(other)...`).
+///
+/// Negative-evidence gating: only POSITIVE foreign evidence downgrades. A bare
+/// local with no resolvable declaration (the `sideEffectLog` channel-candidate
+/// shape), a call to a test-bound callee, an ambiguous (multi-declaration or
+/// mutated) local, and any non-call member access keep confirming. In
+/// particular, mere absence of linkage is never foreign evidence
+/// (`scope_bindings` is empty in unit tests, so absence must not downgrade).
+fn ts_effect_observed_is_affirmatively_foreign(
+    observed: &str,
+    owner_names: &[&str],
+    changed_tokens: &[String],
+    test: &TypeScriptTest,
+) -> bool {
+    // A bare local observes through its single-declaration initializer: only
+    // a foreign-call initializer is affirmative evidence. An owner-call (or
+    // unresolvable) initializer keeps the channel-candidate confirmation.
+    if ts_effect_is_bare_identifier(observed)
+        && let Some(initializer) = ts_effect_single_declaration_initializer(test, observed.trim())
+        && ts_effect_call_callee_is_foreign(&initializer, owner_names, changed_tokens, test)
+    {
+        return true;
+    }
+    ts_effect_call_callee_is_foreign(observed, owner_names, changed_tokens, test)
+}
+
+/// `true` when `text` is a bare identifier reference (no member access, call,
+/// or other expression shape), mirroring the bare-identifier gate in
+/// [`ts_observed_local_aliases_owner_with_mutation`].
+fn ts_effect_is_bare_identifier(text: &str) -> bool {
+    fn is_ident_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    }
+    let ident = text.trim();
+    let ident_bytes = ident.as_bytes();
+    !ident_bytes.is_empty()
+        && (ident_bytes[0].is_ascii_alphabetic()
+            || ident_bytes[0] == b'_'
+            || ident_bytes[0] == b'$')
+        && ident_bytes.iter().all(|&b| is_ident_byte(b))
+}
+
+/// The initializer of `ident`'s declaration when the test body declares it
+/// EXACTLY once (via [`single_local_initializer`]), or `None` when the name
+/// is undeclared, declared repeatedly, or rewritten/escaped
+/// ([`ts_test_local_is_mutated`]). None of those is affirmative evidence the
+/// local holds a foreign call's result.
+fn ts_effect_single_declaration_initializer(test: &TypeScriptTest, ident: &str) -> Option<String> {
+    let declaration = single_local_initializer(&test.body_text, ident)?;
+    if ts_test_local_is_mutated(test, ident) {
+        return None;
+    }
+    Some(declaration.initializer)
+}
+
+/// `true` when `expr` is shaped as a call to a BARE callee (`callee(...)`)
+/// that is affirmatively foreign: the callee names neither the owner, an
+/// admitted alias, nor a changed token (whole-identifier,
+/// [`ts_references_identifier`]), and the test never binds it — no body-local
+/// declaration ([`local_identifier_declared_in_test_body`]) and no
+/// enclosing-scope binding (`scope_bindings`).
+///
+/// Narrow by construction: member calls (`logger.format(...)`), bare
+/// identifiers, and calls whose callee the test binds keep confirming. An
+/// import resolving the callee to another module is itself foreign evidence,
+/// so `imports_in_file` never withholds the downgrade.
+fn ts_effect_call_callee_is_foreign(
+    expr: &str,
+    owner_names: &[&str],
+    changed_tokens: &[String],
+    test: &TypeScriptTest,
+) -> bool {
+    let Some(callee) = ts_effect_bare_call_callee(expr) else {
+        return false;
+    };
+    if owner_names
+        .iter()
+        .any(|name| ts_references_identifier(callee, name))
+        || changed_tokens
+            .iter()
+            .any(|tok| ts_references_identifier(callee, tok))
+    {
+        return false;
+    }
+    !local_identifier_declared_in_test_body(&test.body_text, callee)
+        && !test
+            .scope_bindings
+            .iter()
+            .any(|binding| binding.name == callee)
+}
+
+/// The callee of `expr` when it is a plain bare-callee call (`name(...)`,
+/// with optional whitespace before the paren). Member calls (`recv.name(`),
+/// bare identifiers, and every other shape resolve to `None` — those keep the
+/// side-channel confirmation.
+fn ts_effect_bare_call_callee(expr: &str) -> Option<&str> {
+    let trimmed = expr.trim();
+    let open = trimmed.find('(')?;
+    let callee = trimmed[..open].trim_end();
+    // A member segment (`recv.name`) is not a bare identifier, so member
+    // calls (including `?.` / `!.` chains, whose punctuation survives the
+    // trim) are excluded here, not by the caller.
+    ts_effect_is_bare_identifier(callee).then_some(callee)
 }
 
 /// One-hop local aliasing credit for the value-family observation guard.
