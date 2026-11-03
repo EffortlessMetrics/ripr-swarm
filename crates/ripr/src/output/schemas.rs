@@ -680,4 +680,37 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn check_output_doc_separates_internal_schema_gate_from_consumer_tolerance()
+    -> Result<(), String> {
+        let doc = output_schema_doc()?;
+        const SECTION: &str = "## Check Output";
+        let section = doc
+            .split_once(SECTION)
+            .ok_or_else(|| format!("docs/OUTPUT_SCHEMA.md is missing {SECTION}"))?
+            .1;
+        let end = section.find("\n## ").unwrap_or(section.len());
+        let check_output = &section[..end];
+        const MISLEADING: &str =
+            "Unknown top-level fields are rejected by the verification contract";
+        if check_output.contains(MISLEADING) {
+            return Err(format!(
+                "check output contract must not tell external consumers to reject unknown fields: found {MISLEADING:?}"
+            ));
+        }
+        for required in [
+            "cargo xtask check-verification-contracts",
+            "External consumers (CI, editor integrations, and coding agents)",
+            "tolerate unknown top-level and nested fields",
+            "`test_harnesses`",
+        ] {
+            if !check_output.contains(required) {
+                return Err(format!(
+                    "check output contract must document consumer tolerance ({required:?})"
+                ));
+            }
+        }
+        Ok(())
+    }
 }

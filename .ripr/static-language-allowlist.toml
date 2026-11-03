@@ -217,3 +217,8 @@ reason = "Immutable verbatim GitHub timeline capture for the #4930 read-only int
 path = "fixtures/issue_lifecycle_real_rows/snapshots/row-a-pr-8285.json"
 owner = "test-infra"
 reason = "Immutable verbatim GitHub PR capture for the #4932 real closeout rows; the captured bot review body quotes the prohibited mutation-runtime vocabulary as review data, not as static classification output."
+
+[[allow]]
+path = "tools/repo-policy/tests/fixtures/review_bodies/ready-pr12736-7.md"
+owner = "ci/admission"
+reason = "Verbatim real review-of-record body kept untrimmed as a review-disposition verifier fixture (#12814); the prose is a historical comment, not analyzer output."

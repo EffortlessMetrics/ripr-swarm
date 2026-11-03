@@ -96,10 +96,11 @@ Progress:
   Long-running pilot analysis writes producer stages to stderr as
   `ripr progress: <stage> [repo]` and, while a stage stays active, throttled
   `still active after <elapsed class>` heartbeats, exactly as `ripr check`
-  reports them. Non-TTY / CI output is newline-delimited with no control
-  sequences; stdout and the pilot packet stay byte-clean. When the default
-  timeout passes, the same run continues under the same progress stream.
-  `--quiet` turns this stream off.
+  reports them, including `processed_<n>_of_<total>` once the inventory has
+  an honest seam denominator. Non-TTY / CI output is newline-delimited with
+  no control sequences; stdout and the pilot packet stay byte-clean. When
+  the default timeout passes, the same run continues under the same progress
+  stream. `--quiet` turns this stream off.
 
 Environment variables:
   RIPR_PILOT_SEAM_BUDGET        Maximum gaps written to pilot artifacts (repo-exposure.json,
@@ -208,8 +209,8 @@ Common options:
                     walks up to the enclosing workspace or package, or the git
                     top level (never past the repository); `--root .` pins
                     this directory.
-  --quiet           Suppress stderr progress. Unknown totals show no
-                    percentage or ETA, and progress makes no speed claim.
+  --quiet           Suppress stderr progress; known seam totals as processed_n_of_total.
+                    Unknown totals show no percentage or ETA, and progress makes no speed claim.
   --timeout SECS    Analysis-worker budget (600s default; 0 off; repo formats skip).
                     Pre-worker git/post-run rendering outside; in-worker git diff
                     load counts against it (each git call has its own timeout). Raise/disable on analysis_timeout.
@@ -415,20 +416,30 @@ Exit status:
 Progress:
   Long-running check analysis writes producer stages to stderr as
   `ripr progress: <stage> [<scope>]` and, while a stage stays active,
-  throttled `still active after <elapsed class>` heartbeats. Non-TTY
-  / CI output is newline-delimited with no control sequences. A TTY
-  may reuse one line and stays silent for sub-threshold flashes.
-  Machine formats (json, sarif, github) keep stdout byte-clean. With json,
-  sarif, badge-* or agent selected and stderr not a terminal, the
-  stream is off by default; `RIPR_PROGRESS=1` restores it. A terminal and
-  the human formats keep it. Unknown totals never become a
-  percentage or ETA. Progress does not mean analysis is faster or
-  that the command will succeed. `--quiet` turns this stream off; so does
-  setting `RIPR_QUIET` to anything but empty, `0` or `false`. `repair` and
-  `continue` accept `--quiet` too and drop their progress narration and
-  `wrote <path>` lines; refusal prose is never suppressed.
+  throttled `still active after <elapsed class>` heartbeats. When a
+  repo-inventory walk has an honest seam denominator, those lines also
+  carry `processed_<n>_of_<total>` so a multi-minute `repo-exposure-json`
+  run can be told from a hang. Non-TTY / CI output is newline-delimited
+  with no control sequences. A TTY may reuse one line and stays silent
+  for sub-threshold flashes. Machine formats (json, sarif, github) keep
+  stdout byte-clean. With json, sarif, badge-* or agent selected and
+  stderr not a terminal, the stream is off by default; `RIPR_PROGRESS=1`
+  restores it. A terminal and the human formats keep it. Unknown totals
+  never become a percentage or ETA. Progress does not mean analysis is faster
+  or that the command will succeed. `--quiet` turns this stream
+  off; so does setting `RIPR_QUIET` to anything but empty, `0` or
+  `false`. `repair` and `continue` accept `--quiet` too and drop their
+  progress narration and `wrote <path>` lines; refusal prose is never
+  suppressed.
 
 Environment variables:
+  RIPR_MAX_DIFF_CHANGED_LINES             Maximum added plus removed diff lines recorded
+                                          while parsing a unified diff before check
+                                          stops with diff_scope_oversized (language-
+                                          neutral; per-language adapter limits may
+                                          still apply). With --json, stdout carries a
+                                          non-consumable limited artifact.
+                                          Default: 100000.
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
                                           before check stops with
                                           diff_scope_oversized. With --json, stdout
