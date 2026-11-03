@@ -88,7 +88,7 @@ fn review_disposition_self_test_passes() -> Result<(), String> {
 #[test]
 fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
     let head = "a".repeat(40);
-    let cases: [(&str, bool); 30] = [
+    let cases: [(&str, bool); 37] = [
         ("SOURCE_REVIEW_READY", true),
         ("REVIEW_INCOMPLETE", false),
         (
@@ -134,7 +134,30 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
             true,
         ),
         ("REVIEW_READY - head 7c50f64\nNo findings.", true),
-        ("REVIEW_READY \u{2014} head xyz", false),
+        ("REVIEW_READY \u{2014} head xyz", true),
+        // Trimmed real first lines and summary lines from merged reviews of record.
+        (
+            "REVIEW_READY for the current candidate.\n\ndisposition: REVIEW_READY, subject to final unchanged-head refresh.",
+            true,
+        ),
+        (
+            "REVIEW_READY \u{2014} native qualification and integration review complete.\ndisposition: REVIEW_READY for the installed candidate.",
+            true,
+        ),
+        (
+            "REVIEW_READY \u{2014} exact-head source, native-proof, current-findings and integration review complete.",
+            true,
+        ),
+        (
+            "REVIEW_READY \u{2014} head b9a71b72\n**The blocker is fixed.** The case now adds `unsafe { x.unreachable_unchecked() }`.",
+            true,
+        ),
+        ("REVIEW_READY \u{2014} not ready", false),
+        ("REVIEW_READY \u{2014} REPAIR_REQUIRED", false),
+        (
+            "REVIEW_READY for the candidate, but repairs required",
+            false,
+        ),
         (
             "REVIEW_READY\n```\nnot ready\n```\nChecked the oracle.",
             true,

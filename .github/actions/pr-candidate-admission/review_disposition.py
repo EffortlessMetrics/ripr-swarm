@@ -21,11 +21,16 @@ import sys
 from typing import Any
 
 READINESS_MARKERS = ("SOURCE_REVIEW_READY", "REVIEW_READY")
+# A marker line: the marker alone, or the marker followed by a dash, comma or "for"
+# and free text ("REVIEW_READY \u2014 head <sha>", "disposition: REVIEW_READY, subject to
+# CI"). The free text is screened separately so it cannot retract the marker.
 POSITIVE_LINE = re.compile(
-    r"^ {0,3}(?:disposition:[ \t]*)?(SOURCE_REVIEW_READY|REVIEW_READY)"
-    r"(?:[ \t]+[\u2014\u2013-][ \t]+head[ \t]+[0-9a-f]{7,40})?[ \t]*$",
+    r"^ {0,3}(?:disposition:[ \t]*)?(?:SOURCE_REVIEW_READY|REVIEW_READY)"
+    r"(?P<tail>(?:[ \t]*[,\u2014\u2013]|[ \t]+-[ \t]|[ \t]+for\b)[^\n]*)?[ \t]*$",
     re.IGNORECASE,
 )
+# Extra words that turn a marker line into a hedge or retraction.
+TAIL_BLOCK = re.compile(r"\b(?:but|however|although|except|unless)\b", re.IGNORECASE)
 # Any line that speaks about disposition or readiness state. After the first line,
 # such a line is only allowed when it is itself an exact positive line.
 STATE_MENTION = re.compile(
@@ -38,8 +43,8 @@ STATE_MENTION = re.compile(
 # fine, only phrases that retract or deny the disposition refuse.
 NEGATION = re.compile(
     r"\bnot[ \t]+(?:yet[ \t]+)?(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
-    r"|\bno[ \t]+longer\b"
-    r"|\b(?:repairs?|changes?|fixes)[ \t]+(?:is|are)[ \t]+(?:still[ \t]+)?(?:required|needed)\b"
+    r"|\bno[ \t]+longer[ \t]+(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
+    r"|\b(?:repairs?|changes?|fixes)[ \t]+(?:(?:is|are)[ \t]+)?(?:still[ \t]+)?(?:required|needed)\b"
     r"|\bneeds?[ \t]+(?:repair|changes|rework)\b",
     re.IGNORECASE,
 )
@@ -80,6 +85,17 @@ def visible_lines(body: str) -> list[str] | None:
     return visible
 
 
+def positive_line(line: str) -> bool:
+    """Whether ``line`` is a marker line whose free-text tail does not retract it."""
+    match = POSITIVE_LINE.match(line)
+    if match is None:
+        return False
+    tail = match.group("tail") or ""
+    return not (
+        STATE_MENTION.search(tail) or NEGATION.search(tail) or TAIL_BLOCK.search(tail)
+    )
+
+
 def comment_body_ready(body: str) -> bool:
     """Whether a COMMENT review body carries a current positive source disposition.
 
@@ -91,10 +107,10 @@ def comment_body_ready(body: str) -> bool:
     if lines is None:
         return False
     substantive = [line for line in lines if line.strip()]
-    if not substantive or not POSITIVE_LINE.match(substantive[0]):
+    if not substantive or not positive_line(substantive[0]):
         return False
     return all(
-        POSITIVE_LINE.match(line)
+        positive_line(line)
         or not (STATE_MENTION.search(line) or NEGATION.search(line))
         for line in substantive[1:]
     )
@@ -251,7 +267,15 @@ def self_test() -> None:
         ("REVIEW_READY — head 7c50f64fa93c3e40533240fbe4fd0e9ac7398eab", True),
         ("REVIEW_READY \u2014 head 7c50f64fa\n\nAngles: correctness. Findings: nothing blocking; hosted CI not run; fail-closed on missing data.", True),
         ("REVIEW_READY - head 7c50f64\nNo findings.", True),
-        ("REVIEW_READY \u2014 head xyz", False),
+        ("REVIEW_READY \u2014 head xyz", True),
+        ("REVIEW_READY for the current candidate.\n\ndisposition: REVIEW_READY, subject to final unchanged-head refresh.", True),
+        ("REVIEW_READY \u2014 native qualification and integration review complete.\ndisposition: REVIEW_READY for the installed candidate.", True),
+        ("REVIEW_READY \u2014 exact-head source, native-proof, current-findings and integration review complete.", True),
+        ("REVIEW_READY \u2014 head b9a71b72\n**The blocker is fixed.** The case now adds `unsafe { x.unreachable_unchecked() }`.", True),
+        ("REVIEW_READY \u2014 not ready", False),
+        ("REVIEW_READY \u2014 REPAIR_REQUIRED", False),
+        ("REVIEW_READY for the candidate, but repairs required", False),
+        ("SOURCE_REVIEW_READY, but repairs required", False),
         ("REVIEW_READY\n```\nnot ready\n```\nChecked the oracle.", True),
     ]
     for body, expected in cases:
