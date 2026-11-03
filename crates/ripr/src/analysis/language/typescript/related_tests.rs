@@ -4007,6 +4007,13 @@ fn importer_has_nearer_paths_config(root: &Path, importer: &Path) -> bool {
 const MAX_NEARER_CONFIG_HOPS: usize = 32;
 
 fn nearer_paths_withhold_uncached(root: &Path, dir: &Path) -> bool {
+    // The importer is not under `root`: no nearer in-root config can own it,
+    // so the root map still applies. Check this before probing any config so
+    // an out-of-root (or differently spelled) directory is never treated as
+    // a nested config owner.
+    if dir.strip_prefix(root).is_err() {
+        return false;
+    }
     let mut dir = dir.to_path_buf();
     for _ in 0..MAX_NEARER_CONFIG_HOPS {
         let ts_config = dir.join("tsconfig.json");
@@ -4022,11 +4029,6 @@ fn nearer_paths_withhold_uncached(root: &Path, dir: &Path) -> bool {
         let Some(parent) = dir.parent().map(Path::to_path_buf) else {
             return false;
         };
-        // The importer is not under `root` (or the walk climbed out of it):
-        // no nearer in-root config can own it, so the root map still applies.
-        if parent != root && dir.strip_prefix(root).is_err() {
-            return false;
-        }
         dir = parent;
     }
     false
@@ -6228,6 +6230,39 @@ mod nested_config_withhold_tests {
         if resolved.as_deref() != Some("packages/a/src/owner") {
             return Err(format!(
                 "a relative import must resolve lexically despite the nested config, got {resolved:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The withhold never fires for an importer outside the workspace root:
+    /// no nested in-root config can own it, so the root fallback applies even
+    /// when the importer's own directory declares `paths`.
+    #[test]
+    fn outside_root_importer_keeps_root_fallback() -> Result<(), String> {
+        let root = disagreeing_fixture(
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        )?;
+        // A directory outside the workspace root with its own declaring
+        // config; the importer lives there, not under `root`.
+        let outside = temp_dir("outside-root")?;
+        write(
+            &outside,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            &outside.join("src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        cleanup(&outside);
+        if resolved.as_deref() != Some("shared/owner") {
+            return Err(format!(
+                "an importer outside the root must keep the root fallback, got {resolved:?}"
             ));
         }
         Ok(())
