@@ -872,6 +872,10 @@ mod tests {
     }
 
     fn seam_json(gap_id: &str, strength: &str) -> Value {
+        seam_json_owned(gap_id, "owner", strength)
+    }
+
+    fn seam_json_owned(gap_id: &str, owner: &str, strength: &str) -> Value {
         json!({
             "seam_id": format!("seam-{gap_id}"),
             "file": "src/lib.rs",
@@ -879,7 +883,7 @@ mod tests {
             "kind": "predicate_boundary",
             "related_tests": [{"oracle_strength": strength}],
             "evidence_record": {
-                "owner": "owner",
+                "owner": owner,
                 "seam_kind": "predicate",
                 "canonical_item": {
                     "canonical_gap_id": gap_id,
@@ -998,9 +1002,147 @@ mod tests {
             return Err(format!("unique control changed: {value}"));
         }
         // Same owner and kind, genuinely different gap ids: not a collision.
+        // The parser must accept both rows, not merely fail to withhold them.
         let two = snapshot_text(&[seam_json("gap:a", "weak"), seam_json("gap:b", "weak")]);
-        if parse_snapshot(&two, "base").is_ok_and(|snapshot| !snapshot.available) {
-            return Err("distinct gap ids on one owner were treated as a collision".to_string());
+        let parsed = parse_snapshot(&two, "base")?;
+        let mut ids = parsed
+            .items
+            .iter()
+            .map(|item| item.gap_id.as_str())
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        if !parsed.available
+            || !parsed.comparable()
+            || ids != ["gap:a", "gap:b"]
+            || !parsed.limitations.is_empty()
+            || parsed.unknown_items != 0
+        {
+            return Err(format!(
+                "distinct ids on one owner were not admitted intact: {parsed:?}"
+            ));
+        }
+        // Comparing that two-row snapshot with itself keeps both gaps, complete.
+        let value = compare_text(&two, &two)?;
+        let rows = value["deltas"].as_array().ok_or("missing deltas")?;
+        let out_ids = rows
+            .iter()
+            .filter_map(|row| row["canonical_gap_id"].as_str())
+            .collect::<Vec<_>>();
+        if value["coverage"]["complete"] != true
+            || value["coverage"]["matched_items"] != 2
+            || out_ids != ["gap:a", "gap:b"]
+            || rows
+                .iter()
+                .any(|row| row["delta_attribution"] != "baseline_existing")
+        {
+            return Err(format!("two-row self comparison changed: {value}"));
+        }
+        Ok(())
+    }
+
+    fn delta_ids(value: &Value) -> Result<Vec<String>, String> {
+        let mut ids = value["deltas"]
+            .as_array()
+            .ok_or("missing deltas")?
+            .iter()
+            .filter_map(|row| row["canonical_gap_id"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        ids.sort();
+        Ok(ids)
+    }
+
+    fn all_unknown(value: &Value) -> Result<bool, String> {
+        Ok(value["deltas"]
+            .as_array()
+            .ok_or("missing deltas")?
+            .iter()
+            .all(|row| {
+                row["delta_attribution"] == "comparison_unknown"
+                    && row["comparison_confidence"] == "unknown"
+            }))
+    }
+
+    #[test]
+    fn both_sides_invalid_yield_no_deltas_and_disclose_both_sides() -> Result<(), String> {
+        let dup = snapshot_text(&[seam_json("gap:x", "weak"), seam_json("gap:x", "strong")]);
+        let value = compare_text(&dup, &dup)?;
+        let limitations = value["limitations"].to_string();
+        if value["base"]["available"] != false
+            || value["head"]["available"] != false
+            || !value["deltas"].as_array().is_some_and(Vec::is_empty)
+            || value["coverage"]["base_items"] != 0
+            || value["coverage"]["head_items"] != 0
+            || value["coverage"]["unknown_items"] != 2
+            || value["coverage"]["complete"] != false
+            || value["coverage"]["low_coverage_disclosed"] != true
+            || !limitations.contains("base snapshot repeats canonical gap id")
+            || !limitations.contains("head snapshot repeats canonical gap id")
+        {
+            return Err(format!("both-sides-invalid result is wrong: {value}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn one_invalid_base_keeps_the_valid_head_ids_as_unknown() -> Result<(), String> {
+        let base = snapshot_text(&[seam_json("gap:x", "weak"), seam_json("gap:x", "strong")]);
+        let head = snapshot_text(&[seam_json("gap:x", "strong"), seam_json("gap:y", "weak")]);
+        let value = compare_text(&base, &head)?;
+        if value["base"]["available"] != false
+            || value["head"]["available"] != true
+            || value["coverage"]["head_items"] != 2
+            || value["coverage"]["base_items"] != 0
+            || value["coverage"]["complete"] != false
+            || delta_ids(&value)? != ["gap:x", "gap:y"]
+            || !all_unknown(&value)?
+        {
+            return Err(format!("invalid-base result is wrong: {value}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn one_invalid_head_keeps_the_valid_base_ids_as_unknown() -> Result<(), String> {
+        let base = snapshot_text(&[seam_json("gap:x", "weak"), seam_json("gap:y", "weak")]);
+        let head = snapshot_text(&[seam_json("gap:x", "strong"), seam_json("gap:x", "weak")]);
+        let value = compare_text(&base, &head)?;
+        if value["head"]["available"] != false
+            || value["base"]["available"] != true
+            || value["coverage"]["base_items"] != 2
+            || value["coverage"]["head_items"] != 0
+            || value["coverage"]["complete"] != false
+            || delta_ids(&value)? != ["gap:x", "gap:y"]
+            || !all_unknown(&value)?
+        {
+            return Err(format!("invalid-head result is wrong: {value}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn duplicates_across_conflicting_owners_are_withheld_in_either_order() -> Result<(), String> {
+        let head = snapshot_text(&[seam_json("gap:x", "strong")]);
+        let forward = snapshot_text(&[
+            seam_json_owned("gap:x", "owner_a", "weak"),
+            seam_json_owned("gap:x", "owner_b", "strong"),
+        ]);
+        let reversed = snapshot_text(&[
+            seam_json_owned("gap:x", "owner_b", "strong"),
+            seam_json_owned("gap:x", "owner_a", "weak"),
+        ]);
+        let first = compare_text(&forward, &head)?;
+        let second = compare_text(&reversed, &head)?;
+        if first["base"]["available"] != false
+            || first["coverage"]["complete"] != false
+            || delta_ids(&first)? != ["gap:x"]
+            || !all_unknown(&first)?
+        {
+            return Err(format!(
+                "conflicting-owner duplicates were admitted: {first}"
+            ));
+        }
+        if first != second {
+            return Err(format!("row order changed the result: {first} vs {second}"));
         }
         Ok(())
     }
