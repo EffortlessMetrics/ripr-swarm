@@ -27,6 +27,9 @@ use std::path::Path;
 mod boundary_input;
 mod fact_index;
 mod identity;
+mod row_miss;
+#[cfg(test)]
+mod row_miss_tests;
 mod static_limit;
 mod v2_projection;
 #[cfg(test)]
@@ -69,7 +72,7 @@ const PERL_ORACLE_MATCHER_GRADING: &str = "oracle_matcher_grading";
 
 /// Stable reason marker for a *configured* managed Perl facts producer that
 /// was invoked and failed (#6828). The adapter returns this marked reason so
-/// the pipeline's `perl_run_status_for_err` can map it to
+/// the pipeline's `adapter_run_status_for_err` can map it to
 /// [`LanguageRunStatus::Failed`], whose typed limitation is `producer_failure`
 /// with `inspect_failure` recovery — not the generic missing-packet advice.
 pub(crate) const PERL_PRODUCER_FAILURE_REASON_PREFIX: &str = "producer failure: ";
@@ -204,11 +207,12 @@ impl PerlAdapter {
     ) -> Result<PerlFactPacket, String> {
         let packet: PerlFactPacket = serde_json::from_str(text)
             .map_err(|err| format!("parse ripr-perl-facts-v1 packet: {err}"))?;
-        if packet.schema_version != crate::app::PERL_FACT_PACKET_SCHEMA {
+        if !crate::app::is_supported_perl_fact_packet_schema(&packet.schema_version) {
             return Err(format!(
-                "unsupported Perl fact packet schema `{}`; expected `{}`; regenerate the packet with an exporter that emits that schema",
+                "unsupported Perl fact packet schema `{}`; expected `{}` or `{}`; regenerate the packet with an exporter that emits a supported schema",
                 packet.schema_version,
                 crate::app::PERL_FACT_PACKET_SCHEMA,
+                crate::app::PERL_FACT_PACKET_V2_SCHEMA,
             ));
         }
         packet.validate_ingestion(options)?;
@@ -580,6 +584,21 @@ struct PerlFactPacket {
     verify_commands: Vec<VerifyCommandFact>,
     limitations: Vec<LimitationFact>,
     provenance: Vec<ProvenanceFact>,
+    /// Row-owned predicate participation (#17237 / #5562). Empty on v1 packets.
+    #[serde(default)]
+    predicate_participations: Vec<PredicateParticipationFact>,
+    /// Row-owned oracle-to-sink relevance (#9296 / #5562).
+    #[serde(default)]
+    oracle_relevances: Vec<OracleRelevanceFact>,
+    /// Row activation and framework execution (#4061 / #5562).
+    #[serde(default)]
+    activation_framework: Vec<ActivationFrameworkFact>,
+    /// Exact/candidate/bounded reach for a relation (#3223 / #5562).
+    #[serde(default)]
+    relation_reach: Vec<RelationReachFact>,
+    /// Complete-or-unknown assertion extraction for a test scope (#5562).
+    #[serde(default)]
+    oracle_scope_coverage: Vec<OracleScopeCoverageFact>,
     /// Lazily built id index; not part of the wire format or of equality.
     #[serde(skip)]
     index: fact_index::LazyPacketIndex,
@@ -780,6 +799,14 @@ impl PerlFactPacket {
             ("tests", self.tests.len()),
             ("oracles", self.oracles.len()),
             ("relations", self.relations.len()),
+            (
+                "predicate_participations",
+                self.predicate_participations.len(),
+            ),
+            ("oracle_relevances", self.oracle_relevances.len()),
+            ("activation_framework", self.activation_framework.len()),
+            ("relation_reach", self.relation_reach.len()),
+            ("oracle_scope_coverage", self.oracle_scope_coverage.len()),
         ] {
             if count > MAX_FACTS_PER_ARRAY {
                 return Err(format!(
@@ -1219,6 +1246,7 @@ impl PerlFactPacket {
             test_name: test.name.clone(),
             test_framework: test.framework,
             oracle_id: oracle.map(|oracle| oracle.oracle_id.clone()),
+            callsite_id: relation.callsite_id.clone(),
             relation_kind: relation.relation_kind,
             reachability_hint: relation.reachability_hint,
             oracle_shape: oracle.map(|oracle| oracle.kind.assertion_shape().to_string()),
@@ -2169,6 +2197,7 @@ struct PerlRelatedTestEvidence {
     verify_command: Option<Vec<String>>,
     verify_command_id: Option<String>,
     evidence_refs: Vec<String>,
+    callsite_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -2584,10 +2613,129 @@ struct RelationFact {
     owner_id: String,
     test_id: String,
     oracle_id: Option<String>,
+    #[serde(default)]
+    callsite_id: Option<String>,
     relation_kind: RelationKind,
     reachability_hint: ReachabilityHint,
     confidence: Confidence,
     provenance_refs: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum PredicateParticipation {
+    SameOutcome,
+    Distinguishes,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+struct PredicateParticipationFact {
+    participation_id: String,
+    change_id: String,
+    relation_id: String,
+    test_id: String,
+    #[serde(default)]
+    callsite_id: Option<String>,
+    #[serde(default)]
+    oracle_id: Option<String>,
+    participation: PredicateParticipation,
+    #[serde(default)]
+    support_value: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum OracleRelevanceState {
+    ExactSink,
+    ExactSinkBroadAssertion,
+    AffirmativeOtherSink,
+    CandidateSink,
+    Bounded,
+    Unlinked,
+    DynamicUnknown,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+struct OracleRelevanceFact {
+    relevance_id: String,
+    change_id: String,
+    relation_id: String,
+    test_id: String,
+    #[serde(default)]
+    callsite_id: Option<String>,
+    #[serde(default)]
+    oracle_id: Option<String>,
+    state: OracleRelevanceState,
+    #[serde(default)]
+    required_discriminator: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ActivationState {
+    Possible,
+    Impossible,
+    Scoped,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum FrameworkExecution {
+    Executes,
+    Skipped,
+    Scoped,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum FrameworkOracleMode {
+    Normal,
+    TodoQualified,
+    Unknown,
+}
+
+impl Default for FrameworkOracleMode {
+    fn default() -> Self {
+        Self::Normal
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+struct ActivationFrameworkFact {
+    fact_id: String,
+    relation_id: String,
+    activation: ActivationState,
+    framework_execution: FrameworkExecution,
+    #[serde(default)]
+    framework_oracle_mode: FrameworkOracleMode,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum RelationReachState {
+    ExactStaticCall,
+    BoundedHelper,
+    Heuristic,
+    DynamicUnknown,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+struct RelationReachFact {
+    reach_id: String,
+    relation_id: String,
+    state: RelationReachState,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+struct OracleScopeCoverageFact {
+    scope_id: String,
+    test_id: String,
+    extraction_complete: bool,
+    recognized_assertion_count: u32,
+    #[serde(default)]
+    unresolved_admission: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
