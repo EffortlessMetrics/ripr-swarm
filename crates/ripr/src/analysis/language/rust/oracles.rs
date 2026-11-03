@@ -784,8 +784,7 @@ fn unresolved_assertion_macro_invocations_among(
             // With credited macros the witness is the credited spelling, not
             // another assertion-like macro in the same test (#7089).
             let named = if credited.is_empty() {
-                is_unresolved_assertion_like_macro(&macro_name)
-                    || aliases.contains(&macro_name)
+                is_unresolved_assertion_like_macro(&macro_name) || aliases.contains(&macro_name)
             } else {
                 credited.contains(&macro_name)
             };

@@ -7,7 +7,7 @@ name: Rust Test Shards
 # start only after those gates pass, so a gate failure still costs no test minutes
 # (#10346). The self-hosted routes keep the one-command step inside rust-gates.yml.
 #
-# Four `--partition count:N/4` runs together select exactly the tests the single
+# Four `--partition hash:N/4` runs together select exactly the tests the single
 # unsharded command selects. `verify` is the check that makes that true rather
 # than assumed: every shard must have exited zero with a fresh JUnit report naming
 # a test, and the four partition lists must be pairwise disjoint and equal the
@@ -48,7 +48,7 @@ jobs:
       - name: Install CI tools
         uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
-          tool: nextest
+          tool: nextest@0.9.149
 
       # Separate dependency cache from the gates job; the action defaults exclude
       # workspace test binaries. One shard on main is enough to write the cache.
@@ -175,7 +175,7 @@ jobs:
           checkout_sha="$(git rev-parse HEAD)"
           {
             printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
-            printf 'profile=ci\nshard=%s/4\ncommand=cargo nextest run --workspace --profile ci --partition count:%s/4\n' "${{ matrix.shard }}" "${{ matrix.shard }}"
+            printf 'profile=ci\nshard=%s/4\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/4\n' "${{ matrix.shard }}" "${{ matrix.shard }}"
             cargo nextest --version
             rustc --version
             cargo --version
@@ -183,14 +183,14 @@ jobs:
             git hash-object Cargo.lock .config/nextest.toml .github/workflows/rust-gates.yml .github/workflows/rust-test-shards.yml
           } > target/nextest/ci/run-context.txt
           set +e
-          cargo nextest run --workspace --profile ci --partition count:${{ matrix.shard }}/4
+          cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/4
           test_exit=$?
           set -e
           printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
           printf '%s\n' "$test_exit" > target/nextest/ci/shard-${{ matrix.shard }}.status
           # The partition lists let `verify` prove the shards are a disjoint cover.
           # Listing reuses the build above; shard 1 also lists the whole workspace.
-          cargo nextest list --workspace --profile ci --partition count:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
+          cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
           if [ "${{ matrix.shard }}" = 1 ]; then
             cargo nextest list --workspace --profile ci --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
           fi
