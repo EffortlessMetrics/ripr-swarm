@@ -1,0 +1,99 @@
+{
+  "schema_version": "1.0",
+  "kind": "packaged_repair_parity_receipt",
+  "fixture": {
+    "manifest_path": "fixtures/packaged_repair_parity/manifest.json",
+    "repository_identity": "fixtures/blind_journey_installed_rust/repository",
+    "base_commit": "01821f774cb2cc2bc745b7506a3941312456fb4e",
+    "head_commit": "18a45fa5cd718f85dc60fcb27495b24dbd9715e7",
+    "canonical_gap_id": "seam-tier-boundary-equality"
+  },
+  "candidate": {
+    "commit": "cccccccccccccccccccccccccccccccccccccccc",
+    "tree": "dddddddddddddddddddddddddddddddddddddddd",
+    "product_version": "0.12.0-dev"
+  },
+  "channels": {
+    "installed_cli": {
+      "channel": "installed_cli",
+      "artifact_identities": [],
+      "attempt_id": null,
+      "semantic": null,
+      "section_state": "missing_evidence",
+      "executed_steps": [],
+      "limitations": ["installed CLI journey not executed in contract-only slice"],
+      "non_claims": ["not a completed installed CLI qualification"]
+    },
+    "packaged_vsix": {
+      "channel": "packaged_vsix",
+      "artifact_identities": [],
+      "attempt_id": null,
+      "semantic": null,
+      "section_state": "missing_evidence",
+      "executed_steps": [],
+      "limitations": ["packaged VSIX journey not executed in contract-only slice"],
+      "non_claims": ["not a completed VSIX qualification"]
+    }
+  },
+  "required_sections": [
+    {
+      "section_id": "installed_cli_positive_journey",
+      "state": "missing_evidence",
+      "channel": "installed_cli"
+    },
+    {
+      "section_id": "packaged_vsix_positive_journey",
+      "state": "missing_evidence",
+      "channel": "packaged_vsix"
+    },
+    {
+      "section_id": "unchanged_edit_control",
+      "state": "missing_evidence",
+      "channel": null
+    },
+    {
+      "section_id": "limited_item_cannot_start",
+      "state": "missing_evidence",
+      "channel": null
+    },
+    {
+      "section_id": "restart_survives_status",
+      "state": "missing_evidence",
+      "channel": null
+    },
+    {
+      "section_id": "no_manual_artifact_threading",
+      "state": "missing_evidence",
+      "channel": null
+    }
+  ],
+  "negative_controls": [],
+  "anti_ambient_controls": [
+    {
+      "control_id": "no_workspace_binary",
+      "state": "missing_evidence"
+    },
+    {
+      "control_id": "no_shared_mutable_attempt_state",
+      "state": "missing_evidence"
+    }
+  ],
+  "parity": {
+    "semantic_axes_compared": [
+      "canonical_gap_id",
+      "allowed_edit_surface",
+      "movement_state"
+    ],
+    "verdict": "missing_evidence",
+    "mismatches": []
+  },
+  "limitations": [
+    "contract-only skeleton; channel execution lands in #4650/#4651"
+  ],
+  "non_claims": [
+    "not a qualified packaged repair transaction",
+    "not a support-tier promotion",
+    "not a runtime mutation result"
+  ],
+  "claim_boundary": "This receipt records the typed cross-channel comparison contract and closed section states for one external fixture. It does not claim that an installed CLI or packaged VSIX completed the canonical repair journey."
+}

@@ -197,7 +197,8 @@ Run the generator self-pin smoke with the binary built from the release commit
 `LATEST_RELEASED_VERSION` in `crates/ripr/src/cli/commands/init_workflow.rs` has
 been bumped with the package version; a forgotten bump makes the released binary
 warn and pin the previous release. `release-readiness` checks that constant from
-source (`init-pin-version`); this step checks the behavior of the built binary.
+source (`init-pin-version`); `cargo xtask release-readiness` runs the same
+assertions as the `init-generator-self-pin` check on the release commit.
 
 ```bash
 version=0.11.0

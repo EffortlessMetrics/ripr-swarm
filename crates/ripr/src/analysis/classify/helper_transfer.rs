@@ -28,6 +28,7 @@
 //! alone never establishes propagation or discrimination — the oracle
 //! still has to observe the sink through the ordinary evidence stages.
 
+mod cross_crate_hop;
 mod macro_argument;
 mod qualified_hop;
 mod returned_ledger;
@@ -51,6 +52,7 @@ pub(in crate::analysis) use selected_inherent_call::{
 
 use super::value_transfer::ExactInputs;
 use crate::analysis::facts::{CallFact, FunctionImplContext, FunctionSummary, RustIndex};
+use std::collections::BTreeSet;
 
 /// The configured hop bound for helper transfer. Exceeding it yields a
 /// typed limitation naming the chain's stop, never a silent drop.
@@ -173,6 +175,12 @@ pub(crate) struct HelperHop {
     /// entry needs the stricter identity rules, and the hop establishes only
     /// reach, never result forwarding. Preserve this provenance through chains.
     pub(crate) module_qualified: bool,
+    /// Bound by the cross-crate route (#11401): the one crate name, read from
+    /// the caller package's `[dependencies]`, the call is spelled through
+    /// (`wscore::discount(..)` holds `wscore`). Such a hop is also
+    /// `module_qualified`, so every consumer that has no cross-crate proof
+    /// keeps refusing it; only the tail-forwarding rule reads this name.
+    pub(crate) crate_qualifier: Option<String>,
     /// Some indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
     /// something other than the standard macro (a `macro_rules!`, an
     /// import, a glob or `#[macro_use]`), so no bare macro in the caller
@@ -1018,6 +1026,7 @@ pub(crate) fn resolve_chain(
             receiver: None,
             through_macro: true,
             module_qualified: false,
+            crate_qualifier: None,
             transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
             diverging_handlers: diverging_handlers(caller, callee_name, index),
         };
@@ -1120,11 +1129,26 @@ fn chain_through_caller(
         if let Some(hop) = qualified_hop::qualified_free_hop(caller, callee_name, index) {
             return extend_chain(hop, callee_name, index, workspace_complete, visited);
         }
+        // #11401: a call spelled through another workspace crate that the
+        // caller's manifest depends on.
+        if let Some(hop) = cross_crate_hop::cross_crate_free_hop(caller, callee_name, index) {
+            return extend_chain(hop, callee_name, index, workspace_complete, visited);
+        }
         return stopped(format!(
             "call site for `{callee_name}` in `{}` is not statically splittable",
             caller.name
         ));
     };
+    // #11401: a bare call between two different member packages is not callee
+    // identity (the name may come from a crate the workspace does not hold);
+    // only the call spelled through the dependency's name binds across the
+    // crate edge.
+    if crosses_member_packages(caller, callee_name, index) {
+        return stopped(format!(
+            "call of `{callee_name}` in `{}` crosses to another workspace package without being spelled through its dependency name",
+            caller.name
+        ));
+    }
     if sites.len() > 1 {
         return stopped(format!(
             "helper `{callee_name}` is called {} times in `{}`; multi-site binding is not transferred at this bound",
@@ -1140,10 +1164,27 @@ fn chain_through_caller(
         receiver: None,
         through_macro: false,
         module_qualified: false,
+        crate_qualifier: None,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
         diverging_handlers: diverging_handlers(caller, callee_name, index),
     };
     extend_chain(hop, callee_name, index, workspace_complete, visited)
+}
+
+/// Whether `caller` and the one function named `callee_name` are items of two
+/// different member packages (both under a package directory). The root
+/// package has no member prefix and is never counted here, so the existing
+/// root-to-member reading is unchanged.
+fn crosses_member_packages(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) -> bool {
+    let Some(caller_package) = super::related_tests::package_prefix(&caller.file) else {
+        return false;
+    };
+    index
+        .functions()
+        .iter()
+        .find(|function| function.name == callee_name)
+        .and_then(|callee| super::related_tests::package_prefix(&callee.file))
+        .is_some_and(|callee_package| callee_package != caller_package)
 }
 
 /// The callers [`resolve_chain`] counts for `callee_name` (#9329). It is
@@ -1484,6 +1525,7 @@ fn method_hop(caller: &FunctionSummary, callee_name: &str, index: &RustIndex) ->
         receiver: Some(receiver.to_string()),
         through_macro: false,
         module_qualified: false,
+        crate_qualifier: None,
         transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
         diverging_handlers: diverging_handlers(caller, callee_name, index),
     })
@@ -1765,6 +1807,63 @@ pub(crate) fn test_call_is_shadowed(
     callee: &str,
     call_line: usize,
 ) -> bool {
+    test_call_is_shadowed_with(index, test, callee, call_line, &BTreeSet::new())
+}
+
+/// [`test_call_is_shadowed`] for a call of a chain entry: an integration
+/// test of the entry's own package that imports the entry through that
+/// package's library (`use app::checkout;` in `app/tests/`) is not a foreign
+/// import, even when the workspace root is virtual and `package_names` holds
+/// no member crate (#11401). The crate name comes from the manifests; a test
+/// of another package, an entry outside a library root and an unreadable
+/// manifest add nothing, so those imports still read foreign.
+pub(crate) fn test_call_is_shadowed_for_entry(
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    entry: &FunctionSummary,
+    call_line: usize,
+) -> bool {
+    test_call_is_shadowed_with(
+        index,
+        test,
+        &entry.name,
+        call_line,
+        &own_package_library_names(index, test, entry),
+    )
+}
+
+/// The crate names through which `test` imports the library of `entry`'s
+/// package, when `test` belongs to that same member package (#11401).
+fn own_package_library_names(
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    entry: &FunctionSummary,
+) -> BTreeSet<String> {
+    let package = super::related_tests::package_prefix(&entry.file);
+    if package.is_none()
+        || package != super::related_tests::package_prefix(&test.file)
+        || super::related_tests::path_is_absolute_form(&entry.file)
+        || super::related_tests::path_is_absolute_form(&test.file)
+    {
+        return BTreeSet::new();
+    }
+    let Some(root) = super::owner_pin::target_root(&entry.file, index, &BTreeSet::new()) else {
+        return BTreeSet::new();
+    };
+    index
+        .member_crates
+        .import_names(&test.file, &root)
+        .into_iter()
+        .collect()
+}
+
+fn test_call_is_shadowed_with(
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    callee: &str,
+    call_line: usize,
+    own_package_crates: &BTreeSet<String>,
+) -> bool {
     if !callee_is_unique(callee, index) {
         return true;
     }
@@ -1780,8 +1879,20 @@ pub(crate) fn test_call_is_shadowed(
             import.alias.as_deref() == Some(callee)
                 && import.path.rsplit("::").next() != Some(callee)
         });
+    let crate_names: std::borrow::Cow<'_, BTreeSet<String>> = if own_package_crates.is_empty() {
+        std::borrow::Cow::Borrowed(&index.package_names)
+    } else {
+        std::borrow::Cow::Owned(
+            index
+                .package_names
+                .iter()
+                .chain(own_package_crates)
+                .cloned()
+                .collect(),
+        )
+    };
     if renamed_import
-        || super::reveal::file_imports_foreign_callee_name(source, callee, &index.package_names)
+        || super::reveal::file_imports_foreign_callee_name(source, callee, &crate_names)
     {
         return true;
     }
@@ -1923,23 +2034,24 @@ pub(crate) fn chain_entry_pin_admits(
     let calls_entry = test.calls.iter().any(|call| {
         call.name == entry_name
             && is_direct_call_site(&call.text, entry_name)
-            && !test_call_is_shadowed(index, test, entry_name, call.line)
+            && !test_call_is_shadowed_for_entry(index, test, &entry.caller, call.line)
     });
     // #9638: an integration test may name the entry through its own library
     // (`pkg::entry(..)`, `pkg::module::entry(..)`) with no `use`. The path is
     // the relation's own-crate spelling, established by the same authority that
     // relates the test to the chain, so the pin adds no second resolver.
     let qualified_entry = test.calls.iter().find_map(|call| {
-        (call.name == entry_name && !test_call_is_shadowed(index, test, entry_name, call.line))
-            .then(|| {
-                super::related_tests::own_crate_qualified_entry_path(
-                    index,
-                    test,
-                    &entry.caller,
-                    call.line,
-                )
-            })
-            .flatten()
+        (call.name == entry_name
+            && !test_call_is_shadowed_for_entry(index, test, &entry.caller, call.line))
+        .then(|| {
+            super::related_tests::own_crate_qualified_entry_path(
+                index,
+                test,
+                &entry.caller,
+                call.line,
+            )
+        })
+        .flatten()
     });
     if !calls_entry && qualified_entry.is_none() {
         return false;
@@ -3139,7 +3251,10 @@ fn hops_forward_owner_result_with(
             // #8999: a module-qualified hop has no result-forwarding proof.
             // #9329: a method hop never forwards: its caller makes a
             // receiver call whose result no tail-forwarding rule reads.
-            if hop.through_macro || hop.module_qualified || hop.receiver.is_some() {
+            if hop.through_macro
+                || (hop.module_qualified && hop.crate_qualifier.is_none())
+                || hop.receiver.is_some()
+            {
                 return false;
             }
             let callee = match step.checked_sub(1) {
@@ -3155,6 +3270,7 @@ fn hops_forward_owner_result_with(
                 &hop.call_text,
                 &hop.diverging_handlers,
                 integer_offset,
+                hop.crate_qualifier.as_deref(),
             )
                 // #10284: a caller that binds its callee's name
                 // (`let is_bulk = |_| true;`) calls the binding, and a
@@ -3870,6 +3986,7 @@ fn caller_tail_forwards_call(
     call_text: &str,
     diverging_handlers: &[String],
     integer_offset: bool,
+    crate_qualifier: Option<&str>,
 ) -> bool {
     let body: &str = &caller.body;
     let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
@@ -3925,6 +4042,15 @@ fn caller_tail_forwards_call(
         }
         None => tail,
     };
+    // #11401: a cross-crate hop forwards only when the tail is exactly the
+    // call spelled through its one crate name; none of the bare-name tail
+    // shapes below apply to it.
+    if let Some(qualifier) = crate_qualifier {
+        return tail
+            .strip_prefix(qualifier)
+            .and_then(|rest| rest.strip_prefix("::"))
+            .is_some_and(|rest| is_exact_call(rest, callee));
+    }
     if is_exact_call(tail, callee) {
         return true;
     }
@@ -5079,6 +5205,7 @@ mod tests {
                 receiver: None,
                 through_macro: false,
                 module_qualified: false,
+                crate_qualifier: None,
                 transparent_macros_rebound: false,
                 diverging_handlers: Vec::new(),
             }],
@@ -5110,6 +5237,7 @@ mod tests {
                 receiver: None,
                 through_macro: false,
                 module_qualified,
+                crate_qualifier: None,
                 transparent_macros_rebound: false,
                 diverging_handlers: Vec::new(),
             })
@@ -5542,6 +5670,7 @@ mod tests {
             receiver: None,
             through_macro: false,
             module_qualified: false,
+            crate_qualifier: None,
             transparent_macros_rebound: false,
             diverging_handlers: Vec::new(),
         };
@@ -5627,6 +5756,7 @@ mod tests {
                     receiver: None,
                     through_macro: false,
                     module_qualified: false,
+                    crate_qualifier: None,
                     transparent_macros_rebound: false,
                     diverging_handlers: Vec::new(),
                 }],
