@@ -18,8 +18,9 @@ fn mapped() {
 
 fn admitted(lib: &str, tests: &str) -> Vec<String> {
     let index = index(&[(LIB, lib), (TESTS, tests)]);
-    let Some(pin) = establish(&index, "inc", "x + 1") else {
-        assert!(false, "pin");
+    let pin = establish(&index, "inc", "x + 1");
+    assert!(pin.is_some(), "the owner must establish a pin");
+    let Some(pin) = pin else {
         return Vec::new();
     };
     admitted_texts(&index, &pin)
@@ -29,8 +30,9 @@ fn admitted(lib: &str, tests: &str) -> Vec<String> {
 fn substitute_finds_inc_call() {
     let index = index(&[(LIB, INC), (TESTS, PATH_VALUE_TESTS)]);
     let owner = owner(&index, "inc");
-    let Some(test) = index.tests().iter().find(|t| t.name == "mapped") else {
-        assert!(false, "mapped test");
+    let test = index.tests().iter().find(|t| t.name == "mapped");
+    assert!(test.is_some(), "the mapped test must be indexed");
+    let Some(test) = test else {
         return;
     };
     let chain = "vec![1, 2].into_iter().map(inc).collect::<Vec<_>>()";
@@ -61,9 +63,9 @@ mod tests {
         crate::domain::OracleKind::ExactValue,
         "oracle kind for reveal pin"
     );
-    let owner = owner(&index, "inc");
-    let Some(pin) = establish(&index, "inc", "x + 1") else {
-        assert!(false, "pin");
+    let pin = establish(&index, "inc", "x + 1");
+    assert!(pin.is_some(), "the owner must establish a pin");
+    let Some(pin) = pin else {
         return;
     };
     assert_eq!(

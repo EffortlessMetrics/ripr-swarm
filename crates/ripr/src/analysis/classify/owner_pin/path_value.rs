@@ -133,10 +133,9 @@ mod tests {
 
     #[test]
     fn parses_map_collect_chain() {
-        let Some(chain) =
-            parse_iterator_chain("vec![1, 2].into_iter().map(inc).collect::<Vec<_>>()")
-        else {
-            assert!(false, "bounded map/collect chain");
+        let chain = parse_iterator_chain("vec![1, 2].into_iter().map(inc).collect::<Vec<_>>()");
+        assert!(chain.is_some(), "bounded map/collect chain");
+        let Some(chain) = chain else {
             return;
         };
         assert_eq!(chain.inputs, vec!["1", "2"]);

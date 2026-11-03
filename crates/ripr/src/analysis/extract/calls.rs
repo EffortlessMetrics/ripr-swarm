@@ -438,16 +438,6 @@ mod tests {
 
     #[test]
     fn path_value_map_calls_add_owner_reach_on_assert_line() {
-        let body = "#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mapped() {
-        assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);
-    }
-}
-";
         let calls = extract_call_facts(
             "    assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);",
             7,
