@@ -19,7 +19,7 @@ fn context_assignments_are_singletons_even_when_values_agree() -> Result<(), Str
         out: PathBuf::new(),
     };
     let valid = format!(
-        "repository=o/r\ncheckout_sha={}\nrun_id=7\nrun_attempt=1\nprofile=ci\nshard=2/4\ncommand=cargo nextest run --workspace --profile ci --partition count:2/4\nnextest_exit=0\n",
+        "repository=o/r\ncheckout_sha={}\nrun_id=7\nrun_attempt=1\nprofile=ci\nshard=2/4\ncommand=cargo nextest run --workspace --profile ci --partition hash:2/4\nnextest_exit=0\n",
         options.sha
     );
     let problems = |text: &str| {
@@ -292,7 +292,7 @@ fn put_attempt(root: &Path, shard: u32, attempt: u32) -> Result<PathBuf, String>
     put(
         "run-context.txt",
         format!(
-            "repository=o/r\ncheckout_sha={}\nrun_id=7\nrun_attempt={attempt}\nprofile=ci\nshard={shard}/2\ncommand=cargo nextest run --workspace --profile ci --partition count:{shard}/2\ncargo-nextest 0.9\nrustc 1.95\ncargo 1.95\n{INPUT_HEADER}\n{}\nnextest_exit=0\n",
+            "repository=o/r\ncheckout_sha={}\nrun_id=7\nrun_attempt={attempt}\nprofile=ci\nshard={shard}/2\ncommand=cargo nextest run --workspace --profile ci --partition hash:{shard}/2\ncargo-nextest 0.9\nrustc 1.95\ncargo 1.95\n{INPUT_HEADER}\n{}\nnextest_exit=0\n",
             "a".repeat(40),
             attempt_blobs().join("\n")
         ),
@@ -301,6 +301,54 @@ fn put_attempt(root: &Path, shard: u32, attempt: u32) -> Result<PathBuf, String>
         put("list-all.txt", "b1 case\nb2 case\n".to_string())?;
     }
     Ok(dir)
+}
+
+#[test]
+fn partition_commands_reject_legacy_and_mixed_modes() -> Result<(), String> {
+    for mode in ["count", "slice"] {
+        for mixed in [false, true] {
+            let root = crate::tests::temp_dir(&format!("receipt-partition-{mode}-{mixed}"));
+            for shard in 1..=2 {
+                put_attempt(&root, shard, 1)?;
+            }
+            let options = attempt_options(&root, 1);
+            let valid = verify(&options, Ok(attempt_blobs()));
+            assert!(valid.problems.is_empty(), "{:?}", valid.problems);
+            for shard in 1..=2 {
+                if mixed && shard == 1 {
+                    continue;
+                }
+                let context = root
+                    .join("in")
+                    .join(format!("integration-nextest-shard-{shard}-1"))
+                    .join("run-context.txt");
+                let text = fs::read_to_string(&context).map_err(|err| err.to_string())?;
+                let changed = text.replace("--partition hash:", &format!("--partition {mode}:"));
+                assert_ne!(changed, text, "fixture did not change shard {shard}'s mode");
+                fs::write(context, changed).map_err(|err| err.to_string())?;
+            }
+            let outcome = verify(&options, Ok(attempt_blobs()));
+            assert!(
+                outcome
+                    .problems
+                    .iter()
+                    .any(|why| why.contains("run-context command")),
+                "{mode}/{mixed}: {:?}",
+                outcome.problems
+            );
+            // The complete green inventory is unchanged; only the command is wrong.
+            assert!(
+                outcome
+                    .problems
+                    .iter()
+                    .all(|why| why.contains("run-context command")),
+                "{mode}/{mixed}: {:?}",
+                outcome.problems
+            );
+            fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 #[test]
@@ -378,6 +426,8 @@ fn invalid_latest_attempt_never_falls_back_to_older_green_evidence() -> Result<(
         "malformed-xml",
         "tool-mismatch",
         "wrong-list",
+        "wrong-partition-count",
+        "wrong-partition-slice",
     ] {
         let root = crate::tests::temp_dir(&format!("receipt-latest-{label}"));
         put_attempt(&root, 1, 1)?;
@@ -402,6 +452,12 @@ fn invalid_latest_attempt_never_falls_back_to_older_green_evidence() -> Result<(
             "malformed-xml" => fs::write(latest.join("junit.xml"), "<testsuites>broken"),
             "tool-mismatch" => fs::write(&context, text.replace("rustc 1.95", "rustc different")),
             "wrong-list" => fs::write(latest.join("list-2.txt"), "forged subject\n"),
+            "wrong-partition-count" => {
+                fs::write(&context, text.replace("--partition hash:", "--partition count:"))
+            }
+            "wrong-partition-slice" => {
+                fs::write(&context, text.replace("--partition hash:", "--partition slice:"))
+            }
             _ => return Err(format!("unknown fixture variant: {label}")),
         }
         .map_err(|err| err.to_string())?;
@@ -415,6 +471,16 @@ fn invalid_latest_attempt_never_falls_back_to_older_green_evidence() -> Result<(
             "{label}: {}",
             outcome.summary
         );
+        if label.starts_with("wrong-partition-") {
+            assert!(
+                outcome
+                    .problems
+                    .iter()
+                    .any(|why| why.contains("shard 2: run-context command")),
+                "{label}: {:?}",
+                outcome.problems
+            );
+        }
         fs::remove_dir_all(root).map_err(|err| err.to_string())?;
     }
     Ok(())
