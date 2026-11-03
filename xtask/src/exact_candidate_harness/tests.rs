@@ -197,7 +197,11 @@ fn instrument_failure_rows_do_not_count_as_executed() -> TestResult {
 /// A Windows child cannot run a `#!/bin/sh` file, so the fake candidate there is a
 /// `.cmd` batch file that prints the same version line.
 fn fake_ripr_name() -> &'static str {
-    if cfg!(windows) { "fake-ripr.cmd" } else { "fake-ripr" }
+    if cfg!(windows) {
+        "fake-ripr.cmd"
+    } else {
+        "fake-ripr"
+    }
 }
 
 fn fake_ripr_script(version_line: &str) -> Vec<u8> {
