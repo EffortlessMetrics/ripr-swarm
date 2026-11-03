@@ -23785,6 +23785,16 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
         );
     }
 
+    if path.starts_with(".agents/skills/finish-pr/")
+        && (path.starts_with(".agents/skills/finish-pr/scripts/")
+            || path.starts_with(".agents/skills/finish-pr/tests/"))
+        && path.ends_with(".py")
+    {
+        return Some(
+            "Exact-head merge guard runs from an agent session at merge time with only gh and stdlib Python; its fake-API tests are executed by the Rust-owned guarded_merge_selftest (#11781).",
+        );
+    }
+
     if path.starts_with("fixtures/")
         && (path.ends_with(".ts")
             || path.ends_with(".tsx")
