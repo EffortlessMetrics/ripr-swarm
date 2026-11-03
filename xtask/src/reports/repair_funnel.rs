@@ -87,6 +87,9 @@ pub(crate) struct FunnelCaseRowV1 {
     pub metrics: Vec<MetricObservationV1>,
     pub identity: BTreeMap<String, String>,
     pub control_violations: Vec<String>,
+    /// True for rows projected from the committed planted-controls corpus.
+    /// Such rows prove the controls fire; they never feed real-route metrics.
+    pub planted_control: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -176,7 +179,7 @@ fn static_movement_from_attempt(attempt: &Value) -> Option<&'static str> {
             "improved" => Some("improved"),
             "unchanged" => Some("unchanged"),
             "regressed" => Some("regressed"),
-            "closed" => Some("closed"),
+            "closed" | "resolved" => Some("closed"),
             "unknown" => Some("unknown"),
             _ => None,
         };
@@ -185,21 +188,33 @@ fn static_movement_from_attempt(attempt: &Value) -> Option<&'static str> {
         "receipt_movement_improved" | "receipt_movement_improved_closed" => Some("improved"),
         "receipt_movement_unchanged" => Some("unchanged"),
         "receipt_movement_regressed" => Some("regressed"),
-        "receipt_movement_closed" | "receipt_gap_closed" => Some("closed"),
+        "receipt_movement_closed" | "receipt_gap_closed" | "receipt_movement_resolved" => {
+            Some("closed")
+        }
         _ => Some("unknown"),
     }
 }
 
-fn verify_executed(attempt: &Value) -> bool {
+/// Verification counts only when a project verification command is declared;
+/// a bare `pass` with no command cannot show what strength was exercised.
+fn verify_declared(attempt: &Value) -> bool {
     attempt
-        .get("verify_executed")
-        .and_then(Value::as_bool)
-        .unwrap_or_else(|| {
-            matches!(
-                attempt.get("verify_result").and_then(Value::as_str),
-                Some("pass") | Some("fail") | Some("failed")
-            )
-        })
+        .get("verify_command")
+        .and_then(Value::as_str)
+        .is_some_and(|command| !command.trim().is_empty())
+}
+
+fn verify_executed(attempt: &Value) -> bool {
+    verify_declared(attempt)
+        && attempt
+            .get("verify_executed")
+            .and_then(Value::as_bool)
+            .unwrap_or_else(|| {
+                matches!(
+                    attempt.get("verify_result").and_then(Value::as_str),
+                    Some("pass") | Some("fail") | Some("failed")
+                )
+            })
 }
 
 fn verify_passed(attempt: &Value) -> bool {
@@ -431,7 +446,9 @@ pub(crate) fn project_case(inputs: &Value) -> Result<FunnelCaseRowV1, String> {
             metrics.push(row);
             return;
         }
-        row.value = Some((end - start) as f64);
+        // Stage offsets share one zero (journey start); a timed install is the
+        // evidence gate (`start`), and install time stays inside the duration.
+        row.value = Some(end as f64);
         row.sample_count = 1;
         row.state = "measured".to_string();
         row.non_claims.clear();
@@ -466,6 +483,7 @@ pub(crate) fn project_case(inputs: &Value) -> Result<FunnelCaseRowV1, String> {
         metrics,
         identity,
         control_violations,
+        planted_control: false,
     })
 }
 
@@ -562,7 +580,19 @@ fn validate_controls(
     {
         violations.push("control_5: fixture cohort claimed as real attempt".into());
     }
-    // 6. Selected denominator must not drop failed rows silently.
+    // 6. Selected denominator must not drop failed rows silently: an explicit
+    // exclusion needs a stated reason, and the drop flag is always a violation.
+    if inputs
+        .get("selected_for_denominator")
+        .and_then(Value::as_bool)
+        == Some(false)
+        && !inputs
+            .get("exclusion_reason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| !reason.trim().is_empty())
+    {
+        violations.push("control_6: row excluded from denominator without exclusion_reason".into());
+    }
     if inputs
         .get("drop_from_denominator")
         .and_then(Value::as_bool)
@@ -621,6 +651,8 @@ pub(crate) fn assess_controls_corpus(corpus: &Value) -> FirstHourRepairFunnelRep
                         row.case_id, row.control_violations
                     ));
                 }
+                let mut row = row;
+                row.planted_control = true;
                 cases.push(row);
             }
             Err(error) => {
@@ -632,6 +664,16 @@ pub(crate) fn assess_controls_corpus(corpus: &Value) -> FirstHourRepairFunnelRep
                 }
             }
         }
+    }
+    if entries.is_empty() {
+        control_failures.push("controls corpus has no cases".to_string());
+    } else if !entries.iter().any(|entry| {
+        entry
+            .get("expect_control_violations")
+            .and_then(Value::as_array)
+            .is_some_and(|expected| !expected.is_empty())
+    }) {
+        control_failures.push("controls corpus plants no negative control".to_string());
     }
     let selected_count = cases.iter().filter(|c| c.selected_for_denominator).count() as u64;
     FirstHourRepairFunnelReportV1 {
@@ -688,6 +730,9 @@ pub(crate) fn repair_funnel_markdown(report: &FirstHourRepairFunnelReportV1) -> 
             ));
         }
         out.push('\n');
+        for (key, value) in &case.identity {
+            out.push_str(&format!("- identity `{key}`: {value}\n"));
+        }
         out.push_str("Metrics:\n\n");
         for metric in &case.metrics {
             out.push_str(&format!(
@@ -733,6 +778,13 @@ pub(crate) fn repair_funnel_to_input(value: &Value) -> Result<Value, String> {
             case.get("selected_for_denominator")
                 .and_then(Value::as_bool)
                 != Some(false)
+                && case.get("planted_control").and_then(Value::as_bool) != Some(true)
+                && case.get("cohort").and_then(Value::as_str)
+                    == Some("governed_real_repository_attempt")
+                && case
+                    .get("control_violations")
+                    .and_then(Value::as_array)
+                    .is_none_or(|violations| violations.is_empty())
         })
         .collect();
     let sample_count = selected.len() as u64;
@@ -833,6 +885,7 @@ mod tests {
                 }]
             },
             "repair_attempt": {
+                "verify_command": "cargo xtask check-pr",
                 "verify_result": "pass",
                 "verify_executed": true,
                 "static_movement": "improved",
@@ -854,7 +907,14 @@ mod tests {
             .find(|m| m.id == "time_to_verified_improvement")
             .ok_or("missing metric")?;
         assert_eq!(metric.state, "measured");
-        assert_eq!(metric.value, Some(10000.0));
+        assert_eq!(metric.value, Some(20000.0));
+        let honest = row
+            .metrics
+            .iter()
+            .find(|m| m.id == "time_to_first_honest_result")
+            .ok_or("missing honest metric")?;
+        // install 10 s plus first check 5 s: install time stays in the duration.
+        assert_eq!(honest.value, Some(15000.0));
         Ok(())
     }
 
@@ -865,6 +925,7 @@ mod tests {
             "case_id": "unit-static-unchanged",
             "cohort": "governed_real_repository_attempt",
             "repair_attempt": {
+                "verify_command": "cargo xtask check-pr",
                 "verify_result": "pass",
                 "verify_executed": true,
                 "static_movement": "unchanged"
@@ -881,23 +942,113 @@ mod tests {
     }
 
     #[test]
-    fn controls_report_ingests_through_committed_scoreboard_config() -> Result<(), String> {
+    fn planted_controls_never_feed_real_route_scoreboard_metrics() -> Result<(), String> {
         use super::super::dx_scoreboard::{SampleOutcome, load_config, parse_ingest};
         let config = load_config(&workspace_path("benchmarks/dx_scoreboard/scoreboards.toml"))?;
         let corpus = read_json(&workspace_path(CONTROLS_CORPUS), "controls")?;
         let report = assess_controls_corpus(&corpus);
+        assert!(report.cases.iter().all(|case| case.planted_control));
         let value = serde_json::to_value(&report).map_err(|error| error.to_string())?;
         let samples = parse_ingest(&value, &config)?;
         assert_eq!(samples.len(), 3);
-        let count = samples
-            .iter()
-            .find(|sample| sample.metric == "repair.selected_case_count")
-            .ok_or("missing selected_case_count sample")?;
-        assert_eq!(
-            count.outcome,
-            SampleOutcome::Value(report.selected_count as f64)
+        assert!(
+            samples
+                .iter()
+                .all(|sample| matches!(sample.outcome, SampleOutcome::Incomplete(_))),
+            "{samples:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn real_route_rows_ingest_with_install_inclusive_durations() -> Result<(), String> {
+        use super::super::dx_scoreboard::{SampleOutcome, load_config, parse_ingest};
+        let config = load_config(&workspace_path("benchmarks/dx_scoreboard/scoreboards.toml"))?;
+        let corpus = read_json(&workspace_path(CONTROLS_CORPUS), "controls")?;
+        let entry = corpus["cases"]
+            .as_array()
+            .and_then(|cases| cases.first())
+            .ok_or("controls corpus needs a first case")?;
+        let mut report = assess_controls_corpus(&corpus);
+        let row = project_case(&entry["inputs"])?;
+        assert!(!row.planted_control);
+        report.cases = vec![row];
+        let value = serde_json::to_value(&report).map_err(|error| error.to_string())?;
+        let samples = parse_ingest(&value, &config)?;
+        let measured = |id: &str| {
+            samples
+                .iter()
+                .find(|sample| sample.metric == id)
+                .map(|sample| sample.outcome.clone())
+        };
+        // install 12 s + check 8 s; verified improvement at 25 s from journey start.
+        assert_eq!(
+            measured("repair.time_to_first_honest_result_ms"),
+            Some(SampleOutcome::Value(20000.0))
+        );
+        assert_eq!(
+            measured("repair.time_to_verified_improvement_ms"),
+            Some(SampleOutcome::Value(25000.0))
+        );
+        assert_eq!(
+            measured("repair.selected_case_count"),
+            Some(SampleOutcome::Value(1.0))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unqualified_verification_and_resolved_receipts_follow_declared_vocabulary()
+    -> Result<(), String> {
+        let bare = json!({
+            "schema_version": INPUTS_SCHEMA_VERSION,
+            "case_id": "bare-pass",
+            "cohort": "governed_real_repository_attempt",
+            "repair_attempt": {
+                "verify_result": "pass",
+                "verify_executed": true,
+                "static_movement": "improved"
+            }
+        });
+        let row = project_case(&bare)?;
+        assert_eq!(row.funnel_exit, "verification_not_run");
+        assert!(
+            !row.stages
+                .iter()
+                .any(|s| s.stage == "verified_improvement_or_closure")
+        );
+        let resolved = json!({
+            "schema_version": INPUTS_SCHEMA_VERSION,
+            "case_id": "resolved",
+            "cohort": "governed_real_repository_attempt",
+            "repair_attempt": {
+                "verify_command": "cargo xtask check-pr",
+                "verify_result": "pass",
+                "receipt_state": "receipt_movement_resolved"
+            }
+        });
+        assert_eq!(project_case(&resolved)?.funnel_exit, "verified_closure");
+        Ok(())
+    }
+
+    #[test]
+    fn empty_or_controlless_corpus_fails_closed() {
+        let empty = assess_controls_corpus(&json!({"cases": []}));
+        assert!(!empty.control_failures.is_empty());
+        let controlless = assess_controls_corpus(&json!({"cases": [{
+            "id": "x",
+            "inputs": {
+                "schema_version": INPUTS_SCHEMA_VERSION,
+                "case_id": "x",
+                "cohort": "governed_real_repository_attempt"
+            }
+        }]}));
+        assert!(
+            controlless
+                .control_failures
+                .iter()
+                .any(|failure| failure.contains("plants no negative control"))
+        );
     }
 
     #[test]

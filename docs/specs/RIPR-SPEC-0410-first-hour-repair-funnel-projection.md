@@ -39,6 +39,19 @@ through `first_hour_repair_funnel_inputs.v1` → `first_hour_repair_funnel.v1`:
   missing stages are not inferred from prose or issue state.
 - `time_to_verified_improvement` requires both project verification executed
   at declared strength and current static movement improved or closed.
+- Project verification counts only when the attempt declares a non-empty
+  `verify_command`; a bare `pass` leaves the case at `verification_not_run`.
+- Static movement reads the receipt vocabulary, including
+  `receipt_movement_resolved` as closure.
+- Stage offsets share one zero (journey start). Durations include install
+  time; a timed install is the evidence gate for every duration.
+- Excluding a case from the denominator needs an explicit `exclusion_reason`;
+  a silent exclusion is `control_6`.
+- Rows projected from the committed controls corpus are marked
+  `planted_control` and never feed `repair.*` metrics. Scoreboard ingest counts
+  only `governed_real_repository_attempt` rows that are selected and carry no
+  control violations; otherwise the metrics stay `not_measured`.
+- An empty controls corpus, or one that plants no negative control, fails.
 - Cohorts (`deterministic_fixture`, `installed_deterministic_journey`,
   `blind_operator_journey`, `governed_real_repository_attempt`) stay separate.
 - Planted controls reject verified improvement without verification, static

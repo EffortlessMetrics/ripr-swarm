@@ -25,6 +25,7 @@
           ]
         },
         "repair_attempt": {
+          "verify_command": "cargo xtask check-pr",
           "verify_result": "pass",
           "verify_executed": true,
           "static_movement": "improved",
@@ -40,6 +41,7 @@
         "case_id": "verification_pass_static_unchanged",
         "cohort": "governed_real_repository_attempt",
         "repair_attempt": {
+          "verify_command": "cargo xtask check-pr",
           "verify_result": "pass",
           "verify_executed": true,
           "static_movement": "unchanged"
@@ -53,6 +55,7 @@
         "case_id": "verification_never_ran",
         "cohort": "governed_real_repository_attempt",
         "repair_attempt": {
+          "verify_command": "cargo xtask check-pr",
           "verify_result": "not_run",
           "verify_executed": false,
           "static_movement": "improved"
@@ -68,6 +71,7 @@
         "cohort": "deterministic_fixture",
         "claim_real_attempt": true,
         "repair_attempt": {
+          "verify_command": "cargo xtask check-pr",
           "verify_result": "pass",
           "verify_executed": true,
           "static_movement": "improved"
@@ -84,6 +88,7 @@
         "hidden_assistance": true,
         "funnel_exit": "verified_improvement",
         "repair_attempt": {
+          "verify_command": "cargo xtask check-pr",
           "verify_result": "pass",
           "verify_executed": true,
           "static_movement": "improved"
@@ -99,9 +104,52 @@
         "cohort": "governed_real_repository_attempt",
         "drop_from_denominator": true,
         "repair_attempt": {
+          "verify_command": "cargo xtask check-pr",
           "verify_result": "fail",
           "verify_executed": true,
           "static_movement": "unchanged"
+        }
+      }
+    },
+    {
+      "id": "silent_denominator_exclusion",
+      "expect_control_violations": ["control_6"],
+      "inputs": {
+        "schema_version": "first_hour_repair_funnel_inputs.v1",
+        "case_id": "silent_denominator_exclusion",
+        "cohort": "governed_real_repository_attempt",
+        "selected_for_denominator": false,
+        "repair_attempt": {
+          "verify_command": "cargo xtask check-pr",
+          "verify_result": "fail",
+          "verify_executed": true,
+          "static_movement": "unchanged"
+        }
+      }
+    },
+    {
+      "id": "pass_without_declared_verification",
+      "inputs": {
+        "schema_version": "first_hour_repair_funnel_inputs.v1",
+        "case_id": "pass_without_declared_verification",
+        "cohort": "governed_real_repository_attempt",
+        "repair_attempt": {
+          "verify_result": "pass",
+          "verify_executed": true,
+          "static_movement": "improved"
+        }
+      }
+    },
+    {
+      "id": "receipt_movement_resolved_is_closure",
+      "inputs": {
+        "schema_version": "first_hour_repair_funnel_inputs.v1",
+        "case_id": "receipt_movement_resolved_is_closure",
+        "cohort": "governed_real_repository_attempt",
+        "repair_attempt": {
+          "verify_command": "cargo xtask check-pr",
+          "verify_result": "pass",
+          "receipt_state": "receipt_movement_resolved"
         }
       }
     },
@@ -127,6 +175,7 @@
           ]
         },
         "repair_attempt": {
+          "verify_command": "cargo xtask check-pr",
           "verify_result": "pass",
           "verify_executed": true,
           "static_movement": "improved",
