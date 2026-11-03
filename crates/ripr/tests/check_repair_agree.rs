@@ -530,11 +530,9 @@ const WS_OLD: &str = "pub fn discount(price: u32) -> u32 {\n    if price > 100 {
 const WS_NEW: &str = "pub fn discount(price: u32) -> u32 {\n    if price >= 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";
 /// #11401: the unreached fixture. A plain `wscore::discount(price)` call now
 /// reads noticed in `ripr check` (RIPR-SPEC-0407), so the dependency is
-/// renamed here: `disc::discount(..)` is a crate edge ripr does not resolve
-/// yet, which keeps the change without a static path.
-const WS_RENAMED_APP_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ndisc = { path = \"../wscore\", package = \"wscore\" }\n";
-const WS_RENAMED_APP_SRC: &str =
-    "pub fn checkout(price: u32) -> u32 {\n    disc::discount(price)\n}\n";
+/// declared under `[dev-dependencies]` only here: library code cannot see it,
+/// the call is not a crate edge, and the change keeps no static path.
+const WS_DEV_ONLY_APP_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dev-dependencies]\nwscore = { path = \"../wscore\" }\n";
 const WS_CORE_TEST: &str = "use wscore::discount;\n\n#[test]\nfn discount_at_boundary() {\n    assert_eq!(discount(100), 90);\n    assert_eq!(discount(50), 50);\n}\n";
 const WS_APP_TEST: &str = "use app::checkout;\n\n#[test]\nfn checkout_at_boundary() {\n    assert_eq!(checkout(100), 90);\n}\n";
 
@@ -555,13 +553,14 @@ fn workspace_repo(core_tests: bool, commit_change: bool) -> Result<Repo, String>
 }
 
 /// The workspace whose only test is in `app` and reaches `wscore` through a
-/// renamed dependency ripr does not resolve: no static path (#11401).
+/// dev-only dependency ripr does not follow: no static path
+/// (#11401).
 fn unreached_workspace_repo(commit_change: bool) -> Result<Repo, String> {
     Repo::create_workspace(
         &[
             ("Cargo.toml", WS_ROOT),
-            ("app/Cargo.toml", WS_RENAMED_APP_TOML),
-            ("app/src/lib.rs", WS_RENAMED_APP_SRC),
+            ("app/Cargo.toml", WS_DEV_ONLY_APP_TOML),
+            ("app/src/lib.rs", WS_APP_SRC),
             ("wscore/Cargo.toml", WS_CORE_TOML),
             ("wscore/src/lib.rs", WS_OLD),
             ("app/tests/t.rs", WS_APP_TEST),
