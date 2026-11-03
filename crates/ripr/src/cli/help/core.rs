@@ -431,6 +431,13 @@ Progress:
   suppressed.
 
 Environment variables:
+  RIPR_MAX_DIFF_CHANGED_LINES             Maximum added plus removed diff lines recorded
+                                          while parsing a unified diff before check
+                                          stops with diff_scope_oversized (language-
+                                          neutral; per-language adapter limits may
+                                          still apply). With --json, stdout carries a
+                                          non-consumable limited artifact.
+                                          Default: 100000.
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
                                           before check stops with
                                           diff_scope_oversized. With --json, stdout
