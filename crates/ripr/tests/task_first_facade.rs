@@ -1044,7 +1044,12 @@ fn agent_status_and_repair_spell_the_discovery_gate_like_the_facade() -> Result<
         "agent status typed refusal keeps stdout empty"
     );
 
-    let repair = run_ripr(&outer, &["agent", "repair"])?;
+    // A missing --seam-id is a usage refusal before any root resolution, so
+    // the gate control names a subject: the gate fires before it is used.
+    let repair = run_ripr(
+        &outer,
+        &["agent", "repair", "--seam-id", "probe:gate-control"],
+    )?;
     assert_exit(&repair, 2, "agent repair outside any workspace");
     let repair_all = stderr_text(&repair);
     assert!(
