@@ -1,12 +1,11 @@
 //! Normative emission contract for [`StopReason`] (RIPR-SPEC-0411, #5514).
+//!
+//! Test-only registry: the module is `#[cfg(test)]`, so it carries no
+//! dead-code suppression and ships no production surface.
 
 use crate::domain::StopReason;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[expect(
-    dead_code,
-    reason = "policy:5514: normative registry consumed by spec 0411 tests"
-)]
 pub(in crate::analysis) enum StopReasonEmissionRole {
     /// Valid wire token with gloss and next-step guidance, but no production
     /// push site on current main.
@@ -30,10 +29,6 @@ pub(in crate::analysis) enum StopReasonEmissionRole {
     UnsafeObligation,
 }
 
-#[expect(
-    dead_code,
-    reason = "policy:5514: normative registry consumed by spec 0411 tests"
-)]
 pub(in crate::analysis) struct StopReasonContractEntry {
     pub reason: StopReason,
     pub role: StopReasonEmissionRole,
@@ -42,10 +37,6 @@ pub(in crate::analysis) struct StopReasonContractEntry {
     pub governing_spec: &'static str,
 }
 
-#[expect(
-    dead_code,
-    reason = "policy:5514: normative registry consumed by spec 0411 tests"
-)]
 pub(in crate::analysis) const STOP_REASON_CONTRACT: &[StopReasonContractEntry] = &[
     StopReasonContractEntry {
         reason: StopReason::MaxDepthReached,
@@ -151,10 +142,6 @@ pub(in crate::analysis) const STOP_REASON_CONTRACT: &[StopReasonContractEntry] =
     },
 ];
 
-#[expect(
-    dead_code,
-    reason = "policy:5514: normative registry consumed by spec 0411 tests"
-)]
 pub(in crate::analysis) fn contract_entry(
     reason: &StopReason,
 ) -> Option<&'static StopReasonContractEntry> {
@@ -214,6 +201,20 @@ mod tests {
                 "missing contract entry for {}",
                 reason.as_str()
             );
+        }
+        for entry in STOP_REASON_CONTRACT {
+            assert!(
+                entry.governing_spec.starts_with("RIPR-SPEC-"),
+                "{} must name its governing spec",
+                entry.reason.as_str()
+            );
+            if entry.role == StopReasonEmissionRole::ReservedWire {
+                assert!(
+                    !entry.changes_classification,
+                    "{} is never emitted so it cannot change classification",
+                    entry.reason.as_str()
+                );
+            }
         }
         let mut wires = STOP_REASON_CONTRACT
             .iter()
