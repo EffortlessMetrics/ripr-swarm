@@ -274,10 +274,11 @@ arguments (`!x`, `a != b`) do not change this grade.
   changed `Ok(..)` / `Some(..)` tail earn credit; the equality forms are exact
   by the provider's contract, but a verified import and a literal expected
   operand are not enough alone: the invocation must also pass the owner-pin
-  admission gates (RIPR-SPEC-0197), including being a single-line,
-  unqualified invocation with the owner call as its first operand. A
-  multi-line invocation stays `unknown`. The tolerance forms do not, until the tolerance and the
-  size of the change are both readable.
+  admission gates (RIPR-SPEC-0197), including being an unqualified
+  invocation that starts its line, whose closing line holds nothing but the
+  `;` and a comment, with the owner call as its first operand. The
+  invocation may span lines (#12394). The tolerance forms do not earn credit,
+  until the tolerance and the size of the change are both readable.
 - Honesty corpus case expecting
   `rust_macro_wrapped_assertion_unresolved`, limitation detail,
   non-promotion, no verify command, no receipt command, and no repair packet.

@@ -21546,3 +21546,34 @@ metrics = [
   "terraform_capability_cell_index_complete",
   "terraform_generic_hcl_non_claim_registered",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0408"
+name = "Verification run snapshot binding and requested/prepared compatibility"
+spec = "docs/specs/RIPR-SPEC-0408-verification-run-snapshot-binding.md"
+tests = [
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::corpus_cases_match_acceptance_fixtures",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::root_relocation_preserves_portable_identity_while_concrete_root_differs",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::plan_config_resource_change_changes_portable_identity",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::plan_digest_alone_changes_portable_identity",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::committed_pair_is_compatible",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::dirty_worktree_rejects_committed_request",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::capture_policy_mismatch_is_incompatible",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::captured_external_original_path_mismatch_is_incompatible",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::unsupported_inventory_contents_change_binding_identity",
+]
+fixtures = [
+  "fixtures/verification_run_snapshot_binding",
+]
+code = [
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/model.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0408-verification-run-snapshot-binding.md",
+  "docs/spec-index.d/RIPR-SPEC-0408.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0408.toml",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
