@@ -1,0 +1,6 @@
+# Registers the cross-file macro shadowing control (#12720) under RIPR-SPEC-0094.
+[[extend]]
+id = "RIPR-SPEC-0094"
+tests = [
+  "crates/ripr/tests/snapshot_field_admission.rs::a_bare_snapshot_macro_defined_in_another_file_keeps_the_return_seam_credit",
+]

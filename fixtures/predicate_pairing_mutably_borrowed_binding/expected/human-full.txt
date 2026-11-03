@@ -47,6 +47,7 @@ Weakness
 Next step
   Add boundary tests for below, equal, and above the changed threshold with exact assertions
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/input --diff <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/diff.patch --mode fast probe:src_lib.rs:predicate:fa1d51d0
   ripr context --root <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/input --diff <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/diff.patch --mode fast --at probe:src_lib.rs:predicate:fa1d51d0
 
@@ -85,5 +86,6 @@ Weakness
 Next step
   The related test `borrowed` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/input --diff <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/diff.patch --mode fast probe:src_lib.rs:return_value:c71d52af
   ripr context --root <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/input --diff <cwd>/fixtures/predicate_pairing_mutably_borrowed_binding/diff.patch --mode fast --at probe:src_lib.rs:return_value:c71d52af
