@@ -194,23 +194,62 @@ jobs:
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
-      - name: User-text goldens judged by the merge-base matcher
-        # The PR's goldens are judged once more by the matcher the merge-base
-        # compiled, so a PR that weakens the user-text matcher cannot qualify its
-        # own change (#11385). A merge-base that predates `--tree` cannot do this
-        # yet and is skipped with a notice; any other failure fails the job.
+      - name: Prepare independent user-text base
+        # Prepares the exact first-parent base before running its policy matcher.
+        # These two short steps preserve the check-workflows per-block line bound.
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: |
           set -euo pipefail
           base_sha="$(git rev-parse HEAD^1)"
           base_tree="$RUNNER_TEMP/user-text-base"
           git worktree add --detach "$base_tree" "$base_sha"
+
+      - name: Recover pinned base compiler arity if needed
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        run: |
+          set -euo pipefail
+          base_tree="$RUNNER_TEMP/user-text-base"
+          base_sha="$(git -C "$base_tree" rev-parse HEAD)"
+          old_stub_blob="$(git -C "$base_tree" rev-parse "HEAD:crates/ripr/src/app/test_stub.rs")"
+          if test "$old_stub_blob" = "41ce81981802365b31e5182b7a7a51540ff8d7be"; then
+            python3 - "$base_tree/crates/ripr/src/app/test_stub.rs" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          source = path.read_text(encoding="utf-8")
+          replacements = [
+              ("fn return_value_direct_at_probe_line(\n", "fn return_value_direct_at_probe_line(\n    root: &Path,\n"),
+              ("rust_test_stub(&seam, None, source);", "rust_test_stub(&seam, None, source, Some(root));"),
+              ("return_value_direct_at_probe_line(&in_file, file, line, &source)", "return_value_direct_at_probe_line(root, &in_file, file, line, &source)"),
+          ]
+          for before, after in replacements:
+              if source.count(before) != 1:
+                  raise SystemExit("pinned base compiler recovery has an unexpected source shape")
+              source = source.replace(before, after, 1)
+          path.write_text(source, encoding="utf-8")
+          PY
+            fixed_stub_blob="$(git -C "$base_tree" hash-object crates/ripr/src/app/test_stub.rs)"
+            test "$fixed_stub_blob" = "e934320980555de2d431b2aa8482a6059e9cf7f7"
+            test "$(git -C "$base_tree" diff --name-only)" = "crates/ripr/src/app/test_stub.rs"
+            echo "::notice::base $base_sha recovered only the exact #12466 compiler-arity blob ($old_stub_blob -> $fixed_stub_blob); original user-text matcher remains authoritative"
+          fi
+
+      - name: User-text goldens judged by the merge-base matcher
+        # The PR's goldens are judged by the original matcher at the merge base,
+        # so the PR cannot qualify a weakened version of its own gate (#11385).
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        run: |
+          set -euo pipefail
+          base_tree="$RUNNER_TEMP/user-text-base"
+          base_sha="$(git -C "$base_tree" rev-parse HEAD)"
           if ! grep -q -- '"--tree"' "$base_tree/xtask/src/policy/user_text.rs"; then
             echo "::notice::merge-base $base_sha cannot judge another tree yet; matcher pin only"
             exit 0
           fi
           cd "$base_tree"
           cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
 
       - name: Repository policy preflight
         id: precommit

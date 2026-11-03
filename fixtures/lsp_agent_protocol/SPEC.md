@@ -4,9 +4,9 @@ Spec: RIPR-SPEC-0131
 
 ## Purpose
 
-This fixture corpus pins the versioned wire contract for generic headless
-clients. It tests vocabulary and envelope shape against the live capability
-advertisement: `ripr/listActionableItems` is the one implemented request, the
+This fixture corpus pins the versioned wire contract for the experimental
+riprAgent adapter. It tests vocabulary and envelope shape against the live
+capability advertisement for the VS Code–bounded private slice: `ripr/listActionableItems` is the one implemented request, the
 `actionable` profile is the one supported profile, and cancellation is
 advertised. Every other request, profile, progress, continuation, and
 snapshot-handle surface stays fail-closed: `snapshot_id` is echoed in

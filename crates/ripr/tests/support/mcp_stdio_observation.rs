@@ -1,4 +1,5 @@
 use serde::Serialize;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     io::Read,
@@ -21,12 +22,50 @@ struct Progress {
     truncated: bool,
 }
 
+/// Minimum nonsemantic stages that distinguish launch, input completion, a
+/// correlated reply, stdin release, child exit, and the owned deadline (#4914).
+pub(super) const INVESTIGATION_STAGE_CONTRACT_V1: &[&str] = &[
+    "child_spawn_returned",
+    "input_line_flushed",
+    "matching_reply_received",
+    "stdin_released",
+    "child_exit_observed",
+    "owned_deadline_started",
+];
+
+pub(super) fn assert_investigation_stage_contract(observation_json: &str) -> Result<(), String> {
+    let value: Value = serde_json::from_str(observation_json)
+        .map_err(|error| format!("parse MCP observation JSON: {error}"))?;
+    if value.get("timed_out").and_then(Value::as_bool) != Some(false) {
+        return Err("investigation attempt must complete within the owned deadline".into());
+    }
+    if value.get("deadline_seconds").and_then(Value::as_i64) != Some(10) {
+        return Err("investigation attempt must retain the 10-second contract".into());
+    }
+    let stage_names = value
+        .pointer("/progress/stages")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "observation JSON missing progress.stages".to_string())?
+        .iter()
+        .filter_map(|stage| stage.get("name").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    for required in INVESTIGATION_STAGE_CONTRACT_V1 {
+        if !stage_names.contains(required) {
+            return Err(format!(
+                "observation missing required investigation stage `{required}`; saw {stage_names:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) struct Observation {
     started: Instant,
     executable: PathBuf,
     executable_sha256: String,
     child_pid: u32,
     hold_input_until_exit: bool,
+    retention_directory: Option<PathBuf>,
     progress: Mutex<Progress>,
 }
 
@@ -60,6 +99,7 @@ impl Observation {
         executable_sha256: String,
         child_pid: u32,
         hold_input_until_exit: bool,
+        retention_directory: Option<PathBuf>,
     ) -> Self {
         Self {
             started,
@@ -67,6 +107,7 @@ impl Observation {
             executable_sha256,
             child_pid,
             hold_input_until_exit,
+            retention_directory,
             progress: Mutex::new(Progress::default()),
         }
     }
@@ -111,8 +152,12 @@ impl Observation {
         });
         let encoded = serde_json::to_string_pretty(&value)
             .map_err(|error| format!("encode MCP observation: {error}"))?;
-        if let Some(directory) = std::env::var_os("RIPR_3088_STDIO_OBSERVATIONS") {
-            let path = PathBuf::from(directory).join(format!("child-{}.json", self.child_pid));
+        if let Some(directory) = self
+            .retention_directory
+            .clone()
+            .or_else(|| std::env::var_os("RIPR_3088_STDIO_OBSERVATIONS").map(PathBuf::from))
+        {
+            let path = directory.join(format!("child-{}.json", self.child_pid));
             let mut file = std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)

@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0404](../specs/RIPR-SPEC-0404-postgresql-pgtap-dialect-schema-migration-and-database-state-evidence-contracts.md) | proposed | PostgreSQL/pgTAP dialect, schema, migration, transaction, and database-state evidence contracts (#5736, #5602) |

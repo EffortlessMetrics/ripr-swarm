@@ -261,21 +261,29 @@ ceilings = { "speed.warm_check_ms" = 90000, "speed.warm_check_peak_rss_mb" = 102
 # on 4 cores: 16.1 s cold, 2.6 s warm, 62 MiB. The ceilings are a regression
 # gate above those numbers, not a claim that the 2 s bar is met.
 #
-# Not yet a usable speed row (#12052). The truncation is reported as
-# `partial_with_limitations` (`diff_scope_oversized` plus unindexed test
-# files), and a warm-check sample is admitted only from a complete analysis, so
-# both hosted nightlies of 2026-11-01 recorded this row's `speed.warm_check_*`
-# as `incomplete` ("analysis is not complete") and the ceilings read as
-# "not established". The measured 1.0 s / 60 MiB are not admissible values, so
-# the ceilings stay at their local calibration until the row can complete.
+# At this pin the walk no longer reaches the 20,000-entry cap (the
+# `tests/baselines/reference` prune, #11984), but the analysis is still
+# `partial_with_limitations`: the diff adds generated baseline `.js` files the
+# preview adapter skips, a test file registers tests the extractor does not
+# index, and the added test fixture does not parse. All three are typed
+# `language_scope_unsupported` limitations. A warm-check sample is admitted only
+# from a complete analysis, so both hosted nightlies of 2026-11-01 and the
+# 2026-11-02 run recorded this row's `speed.warm_check_*` as `incomplete`.
+# `expected_partial` declares the intended outcome: the sample is admitted only
+# when the analysis is the typed partial outcome and its only limitations are
+# of the declared kind. A complete result, or any other limitation kind
+# beside it, fails the row. The admitted row stays visibly partial and is
+# never scanned for contradictions.
+# The ceilings stay (#12052).
 [[corpus]]
 id = "typescript-compiler"
 url = "https://github.com/microsoft/TypeScript"
 sha = "ad04bf7488384a5dcdf7d250ccb8e5263021a8ff"
 language = "typescript"
-note = "TypeScript compiler repository (over the 20,000-entry workspace-walk cap); commit fixes declaration emit for nested binding patterns in src/compiler and adds baseline files"
+note = "TypeScript compiler repository; commit fixes declaration emit for nested binding patterns in src/compiler and adds baseline files"
 heavy = true
 ceilings = { "speed.warm_check_ms" = 5000, "speed.warm_check_peak_rss_mb" = 256 }
+expected_partial = "language_scope_unsupported"
 
 [[corpus]]
 id = "hono-typescript"
@@ -958,6 +966,46 @@ regression_additive = true
 runner_dependent = true
 per_repo = true
 source = "ingest:first-run"
+
+# --------------------------------------------------------------- repair ----
+# First-hour repair funnel (#6308). Host-sensitive durations stay advisory
+# until runner policy is ratified; zero selected cases remain not_measured.
+
+[[metric]]
+id = "repair.time_to_verified_improvement_ms"
+board = "repair"
+title = "Install to verified improvement or closure (project verification plus static movement)"
+unit = "ms"
+direction = "lower_is_better"
+target = 600000
+regression_pct = 25
+regression_floor = 60000
+runner_dependent = true
+source = "ingest:repair-funnel"
+
+[[metric]]
+id = "repair.time_to_first_honest_result_ms"
+board = "repair"
+title = "Install to first decisive honest result on the first-run walk"
+unit = "ms"
+direction = "lower_is_better"
+target = 300000
+regression_pct = 25
+regression_floor = 30000
+runner_dependent = true
+source = "ingest:repair-funnel"
+
+[[metric]]
+id = "repair.selected_case_count"
+board = "repair"
+title = "Governed funnel cases selected for real-route denominators"
+unit = "cases"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:repair-funnel"
 
 # ------------------------------------------------------------------ agent ----
 # Help-only agents fixing seeded test gaps on pinned crates, scored with

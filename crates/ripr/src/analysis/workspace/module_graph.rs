@@ -748,7 +748,9 @@ fn evidence_roots(
 }
 
 /// The default paths of declared targets that name no `path`:
-/// `<dir>/<name>.rs` and `<dir>/<name>/main.rs`.
+/// `<dir>/<name>.rs` and `<dir>/<name>/main.rs`. When both layouts exist
+/// on disk Cargo drops the target entirely (#6979 item 4), so neither path
+/// is rooted.
 fn named_default_roots(target_entries: Option<&toml::Value>, dir: &Path) -> Vec<PathBuf> {
     let Some(entries) = target_entries.and_then(toml::Value::as_array) else {
         return Vec::new();
@@ -760,10 +762,21 @@ fn named_default_roots(target_entries: Option<&toml::Value>, dir: &Path) -> Vec<
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .flat_map(|name| {
-            [
-                dir.join(format!("{name}.rs")),
-                dir.join(name).join("main.rs"),
-            ]
+            let file = dir.join(format!("{name}.rs"));
+            let directory = dir.join(name).join("main.rs");
+            let file_present = file.is_file();
+            let directory_present = directory.is_file();
+            if file_present && directory_present {
+                return Vec::new();
+            }
+            let mut roots = Vec::new();
+            if file_present || !directory_present {
+                roots.push(file);
+            }
+            if directory_present || !file_present {
+                roots.push(directory);
+            }
+            roots
         })
         .collect()
 }
@@ -2562,5 +2575,53 @@ mod tests {
             BTreeSet::from([PathBuf::from("src/orphan.rs")])
         );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn ambiguous_name_only_test_dual_layout_is_not_an_evidence_root() -> Result<(), String> {
+        let manifest = "[package]\nname='tree'\nversion='0.1.0'\nedition='2021'\nautotests=false\n\n[[test]]\nname='registered'\n";
+        let root = fixture(
+            "dual-layout-test",
+            &[
+                ("Cargo.toml", manifest),
+                ("src/lib.rs", "pub fn f() {}\n"),
+                ("tests/registered.rs", "#[test] fn from_file() {}\n"),
+                ("tests/registered/main.rs", "#[test] fn from_dir() {}\n"),
+            ],
+        )?;
+        let context = evidence_for(&root, &["tests/registered.rs", "tests/registered/main.rs"]);
+        assert!(
+            context
+                .module_graph_orphans
+                .contains(Path::new("tests/registered.rs")),
+            "ambiguous file layout must not be rooted: {:?}",
+            context.module_graph_orphans
+        );
+        assert!(
+            context
+                .module_graph_orphans
+                .contains(Path::new("tests/registered/main.rs")),
+            "ambiguous directory layout must not be rooted: {:?}",
+            context.module_graph_orphans
+        );
+
+        let sole_file = fixture(
+            "dual-layout-file-only",
+            &[
+                ("Cargo.toml", manifest),
+                ("src/lib.rs", ""),
+                ("tests/registered.rs", "#[test] fn from_file() {}\n"),
+            ],
+        )?;
+        let reached = evidence_for(&sole_file, &["tests/registered.rs"]);
+        assert!(
+            !reached
+                .module_graph_orphans
+                .contains(Path::new("tests/registered.rs")),
+            "the sole file layout stays a declared root: {:?}",
+            reached.module_graph_orphans
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        std::fs::remove_dir_all(sole_file).map_err(|error| error.to_string())
     }
 }
