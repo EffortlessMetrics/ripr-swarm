@@ -68,7 +68,7 @@ const FIRST_RUN_WORKFLOW_LINES: &str = "workflow_lines";
 const DEFAULT_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
 const DEFAULT_CORPUS_DIR: &str = "target/ripr/dx-scoreboard/corpus";
 const DEFAULT_TIMEOUT_MS: u64 = 900_000;
-const BOARDS: [&str; 8] = [
+const BOARDS: [&str; 9] = [
     "speed",
     "ci",
     "trust",
@@ -77,6 +77,7 @@ const BOARDS: [&str; 8] = [
     "agent",
     "corpus",
     "ranking",
+    "repair",
 ];
 
 const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>]
@@ -85,7 +86,7 @@ Measures the developer-experience scoreboards declared in
 benchmarks/dx_scoreboard/scoreboards.toml and writes
 target/ripr/reports/dx-scoreboard.{json,md}.
 
-  --boards <list>     comma-separated subset of speed,ci,trust,paste,first_run,agent,corpus,ranking
+  --boards <list>     comma-separated subset of speed,ci,trust,paste,first_run,agent,corpus,ranking,repair
   --repo <id>         limit corpus measurements to these corpus ids
   --include-heavy     also measure corpus entries marked heavy
   --corpus-dir <dir>  where pinned corpus checkouts live
@@ -137,6 +138,13 @@ pub(crate) struct CorpusEntry {
     /// does not, and it does not depend on a same-runner baseline existing.
     #[serde(default)]
     pub(crate) ceilings: BTreeMap<String, f64>,
+    /// Static limit a warm check on this row is expected to stop at (for
+    /// example `typescript_workspace_discovery_truncated`). The analysis is
+    /// `partial_with_limitations` by design, so a sample is admitted only
+    /// when it is that partial outcome and a finding names this limit;
+    /// a complete result or any other limit fails the row (#12052).
+    #[serde(default)]
+    pub(crate) expected_partial: Option<String>,
 }
 
 /// Languages a corpus entry may declare.
@@ -427,6 +435,7 @@ pub(crate) fn corpus_from_manifest(value: &Value) -> Result<(String, Vec<CorpusE
             // The shared manifest carries no ceilings; they are set per
             // entry in the inline list only.
             ceilings: BTreeMap::new(),
+            expected_partial: None,
             // A present non-string value is an error, not an absent field:
             // reading it as absent would file the entry under `rust`.
             language: match &repo["language"] {
@@ -459,6 +468,25 @@ pub(crate) fn validate_corpus(corpus: &[CorpusEntry]) -> Result<(), String> {
                 entry.id,
                 entry.language(),
                 CORPUS_LANGUAGES.join(", ")
+            ));
+        }
+        if entry.expected_partial.as_deref().is_some_and(|limit| {
+            limit.is_empty()
+                || !limit
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        }) {
+            return Err(format!(
+                "corpus `{}` expected_partial must name a static limit or typed limitation kind in snake_case",
+                entry.id
+            ));
+        }
+        if let Some(limit) = entry.expected_partial.as_deref()
+            && measure::typed_cause_of_static_limit(limit).is_none()
+        {
+            return Err(format!(
+                "corpus `{}` expected_partial `{limit}` has no known typed cause",
+                entry.id
             ));
         }
         if !full_sha(&entry.sha)

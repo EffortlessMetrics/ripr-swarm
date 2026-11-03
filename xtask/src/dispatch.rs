@@ -160,6 +160,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::reports::release_server::release_upload_assets(&args)
         }
         XtaskCommand::TargetedTestOutcome(args) => super::reports::targeted_test_outcome(&args),
+        XtaskCommand::NativeLibtest(args) => super::native_libtest::run(&args),
         XtaskCommand::MutationCalibration(args) => super::reports::mutation_calibration(&args),
         XtaskCommand::BunUbCalibration(args) => super::reports::bun_ub_calibration(&args),
         XtaskCommand::BunUbPreviewSummary(args) => super::reports::bun_ub_preview_summary(&args),
@@ -244,8 +245,22 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckBadgeDiffPolicy => super::check_badge_diff_policy(),
         XtaskCommand::CheckGeneratedClean => super::check_generated_clean(),
         XtaskCommand::CheckVerificationContracts(args) => {
-            super::verification_contracts::check_verification_contracts(&args)
+            super::verification_contracts::check_verification_contracts_with_hooks(
+                &args,
+                |root| {
+                    let summary =
+                        super::schema_producer_sweep::verification_corpus_gate_check(root)?;
+                    Ok(super::verification_contracts::CorpusGateCounts {
+                        producer_discovered: summary.producer_discovered,
+                        producer_validated: summary.producer_validated,
+                        edge_validated: summary.edge_validated,
+                        summary_lines: summary.summary_lines,
+                    })
+                },
+                super::schema_producer_sweep::contract_subjects_owned_by_corpus_gate,
+            )
         }
+        XtaskCommand::CheckRiprAgentDisposition => super::ripr_agent_disposition::check(),
         XtaskCommand::SchemaProducerSweep(args) => {
             super::schema_producer_sweep::schema_producer_sweep(&args)
         }

@@ -336,3 +336,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_parameter_token_coincidence (27)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless owner_parameter_token_coincidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_parameter_token_coincidence (28)
+
+Reason:
+RIPR-SPEC-0094 (#5830, #12671): the return_value seam no longer takes the other-function assertion subtotal_multiplies as an oracle once tax_is_owed reaches the owner, so ripr repair now reads a gap and offers a repair start instead of judging the surrounding code exposed
+
+Command:
+`cargo xtask goldens bless owner_parameter_token_coincidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

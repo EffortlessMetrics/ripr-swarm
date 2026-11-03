@@ -688,6 +688,30 @@ pub(crate) fn repair_funnel_markdown(report: &FirstHourRepairFunnelReportV1) -> 
             ));
         }
         out.push('\n');
+        out.push_str("Metrics:\n\n");
+        for metric in &case.metrics {
+            out.push_str(&format!(
+                "- `{}`: {} {:?} {} (samples: {}){}\n",
+                metric.id,
+                metric.state,
+                metric.value,
+                metric.unit,
+                metric.sample_count,
+                if metric.non_claims.is_empty() {
+                    String::new()
+                } else {
+                    format!(" non-claims: {}", metric.non_claims.join(", "))
+                }
+            ));
+        }
+        out.push('\n');
+        if !case.control_violations.is_empty() {
+            out.push_str("Control violations:\n\n");
+            for violation in &case.control_violations {
+                out.push_str(&format!("- {violation}\n"));
+            }
+            out.push('\n');
+        }
     }
     out
 }
@@ -853,6 +877,23 @@ mod tests {
                 .any(|s| s.stage == "verified_improvement_or_closure")
         );
         assert_eq!(row.funnel_exit, "honest_static_limitation");
+        Ok(())
+    }
+
+    #[test]
+    fn controls_report_ingests_through_committed_scoreboard_config() -> Result<(), String> {
+        use super::super::dx_scoreboard::{SampleOutcome, load_config, parse_ingest};
+        let config = load_config(&workspace_path("benchmarks/dx_scoreboard/scoreboards.toml"))?;
+        let corpus = read_json(&workspace_path(CONTROLS_CORPUS), "controls")?;
+        let report = assess_controls_corpus(&corpus);
+        let value = serde_json::to_value(&report).map_err(|error| error.to_string())?;
+        let samples = parse_ingest(&value, &config)?;
+        assert_eq!(samples.len(), 3);
+        let count = samples
+            .iter()
+            .find(|sample| sample.metric == "repair.selected_case_count")
+            .ok_or("missing selected_case_count sample")?;
+        assert_eq!(count.outcome, SampleOutcome::Value(report.selected_count as f64));
         Ok(())
     }
 

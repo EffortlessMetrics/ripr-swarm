@@ -81,7 +81,7 @@ this repository's own two-xtask-file diff (about 31 s to 64 s) and merged with
 every required check green. `cargo xtask warm-ab` is the row that fails.
 
 ```bash
-cargo xtask warm-ab --baseline <bin> --candidate <bin> --tree <checkout> --diff <file> --pin <id>
+cargo xtask warm-ab --baseline <bin> --candidate <bin> --tree <checkout> --diff <file> --pin <id> [--control-slowdown <ratio>]
 ```
 
 It copies both binaries, gives each its own `RIPR_CACHE_DIR`, runs one cold
@@ -102,6 +102,17 @@ The report (`warm-ab-<pin>.{json,md}`) records both binaries' sha256, cold and
 warm milliseconds, finding counts, and whether the two findings reports are
 byte-identical. A difference is reported, not failed: the two are different
 builds.
+
+`--control-slowdown <ratio>` (above 1.0, at most 10.0) is the negative control
+(#11876, #12244): after each candidate warm check the harness waits until the candidate's
+recorded time is `ratio` times that run's paired baseline time, whether the
+candidate was faster or slower and whether the pin takes two seconds or a minute.
+It refuses a pin where the control would stay inside the noise floor (the pass
+would not test the gate) or would run past the ceiling, and says so. A fixed sleep
+crossed the limit only on the slow-baseline pins (5 s on a 1.9 s warm check is
+4x; on a 57 s one it is 1.09x). The packet records `control_slowdown`, so a
+control receipt cannot be mistaken for a measurement (the Markdown report says
+so too), and no product code is touched. Never pass it in the nightly measurement.
 
 The nightly `warm-ab` job in `size-scaling.yml` runs
 `cargo xtask warm-ab --baseline-ref <ref> --candidate-ref <ref> --pins <id=commit,...> --external-pins <corpus ids>`,

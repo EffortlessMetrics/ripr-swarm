@@ -35,6 +35,7 @@ mod pr_causal_delta;
 mod pr_evidence;
 mod pr_evidence_summary;
 mod proof_preflight;
+mod proof_receipt_binding;
 mod proof_route;
 mod python_repair_driver;
 mod python_repair_trust;
@@ -70,6 +71,7 @@ mod targeted_rerun;
 mod targeted_test;
 mod test_oracles;
 mod verdict_corpus;
+mod verdict_corpus_perl_edit_replay;
 mod verdict_corpus_relabel;
 
 pub(crate) use agentic_bench::agentic_bench;

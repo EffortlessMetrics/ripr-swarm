@@ -195,7 +195,7 @@ A call statement or `with` item, by the last dotted segment of its callee:
 | `assertRaises` | `broad_error` / weak |
 | `raises` as `pytest.raises` or bare `raises`, as a `with` item, with `match=` | `exact_error_variant` / strong |
 | the same without `match=` | `broad_error` / weak |
-| `assert_called`, `assert_called_once`, `assert_called_with`, `assert_called_once_with`, `assert_any_call`, `assert_has_calls`, `assert_not_called` | `mock_expectation` / medium |
+| `assert_called`, `assert_called_once`, `assert_called_with`, `assert_called_once_with`, `assert_any_call`, `assert_has_calls`, `assert_not_called`, `assert_awaited`, `assert_awaited_once`, `assert_awaited_with`, `assert_awaited_once_with` | `mock_expectation` / medium |
 | other segment starting `assert_`, or `assert_that` | `unknown`, shape `unknown_custom_helper` (rule 28 re-reads proven numpy.testing and assertpy equality) |
 | anything else | no assertion recorded |
 
@@ -1354,8 +1354,22 @@ mutant calibrates the rule; ripr reports only the static shape.
     and still count. A body that rebinds the name (assignment, walrus, `for`, `as`,
     `import`), a name defined more than once in the enclosing body, and a def
     that is only returned or passed are fail-closed: they give no reach. A direct test call of the nested name is
-    unchanged. Whether the assertion observes the nested function's result,
-    not only its call, is a separate problem (#12182).
+    unchanged. Reach is a call path; credit needs a result path. When every
+    call the enclosing body makes is an expression statement of its own
+    (`inner()` on a line by itself) and the name is never referenced any
+    other way (`return inner`, `register(inner)` and `x = inner` let a caller
+    run it later) anywhere in the enclosing body, deferred lambda and
+    sibling-def bodies included, the nested function's result reaches
+    nothing the enclosing function returns. The downgrade also needs the
+    changed `return` line, and the line it replaced, to be free of calls,
+    `await`, `yield` and `lambda`, since a call in
+    the returned expression can have an effect a test observes. So a strong assertion on the
+    enclosing function's result gives a changed `return` in the nested body no
+    direct return-value credit: the finding is `weakly_exposed` with the
+    missing discriminator "an assertion on a value computed from the result of
+    `outer.inner`". A call whose value may be returned, bound, passed or
+    asserted keeps the credit, and so does a related test that calls the
+    nested name itself.
 
 ### Verdict ladder
 
@@ -1913,6 +1927,7 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `a_deep_sum_is_refused_not_recursed`.
 - Existing: `crates/ripr/src/analysis/language/python/python_tests.rs`
   `oracle_for_call_recognizes_all_unittest_and_mock_variants`,
+  `oracle_for_call_recognizes_async_mock_expectations`,
   `collect_with_item_assertions_treats_pytest_raises_match_as_exact_error`,
   `contains_dynamic_dispatch_detects_registry_indexed_call`,
   `contains_metaprogramming_detects_metaclass_declarations`,

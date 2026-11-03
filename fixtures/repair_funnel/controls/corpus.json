@@ -1,6 +1,6 @@
 {
   "schema_version": "first_hour_repair_funnel_controls.v1",
-  "spec": "RIPR-SPEC-0377",
+  "spec": "RIPR-SPEC-0410",
   "description": "Planted negative and positive receipts for the first-hour repair funnel projection controls (#6308).",
   "cases": [
     {

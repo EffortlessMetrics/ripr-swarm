@@ -12,7 +12,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | --- | --- | --- | --- |
 | `metrics/public-proof/dx-scoreboard.json` | Speed, memory, CI adoption, pasted-command safety, self-contradictions | ripr 0.11.0 (10e5637) | runner `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor` |
 | `metrics/dx-scoreboard/corpus-full-baseline.json` | Corpus lane, used when the scoreboard receipt did not ingest corpus | 10e5637 | runner `github-hosted-linux-x86_64-4cpu-intel-r-xeon-r-platinum-8370c-cpu-2-80ghz` |
-| `metrics/dx-scoreboard/pilot-ranking-baseline.json` | Pilot ranking lane, used when the scoreboard receipt did not ingest ranking | 72e613e | runner `local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-80ghz` |
+| `metrics/dx-scoreboard/pilot-ranking-baseline.json` | Pilot ranking lane, used when the scoreboard receipt did not ingest ranking | 8cbe2b0 | runner `github-hosted-linux-x86_64-4cpu-amd-epyc-9v74-80-core-processor` |
 | `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | 818 cases | RIPR-SPEC-0219 |
 | `metrics/public-proof/mutation-spot-check.json` | Agreement with real mutation runs | 5 repositories at pinned revisions | cargo-mutants 27.1.0 |
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
@@ -83,15 +83,15 @@ By board, so the weak areas show before the full table:
 | First run | Seconds for the scripted walk on one crate, setup excluded | 3.56 s | <= 10 s | meets the bar | was 0.58 in ripr 0.10.0 |
 | corpus | Pinned repository whose diff-scoped `ripr check` did not reach `analyzed` | 0 repos | <= 0 repos | meets the bar | -1 repo since adf4e63 (was 1 repo) |
 | corpus | Diff-scoped `ripr check` on a pinned real change | 3.5 s | <= 5.0 s | meets the bar | earlier receipt on another runner class `local-linux-x86_64-4cpu` (was 13.2 s) |
-| ranking | Pilot's top 5 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **17.6%** | >= 60.0% | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **28.0%** | >= 60.0% | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks a labeled mutant can judge (precision can rise by making picks unjudgeable) | **64.1%** | >= 80.0% | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks that land in a function no higher pick named | **71.8%** | >= 90.0% | below the bar | no earlier measurement |
-| ranking | Picks in pilot's top 10 across the pinned crates (precision and shares can rise by ranking fewer seams) | **39 picks** | >= 50 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 5 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **18.8%** | >= 60.0% | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **29.2%** | >= 60.0% | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks a labeled mutant can judge (precision can rise by making picks unjudgeable) | **63.2%** | >= 80.0% | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks that land in a function no higher pick named | **71.0%** | >= 90.0% | below the bar | no earlier measurement |
+| ranking | Picks in pilot's top 10 across the pinned crates (precision and shares can rise by ranking fewer seams) | **38 picks** | >= 50 picks | below the bar | no earlier measurement |
 | ranking | Pilot's top 5 picks per crate a missed mutant confirms (pooled count) | **3 picks** | >= 12 picks | below the bar | no earlier measurement |
-| ranking | Pilot's top 5 picks per crate where every judging mutant was caught (pooled count) | **14 picks** | <= 8 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 5 picks per crate where every judging mutant was caught (pooled count) | **13 picks** | <= 8 picks | below the bar | no earlier measurement |
 | ranking | Pilot's top 10 picks per crate a missed mutant confirms (pooled count) | **7 picks** | >= 24 picks | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks per crate where every judging mutant was caught (pooled count) | **18 picks** | <= 16 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks per crate where every judging mutant was caught (pooled count) | **17 picks** | <= 16 picks | below the bar | no earlier measurement |
 | First run | Generated CI workflows over their line budget | **3 workflows** | <= 0 workflows | below the bar | unchanged from ripr 0.10.0 (3) |
 
 Not measured, and why:
@@ -107,7 +107,7 @@ Not measured, and why:
 Each line below is computed from the receipts above. Detail sections follow.
 
 - **Wrong gaps.** On changes from real repositories ripr reported a gap on 0 of 22 whose tests caught every listed mutant (0.0%): no case recorded. On the authored cases, which were written to fill empty corpus cells, it did so on 0 of 398 (0.0%).
-- **Mostly unsure.** On real-repository changes it abstained on 31 of 36 cases (86.1%); on the authored cases, 272 of 782 (34.8%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Mostly unsure.** On real-repository changes it abstained on 32 of 36 cases (88.9%); on the authored cases, 277 of 782 (35.4%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 12 mutants on seams ripr called ungripped, real mutation testing caught 0 that ripr said nothing would catch; ripr agreed on 12. No false-gap examples are recorded.
 - **Thin ground truth.** Only 75 of 1745 mutants (4.3%) enter an agreement rate. 493 join a ripr seam precisely, and 418 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
@@ -166,8 +166,8 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | False actionable (of discriminated) | 0/420 (0.0%) | 0/22 (0.0%) | 0/398 (0.0%) |
 | False exposed (of not fully discriminated) | 0/398 (0.0%) | 0/14 (0.0%) | 0/384 (0.0%) |
 | False silent (of not fully discriminated) | 0/398 (0.0%) | 0/14 (0.0%) | 0/384 (0.0%) |
-| Ideal verdict | 515/818 (63.0%) | 5/36 (13.9%) | 510/782 (65.2%) |
-| Abstained (limited or silent where acceptable) | 303/818 (37.0%) | 31/36 (86.1%) | 272/782 (34.8%) |
+| Ideal verdict | 509/818 (62.2%) | 4/36 (11.1%) | 505/782 (64.6%) |
+| Abstained (limited or silent where acceptable) | 309/818 (37.8%) | 32/36 (88.9%) | 277/782 (35.4%) |
 | Findings with a contradiction | 0/1006 (0.0%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
@@ -349,7 +349,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `hex-decode-slice-length` | upstream | partially_discriminated | gap | limited | infection_unknown | abstained | none |
 | `hex-decode-slice-odd` | upstream | discriminated | credited | limited | infection_unknown | abstained | none |
 | `hex-encode-slice-length` | upstream | partially_discriminated | gap | limited | infection_unknown | abstained | none |
-| `hex-from-hex-odd-variant` | upstream | discriminated | credited | credited | exposed | ideal | none |
+| `hex-from-hex-odd-variant` | upstream | discriminated | credited | limited | static_unknown | abstained | none |
 | `idiom-assert-macro-wrapper` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `idiom-catch-unwind-panic-and-value` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `idiom-display-string-pin` | authored | discriminated | credited | credited | exposed | ideal | none |
@@ -417,10 +417,10 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `lib-pretty-line-struct-literal` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `lib-pretty-render-shadowed-assert-eq` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `lib-pretty-total-path-qualified` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `lib-proptest-encode-roundtrip` | authored | partially_discriminated | gap | limited | no_static_path | abstained | none |
-| `lib-proptest-even-sum-model` | authored | discriminated | credited | limited | no_static_path | abstained | none |
-| `lib-proptest-parse-no-panic` | authored | not_discriminated | gap | limited | no_static_path | abstained | none |
-| `lib-proptest-percent-bound` | authored | partially_discriminated | gap | limited | no_static_path | abstained | none |
+| `lib-proptest-encode-roundtrip` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
+| `lib-proptest-even-sum-model` | authored | discriminated | credited | limited | static_unknown | abstained | none |
+| `lib-proptest-parse-no-panic` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
+| `lib-proptest-percent-bound` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
 | `lib-quickcheck-macro-relational-bound` | authored | partially_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `lib-quickcheck-model-comparison` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `lib-quickcheck-roundtrip-involution` | authored | partially_discriminated | gap | gap | reachable_unrevealed | ideal | none |
@@ -455,13 +455,13 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `loop-accumulator-iter-walk` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `loop-accumulator-subtract-pin` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `loop-accumulator-table-pin` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `macro-export-crate-call` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
-| `macro-export-group-import` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
-| `macro-export-path-boundary` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
+| `macro-export-crate-call` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
+| `macro-export-group-import` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
+| `macro-export-path-boundary` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
 | `macro-export-path-second-definition` | authored | not_discriminated | gap | limited | no_static_path | abstained | none |
-| `macro-module-child-boundary` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
-| `macro-module-child-far-rows` | authored | not_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | none |
-| `macro-module-import-boundary` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
+| `macro-module-child-boundary` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
+| `macro-module-child-far-rows` | authored | not_discriminated | gap | limited | infection_unknown, propagation_unknown | abstained | none |
+| `macro-module-import-boundary` | authored | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
 | `macro-module-path-module-far-rows` | authored | not_discriminated | gap | limited | no_static_path | abstained | none |
 | `macro-table-arrow-rows-refused` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
 | `macro-table-boundary-rows` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
@@ -722,7 +722,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `spec0094-effect-blind` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0094-effect-confirmed` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spec0094-return-value-blind` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `spec0096-named-binding-used` | authored | discriminated | credited | limited | static_unknown | abstained | none |
+| `spec0096-named-binding-used` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spec0096-returned-call-ok-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec0096-wildcard-discard-unobserved` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
 | `spec0106-unwrap-err-exact-variant` | authored | discriminated | credited | credited | exposed | ideal | none |

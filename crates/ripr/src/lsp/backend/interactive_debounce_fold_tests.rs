@@ -117,6 +117,15 @@ fn overlapping_interactive_triggers_issue_one_scheduler_request_at_the_latest_re
                 "window owner must request the latest folded workspace revision {OVERLAPPING_INTERACTIVE_TRIGGERS}, got {revision}"
             ));
         }
+        // Cancel the window owner's refresh, then wait behind it on the single
+        // analysis thread, so no analysis work (or child process it started) is
+        // still running when this process exits (#12221).
+        backend.refresh_scheduler.stop();
+        backend
+            .refresh_scheduler
+            .analysis_thread()
+            .run(|| ())
+            .await?;
         Ok(())
     })
 }

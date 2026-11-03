@@ -1,6 +1,6 @@
 # Repair Funnel Control Fixture Corpus
 
-Spec: RIPR-SPEC-0377
+Spec: RIPR-SPEC-0410
 
 ## Given
 

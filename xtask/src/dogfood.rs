@@ -802,6 +802,7 @@ pub(crate) struct DogfoodTypescriptPreviewRepairLoopScenario {
     pub(crate) must_have_receipt_command: bool,
     pub(crate) must_not_invent_verify_command: bool,
     pub(crate) must_not_emit_repair_packet: bool,
+    pub(crate) must_not_claim_already_observed: bool,
     pub(crate) authority_boundary: String,
     pub(crate) expected_test_or_observer_shape: String,
     pub(crate) verify_command: String,
@@ -10780,6 +10781,7 @@ pub(crate) fn dogfood_typescript_preview_repair_loop_scenarios_at(
             must_have_receipt_command: false,
             must_not_invent_verify_command: false,
             must_not_emit_repair_packet: false,
+            must_not_claim_already_observed: false,
             authority_boundary: "unknown".to_string(),
             expected_test_or_observer_shape: "unknown".to_string(),
             verify_command: "unknown".to_string(),
@@ -10860,6 +10862,11 @@ pub(crate) fn dogfood_typescript_preview_repair_loop_scenarios_at(
                 .unwrap_or(false),
             must_not_emit_repair_packet: json_bool_field(case, "must_not_emit_repair_packet")
                 .unwrap_or(false),
+            must_not_claim_already_observed: json_bool_field(
+                case,
+                "must_not_claim_already_observed",
+            )
+            .unwrap_or(false),
             authority_boundary: json_string_field(case, "authority_boundary")
                 .unwrap_or_else(|| "unknown".to_string()),
             expected_test_or_observer_shape: json_string_field(
@@ -11083,6 +11090,22 @@ pub(crate) fn dogfood_typescript_preview_repair_loop_run(
                 .to_string(),
         );
     }
+    if scenario.must_not_claim_already_observed {
+        if scenario.gap_state == "already_observed"
+            || scenario.actionability_category == "strong_oracle_observed"
+        {
+            errors.push(
+                "must_not_claim_already_observed cases must not pin already_observed / strong_oracle_observed in the corpus record"
+                    .to_string(),
+            );
+        }
+        if scenario.outcome == "already_observed_unchanged" {
+            errors.push(
+                "must_not_claim_already_observed cases must not use outcome already_observed_unchanged"
+                    .to_string(),
+            );
+        }
+    }
     if scenario.outcome == "resolved" {
         dogfood_typescript_preview_repair_loop_check_closed_receipt(scenario, &mut errors);
     }
@@ -11253,6 +11276,22 @@ pub(crate) fn dogfood_typescript_preview_repair_loop_check_source_fixture(
             scenario.repair_packet_ready,
             json_bool_field(actionability, "repair_packet_ready")
         ));
+    }
+    if scenario.must_not_claim_already_observed {
+        if json_string_field(actionability, "gap_state").as_deref() == Some("already_observed") {
+            errors.push(
+                "must_not_claim_already_observed: live preview_actionability must not spuriously claim gap_state already_observed"
+                    .to_string(),
+            );
+        }
+        if json_string_field(actionability, "actionability_category").as_deref()
+            == Some("strong_oracle_observed")
+        {
+            errors.push(
+                "must_not_claim_already_observed: live preview_actionability must not spuriously claim strong_oracle_observed"
+                    .to_string(),
+            );
+        }
     }
     if scenario.must_not_emit_repair_packet {
         if json_bool_field(actionability, "repair_packet_ready") != Some(false) {

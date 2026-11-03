@@ -89,6 +89,48 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # Hosted shard losses ("runner received a shutdown signal", exit 143, or "lost
+      # communication") happened inside the test-profile compile of
+      # `cargo nextest run --workspace`, which builds the `ripr` lib test and the
+      # `xtask` bin test at the same time. Each rustc peaks at roughly 9-11 GB; on a
+      # 4 CPU / 16 GB hosted runner (the same shape, where it reproduced as kernel
+      # OOM kills) the pair starves the runner agent. Build the workspace without
+      # xtask first, then add xtask, so the two never overlap. The test step below
+      # still runs the full unchanged nextest command; a build failure here fails
+      # the shard, and `verify` still requires every shard green. The sampler
+      # leaves a memory trace in the log for the next incident.
+      # The split alone left 1.1-2.2 GB free at peak (#12719). The `ripr` lib test is
+      # one rustc over a 1.4M-line crate: about 11 GB resident before codegen starts
+      # (frontend 3.7 GB, MIR borrowck +4.3 GB, monomorphisation +1.8 GB) and 13-14
+      # GB at its peak, whatever the build parallelism (local 16 GB runs with 2 jobs,
+      # or with the lib test built alone first, were still ended by the kernel OOM handler). Scheduling
+      # cannot lower that floor, so give the runner 8 GB of swap so a spike pages out
+      # instead of starving the runner agent. This only adds memory; it relaxes no
+      # check, and a swap setup failure is logged and the build still runs.
+      # The image already has an active 4 GB /mnt/swapfile, so use another path:
+      # fallocate on an active swap file fails with ETXTBSY.
+      - name: Add swap headroom for the test build
+        run: |
+          swapfile=/mnt/ci-swapfile-8g
+          if [ ! -d /mnt ]; then swapfile=/ci-swapfile-8g; fi
+          if sudo fallocate -l 8G "$swapfile" && sudo chmod 600 "$swapfile" && sudo mkswap "$swapfile" > /dev/null && sudo swapon "$swapfile"; then
+            echo "swap enabled:"; swapon --show
+          else
+            echo "::warning::could not enable swap; the build runs without extra headroom (#12719)"
+          fi
+          free -m
+
+      - name: Build the test binaries one memory-heavy crate at a time
+        timeout-minutes: 30
+        env:
+          CARGO_BUILD_JOBS: "3"
+        run: |
+          ( while true; do echo "$(date +%T) $(free -m | awk '/^Mem:/{print "used_mb="$3" available_mb="$7}') $(free -m | awk '/^Swap:/{print "swap_used_mb="$3}')"; sleep 5; done ) > "$RUNNER_TEMP/memory.log" &
+          sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true; echo "peak memory sample:"; awk "{split(\$2,u,\"=\"); if (u[2]+0>m) {m=u[2]+0; l=\$0}} END{print l}" "$RUNNER_TEMP/memory.log"' EXIT
+          cargo test --no-run --locked --workspace --exclude xtask
+          cargo test --no-run --locked --workspace
+
       - name: Required Rust tests (shard ${{ matrix.shard }} of 4)
         id: rust-test-shard
         timeout-minutes: 40

@@ -51,6 +51,7 @@ Weakness
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_truthiness_swap_falsy_input_control/input --diff <cwd>/fixtures/python_truthiness_swap_falsy_input_control/diff.patch --mode fast probe:src_lib.py:python_preview:fc6faa73
   ripr context --root <cwd>/fixtures/python_truthiness_swap_falsy_input_control/input --diff <cwd>/fixtures/python_truthiness_swap_falsy_input_control/diff.patch --mode fast --at probe:src_lib.py:python_preview:fc6faa73
 

@@ -15,9 +15,12 @@
 //! - a formal parameter (`def test(monkeypatch)`) or a recognized fixture type;
 //! - an inert string statement (never a formatted string).
 //!
-//! Any other name containing `patch`, `mock`, `Mock`, `setattr`, `delattr` or
-//! `monkey`, any string containing one of those (or `spy`, `setitem`,
-//! `delitem`) outside a docstring, any name that reaches a patcher indirectly
+//! Any other **call** to a patch-like API fails closed only when its arguments
+//! name the callee or owner, or the target is unreadable; unrelated
+//! `mock.patch('other.symbol')` / `monkeypatch.setattr` on another attribute
+//! does not veto credit (#10391). Non-call patch-like references, any string
+//! containing `patch`, `mock`, `setattr`, `delattr`, `spy`, `setitem`, or
+//! `delitem` outside a docstring, any name that reaches a patcher indirectly
 //! (`getattr`, `getfixturevalue`, `__import__`, `__self__`, `builtins`,
 //! `partial`; and `setitem`, `delitem`, `spy`, `context`, `syspath_prepend` or an
 //! f-string when the file also names a patcher),
@@ -511,6 +514,27 @@ impl<'a> Chain<'a> {
     }
 }
 
+/// Patch routes whose target is read from call arguments (#10391). Unrelated
+/// targets do not veto bare-bool credit; unauthenticated environment/mock
+/// construction stays on the old file-local fail-closed path.
+fn is_callee_scoped_patch_route(chain: &Chain<'_>) -> bool {
+    let verb = chain.segments.last().copied().unwrap_or("");
+    if ENVIRONMENT_VERBS.contains(&verb) || MOCK_OBJECT_NAMES.contains(&verb) {
+        return false;
+    }
+    if matches!(
+        verb,
+        "patch" | "setattr" | "delattr" | "setitem" | "delitem" | "spy"
+    ) {
+        return true;
+    }
+    chain.segments.len() >= 2
+        && chain.segments[..chain.segments.len() - 1]
+            .iter()
+            .any(|segment| has_marker(segment))
+        && matches!(verb, "object" | "dict" | "multiple" | "start")
+}
+
 fn chain_may_patch(
     tokens: &[Tok],
     regions: &Regions,
@@ -535,7 +559,13 @@ fn chain_may_patch(
             || (bindings.mock_inspection(tokens, chain)
                 && discarded_call(tokens, start, chain.end + 1)
                 && inert_call_arguments(tokens, chain.end + 1));
-        return !allowed || call_args_hide_a_target(tokens, chain.end + 1, names);
+        if allowed {
+            return call_args_hide_a_target(tokens, chain.end + 1, names);
+        }
+        if is_callee_scoped_patch_route(chain) {
+            return callee_scoped_patch_call_vetoes(tokens, chain.end + 1, chain, names);
+        }
+        return true;
     }
     // A type annotation may be a patch factory, so only recognized fixture
     // types qualify. A dotted chain is never a formal parameter name.
@@ -596,6 +626,114 @@ fn inert_call_arguments(tokens: &[Tok], open: usize) -> bool {
 fn call_args_hide_a_target(tokens: &[Tok], open: usize, names: &[&str]) -> bool {
     matching_close(tokens, open)
         .is_none_or(|close| args_name_a_target_or_hide_one(&tokens[open + 1..close], names))
+}
+
+fn callee_scoped_patch_call_vetoes(
+    tokens: &[Tok],
+    open: usize,
+    chain: &Chain<'_>,
+    names: &[&str],
+) -> bool {
+    if call_args_hide_a_target(tokens, open, names) {
+        return true;
+    }
+    patch_route_target_unreadable(tokens, open, chain)
+}
+
+/// Whether a callee-scoped patch call hides its target behind a symbolic name.
+fn patch_route_target_unreadable(tokens: &[Tok], open: usize, chain: &Chain<'_>) -> bool {
+    let verb = chain.segments.last().copied().unwrap_or("");
+    let Some(close) = matching_close(tokens, open) else {
+        return true;
+    };
+    let args = &tokens[open + 1..close];
+    match verb {
+        "patch" => {
+            let qualified = chain.segments.len() >= 2
+                && chain
+                    .segments
+                    .get(chain.segments.len().wrapping_sub(2))
+                    .is_some_and(|segment| has_marker(segment));
+            let bare_import = chain.segments.len() == 1;
+            if !qualified && !bare_import {
+                return false;
+            }
+            !argument_group_is_single_string_literal(
+                positional_argument_groups(args).first().map(Vec::as_slice),
+            )
+        }
+        "dict" | "multiple" => args.iter().any(|token| matches!(token, Tok::Name { .. })),
+        "setattr" | "delattr" => attribute_name_argument_is_unreadable(args, "name"),
+        "object"
+            if chain
+                .segments
+                .iter()
+                .any(|segment| segment.contains("patch")) =>
+        {
+            attribute_name_argument_is_unreadable(args, "attribute")
+        }
+        _ => false,
+    }
+}
+
+fn attribute_name_argument_is_unreadable(args: &[Tok], keyword: &str) -> bool {
+    !attribute_name_literal_is_readable(args, keyword)
+}
+
+fn attribute_name_literal_is_readable(args: &[Tok], keyword: &str) -> bool {
+    positional_argument_groups(args)
+        .get(1)
+        .is_some_and(|group| argument_group_is_single_string_literal(Some(group.as_slice())))
+        || keyword_argument_is_single_string_literal(args, keyword)
+}
+
+fn keyword_argument_is_single_string_literal(args: &[Tok], keyword: &str) -> bool {
+    args.windows(3).any(|window| {
+        matches!(&window[0], Tok::Name { name } if name == keyword)
+            && matches!(window[1], Tok::Equal)
+            && matches!(window[2], Tok::String { .. })
+    })
+}
+
+fn argument_group_is_single_string_literal(group: Option<&[&Tok]>) -> bool {
+    matches!(group, Some([Tok::String { .. }]))
+}
+
+fn positional_argument_groups(args: &[Tok]) -> Vec<Vec<&Tok>> {
+    let mut groups = Vec::new();
+    let mut current = Vec::new();
+    let mut depth = 0usize;
+    let mut keyword = false;
+    for token in args {
+        match token {
+            Tok::Lpar | Tok::Lsqb | Tok::Lbrace => {
+                depth += 1;
+                if !keyword {
+                    current.push(token);
+                }
+            }
+            Tok::Rpar | Tok::Rsqb | Tok::Rbrace => {
+                depth = depth.saturating_sub(1);
+                if !keyword {
+                    current.push(token);
+                }
+            }
+            Tok::Equal if depth == 0 => keyword = true,
+            Tok::Comma if depth == 0 => {
+                keyword = false;
+                if !current.is_empty() {
+                    groups.push(std::mem::take(&mut current));
+                }
+            }
+            _ if depth == 0 && !keyword => current.push(token),
+            _ if !keyword => current.push(token),
+            _ => {}
+        }
+    }
+    if !current.is_empty() {
+        groups.push(current);
+    }
+    groups
 }
 
 /// Any identifier or string in the arguments that names a target, or a form

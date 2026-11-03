@@ -1,9 +1,11 @@
 //! Actual check-fast dispatch controls for RIPR-SPEC-0060 (#7528).
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::process::Output;
+use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
 
 const SPEC: &str = "docs/specs/RIPR-SPEC-9999-support-route-control.md";
 
@@ -96,11 +98,9 @@ fn commit(root: &Path, message: &str) -> Result<(), String> {
 }
 
 fn run(root: &Path, command: &str) -> Result<Output, String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .current_dir(root)
-        .arg(command)
-        .output()
-        .map_err(|error| error.to_string())?;
+    let output = xtask_bin::output(|xtask| {
+        xtask.current_dir(root).arg(command);
+    })?;
     println!(
         "command={command}; native_exit={:?}; {}",
         output.status.code(),
