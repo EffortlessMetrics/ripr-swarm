@@ -1807,6 +1807,18 @@ fn declared_enum_variants(
     type_name: &str,
     owner: &str,
 ) -> Option<std::collections::BTreeSet<String>> {
+    declared_enum_variants_scoped(source, type_name, owner, true)
+}
+
+/// [`declared_enum_variants`], with the owner-attribute check (#7692) optional:
+/// an imported enum's module is not the owner's file, so a same-named
+/// attributed function there cannot expand at the owner's match.
+fn declared_enum_variants_scoped(
+    source: &str,
+    type_name: &str,
+    owner: &str,
+    owner_in_file: bool,
+) -> Option<std::collections::BTreeSet<String>> {
     use ra_ap_syntax::{AstNode, ast, ast::HasName};
     // Cheap text test before the parse: most owner files declare no enum
     // of the scrutinee's type at all.
@@ -1859,7 +1871,7 @@ fn declared_enum_variants(
             || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
             || parent_glob_outside_this_file(&node)
             || may_shadow_in_owner_scope(&node, owner)
-            || owner_attr_may_emit_items(&node, owner, source)
+            || (owner_in_file && owner_attr_may_emit_items(&node, owner, source))
         {
             return None;
         }
@@ -2182,7 +2194,7 @@ fn imported_enum_variants(
     if file == owner_file {
         return None;
     }
-    declared_enum_variants(&files.get(&file)?.source, type_name, owner_name)
+    declared_enum_variants_scoped(&files.get(&file)?.source, type_name, owner_name, false)
 }
 
 /// Compiler attributes that expand to no new items, matching the sibling-root
@@ -2227,12 +2239,20 @@ const BUILTIN_DERIVES: &[&str] = &[
 /// Whether `source` imports a glob or a name that may shadow a builtin
 /// attribute or derive (`use pm::Clone; #[derive(Clone)]`).
 fn imports_shadow_builtin_macros(source: &str) -> bool {
+    imports_may_shadow_builtins(source, false)
+}
+
+/// With `variant_globs_inert`, a glob of an enum's variants (`use Kind::*`)
+/// does not count: variants cannot name an attribute or derive macro.
+fn imports_may_shadow_builtins(source: &str, variant_globs_inert: bool) -> bool {
     flattened_use_paths(source).iter().any(|import| {
-        let name = import
-            .alias
-            .as_deref()
-            .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or_default());
+        let mut segments = import.path.rsplit("::");
+        let last = segments.next().unwrap_or_default();
+        let name = import.alias.as_deref().unwrap_or(last);
         let name = name.strip_prefix("r#").unwrap_or(name);
+        if name == "*" && import.alias.is_none() {
+            return !(variant_globs_inert && segments.next().is_some_and(is_variant_name));
+        }
         name == "*" || BUILTIN_ATTRIBUTES.contains(&name) || BUILTIN_DERIVES.contains(&name)
     })
 }
@@ -2270,7 +2290,7 @@ fn owner_attr_may_emit_items(node: &ra_ap_syntax::SyntaxNode, owner: &str, sourc
     let Some(attr) = ast::Attr::cast(node.clone()) else {
         return false;
     };
-    if !attribute_may_emit_items(&attr) && !imports_shadow_builtin_macros(source) {
+    if !attribute_may_emit_items(&attr) && !imports_may_shadow_builtins(source, true) {
         return false;
     }
     let owner = owner.strip_prefix("r#").unwrap_or(owner);
@@ -4093,6 +4113,13 @@ mod tests {
         let local_body = "pub fn f(k: Kind) -> i32 {\n    #[derive(Clone)]\n    struct Local;\n    match k {\n        Kind::A => 1,\n        _ => 0,\n    }\n}\n";
         assert_eq!(
             judged(&format!("pub enum Kind {{ A, B }}\n{local_body}")),
+            Some(ArmSelection::SelectsOther)
+        );
+        // A glob of the enum's own variants cannot name an attribute macro.
+        assert_eq!(
+            judged(&format!(
+                "pub enum Kind {{ A, B }}\nuse Kind::*;\n#[inline]\n{KIND}"
+            )),
             Some(ArmSelection::SelectsOther)
         );
         // Each source below declares `enum Kind { A, B }` too, so the
