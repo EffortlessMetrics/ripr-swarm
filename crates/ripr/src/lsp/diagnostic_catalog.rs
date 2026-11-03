@@ -619,6 +619,10 @@ const fn labels_are_distinct_snake_case(labels: &[&str]) -> bool {
             if !(b.is_ascii_lowercase() || b == b'_') {
                 return false;
             }
+            // No leading, trailing or doubled underscore.
+            if b == b'_' && (k == 0 || k + 1 == bytes.len() || bytes[k + 1] == b'_') {
+                return false;
+            }
             k += 1;
         }
         let mut j = i + 1;
@@ -915,6 +919,9 @@ mod tests {
         assert!(!labels_are_distinct_snake_case(&["a", "b", "a"]));
         assert!(!labels_are_distinct_snake_case(&["Upper"]));
         assert!(!labels_are_distinct_snake_case(&["has-dash"]));
+        assert!(!labels_are_distinct_snake_case(&["_lead"]));
+        assert!(!labels_are_distinct_snake_case(&["trail_"]));
+        assert!(!labels_are_distinct_snake_case(&["dou__ble"]));
         assert!(closed_vocabulary_is_well_formed());
     }
 
