@@ -76,6 +76,7 @@ mod ripr_agent_disposition;
 mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
+mod tool_capabilities;
 mod types;
 mod warm_ab;
 mod work_adapter_identity;

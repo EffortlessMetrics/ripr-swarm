@@ -226,6 +226,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckPublicApi => super::check_public_api(),
         XtaskCommand::CheckOutputContracts => super::check_output_contracts(),
         XtaskCommand::CheckIdentityRegistry => super::identity_registry::check_identity_registry(),
+        XtaskCommand::CheckToolCapabilities(args) => super::tool_capabilities::run(&args),
         XtaskCommand::CheckDocArtifacts => super::check_doc_artifacts(),
         XtaskCommand::CheckSupportTiers => super::check_support_tiers(),
         XtaskCommand::CheckCapabilityProducers(args) => {
