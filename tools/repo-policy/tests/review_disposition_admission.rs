@@ -148,7 +148,15 @@ fn wrong_head_changes_requested_and_identity_controls() -> Result<(), String> {
     untrusted["author_association"] = serde_json::json!("NONE");
     let mut untrusted_approval = review("r", "APPROVED", &head, at, "");
     untrusted_approval["author_association"] = serde_json::json!("CONTRIBUTOR");
+    let mut deleted_user_block = review("x", "CHANGES_REQUESTED", &head, at, "");
+    deleted_user_block["user"] = serde_json::Value::Null;
+    deleted_user_block["id"] = serde_json::json!(2);
     let controls = [
+        (
+            "changes requested from a deleted account",
+            serde_json::json!([review("r", "APPROVED", &head, at, ""), deleted_user_block]),
+            false,
+        ),
         (
             "wrong head",
             serde_json::json!([review("r", "COMMENTED", &other, at, "SOURCE_REVIEW_READY")]),

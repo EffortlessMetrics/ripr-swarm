@@ -97,10 +97,13 @@ def _trusted(review: dict[str, Any]) -> bool:
 
 def _latest_by_login(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_login: dict[str, dict[str, Any]] = {}
-    for review in reviews:
+    for index, review in enumerate(reviews):
         login = str((review.get("user") or {}).get("login") or "")
         if not login:
-            continue
+            # A deleted account yields user: null. Keep each such review as its own
+            # identity so a blocking review is never silently dropped.
+            review_id = review.get("id")
+            login = f"<anonymous:{review_id if review_id is not None else f'index-{index}'}>"
         current = by_login.get(login)
         if current is None or _order(review) >= _order(current):
             by_login[login] = review
@@ -235,6 +238,14 @@ def self_test() -> None:
     )
     assert reviews_allow_source_attestation(
         [review(state="APPROVED", commit_id=head)], head=head
+    )
+    # A CHANGES_REQUESTED from a deleted account (user: null) must still block.
+    assert not reviews_allow_source_attestation(
+        [
+            review(state="APPROVED", commit_id=head, id=1),
+            review(state="CHANGES_REQUESTED", commit_id=head, id=2, user=None),
+        ],
+        head=head,
     )
 
     assert reviews_allow_source_attestation(
