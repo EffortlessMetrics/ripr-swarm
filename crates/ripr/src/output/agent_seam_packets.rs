@@ -2933,12 +2933,8 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
     }
     // #12711: the new test for a pushed collection checks its full contents,
     // so its suggested name does not call it an observer.
-    let name = if readiness.proposes_collection_contents_check() {
-        format!(
-            "{}_{}",
-            snake_case_token(owner_short),
-            crate::analysis::repair_route::COLLECTION_CONTENTS_TEST_NAME_SUFFIX
-        )
+    let name = if readiness.proposes_collection_contents_check(entry.class) {
+        crate::analysis::repair_route::collection_contents_test_name(owner_short)
     } else {
         name
     };

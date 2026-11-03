@@ -176,13 +176,21 @@ expected contents left to fill in. A push into any other receiver, such as
 the function's own local, keeps the observer refusal.
 
 The repair brief bare `ripr repair` prints for that gap names the same check
-(#12711). `RepairRouteReadiness::proposes_collection_contents_check` (the
-proposed `whole_object_equality` with its present contents-check evidence)
-is the one answer it reads: the suggested assertion reads "an exact check of
-the full contents of `buf` after the call, such as
+(#12711). `RepairRouteReadiness::proposes_collection_contents_check` is the
+one answer it reads: a headline grip class, a ready route with a selected
+target, and the proposed `whole_object_equality` with its present
+contents-check evidence. The grip-class ceiling parks a suppressed,
+intentional or already-checked seam without dropping that proposal, so class
+and readiness are part of the answer. When it holds, the suggested assertion
+reads "an exact check of the full contents of `buf` after the call, such as
 `assert_eq!(buf, expected_buf)`", and the suggested test name and the stub's
-test name end in `full_contents` rather than `side_effect_observer`. Every
-other gap keeps its brief and test name.
+test name end in `full_contents` rather than `side_effect_observer`. The
+same suggestion and name reach the packet JSON recommended test name and the
+`cargo test` command, the evidence record, the agent brief, the card JSON
+assertion goal, `ripr agent card` and the editor hover. Every
+other gap keeps its brief and test name. A contents-check stub written
+before this change under `<owner>_side_effect_observer` still reads as
+already written.
 
 `ripr check` and bare `ripr repair` read the same repository evidence and the
 same `repair_packet_eligibility` decision. In the default check and with

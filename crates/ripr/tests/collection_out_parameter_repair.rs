@@ -720,3 +720,46 @@ fn repair_brief_for_other_gaps_is_unchanged() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn stub_written_under_the_earlier_name_is_already_written() -> Result<(), String> {
+    // #12711: a contents-check stub written before the rename, under
+    // `log_line_side_effect_observer`, is still ripr's own earlier write.
+    let repo = Repo::create(OLD, NEW, &test_file(COUNT_BODY))?;
+    let stub_args = [
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "side_effect",
+        "--write",
+    ];
+    let first = text(&repo.ripr(&stub_args)?);
+    let path = repo.0.join("src/lib.rs");
+    let written = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    if !written.contains("fn log_line_full_contents()") {
+        return Err(format!(
+            "first write must add the stub:\n{first}\n{written}"
+        ));
+    }
+    std::fs::write(
+        &path,
+        written.replace(
+            "fn log_line_full_contents()",
+            "fn log_line_side_effect_observer()",
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    let second = text(&repo.ripr(&stub_args)?);
+    let after = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    if !second.contains("Stub already written at") || after.contains("fn log_line_full_contents()")
+    {
+        return Err(format!(
+            "the earlier-named stub must read as already written:\n{second}\n{after}"
+        ));
+    }
+    Ok(())
+}

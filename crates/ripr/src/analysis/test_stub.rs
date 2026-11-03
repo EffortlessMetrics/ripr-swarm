@@ -422,12 +422,16 @@ fn rust_test_stub_for_target(
 
     // #12711: the contents-check stub is not an observer test; it takes the
     // name ending the repair brief suggests for the same check.
-    let suffix = if pushed_buffer_parameter(seam, &signature, source).is_some() {
-        crate::analysis::repair_route::COLLECTION_CONTENTS_TEST_NAME_SUFFIX
+    let contents_check = pushed_buffer_parameter(seam, &signature, source).is_some();
+    let base_name = if contents_check {
+        crate::analysis::repair_route::collection_contents_test_name(&signature.name)
     } else {
-        name_suffix(seam.kind())
+        format!(
+            "{}_{}",
+            snake_case(&signature.name),
+            name_suffix(seam.kind())
+        )
     };
-    let base_name = format!("{}_{}", snake_case(&signature.name), suffix);
     let path_scope = if integration_placement {
         PathScope::Integration(integration_crate.unwrap_or("crate"))
     } else {
@@ -462,6 +466,20 @@ fn rust_test_stub_for_target(
             break;
         }
         candidate_number += 1;
+    }
+    // #12711: a contents-check stub written before the rename sits under the
+    // kind's own name; the identical test under that name is still ripr's
+    // earlier write, not a reason to write a second copy.
+    if matched.is_none() && contents_check {
+        let earlier = format!(
+            "{}_{}",
+            snake_case(&signature.name),
+            name_suffix(seam.kind())
+        );
+        let rendered = render_test_fn(seam, &signature, &earlier, &body, &indent);
+        if scope_contains_test_fn(&scope, &rendered, &earlier) {
+            matched = Some((earlier, rendered));
+        }
     }
     let (test_name, test_fn, already_present) = match matched {
         Some((name, rendered)) => (name, rendered, true),
@@ -1846,7 +1864,7 @@ fn scope_contains_fn_named(scope: &StubScope<'_>, name: &str) -> bool {
         })
 }
 
-fn snake_case(name: &str) -> String {
+pub(crate) fn snake_case(name: &str) -> String {
     let mut out = String::new();
     for (index, c) in name.chars().enumerate() {
         if c.is_ascii_uppercase() {

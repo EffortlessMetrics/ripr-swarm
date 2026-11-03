@@ -468,7 +468,7 @@ pub(crate) fn assemble_repair_card(
     // #12711: a route that proposes a pushed collection's contents check
     // names that check, the one the stub writes, instead of "none".
     let seam_assertion =
-        seam_assertion.or_else(|| collection_contents_check_suggestion(&entry.seam, readiness));
+        seam_assertion.or_else(|| collection_contents_check_suggestion(entry, readiness));
     let mut instruction = facts
         .witness
         .map(FixInstructionSummary::from_witness)
@@ -1532,6 +1532,34 @@ mod tests {
             {
                 return Err(format!(
                     "{family:?} must record an exact unavailable reason"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn card_names_the_contents_check_only_for_a_ready_headline_push() -> Result<(), String> {
+        // #12711: the card (the repair brief and hover read it) suggests the
+        // contents check for a ready push, and not once the class parks it.
+        const SUGGESTION: &str = "an exact check of the full contents of `buf`";
+        for (class, wanted) in [
+            (SeamGripClass::WeaklyGripped, true),
+            (SeamGripClass::Suppressed, false),
+            (SeamGripClass::Intentional, false),
+            (SeamGripClass::StronglyGripped, false),
+        ] {
+            let entry = crate::analysis::repair_route::marked_push_seam_for_tests(class);
+            let packet = packet_for(&entry);
+            let card = assemble_repair_card(&facts_for(&entry, &packet))?;
+            let named = card
+                .assertion_goal_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains(SUGGESTION));
+            if named != wanted {
+                return Err(format!(
+                    "{class:?}: card names the contents check {named}, want {wanted}: {:?}",
+                    card.assertion_goal_detail
                 ));
             }
         }
