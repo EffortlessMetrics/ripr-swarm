@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Candidate admission now treats the `rust-inherent-*.json` and `rust-repo-exposure-*.json` captures under `fixtures/evidence-promotion-honesty-corpus/reports/` as generated, so recapturing them after a cache bump no longer counts as review burden (#12739). Only those two capture families are declarable: `check-evidence-promotion-honesty` still regenerates each from its Cargo subject and binds it by `content_sha256`, and the case file that carries its provenance stays counted.
