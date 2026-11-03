@@ -31,6 +31,7 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_committed_golden_expected_file/input --diff <cwd>/fixtures/rust_committed_golden_expected_file/diff.patch --mode fast probe:src_lib.rs:return_value:8711762f
   ripr context --root <cwd>/fixtures/rust_committed_golden_expected_file/input --diff <cwd>/fixtures/rust_committed_golden_expected_file/diff.patch --mode fast --at probe:src_lib.rs:return_value:8711762f
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)

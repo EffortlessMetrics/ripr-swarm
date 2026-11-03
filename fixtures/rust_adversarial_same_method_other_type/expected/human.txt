@@ -31,11 +31,12 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach weak: No test is seen calling size_hint; tests share only its file or a name token: combinations_inexact_size_hints
+    - reach weak: No test is seen calling size_hint; tests share only a name token
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 12 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_adversarial_same_method_other_type/input --diff <cwd>/fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast probe:src_lib.rs:return_value:c861ec7a
   ripr context --root <cwd>/fixtures/rust_adversarial_same_method_other_type/input --diff <cwd>/fixtures/rust_adversarial_same_method_other_type/diff.patch --mode fast --at probe:src_lib.rs:return_value:c861ec7a
   no repair start offered: ripr found 8 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above

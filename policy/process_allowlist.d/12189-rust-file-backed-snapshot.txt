@@ -1,0 +1,1 @@
+crates/ripr/tests/snapshot_field_admission.rs|Command::new|1|snapshot-12189|Test fixture runs git init/add/commit in a private temp repository to prove an untracked .snap file does not credit a return seam; no shell, no network.

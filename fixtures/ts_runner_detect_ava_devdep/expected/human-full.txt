@@ -84,6 +84,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/ts_runner_detect_ava_devdep/input --diff <cwd>/fixtures/ts_runner_detect_ava_devdep/diff.patch --mode fast probe:src_math.ts:typescript_preview:1f83e897
   ripr context --root <cwd>/fixtures/ts_runner_detect_ava_devdep/input --diff <cwd>/fixtures/ts_runner_detect_ava_devdep/diff.patch --mode fast --at probe:src_math.ts:typescript_preview:1f83e897
 

@@ -57,5 +57,6 @@ Limitation detail
 Next step
   `tax_is_added` (src/lib.rs:23) calls the owner inside an executor helper such as `block_on`, and ripr does not pair the assertion on the helper's result with the owner's call, so ripr does not report a gap. Check that the assertion's expected value differs between the old and the new behavior; add a test only if it does not
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_polling_helper_shadowed/input --diff <cwd>/fixtures/rust_polling_helper_shadowed/diff.patch --mode fast probe:src_lib.rs:return_value:e14b9880
   ripr context --root <cwd>/fixtures/rust_polling_helper_shadowed/input --diff <cwd>/fixtures/rust_polling_helper_shadowed/diff.patch --mode fast --at probe:src_lib.rs:return_value:e14b9880
