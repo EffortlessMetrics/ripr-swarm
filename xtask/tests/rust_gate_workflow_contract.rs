@@ -464,7 +464,10 @@ fn sharded_hosted_tests_reject_legacy_and_mixed_partition_commands() {
         ] {
             let replacement = command.replace("--partition hash:", &format!("--partition {mode}:"));
             let changed = SHARDS.replace(command, &replacement);
-            assert_ne!(changed, SHARDS, "{label}/{mode} did not change the workflow");
+            assert_ne!(
+                changed, SHARDS,
+                "{label}/{mode} did not change the workflow"
+            );
             let expected = format!("shards: expected exactly one {label} hash-partition command");
             assert!(
                 shard_contract_violations(&changed, ROUTED).contains(&expected),

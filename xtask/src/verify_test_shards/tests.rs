@@ -452,12 +452,14 @@ fn invalid_latest_attempt_never_falls_back_to_older_green_evidence() -> Result<(
             "malformed-xml" => fs::write(latest.join("junit.xml"), "<testsuites>broken"),
             "tool-mismatch" => fs::write(&context, text.replace("rustc 1.95", "rustc different")),
             "wrong-list" => fs::write(latest.join("list-2.txt"), "forged subject\n"),
-            "wrong-partition-count" => {
-                fs::write(&context, text.replace("--partition hash:", "--partition count:"))
-            }
-            "wrong-partition-slice" => {
-                fs::write(&context, text.replace("--partition hash:", "--partition slice:"))
-            }
+            "wrong-partition-count" => fs::write(
+                &context,
+                text.replace("--partition hash:", "--partition count:"),
+            ),
+            "wrong-partition-slice" => fs::write(
+                &context,
+                text.replace("--partition hash:", "--partition slice:"),
+            ),
             _ => return Err(format!("unknown fixture variant: {label}")),
         }
         .map_err(|err| err.to_string())?;
