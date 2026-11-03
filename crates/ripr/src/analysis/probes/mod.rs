@@ -22,9 +22,9 @@ pub(crate) use binding_predicate::{
     BindingPredicateResolution, BindingValueResolution, ChangedBindingPredicateUse,
     resolve_changed_binding_uses,
 };
-pub(crate) use binding_return::ChangedBindingReturnFlow;
-#[cfg(test)]
-pub(crate) use binding_return::ReturnFlowKind;
+pub(crate) use binding_return::{
+    ChangedBindingReturnFlow, ReturnFlowKind, resolve_changed_binding_return,
+};
 pub(crate) use classify::parser_expression_for_probe;
 pub(crate) use diff::probes_for_file_with_relations;
 pub(crate) use diff::resolve_probe_source_currentness;
@@ -50,6 +50,9 @@ pub(crate) struct SeededProbe {
     pub parser_span: Option<ParserByteSpan>,
     /// Original changed closing line; canonical identity alone cannot confirm activation.
     pub propagation_origin: Option<crate::analysis::diff::ChangedLine>,
+    /// #11400: a returned expression that reads a changed `const`, standing
+    /// in for the declaration line (`const_reader_returns`).
+    pub const_reader: bool,
 }
 
 impl SeededProbe {
@@ -60,6 +63,7 @@ impl SeededProbe {
             binding_return: None,
             propagation_origin: None,
             parser_span: None,
+            const_reader: false,
         }
     }
 
@@ -70,6 +74,7 @@ impl SeededProbe {
             binding_return: None,
             propagation_origin: None,
             parser_span: Some(parser_span),
+            const_reader: false,
         }
     }
 
@@ -87,6 +92,7 @@ impl SeededProbe {
             binding_return: None,
             propagation_origin: None,
             parser_span: None,
+            const_reader: false,
         }
     }
 

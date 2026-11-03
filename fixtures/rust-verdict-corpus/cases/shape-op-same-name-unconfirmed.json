@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-op-same-name-unconfirmed",
+  "subject_id": "authored-op-credit-same-name-unconfirmed",
+  "diff": "cases/shape-op-same-name-unconfirmed.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "operator_same_name_modules_named_add_unconfirmed",
+  "hard_case": "Same layout as the confirmed twin, but the later test binds the `.add(` result as `r`, so no assertion token confirms the `other` field in the impl body.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Self(self.0 - other.0)",
+        "mutated_line": "Self(self.0 - other.0)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::operator_under_test",
+        "equivalence_review": "not equivalent: `Money(2).add(Money(3))` no longer yields `.0 == 5`"
+      },
+      {
+        "replacement": "Self(self.0 * other.0)",
+        "mutated_line": "Self(self.0 * other.0)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::operator_under_test",
+        "equivalence_review": "not equivalent: product six is not five"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The later same-named test calls `.add(` beside an operator-only sibling module but only pins `r.0`, leaving the `Self(..)` body unconfirmed; RIPR-SPEC-0240 classifies that as `weakly_exposed` after lifting syntax-only withholding (matches `operator_call_credit`). Runtime mutants still fail, so RIPR-SPEC-0219 scores the row `false_actionable` (ideal credited vs observed gap). Issue #10581.",
+  "labeling_observation": {
+    "ripr_commit": "9fff67eb93",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

@@ -191,6 +191,9 @@ mod issue7813_alias_member_tests;
 #[path = "tests/issue7815_typeof_mixed_tests.rs"]
 mod issue7815_typeof_mixed_tests;
 mod rethrow_wrapper;
+#[cfg(test)]
+#[path = "tests/snapshot_subject_binding_tests.rs"]
+mod snapshot_subject_binding_tests;
 mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
@@ -213,7 +216,10 @@ pub(crate) use assertion_selection::{
 };
 pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
-pub(crate) use boundary_selection::typescript_changed_boundary_text;
+pub(crate) use boundary_selection::{
+    typescript_changed_boundary_is_equality_negation, typescript_changed_boundary_text,
+    typescript_changed_line_is_first_body_statement,
+};
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use class_entries::*;

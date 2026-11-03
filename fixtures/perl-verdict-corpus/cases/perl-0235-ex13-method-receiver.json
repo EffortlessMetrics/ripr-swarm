@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex13-method-receiver.json",
-    "sha256": "f2b5ae3cdc93269bf204233c9318e38962adac60cdf87f8faf49445c5d2343e2",
+    "sha256": "508fc3c6d69486dde392d4af1bdb27675ad950c09792cba6b671f6565ffcc944",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-testmore-tier-far-from-boundary, then in oracles where {\"oracle_id\": \"oracle:t/qualified.t:is:130-198\"} set {\"observed_sink\": null}; in relations where {\"oracle_id\": \"oracle:t/qualified.t:is:130-198\"} set {\"relation_kind\": \"method_receiver\"}; the packet fingerprint was recomputed."
   },

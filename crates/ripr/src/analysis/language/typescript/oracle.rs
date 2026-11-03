@@ -550,8 +550,16 @@ pub(crate) fn collect_expect_assertions_in_statement(
         }
         Statement::ReturnStatement(return_stmt) => {
             if let Some(argument) = &return_stmt.argument {
-                if let Some(mut assertion) =
-                    assertion_from_expression_any(argument, source, &context.returning())
+                let returning = context.returning();
+                // A `.resolves` / `.rejects` matcher returned inside a callback
+                // whose value is discarded (`forEach`) is not runner-bound (#8933).
+                if !returning.returned_to_runner
+                    && !returning.expression_body
+                    && is_floating_promise_assertion(argument)
+                {
+                    collect_nested_callback_assertions(argument, false, source, context, out);
+                } else if let Some(mut assertion) =
+                    assertion_from_expression_any(argument, source, &returning)
                 {
                     attach_match_object_const(&mut assertion, argument, context);
                     out.push(assertion);
@@ -1760,7 +1768,7 @@ pub(crate) fn ava_assertion_from_expression(
             source,
         ),
         oracle_confidence,
-        rendered_call: None,
+        rendered_call: Some(format!("{receiver}.{method}(...)")),
         loose_number_expected: false,
         expected_object_const: None,
         compares_reference_identity: TypeScriptAssertion::ava_compares_reference_identity(method),
@@ -4132,6 +4140,7 @@ pub(crate) fn related_mock_payload_oracle(related: &[RelatedTest]) -> Option<Str
 /// and force a wrong actionable `mocked_module` signal on the finding. The
 /// `relation_index` MUST likewise be the same pre-filter, so the collector
 /// sees exactly the candidates pass 1 admitted (#10028).
+#[cfg(test)]
 pub(crate) fn collect_related_mock_paths(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
@@ -4140,15 +4149,26 @@ pub(crate) fn collect_related_mock_paths(
     alias_map: Option<&TsAliasMap>,
     relation_index: &RelationIndex,
 ) -> Vec<String> {
-    let mut paths: Vec<String> = Vec::new();
-    for candidate in related_test_candidates(
+    mock_paths_from_candidates(&related_test_candidates(
         owner,
         all_tests,
         workspace_root,
         reexport_index,
         alias_map,
         relation_index,
-    ) {
+    ))
+}
+
+/// The mock-path projection of an already computed candidate list: each
+/// candidate's `mocks_in_file` contributed once, in candidate order. Callers
+/// that hold the owner's candidates (`owner_line_context`) project them
+/// instead of recomputing the whole relation scan, which is deterministic for
+/// the same inputs.
+pub(crate) fn mock_paths_from_candidates(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    for candidate in candidates {
         for path in &candidate.test.mocks_in_file {
             if !paths.iter().any(|existing| existing == path) {
                 paths.push(path.clone());

@@ -241,7 +241,7 @@ esac
             .split_once("      - name: Recheck initially admitted eligibility\n")
             .ok_or("missing actual eligibility step")?;
         let (step, _) = job
-            .split_once("      - name: Read the extension e2e check for the admitted head\n")
+            .split_once("      - name: Require the extension e2e result for the admitted head\n")
             .ok_or("missing summary after eligibility")?;
         let eligibility_script = scratch.0.join("eligibility.sh");
         fs::write(&eligibility_script, result_shell(step)?).map_err(|e| e.to_string())?;
@@ -258,9 +258,9 @@ esac
         "ELIGIBILITY_RESULT".to_string(),
         eligibility_outcome.to_string(),
     );
-    // The extension e2e step (#12122) reads live check runs and runs only for
-    // an admitted merge-ready pull_request; its own verdict is exercised by
-    // repo-policy's docs_only_routing and the synthetic-JSON run on #12148.
+    // The extension e2e step (#12122, #12252) judges this run's own `needs`
+    // results and runs only for an admitted merge-ready pull_request; its
+    // verdict matrix is exercised by repo-policy's docs_only_routing.
     env.insert(
         "VSCODE_CHECK_RESULT".to_string(),
         if event == "pull_request" && eligibility_outcome != "skipped" {
@@ -422,6 +422,33 @@ fn hard_cut_refusal_of_admitted_candidate_names_the_cut_reason() -> Result<(), S
     assert!(
         !report.contains("candidate_current_unique_bounded —"),
         "result must not pair the success reason with the cut detail, got: {report}"
+    );
+    Ok(())
+}
+
+/// #11736 Proposal B v1: the result report carries the live ownership claims
+/// next to the competing PRs row, without failing an admitted qualification.
+#[test]
+fn live_ownership_claims_surface_in_the_result_report() -> Result<(), String> {
+    let claims = "root (@steven), updated 40m";
+    let (success, report) = run_result(
+        &workflow()?,
+        "pull_request",
+        "refs/pull/10/merge",
+        "success",
+        "admitted",
+        &[
+            ("ADMISSION_REASON", "candidate_current_unique_bounded"),
+            ("ADMISSION_CONCURRENT_CLAIMS", claims),
+        ],
+    )?;
+    assert!(
+        success,
+        "a live ownership claim annotates the run, it must not fail it: {report}"
+    );
+    assert!(
+        report.contains(&format!("- concurrent claims: `{claims}`")),
+        "result summary must carry the concurrent claims row next to competing PRs, got: {report}"
     );
     Ok(())
 }
@@ -1087,7 +1114,7 @@ fn succession_reads_are_pinned_read_only_gets_of_the_same_workflow_head_and_even
         .split_once("      - name: Recheck initially admitted eligibility\n")
         .ok_or("missing eligibility step")?;
     let (step, _) = job
-        .split_once("      - name: Read the extension e2e check for the admitted head\n")
+        .split_once("      - name: Require the extension e2e result for the admitted head\n")
         .ok_or("missing summary")?;
     for needle in [
         "gh api \"repos/$REPOSITORY/actions/runs/$GITHUB_RUN_ID\"",

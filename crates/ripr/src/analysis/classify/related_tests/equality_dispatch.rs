@@ -188,7 +188,7 @@ fn count_items(masked: &str, keywords: &[&str], name: &str) -> usize {
             let at = from + relative;
             from = at + needle.len();
             let before_ok = at == 0 || !is_ident_byte(bytes[at - 1]);
-            if before_ok && ident_boundary(bytes, at, at + needle.len()) {
+            if before_ok && ident_boundary(masked, at, at + needle.len()) {
                 count += 1;
             }
         }
@@ -399,12 +399,11 @@ pub(super) fn use_paths(masked: &str) -> Vec<&str> {
 /// `=>` before the next `;`, `{` or `}`; that over-refuses (a name used in an
 /// arm body before another arm) and only withholds the relation.
 fn rebound_by_pattern(before: &str, name: &str) -> bool {
-    let bytes = before.as_bytes();
     let mut from = 0usize;
     while let Some(relative) = before[from..].find(name) {
         let at = from + relative;
         from = at + name.len();
-        if !ident_boundary(bytes, at, at + name.len()) {
+        if !ident_boundary(before, at, at + name.len()) {
             continue;
         }
         if in_struct_pattern(before, at) || in_match_arm_pattern(before, at + name.len()) {
@@ -530,7 +529,6 @@ struct ComparisonMacro<'a> {
 
 /// Every `assert_eq!`/`assert_ne!` (and `debug_` twin) in the masked body.
 fn comparison_macros(masked: &str) -> Vec<ComparisonMacro<'_>> {
-    let bytes = masked.as_bytes();
     let mut found = Vec::new();
     for (name, negated) in [
         ("assert_eq!", false),
@@ -544,7 +542,7 @@ fn comparison_macros(masked: &str) -> Vec<ComparisonMacro<'_>> {
             search = start + name.len();
             // `debug_assert_eq!` contains no `assert_eq!` boundary hit, and
             // `my_assert_eq!` is another macro.
-            if !ident_boundary(bytes, start, start + name.len()) {
+            if !ident_boundary(masked, start, start + name.len()) {
                 continue;
             }
             let before = &masked[..start];

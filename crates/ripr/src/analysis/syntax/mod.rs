@@ -1,4 +1,5 @@
 mod adapter;
+mod bolero;
 mod constant_return;
 pub(crate) mod fn_signature;
 pub(crate) mod lexical;
@@ -11,9 +12,11 @@ mod mut_parameter;
 mod name_scope;
 mod nesting;
 mod owner_pin;
+mod parent_module_cfg_gate;
 mod passthrough_item_macros;
 mod pattern_pin;
 mod proptest;
+pub(crate) use bolero::bolero_profiles;
 pub(crate) use proptest::proptest_expansions;
 pub(crate) mod run_memo;
 mod source_snapshot;
@@ -38,7 +41,10 @@ pub(crate) use owner_pin::{
     standard_derive_names, supported_targeted_item_context, trusted_macro_binding_site_sets,
     trusted_macro_binding_sites, use_rebinds_crate_name,
 };
-pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
+pub(crate) use owner_pin::{
+    ClaimsMacroKind, claims_macro_names, claims_payload_variant, decimal_u8,
+    is_test_scoped_trusted_macro, literal_check_syntax, literal_owner_syntax,
+};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};
 pub(crate) mod ra;
 
@@ -59,12 +65,13 @@ pub(crate) use macro_scope::{
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
 pub(crate) use name_scope::{
     NameScope, NameScopes, UseBinding, fn_call_has_local_binding, function_type_param_names,
-    name_scope_for_file, name_scope_for_items, name_scopes_for_fn,
+    name_scope_for_file, name_scope_for_items, name_scopes_for_fn, use_item_bindings,
 };
 pub(crate) use nesting::{
-    block_comment_only_lines, non_code_token_end, parse_clean_source_file, rust_nesting_refusal,
-    string_literal_continuation_lines,
+    block_comment_only_lines, non_code_token_end, parse_clean_source_file,
+    parse_clean_source_file_memoized, rust_nesting_refusal, string_literal_continuation_lines,
 };
+pub(crate) use parent_module_cfg_gate::owner_gated_by_parent_mod_declarations;
 pub(crate) use ra::drop_in_assertion_leaf;
 pub(crate) use ra::parser_oracles_for_function;
 #[cfg(test)]

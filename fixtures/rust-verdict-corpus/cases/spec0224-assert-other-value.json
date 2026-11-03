@@ -1,0 +1,47 @@
+{
+  "case_id": "spec0224-assert-other-value",
+  "subject_id": "authored-spec0224-1-other-value",
+  "diff": "cases/spec0224-assert-other-value.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 24
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "match_arm_pattern",
+  "test_shape": "assert_other_value_while_reaching_exact_arm",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Some(&b'>') => (Op::Exact, &s[1..]),",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: parse(\"=1.2.3\") no longer takes the Exact arm and falls through to caret, but test_comparator_parse asserts matches!(other_status(), Ok(_)) and matches!(other_flag(), Ok(_)) and never observes the parse result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "test_comparator_parse calls parse(\"=1.2.3\"), so the Exact arm runs, then asserts matches!(other_status(), Ok(_)) and matches!(other_flag(), Ok(_)), two smoke oracles of other Results. Changing Some(&b'=') to Some(&b'>') therefore survives cargo test. Two assertions are required: a single family-relevant assertion always matches a MatchArm probe and would read observation_unconfirmed. That is the RIPR-SPEC-0224 example 1 miss: the related test is listed with assertion_not_observing because its admitted assertions observe another value. Distinct from spec0224-parse-exact-arm-unobserved, whose assert_to_string helper is family-relevant and reads observation_unconfirmed.",
+  "labeling_observation": {
+    "ripr_commit": "7a8d76e958",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0224#1"
+  ]
+}
