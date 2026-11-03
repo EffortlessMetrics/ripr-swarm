@@ -1697,10 +1697,10 @@ change.
 2. The call. Its arguments are plain decimal literals (optionally negated) and
    it is spelled exactly as the owner call: single-line or multi-line, bare, or
    followed by `.unwrap()` when the pin unwraps.
-3. Withhold. When both versions, run on those arguments, return `Ok(a)` or
-   `Some(a)` and the pin names the same wrapper with another integer, or take
-   an `Err(..)` or `None` exit that the pin names as `Ok(..)` or `Some(..)`,
-   the pin does not credit. This applies to `assert_eq!`, `matches!` and the
+3. Withhold. When both versions, run on those arguments, return a bare
+   integer `a`, `Ok(a)` or `Some(a)` and the pin names the same shape with
+   another integer, or take an `Err(..)` or `None` exit that the pin names as
+   `Ok(..)` or `Some(..)`, the pin does not credit. This applies to `assert_eq!`, `matches!` and the
    claims `assert_ok_eq!` / `assert_some_eq!` alike.
 4. Fail open to today's reading. A call or owner outside the subset, an
    `Err(..)` payload, a wrapper mismatch the compiler would reject and every

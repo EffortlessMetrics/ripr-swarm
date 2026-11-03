@@ -399,11 +399,12 @@ fn a_pinned_literal_neither_owner_version_returns_does_not_credit() -> Result<()
         ),
         option_case("g_some_odd", some, "assert_some_eq!(half(7), 3);", false),
         // Outside the closed subset: an expression argument is not read, so the
-        // reading is today's.
+        // reading is today's. 9 is neither version's value, so the row credits
+        // only while the expression stays unevaluated.
         result_case(
             "u_expression_argument",
             ok,
-            "assert_ok_eq!(checked_div(16 + 1, 5), 4);",
+            "assert_ok_eq!(checked_div(16 + 1, 5), 9);",
             true,
         ),
     ];
