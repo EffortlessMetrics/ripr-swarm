@@ -1582,8 +1582,7 @@ const CLAIMS_CRATES: &[&str] = &["claims"];
 /// The crates whose export under `name` is a drop-in for the trusted macro.
 fn drop_in_crates(name: &str) -> &'static [&'static str] {
     match name {
-        "assert_ok" | "assert_err" | "assert_some" | "assert_none" | "assert_ok_eq"
-        | "assert_some_eq" => CLAIMS_CRATES,
+        _ if is_claims_macro(name) => CLAIMS_CRATES,
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
@@ -1681,8 +1680,9 @@ pub(crate) fn source_imported_claims_macros(
         .filter_map(ast::UseTree::cast)
         .filter(|item| item.use_tree_list().is_none() && item.rename().is_none())
         .collect();
-    CLAIMS_MACRO_NAMES
+    CLAIMS_MACROS
         .into_iter()
+        .map(|(name, _)| name)
         .filter(|name| {
             uses.iter().any(|item| {
                 is_drop_in_assertion(item, name) && import_reaches_test(item, name, &test_fn)
@@ -1691,18 +1691,67 @@ pub(crate) fn source_imported_claims_macros(
         .collect()
 }
 
-/// The claims macros whose call yields the `Ok`/`Some` payload, as the
-/// payload route reads them. A subset of [`CLAIMS_MACRO_NAMES`].
-pub(crate) const CLAIMS_PAYLOAD_MACRO_NAMES: [&str; 2] = ["assert_ok", "assert_some"];
+/// How a claims macro reads its operand (RIPR-SPEC-0197).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClaimsMacroKind {
+    /// `assert_err!` / `assert_none!`: panics unless the operand has the
+    /// named variant; yields nothing a pin can read.
+    Variant,
+    /// `assert_ok!` / `assert_some!`: also yields the `Ok`/`Some` payload,
+    /// which the payload route reads.
+    Payload,
+    /// `assert_ok_eq!` / `assert_some_eq!`: compares the payload with an
+    /// expected operand (the payload-equality owner pin).
+    PayloadEq,
+}
 
-const CLAIMS_MACRO_NAMES: [&str; 6] = [
-    "assert_err",
-    "assert_none",
-    "assert_ok",
-    "assert_ok_eq",
-    "assert_some",
-    "assert_some_eq",
+/// The one table of claims macros. Macro-name knowledge lives here: a new
+/// claims macro is one row plus its entry in [`TRUSTED_MACRO_NAMES`] (a test
+/// holds the two together), and the import scan, the drop-in crate lookup, the
+/// payload route and the equality nomination all read this table (#12394).
+const CLAIMS_MACROS: [(&str, ClaimsMacroKind); 6] = [
+    ("assert_err", ClaimsMacroKind::Variant),
+    ("assert_none", ClaimsMacroKind::Variant),
+    ("assert_ok", ClaimsMacroKind::Payload),
+    ("assert_ok_eq", ClaimsMacroKind::PayloadEq),
+    ("assert_some", ClaimsMacroKind::Payload),
+    ("assert_some_eq", ClaimsMacroKind::PayloadEq),
 ];
+
+/// The claims macros of `kind`, in table order.
+pub(crate) fn claims_macro_names(kind: ClaimsMacroKind) -> impl Iterator<Item = &'static str> {
+    CLAIMS_MACROS
+        .into_iter()
+        .filter(move |(_, candidate)| *candidate == kind)
+        .map(|(name, _)| name)
+}
+
+/// The variant a claims `Payload` / `PayloadEq` macro requires and unwraps
+/// (`assert_ok!` / `assert_ok_eq!` read `Ok`, the `Some` pair read `Some`);
+/// `None` for the variant-only macros and for any other name. The opposite
+/// exit panics the macro before any comparison, so a pin reads only on this one.
+pub(crate) fn claims_payload_variant(name: &str) -> Option<&'static str> {
+    match name {
+        "assert_ok" | "assert_ok_eq" => Some("Ok"),
+        "assert_some" | "assert_some_eq" => Some("Some"),
+        _ => None,
+    }
+}
+
+/// Whether `name` is a claims macro of any kind.
+fn is_claims_macro(name: &str) -> bool {
+    CLAIMS_MACROS
+        .iter()
+        .any(|(candidate, _)| *candidate == name)
+}
+
+/// Trusted names whose trust is the test-side binding scan's alone (#6578): the
+/// claims macros and expect-test's `expect!` / `expect_file!`. Outside a test
+/// that verifies the matching import, a bare one is a crate's own and may hide
+/// a `return`.
+pub(crate) fn is_test_scoped_trusted_macro(name: &str) -> bool {
+    is_claims_macro(name) || matches!(name, "expect" | "expect_file")
+}
 
 /// The offset of the first non-blank character on source line `line`
 /// (1-based), or `None` when there is no such line.
@@ -6906,6 +6955,53 @@ mod skipping_table_tests {
     fn a_column_is_never_read_for_a_loop_that_skips_for_another_reason() {
         let extra = inline("if want.is_none() { continue; }");
         assert_eq!(skipping_table_column(&extra, "scheme", SOURCE), None);
+    }
+
+    /// #12394: macro-name knowledge is one table. Every claims macro is a
+    /// trusted name (the binding scan only sees trusted names), maps to the
+    /// `claims` crate for the verified-import lookup, and is test-scoped, so a
+    /// third claims macro cannot be added to some of the places and not others.
+    #[test]
+    fn every_claims_macro_is_trusted_test_scoped_and_dropped_in_from_claims() {
+        for (name, _) in CLAIMS_MACROS {
+            assert!(TRUSTED_MACRO_NAMES.contains(&name), "{name} is not trusted");
+            assert_eq!(drop_in_crates(name), CLAIMS_CRATES, "{name} drop-in crate");
+            assert!(
+                is_test_scoped_trusted_macro(name),
+                "{name} is not test-scoped"
+            );
+        }
+        let by_kind = |kind| claims_macro_names(kind).collect::<Vec<_>>();
+        assert_eq!(
+            by_kind(ClaimsMacroKind::Variant),
+            ["assert_err", "assert_none"]
+        );
+        assert_eq!(
+            by_kind(ClaimsMacroKind::Payload),
+            ["assert_ok", "assert_some"]
+        );
+        assert_eq!(
+            by_kind(ClaimsMacroKind::PayloadEq),
+            ["assert_ok_eq", "assert_some_eq"]
+        );
+        // The non-claims test-scoped names stay test-scoped, and an ordinary
+        // trusted macro does not become so.
+        assert!(is_test_scoped_trusted_macro("expect"));
+        assert!(is_test_scoped_trusted_macro("expect_file"));
+        assert!(!is_test_scoped_trusted_macro("assert_eq"));
+        assert!(!is_claims_macro("assert_eq"));
+        // The payload variant exists exactly for the kinds that unwrap one, and
+        // the owner-pin collectors list every equality macro.
+        for (name, kind) in CLAIMS_MACROS {
+            assert_eq!(
+                claims_payload_variant(name).is_some(),
+                kind != ClaimsMacroKind::Variant,
+                "{name} payload variant"
+            );
+        }
+        for name in claims_macro_names(ClaimsMacroKind::PayloadEq) {
+            assert!(ASSERTION_CANDIDATES.contains(&name), "{name} not collected");
+        }
     }
 
     #[test]
