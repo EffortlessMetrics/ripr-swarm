@@ -957,7 +957,10 @@ mod tests {
         assert!(!recovery_is_coherent(&both));
         let duplicate = entry(
             "x",
-            meta(&[CatalogRecoveryKind::Retry, CatalogRecoveryKind::Retry], None),
+            meta(
+                &[CatalogRecoveryKind::Retry, CatalogRecoveryKind::Retry],
+                None,
+            ),
         );
         assert!(!recovery_is_coherent(&duplicate));
         for catalogued in catalog() {
