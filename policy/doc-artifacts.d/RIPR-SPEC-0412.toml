@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0412"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0412-collection-push-contents-check-next-step.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #12456 aligns diff-side and hover guidance with the #11402 repair-route contents-check precondition."

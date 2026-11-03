@@ -3468,10 +3468,10 @@ unchanged and compose underneath (the budget counts already-capped payloads).
 ### `confidence_basis` and `confidence_why_capped` (additive, preview findings, #10700)
 
 The fields are reserved by the shared `Finding.confidence_basis` shape and are
-not populated by any adapter until the TypeScript/JavaScript classifier lands
-(#10700 part 2); until then no output carries them. Once populated,
-TypeScript/JavaScript preview findings carry a per-class constant `confidence`
-that is not on the same scale as Rust's. `confidence_basis` is a non-empty list
+populated by the TypeScript/JavaScript classifier (#10700 part 2) and the
+Python classifier (#12419). TypeScript/JavaScript and Python preview findings
+carry a per-class constant `confidence` that is not on the same scale as
+Rust's. `confidence_basis` is a non-empty list
 of `{code, summary}` objects naming why the score is capped (codes:
 `preview_stages_not_modeled`, `syntax_first_no_type_resolution`,
 `infection_not_established`, `propagation_not_established`, `no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
@@ -3659,6 +3659,12 @@ while `call_effect` remains the fallback for other observable calls.
 - `infection_evidence_unknown`
 - `propagation_evidence_unknown`
 - `static_probe_unknown`
+
+Reserved wire values (RIPR-SPEC-0411, #5514): `max_depth_reached`,
+`external_crate_boundary`, and `feature_unknown` stay valid JSON tokens with
+human glosses and next-step guidance, but no production classifier on current
+main pushes them onto a finding. A future spec slice must name the trigger
+before any emitter lands.
 
 `agent_card_refusal_kind` values:
 
@@ -19621,7 +19627,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.148",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.153",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20393,7 +20399,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.55",
+    "schema_version": "1.56",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -20406,7 +20412,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.148",
+      "schema_version": "1.153",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

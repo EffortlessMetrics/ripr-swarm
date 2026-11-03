@@ -847,3 +847,10 @@ reason = "Gate/ledger refusal-admission behavior; not an exposure-verdict exampl
 id = "RIPR-SPEC-0363"
 scope = "out"
 reason = "TypeScript per-file fact persistence; a cache-admission behavior, not an exposure-verdict example a typescript case labels"
+
+
+# StopReason emission contract
+[[spec]]
+id = "RIPR-SPEC-0411"
+scope = "out"
+reason = "documents which producers may emit each stop_reason wire value and reserves three unemitted tokens; no verdict a corpus case can label"

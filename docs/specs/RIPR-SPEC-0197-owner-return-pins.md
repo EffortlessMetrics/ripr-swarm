@@ -15,8 +15,8 @@ Linked plan:
 Linked issues:
 
 - #4478 (confirm a return value pinned by `assert_eq!` on the owner's own call)
-- #9478 (bounded typed function-pointer calls; iterator, macro and executor
-  credit remain separate work)
+- #9478 (bounded typed function-pointer calls and owner path values in
+  `.map`; macro and executor credit remain separate work)
 - #5027 (share bounded equality execution admission with ErrorPath and Predicate)
 - #5040 (typed async-harness execution provenance; explicit unsupported boundary)
 - #3727 (parser-backed call identity; this spec adds the owner's item
@@ -1678,6 +1678,34 @@ payload with `expected`, so each reads as the unwrapped pin above
 The import is read at file granularity, with the same accepted limitation as
 "Claims payload pins".
 
+### Pinned literal neither owner version returns (#12716)
+
+An owner-return pin compares the owner's call with a literal. A literal equal
+to the value the owner returned before the diff, or to the value it returns
+after, tells the versions apart: the test passes on one and fails on the other.
+A literal that neither version returns fails on both, so it cannot notice the
+change.
+
+1. Closed subset. The owner, before and after the changed line, is a bare-name
+   `fn` whose parameters are plain `ident: <one integer type>`, whose body is
+   only `if COND { return RET; }` guards and a tail, and whose integers are
+   decimal literals and parameters joined by `+ - * / %`, unary `-` and
+   parentheses, in `Ok(..)`, `Some(..)`, `Err(..)`, `None` or bare. Every
+   intermediate value is checked in the parameter type; an overflow or division
+   by zero is not evaluable. The old version is the owner with the changed line
+   replaced by the diff's old text; a diff with no old line is not evaluable.
+2. The call. Its arguments are plain decimal literals (optionally negated) and
+   it is spelled exactly as the owner call: single-line or multi-line, bare, or
+   followed by `.unwrap()` when the pin unwraps.
+3. Withhold. When both versions, run on those arguments, return a bare
+   integer `a`, `Ok(a)` or `Some(a)` and the pin names the same shape with
+   another integer, or take an `Err(..)` or `None` exit that the pin names as
+   `Ok(..)` or `Some(..)`, the pin does not credit. This applies to `assert_eq!`, `matches!` and the
+   claims `assert_ok_eq!` / `assert_some_eq!` alike.
+4. Fail open to today's reading. A call or owner outside the subset, an
+   `Err(..)` payload, a wrapper mismatch the compiler would reject and every
+   pin either version agrees with keep their current result.
+
 ### Bool-owner pins
 
 An owner whose signature declares `-> bool` has two values, so a bare
@@ -3150,6 +3178,28 @@ assertions. This repair shares the existing callback without that larger migrati
   verdict-corpus case
   `spec0231-oracle-helper-assert-json-eq`.
 
+### Bounded `.map(owner)` iterator chains (#9478 slice A)
+
+An `assert_eq!` whose one operand is a bounded iterator chain and whose other
+operand is a literal `Vec` is admitted as a call of the owner on the chain's
+first input when all of these hold: the chain's input is a literal integer
+sequence read through `.into_iter()`, `.iter()` or `.iter_mut()`; its adapter is
+one `.map(owner)` with a simple owner path, followed by `.collect::<Vec<_>>()`;
+the path resolves to the owner by the same owner-identity gates as a direct
+call (a qualified path must resolve through the shared call identity); the
+owner body folds each input to exactly the expected literal elements; and the
+changed behavior is visible at the first input (the representative call), so a
+change that is invisible there is refused even when a later input would show it
+(#12841). Unresolved,
+shadowed, foreign same-name, non-literal, closure, generic-adapter and
+non-matching chains are refused. The owner pin credits before the function-value
+limit (RIPR-SPEC-0240) is consulted, so the limit needs no bounded-chain
+exception. A refused chain that still names the owner as a value keeps that
+limit and reads `static_unknown`; a chain that does not name the owner as a
+value (a shadowing local binding, a foreign same-name function) is decided by the
+ordinary classification rules.
+Implementation: `substitute_owner_call`.
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/facts/test_helpers.rs` and
@@ -3158,9 +3208,15 @@ assertions. This repair shares the existing callback without that larger migrati
   `invoked_callback_params`, source-position ordering in `starts_after`).
 
 - `crates/ripr/src/analysis/extract/calls/function_alias.rs`: shared bounded
-  alias reader and `local_fn_pointer_call`; `extract/calls.rs` retains the
-  call-fact producer and its per-line budget. The scalar free-function pin
+  alias reader and `local_fn_pointer_call`; `extract/calls/path_value_map.rs`
+  adds synthetic owner calls for bounded `.map(owner)` chains; `extract/calls.rs`
+  retains the call-fact producer and its per-line budget. The scalar free-function pin
   resolves the returned path through its existing identity gates (#9478).
+
+- `crates/ripr/tests/owner_pin_execution/path_value.rs`:
+  `path_value_pins_only_the_observed_owner` (#9478 slice A) compares bare,
+  qualified, unresolved, shadowed, foreign same-name and blind `.map(owner)`
+  subjects through the public API.
 
 - `crates/ripr/src/analysis/syntax/ra.rs`: `function_item_fact` fills
   `FunctionFact.item`.

@@ -477,6 +477,39 @@ fn example_rows_pin_a_boundary_that_generated_inputs_cannot() -> Result<(), Stri
     Ok(())
 }
 
+const HYPOTHESIS_PHASE_IMPORTS: &str = "from hypothesis import Phase, example, given, settings\nfrom hypothesis import strategies as st\n\nfrom src.shop import passed";
+
+fn passed_class_with_phase_imports(body: &str) -> Result<ExposureClass, String> {
+    classify(
+        PASSED,
+        2,
+        PASSED_OLD,
+        &test_module(HYPOTHESIS_PHASE_IMPORTS, body),
+    )
+}
+
+#[test]
+fn explicit_examples_withheld_when_settings_disable_explicit_phase() -> Result<(), String> {
+    assert_eq!(
+        passed_class_with_phase_imports(
+            "@settings(phases=[Phase.generate])\n@given(st.integers(0, 100))\n@example(49)\n@example(50)\ndef test_passed(score):\n    assert passed(score) == (score >= 50)\n"
+        )?,
+        ExposureClass::StaticUnknown
+    );
+    Ok(())
+}
+
+#[test]
+fn explicit_examples_still_pin_boundary_when_explicit_phase_enabled() -> Result<(), String> {
+    assert_eq!(
+        passed_class_with_phase_imports(
+            "@settings(phases=[Phase.explicit, Phase.generate])\n@given(st.integers(0, 100))\n@example(49)\n@example(50)\ndef test_passed(score):\n    assert passed(score) == (score >= 50)\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
 #[test]
 fn a_given_test_without_assertions_reads_as_a_gap_not_a_limit() -> Result<(), String> {
     // `py-hypothesis-label-no-crash`: no oracle for the generated input to

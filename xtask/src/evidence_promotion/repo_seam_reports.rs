@@ -22,8 +22,9 @@ use super::{
     read_evidence_promotion_corpus, ripr_debug_binary, run,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const REGENERATION_TIMEOUT: Duration = Duration::from_mins(2);
@@ -234,6 +235,224 @@ pub(super) fn repo_seam_cases(
     regenerable
 }
 
+/// The producer's `raw_json_placeholder_v1` canonicalization: the digest is the
+/// sha256 of the file bytes with the stored `content_sha256` replaced by this
+/// placeholder.
+const CONTENT_DIGEST_CANONICALIZATION: &str = "raw_json_placeholder_v1";
+const CONTENT_DIGEST_PLACEHOLDER: &str =
+    "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Why one committed report's `artifact.content_sha256` cannot be trusted, or
+/// `None` when it verifies or the file makes no digest claim. A canonicalization
+/// this check does not know is a problem, not a pass: the digest is unknown.
+pub(super) fn report_digest_problem(label: &str, text: &str) -> Option<String> {
+    let Ok(report) = serde_json::from_str::<Value>(text) else {
+        return Some(format!(
+            "{label}: not JSON, so its digest cannot be checked"
+        ));
+    };
+    let artifact = report.get("artifact")?;
+    let stored = artifact.get("content_sha256").and_then(Value::as_str)?;
+    match artifact.get("canonicalization").and_then(Value::as_str) {
+        Some(CONTENT_DIGEST_CANONICALIZATION) => {}
+        other => {
+            return Some(format!(
+                "{label}: canonicalization {other:?} is not `{CONTENT_DIGEST_CANONICALIZATION}`, so its `content_sha256` is unknown (not verified)"
+            ));
+        }
+    }
+    let placeholder = text.replace(stored, CONTENT_DIGEST_PLACEHOLDER);
+    let actual = format!("sha256:{:x}", Sha256::digest(placeholder.as_bytes()));
+    (actual != stored).then(|| {
+        format!(
+            "{label}: `content_sha256` is {stored} but its bytes hash to {actual}; the file was edited after it was generated. Recapture it with `ripr check --mode draft --format repo-exposure-json` instead of editing it by hand"
+        )
+    })
+}
+
+/// A full `ripr check --format repo-exposure-json` capture, as opposed to a
+/// trimmed projection: it carries the producer's `artifact` block or the
+/// `source_subject.corpus` identity. Either marker alone makes the file a
+/// capture, so deleting just one of them still leaves the other to be judged.
+fn is_full_capture(report: &Value) -> bool {
+    report.get("artifact").is_some() || report.pointer("/source_subject/corpus").is_some()
+}
+
+/// Whether a full capture carries its producer `artifact.content_sha256`.
+fn carries_digest(report: &Value) -> bool {
+    report
+        .pointer("/artifact/content_sha256")
+        .and_then(Value::as_str)
+        .is_some_and(|digest| !digest.is_empty())
+}
+
+/// The reports the corpus names as intentionally unstamped, as
+/// `report path -> reason`. An entry without a report or a non-empty reason,
+/// or a duplicate, is itself a violation.
+fn read_digest_exemptions(
+    corpus: &Value,
+    violations: &mut Vec<String>,
+) -> BTreeMap<String, String> {
+    let mut exemptions = BTreeMap::new();
+    let Some(entries) = corpus
+        .get("report_digest_exemptions")
+        .and_then(Value::as_array)
+    else {
+        return exemptions;
+    };
+    for entry in entries {
+        let text = |field: &str| {
+            entry
+                .get(field)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("")
+        };
+        let (report, reason) = (text("report"), text("reason"));
+        if report.is_empty() || reason.is_empty() {
+            violations.push(format!(
+                "report_digest_exemptions entry `{report}`: needs `report` and a non-empty `reason` saying why this capture carries no `content_sha256` (#12745)"
+            ));
+            continue;
+        }
+        if exemptions
+            .insert(report.to_string(), reason.to_string())
+            .is_some()
+        {
+            violations.push(format!(
+                "report_digest_exemptions: `{report}` is listed twice (#12745)"
+            ));
+        }
+    }
+    exemptions
+}
+
+/// Fail closed on a full capture with no `artifact.content_sha256`, unless the
+/// corpus lists it in `report_digest_exemptions`. An exemption is judged too:
+/// it must name a capture that really is unstamped, so deleting the digest
+/// cannot hide behind an exemption written for another reason and an exemption
+/// cannot outlive the need for it (#12745).
+fn stamp_problems(
+    reports: &[(String, Value)],
+    exemptions: &BTreeMap<String, String>,
+    violations: &mut Vec<String>,
+) {
+    let mut used = Vec::new();
+    for (label, report) in reports {
+        if !is_full_capture(report) {
+            continue;
+        }
+        let exempt = exemptions.contains_key(label);
+        if exempt {
+            used.push(label.as_str());
+        }
+        match (carries_digest(report), exempt) {
+            (false, false) => violations.push(format!(
+                "{label}: a committed capture carries no `artifact.content_sha256`, so edits to it cannot be detected. Recapture it with `ripr check --mode draft --format repo-exposure-json`, or list it in `report_digest_exemptions` with a reason (#12745)"
+            )),
+            (true, true) => violations.push(format!(
+                "report_digest_exemptions: `{label}` carries a `content_sha256`; remove the exemption (#12745)"
+            )),
+            _ => {}
+        }
+    }
+    for report in exemptions.keys() {
+        if !used.contains(&report.as_str()) {
+            violations.push(format!(
+                "report_digest_exemptions: `{report}` names no committed capture; remove the exemption (#12745)"
+            ));
+        }
+    }
+}
+
+/// The reports the corpus requires to stay stamped, whatever markers the file
+/// still carries. Content alone cannot tell a stamped capture that lost both
+/// `artifact` and `source_subject.corpus` from a trimmed projection, so the
+/// ones that carry a digest today are listed (#12816). An entry that names no
+/// committed report, or a report without a digest, is a violation.
+fn required_digest_problems(
+    corpus: &Value,
+    reports: &[(String, Value)],
+    violations: &mut Vec<String>,
+) {
+    let Some(entries) = corpus
+        .get("report_digest_required")
+        .and_then(Value::as_array)
+    else {
+        violations.push(
+            "report_digest_required: the corpus must carry this key as an array of report paths; without it the stamped captures are unguarded (#12816)"
+                .to_string(),
+        );
+        return;
+    };
+    let mut listed = Vec::new();
+    for entry in entries {
+        let Some(path) = entry
+            .as_str()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        else {
+            violations.push(
+                "report_digest_required: every entry must be a non-empty report path (#12816)"
+                    .to_string(),
+            );
+            continue;
+        };
+        match reports.iter().find(|(label, _)| label == path) {
+            None => violations.push(format!(
+                "report_digest_required: `{path}` names no committed report; remove the entry (#12816)"
+            )),
+            Some((_, report)) if !carries_digest(report) => violations.push(format!(
+                "{path}: the corpus requires this capture to carry `artifact.content_sha256`, but it has none (the field or its `artifact` block was removed). Recapture it with `ripr check --mode draft --format repo-exposure-json` (#12816)"
+            )),
+            Some(_) => {}
+        }
+        listed.push(path);
+    }
+    // The list is a rule, not a snapshot: a stamped capture added later must
+    // join it, or deleting its markers would pass unnoticed.
+    for (label, report) in reports {
+        if carries_digest(report) && !listed.contains(&label.as_str()) {
+            violations.push(format!(
+                "{label}: this capture carries `artifact.content_sha256` but is not in `report_digest_required`; add it so a later edit cannot strip its markers (#12816)"
+            ));
+        }
+    }
+}
+
+/// Verify the self-digest of every committed report in the corpus (#12602).
+/// The regeneration guard above judges seams only and ignores the producer
+/// stamps, so a hand edit of a stamp left the digest stale with every gate green.
+pub(super) fn check_report_digests(violations: &mut Vec<String>) -> Result<(), String> {
+    let reports = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS)
+        .parent()
+        .map_or_else(|| PathBuf::from("reports"), |dir| dir.join("reports"));
+    let Ok(entries) = std::fs::read_dir(&reports) else {
+        return Ok(());
+    };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    files.sort();
+    let mut parsed = Vec::new();
+    for path in files {
+        let label = normalize_path(&path);
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {label}: {error}"))?;
+        violations.extend(report_digest_problem(&label, &text));
+        if let Ok(report) = serde_json::from_str::<Value>(&text) {
+            parsed.push((label, report));
+        }
+    }
+    let corpus = read_evidence_promotion_corpus(Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS))?;
+    let exemptions = read_digest_exemptions(&corpus, violations);
+    stamp_problems(&parsed, &exemptions, violations);
+    required_digest_problems(&corpus, &parsed, violations);
+    Ok(())
+}
+
 fn regenerate(subject: &Path, binary: &Path) -> Result<Value, String> {
     let mut args = vec!["check".to_string()];
     for arg in REGENERATION_ARGS {
@@ -332,6 +551,165 @@ mod tests {
                 ]
             }]
         })
+    }
+
+    /// A report whose `content_sha256` is computed the producer's way.
+    fn sealed_report(extra_stamp: &str) -> String {
+        let template = format!(
+            "{{\n  \"artifact\": {{\"canonicalization\": \"raw_json_placeholder_v1\", \"content_sha256\": \"{CONTENT_DIGEST_PLACEHOLDER}\"}},\n  \"stamp\": \"{extra_stamp}\"\n}}\n"
+        );
+        let digest = format!("sha256:{:x}", Sha256::digest(template.as_bytes()));
+        template.replace(CONTENT_DIGEST_PLACEHOLDER, &digest)
+    }
+
+    #[test]
+    fn a_sealed_report_verifies_and_a_hand_edit_of_a_stamp_does_not() {
+        let sealed = sealed_report("1.138");
+        assert_eq!(report_digest_problem("r.json", &sealed), None);
+        // The #12368 failure: a producer stamp changed, the digest left alone.
+        let edited = sealed.replace("1.138", "1.139");
+        let problem = report_digest_problem("r.json", &edited);
+        assert!(
+            problem
+                .as_deref()
+                .is_some_and(|text| text.contains("edited after it was generated")),
+            "{problem:?}"
+        );
+        // Restoring the stamp restores the pass.
+        assert_eq!(
+            report_digest_problem("r.json", &edited.replace("1.139", "1.138")),
+            None
+        );
+    }
+
+    #[test]
+    fn an_unknown_canonicalization_or_non_json_report_is_not_a_pass() {
+        let other =
+            r#"{"artifact": {"canonicalization": "other_v2", "content_sha256": "sha256:ab"}}"#;
+        let problem = report_digest_problem("r.json", other);
+        assert!(
+            problem
+                .as_deref()
+                .is_some_and(|text| text.contains("unknown")),
+            "{problem:?}"
+        );
+        assert!(report_digest_problem("r.json", "not json").is_some());
+        // No digest claim, no problem: such a file asserts nothing to verify.
+        assert_eq!(report_digest_problem("r.json", r#"{"seams": []}"#), None);
+        assert_eq!(
+            report_digest_problem("r.json", r#"{"artifact": {"generated_at": "unix_ms:1"}}"#),
+            None
+        );
+    }
+
+    fn capture(stamped: bool) -> Value {
+        if stamped {
+            json!({"artifact": {"content_sha256": "sha256:ab"}, "source_subject": {"corpus": {}}})
+        } else {
+            json!({"artifact": {"generated_at": "unix_ms:1"}, "source_subject": {"corpus": {}}})
+        }
+    }
+
+    fn stamp_violations(reports: &[(&str, Value)], exempt: &[&str]) -> Vec<String> {
+        let reports: Vec<(String, Value)> = reports
+            .iter()
+            .map(|(label, report)| ((*label).to_string(), report.clone()))
+            .collect();
+        let exemptions: BTreeMap<String, String> = exempt
+            .iter()
+            .map(|label| ((*label).to_string(), "pre-stamp capture".to_string()))
+            .collect();
+        let mut violations = Vec::new();
+        stamp_problems(&reports, &exemptions, &mut violations);
+        violations
+    }
+
+    #[test]
+    fn deleting_the_digest_from_a_capture_fails_unless_it_is_exempt() {
+        // The #12745 evasion: the field is removed, the file still reads as a capture.
+        let deleted = stamp_violations(&[("a.json", capture(false))], &[]);
+        assert!(
+            deleted.len() == 1
+                && deleted[0].contains("a.json")
+                && deleted[0].contains("content_sha256"),
+            "{deleted:?}"
+        );
+        // Removing the `artifact` block too leaves the corpus identity to judge.
+        let no_artifact = json!({"source_subject": {"corpus": {}}});
+        assert_eq!(stamp_violations(&[("b.json", no_artifact)], &[]).len(), 1);
+        // A stamped capture, an exempt unstamped one and a trimmed projection pass.
+        assert!(stamp_violations(&[("c.json", capture(true))], &[]).is_empty());
+        assert!(stamp_violations(&[("d.json", capture(false))], &["d.json"]).is_empty());
+        let projection = json!({"scope": {}, "seams": []});
+        assert!(stamp_violations(&[("e.json", projection)], &[]).is_empty());
+    }
+
+    #[test]
+    fn a_required_capture_cannot_lose_every_marker() {
+        let corpus = json!({"report_digest_required": ["a.json", "gone.json", ""]});
+        let stripped = json!({"scope": {}, "seams": []});
+        let reports = vec![("a.json".to_string(), stripped)];
+        let mut violations = Vec::new();
+        required_digest_problems(&corpus, &reports, &mut violations);
+        assert_eq!(violations.len(), 3, "{violations:?}");
+        // A missing key or a non-array value disables nothing silently.
+        for bad in [json!({}), json!({"report_digest_required": {}})] {
+            let mut missing = Vec::new();
+            required_digest_problems(&bad, &[], &mut missing);
+            assert_eq!(missing.len(), 1, "{missing:?}");
+        }
+        // A stamped capture left off the list is a violation.
+        let unlisted = vec![("new.json".to_string(), capture(true))];
+        let mut off_list = Vec::new();
+        required_digest_problems(
+            &json!({"report_digest_required": []}),
+            &unlisted,
+            &mut off_list,
+        );
+        assert!(
+            off_list.len() == 1 && off_list[0].contains("not in `report_digest_required`"),
+            "{off_list:?}"
+        );
+        // The same report with its digest passes.
+        let stamped = vec![("a.json".to_string(), capture(true))];
+        let mut clean = Vec::new();
+        required_digest_problems(
+            &json!({"report_digest_required": ["a.json"]}),
+            &stamped,
+            &mut clean,
+        );
+        assert!(clean.is_empty(), "{clean:?}");
+    }
+
+    #[test]
+    fn a_stale_exemption_fails() {
+        let stamped = stamp_violations(&[("a.json", capture(true))], &["a.json"]);
+        assert!(
+            stamped
+                .iter()
+                .any(|text| text.contains("remove the exemption")),
+            "{stamped:?}"
+        );
+        let missing = stamp_violations(&[], &["gone.json"]);
+        assert!(
+            missing
+                .iter()
+                .any(|text| text.contains("names no committed capture")),
+            "{missing:?}"
+        );
+    }
+
+    #[test]
+    fn a_malformed_exemption_entry_is_a_violation() {
+        let corpus = json!({"report_digest_exemptions": [
+            {"report": "a.json", "reason": "  "},
+            {"report": "b.json", "reason": "why"},
+            {"report": "b.json", "reason": "again"},
+        ]});
+        let mut violations = Vec::new();
+        let read = read_digest_exemptions(&corpus, &mut violations);
+        assert_eq!(read.len(), 1);
+        assert_eq!(violations.len(), 2, "{violations:?}");
     }
 
     #[test]
