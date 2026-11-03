@@ -225,12 +225,8 @@ fn live_read_merges_pages_and_fails_closed_on_gh_error() -> Result<(), String> {
     expect_outcome(&run(two_pages)?, false, "changes requested on page one")?;
     // An API error after a valid page must not admit.
     let failing = format!("#!/bin/sh\nprintf '%s\\n' '{page2}'\nexit 1\n");
-    let output = run(failing)?;
-    let result = if output.status.success() {
-        Err("gh failure was admitted".to_string())
-    } else {
-        Ok(())
-    };
+    let output = run(failing);
+    let result = output.and_then(|o| expect_outcome(&o, false, "gh failure after a valid page"));
     let _ = std::fs::remove_dir_all(&dir);
     result
 }

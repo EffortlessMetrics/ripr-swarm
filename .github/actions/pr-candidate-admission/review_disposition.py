@@ -164,6 +164,7 @@ def fetch_reviews(repository: str, pr_number: str) -> list[dict[str, Any]]:
         check=True,
         capture_output=True,
         text=True,
+        timeout=120,
     ).stdout
     return parse_paginated(out)
 
@@ -323,7 +324,14 @@ def main() -> int:
             "--head plus --check-reviews or --repository/--pr are required unless --self-test is set"
         )
     if live:
-        reviews = fetch_reviews(args.repository, args.pr)
+        try:
+            reviews = fetch_reviews(args.repository, args.pr)
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+            print(
+                f"::error::source review attestation refused: could not read reviews: {exc}",
+                file=sys.stderr,
+            )
+            return 1
     else:
         reviews = parse_paginated(args.check_reviews.read())
     if not reviews_allow_source_attestation(reviews, head=args.head, author=args.author):
