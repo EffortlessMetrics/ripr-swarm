@@ -80,11 +80,12 @@ use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::ra::LineIndex;
 use crate::analysis::syntax::{
-    AssertionContextRefusal, CLAIMS_PAYLOAD_MACRO_NAMES, GeneratedTestPins, HelperLoan,
-    ItemNesting, MacroBindingCandidates, MacroBindingKind, MacroBindingSite, OwnerPinAssertions,
-    PatternPins, RootShadow, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
-    cfg_if_module_name, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
-    err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
+    AssertionContextRefusal, ClaimsMacroKind, GeneratedTestPins, HelperLoan, ItemNesting,
+    MacroBindingCandidates, MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins,
+    RootShadow, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, cfg_if_module_name,
+    claims_macro_names, claims_payload_variant, drop_in_assertion_leaf,
+    empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
+    is_test_scoped_trusted_macro, local_empty_macro_names, macro_binding_scan,
     owner_pin_assertions, owner_pin_matches_assertions, parse_clean_source_file, pattern_pins,
     qualified_matches_paths, returns_leave_the_function, source_binds_value_name,
     source_declares_value_name, source_imported_claims_macros, trusted_macro_binding_site_sets,
@@ -5209,7 +5210,7 @@ impl OwnerReturnPin {
         imports_foreign: ForeignImport<'_>,
         syntax: &OwnerPinSyntax,
     ) -> bool {
-        CLAIMS_EQ_MACROS.into_iter().any(|name| {
+        claims_eq_macros().any(|name| {
             assertion.text.contains(name)
                 && claims_eq_operands(&assertion.text, name).is_some()
                 && self.admits_spelled(test, assertion, index, imports_foreign, syntax, name)
@@ -5314,7 +5315,7 @@ impl OwnerReturnPin {
         // literal)` is its own reading, never the `assert_eq!` ones below. Its
         // operands are read once here; a shape that is not exactly one plain
         // two-operand invocation refuses (fail closed).
-        let claims_eq = matches!(spelling, "assert_ok_eq" | "assert_some_eq");
+        let claims_eq = claims_eq_macros().any(|name| name == spelling);
         let claims_operands = if claims_eq {
             match claims_eq_operands(&assertion.text, spelling) {
                 Some(operands) if !is_guard => Some(operands),
@@ -5419,10 +5420,8 @@ impl OwnerReturnPin {
             // test's own file (a doc example is its own crate).
             // The opposite exit panics the macro before any comparison, so
             // only a pin on the macro's own variant reads.
-            let direction = matches!(
-                (spelling, unwrap_wrapper),
-                ("assert_ok_eq", Some("Ok")) | ("assert_some_eq", Some("Some"))
-            );
+            let direction = claims_payload_variant(spelling)
+                .is_some_and(|variant| unwrap_wrapper == Some(variant));
             // Only a literal expected operand is a discriminator. The cheap
             // refusals come first: the import check parses the whole file.
             if !direction
@@ -5644,11 +5643,8 @@ impl OwnerReturnPin {
                                         // the payload, so only a pin on that same payload
                                         // reads: an `Err` pin (`ErrVariant`, or a field
                                         // gate wrapped in `Err`) is the opposite direction.
-                                        let direction = matches!(
-                                            (name, unwrap_wrapper),
-                                            ("assert_ok", Some("Ok"))
-                                                | ("assert_some", Some("Some"))
-                                        );
+                                        let direction = claims_payload_variant(name)
+                                            .is_some_and(|variant| unwrap_wrapper == Some(variant));
                                         (direction && imported)
                                             .then(|| {
                                                 self.awaited_call_shape(
@@ -7635,15 +7631,15 @@ fn bound_owner_initializer<'a>(
 
 /// The claims macros that compare an `Ok`/`Some` payload with an expected
 /// operand (RIPR-SPEC-0197 claims payload equality pins).
-const CLAIMS_EQ_MACROS: [&str; 2] = ["assert_ok_eq", "assert_some_eq"];
+fn claims_eq_macros() -> impl Iterator<Item = &'static str> {
+    claims_macro_names(ClaimsMacroKind::PayloadEq)
+}
 
 /// Whether `text` is exactly one plain `assert_ok_eq!(..)` /
 /// `assert_some_eq!(..)` statement. Text only nominates a candidate; the
 /// owner pin's verified-import decision grades it.
 pub(in crate::analysis) fn is_claims_payload_eq_text(text: &str) -> bool {
-    CLAIMS_EQ_MACROS
-        .into_iter()
-        .any(|name| claims_eq_operands(text, name).is_some())
+    claims_eq_macros().any(|name| claims_eq_operands(text, name).is_some())
 }
 
 /// Plain `assert_ok_eq!(..)` / `assert_some_eq!(..)` statements of `test`
@@ -7654,7 +7650,7 @@ pub(in crate::analysis) fn is_claims_payload_eq_text(text: &str) -> bool {
 /// its matching `)`; anything else on the closing line besides the `;` and a
 /// comment (a second statement, a chained call) is not nominated (fail closed).
 pub(in crate::analysis) fn claims_payload_eq_candidates(test: &TestSummary) -> Vec<OracleFact> {
-    if !CLAIMS_EQ_MACROS.iter().any(|name| test.body.contains(name)) {
+    if !claims_eq_macros().any(|name| test.body.contains(name)) {
         return Vec::new();
     }
     let masked_body = mask_comments_and_strings(&test.body);
@@ -7712,7 +7708,7 @@ pub(in crate::analysis) fn claims_payload_eq_candidates(test: &TestSummary) -> V
 /// own line (the single-line path reads it), is not a claims equality macro,
 /// or shares its closing line with anything but a `;` and a comment.
 fn multiline_claims_eq_text(body: &str, masked: &str, start: usize) -> Option<String> {
-    let name = CLAIMS_EQ_MACROS.into_iter().find(|name| {
+    let name = claims_eq_macros().find(|name| {
         masked
             .get(start..)
             .is_some_and(|rest| rest.starts_with(name))
@@ -7785,9 +7781,8 @@ fn claims_eq_operands<'a>(text: &'a str, spelling: &str) -> Option<[&'a str; 2]>
 fn claims_payload_call(operand: &str) -> Option<(&'static str, &str)> {
     let operand = operand.trim();
     let masked = mask_comments_and_strings(operand);
-    let name = CLAIMS_PAYLOAD_MACRO_NAMES
-        .into_iter()
-        .find(|name| masked.starts_with(name))?;
+    let name =
+        claims_macro_names(ClaimsMacroKind::Payload).find(|name| masked.starts_with(name))?;
     let after_bang = masked[name.len()..]
         .trim_start()
         .strip_prefix('!')?
@@ -8537,26 +8532,10 @@ fn assertion_context_macros() -> Vec<&'static str> {
         .collect()
 }
 
-/// Trusted names whose trust is the test-side binding scan's alone (#6578).
-/// `expect!` and `expect_file!` are no `std` macros: outside a test that
-/// verifies `use expect_test::{expect, expect_file};`, a bare one is a
-/// crate's own (a try-style `expect!(x)` may hide a `return`), so owner
-/// bodies and binding reads never count it as bounded.
-const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &[
-    "assert_err",
-    "assert_none",
-    "assert_ok",
-    "assert_ok_eq",
-    "assert_some",
-    "assert_some_eq",
-    "expect",
-    "expect_file",
-];
-
 /// Whether a macro named `name` neither returns nor binds a name, whatever
 /// file it sits in.
 fn is_bounded_macro(name: &str) -> bool {
-    NON_RETURNING_MACROS.contains(&name) && !TEST_SCOPED_TRUSTED_MACROS.contains(&name)
+    NON_RETURNING_MACROS.contains(&name) && !is_test_scoped_trusted_macro(name)
 }
 
 fn has_unbounded_macro(masked: &str) -> bool {
