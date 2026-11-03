@@ -784,7 +784,7 @@ fn unanchored_gate_refuses_while_the_plain_walk_retains_and_explicit_root_skips(
     let mut retained = PathBuf::from(".");
     resolve_implicit_command_root(&mut retained, false)
         .map_err(|error| format!("the plain walk must keep retain-start: {error}"))?;
-    if retained != PathBuf::from(".") {
+    if retained != Path::new(".") {
         return Err(format!(
             "retain-start keeps the root, got {}",
             retained.display()
@@ -795,7 +795,7 @@ fn unanchored_gate_refuses_while_the_plain_walk_retains_and_explicit_root_skips(
     let mut explicit = PathBuf::from(".");
     resolve_implicit_command_root_refusing(&mut explicit, true)
         .map_err(|error| format!("an explicit --root must skip the gate: {error}"))?;
-    if explicit != PathBuf::from(".") {
+    if explicit != Path::new(".") {
         return Err(format!(
             "an explicit root is kept as typed, got {}",
             explicit.display()
