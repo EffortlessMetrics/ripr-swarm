@@ -181,7 +181,8 @@ fn kani_availability_probe_refuses_nonzero_signal_and_missing_tool() -> Result<(
                 "untrusted version stdout must not become report claims"
             );
             assert!(
-                observed.report.contains("failed with") || observed.report.contains("failed to run"),
+                observed.report.contains("failed with")
+                    || observed.report.contains("failed to run"),
                 "{mode}: {}",
                 observed.report
             );
