@@ -41,6 +41,7 @@ Weakness
 Next step
   Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bound-exact-wrong --diff fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bound-exact-wrong/diff.patch --mode fast probe:src_lib.rs:return_value:c7c856d1
   ripr context --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bound-exact-wrong --diff fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bound-exact-wrong/diff.patch --mode fast --at probe:src_lib.rs:return_value:c7c856d1
 

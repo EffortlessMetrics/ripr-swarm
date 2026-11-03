@@ -42,6 +42,7 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_macro_table_arrow_local_shadow/input --diff <cwd>/fixtures/rust_macro_table_arrow_local_shadow/diff.patch --mode fast probe:src_lib.rs:predicate:ea84cf5e
   ripr context --root <cwd>/fixtures/rust_macro_table_arrow_local_shadow/input --diff <cwd>/fixtures/rust_macro_table_arrow_local_shadow/diff.patch --mode fast --at probe:src_lib.rs:predicate:ea84cf5e
 
@@ -66,6 +67,7 @@ Evidence
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_macro_table_arrow_local_shadow/input --diff <cwd>/fixtures/rust_macro_table_arrow_local_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:55d9454d
   ripr context --root <cwd>/fixtures/rust_macro_table_arrow_local_shadow/input --diff <cwd>/fixtures/rust_macro_table_arrow_local_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:55d9454d
 

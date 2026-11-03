@@ -11,6 +11,7 @@ pub mod diagnostic_budget;
 mod diagnostic_catalog;
 mod diagnostics;
 mod dollar_requests;
+mod fix_instruction_authority;
 mod gap_artifacts;
 mod git_inputs;
 mod hover;
@@ -36,6 +37,7 @@ mod state;
 mod tests;
 mod transport_bounds;
 mod uri;
+mod workspace_folder_bounds;
 
 use backend::Backend;
 pub use diagnostics::{DiagnosticBatch, workspace_diagnostic_batches};
