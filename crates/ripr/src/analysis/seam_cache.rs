@@ -666,11 +666,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.152`: an exact pin of a one-field integer tuple struct's `.0` (or through
 /// a tuple-constructor receiver, under an imported std operator trait) now
 /// credits the changed `T(e)` tail (#12796).
-/// `1.153`: an exact error-variant pin on a returned-value seam it cannot see is
+/// `1.153`: a bounded `.map(owner)` iterator chain with a resolved owner path and
+/// matching literal `Vec` expectation credits through the owner-return pin (#9478).
+/// `1.154`: an exact error-variant pin on a returned-value seam it cannot see is
 /// one fact in every view: the discriminate stage skips it like the related-test
 /// record, which names it a different-arm pin and is not offered to imitate
 /// (#12733, #12734).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.153";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.154";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -864,8 +866,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.153";
 /// `0.152`: same neither-version literal refusal as full `1.150` (#12716).
 /// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).
-/// `0.155`: same different-arm error-pin rule as full `1.153` (#12733, #12734).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.155";
+/// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
+/// `0.156`: same different-arm error-pin rule as full `1.154` (#12733, #12734).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.156";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1061,8 +1064,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.155";
 /// `0.152`: same neither-version literal refusal as full `1.150` (#12716).
 /// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).
-/// `0.155`: same different-arm error-pin rule as full `1.153` (#12733, #12734).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.155";
+/// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
+/// `0.156`: same different-arm error-pin rule as full `1.154` (#12733, #12734).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.156";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1269,7 +1273,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// stored binding candidates may name them (#12304); `1.53` facts cannot.
 /// `1.55`: an assertion whose `Err(..)` constructor feeds a value-supplying
 /// adapter is a weak relation, not an exact oracle fact of any kind (#12610).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.55";
+/// `1.56`: bounded `.map(owner)` iterator chains emit synthetic owner call
+/// facts for reach (#9478); `1.55` facts lack them.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.56";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5788,7 +5794,8 @@ mod tests {
         // 1.47 -> 1.48: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.48 -> 1.49: call-in-term accumulator probe (RIPR-SPEC-0360, #9478).
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.55");
+        // 1.55 -> 1.56: path-value `.map(owner)` synthetic call facts (#9478).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.56");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5969,8 +5976,9 @@ mod tests {
         // 1.149 -> 1.150: a pinned literal neither owner version returns does not credit (#12716).
         // 1.150 -> 1.151: renamed assertion-macro imports name the macro limit (#12779).
         // 1.151 -> 1.152: a tuple `.0` pin credits the changed `T(e)` tail (#12796).
-        // 1.152 -> 1.153: different-arm error pin is one fact in every view (#12733, #12734).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.153");
+        // 1.152 -> 1.153: bounded `.map(owner)` chains credit via the owner pin (#9478).
+        // 1.153 -> 1.154: different-arm error pin is one fact in every view (#12733, #12734).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.154");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -6104,9 +6112,10 @@ mod tests {
         // 0.151 -> 0.152: same neither-version literal refusal as full 1.150 (#12716).
         // 0.152 -> 0.153: same renamed-assertion-import limit as full 1.151 (#12779).
         // 0.153 -> 0.154: same tuple-projection pin as full 1.152 (#12796).
-        // 0.154 -> 0.155: same different-arm error-pin rule as full 1.152 (#12733, #12734).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.155");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.155");
+        // 0.154 -> 0.155: same path-value crediting as full 1.153 (#9478).
+        // 0.155 -> 0.156: same different-arm error-pin rule as full 1.152 (#12733, #12734).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.156");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.156");
     }
 
     #[test]

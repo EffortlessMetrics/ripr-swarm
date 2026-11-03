@@ -1029,6 +1029,11 @@ fn fold_owner_call(owner: &FunctionSummary, arguments: &[i128]) -> Option<i128> 
     fold_function_text(owner.body.as_str(), arguments)
 }
 
+/// Fold a single-argument owner body at one integer input (#9478 path-value pin).
+pub(in crate::analysis) fn fold_owner_body_at(body: &str, argument: i128) -> Option<i128> {
+    fold_function_text(body, &[argument])
+}
+
 /// [`fold_owner_call`] over the function's source text, so a baseline body
 /// can be folded beside the current one.
 fn fold_function_text(body: &str, arguments: &[i128]) -> Option<i128> {
