@@ -346,20 +346,105 @@ fn claims_payload_equality_grades_only_the_return_value_family() -> Result<(), S
     let outcome = run(&root_dir, &none_exit, "predicate")?;
     assert_ne!(outcome.class, "exposed", "predicate: {}", outcome.class);
     assert_eq!(outcome.oracle.0, "unknown", "predicate oracle");
-    // A multi-line invocation is not nominated (fail closed).
-    let multi = Case {
-        name: "multi_line_invocation",
-        owner: RESULT_OWNER,
-        diff: RESULT_DIFF,
-        owner_extra: "",
-        imports: import,
-        body: "assert_ok_eq!(\n    checked_div(17, 5),\n    3\n);",
-        dependency: CLAIMS_DEP,
-        credited: false,
-    };
-    let outcome = run(&root_dir, &multi, "return_value")?;
-    assert_ne!(outcome.class, "exposed", "multi-line: {}", outcome.class);
-    assert_eq!(outcome.oracle.0, "unknown", "multi-line oracle");
+    // A multi-line invocation is read through its matching `)` (#12394): the
+    // same gates apply, so it credits exactly as its single-line twin does.
+    // Anything else on the closing line keeps it unknown (fail closed).
+    for (name, case_body, credited) in [
+        (
+            "multi_line_invocation",
+            "assert_ok_eq!(\n    checked_div(17, 5),\n    3\n);",
+            true,
+        ),
+        (
+            "multi_line_trailing_comma",
+            "assert_ok_eq!(\n    checked_div(17, 5),\n    3,\n);",
+            true,
+        ),
+        (
+            "multi_line_trailing_comment",
+            "assert_ok_eq!(\n    checked_div(17, 5),\n    3\n); // pins the quotient",
+            true,
+        ),
+        (
+            "multi_line_owner_second",
+            "assert_ok_eq!(\n    3,\n    checked_div(17, 5)\n);",
+            false,
+        ),
+        (
+            "multi_line_non_literal_expected",
+            "let want = 3;\nassert_ok_eq!(\n    checked_div(17, 5),\n    want\n);",
+            false,
+        ),
+        (
+            "multi_line_shares_closing_line",
+            "assert_ok_eq!(\n    checked_div(17, 5),\n    3\n); assert_eq!(1, 1);",
+            false,
+        ),
+        (
+            "multi_line_qualified",
+            "claims::assert_ok_eq!(\n    checked_div(17, 5),\n    3\n);",
+            false,
+        ),
+        // A macro that discards its input never runs the statement inside it.
+        (
+            "multi_line_inside_discarded_macro",
+            "macro_rules! ignore {\n    ($($t:tt)*) => {};\n}\nignore! {\n    assert_ok_eq!(\n        checked_div(17, 5),\n        3\n    );\n}",
+            false,
+        ),
+        (
+            "single_line_inside_discarded_macro",
+            "macro_rules! ignore {\n    ($($t:tt)*) => {};\n}\nignore! {\n    assert_ok_eq!(checked_div(17, 5), 3);\n}",
+            false,
+        ),
+        (
+            "multi_line_comment_in_arguments",
+            "assert_ok_eq!(\n    checked_div(17, 5), // quotient\n    3\n);",
+            true,
+        ),
+    ] {
+        let multi = Case {
+            name,
+            owner: RESULT_OWNER,
+            diff: RESULT_DIFF,
+            owner_extra: "",
+            imports: import,
+            body: case_body,
+            dependency: CLAIMS_DEP,
+            credited,
+        };
+        let outcome = run(&root_dir, &multi, "return_value")?;
+        if credited {
+            assert_eq!(outcome.class, "exposed", "{name}: {}", outcome.class);
+            assert_eq!(
+                outcome.oracle,
+                ("exact_value".to_string(), "strong".to_string()),
+                "{name}: oracle"
+            );
+        } else {
+            assert_ne!(outcome.class, "exposed", "{name}: {}", outcome.class);
+            // The unrelated `assert_eq!(1, 1)` sharing the closing line grades
+            // as its own weak check; the claims statement earns nothing.
+            assert_ne!(outcome.oracle.0, "exact_value", "{name}: oracle");
+        }
+    }
+    // The `Some` direction reads through the same multi-line path.
+    let some = option_case(
+        "multi_line_assert_some_eq",
+        "use claims::assert_some_eq;",
+        "assert_some_eq!(\n    half(8),\n    4\n);",
+        true,
+    );
+    let outcome = run(&root_dir, &some, "return_value")?;
+    assert_eq!(
+        outcome.class, "exposed",
+        "assert_some_eq: {}",
+        outcome.class
+    );
+    assert_eq!(
+        outcome.oracle,
+        ("exact_value".to_string(), "strong".to_string()),
+        "assert_some_eq: oracle"
+    );
     Ok(())
 }
 
