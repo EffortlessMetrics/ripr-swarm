@@ -152,6 +152,36 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      each related test's `oracle_strength` and `relation_reason`. Producer
      version, timestamps and the root are not judged. A repo-seam case without a
      regenerable subject fails (#12144).
+     Every committed report under `reports/` that carries
+     `source_subject.corpus.cache_schema_version` must record the analyzer's
+     current `CACHE_SCHEMA_VERSION`, read from `seam_cache.rs`; an older
+     generation is allowed only through a `report_cache_schema_pins` entry in
+     the corpus naming the report, the version it is held at and a reason. A
+     pin that disagrees with the report, is not older than the current version, or names
+     no capture fails (#12293).
+     Every committed full capture (a report carrying the producer's `artifact`
+     block or `source_subject.corpus`) must carry an `artifact.content_sha256`
+     that matches its own bytes under `raw_json_placeholder_v1` (#12602). A
+     capture with no digest fails and names the file, so deleting the field
+     does not evade the check; the only way past it is a
+     `report_digest_exemptions` entry in the corpus naming the report and a
+     reason. An exemption is judged too: it must name a committed capture that
+     really carries no digest, and is a violation once the capture gains one or
+     is removed (#12745).
+     Content alone cannot tell a stamped capture stripped of `artifact` and
+     `source_subject.corpus` from a trimmed projection, so the corpus also
+     lists in `report_digest_required` every report that carries a digest, and
+     each listed report must still carry one; an entry naming no committed
+     report fails. The list is a rule, not a snapshot: a committed report that
+     carries a digest and is not listed fails, and a missing or non-array
+     `report_digest_required` is a violation rather than a disabled guard
+     (#12816).
+     Scope of the guarantee: the digest is recomputed from the file's own
+     bytes, so anyone who can recompute it can bless an edit. The check
+     detects a stale or hand-edited capture. It is not a tamper-proof seal and
+     is no evidence that the analyzer produced the report. The only sanctioned
+     way to change a report is to recapture it with `ripr check --mode draft
+     --format repo-exposure-json --root <subject>`.
 2a. Validates the case tier before trusting the expectation:
    - `pure` cases are checked-in tiny examples and must not carry
      pinned-external metadata.
