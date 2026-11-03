@@ -467,7 +467,15 @@ pub(crate) fn compile_libtest(
             selected.executable.display()
         )
     })?;
-    if !executable.starts_with(&target_dir) {
+    // `canonicalize` returns the `\\?\` verbatim form on Windows while `absolute`
+    // does not, so compare against the canonical target directory.
+    let canonical_target_dir = std::fs::canonicalize(&target_dir).map_err(|error| {
+        format!(
+            "resolve private libtest target `{}`: {error}",
+            target_dir.display()
+        )
+    })?;
+    if !executable.starts_with(&canonical_target_dir) {
         return Err(
             "selected libtest executable escapes the private compile target directory".to_string(),
         );
