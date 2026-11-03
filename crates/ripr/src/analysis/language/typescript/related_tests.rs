@@ -3983,10 +3983,22 @@ pub(crate) fn import_source_matches_owner(
 /// a [`DirectoryModuleCacheScope`] every call probes afresh so no answer
 /// outlives the run that computed it.
 fn importer_has_nearer_paths_config(root: &Path, importer: &Path) -> bool {
+    // The verdict depends only on the importer's directory, so the run memo
+    // is keyed by it: every file in one directory shares one walk instead of
+    // re-reading the same configs per file.
+    let absolute = if importer.is_absolute() {
+        importer.to_path_buf()
+    } else {
+        root.join(importer)
+    };
+    let dir = absolute
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.to_path_buf());
     run_memoized(
-        &(root.to_path_buf(), importer.to_path_buf()),
+        &(root.to_path_buf(), dir.clone()),
         |cache| &mut cache.nearer_paths_withhold,
-        || nearer_paths_withhold_uncached(root, importer),
+        || nearer_paths_withhold_uncached(root, &dir),
     )
 }
 
@@ -3994,16 +4006,8 @@ fn importer_has_nearer_paths_config(root: &Path, importer: &Path) -> bool {
 /// looking for the nearest `paths`-declaring config.
 const MAX_NEARER_CONFIG_HOPS: usize = 32;
 
-fn nearer_paths_withhold_uncached(root: &Path, importer: &Path) -> bool {
-    let absolute = if importer.is_absolute() {
-        importer.to_path_buf()
-    } else {
-        root.join(importer)
-    };
-    let mut dir = absolute
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| root.to_path_buf());
+fn nearer_paths_withhold_uncached(root: &Path, dir: &Path) -> bool {
+    let mut dir = dir.to_path_buf();
     for _ in 0..MAX_NEARER_CONFIG_HOPS {
         let ts_config = dir.join("tsconfig.json");
         let js_config = dir.join("jsconfig.json");
@@ -4219,7 +4223,7 @@ struct RunResolverCache {
     /// Tracked `*.snap` files per analysis root (`None`: unknown).
     tracked_snapshots: HashMap<PathBuf, Option<std::sync::Arc<HashSet<String>>>>,
     /// Wrong-owner safeguard verdicts (#12754 slice), keyed by
-    /// `(workspace root, importer file as given)`: `true` when the
+    /// `(workspace root, importer directory)`: `true` when the
     /// importer lives under a nearer `paths`-declaring config.
     nearer_paths_withhold: HashMap<(PathBuf, PathBuf), bool>,
     /// Per-body shadow indexes (#10925), keyed by the body text itself so a
