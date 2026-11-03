@@ -763,7 +763,12 @@ changed lines, the selection prompt (`several_eligible_seams`) is unchanged.
 ## Test Mapping
 
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
-- `crates/ripr/tests/repair_check_recommended_start.rs::boundary_change_starts_the_seam_check_recommends` (#12831; with the error-variant guard, the no-start and unscoped negatives)
+- `crates/ripr/tests/repair_check_recommended_start.rs::boundary_change_starts_the_seam_check_recommends` (#12831)
+- `crates/ripr/tests/repair_check_recommended_start.rs::error_variant_change_starts_the_changed_branch_check_recommends` (#12831)
+- `crates/ripr/tests/repair_check_recommended_start.rs::a_change_check_offers_no_start_for_keeps_the_selection` (#12831)
+- `crates/ripr/tests/repair_check_recommended_start.rs::an_unscoped_change_keeps_the_selection` (#12831)
+- `crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run` (#12831)
+- `crates/ripr/src/app/task_first.rs::tests::check_pick_narrows_only_when_eligible_and_committed` (#12831)
 - `crates/ripr/tests/cli_smoke/repair_orderfile.rs::repair_completes_despite_user_orderfile`
 - `crates/ripr/tests/cli_smoke/repair_orderfile.rs::dirty_production_requires_recovery_despite_user_orderfile`
 
