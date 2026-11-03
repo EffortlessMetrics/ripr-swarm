@@ -1386,6 +1386,65 @@ shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
 guard, `issues: write` as the only write authority, the exact probe selector,
 zero-executed-test refusal, and the tracker lifecycle.
 
+### Golden Re-bless
+
+Re-blessing renderer-prose golden drift used to be a per-agent ritual: run the
+arbiter-platform check, read `golden-drift.json`, bless fixture by fixture,
+confirm clean, push, and re-request qualification — each step a hand-run
+command on the right platform
+(`docs/agent-context/validation.md`, "Golden fixtures and the blessing
+platform"). `.github/workflows/goldens-rebless.yml` (#11736, Proposal A)
+turns that ritual into one bounded `workflow_dispatch` job (`pr` input,
+optional `note`). The dispatching actor still decides *that* a PR's goldens
+should be re-blessed; the workflow owns *whether that judgment is safe*.
+
+Preflight is pure `gh api` (no checkout, no PR code): the input is validated
+as a PR number, the PR must be open and unmerged on this repository (fork
+heads are refused — the token holds no write there), and it must be mergeable,
+because `refs/pull/N/merge` only exists while the PR merges cleanly. The job
+then records its convergence claim in the PR_AUTOMATION.md house format and
+refuses while another actor's claim is younger than 4 hours. The checkout is
+the two-parent integration tree the required merge-ready qualification
+already compiles and executes on GitHub runners, with
+`persist-credentials: false` — steps that execute PR-authored build scripts
+while the fixtures compile run with no token in `.git/config` or the
+environment.
+
+The bless decision lives in trusted workflow-layer code — this workflow file
+as it exists on the base branch — never in merge-ref code: merge-ref xtask is
+PR-authored and cannot own the decision to bless itself. The judge is a jq
+gate over `golden-drift.json` (status must be `warn`, at least one entry,
+zero `check.json`-surface entries, all nine semantic arrays empty) plus an
+independent `git diff --no-index` byte compare of every drifted fixture's
+`check.json`. The byte compare is deliberately stricter than the classifier's
+normalized `formatting_only` label: a renderer PR that only moves finding
+locations inside `check.json` changes the machine contract and is refused
+here even though the classifier calls it formatting-only. The bless loop then
+runs `cargo xtask goldens bless` per fixture, deriving each `--reason` from
+that fixture's own `SPEC.md` id (so the command's spec-id validation passes
+without inventing reasons), all-or-nothing: a mixed drift set (semantic
+`human.txt` changes, `check.json` entries, contract or run errors) is refused
+whole and comments the classified drift on the PR with zero pushes. The
+post-bless `goldens check` must exit clean before anything is pushed, and the
+push is one bot-authored commit guarded by the `git ls-remote` writer check,
+with the token injected only in that step.
+
+A GITHUB_TOKEN push fires no workflow events, so the job re-arms merge-ready
+qualification itself (the design's recommended default): when the PR carried
+`merge-ready` before the push, the label is removed and re-applied so the
+fresh labeled event re-runs admission and qualification on the new head; when
+it did not, the job comments the exact command instead of adding a
+qualification request nobody made. That write boundary is trivially flippable
+to comment-only if the owner prefers the merge-ready request to stay a purely
+human/lane signal. Non-goals: no semantic-drift auto-bless ever, no bypass of
+the evidence-promotion honesty gates, no required-check authority, no Windows
+evidence. `xtask/tests/goldens_rebless_workflow_contract.rs` pins the route:
+the merge-ref checkout, `persist-credentials: false`, fork/conflict
+preflight, the 4h claim scan, the locked-manifest fetch list, every judge
+gate, the byte-identity witness, the SPEC-derived bless loop, the
+confirmation-before-push ordering, the guarded bot push, the re-arm rule, and
+the allowlist budget row.
+
 ### Self-Hosted Runner Placement
 
 The everyday required Rust gate routes through `routed-rust.yml`
