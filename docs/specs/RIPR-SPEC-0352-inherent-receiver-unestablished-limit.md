@@ -120,8 +120,10 @@ cause.
   check and unmatched-name reach-every-package each fail a control, as does the
   `#[ignore]` exclusion.
 - Still unexercised: the duplicate-directory clause of the reach-every-package
-  rule, crate-local and scoped names under trust, and the own-related-tests
-  filter. The `toml::Table` parse-failure arm is equivalent to the name-mismatch
+  rule, crate-local and scoped names under trust, the own-related-tests
+  filter (the same-named-type control pins the outcome, not the filter), the
+  seeding of the mounted set from the test file's declaring parents, and the
+  unreadable-manifest arms of the manifest check. The `toml::Table` parse-failure arm is equivalent to the name-mismatch
   arm below it (an unparsable manifest declares no name), so no control can
   tell them apart.
 - Known open: when the owner call sits outside the assertion the relation is

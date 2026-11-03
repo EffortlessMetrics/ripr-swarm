@@ -780,8 +780,10 @@ fn an_ignored_test_does_not_trigger_the_withhold() -> Result<(), String> {
     keeps_gap("ignored test", shape, CONTROL)
 }
 
-/// A same-named type in another crate is not the owner: its test is never one
-/// of the finding's related tests, and the withhold must not look at it.
+/// A same-named type in another crate is not the owner, so its macro-bearing
+/// test must not trigger the withhold. This pins the end-to-end outcome only:
+/// it does not isolate the own-related-tests filter (replacing that filter with
+/// `true` still passes), which the spec records as unexercised.
 #[test]
 fn a_same_named_type_in_another_crate_does_not_trigger_the_withhold() -> Result<(), String> {
     let workspace = Workspace::create(
