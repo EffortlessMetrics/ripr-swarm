@@ -249,7 +249,10 @@ note = "pnpm monorepo whose package is packages/remeda; the commit edits package
 # 26 `no_static_path` findings. The row declares that typed partial result, as
 # `typescript-compiler` does, so the ceilings below are measured on the outcome
 # the default caps produce; a complete result or any other limitation beside it
-# fails the row (#12052). The ceilings stay at their local calibration.
+# fails the row (#12052). The ceilings stay at their local calibration. The
+# route to a complete result is the read-cap cost work in #11676 and #11767
+# (raising the caps to 2 GiB did not finish in 500 s); the DI-factory
+# receiver miss behind the 26 `no_static_path` findings is #12755.
 [[corpus]]
 id = "vscode-typescript"
 url = "https://github.com/microsoft/vscode"
