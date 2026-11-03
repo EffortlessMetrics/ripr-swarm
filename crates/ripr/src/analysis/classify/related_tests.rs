@@ -5667,7 +5667,13 @@ fn executable_call_resolves(
                         }
                     })
                 });
-                binding_admitted && assertion_arguments_resolve(&call, index, resolves)
+                binding_admitted
+                    && assertion_arguments_resolve(
+                        &call,
+                        index,
+                        trust_unplaced_standard_root,
+                        resolves,
+                    )
             })
 }
 
@@ -5751,12 +5757,28 @@ fn inherent_call_node_resolves(
             })
 }
 
+/// Whether any indexed file declares `macro_rules! name`, whatever its scope or
+/// export. A text scan: a hit only withholds the limit, so a spelling inside a
+/// comment or string can at worst keep a gap.
+fn workspace_defines_macro(index: &RustIndex, name: &str) -> bool {
+    index.files().values().any(|facts| {
+        let source = facts.data().source.as_ref();
+        source.match_indices("macro_rules!").any(|(at, keyword)| {
+            source[at + keyword.len()..]
+                .trim_start()
+                .strip_prefix(name)
+                .is_some_and(|rest| !rest.starts_with(is_ident_char))
+        })
+    })
+}
+
 /// Assertion token trees are not expression descendants of the source AST.
 /// Parse only their evaluated operands, preserving the original invocation as
 /// the lexical scope anchor. Diagnostics and unsupported macros add no proof.
 fn assertion_arguments_resolve(
     call: &ast::MacroCall,
     index: Option<&RustIndex>,
+    trust_unplaced_standard_root: bool,
     resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
 ) -> bool {
     let Some(path) = call.path() else {
@@ -5773,6 +5795,19 @@ fn assertion_arguments_resolve(
     let operands = match qualified.unwrap_or(name.trim()) {
         "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
         "assert" | "debug_assert" => 1,
+        // `assert_matches!` is no prelude macro, so a bare spelling names
+        // whatever an import or crate binds. Only the limit-naming trusted
+        // pass reads its first operand, which the std and `assert_matches`
+        // crate macros evaluate before matching the pattern; the credit path
+        // never does. A workspace macro of the same name may ignore its
+        // operand, so one anywhere keeps the gap (#10666).
+        "assert_matches"
+            if qualified.is_none()
+                && trust_unplaced_standard_root
+                && index.is_some_and(|index| !workspace_defines_macro(index, "assert_matches")) =>
+        {
+            1
+        }
         _ => return false,
     };
     if qualified.is_none()
