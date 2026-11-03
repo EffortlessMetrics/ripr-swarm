@@ -11263,6 +11263,15 @@
           "file": "src/lib.rs",
           "oracle_strength": "none",
           "relation_reason": "same_test_file"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::parse_pinned",
+          "expression": "Ok(n)",
+          "test": "pinned_even",
+          "file": "src/lib.rs",
+          "oracle_strength": "none",
+          "relation_reason": "direct_owner_call"
         }
       ]
     },
