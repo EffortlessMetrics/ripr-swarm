@@ -625,6 +625,14 @@ case = "spec0231r42-package-renamed-claims-dependency"
 reason = "Discriminated at runtime, abstained on purpose: a `package`-renamed claims dependency is not a verified claims import, so the oracle stays unknown (RIPR-SPEC-0231 example 42). Delete this entry if renamed dependencies are resolved."
 
 [[entry]]
+case = "spec0231r42b-renamed-claims-import"
+reason = "Discriminated at runtime, abstained on purpose: a renamed claims import is not a verified claims import, so the oracle stays unknown and the finding names the macro limit (RIPR-SPEC-0231 example 42, #12779). Delete this entry if renamed imports are resolved."
+
+[[entry]]
+case = "spec0231r42c-path-qualified-claims-call"
+reason = "Discriminated at runtime, abstained on purpose: a path-qualified claims call with no import is not a verified claims import, so the oracle stays unknown (RIPR-SPEC-0231 example 42). Delete this entry if path-qualified calls are resolved."
+
+[[entry]]
 case = "spec0231r43-non-literal-expected-operand"
 reason = "Discriminated at runtime, abstained on purpose: a non-literal expected operand keeps the claims assertion unknown / none (RIPR-SPEC-0231 example 43). Delete this entry if bound operands become evaluable."
 
