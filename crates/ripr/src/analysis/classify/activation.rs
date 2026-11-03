@@ -11838,6 +11838,7 @@ assert_eq!(input.amount, 100);"#
             receiver: None,
             through_macro: false,
             module_qualified: false,
+            crate_qualifier: None,
             transparent_macros_rebound: false,
             diverging_handlers: Vec::new(),
         }
