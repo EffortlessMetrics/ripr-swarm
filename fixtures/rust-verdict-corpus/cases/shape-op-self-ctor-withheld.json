@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-op-self-ctor-withheld",
+  "subject_id": "authored-op-credit-self-ctor",
+  "diff": "cases/shape-op-self-ctor-withheld.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "operator_overload_self_ctor_unconfirmed",
+  "hard_case": "The impl builds its result through `Self(..)` while the test reaches it only via `+` and compares `Money(..)` operands, so no assertion token confirms the changed line.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Self(self.0 - other.0)",
+        "mutated_line": "Self(self.0 - other.0)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::operator_under_test",
+        "equivalence_review": "not equivalent: `Self(other.0 + self.0)` becomes subtraction and `Money(2) + Money(3)` no longer equals `Money(5)`"
+      },
+      {
+        "replacement": "Self(self.0 * other.0)",
+        "mutated_line": "Self(self.0 * other.0)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::operator_under_test",
+        "equivalence_review": "not equivalent: `Self(other.0 + self.0)` becomes multiplication and the sum is no longer five"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "operator_under_test asserts `Money(2) + Money(3) == Money(5)`, so replacing `+` inside the impl with `-` or `*` fails the test even though operand order in `Self(..)` is behavior-preserving. RIPR-SPEC-0240 withholds the unconfirmed operator credit as `static_unknown` rather than a false `weakly_exposed` gap. Parent #9567, issue #10581.",
+  "labeling_observation": {
+    "ripr_commit": "9fff67eb93",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}
