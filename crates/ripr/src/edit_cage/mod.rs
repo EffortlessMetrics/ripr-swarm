@@ -1845,12 +1845,82 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
         #[cfg(unix)]
         if metadata.is_file() {
             use std::os::unix::fs::MetadataExt as _;
-            if metadata.nlink() != 1 {
+            if metadata.nlink() != 1 && !links_are_staged_publication_pair(&current, &metadata)? {
                 return Ok(false);
             }
         }
     }
     Ok(true)
+}
+
+/// True when every hard link of `metadata`'s file lives in its own directory
+/// and is the immutable destination plus the `<stem>.tmp-<pid>-<nonce>` staging
+/// name that `write_bytes_atomic` links into place before removing. A process
+/// stopped or terminated between the link and the removal leaves exactly this pair
+/// behind, and it aliases nothing outside the governed directory. Any other
+/// link (another directory, another name, an extra count) stays refused.
+#[cfg(unix)]
+fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Result<bool, String> {
+    use std::os::unix::fs::MetadataExt as _;
+    let Some(parent) = path.parent() else {
+        return Ok(false);
+    };
+    let mut names = Vec::new();
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(false),
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return Ok(false);
+        };
+        let Ok(candidate) = fs::symlink_metadata(entry.path()) else {
+            // Removed between listing and inspection: the pair is changing.
+            continue;
+        };
+        if candidate.is_file()
+            && candidate.dev() == metadata.dev()
+            && candidate.ino() == metadata.ino()
+        {
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                return Ok(false);
+            };
+            names.push(name);
+        }
+    }
+    if u64::try_from(names.len()).ok() != Some(metadata.nlink()) || names.len() != 2 {
+        return Ok(false);
+    }
+    let (Some(destination), Some(staging)) = (
+        names.iter().find(|name| !is_staging_name(name)),
+        names.iter().find(|name| is_staging_name(name)),
+    ) else {
+        return Ok(false);
+    };
+    let stem = Path::new(destination)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(destination);
+    Ok(staging.strip_prefix(stem).is_some_and(is_staging_suffix))
+}
+
+#[cfg(unix)]
+fn is_staging_name(name: &str) -> bool {
+    name.rsplit_once(".tmp-")
+        .is_some_and(|(_, tail)| is_staging_suffix(&format!(".tmp-{tail}")))
+}
+
+/// `.tmp-<pid>-<nonce>` with decimal digits only.
+#[cfg(unix)]
+fn is_staging_suffix(rest: &str) -> bool {
+    rest.strip_prefix(".tmp-")
+        .and_then(|tail| tail.split_once('-'))
+        .is_some_and(|(pid, nonce)| {
+            !pid.is_empty()
+                && !nonce.is_empty()
+                && pid.bytes().all(|byte| byte.is_ascii_digit())
+                && nonce.bytes().all(|byte| byte.is_ascii_digit())
+        })
 }
 
 pub(crate) fn workflow_path_components_are_safe(
@@ -4969,6 +5039,73 @@ mod tests {
             fs::read_to_string(&external_file)
                 .map_err(|err| format!("read external hardlink target: {err}"))?,
             "outside-after\n"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_publication_pair_left_by_an_interrupted_writer_is_not_ambiguous() -> Result<(), String>
+    {
+        let fixture = git_fixture("staged-publication-pair")?;
+        commit_target_ignore(&fixture)?;
+        let dir = fixture.root.join("target/ripr/artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
+        let destination = dir.join("after.check-findings.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-441-3"))
+            .map_err(|err| format!("link staging name: {err}"))?;
+
+        assert!(writable_path_components_are_safe(
+            &fixture.root,
+            "target/ripr/artifacts/after.check-findings.json"
+        )?);
+        assert!(writable_path_components_are_safe(
+            &fixture.root,
+            "target/ripr/artifacts/after.check-findings.tmp-441-3"
+        )?);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hard_links_that_are_not_a_staged_publication_pair_stay_unsafe() -> Result<(), String> {
+        let fixture = git_fixture("unstaged-hardlinks")?;
+        let external = external_fixture("unstaged-hardlinks")?;
+        commit_target_ignore(&fixture)?;
+        let dir = fixture.root.join("target/ripr/artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
+        let destination = dir.join("after.check-findings.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+
+        // A staging-shaped name for another stem, a non-numeric suffix, a third
+        // link, and a link outside the directory each keep the path unsafe.
+        for (label, extra) in [
+            ("other stem", dir.join("receipt.tmp-1-1")),
+            ("non-numeric", dir.join("after.check-findings.tmp-x-1")),
+            ("plain alias", dir.join("alias.json")),
+            ("external", external.root.join("outside.json")),
+        ] {
+            fs::hard_link(&destination, &extra).map_err(|err| format!("link {label}: {err}"))?;
+            assert!(
+                !writable_path_components_are_safe(
+                    &fixture.root,
+                    "target/ripr/artifacts/after.check-findings.json"
+                )?,
+                "{label} link must stay unsafe"
+            );
+            fs::remove_file(&extra).map_err(|err| format!("unlink {label}: {err}"))?;
+        }
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-1-1"))
+            .map_err(|err| format!("link first staging name: {err}"))?;
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-2-1"))
+            .map_err(|err| format!("link second staging name: {err}"))?;
+        assert!(
+            !writable_path_components_are_safe(
+                &fixture.root,
+                "target/ripr/artifacts/after.check-findings.json"
+            )?,
+            "a third link must stay unsafe"
         );
         Ok(())
     }
