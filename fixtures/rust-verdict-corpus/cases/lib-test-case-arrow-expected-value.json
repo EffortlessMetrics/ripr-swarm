@@ -51,5 +51,8 @@
   },
   "axes": [
     "test_library_idiom"
+  ],
+  "spec_examples": [
+    "RIPR-SPEC-0231#38"
   ]
 }

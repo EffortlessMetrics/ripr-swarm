@@ -17,6 +17,7 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:ports.py:ranges:predicate_boundary:predicate:lo_80
   Changed behavior: "lo": 80,
@@ -42,6 +43,7 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_literal_value_inside_longer_number/input --diff <cwd>/fixtures/python_literal_value_inside_longer_number/diff.patch --mode fast probe:ports.py:python_preview:64ed4168
   ripr context --root <cwd>/fixtures/python_literal_value_inside_longer_number/input --diff <cwd>/fixtures/python_literal_value_inside_longer_number/diff.patch --mode fast --at probe:ports.py:python_preview:64ed4168
   no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `ports.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command

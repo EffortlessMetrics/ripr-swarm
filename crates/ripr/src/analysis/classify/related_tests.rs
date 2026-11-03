@@ -24,7 +24,7 @@ use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphSta
 use crate::domain::{Probe, RelationConfidence, RelationReason};
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
-    ast::{self, HasArgList, HasName},
+    ast::{self, HasArgList, HasLoopBody, HasName},
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -1337,10 +1337,10 @@ fn find_related_tests_with_candidates<'a>(
                         // #6780 Devin review: a test-local closure or nested
                         // fn named like the hop caller shadows it, so the
                         // call never reaches the helper.
-                        && !super::helper_transfer::test_call_is_shadowed(
+                        && !super::helper_transfer::test_call_is_shadowed_for_entry(
                             index,
                             test,
-                            &hop.caller.name,
+                            &hop.caller,
                             call.line,
                         )
                 })
@@ -4133,6 +4133,181 @@ fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
     last
 }
 
+fn let_binding_in_scope_at(parse_body: &str, let_at: usize, call_at: usize) -> bool {
+    const WRAPPER: &str = "fn ripr_receiver_scope() {\n";
+    let source = format!("{WRAPPER}{parse_body}\n}}");
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return true;
+    };
+    let syntax = parse.tree().syntax().clone();
+    let offset = WRAPPER.len() + let_at;
+    let token = syntax
+        .token_at_offset((offset as u32).into())
+        .right_biased()
+        .or_else(|| syntax.token_at_offset((offset as u32).into()).left_biased());
+    let Some(token) = token else {
+        return true;
+    };
+    let block = token
+        .parent()
+        .into_iter()
+        .flat_map(|node| node.ancestors())
+        .find_map(ast::BlockExpr::cast);
+    if let Some(block) = block {
+        let range = block.syntax().text_range();
+        let call_offset = (WRAPPER.len() + call_at) as u32;
+        call_offset >= u32::from(range.start()) && call_offset <= u32::from(range.end())
+    } else {
+        true
+    }
+}
+
+fn ident_pat_binds_name(pattern: Option<ast::Pat>, name: &str) -> bool {
+    let raw = name.trim_start_matches("r#");
+    pattern.is_some_and(|pattern| {
+        pattern
+            .syntax()
+            .descendants()
+            .filter_map(ast::IdentPat::cast)
+            .any(|pattern| {
+                pattern
+                    .name()
+                    .is_some_and(|bound| bound.text().trim_start_matches("r#") == raw)
+            })
+    })
+}
+
+/// Whether a closure/`for`/`match` binding or `if let` guard shadows `name`
+/// at the call site used by the text receiver matcher (#6858).
+fn receiver_binding_shadowed_at(parse_body: &str, name: &str, call_at: usize) -> bool {
+    const WRAPPER: &str = "fn ripr_receiver_scope() {\n";
+    let source = format!("{WRAPPER}{parse_body}\n}}");
+    let offset = WRAPPER.len() + call_at.min(parse_body.len());
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return true;
+    };
+    let syntax = parse.tree().syntax().clone();
+    let offset_u32 = offset as u32;
+    let token = syntax
+        .token_at_offset(offset_u32.into())
+        .right_biased()
+        .or_else(|| syntax.token_at_offset(offset_u32.into()).left_biased());
+    let Some(token) = token else {
+        return true;
+    };
+    for ancestor in token.parent().into_iter().flat_map(|node| node.ancestors()) {
+        if let Some(closure) = ast::ClosureExpr::cast(ancestor.clone())
+            && closure.param_list().is_some_and(|list| {
+                list.params()
+                    .any(|param| ident_pat_binds_name(param.pat(), name))
+            })
+            && closure.body().is_some_and(|body| {
+                let body_range = body.syntax().text_range();
+                offset_u32 >= u32::from(body_range.start())
+                    && offset_u32 <= u32::from(body_range.end())
+            })
+        {
+            return true;
+        }
+        if let Some(for_loop) = ast::ForExpr::cast(ancestor.clone())
+            && ident_pat_binds_name(for_loop.pat(), name)
+            && for_loop.loop_body().is_some_and(|body| {
+                let body_range = body.syntax().text_range();
+                offset_u32 >= u32::from(body_range.start())
+                    && offset_u32 <= u32::from(body_range.end())
+            })
+        {
+            return true;
+        }
+        if let Some(arm) = ast::MatchArm::cast(ancestor.clone())
+            && ident_pat_binds_name(arm.pat(), name)
+        {
+            return true;
+        }
+        if let Some(if_expr) = ast::IfExpr::cast(ancestor.clone())
+            && if_expr.condition().is_some_and(|condition| {
+                condition
+                    .syntax()
+                    .descendants()
+                    .filter_map(ast::LetExpr::cast)
+                    .any(|binding| ident_pat_binds_name(binding.pat(), name))
+            })
+        {
+            if if_expr.else_branch().is_some_and(|else_branch| {
+                let else_range = else_branch.syntax().text_range();
+                offset_u32 >= u32::from(else_range.start())
+                    && offset_u32 <= u32::from(else_range.end())
+            }) {
+                continue;
+            }
+            return true;
+        }
+        if let Some(while_expr) = ast::WhileExpr::cast(ancestor.clone())
+            && while_expr.condition().is_some_and(|condition| {
+                condition
+                    .syntax()
+                    .descendants()
+                    .filter_map(ast::LetExpr::cast)
+                    .any(|binding| ident_pat_binds_name(binding.pat(), name))
+            })
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// The `let` binding of `name` live at `call_at`, scanning only `prefix`.
+fn live_let_statement_before<'a>(
+    prefix: &'a str,
+    full_body: &'a str,
+    parse_body: &str,
+    name: &str,
+    call_at: usize,
+) -> Option<&'a str> {
+    if name.is_empty() || call_at == 0 || prefix.is_empty() {
+        return None;
+    }
+    let bytes = prefix.as_bytes();
+    let before = prefix.len().min(full_body.len());
+    let mut last = None;
+    let mut search = 0usize;
+    while let Some(relative) = prefix[search..before].find("let ") {
+        let let_at = search + relative;
+        let mut i = let_at + 4;
+        while i < before && i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= before {
+            break;
+        }
+        if prefix[i..before].starts_with("mut") && ident_boundary(prefix, i, i + 3) {
+            i += 3;
+            while i < before && i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+        }
+        if i >= before {
+            break;
+        }
+        if prefix[i..before].starts_with(name) && ident_boundary(prefix, i, i + name.len()) {
+            let stmt_end = prefix[i..before]
+                .find(';')
+                .map(|offset| i + offset)
+                .unwrap_or(before);
+            if stmt_end >= before || !let_binding_in_scope_at(parse_body, let_at, call_at) {
+                search = let_at + 1;
+                continue;
+            }
+            let stmt = &prefix[let_at..stmt_end];
+            let typed = stmt.find('=').is_some_and(|eq| stmt[..eq].contains(':'));
+            last = Some(if typed { &prefix[let_at..before] } else { stmt });
+        }
+        search = let_at + 1;
+    }
+    last
+}
+
 /// The type a `let` binding certainly has: its annotation, or a constructor
 /// written as one segment (`Tile(1)`, `Tile { .. }`). Unlike
 /// [`let_binding_type_head`] an associated call (`Factory::new()`) is not
@@ -4183,9 +4358,29 @@ pub(in crate::analysis) fn let_binding_mentions_type(
     binding: &str,
     type_name: &str,
 ) -> bool {
-    last_let_statement(body, binding)
-        .and_then(let_statement_type_head)
-        .is_some_and(|head| head == type_name)
+    let_binding_mentions_type_at(body, body, body, body.len(), binding, type_name)
+}
+
+fn let_binding_mentions_type_at(
+    prefix: &str,
+    full_body: &str,
+    parse_body: &str,
+    call_at: usize,
+    binding: &str,
+    type_name: &str,
+) -> bool {
+    if receiver_binding_shadowed_at(parse_body, binding, call_at.saturating_sub(1)) {
+        return false;
+    }
+    live_let_statement_before(prefix, full_body, parse_body, binding, call_at).is_some_and(|stmt| {
+        if let Some(head) = let_statement_type_head(stmt) {
+            head == type_name
+        } else if let Some(eq) = stmt.find('=') {
+            stmt[..eq].find(':').is_none() && literal_type_head(&stmt[eq + 1..]) == Some(type_name)
+        } else {
+            false
+        }
+    })
 }
 
 fn let_statement_type_head(stmt: &str) -> Option<&str> {
@@ -4305,7 +4500,7 @@ fn initializer_type_head(expr: &str) -> Option<&str> {
             (is_constructor_name(call) || is_variant_name(call)).then_some(*ty)
         }
         ([last], Some(b'(') | Some(b'{')) => Some(last),
-        ([ty, _assoc], None) => Some(ty),
+        ([ty, assoc], None) => is_variant_name(assoc).then_some(*ty),
         _ => None,
     }
 }
@@ -4642,6 +4837,7 @@ fn text_resolves_method_to_type(
     impl_type: &str,
     impl_trait: Option<&str>,
     body_for_lets: &str,
+    scope_body: &str,
     whole_body: bool,
 ) -> bool {
     let bytes = text.as_bytes();
@@ -4676,7 +4872,15 @@ fn text_resolves_method_to_type(
                 if whole_body
                     && (qualified_self_type_matches(text, at - 2, impl_type, impl_trait)
                         || (impl_trait.is_some_and(|tr| qualifier == Some(tr))
-                            && first_argument_has_type(text, after, impl_type, body_for_lets)))
+                            && first_argument_has_type(
+                                text,
+                                after,
+                                impl_type,
+                                body_for_lets,
+                                text,
+                                scope_body,
+                                at,
+                            )))
                 {
                     return true;
                 }
@@ -4688,7 +4892,14 @@ fn text_resolves_method_to_type(
                         // A raw call line is unmasked, so a literal quoted in
                         // a string or comment there must not type a receiver.
                         || (whole_body && suffixed_numeric_literal_type(recv) == Some(impl_type))
-                        || let_binding_mentions_type(body_for_lets, recv, impl_type)
+                        || let_binding_mentions_type_at(
+                            body_for_lets,
+                            text,
+                            scope_body,
+                            at,
+                            recv,
+                            impl_type,
+                        )
                     {
                         return true;
                     }
@@ -4749,6 +4960,9 @@ fn first_argument_has_type(
     after_name: usize,
     impl_type: &str,
     body_for_lets: &str,
+    full_body: &str,
+    scope_body: &str,
+    call_at: usize,
 ) -> bool {
     let bytes = text.as_bytes();
     let mut open = after_name;
@@ -4786,17 +5000,21 @@ fn first_argument_has_type(
         return ty == impl_type;
     }
     if !arg.is_empty() && arg.bytes().all(is_ident_byte) {
-        // A binding is typed by its annotation or, as an argument is, by a
-        // literal initializer; `let s = Site::new();` names no type.
-        return last_let_statement(body_for_lets, arg).is_some_and(|stmt| {
-            let Some(eq) = stmt.find('=') else {
-                return false;
-            };
-            match stmt[..eq].find(':') {
-                Some(_) => let_statement_type_head(stmt) == Some(impl_type),
-                None => literal_type_head(&stmt[eq + 1..]) == Some(impl_type),
-            }
-        });
+        if receiver_binding_shadowed_at(scope_body, arg, call_at.saturating_sub(1)) {
+            return false;
+        }
+        // Trait dispatch reads only an annotation or a literal initializer
+        // head; `let s = Site::new();` names no type for the first argument.
+        return live_let_statement_before(body_for_lets, full_body, scope_body, arg, call_at)
+            .is_some_and(|stmt| {
+                let Some(eq) = stmt.find('=') else {
+                    return false;
+                };
+                match stmt[..eq].find(':') {
+                    Some(_) => let_statement_type_head(stmt) == Some(impl_type),
+                    None => literal_type_head(&stmt[eq + 1..]) == Some(impl_type),
+                }
+            });
     }
     literal_type_head(arg) == Some(impl_type)
 }
@@ -5203,6 +5421,7 @@ fn method_call_resolves_to_impl_in(
         impl_type,
         impl_trait,
         masked_body,
+        &test.body,
         true,
     ) {
         return true;
@@ -5215,6 +5434,7 @@ fn method_call_resolves_to_impl_in(
                 impl_type,
                 impl_trait,
                 masked_body,
+                &test.body,
                 false,
             )
     })
@@ -6156,7 +6376,7 @@ pub(in crate::analysis) fn resolves_method_in_prefix(
     if method.is_empty() || impl_type.is_empty() {
         return false;
     }
-    text_resolves_method_to_type(prefix, method, impl_type, impl_trait, prefix, true)
+    text_resolves_method_to_type(prefix, method, impl_type, impl_trait, prefix, prefix, true)
 }
 
 /// Whether `owner` is `drop` of a plain `impl Drop for T` of the standard
@@ -6251,7 +6471,12 @@ pub(in crate::analysis) fn test_dispatches_trait_impl(
                 continue;
             };
             let receiver = after[..end].trim();
-            if dispatch_operand_has_type(receiver, &body[..for_at], &impl_type) {
+            let Some(receiver_rel) = after[..end].find(receiver) else {
+                continue;
+            };
+            let use_at = at + 2 + receiver_rel;
+            if dispatch_operand_has_type(receiver, &body[..for_at], &impl_type, &test.body, use_at)
+            {
                 return true;
             }
         }
@@ -6293,18 +6518,32 @@ pub(in crate::analysis) fn test_dispatches_trait_impl(
             return false;
         }
         let prior_bindings = before.rfind(';').map_or("", |end| &before[..=end]);
-        ident_ending_at(before, before.len())
-            .is_some_and(|receiver| dispatch_operand_has_type(receiver, prior_bindings, &impl_type))
-            || receiver_expr_resolves_to_type(before, before.len(), &impl_type, prior_bindings)
+        ident_ending_at(before, before.len()).is_some_and(|receiver| {
+            dispatch_operand_has_type(
+                receiver,
+                prior_bindings,
+                &impl_type,
+                &test.body,
+                before.len(),
+            )
+        }) || receiver_expr_resolves_to_type(before, before.len(), &impl_type, prior_bindings)
     })
 }
 
-fn dispatch_operand_has_type(expr: &str, preceding: &str, impl_type: &str) -> bool {
+fn dispatch_operand_has_type(
+    expr: &str,
+    preceding: &str,
+    impl_type: &str,
+    parse_body: &str,
+    use_at: usize,
+) -> bool {
     let preceding = preceding.rfind(';').map_or("", |end| &preceding[..=end]);
     let expr = expr.trim().strip_prefix('&').unwrap_or(expr).trim();
     let expr = expr.strip_prefix("mut ").unwrap_or(expr).trim();
     if !expr.is_empty() && expr.bytes().all(is_ident_byte) {
-        return let_binding_mentions_type(preceding, expr, impl_type);
+        return let_binding_mentions_type_at(
+            preceding, parse_body, parse_body, use_at, expr, impl_type,
+        );
     }
     bracketed_expr_has_type(expr, expr.len(), impl_type, preceding, true)
 }
@@ -6765,7 +7004,11 @@ fn test_imports_same_name_twin(
         .copied()
         .chain(imported.iter().copied())
         .collect();
-    if imported.is_empty()
+    // A named `use super::rows` (or `self::rows`) stores only the qualifier
+    // prefix in `module`; the leaf is `owner_name` and is not part of
+    // `imported`. An empty `imported` with a resolved `segments` path is
+    // valid (#7103 / #8059).
+    if (imported.is_empty() && segments.is_empty())
         || imported
             .iter()
             .any(|segment| matches!(*segment, "super" | "self" | "crate"))
@@ -7384,6 +7627,18 @@ mod tests {
             ],
         ));
         assert!(!undecided("/work/repo/src/lib.rs", owner, &ids));
+        // #7103 / #8059 review: `super::rows` from `inner::tests` names
+        // `inner::rows`, not the file-root owner; a named import that binds
+        // the nested twin must not withhold credit from that nested owner.
+        let rows_owner = "src/lib.rs::rows";
+        let rows_ids = ["src/lib.rs::rows", "src/lib.rs::inner::rows"];
+        let rows_named = "fn pins() {\n use super::rows;\n rows(30, 3);\n}";
+        let rows_module = vec!["inner".to_string(), "tests".to_string()];
+        let rows_twin = |body: &str, owner: &str| {
+            test_imports_same_name_twin(body, lib, &rows_module, owner, "rows", &rows_ids)
+        };
+        assert!(rows_twin(rows_named, rows_owner));
+        assert!(!rows_twin(rows_named, "src/lib.rs::inner::rows"));
         // The import resolves against the test's own module: `self` and a
         // nested `super` name modules no twin sits in (a re-export), and a
         // nested twin is reached through its parent.
@@ -7770,6 +8025,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 receiver: None,
                 through_macro: false,
                 module_qualified: false,
+                crate_qualifier: None,
                 transparent_macros_rebound: false,
                 diverging_handlers: Vec::new(),
             }],
@@ -7883,6 +8139,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 receiver: None,
                 through_macro: false,
                 module_qualified: false,
+                crate_qualifier: None,
                 transparent_macros_rebound: false,
                 diverging_handlers: Vec::new(),
             }],
@@ -7940,6 +8197,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 receiver: None,
                 through_macro: false,
                 module_qualified: false,
+                crate_qualifier: None,
                 transparent_macros_rebound: false,
                 diverging_handlers: Vec::new(),
             }],
@@ -8488,6 +8746,11 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             ),
             (
                 "let z = Wrap::new(1); Render::render(&z);",
+                Some("Render"),
+                false,
+            ),
+            (
+                "let s = Site::new(); Render::render(&s);",
                 Some("Render"),
                 false,
             ),
@@ -14169,6 +14432,59 @@ let r = try_parse_summary(\"x\");",
     // or line break between the callee and `(` must not turn the call's
     // argument into the receiver.
     #[test]
+    fn receiver_binding_respects_block_scope_closure_for_and_assoc_consts() {
+        for (body, expected) in [
+            (
+                "let s = Cache::new(); { let s = Site::new(); } s.build();",
+                false,
+            ),
+            ("let s = Site::new(); xs.iter().map(|s| s.build());", false),
+            ("let s = Site::new(); for s in caches { s.build(); }", false),
+            ("let s = Site::DEFAULT_CACHE; s.build();", false),
+            ("let s = Site::new(); s.build();", true),
+            (
+                "let s = Cache::new(); let s = Site::new(); s.build();",
+                true,
+            ),
+        ] {
+            let summary = test("tests/site.rs", "t", body);
+            assert_eq!(
+                method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                expected,
+                "{body}"
+            );
+        }
+        let body = "let x: f64 = 0.0; { let x: u8 = 0; } Render::render(&x);";
+        let summary = test("tests/render.rs", "t", body);
+        assert!(
+            method_call_resolves_to_impl(&summary, "render", "f64", Some("Render")),
+            "{body}"
+        );
+        assert!(
+            !method_call_resolves_to_impl(&summary, "render", "u8", Some("Render")),
+            "{body}"
+        );
+        let body = "let s: Site = make(); let label = \"ok\"; xs.iter().map(|s| s.build());";
+        let summary = test("tests/site.rs", "t", body);
+        assert!(
+            !method_call_resolves_to_impl_type(&summary, "build", "Site"),
+            "{body}"
+        );
+        let body = "let s: Site = make(); if let Some(s) = cache { } else { s.build(); }";
+        let summary = test("tests/site.rs", "t", body);
+        assert!(
+            method_call_resolves_to_impl_type(&summary, "build", "Site"),
+            "{body}"
+        );
+        let body = "let s: Site = make(); for s in std::iter::once(s.build()) {}";
+        let summary = test("tests/site.rs", "t", body);
+        assert!(
+            method_call_resolves_to_impl_type(&summary, "build", "Site"),
+            "{body}"
+        );
+    }
+
+    #[test]
     fn bracketed_receiver_is_not_read_from_a_raw_call_line() {
         let cases = [
             (
@@ -14244,6 +14560,7 @@ let r = try_parse_summary(\"x\");",
             ("let x = Vec::with_capacity(4)", None),
             ("let x = Shape::Circle", Some("Shape")),
             ("let x = Shape::Circle(1.0)", Some("Shape")),
+            ("let x = Site::DEFAULT_CACHE", None),
             // Prefixes are a convention, not a return type (#8782 item 2).
             ("let x = Site::with_cache()", None),
             ("let x = Site::FACTORY()", None),
