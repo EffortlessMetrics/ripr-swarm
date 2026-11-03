@@ -1,0 +1,1 @@
+crates/ripr/tests/cross_crate_reach.rs|Command::new|2|11401-cross-crate-reach|Fixture setup runs local git (init/commit) in a temp repository and the built ripr binary (check, repair) against it; no shell or network.

@@ -7,8 +7,8 @@
 //! the test runs only in `b`, with the fake macro. ripr cannot place the file
 //! while an `include!` is unresolved, so the finding is a named limitation, not
 //! a gap, and nothing is credited. Each control changes one thing about that
-//! shape and keeps the gap. `--mode ready` is required: draft mode does not
-//! index `b`.
+//! shape and keeps the gap. Ready mode indexes every member; draft mode must
+//! still withhold when an unindexed member may compile the receiver (#10149).
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -28,6 +28,10 @@ enum Placement {
     Resolved,
     /// No `b` and no `fakestd`: the standard macro, placement available.
     PlainStd,
+    /// Owner crate, dependent test crate, and a namesake with no `include!`
+    /// or `#[path]`. Draft indexes the owner and the test crate; the namesake
+    /// stays unindexed and must not withhold placement.
+    AcrossIndexedPackages,
 }
 
 struct Workspace {
@@ -140,8 +144,11 @@ impl Workspace {
             )
         };
         let members = match placement {
+            Placement::AcrossIndexedPackages => {
+                return Self::create_across_indexed_packages(root, test_statement);
+            }
             Placement::PlainStd => "[\"a\"]",
-            _ => "[\"a\", \"b\", \"fakestd\"]",
+            Placement::Generated | Placement::Resolved => "[\"a\", \"b\", \"fakestd\"]",
         };
         write(
             "Cargo.toml",
@@ -225,12 +232,75 @@ fn main() {
         })
     }
 
-    fn run(&self, diff: bool) -> Result<Value, String> {
+    /// Owner in `meter`, test in `panel` via `use meter::Gauge`, namesake
+    /// `spare` with no include/path mount. Draft indexes meter and panel.
+    /// `test_statement` is unused: the corpus shape is an associated function
+    /// (`Gauge::reading`), not the inherent `Widget::read` control.
+    fn create_across_indexed_packages(
+        root: PathBuf,
+        _test_statement: &str,
+    ) -> Result<Self, String> {
+        let write = |path: &str, text: &str| -> Result<(), String> {
+            let file = root.join(path);
+            if let Some(parent) = file.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create {path} directory failed: {error}"))?;
+            }
+            std::fs::write(&file, text).map_err(|error| format!("write {path} failed: {error}"))
+        };
+        let package = |name: &str, extra: &str| {
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n{extra}"
+            )
+        };
+        let gauge_lib = |body: &str| {
+            format!(
+                "pub struct Gauge;\nimpl Gauge {{\n    pub fn reading() -> u32 {{{body}}}\n}}\n"
+            )
+        };
+        write(
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"meter\", \"panel\", \"spare\"]\nresolver = \"2\"\n",
+        )?;
+        write("meter/Cargo.toml", &package("meter", ""))?;
+        let before = gauge_lib("4");
+        let after = gauge_lib("5");
+        write("meter/src/lib.rs", &after)?;
+        write(
+            "panel/Cargo.toml",
+            &package(
+                "panel",
+                "\n[dependencies]\nmeter = { path = \"../meter\" }\nspare = { path = \"../spare\" }\n",
+            ),
+        )?;
+        write("panel/src/lib.rs", "")?;
+        write(
+            "panel/tests/direct.rs",
+            "use meter::Gauge;\n#[test]\nfn reads() { std::assert_eq!(Gauge::reading(), 4); }\n",
+        )?;
+        write("spare/Cargo.toml", &package("spare", ""))?;
+        write(
+            "spare/src/lib.rs",
+            "pub struct Gauge;\nimpl Gauge {\n    pub fn reading() -> u32 {0}\n}\npub fn reading() -> u32 {0}\n",
+        )?;
+        let diff = root.join("change.diff");
+        write(
+            "change.diff",
+            &whole_file_diff("meter/src/lib.rs", &before, &after),
+        )?;
+        Ok(Self {
+            root,
+            diff,
+            owner_line: 3,
+        })
+    }
+
+    fn run_with_mode(&self, diff: bool, mode: &str) -> Result<Value, String> {
         let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
         command
             .args(["check", "--root"])
             .arg(&self.root)
-            .args(["--mode", "ready", "--quiet", "--format"])
+            .args(["--mode", mode, "--quiet", "--format"])
             .arg(if diff { "json" } else { "repo-exposure-json" })
             .env("RIPR_CACHE_DIR", self.root.join("cache"));
         if diff {
@@ -250,9 +320,36 @@ fn main() {
             .map_err(|error| format!("instrument: stdout is not JSON: {error}"))
     }
 
-    /// The one finding of the mutated `Widget::read` line.
-    fn finding(&self) -> Result<Value, String> {
-        let document = self.run(true)?;
+    fn run_with_relative_root(&self, diff: bool, mode: &str) -> Result<Value, String> {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+        command
+            .current_dir(&self.root)
+            .args(["check", "--root", "."])
+            .args(["--mode", mode, "--quiet", "--format"])
+            .arg(if diff { "json" } else { "repo-exposure-json" })
+            .env("RIPR_CACHE_DIR", self.root.join("cache"));
+        if diff {
+            command.arg("--diff").arg(&self.diff);
+        }
+        let output = command
+            .output()
+            .map_err(|error| format!("run ripr failed: {error}"))?;
+        if !matches!(output.status.code(), Some(0 | 1)) {
+            return Err(format!(
+                "instrument: ripr exited {:?}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("instrument: stdout is not JSON: {error}"))
+    }
+
+    fn run(&self, diff: bool) -> Result<Value, String> {
+        self.run_with_mode(diff, "ready")
+    }
+
+    fn finding_from(&self, document: &Value) -> Result<Value, String> {
         let findings = document
             .get("findings")
             .and_then(Value::as_array)
@@ -266,6 +363,10 @@ fn main() {
                 "premise: one finding on the owner line, got {other:?}"
             )),
         }
+    }
+
+    fn finding(&self) -> Result<Value, String> {
+        self.finding_from(&self.run(true)?)
     }
 
     /// The repo-exposure seam of `Widget::read`.
@@ -343,6 +444,37 @@ fn an_unplaced_standard_assertion_over_the_owner_call_is_a_named_limitation() ->
     assert!(
         !control.to_string().contains("receiver_unestablished:"),
         "{control}"
+    );
+    Ok(())
+}
+
+/// Draft mode indexes only the changed package, so an unindexed member's
+/// generated mount must still withhold the gap (#10149).
+#[test]
+fn draft_mode_withholds_the_unplaced_generated_mount_control() -> Result<(), String> {
+    let workspace = Workspace::create(Placement::Generated, CONTROL)?;
+    let finding = workspace.finding_from(&workspace.run_with_mode(true, "draft")?)?;
+    assert_eq!(text(&finding, "/classification")?, "static_unknown");
+    assert_eq!(limit(&finding), Some(LIMIT), "{finding}");
+    let relative = workspace.finding_from(&workspace.run_with_relative_root(true, "draft")?)?;
+    assert_eq!(text(&relative, "/classification")?, "static_unknown");
+    assert_eq!(limit(&relative), Some(LIMIT), "{relative}");
+    Ok(())
+}
+
+/// Draft indexes the owner package and its dependent test crate. A namesake
+/// sibling with no `include!` / `#[path]` stays unindexed and must not
+/// withhold placement of the indexed members (#10149 narrowing).
+#[test]
+fn draft_mode_credits_indexed_members_across_packages() -> Result<(), String> {
+    let workspace = Workspace::create(Placement::AcrossIndexedPackages, CONTROL)?;
+    let finding = workspace.finding_from(&workspace.run_with_mode(true, "draft")?)?;
+    assert_ne!(limit(&finding), Some(LIMIT), "{finding}");
+    assert_eq!(text(&finding, "/classification")?, "exposed", "{finding}");
+    assert_eq!(
+        relations(&finding),
+        vec!["direct_owner_call".to_string()],
+        "{finding}"
     );
     Ok(())
 }
@@ -616,5 +748,207 @@ fn another_crates_glob_reexport_is_part_of_the_unplaced_doubt() -> Result<(), St
         Some(LIMIT),
         "another crate's glob and exported macro are placement-dependent doubt: {finding}"
     );
+    Ok(())
+}
+
+const BARE: &str = "assert_eq!(Widget::new().read(), 4);";
+const NOOP_MACRO: &str = "macro_rules! assert_eq { ($($t:tt)*) => {}; }\n";
+
+/// A call outside the assertion already resolves with the macro gate on, so
+/// nothing is blocked by the macro and the rule must not claim it.
+#[test]
+fn a_call_outside_the_assertion_is_not_blocked_by_the_macro() -> Result<(), String> {
+    let statement = "let read = Widget::new().read(); std::assert_eq!(read, 4);";
+    let finding = Workspace::create(Placement::Generated, statement)?.finding()?;
+    assert_keeps_gap("call outside the assertion", &finding)?;
+    assert_eq!(
+        relations(&finding),
+        ["direct_owner_call"],
+        "premise: the call is credited without the macro: {finding}"
+    );
+    Ok(())
+}
+
+/// An `#[ignore]` test never runs in the default suite, so it cannot be what
+/// stands between the finding and a gap.
+#[test]
+fn an_ignored_test_does_not_trigger_the_withhold() -> Result<(), String> {
+    let shape = Shape {
+        attrs: "#[ignore]\n    ",
+        ..Shape::default()
+    };
+    keeps_gap("ignored test", shape, CONTROL)
+}
+
+/// A same-named type in another crate is not the owner, so its macro-bearing
+/// test must not trigger the withhold. This pins the end-to-end outcome only:
+/// it does not isolate the own-related-tests filter (replacing that filter with
+/// `true` still passes), which the spec records as unexercised.
+#[test]
+fn a_same_named_type_in_another_crate_does_not_trigger_the_withhold() -> Result<(), String> {
+    let workspace = Workspace::create(
+        Placement::Generated,
+        "std::assert_eq!(Other::new().read(), 4);",
+    )?;
+    workspace.write_file(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"a\", \"b\", \"fakestd\", \"c\"]\nresolver = \"2\"\n",
+    )?;
+    workspace.write_file(
+        "c/Cargo.toml",
+        "[package]\nname = \"c\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )?;
+    workspace.write_file(
+        "c/src/lib.rs",
+        "pub struct Widget;\nimpl Widget {\n    pub fn new() -> Self { Widget }\n    pub fn read(&self) -> u32 { 4 }\n}\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn reads_c() { std::assert_eq!(Widget::new().read(), 4); }\n}\n",
+    )?;
+    assert_keeps_gap("same-named type in another crate", &workspace.finding()?)
+}
+
+/// A bare `assert_eq!` is decided by name. A macro site that reaches the test's
+/// own file through a resolved mount, a `#[macro_use]` module or a stray file is
+/// the test package's doubt whatever the placement, so the gap stays.
+#[test]
+fn a_macro_site_in_the_test_packages_own_files_keeps_the_bare_assertion_gap() -> Result<(), String>
+{
+    let rows: [(&str, &str, &str, &str); 6] = [
+        (
+            "own-crate macro in another module",
+            "#[macro_use]\nmod noop;\nmod shared;\n",
+            "a/src/noop.rs",
+            NOOP_MACRO,
+        ),
+        (
+            "literal #[path] mount into another package",
+            "#[macro_use]\n#[path = \"../../b/src/noop.rs\"]\nmod noop;\nmod shared;\n",
+            "b/src/noop.rs",
+            NOOP_MACRO,
+        ),
+        (
+            "mount under a nested src directory",
+            "#[macro_use]\n#[path = \"x/src/noop.rs\"]\nmod noop;\nmod shared;\n",
+            "a/src/x/src/noop.rs",
+            NOOP_MACRO,
+        ),
+        (
+            "root-level file with no package",
+            "mod shared;\n",
+            "loose.rs",
+            "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+        ),
+        (
+            "file under the package but outside src",
+            "mod shared;\n",
+            "a/loose.rs",
+            "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+        ),
+        (
+            "file with no nameable package",
+            "mod shared;\n",
+            "stray/macros.rs",
+            "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+        ),
+    ];
+    for (label, lib, path, source) in rows {
+        let workspace = Workspace::create(Placement::Generated, BARE)?;
+        workspace.write_file("a/src/lib.rs", lib)?;
+        workspace.write_file(path, source)?;
+        assert_keeps_gap(label, &workspace.finding()?)?;
+    }
+    Ok(())
+}
+
+/// A dependency the test package imports, names or renames is its own doubt.
+/// `a` depends on `dependency` and starts with `lib_head`; `mac` exports a
+/// no-op `assert_eq!` only where the dependency really points at it.
+#[test]
+fn a_dependency_macro_in_the_test_packages_import_scope_keeps_the_gap() -> Result<(), String> {
+    const MAC: &str = "mac = { path = \"../mac\" }";
+    const RENAMED: &str = "mac = { package = \"other\", path = \"../other\" }";
+    let rows: [(&str, &str, &str, &str, &str); 8] = [
+        ("glob import", "mac", "other", MAC, "use mac::*;"),
+        (
+            "macro_use extern crate",
+            "mac",
+            "other",
+            MAC,
+            "#[macro_use]\nextern crate mac;",
+        ),
+        (
+            "plain extern crate",
+            "mac",
+            "other",
+            MAC,
+            "extern crate mac;",
+        ),
+        (
+            "explicit import",
+            "mac",
+            "other",
+            MAC,
+            "use mac::assert_eq;",
+        ),
+        (
+            "rename behind a decoy directory",
+            "benign",
+            "other",
+            RENAMED,
+            "use mac::*;",
+        ),
+        (
+            "rename onto a matching directory",
+            "mac",
+            "other",
+            RENAMED,
+            "use mac::*;",
+        ),
+        (
+            "crate named differently from its directory",
+            "benign",
+            "macx",
+            "macx = { path = \"../other\" }",
+            "use macx::*;",
+        ),
+        (
+            "directory holds another crate",
+            "benign",
+            "mac",
+            "mac = { path = \"../other\" }",
+            "use mac::*;",
+        ),
+    ];
+    for (label, mac_package, other_package, dependency, lib_head) in rows {
+        let workspace = Workspace::create(Placement::Generated, BARE)?;
+        workspace.write_file(
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"a\", \"b\", \"fakestd\", \"mac\", \"other\"]\nresolver = \"2\"\n",
+        )?;
+        workspace.write_file(
+            "a/Cargo.toml",
+            &format!(
+                "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[lib]\ntest = false\ndoctest = false\n\n[dependencies]\n{dependency}\n"
+            ),
+        )?;
+        let exports = "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {}; }\n";
+        let mac_source = if dependency.contains("../mac") {
+            exports
+        } else {
+            "pub fn benign() {}\n"
+        };
+        for (directory, package, source) in [
+            ("mac", mac_package, mac_source),
+            ("other", other_package, exports),
+        ] {
+            workspace.write_file(
+                &format!("{directory}/Cargo.toml"),
+                &format!(
+                    "[package]\nname = \"{package}\"\nversion = \"0.0.0\"\nedition = \"2021\"\n"
+                ),
+            )?;
+            workspace.write_file(&format!("{directory}/src/lib.rs"), source)?;
+        }
+        workspace.write_file("a/src/lib.rs", &format!("{lib_head}\nmod shared;\n"))?;
+        assert_keeps_gap(label, &workspace.finding()?)?;
+    }
     Ok(())
 }
