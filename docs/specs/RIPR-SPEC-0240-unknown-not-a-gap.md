@@ -726,10 +726,12 @@ under `rust_indirect_owner_call_unresolved`:
   or an integration test, names the owner without calling it: an argument
   (`.map(inc)`) or an untyped binding (`let f = inc; f(2)`; a typed `fn` pointer binding is left to RIPR-SPEC-0115).
   A bounded `.map(owner)` chain that the owner pin credits (RIPR-SPEC-0197,
-  #9478 slice A) is `exposed` before this limit is consulted; a chain the pin
-  refuses (unresolved paths, shadowed bindings, qualified paths to a different
-  same-leaf function, async or method owners, non-matching or non-literal
-  expectations) keeps this limit. A call
+  #9478 slice A) is `exposed` before this limit is consulted; a refused chain
+  that still names the owner as a value (async or method owners, non-matching or
+  non-literal expectations, a change invisible at the first input) keeps this
+  limit. A chain whose path is unresolved, shadowed by a local binding, or
+  qualified to a different same-leaf function is not a value use of the owner and
+  is decided by the ordinary classification rules. A call
   `inc(..)`, a macro `inc!`, a method `.inc`, a `use` declaration, a field label
   `inc:`, a `fn inc` definition and a test that binds a local or parameter
   named `inc` are not value uses. A mention only in production code keeps the
