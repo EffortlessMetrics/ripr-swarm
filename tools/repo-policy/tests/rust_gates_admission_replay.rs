@@ -23,7 +23,9 @@ const PR_NUMBER: &str = "11988";
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 fn step_text() -> TestResult<&'static str> {
-    let (_, tail) = WORKFLOW.split_once(STEP).ok_or("verification step exists")?;
+    let (_, tail) = WORKFLOW
+        .split_once(STEP)
+        .ok_or("verification step exists")?;
     Ok(tail.split_once("\n      # #3841").map_or(tail, |(s, _)| s))
 }
 
@@ -51,7 +53,11 @@ fn run(dir: &Path, program: &str, args: &[&str]) -> TestResult<String> {
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .output()?;
     if !out.status.success() {
-        return Err(format!("{program} {args:?}: {}", String::from_utf8_lossy(&out.stderr)).into());
+        return Err(format!(
+            "{program} {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        )
+        .into());
     }
     Ok(String::from_utf8(out.stdout)?.trim().to_string())
 }
@@ -205,7 +211,10 @@ impl Fixture {
             "{label}: expected fail-closed, got success; stderr: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        assert!(published.is_empty(), "{label}: published outputs {published:?}");
+        assert!(
+            published.is_empty(),
+            "{label}: published outputs {published:?}"
+        );
         Ok(())
     }
 }
@@ -300,7 +309,11 @@ fn stale_or_wrong_head_base_tree_and_merge_fail_closed() -> TestResult {
         subject[key] = other.clone().into();
         let mut env = f.env_for(&subject)?;
         env.insert(
-            if key == "tree" { "ADMITTED_TREE" } else { "ADMITTED_HEAD" },
+            if key == "tree" {
+                "ADMITTED_TREE"
+            } else {
+                "ADMITTED_HEAD"
+            },
             other.clone(),
         );
         env.insert("CONSTITUENT_HEAD", other.clone());
@@ -348,7 +361,11 @@ fn malformed_or_mismatched_subject_json_fails_closed() -> TestResult {
     f.rejects("malformed identity", &env)?;
     for (label, key, value) in [
         ("version", "version", serde_json::json!(1)),
-        ("destination ref", "destination_ref", "refs/heads/other".into()),
+        (
+            "destination ref",
+            "destination_ref",
+            "refs/heads/other".into(),
+        ),
         ("repository", "repository", "other/repo".into()),
         ("pr number", "pr_number", 11989.into()),
         ("pr id", "pr_id", "PR_other".into()),
