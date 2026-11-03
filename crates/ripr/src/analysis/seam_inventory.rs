@@ -48,7 +48,7 @@ use crate::analysis_outcome::AnalysisLimitation;
 use crate::config::RiprConfig;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 pub(crate) const REPO_EXPOSURE_SEAM_LIMIT_ENV: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
@@ -269,8 +269,20 @@ pub(crate) fn seam_facts_cache_miss_message(compact: bool) -> &'static str {
     }
 }
 
+/// Set once by an invocation that already announced the full-repo audit path
+/// (`ripr check --format repo-*`, #4945). Only those runs print the miss
+/// notice: the same inventory also backs `agent stub`, `continue`, `pilot` and
+/// the editor, whose stderr contracts (and `RIPR_QUIET`) must not change.
+static ANNOUNCE_CACHE_MISS: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn announce_seam_facts_cache_misses() {
+    ANNOUNCE_CACHE_MISS.store(true, Ordering::Relaxed);
+}
+
 fn disclose_seam_facts_cache_miss(compact: bool) {
-    eprintln!("{}", seam_facts_cache_miss_message(compact));
+    if ANNOUNCE_CACHE_MISS.load(Ordering::Relaxed) {
+        eprintln!("{}", seam_facts_cache_miss_message(compact));
+    }
 }
 
 /// Walk production Rust files at `root` and emit per-seam evidence and
