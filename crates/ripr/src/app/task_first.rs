@@ -3066,6 +3066,10 @@ pub(crate) enum RepairRefusalCode {
     RetryBudgetExhausted,
     /// `continue`: no current attempt exists.
     NoCurrentAttempt,
+    /// The repair spellings ran where no workspace, package or Git repository
+    /// anchors the current directory, so there is no project to answer about
+    /// (#12417). An explicit `--root` skips that discovery gate.
+    UnanchoredRoot,
     /// `continue`: several current attempts; select one with `--attempt`.
     AmbiguousAttempts,
     /// `continue`: the attempt ended without a receipt.
@@ -3108,7 +3112,7 @@ impl RepairRefusalDisposition {
 impl RepairRefusalCode {
     /// Every code, for the docs/help parity test.
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 17] = [
+    pub(crate) const ALL: [Self; 18] = [
         Self::ItemNamesNoSeam,
         Self::ItemNamesSeveralSeams,
         Self::SeamNotRepairEligible,
@@ -3120,6 +3124,7 @@ impl RepairRefusalCode {
         Self::AwaitingEdit,
         Self::RetryBudgetExhausted,
         Self::NoCurrentAttempt,
+        Self::UnanchoredRoot,
         Self::AmbiguousAttempts,
         Self::AttemptEndedWithoutReceipt,
         Self::AttemptCompletionUnconfirmed,
@@ -3141,6 +3146,7 @@ impl RepairRefusalCode {
             Self::AwaitingEdit => "awaiting_edit",
             Self::RetryBudgetExhausted => "retry_budget_exhausted",
             Self::NoCurrentAttempt => "no_current_attempt",
+            Self::UnanchoredRoot => "unanchored_root",
             Self::AmbiguousAttempts => "ambiguous_attempts",
             Self::AttemptEndedWithoutReceipt => "attempt_ended_without_receipt",
             Self::AttemptCompletionUnconfirmed => "attempt_completion_unconfirmed",
@@ -3168,7 +3174,8 @@ impl RepairRefusalCode {
             | Self::NoEligibleSeam
             | Self::StartRefusedUncommittedTarget
             | Self::NoTestRoute
-            | Self::NoCurrentAttempt => RepairRefusalDisposition::NotStarted,
+            | Self::NoCurrentAttempt
+            | Self::UnanchoredRoot => RepairRefusalDisposition::NotStarted,
         }
     }
 
