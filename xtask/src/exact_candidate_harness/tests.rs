@@ -194,11 +194,29 @@ fn instrument_failure_rows_do_not_count_as_executed() -> TestResult {
     Ok(())
 }
 
+/// A Windows child cannot run a `#!/bin/sh` file, so the fake candidate there is a
+/// `.cmd` batch file that prints the same version line.
+fn fake_ripr_name() -> &'static str {
+    if cfg!(windows) {
+        "fake-ripr.cmd"
+    } else {
+        "fake-ripr"
+    }
+}
+
+fn fake_ripr_script(version_line: &str) -> Vec<u8> {
+    if cfg!(windows) {
+        format!("@echo off\r\necho {version_line}\r\n").into_bytes()
+    } else {
+        format!("#!/bin/sh\necho \"{version_line}\"\n").into_bytes()
+    }
+}
+
 #[test]
 fn admit_options_reject_version_mismatch() -> TestResult {
     let dir = tempfile_root("admit-version")?;
-    let script = dir.join("fake-ripr");
-    std::fs::write(&script, b"#!/bin/sh\necho ripr 0.10.0\n").map_err(|error| error.to_string())?;
+    let script = dir.join(fake_ripr_name());
+    std::fs::write(&script, fake_ripr_script("ripr 0.10.0")).map_err(|error| error.to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -215,7 +233,7 @@ fn admit_options_reject_version_mismatch() -> TestResult {
     let commit = "c7d6b397c5ea11d121800e32af890856f252d097";
     std::fs::write(
         &script,
-        format!("#!/bin/sh\necho \"ripr 0.11.0 ({commit})\"\n"),
+        fake_ripr_script(&format!("ripr 0.11.0 ({commit})")),
     )
     .map_err(|error| error.to_string())?;
     #[cfg(unix)]

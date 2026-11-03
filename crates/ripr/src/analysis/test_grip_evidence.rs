@@ -4381,6 +4381,19 @@ fn collection_assertion_admitted(
         || pin_syntax.admits_effect_assertion(test, oracle, index)
 }
 
+/// #12722: an exact error-variant pin reads the owner's `Err` arm, so on a
+/// returned-value seam it is published as an oracle only when it names the
+/// exact `Err(..)` that seam constructs (#11111). Otherwise a test such as
+/// `assert_eq!(f(2).unwrap_err(), E::Even)` showed `strong` on the same
+/// owner's `Ok(n)` seam while the seam itself graded weak, because the
+/// assertion cannot see the value `Ok(n)` returns. Mirrors the rule
+/// `oracle_discriminates_seam` already applies to the grade.
+fn error_pin_can_see_return_value(seam: &RepoSeam, oracle: &OracleFact) -> bool {
+    seam.kind() != SeamKind::ReturnValue
+        || !matches!(oracle.kind, OracleKind::ExactErrorVariant)
+        || exact_err_return_matches_error_pin(seam, &oracle.text)
+}
+
 fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact) -> bool {
     if let Some(receiver) = direct_collection_mutation_receiver(seam.expression()) {
         // #6640: a pure count read (`.len()`, `.is_empty()`) notices a
@@ -5219,7 +5232,9 @@ fn best_oracle(
     let mut best_matching_strength = OracleStrength::None;
     let mut best_matching_contradiction = None;
     for oracle in &test.assertions {
-        if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
+        if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax)
+            || !error_pin_can_see_return_value(seam, oracle)
+        {
             continue;
         }
         let (strength, contradiction) =

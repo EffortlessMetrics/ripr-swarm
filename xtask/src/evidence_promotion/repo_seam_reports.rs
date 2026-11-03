@@ -13,7 +13,9 @@
 //! rest on: the set of seams, each seam's `grip_class` and stage states, and
 //! each related test's `oracle_strength` and `relation_reason`. Producer
 //! version, cache schema, timestamps and the absolute root are expected to
-//! differ between captures and are not judged.
+//! differ between captures and are not judged here; the cache schema is
+//! checked separately against `CACHE_SCHEMA_VERSION` by `report_cache_schema`
+//! (#12293).
 
 use super::{
     EVIDENCE_PROMOTION_HONESTY_CORPUS, capture_output_with_timeout, normalize_path,
