@@ -1644,27 +1644,56 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
     )
 }
 
-/// The claims macros `source` names by a `use claims::name;` (or
-/// `use claims::{name, ..};`) import, under their own names. A source that
+/// The claims macros a `use claims::name;` import makes reach the test on
+/// `test_lines` (1-based, inclusive), under their own names. A source that
 /// does not parse cleanly imports nothing provable. The import's manifest
 /// verdict and shadowing are the binding scan's, which already treats an
 /// unverified or foreign import of a trusted name as a binding site.
-pub(crate) fn source_imported_claims_macros(source: &str) -> Vec<&'static str> {
+///
+/// The import must resolve where the test asserts (#12462). A `use` names its
+/// macro only in its own module and the test's own body; a child module does
+/// not inherit it, so an import in an ancestor module counts only when every
+/// module between it and the test re-imports it with `use super::*;` (or
+/// `use super::name;`). An import in another function, a sibling module or a
+/// nested block never counts, and neither does one under any `cfg` or
+/// `cfg_attr` other than the plain test gate: it may be compiled out, and a
+/// predicate that might be true is not one that is. A doc example is its own
+/// synthetic source whose test function opens on the fence line, so it is
+/// read like any test; a span that places no function credits nothing.
+pub(crate) fn source_imported_claims_macros(
+    source: &str,
+    test_lines: (usize, usize),
+) -> Vec<&'static str> {
     let Some(parse) = parse_clean_source_file(source) else {
         return Vec::new();
     };
-    let uses: Vec<ast::UseTree> = parse
-        .tree()
-        .syntax()
+    let root = parse.tree().syntax().clone();
+    // The test is the function that starts on its first line. Only the start
+    // is used: a trailing comment or a neighbour on the last line does not
+    // change which function the test is.
+    let Some(test_fn) =
+        first_code_offset(source, test_lines.0).and_then(|offset| fn_at_offset(&root, offset))
+    else {
+        return Vec::new();
+    };
+    let uses: Vec<ast::UseTree> = root
         .descendants()
         .filter_map(ast::UseTree::cast)
         .filter(|item| item.use_tree_list().is_none() && item.rename().is_none())
         .collect();
     CLAIMS_MACRO_NAMES
         .into_iter()
-        .filter(|name| uses.iter().any(|item| is_drop_in_assertion(item, name)))
+        .filter(|name| {
+            uses.iter().any(|item| {
+                is_drop_in_assertion(item, name) && import_reaches_test(item, name, &test_fn)
+            })
+        })
         .collect()
 }
+
+/// The claims macros whose call yields the `Ok`/`Some` payload, as the
+/// payload route reads them. A subset of [`CLAIMS_MACRO_NAMES`].
+pub(crate) const CLAIMS_PAYLOAD_MACRO_NAMES: [&str; 2] = ["assert_ok", "assert_some"];
 
 const CLAIMS_MACRO_NAMES: [&str; 6] = [
     "assert_err",
@@ -1674,6 +1703,129 @@ const CLAIMS_MACRO_NAMES: [&str; 6] = [
     "assert_some",
     "assert_some_eq",
 ];
+
+/// The offset of the first non-blank character on source line `line`
+/// (1-based), or `None` when there is no such line.
+fn first_code_offset(source: &str, line: usize) -> Option<TextSize> {
+    let mut offset = 0usize;
+    for (index, text) in source.split_inclusive('\n').enumerate() {
+        if index + 1 == line {
+            let blank = text.len() - text.trim_start().len();
+            let at = offset + blank;
+            return (at < offset + text.trim_end().len())
+                .then(|| TextSize::try_from(at).ok())
+                .flatten();
+        }
+        offset += text.len();
+    }
+    None
+}
+
+/// The innermost `fn` item that holds `offset`; attributes belong to it.
+fn fn_at_offset(root: &SyntaxNode, offset: TextSize) -> Option<SyntaxNode> {
+    root.token_at_offset(offset)
+        .right_biased()?
+        .parent_ancestors()
+        .find(|node| ast::Fn::can_cast(node.kind()))
+}
+
+/// Whether `item` carries a `cfg` or `cfg_attr` other than the plain test
+/// gate: such an item may be compiled out.
+fn use_may_be_compiled_out(item: &ast::Use) -> bool {
+    item.attrs().any(|attr| {
+        matches!(
+            attr.meta(),
+            Some(ast::Meta::CfgMeta(_) | ast::Meta::CfgAttrMeta(_))
+        ) && !crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(
+            &attr.syntax().text().to_string(),
+        )
+    })
+}
+
+/// Whether the `use` holding `tree` makes macro `name` resolve in the body of
+/// `test_fn`.
+fn import_reaches_test(tree: &ast::UseTree, name: &str, test_fn: &SyntaxNode) -> bool {
+    let Some(item) = tree.syntax().ancestors().find_map(ast::Use::cast) else {
+        return false;
+    };
+    if use_may_be_compiled_out(&item) {
+        return false;
+    }
+    let Some(container) = item.syntax().parent() else {
+        return false;
+    };
+    use ra_ap_syntax::SyntaxKind as K;
+    // The modules enclosing the test, innermost first.
+    let enclosing = |test_fn: &SyntaxNode| -> Vec<SyntaxNode> {
+        test_fn
+            .ancestors()
+            .skip(1)
+            .filter(|node| ast::Module::can_cast(node.kind()))
+            .collect()
+    };
+    match container.kind() {
+        K::SOURCE_FILE => enclosing(test_fn)
+            .iter()
+            .all(|module| module_reimports_parent(module, name)),
+        K::ITEM_LIST => {
+            let Some(owner) = container.parent() else {
+                return false;
+            };
+            let mut between = Vec::new();
+            for module in enclosing(test_fn) {
+                if module == owner {
+                    return between
+                        .iter()
+                        .all(|module| module_reimports_parent(module, name));
+                }
+                between.push(module);
+            }
+            false
+        }
+        K::STMT_LIST => {
+            // Only the test fn's own body block; a nested block or another
+            // function's body does not reach the assertion.
+            container
+                .parent()
+                .and_then(|block| block.parent())
+                .is_some_and(|owner| &owner == test_fn)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `module` brings its parent's names in with `use super::*;` or
+/// `use super::name;`, so an import the parent holds resolves inside it.
+fn module_reimports_parent(module: &SyntaxNode, name: &str) -> bool {
+    let Some(list) = module
+        .children()
+        .find(|node| node.kind() == ra_ap_syntax::SyntaxKind::ITEM_LIST)
+    else {
+        return false;
+    };
+    list.children().filter_map(ast::Use::cast).any(|item| {
+        if use_may_be_compiled_out(&item) {
+            return false;
+        }
+        item.syntax()
+            .descendants()
+            .filter_map(ast::UseTree::cast)
+            .filter(|tree| tree.use_tree_list().is_none() && tree.rename().is_none())
+            .any(|tree| {
+                let path: String = tree
+                    .path()
+                    .map(|path| path.syntax().text().to_string())
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .collect();
+                if tree.star_token().is_some() {
+                    path == "super"
+                } else {
+                    path.strip_prefix("super::") == Some(name)
+                }
+            })
+    })
+}
 
 /// Words that let tokens bind or import a name, or pull in unseen items,
 /// once a macro expansion parses them as items.

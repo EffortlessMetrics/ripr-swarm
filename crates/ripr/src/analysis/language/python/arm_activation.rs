@@ -414,6 +414,7 @@ fn patches_builtin(lines: &[&str], index: usize, name: &str, modules: &[String])
         return false;
     }
     let compact = compact_statement(lines, index);
+    let spaced = spaced_statement(lines, index);
     modules.iter().any(|module| {
         [
             format!("{module}.{name}"),
@@ -422,13 +423,14 @@ fn patches_builtin(lines: &[&str], index: usize, name: &str, modules: &[String])
         ]
         .iter()
         .any(|target| {
-            compact.match_indices(target.as_str()).any(|(start, _)| {
-                let boundary = compact[..start]
-                    .chars()
-                    .next_back()
-                    .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
-                boundary && rebinds_target(&compact, target)
-            })
+            binds_in_header(&spaced, target)
+                || compact.match_indices(target.as_str()).any(|(start, _)| {
+                    let boundary = compact[..start]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
+                    boundary && rebinds_target(&compact, target)
+                })
         })
     })
 }
@@ -464,6 +466,121 @@ fn compact_statement(lines: &[&str], index: usize) -> String {
         .chars()
         .filter(|ch| !ch.is_whitespace())
         .collect()
+}
+
+/// Text of the statement containing `lines[index]` with comments removed and
+/// line breaks and `\` continuations turned into single spaces (#12591).
+fn spaced_statement(lines: &[&str], index: usize) -> String {
+    statement_line_range(lines, index)
+        .map(|line_index| {
+            let code = strip_comment(lines[line_index].trim());
+            code.strip_suffix('\\').unwrap_or(code).to_string()
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+/// `text` with the inside of every string literal replaced by `_`, so a
+/// keyword or delimiter inside a string is never read. The result has the
+/// same length as `text`.
+fn mask_strings(text: &str) -> Vec<u8> {
+    let (mut quote, mut escaped) = (0u8, false);
+    let mut masked = Vec::with_capacity(text.len());
+    for byte in text.bytes() {
+        if quote != 0 {
+            if escaped {
+                escaped = false;
+                masked.push(b'_');
+            } else if byte == b'\\' {
+                escaped = true;
+                masked.push(b'_');
+            } else if byte == quote {
+                quote = 0;
+                masked.push(byte);
+            } else {
+                masked.push(b'_');
+            }
+        } else {
+            if byte == b'"' || byte == b'\'' {
+                quote = byte;
+            }
+            masked.push(byte);
+        }
+    }
+    masked
+}
+
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// Whether `word` stands alone at `at` (not part of a longer name or an attribute).
+fn word_at(bytes: &[u8], at: usize, word: &str) -> bool {
+    let word = word.as_bytes();
+    bytes.get(at..at + word.len()) == Some(word)
+        && at
+            .checked_sub(1)
+            .and_then(|before| bytes.get(before))
+            .is_none_or(|&byte| !is_word_byte(byte) && byte != b'.')
+        && bytes
+            .get(at + word.len())
+            .is_none_or(|&byte| !is_word_byte(byte))
+}
+
+/// End of the target that starts at `from`: the first index at bracket depth
+/// zero where `stop` holds, or where an enclosing bracket closes.
+fn target_end(bytes: &[u8], from: usize, stop: impl Fn(&[u8], usize) -> bool) -> usize {
+    let mut depth = 0usize;
+    for (index, &byte) in bytes.iter().enumerate().skip(from) {
+        if depth == 0 && stop(bytes, index) {
+            return index;
+        }
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => match depth.checked_sub(1) {
+                Some(next) => depth = next,
+                None => return index,
+            },
+            _ => {}
+        }
+    }
+    bytes.len()
+}
+
+/// Whether a `for` target (a loop header or comprehension clause) or a
+/// `with ... as` target in `statement` stores into `target` (#12591), so
+/// `for b.isinstance in items:`, `with ctx() as b.isinstance:` and
+/// `[0 for b.isinstance in items]` read as a rebinding. A plain
+/// `for x in items:` or `with ctx() as x:`, and a use of the attribute in the
+/// iterable or context expression, bind nothing. Strings are never read.
+fn binds_in_header(statement: &str, target: &str) -> bool {
+    let masked = mask_strings(statement);
+    let stores = |from: usize, end: usize| {
+        statement.get(from..end).is_some_and(|slice| {
+            let compact: String = slice.chars().filter(|ch| !ch.is_whitespace()).collect();
+            is_store_slot(&compact, target)
+        })
+    };
+    let is_with = (0..masked.len()).any(|at| word_at(&masked, at, "with"));
+    (0..masked.len()).any(|at| {
+        if word_at(&masked, at, "for") {
+            let from = at + "for".len();
+            stores(
+                from,
+                target_end(&masked, from, |bytes, index| word_at(bytes, index, "in")),
+            )
+        } else if is_with && word_at(&masked, at, "as") {
+            let from = at + "as".len();
+            stores(
+                from,
+                target_end(&masked, from, |bytes, index| {
+                    matches!(bytes.get(index), Some(b',' | b':'))
+                }),
+            )
+        } else {
+            false
+        }
+    })
 }
 
 /// Whether the line rebinds `target` (`builtins.name`, `builtins["name"]`;

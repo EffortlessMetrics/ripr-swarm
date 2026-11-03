@@ -104,9 +104,13 @@ an `and` chain (split outside quotes and brackets) may be:
   builtins module or an alias (`builtins.isinstance = f`, an annotated
   `b.isinstance: object = f`, a tuple, list or chained target
   `b.isinstance, other = f, g`, a tuple/list/parenthesized target split across
-  physical lines or continued with `\`, `setattr`, `vars(builtins)[..]`); a bare
-  annotation, a use inside a call or subscript key, a comparison and a
-  right-hand-side read are not rebindings (#12183, #12206, #12222, #12593);
+  physical lines or continued with `\`, a `for` or comprehension target
+  (`for b.isinstance in items`, `[0 for b.isinstance in items]`), a
+  `with ... as b.isinstance` target, `setattr`, `vars(builtins)[..]`); a bare
+  annotation, a use inside a call or subscript key, a comparison, a
+  right-hand-side, iterable or context-expression read and a plain
+  `for x in items` / `with ctx() as x` are not rebindings (#12183, #12206,
+  #12222, #12593, #12591);
 - a `for TARGET in NAME:` header, read as `len(NAME) > 0` over a literal
   display or string, so a loop body never runs for `total([])`.
 

@@ -467,7 +467,15 @@ pub(crate) fn compile_libtest(
             selected.executable.display()
         )
     })?;
-    if !executable.starts_with(&target_dir) {
+    // `canonicalize` returns the `\\?\` verbatim form on Windows while `absolute`
+    // does not, so compare against the canonical target directory.
+    let canonical_target_dir = std::fs::canonicalize(&target_dir).map_err(|error| {
+        format!(
+            "resolve private libtest target `{}`: {error}",
+            target_dir.display()
+        )
+    })?;
+    if !executable.starts_with(&canonical_target_dir) {
         return Err(
             "selected libtest executable escapes the private compile target directory".to_string(),
         );
@@ -1361,8 +1369,12 @@ mod tests {
         assert!(receipt.profile_test);
         assert!(receipt.json_complete);
         assert!(receipt.process_tree_settled);
+        // The receipt keeps `target_dir` as an absolute path and `executable` as the
+        // canonical one (the `\\?\` form on Windows), so compare canonical forms.
+        let canonical_target_dir =
+            std::fs::canonicalize(&receipt.target_dir).map_err(|error| error.to_string())?;
         assert!(
-            Path::new(&receipt.executable).starts_with(&receipt.target_dir),
+            Path::new(&receipt.executable).starts_with(&canonical_target_dir),
             "executable {} escaped {}",
             receipt.executable,
             receipt.target_dir
@@ -1504,7 +1516,10 @@ mod tests {
     }
 
     fn filetime_or_ignore(path: &Path, later: SystemTime) -> Result<(), String> {
-        fs::File::open(path)
+        // Windows refuses `set_modified` on a handle opened read-only.
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)
             .and_then(|file| file.set_modified(later))
             .map_err(|error| error.to_string())
     }
