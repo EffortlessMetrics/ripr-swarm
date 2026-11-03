@@ -868,7 +868,11 @@ mod tests {
             (true, Some(true), "timed out"),
         ] {
             let problem = process_completion_problem(timed_out, status, "exit status: 1", 5);
-            assert!(problem.as_deref().is_some_and(|text| text.contains(expected)));
+            assert!(
+                problem
+                    .as_deref()
+                    .is_some_and(|text| text.contains(expected))
+            );
             let run = reconcile_kani_output(&harnesses, output, problem);
             assert!(matches!(&run.results[0].status, HarnessStatus::Verified));
             assert_eq!(run.results[0].time, "1s");
@@ -914,8 +918,7 @@ mod tests {
         ));
         assert_eq!(run.results[1].time, "n/a");
         assert!(
-            render_report(&run.results, "NOT-ESTABLISHED: process timed out")
-                .contains("second.rs")
+            render_report(&run.results, "NOT-ESTABLISHED: process timed out").contains("second.rs")
         );
         let error =
             complete_lane_verdict(&run.results, true, false, run.process_problem.as_deref())
