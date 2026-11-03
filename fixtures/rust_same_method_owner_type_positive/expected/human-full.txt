@@ -38,5 +38,6 @@ Evidence
   - local flow reaches returned value: (0, Some(self.remaining)) (line 22)
   - related test tests/size_hints.rs:4 while_some_size_hint_upper_bound uses strong exact value oracle: assert_eq!(it.size_hint().1, Some(it.remaining));
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_same_method_owner_type_positive/input --diff <cwd>/fixtures/rust_same_method_owner_type_positive/diff.patch --mode fast probe:src_lib.rs:return_value:c861ec7a
   ripr context --root <cwd>/fixtures/rust_same_method_owner_type_positive/input --diff <cwd>/fixtures/rust_same_method_owner_type_positive/diff.patch --mode fast --at probe:src_lib.rs:return_value:c861ec7a

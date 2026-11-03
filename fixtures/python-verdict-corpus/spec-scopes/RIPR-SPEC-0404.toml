@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0404"
+scope = "out"
+reason = "PostgreSQL/pgTAP SQL evidence contract is normative spec law for #5736; runtime mutant proof lands in SQL judged corpora under #5602"

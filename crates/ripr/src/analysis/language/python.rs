@@ -409,6 +409,9 @@ mod reexports;
 mod related_tests;
 mod repo;
 mod route_client;
+mod row_discriminator_coverage;
+#[cfg(test)]
+mod row_discriminator_coverage_tests;
 mod row_miss;
 mod row_reach;
 mod setup_receivers;
@@ -669,6 +672,11 @@ struct PythonOwner {
     /// #12182). `false` for every other owner and for any call whose value may
     /// flow on, which keeps today's reading.
     nested_result_discarded: bool,
+    /// The module's stdlib `click` import alias is bound exactly once at module
+    /// scope (`cli_subcommand.rs`, #9226). `cli_runner_invoke` and transparent
+    /// click-alias decorators require this; reassigned aliases stay fail-closed.
+    #[serde(default)]
+    trusted_stdlib_click_alias: bool,
 }
 
 /// One declared parameter of a Python function owner.
