@@ -242,12 +242,15 @@ mock expectations, and custom `assert_*` helpers.
     receivers do not qualify by an `assert` prefix or constructor suffix. Defaults and annotations are executable expressions,
     and all formatted strings retain the veto because their executable expressions
     are hidden from this token scan. Non-ASCII identifiers also retain the veto:
-    this scan does not implement Python's NFKC identifier normalization. Everything else keeps the credit withheld: any other
-    patch-like call or reference or alias (`patch*`, `setattr`, `delattr`,
-    `monkeypatch.context()`, `mocker.spy`, `swap = ..`, `partial(..)`,
-    `yield from [swap := ..]`), any string outside a docstring that contains
-    `patch`, `mock`, `setattr`, `delattr`, `setitem`, `delitem`, `spy` or
-    `monkey`, any use of `getattr`, `__getattribute__`, `getfixturevalue`,
+    this scan does not implement Python's NFKC identifier normalization. Patch-route
+    calls (`patch`, `setattr`, `delattr`, `patch.object`, `patch.dict`, `patch.multiple`,
+    and similar) fail closed only when their arguments name the callee or owner or hide
+    the target; the same call patching another symbol in the module does not withhold
+    credit. Everything else keeps the credit withheld: any other patch-like reference
+    or alias (`swap = ..`, unauthenticated environment/mock use, `monkeypatch.context()`,
+    `mocker.spy`, `partial(..)`, `yield from [swap := ..]`), any string outside a
+    docstring that contains `patch`, `mock`, `setattr`, `delattr`, `setitem`, `delitem`,
+    `spy` or `monkey`, any use of `getattr`, `__getattribute__`, `getfixturevalue`,
     `__import__`, `__builtins__`, `builtins`, `__self__`, `partial`,
     `setitem`, `delitem`, `spy`, `context` or `syspath_prepend`, a string
     argument with a backslash, an f-string, adjacent literals, `*args` /
@@ -386,8 +389,9 @@ parameter-shadowed name, a fixture with arguments or extra statements, an
 undecorated function make no edge. The relation is uncertain, carries no
 oracle and never reaches `exposed`: the command's output is not credited, and a
 helper reached through the command is reach-only too (the invoke may never run
-the body, e.g. `--help`). `import click as c` and `from click import command`
-are not recognised.
+the body, e.g. `--help`). `import click as c` is recognised when it is the
+module's only binding of stdlib `click` and the alias is not rebound from
+another module; `from click import command` is not recognised.
 A group subcommand gets the same weak relation by name (#9226): a top-level
 synchronous function bound once and decorated by one `@<group>.command`
 registration (plus `click.option` / `click.argument` only) is reached by a test
@@ -395,8 +399,8 @@ that passes the group, through the same provenance-checked import, as the first
 argument of `<runner>.invoke(` with a literal argument list (positional or
 `args=`) whose first element is the subcommand's name. The group must be a
 top-level function bound once in the same file, decorated only by `click.group`
-(without `cls=`), `click.option` and `click.argument`, with `import click` as
-the file's only binding of `click`. The name is a string literal given to the
+(without `cls=`), `click.option` and `click.argument`, with `import click` or a single provenance-checked `import click as <alias>` as
+the file's only binding of stdlib `click`. The name is a string literal given to the
 registration (positionally or as `name=`), or the function's own name lowered
 with `_` as `-`; a function name ending `_command`, `_cmd`, `_group` or `_grp`
 is refused, since click versions differ on stripping it. Every registration on

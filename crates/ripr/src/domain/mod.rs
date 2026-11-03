@@ -1,4 +1,5 @@
 mod candidate_relation;
+mod canonical_item;
 mod causal_delta;
 mod classification;
 mod command_spec;
@@ -15,6 +16,7 @@ mod feedback;
 mod finding_test_evidence;
 mod fix_instruction;
 mod git_candidate;
+mod guard_refusal;
 mod identity;
 mod intervention_study;
 mod language;
@@ -35,6 +37,7 @@ mod test_evidence_summary;
 mod verification_result;
 
 pub use candidate_relation::CandidateRelation;
+pub use canonical_item::{CanonicalItemId, CanonicalItemParseError};
 pub use causal_delta::{
     AttributionBasis, CanonicalDelta, CanonicalEvidenceState, ComparisonConfidence,
     ComparisonCoverage, DeltaAttribution, GapState, compare_fixture_delta,
@@ -87,10 +90,18 @@ pub(crate) use feedback::{
     FeedbackReason, FeedbackReceipt, ReferenceState, ResultIdentity, ReviewStatus,
     classify_reference,
 };
-pub use fix_instruction::{FixInstructionState, FixInstructionSummary};
+pub use fix_instruction::{
+    FixInstructionIdentityContext, FixInstructionState, FixInstructionSummary,
+    InstructionIdentityParseError, InstructionInstanceId, InstructionSemanticId,
+    InstructionSnapshotCurrentness,
+};
 pub use git_candidate::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
     GitHashFormat, GitObjectId, GitTreeish,
+};
+pub(crate) use guard_refusal::{
+    GuardRefusalKind, assertion_not_credited_entry_for_test, assertion_not_credited_reason,
+    guard_refusal_digest_classification_hint, guard_refusal_kind, guard_refusal_limitation_edge,
 };
 pub use identity::{
     GOVERNED_IDENTITY_SURFACES, IDENTITY_REGISTRY_JSON_PATH, IDENTITY_REGISTRY_MARKDOWN_PATH,
@@ -121,8 +132,9 @@ pub(crate) use next_action::{
     select_canonical_next_action, whole_repo_pilot_command,
 };
 pub(crate) use probe::{
-    ARM_UNSELECTED_REASON_PREFIX, GUARD_UNENTERED_REASON_PREFIX, exact_assertion_fact,
-    input_boundary_fact, is_unselected_input_reason,
+    ARM_UNSELECTED_REASON_PREFIX, GUARD_UNENTERED_REASON_PREFIX, STRONG_CHECK_UNTIED_NEXT_STEP,
+    exact_assertion_fact, input_boundary_fact, is_unselected_input_reason,
+    row_exact_discriminator_fact,
 };
 pub use probe::{
     ActivationEvidence, AnalysisScope, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact,
@@ -148,8 +160,10 @@ pub use repair_card::{
 pub(crate) use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub(crate) use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
 pub(crate) use probe::boundary_input_observed_with_weak_oracle;
+pub(crate) use probe::declared_const_name;
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};
+pub(crate) use test_evidence_identity::normalize_transport_path;
 pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};
 pub(crate) use verification_result::CommandSpecDigest;
 pub use verification_result::{

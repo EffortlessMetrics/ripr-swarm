@@ -1,0 +1,6 @@
+[package]
+name = "match_arm_let_bound_returned_bare_credited"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]

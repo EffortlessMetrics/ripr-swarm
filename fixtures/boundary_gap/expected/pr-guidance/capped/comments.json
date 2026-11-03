@@ -83,6 +83,7 @@
         ],
         "intent": "Add one focused discriminator test.",
         "near_test": "above_threshold_gets_discount",
+        "proposed_target": null,
         "recommended_file": "tests/pricing.rs",
         "recommended_name": "discounted_total_boundary_discriminator",
         "related_test": {
@@ -150,6 +151,7 @@
         ],
         "intent": "Add one focused discriminator test.",
         "near_test": "above_threshold_gets_discount",
+        "proposed_target": null,
         "recommended_file": "tests/pricing.rs",
         "recommended_name": "discounted_total_boundary_discriminator",
         "related_test": {
@@ -217,6 +219,7 @@
         ],
         "intent": "Add one focused discriminator test.",
         "near_test": "above_threshold_gets_discount",
+        "proposed_target": null,
         "recommended_file": "tests/pricing.rs",
         "recommended_name": "discounted_total_boundary_discriminator",
         "related_test": {
@@ -302,6 +305,7 @@
         ],
         "intent": "Add one focused discriminator test.",
         "near_test": "above_threshold_gets_discount",
+        "proposed_target": null,
         "recommended_file": "tests/pricing.rs",
         "recommended_name": "discounted_total_boundary_discriminator",
         "related_test": {
@@ -370,6 +374,7 @@
         ],
         "intent": "Add one focused discriminator test.",
         "near_test": "above_threshold_gets_discount",
+        "proposed_target": null,
         "recommended_file": "tests/pricing.rs",
         "recommended_name": "discounted_total_boundary_discriminator",
         "related_test": {
@@ -438,6 +443,7 @@
         ],
         "intent": "Add one focused discriminator test.",
         "near_test": "above_threshold_gets_discount",
+        "proposed_target": null,
         "recommended_file": "tests/pricing.rs",
         "recommended_name": "discounted_total_boundary_discriminator",
         "related_test": {
@@ -506,6 +512,7 @@
         ],
         "intent": "Add one focused discriminator test.",
         "near_test": "above_threshold_gets_discount",
+        "proposed_target": null,
         "recommended_file": "tests/pricing.rs",
         "recommended_name": "discounted_total_boundary_discriminator",
         "related_test": {
@@ -574,6 +581,7 @@
         ],
         "intent": "Add one focused discriminator test.",
         "near_test": "above_threshold_gets_discount",
+        "proposed_target": null,
         "recommended_file": "tests/pricing.rs",
         "recommended_name": "discounted_total_boundary_discriminator",
         "related_test": {
@@ -642,6 +650,7 @@
         ],
         "intent": "Add one focused discriminator test.",
         "near_test": "above_threshold_gets_discount",
+        "proposed_target": null,
         "recommended_file": "tests/pricing.rs",
         "recommended_name": "discounted_total_boundary_discriminator",
         "related_test": {
@@ -710,6 +719,7 @@
         ],
         "intent": "Add one focused discriminator test.",
         "near_test": "above_threshold_gets_discount",
+        "proposed_target": null,
         "recommended_file": "tests/pricing.rs",
         "recommended_name": "discounted_total_boundary_discriminator",
         "related_test": {

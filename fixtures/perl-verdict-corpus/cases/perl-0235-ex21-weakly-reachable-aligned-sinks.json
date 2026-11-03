@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex21-weakly-reachable-aligned-sinks.json",
-    "sha256": "63c477ba11143c7b01ef270367d25fd8f400f1486fabd747757b535e0690b861",
+    "sha256": "56c5db94176d4b6f0aaf7a66d9824e3579d2b0272b6dd79c0325e6c281693efb",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"reachability_hint\": \"weakly_reachable\"}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
   },

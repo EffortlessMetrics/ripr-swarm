@@ -963,6 +963,20 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             &focus,
             no_behavior.sole_line_replacement,
         )
+        .or_else(|| {
+            // A nested function whose result the enclosing body discards is
+            // reached by a call, not observed by a result (#12182).
+            matches!(family, ProbeFamily::ReturnValue)
+                .then(|| {
+                    super::nested_result::python_nested_result_gap(
+                        owner,
+                        line_text,
+                        old_line_text,
+                        &related_candidates,
+                    )
+                })
+                .flatten()
+        })
     })
     .flatten();
     let mut table_downgraded = false;
@@ -1693,6 +1707,10 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             boundary_fact: crate::domain::input_boundary_fact(
                 &missing_discriminators,
                 &ProbeFamily::Predicate,
+            ),
+            exact_discriminator_fact: crate::domain::row_exact_discriminator_fact(
+                &missing_discriminators,
+                &family,
             ),
         },
         alignment_prep,

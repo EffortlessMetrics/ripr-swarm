@@ -1145,6 +1145,47 @@ class CaseAll(unittest.TestCase):
 }
 
 #[test]
+fn oracle_for_call_recognizes_async_mock_expectations() -> Result<(), String> {
+    for method in [
+        "assert_awaited",
+        "assert_awaited_once",
+        "assert_awaited_with",
+        "assert_awaited_once_with",
+    ] {
+        let source = format!(
+            r#"
+from unittest.mock import AsyncMock
+
+async def test_on_parse():
+    m = AsyncMock()
+    await on_parse("1", m)
+    m.{method}(1)
+"#
+        );
+        let oracles = assertion_oracles(&source);
+        let mock = oracles
+            .iter()
+            .filter(|(kind, _)| matches!(kind, OracleKind::MockExpectation))
+            .count();
+        if mock != 1 {
+            return Err(format!(
+                "expected one mock_expectation oracle for {method}, got {mock} ({oracles:?})"
+            ));
+        }
+        let unknown = oracles
+            .iter()
+            .filter(|(kind, _)| matches!(kind, OracleKind::Unknown))
+            .count();
+        if unknown != 0 {
+            return Err(format!(
+                "{method} must not read as unknown custom helper ({oracles:?})"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn oracle_for_assert_expr_falls_back_to_smoke_for_bare_name() -> Result<(), String> {
     let source = r#"
 def test_bare_truthy():
@@ -1250,6 +1291,8 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         version_conditional: false,
         cli_subcommand: None,
         nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1824,6 +1867,8 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         version_conditional: false,
         cli_subcommand: None,
         nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1892,6 +1937,8 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         version_conditional: false,
         cli_subcommand: None,
         nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -1982,6 +2029,8 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         version_conditional: false,
         cli_subcommand: None,
         nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -2039,6 +2088,8 @@ fn same_stem_related_handles_missing_stems() {
         version_conditional: false,
         cli_subcommand: None,
         nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
     let test = PythonTest {
         setup_receivers: Vec::new(),
@@ -4499,6 +4550,8 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         version_conditional: false,
         cli_subcommand: None,
         nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -4584,6 +4637,8 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         version_conditional: false,
         cli_subcommand: None,
         nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -4673,6 +4728,8 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         version_conditional: false,
         cli_subcommand: None,
         nested_called_by_parent: false,
+        nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     }
 }
 

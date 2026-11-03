@@ -85,6 +85,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: add or strengthen a focused assertion for the missing check `age == 18`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/ts_dead_assertion_after_try_finally/input --diff <cwd>/fixtures/ts_dead_assertion_after_try_finally/diff.patch --mode fast probe:src_eligibility.ts:typescript_preview:013a8947
   ripr context --root <cwd>/fixtures/ts_dead_assertion_after_try_finally/input --diff <cwd>/fixtures/ts_dead_assertion_after_try_finally/diff.patch --mode fast --at probe:src_eligibility.ts:typescript_preview:013a8947
 
