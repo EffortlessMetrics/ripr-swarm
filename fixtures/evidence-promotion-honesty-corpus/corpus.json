@@ -90,6 +90,40 @@
       "reason": "Historical capture no corpus case reads; held at the generation it was taken at until it is recaptured or removed (#12293)."
     }
   ],
+  "report_digest_exemptions": [
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
+      "reason": "Historical capture taken before the producer stamped `artifact.content_sha256`; it is also held at an older cache generation by `report_cache_schema_pins`, and gains a stamp when it is recaptured or removed (#12745)."
+    }
+  ],
   "cases": [
     {
       "id": "typescript_mock_count_alias",

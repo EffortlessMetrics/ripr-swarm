@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `check-evidence-promotion-honesty` now fails a committed full repo-exposure capture that carries no `artifact.content_sha256`, naming the file, so deleting the digest no longer evades the check; the eight historical pre-stamp inherent-receiver captures are listed in the corpus's `report_digest_exemptions`, and an exemption that names a stamped or missing capture fails. RIPR-SPEC-0108 now states that the digest is self-sealing: it detects a stale or hand-edited capture and is not an authenticity check (#12745).

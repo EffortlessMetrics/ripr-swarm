@@ -159,6 +159,21 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      the corpus naming the report, the version it is held at and a reason. A
      pin that disagrees with the report, is not older than the current version, or names
      no capture fails (#12293).
+     Every committed full capture (a report carrying the producer's `artifact`
+     block or `source_subject.corpus`) must carry an `artifact.content_sha256`
+     that matches its own bytes under `raw_json_placeholder_v1` (#12602). A
+     capture with no digest fails and names the file, so deleting the field
+     does not evade the check; the only way past it is a
+     `report_digest_exemptions` entry in the corpus naming the report and a
+     reason. An exemption is judged too: it must name a committed capture that
+     really carries no digest, and is a violation once the capture gains one or
+     is removed (#12745).
+     Scope of the guarantee: the digest is recomputed from the file's own
+     bytes, so anyone who can recompute it can bless an edit. The check
+     detects a stale or hand-edited capture. It is not a tamper-proof seal and
+     is no evidence that the analyzer produced the report. The only sanctioned
+     way to change a report is to recapture it with `ripr check --mode draft
+     --format repo-exposure-json --root <subject>`.
 2a. Validates the case tier before trusting the expectation:
    - `pure` cases are checked-in tiny examples and must not carry
      pinned-external metadata.
