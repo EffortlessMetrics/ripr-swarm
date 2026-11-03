@@ -1801,7 +1801,11 @@ fn push_language_routes_terminal(out: &mut String, routes: &[PilotLanguageRoute]
         // `pilot-summary.json` and the Markdown guidance line, not the label.
         if let Some(command) = route.command.as_deref() {
             out.push_str(&format!("    route: {command}\n"));
-        } else if let Some(guidance) = route.guidance.as_deref() {
+        }
+        // A disabled-but-available language keeps its enable step visible next
+        // to the check route, since `ripr check` skips it until it is enabled.
+        let show_guidance = route.command.is_none() || (route.available && !route.enabled);
+        if let Some(guidance) = route.guidance.as_deref().filter(|_| show_guidance) {
             out.push_str(&format!("    {guidance}\n"));
         }
     }

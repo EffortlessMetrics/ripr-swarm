@@ -3435,6 +3435,14 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             terminal.contains(&format!("typescript: 1 file (preview; turn it on in ripr.toml [languages] to check it)\n    route: {}\n", route_command())),
             "{terminal}"
         );
+        let disabled_guidance = required
+            .routes
+            .iter()
+            .find(|route| route.language == LanguageId::TypeScript)
+            .and_then(|route| route.guidance.clone());
+        if let Some(guidance) = disabled_guidance {
+            assert!(terminal.contains(&format!("    {guidance}\n")), "{terminal}");
+        }
         assert!(
             terminal.contains(
                 "none: pilot found no gaps in the Rust code it checked; see the other languages below"
