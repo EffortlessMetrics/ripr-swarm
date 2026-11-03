@@ -1121,6 +1121,7 @@ pub(crate) fn resolve_repair_start(
         if let Some(chosen) = check_recommended_start(root, &config, output, &candidates) {
             candidates.retain(|(id, _)| *id == chosen);
         } else {
+            let before = candidates.len();
             let mut kept = Vec::new();
             for (id, note) in std::mem::take(&mut candidates) {
                 let closed = classified
@@ -1149,6 +1150,16 @@ pub(crate) fn resolve_repair_start(
                     Some(reason) => refusal_reasons.push(reason),
                     None => kept.push((id, note)),
                 }
+            }
+            // Check recommended none of the rest. A lone survivor of a
+            // narrowing would otherwise read as the only choice and start on
+            // its own; it is offered by id instead.
+            if kept.len() == 1 && kept.len() < before {
+                let (_, note) = kept.remove(0);
+                refusal_reasons.push(format!(
+                    "the code at {} `{}`: `ripr check` recommends no repair start for this change; to repair it anyway, run `{}`",
+                    note.location, note.code, note.command
+                ));
             }
             candidates = kept;
         }
@@ -1226,11 +1237,13 @@ fn recommended_seam(
     }
 }
 
+/// Why a changed spot has no repair start when `ripr check` cannot judge it
+/// (#12849): check offers none for a static-limited finding.
+const CHECK_UNKNOWN_REASON: &str = "`ripr check` cannot tell from reading the code whether tests would notice this and offers no repair start for it, so inspect it by hand before adding a test";
+
 /// Why a changed spot needs no repair when `ripr check` already reads it as
 /// noticed by a test (#11401). It speaks to the changed code itself, unlike
 /// [`GRIPPED_SPOT_REASON`].
-const CHECK_UNKNOWN_REASON: &str = "`ripr check` cannot tell from reading the code whether tests would notice this and offers no repair start for it, so inspect it by hand before adding a test";
-
 const CHECK_NOTICED_REASON: &str = "`ripr check` reads this changed code as already noticed by a test, so there is no gap to repair here";
 
 /// Turn the refusal of each changed seam that `ripr check` reads as noticed

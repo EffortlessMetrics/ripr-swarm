@@ -764,10 +764,10 @@ changed lines, the selection prompt (`several_eligible_seams`) is unchanged.
 
 When several seams are eligible on the changed lines and `ripr check` names no
 single start, a seam whose bound check finding (the shared `finding_for_seam`
-join) is exposed or static-limited is not offered: check reads it as noticed or
+join) is exposed or static-limited (`finding_is_static_limited`) is not offered: check reads it as noticed or
 cannot judge it, and offers no start for it. The refusal says so in plain words
 for each such spot; if none remain, bare repair refuses (`no_eligible_seam`)
-instead of listing starts. A single eligible seam and an unscoped change keep
+instead of listing starts. When exactly one seam survives and check recommended none, it is not started on its own; the refusal gives its `ripr repair <id>` command. A single eligible seam and an unscoped change keep
 their earlier behavior.
 
 ## Test Mapping
