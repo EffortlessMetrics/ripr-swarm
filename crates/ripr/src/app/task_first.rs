@@ -868,8 +868,9 @@ pub(crate) fn resolve_repair_start(
     // classes, so no eligible seam is lost.
     let policy = AgentBriefPolicy::from_config(&config);
     let bound = bound_root(&root.to_string_lossy());
-    let mut eligible_ids = Vec::new();
-    let mut candidate_notes: Vec<RepairCandidateNote> = Vec::new();
+    // Each eligible seam id with its plain description, kept as pairs so a
+    // narrowing can never leave the two out of step.
+    let mut candidates: Vec<(String, RepairCandidateNote)> = Vec::new();
     // #11111: the gate judges whole seams, not the change. When the diff a
     // bare `ripr check` would read is available, a seam the diff does not
     // touch says nothing about the change: an already-gripped one is counted,
@@ -927,6 +928,10 @@ pub(crate) fn resolve_repair_start(
     // crate, but `ripr check` can. A changed seam that check reads as noticed
     // is not an open gap here either, so the two commands cannot disagree.
     let manifest_dirs: std::cell::OnceCell<Vec<String>> = std::cell::OnceCell::new();
+    // One default check run serves both the noticed-by-check screen above and
+    // the recommended-start narrowing below.
+    let check_run =
+        RunOnce::new(|| super::gap_bound_repair::default_check_output(root, base, &config).ok());
     let refusals = notice_what_check_notices(
         refusals,
         &classified,
@@ -936,11 +941,7 @@ pub(crate) fn resolve_repair_start(
                 .get_or_init(|| crate::analysis::seam_cache::workspace_manifest_dir_prefixes(root));
             call_may_cross_a_crate(root, entry, dirs)
         },
-        || {
-            super::gap_bound_repair::default_check_output(root, base, &config)
-                .ok()
-                .map(|output| output.findings)
-        },
+        || check_run.get().map(|output| output.findings.clone()),
     );
     // For each gripped refusal: whether the spot is outside the change, and why.
     let mut gripped_reasons: Vec<(bool, String)> = Vec::new();
@@ -955,8 +956,10 @@ pub(crate) fn resolve_repair_start(
         match refusal {
             None if off => eligible_off_change += 1,
             None => {
-                eligible_ids.push(entry.seam.id().as_str().to_string());
-                candidate_notes.push(describe_candidate(entry, &bound));
+                candidates.push((
+                    entry.seam.id().as_str().to_string(),
+                    describe_candidate(entry, &bound),
+                ));
             }
             // An already-gripped reason names its own spot, so it is never
             // read as the verdict on a different changed line.
@@ -1111,15 +1114,15 @@ pub(crate) fn resolve_repair_start(
     // one repair start for it. Check's choice is the recommendation, so the
     // bare start takes it instead of asking the user to repeat it. Only a
     // seam among the eligible ones is taken; no first or newest pick.
-    if eligible_ids.len() > 1
+    if candidates.len() > 1
         && matches!(scope, Some(ChangeScope::TouchesSeams(_)))
-        && let Some(chosen) = check_recommended_start(root, base, &config, &eligible_ids)
-        && let Some(position) = eligible_ids.iter().position(|id| *id == chosen)
+        && let Some(output) = check_run.get()
+        && let Some(chosen) = check_recommended_start(root, &config, output, &candidates)
     {
-        let note = candidate_notes.swap_remove(position);
-        eligible_ids = vec![chosen];
-        candidate_notes = vec![note];
+        candidates.retain(|(id, _)| *id == chosen);
     }
+    let (eligible_ids, candidate_notes): (Vec<String>, Vec<RepairCandidateNote>) =
+        candidates.into_iter().unzip();
     let head = current_git_head(root).ok();
     let spec = if eligible_ids.len() == 1 {
         Some(repair_start_command_spec(&bound, &eligible_ids[0]))
@@ -1139,20 +1142,49 @@ pub(crate) fn resolve_repair_start(
     })
 }
 
+/// Runs `run` at most once and shares its result.
+struct RunOnce<T, F: Fn() -> Option<T>> {
+    cell: std::cell::OnceCell<Option<T>>,
+    run: F,
+}
+
+impl<T, F: Fn() -> Option<T>> RunOnce<T, F> {
+    fn new(run: F) -> Self {
+        Self {
+            cell: std::cell::OnceCell::new(),
+            run,
+        }
+    }
+
+    fn get(&self) -> Option<&T> {
+        self.cell.get_or_init(|| (self.run)()).as_ref()
+    }
+}
+
 /// The seam of the one repair start the default `ripr check` prints for the
-/// change, when it is among `eligible_ids` and needs no commit first. `None`
-/// when check names no start, names another seam, or cannot run (fail-closed:
-/// the caller keeps its selection prompt).
+/// change, when it is among the eligible `candidates` and needs no commit
+/// first. `None` when check names no start or another seam (fail-closed: the
+/// caller keeps its selection prompt).
 fn check_recommended_start(
     root: &Path,
-    base: Option<&str>,
     config: &crate::config::RiprConfig,
-    eligible_ids: &[String],
+    output: &super::CheckOutput,
+    candidates: &[(String, RepairCandidateNote)],
 ) -> Option<String> {
-    let output = super::gap_bound_repair::default_check_output(root, base, config).ok()?;
-    match check_repair_route(root, config, &output, &mut None) {
+    recommended_seam(
+        check_repair_route(root, config, output, &mut None),
+        candidates,
+    )
+}
+
+fn recommended_seam(
+    route: crate::app::CheckRepairRoute,
+    candidates: &[(String, RepairCandidateNote)],
+) -> Option<String> {
+    match route {
         crate::app::CheckRepairRoute::Route(route)
-            if route.uncommitted_target.is_none() && eligible_ids.contains(&route.seam_id) =>
+            if route.uncommitted_target.is_none()
+                && candidates.iter().any(|(id, _)| *id == route.seam_id) =>
         {
             Some(route.seam_id)
         }
@@ -3066,6 +3098,10 @@ pub(crate) enum RepairRefusalCode {
     RetryBudgetExhausted,
     /// `continue`: no current attempt exists.
     NoCurrentAttempt,
+    /// The repair spellings ran where no workspace, package or Git repository
+    /// anchors the current directory, so there is no project to answer about
+    /// (#12417). An explicit `--root` skips that discovery gate.
+    UnanchoredRoot,
     /// `continue`: several current attempts; select one with `--attempt`.
     AmbiguousAttempts,
     /// `continue`: the attempt ended without a receipt.
@@ -3108,7 +3144,7 @@ impl RepairRefusalDisposition {
 impl RepairRefusalCode {
     /// Every code, for the docs/help parity test.
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 17] = [
+    pub(crate) const ALL: [Self; 18] = [
         Self::ItemNamesNoSeam,
         Self::ItemNamesSeveralSeams,
         Self::SeamNotRepairEligible,
@@ -3120,6 +3156,7 @@ impl RepairRefusalCode {
         Self::AwaitingEdit,
         Self::RetryBudgetExhausted,
         Self::NoCurrentAttempt,
+        Self::UnanchoredRoot,
         Self::AmbiguousAttempts,
         Self::AttemptEndedWithoutReceipt,
         Self::AttemptCompletionUnconfirmed,
@@ -3141,6 +3178,7 @@ impl RepairRefusalCode {
             Self::AwaitingEdit => "awaiting_edit",
             Self::RetryBudgetExhausted => "retry_budget_exhausted",
             Self::NoCurrentAttempt => "no_current_attempt",
+            Self::UnanchoredRoot => "unanchored_root",
             Self::AmbiguousAttempts => "ambiguous_attempts",
             Self::AttemptEndedWithoutReceipt => "attempt_ended_without_receipt",
             Self::AttemptCompletionUnconfirmed => "attempt_completion_unconfirmed",
@@ -3168,7 +3206,8 @@ impl RepairRefusalCode {
             | Self::NoEligibleSeam
             | Self::StartRefusedUncommittedTarget
             | Self::NoTestRoute
-            | Self::NoCurrentAttempt => RepairRefusalDisposition::NotStarted,
+            | Self::NoCurrentAttempt
+            | Self::UnanchoredRoot => RepairRefusalDisposition::NotStarted,
         }
     }
 
@@ -4182,6 +4221,81 @@ pub(crate) mod tests {
             || counted(Some(Vec::new())),
         );
         assert_eq!(runs.get(), 2);
+    }
+
+    /// #12831: the noticed-by-check screen and the recommended-start
+    /// narrowing share one check run per `resolve_repair_start`.
+    #[test]
+    fn both_check_consumers_share_one_check_run() {
+        let runs = std::cell::Cell::new(0usize);
+        let shared = RunOnce::new(|| {
+            runs.set(runs.get() + 1);
+            Some(Vec::<crate::domain::Finding>::new())
+        });
+        let classified: Vec<crate::analysis::ClassifiedSeam> = Vec::new();
+        let _ = notice_what_check_notices(
+            Vec::new(),
+            &classified,
+            |_| true,
+            |_| true,
+            || shared.get().cloned(),
+        );
+        // Nothing was open, so the first consumer never asked for check.
+        assert_eq!(runs.get(), 0);
+        assert!(shared.get().is_some());
+        assert!(shared.get().is_some());
+        assert_eq!(runs.get(), 1, "two reads, one run");
+        // A run that cannot answer is not retried either.
+        let none_runs = std::cell::Cell::new(0usize);
+        let failing = RunOnce::new(|| {
+            none_runs.set(none_runs.get() + 1);
+            None::<u8>
+        });
+        assert!(failing.get().is_none() && failing.get().is_none());
+        assert_eq!(none_runs.get(), 1);
+    }
+
+    fn candidate(id: &str) -> (String, RepairCandidateNote) {
+        (
+            id.to_string(),
+            RepairCandidateNote {
+                location: "src/lib.rs:2".to_string(),
+                code: "x".to_string(),
+                test_need: "a test",
+                command: format!("ripr repair {id}"),
+                column: None,
+            },
+        )
+    }
+
+    /// #12831: check's pick narrows the choice only when it is an eligible
+    /// seam that needs no commit first.
+    #[test]
+    fn check_pick_narrows_only_when_eligible_and_committed() {
+        use crate::app::{CheckRepairRoute, RepairRoute};
+        let candidates = vec![candidate("aaa"), candidate("bbb")];
+        let route = |seam: &str, uncommitted: Option<&str>| {
+            CheckRepairRoute::Route(RepairRoute {
+                finding_id: "f".to_string(),
+                seam_id: seam.to_string(),
+                uncommitted_target: uncommitted.map(str::to_string),
+            })
+        };
+        assert_eq!(
+            recommended_seam(route("bbb", None), &candidates),
+            Some("bbb".to_string())
+        );
+        // Check's pick is not among the eligible seams: prompt kept.
+        assert_eq!(recommended_seam(route("zzz", None), &candidates), None);
+        // Check's pick needs a commit first: prompt kept.
+        assert_eq!(
+            recommended_seam(route("bbb", Some("src/lib.rs")), &candidates),
+            None
+        );
+        assert_eq!(
+            recommended_seam(CheckRepairRoute::Silent, &candidates),
+            None
+        );
     }
 
     /// #11401: the pre-test needs a second package and a top-level `pub fn`
