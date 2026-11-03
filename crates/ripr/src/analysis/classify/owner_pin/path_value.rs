@@ -2,9 +2,8 @@
 //! bounded literal iterator chain compared with `assert_eq!`.
 
 use super::closure_adaptor::literal_sequence;
-use crate::analysis::classify::indirect_owner::{
-    names_owner_value, owner_path_names, qualifier_may_name_owner,
-};
+use crate::analysis::classify::call_identity::{CallTarget, shared_owner_call_identity};
+use crate::analysis::classify::indirect_owner::names_owner_value;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::extract::{
     IteratorChain, integer_element, parse_chain_at, parse_iterator_chain,
@@ -60,11 +59,17 @@ fn value_path_names_owner(
         return false;
     }
     if path.contains("::") {
-        let prefix = path
-            .rsplit_once("::")
-            .map(|(before, _)| format!("{before}::"))
-            .unwrap_or_default();
-        if !qualifier_may_name_owner(&prefix, &owner_path_names(owner)) {
+        // A qualified path is credited only where the shared call identity
+        // settles its qualifier on the owner; `crate::decoy::inc` is not the
+        // owner merely because `crate` may name it.
+        let segments: Vec<String> = path.split("::").map(String::from).collect();
+        let Some((_, qualifier)) = segments.split_last() else {
+            return false;
+        };
+        let resolves_to_owner = shared_owner_call_identity(index, owner).is_some_and(|identity| {
+            identity.resolve_call(test, index, qualifier) == CallTarget::Owner
+        });
+        if !resolves_to_owner {
             return false;
         }
     } else if !names_owner_value(&mask_comments_and_strings(code), owner, test, index, |_| {
@@ -110,7 +115,51 @@ pub(in crate::analysis::classify) fn map_path_value_mention(
     if leaf != owner.name {
         return false;
     }
-    value_path_names_owner(code, &chain.owner_path, owner, test, index)
+    // Lift the function-value limit only where the owner pin can actually
+    // credit this chain: the enclosing `assert_eq!` must pair it with a matching
+    // literal `Vec`, so a rejected chain keeps the gap withheld.
+    let Some((left, right)) = enclosing_assert_eq_operands(code, open) else {
+        return false;
+    };
+    [(&left, &right), (&right, &left)]
+        .into_iter()
+        .any(|(chain_operand, expected)| {
+            substitute_owner_call(test, chain_operand, expected, owner, index).is_some()
+        })
+}
+
+/// The two operands of the `assert_eq!(..)` call that encloses `at`, split at
+/// the one top-level comma. A call with a message or any other arity is not read.
+fn enclosing_assert_eq_operands(code: &str, at: usize) -> Option<(String, String)> {
+    let start = code[..at].rfind("assert_eq!(")?;
+    let open = start + "assert_eq!".len();
+    let mut depth = 0i32;
+    let mut close = None;
+    let mut commas = Vec::new();
+    for (offset, ch) in code[open..].char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(open + offset);
+                    break;
+                }
+            }
+            ',' if depth == 1 => commas.push(open + offset),
+            _ => {}
+        }
+    }
+    let close = close.filter(|close| *close > at)?;
+    let inner_start = open + 1;
+    let (first, second) = match commas.as_slice() {
+        [one] => (&code[inner_start..*one], &code[*one + 1..close]),
+        [one, trailing] if code[*trailing + 1..close].trim().is_empty() => {
+            (&code[inner_start..*one], &code[*one + 1..*trailing])
+        }
+        _ => return None,
+    };
+    Some((first.trim().to_string(), second.trim().to_string()))
 }
 
 #[cfg(test)]

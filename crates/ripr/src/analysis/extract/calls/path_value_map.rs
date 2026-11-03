@@ -98,6 +98,13 @@ pub(in crate::analysis) fn parse_chain_at(line: &str, map_at: usize) -> Option<I
         .rfind("vec!")
         .or_else(|| before_walk.rfind('['))
         .unwrap_or(0);
+    // `rows[0].iter()` indexes a value and `my_vec![1].iter()` is another
+    // macro: neither is the literal receiver.
+    if before_walk[..receiver_start]
+        .ends_with(|c: char| c.is_alphanumeric() || matches!(c, '_' | ')' | ']'))
+    {
+        return None;
+    }
     let receiver = before_walk[receiver_start..].trim();
     let inputs = literal_sequence(receiver)?;
     Some(IteratorChain {
@@ -295,6 +302,16 @@ mod tests {
             "0x10", "1e3", "1.5", "2 * 3", "1 << 3", "1u3", "", "-", "u8",
         ] {
             assert_eq!(integer_element(unread), None, "{unread}");
+        }
+    }
+
+    #[test]
+    fn an_indexed_value_or_a_longer_macro_name_is_not_the_literal_receiver() {
+        for line in [
+            "rows[0].iter().map(inc).collect::<Vec<_>>();",
+            "my_vec![1, 2].into_iter().map(inc).collect::<Vec<_>>();",
+        ] {
+            assert!(synthetic_calls_in_line(line).is_empty(), "{line}");
         }
     }
 

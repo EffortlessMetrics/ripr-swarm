@@ -5490,7 +5490,9 @@ impl OwnerReturnPin {
                     && (test.start_line..=test.end_line).contains(&assertion.line))
                 .then(|| {
                     index.functions().iter().find(|function| {
-                        function.name == self.name && function.start_line == self.owner_start_line
+                        function.name == self.name
+                            && function.start_line == self.owner_start_line
+                            && function.file == self.owner_file
                     })
                 })
                 .flatten()

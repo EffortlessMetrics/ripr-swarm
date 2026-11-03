@@ -725,7 +725,7 @@ under `rust_indirect_owner_call_unresolved`:
 - **function value**: a non-ignored test with an assertion, in the owner's file
   or an integration test, names the owner without calling it: an argument
   (`.map(inc)`) or an untyped binding (`let f = inc; f(2)`; a typed `fn` pointer binding is left to RIPR-SPEC-0115).
-  A bounded `.map(owner)` / `.filter(owner)` chain whose bare path resolves to
+  A bounded `.map(owner)` chain whose bare path resolves to
   the owner and whose `assert_eq!` names the matching literal collection is left
   to RIPR-SPEC-0197 (#9478 slice A); unresolved paths, shadowed bindings and
   qualified paths to a different same-leaf function keep the gap or stay

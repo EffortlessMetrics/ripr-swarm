@@ -3178,6 +3178,21 @@ assertions. This repair shares the existing callback without that larger migrati
   verdict-corpus case
   `spec0231-oracle-helper-assert-json-eq`.
 
+### Bounded `.map(owner)` iterator chains (#9478 slice A)
+
+An `assert_eq!` whose one operand is a bounded iterator chain and whose other
+operand is a literal `Vec` is admitted as a call of the owner on the chain's
+first input when all of these hold: the chain's input is a literal integer
+sequence read through `.into_iter()`, `.iter()` or `.iter_mut()`; its adapter is
+one `.map(owner)` with a simple owner path, followed by `.collect::<Vec<_>>()`;
+the path resolves to the owner by the same owner-identity gates as a direct
+call (a qualified path must resolve through the shared call identity); and the
+owner body folds each input to exactly the expected literal elements. Unresolved,
+shadowed, foreign same-name, non-literal, closure, generic-adapter and
+non-matching chains are refused, and the bounded-chain exception to the
+function-value limit (RIPR-SPEC-0240) applies only to a chain this rule admits.
+Implementation: `substitute_owner_call` and `map_path_value_mention`.
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/facts/test_helpers.rs` and

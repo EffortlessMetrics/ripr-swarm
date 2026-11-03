@@ -40,6 +40,16 @@ const CASES: &[(&str, &str, bool)] = &[
         false,
     ),
     (
+        "qualified_foreign_owner_outputs",
+        "assert_eq!(vec![1, 2].into_iter().map(crate::decoy::inc).collect::<Vec<_>>(), vec![2, 3]);",
+        false,
+    ),
+    (
+        "nonliteral_expectation",
+        "let expected = vec![2, 3]; assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), expected);",
+        false,
+    ),
+    (
         "blind",
         "assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![9, 9]);",
         false,
@@ -102,8 +112,10 @@ fn path_value_pins_only_the_observed_owner() -> Result<(), String> {
             "{case}: {:?}",
             changed[0]
         );
-        if case == "blind" {
-            assert_eq!(changed[0].class, ExposureClass::WeaklyExposed);
+        // A chain the owner pin does not admit keeps the function-value limit,
+        // so it is never reported as a repairable gap.
+        if matches!(case, "blind" | "nonliteral_expectation") {
+            assert_eq!(changed[0].class, ExposureClass::StaticUnknown, "{case}");
         }
     }
     Ok(())
