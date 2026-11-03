@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Hosted test shards build the workspace test binaries without `xtask` first and then add it, so the `ripr` lib test and `xtask` bin test compiles (about 9-11 GB each) never overlap on the 16 GB runner. Those overlaps ended shards with "runner received a shutdown signal" (exit 143) or "lost communication". The nextest command, the shard verifier and the Result are unchanged, and the build step logs a memory trace (#12704, #12703).

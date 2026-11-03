@@ -36,6 +36,7 @@ Start here:
     - 9 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/assertion_form_parity_assert_msg/input --diff <cwd>/fixtures/assertion_form_parity_assert_msg/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root <cwd>/fixtures/assertion_form_parity_assert_msg/input --diff <cwd>/fixtures/assertion_form_parity_assert_msg/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
   no repair start offered: a related test already reaches the changed boundary input, but ripr grades its assertion as a weak check, so ripr cannot build a repair packet for this finding yet. Follow the Next step above, then rerun `ripr check`

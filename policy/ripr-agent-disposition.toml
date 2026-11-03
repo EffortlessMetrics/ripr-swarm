@@ -1,0 +1,271 @@
+# Issue #1896: disposition for every landed experimental riprAgent contract element.
+# Closed vocabulary (issue #1896):
+#   internal_shared_type | private_vscode_compatibility | migrate_to_standard_lsp
+#   | migrate_to_mcp | historical_fixture_only | retire | experimental_not_public
+#
+# Standard LSP (#3009) and MCP (#3009) integration registries remain the 0.13
+# public integration authority; rows here must not register private surfaces as
+# standard client support.
+
+schema_version = "1"
+issue = 1896
+owner = "product / swarm"
+
+[[element]]
+id = "integration:standard_lsp"
+kind = "integration_registry"
+disposition = "migrate_to_standard_lsp"
+evidence = "docs/specs/RIPR-SPEC-0129-editor-integration-contract.md Layer 1; #3009 live producer contracts"
+retirement = "Authoritative for generic initialize clients at 0.13"
+
+[[element]]
+id = "integration:standard_mcp"
+kind = "integration_registry"
+disposition = "migrate_to_mcp"
+evidence = "crates/ripr/src/mcp/; ADR 0022 read-only adapter"
+retirement = "Authoritative for headless agents at 0.13 without experimental LSP dependency"
+
+[[element]]
+id = "capability:experimental.riprAgent"
+kind = "capability"
+disposition = "private_vscode_compatibility"
+evidence = "crates/ripr/src/lsp/agent_protocol.rs::server_capability"
+retirement = "#3080 de-advertises when standard surfaces subsume the slice"
+
+[[element]]
+id = "handler:ripr/listActionableItems"
+kind = "handler"
+disposition = "private_vscode_compatibility"
+evidence = "crates/ripr/src/lsp/backend.rs list_actionable_items"
+retirement = "#3080 runtime removal or migration to standard LSP/MCP projection"
+
+[[element]]
+id = "request:ripr/workspaceStatus"
+kind = "request"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/requests/workspace-status.json"
+retirement = "retire on #3080 unless promoted through standard LSP"
+
+[[element]]
+id = "request:ripr/refreshAnalysis"
+kind = "request"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/requests/refresh-analysis.json"
+retirement = "retire on #3080 unless promoted through standard LSP"
+
+[[element]]
+id = "request:ripr/listActionableItems"
+kind = "request"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/requests/list-actionable-items.json"
+retirement = "fixture vocabulary only; live handler is private_vscode_compatibility"
+
+[[element]]
+id = "request:ripr/getRepairPacket"
+kind = "request"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/requests/get-repair-packet.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "request:ripr/getEvidenceContext"
+kind = "request"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/requests/get-evidence-context.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "request:ripr/getTopLimitation"
+kind = "request"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/requests/get-top-limitation.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "request:ripr/getReceiptStatus"
+kind = "request"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/requests/get-receipt-status.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "profile:actionable"
+kind = "profile"
+disposition = "private_vscode_compatibility"
+evidence = "fixtures/lsp_agent_protocol/capability.json supported_profiles"
+retirement = "#3080"
+
+[[element]]
+id = "profile:full"
+kind = "profile"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/capability.json reserved_profiles"
+retirement = "retire on #3080"
+
+[[element]]
+id = "error:no_snapshot"
+kind = "error"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/errors/no-snapshot.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "error:analysis_in_flight"
+kind = "error"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/errors/analysis-in-flight.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "error:stale_snapshot"
+kind = "error"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/errors/stale-snapshot.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "error:stale_continuation"
+kind = "error"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/errors/stale-continuation.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "error:workspace_ambiguous"
+kind = "error"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/errors/workspace-ambiguous.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "error:config_invalid"
+kind = "error"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/errors/config-invalid.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "error:item_not_found"
+kind = "error"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/errors/item-not-found.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "error:route_static_limitation"
+kind = "error"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/errors/route-static-limitation.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "error:unsupported_protocol_version"
+kind = "error"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/errors/unsupported-protocol-version.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "error:unsupported_schema_version"
+kind = "error"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/errors/unsupported-schema-version.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "error:unsupported_profile"
+kind = "error"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/errors/unsupported-profile.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "error:cancelled"
+kind = "error"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/errors/cancelled.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "error:superseded"
+kind = "error"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/errors/superseded.json"
+retirement = "retire on #3080"
+
+[[element]]
+id = "schema:ripr-agent-capability"
+kind = "schema"
+disposition = "experimental_not_public"
+evidence = "schemas/ripr/ripr-agent-capability.schema.json"
+retirement = "stays private; capability producer is VS Code–bounded (#1896)"
+
+[[element]]
+id = "schema:ripr-agent-request"
+kind = "schema"
+disposition = "experimental_not_public"
+evidence = "schemas/ripr/ripr-agent-request.schema.json"
+retirement = "#3009 or retire with #3080"
+
+[[element]]
+id = "schema:ripr-agent-success"
+kind = "schema"
+disposition = "experimental_not_public"
+evidence = "schemas/ripr/ripr-agent-success.schema.json"
+retirement = "#3009 typed envelope or retire with #3080"
+
+[[element]]
+id = "schema:ripr-agent-error"
+kind = "schema"
+disposition = "experimental_not_public"
+evidence = "schemas/ripr/ripr-agent-error.schema.json"
+retirement = "#3009 or retire with #3080"
+
+[[element]]
+id = "fixture_corpus:lsp_agent_protocol"
+kind = "fixture_corpus"
+disposition = "historical_fixture_only"
+evidence = "fixtures/lsp_agent_protocol/SPEC.md"
+retirement = "pins wire vocabulary; not public integration proof"
+
+[[element]]
+id = "spec:RIPR-SPEC-0131"
+kind = "spec"
+disposition = "experimental_not_public"
+evidence = "docs/specs/RIPR-SPEC-0131-ripr-agent-protocol-contract.md"
+retirement = "superseded by standard LSP/MCP contracts at 0.13 GA"
+
+[[element]]
+id = "shared_type:domain.CommandSpec"
+kind = "shared_type"
+disposition = "internal_shared_type"
+evidence = "crates/ripr/src/domain/command_spec.rs consumed by LSP and MCP routes"
+retirement = "retain; strip custom transport fields from shared projections (#1896)"
+
+[[element]]
+id = "shared_type:domain.identity.catalog"
+kind = "shared_type"
+disposition = "internal_shared_type"
+evidence = "crates/ripr/src/domain/identity/catalog.rs"
+retirement = "retain across standard LSP/MCP (#1928/#3009)"
+
+[[element]]
+id = "dto:RiprAgentSuccessEnvelope"
+kind = "dto"
+disposition = "private_vscode_compatibility"
+evidence = "crates/ripr/src/lsp/agent_protocol.rs"
+retirement = "#3080; interim handler shape documented in docs/OUTPUT_SCHEMA.md"
+
+[[element]]
+id = "dto:RiprAgentErrorEnvelope"
+kind = "dto"
+disposition = "private_vscode_compatibility"
+evidence = "crates/ripr/src/lsp/agent_protocol.rs"
+retirement = "#3080"
+
+[[element]]
+id = "dto:RiprAgentRequestEnvelope"
+kind = "dto"
+disposition = "private_vscode_compatibility"
+evidence = "crates/ripr/src/lsp/agent_protocol.rs"
+retirement = "#3080"

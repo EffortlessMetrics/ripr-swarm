@@ -36,6 +36,7 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_macro_table_arrow_foreign_macro/input --diff <cwd>/fixtures/rust_macro_table_arrow_foreign_macro/diff.patch --mode fast probe:src_lib.rs:predicate:ea84cf5e
   ripr context --root <cwd>/fixtures/rust_macro_table_arrow_foreign_macro/input --diff <cwd>/fixtures/rust_macro_table_arrow_foreign_macro/diff.patch --mode fast --at probe:src_lib.rs:predicate:ea84cf5e
 Write a test for it:
