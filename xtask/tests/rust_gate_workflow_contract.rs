@@ -8,7 +8,9 @@ const ROUTED: &str = include_str!("../../.github/workflows/routed-rust.yml");
 /// `test-shards: 4` and runs the same tests in `rust-test-shards.yml` instead (#10507).
 const SHARDED_TEST_CONDITION: &str = "        if: inputs.test-shards == 1";
 const SHARDED_TEST_COMMAND: &str =
-    "cargo nextest run --workspace --profile ci --partition count:${{ matrix.shard }}/4";
+    "cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/4";
+const SHARDED_LIST_COMMAND: &str = "cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt";
+const SHARDED_RECEIPT_COMMAND: &str = "printf 'profile=ci\\nshard=%s/4\\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/4\\n' \"${{ matrix.shard }}\" \"${{ matrix.shard }}\"";
 const REQUIRED_GATES: &[(&str, &str)] = &[
     ("formatting", "cargo fmt --check"),
     ("agent_skills", "cargo policy preflight"),
@@ -379,8 +381,24 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
             .filter(|line| line.contains(needle))
             .count()
     };
-    if count(shards, SHARDED_TEST_COMMAND) != 1 {
-        findings.push("shards: expected exactly one partitioned nextest invocation".to_owned());
+    for (label, command) in [
+        ("test", SHARDED_TEST_COMMAND),
+        ("list", SHARDED_LIST_COMMAND),
+        ("receipt", SHARDED_RECEIPT_COMMAND),
+    ] {
+        if shards.lines().filter(|line| line.trim() == command).count() != 1 {
+            findings.push(format!(
+                "shards: expected exactly one {label} hash-partition command"
+            ));
+        }
+    }
+    if shards
+        .lines()
+        .filter(|line| line.trim() == "tool: nextest@0.9.149")
+        .count()
+        != 1
+    {
+        findings.push("shards: nextest must remain pinned to 0.9.149".to_owned());
     }
     if count(shards, "continue-on-error") != 0 {
         findings.push("shards: no step may continue on error".to_owned());
@@ -434,6 +452,59 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
 fn sharded_hosted_tests_keep_the_one_command_selection() {
     let findings = shard_contract_violations(SHARDS, ROUTED);
     assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn sharded_hosted_tests_reject_legacy_and_mixed_partition_commands() {
+    for mode in ["count", "slice"] {
+        for (label, command) in [
+            ("test", SHARDED_TEST_COMMAND),
+            ("list", SHARDED_LIST_COMMAND),
+            ("receipt", SHARDED_RECEIPT_COMMAND),
+        ] {
+            let replacement = command.replace("--partition hash:", &format!("--partition {mode}:"));
+            let changed = SHARDS.replace(command, &replacement);
+            assert_ne!(
+                changed, SHARDS,
+                "{label}/{mode} did not change the workflow"
+            );
+            let expected = format!("shards: expected exactly one {label} hash-partition command");
+            assert!(
+                shard_contract_violations(&changed, ROUTED).contains(&expected),
+                "{label}/{mode} was not rejected"
+            );
+            let decoy = format!("{changed}\n# {command}\n");
+            assert!(
+                shard_contract_violations(&decoy, ROUTED).contains(&expected),
+                "a comment hid the {label}/{mode} drift"
+            );
+        }
+        let changed = SHARDS.replace("--partition hash:", &format!("--partition {mode}:"));
+        assert_ne!(changed, SHARDS);
+        let findings = shard_contract_violations(&changed, ROUTED);
+        for label in ["test", "list", "receipt"] {
+            assert!(findings.contains(&format!(
+                "shards: expected exactly one {label} hash-partition command"
+            )));
+        }
+    }
+}
+
+#[test]
+fn sharded_hosted_tests_reject_a_changed_nextest_version() {
+    for replacement in ["tool: nextest", "tool: nextest@0.9.148"] {
+        let changed = SHARDS.replace("tool: nextest@0.9.149", replacement);
+        assert_ne!(changed, SHARDS);
+        assert!(
+            shard_contract_violations(&changed, ROUTED)
+                .contains(&"shards: nextest must remain pinned to 0.9.149".to_owned())
+        );
+        let decoy = format!("{changed}\n# tool: nextest@0.9.149\n");
+        assert!(
+            shard_contract_violations(&decoy, ROUTED)
+                .contains(&"shards: nextest must remain pinned to 0.9.149".to_owned())
+        );
+    }
 }
 
 #[test]
