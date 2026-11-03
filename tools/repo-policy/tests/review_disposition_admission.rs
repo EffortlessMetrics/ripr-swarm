@@ -88,7 +88,7 @@ fn review_disposition_self_test_passes() -> Result<(), String> {
 #[test]
 fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
     let head = "a".repeat(40);
-    let cases: [(&str, bool); 25] = [
+    let cases: [(&str, bool); 30] = [
         ("SOURCE_REVIEW_READY", true),
         ("REVIEW_INCOMPLETE", false),
         (
@@ -122,7 +122,19 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
         ("REVIEW_READY\n\nChecked the diff and the oracle.", true),
         // Deferred in #12814 and fixed in the follow-up: negating prose after the marker.
         ("REVIEW_READY\nnot ready; repairs are required", false),
-        ("REVIEW_READY\nThere is a blocking issue remaining", false),
+        ("REVIEW_READY\nThis is no longer ready", false),
+        ("REVIEW_READY\nRepairs are required before merge", false),
+        // The real first-line shape of merged review-of-record comments.
+        (
+            "REVIEW_READY \u{2014} head 7c50f64fa93c3e40533240fbe4fd0e9ac7398eab",
+            true,
+        ),
+        (
+            "REVIEW_READY \u{2014} head 7c50f64fa\n\nAngles: correctness. Findings: nothing blocking; hosted CI not run; fail-closed on missing data.",
+            true,
+        ),
+        ("REVIEW_READY - head 7c50f64\nNo findings.", true),
+        ("REVIEW_READY \u{2014} head xyz", false),
         (
             "REVIEW_READY\n```\nnot ready\n```\nChecked the oracle.",
             true,
@@ -177,6 +189,9 @@ fn wrong_head_changes_requested_and_identity_controls() -> Result<(), String> {
     let ready = review("r", "COMMENTED", &head, at, "REVIEW_READY");
     let mut no_time = review("r", "APPROVED", &head, at, "");
     no_time["submitted_at"] = serde_json::Value::Null;
+    let mut negative_no_time = review("other", "COMMENTED", &head, at, "REPAIR_REQUIRED");
+    negative_no_time["submitted_at"] = serde_json::Value::Null;
+    negative_no_time["id"] = serde_json::json!(3);
     let controls = [
         (
             "another reviewer's negative comment",
@@ -187,6 +202,14 @@ fn wrong_head_changes_requested_and_identity_controls() -> Result<(), String> {
             "another reviewer's neutral comment",
             serde_json::json!([ready, chatter]),
             true,
+        ),
+        (
+            "negative comment without submitted_at",
+            serde_json::json!([
+                review("r", "COMMENTED", &head, at, "REVIEW_READY"),
+                negative_no_time
+            ]),
+            false,
         ),
         (
             "decisive review without submitted_at",

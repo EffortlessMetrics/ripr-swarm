@@ -1,2 +1,2 @@
 <!-- section: Internal / CI -->
-- Harden the review-disposition verifier before it is wired into admission: a trusted reviewer's negative comment refuses despite another reviewer's ready comment, negating prose after the marker refuses, a decisive review without `submitted_at` refuses, and malformed review pages refuse with a refusal line (#8157, #12814).
+- Harden the review-disposition verifier before it is wired into admission: a trusted reviewer's negative comment refuses despite another reviewer's ready comment, phrases that deny or retract readiness after the marker refuse, any submitted review without `submitted_at` refuses, malformed review pages refuse with a refusal line, and the real `REVIEW_READY — head <sha>` first line is accepted (#8157, #12814).

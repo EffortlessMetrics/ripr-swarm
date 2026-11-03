@@ -22,7 +22,9 @@ from typing import Any
 
 READINESS_MARKERS = ("SOURCE_REVIEW_READY", "REVIEW_READY")
 POSITIVE_LINE = re.compile(
-    r"^ {0,3}(?:disposition:[ \t]*)?(SOURCE_REVIEW_READY|REVIEW_READY)[ \t]*$", re.IGNORECASE
+    r"^ {0,3}(?:disposition:[ \t]*)?(SOURCE_REVIEW_READY|REVIEW_READY)"
+    r"(?:[ \t]+[\u2014\u2013-][ \t]+head[ \t]+[0-9a-f]{7,40})?[ \t]*$",
+    re.IGNORECASE,
 )
 # Any line that speaks about disposition or readiness state. After the first line,
 # such a line is only allowed when it is itself an exact positive line.
@@ -31,11 +33,14 @@ STATE_MENTION = re.compile(
     r"|NOT_READY|WITHDRAWN|SUPERSEDED|CHANGES_REQUESTED",
     re.IGNORECASE,
 )
-# Negating or withdrawing prose on a line after the marker. Fail closed: evidence that
-# must use these words belongs in a fenced block, or the body stays marker-only.
+# Negating phrases about readiness on a line after the marker. Deliberately narrow:
+# ordinary review prose ("nothing blocking", "not run", "fail-closed", "missing") is
+# fine, only phrases that retract or deny the disposition refuse.
 NEGATION = re.compile(
-    r"\b(?:not|no longer|never|isn't|aren't|cannot|can't|won't|without|unless|except)\b"
-    r"|repair|incomplete|withdraw|revok|retract|block(?:er|ing|ed)?\b|reject|fail|missing|pending",
+    r"\bnot[ \t]+(?:yet[ \t]+)?(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
+    r"|\bno[ \t]+longer\b"
+    r"|\b(?:repairs?|changes?|fixes)[ \t]+(?:is|are)[ \t]+(?:still[ \t]+)?(?:required|needed)\b"
+    r"|\bneeds?[ \t]+(?:repair|changes|rework)\b",
     re.IGNORECASE,
 )
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -143,7 +148,7 @@ def reviews_allow_source_attestation(
     """Whether review evidence admits qualification for ``head``."""
     del author  # same-account COMMENT attestation is allowed; trust comes from author_association.
     if any(
-        str(r.get("state") or "") in DECISIVE_STATES and not r.get("submitted_at")
+        str(r.get("state") or "") != "PENDING" and not r.get("submitted_at")
         for r in reviews
     ):
         return False  # cannot be ordered, so it cannot be proven superseded
@@ -241,7 +246,12 @@ def self_test() -> None:
         ("REVIEW_READY\n<!-- note -->\ndisposition: REVIEW_READY", True),
         ("", False),
         ("REVIEW_READY\nnot ready; repairs are required", False),
-        ("REVIEW_READY\nThere is a blocking issue remaining", False),
+        ("REVIEW_READY\nThis is no longer ready", False),
+        ("REVIEW_READY\nRepairs are required before merge", False),
+        ("REVIEW_READY — head 7c50f64fa93c3e40533240fbe4fd0e9ac7398eab", True),
+        ("REVIEW_READY \u2014 head 7c50f64fa\n\nAngles: correctness. Findings: nothing blocking; hosted CI not run; fail-closed on missing data.", True),
+        ("REVIEW_READY - head 7c50f64\nNo findings.", True),
+        ("REVIEW_READY \u2014 head xyz", False),
         ("REVIEW_READY\n```\nnot ready\n```\nChecked the oracle.", True),
     ]
     for body, expected in cases:
