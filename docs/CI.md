@@ -1404,51 +1404,62 @@ turns that ritual into one bounded `workflow_dispatch` job (`pr` input,
 optional `note`). The dispatching actor still decides *that* a PR's goldens
 should be re-blessed; the workflow owns *whether that judgment is safe*.
 
-Preflight is pure `gh api` (no checkout, no PR code): the input is validated
-as a PR number, the PR must be open and unmerged on this repository (fork
-heads are refused — the token holds no write there), and it must be mergeable,
-because `refs/pull/N/merge` only exists while the PR merges cleanly. The job
-then records its convergence claim in the PR_AUTOMATION.md house format and
-refuses while another actor's claim is younger than 4 hours. The checkout is
-the two-parent integration tree the required merge-ready qualification
-already compiles and executes on GitHub runners, with
-`persist-credentials: false` — steps that execute PR-authored build scripts
-while the fixtures compile run with no token in `.git/config` or the
-environment.
+The pipeline has four jobs so PR-authored code never shares a job with a
+write token. `prepare` (`pull-requests: write`) is pure `gh api` (no checkout,
+no PR code): the input is validated as a PR number, the PR must be open and
+unmerged on this repository (fork heads are refused — the token holds no write
+there), and it must be mergeable, because `refs/pull/N/merge` only exists
+while the PR merges cleanly. It then records its convergence claim in the
+PR_AUTOMATION.md house format and refuses while another actor's claim is
+younger than 4 hours. `bless` (`contents: read`, no token) checks out the
+two-parent integration tree the required merge-ready qualification already
+compiles and executes, with `persist-credentials: false`, and runs the judge,
+the bless loop and the confirmation. It uploads only a patch and the drift
+report as artifacts.
 
-The bless decision lives in trusted workflow-layer code — this workflow file
-as it exists on the base branch — never in merge-ref code: merge-ref xtask is
-PR-authored and cannot own the decision to bless itself. The judge is a jq
-gate over `golden-drift.json` (status must be `warn`, at least one entry,
-zero `check.json`-surface entries, all nine semantic arrays empty) plus an
-independent `git diff --no-index` byte compare of every drifted fixture's
-`check.json`. The byte compare is deliberately stricter than the classifier's
-normalized `formatting_only` label: a renderer PR that only moves finding
-locations inside `check.json` changes the machine contract and is refused
-here even though the classifier calls it formatting-only. The bless loop then
-runs `cargo xtask goldens bless` per fixture, deriving each `--reason` from
-that fixture's own `SPEC.md` id (so the command's spec-id validation passes
-without inventing reasons), all-or-nothing: a mixed drift set (semantic
-`human.txt` changes, `check.json` entries, contract or run errors) is refused
-whole and comments the classified drift on the PR with zero pushes. The
-post-bless `goldens check` must exit clean before anything is pushed, and the
-push is one bot-authored commit guarded by the `git ls-remote` writer check,
-with the token injected only in that step.
+The judge is a jq gate over `golden-drift.json` (status must be `warn`, at
+least one entry, zero `check.json`-surface entries, all nine semantic arrays
+empty) plus an independent `git diff --no-index` byte compare of every
+drifted fixture's `check.json`. The byte compare is deliberately stricter than
+the classifier's normalized `formatting_only` label: a renderer PR that only
+moves finding locations inside `check.json` changes the machine contract and
+is refused here even though the classifier calls it formatting-only. The judge
+runs beside PR-authored xtask, so it is a consistency check on that tier's
+output, not the authority boundary. The bless loop runs `cargo xtask goldens
+bless` per fixture, deriving each `--reason` from that fixture's own `SPEC.md`
+id, all-or-nothing: a mixed drift set (semantic `human.txt` changes,
+`check.json` entries, contract or run errors) is refused whole, and the
+`refuse` job comments the classified drift on the PR with zero pushes.
 
-A GITHUB_TOKEN push fires no workflow events, so the job re-arms merge-ready
-qualification itself (the design's recommended default): when the PR carried
-`merge-ready` before the push, the label is removed and re-applied so the
-fresh labeled event re-runs admission and qualification on the new head; when
-it did not, the job comments the exact command instead of adding a
-qualification request nobody made. That write boundary is trivially flippable
-to comment-only if the owner prefers the merge-ready request to stay a purely
-human/lane signal. Non-goals: no semantic-drift auto-bless ever, no bypass of
-the evidence-promotion honesty gates, no required-check authority, no Windows
-evidence. `xtask/tests/goldens_rebless_workflow_contract.rs` pins the route:
+`publish` (`contents: write`) executes no PR-authored code. It checks out the
+preflight head SHA, validates the patch (fixture names match
+`^[A-Za-z0-9_][A-Za-z0-9_-]*$`, every touched path is a regular file under
+`fixtures/<judged-name>/expected/`, no renames, copies, symlinks or mode
+changes), applies it on top of that head so the bot commit has the PR head as
+its only parent (no merge of the base branch enters the PR branch), checks the
+`git ls-remote` writer guard, and pushes one bot-authored commit. The Git
+push credential is injected only in that step; the other jobs hold only the
+`GITHUB_TOKEN` scope their `gh api` calls need.
+
+Trust boundary: a `workflow_dispatch` runs the workflow file from whichever
+ref the dispatcher selects, and the job guard `github.ref ==
+'refs/heads/main'` cannot defend against a modified copy of the same file. The
+boundary this route relies on is repository write access, since a dispatcher
+can already push to any unprotected same-repository PR branch. Pinning the
+publish job to the default branch with a deployment-branch-restricted
+environment is a settings change tracked in #12855.
+
+Re-arm is a comment, not a label flip. A `GITHUB_TOKEN` push and label edit
+create no workflow runs, so the route cannot restart admission and
+qualification itself; after the push it comments the exact command (remove and
+re-apply `merge-ready`) and leaves labels untouched, so a cancelled run can
+never strand a PR without its label. Non-goals: no semantic-drift auto-bless
+ever, no bypass of the evidence-promotion honesty gates, no required-check
+authority, no Windows evidence. `xtask/tests/goldens_rebless_workflow_contract.rs` pins the route:
 the merge-ref checkout, `persist-credentials: false`, fork/conflict
 preflight, the 4h claim scan, the locked-manifest fetch list, every judge
 gate, the byte-identity witness, the SPEC-derived bless loop, the
-confirmation-before-push ordering, the guarded bot push, the re-arm rule, and
+confirmation-before-push ordering, the job split between PR-authored code and the write token, the patch validation and head-parented push, the comment-only re-arm, and
 the allowlist budget row.
 
 ### Self-Hosted Runner Placement

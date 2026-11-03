@@ -3,9 +3,9 @@
 //!
 //! The route is the only automation allowed to write golden expected-files
 //! without a human in the loop, so every decision that permits a bless must
-//! live in trusted workflow-layer code (this workflow file, as it exists on
-//! the base branch) and must stay stricter than the merge-ref classifier's
-//! normalized `formatting_only` label. Breaking any invariant below should
+//! live in workflow-layer code and must stay stricter than the merge-ref
+//! classifier's normalized `formatting_only` label, with PR-authored code and
+//! the write token in separate jobs. Breaking any invariant below should
 //! fail here, not silently turn the route into a semantic-drift bless, a
 //! head-branch executor, a fork writer, or an unconfirmed push:
 //!
@@ -22,6 +22,13 @@
 //! - workflow-level write scope, workflow dispatch, review-thread mutation or
 //!   third-party PR creation → `workflow_stays_inside_its_write_boundary`
 //!   fails on the forbidden fragments;
+//! - the write token or write scopes moving into the job that runs PR-authored
+//!   code, or the publish job gaining a cargo step →
+//!   `pr_code_and_write_token_live_in_separate_jobs`;
+//! - the publish job dropping patch validation, or committing on top of the
+//!   merge ref instead of the preflight head → `publish_validates_and_commits_on_the_head`;
+//! - label edits returning to the re-arm path (GITHUB_TOKEN events start no
+//!   workflows) → `re_arm_is_comment_only`;
 //! - fork heads accepted or mergeability preflight dropped →
 //!   `preflight_refuses_forks_and_conflicts` fails on the head-repo and
 //!   mergeability markers;
@@ -78,6 +85,28 @@ fn forbid(lines: &[&str], needle: &str, why: &str) -> Result<(), String> {
     ))
 }
 
+/// The lines of one top-level job: everything after `  <job>:` up to the next
+/// two-space-indented key.
+fn job_block<'a>(lines: &[&'a str], job: &str) -> Vec<&'a str> {
+    let header = format!("  {job}:");
+    let mut block = Vec::new();
+    let mut inside = false;
+    for line in lines {
+        let indent = line.len() - line.trim_start().len();
+        if indent == 2 && line.trim_end().ends_with(':') {
+            inside = line.trim_end() == header;
+            continue;
+        }
+        if indent == 0 && !line.trim().is_empty() {
+            inside = false;
+        }
+        if inside {
+            block.push(*line);
+        }
+    }
+    block
+}
+
 fn count_containing(lines: &[&str], needle: &str) -> usize {
     lines.iter().filter(|line| line.contains(needle)).count()
 }
@@ -114,8 +143,11 @@ fn runs_on_the_arbiter_platform_with_a_deadline() -> Result<(), String> {
     let lines = executable_lines(&source);
     require(
         &lines,
-        "if: github.repository == 'EffortlessMetrics/ripr-swarm'",
-        "a fork running the workflow must not touch the upstream repository",
+        "if: github.repository == 'EffortlessMetrics/ripr-swarm' && github.ref == 'refs/heads/main'",
+        "a fork running the workflow must not touch the upstream repository, \
+         and a dispatch from a non-default ref is refused (a defense-in-depth \
+         guard: it cannot defend against a modified copy of the file, which is \
+         why docs/CI.md names repository write access as the real boundary)",
     )?;
     require(
         &lines,
@@ -136,7 +168,7 @@ fn checkout_uses_the_merge_ref() -> Result<(), String> {
     let lines = executable_lines(&source);
     require(
         &lines,
-        "ref: refs/pull/${{ steps.preflight.outputs.pr_number }}/merge",
+        "ref: refs/pull/${{ needs.prepare.outputs.pr_number }}/merge",
         "the job executes the two-parent integration tree the required \
          qualification already runs; a `refs/pull/N/head` checkout would \
          execute and bless an unmerged, unadmitted head",
@@ -361,34 +393,132 @@ fn push_is_bot_authored_guarded_and_token_scoped() -> Result<(), String> {
         "the one durable write of the whole route",
     )?;
     let token_steps = count_containing(&lines, "GITHUB_TOKEN: ${{ github.token }}");
-    if token_steps < 1 {
-        return Err("the push step must inject the token".to_string());
+    if token_steps != 1 {
+        return Err(format!(
+            "exactly one step (the push) may inject GITHUB_TOKEN; found {token_steps}"
+        ));
+    }
+    let publish = job_block(&lines, "publish");
+    let push_step_has_token = publish
+        .iter()
+        .position(|line| line.contains("id: push"))
+        .is_some_and(|start| {
+            publish[start..]
+                .iter()
+                .take_while(|line| !line.contains("- name:"))
+                .any(|line| line.contains("GITHUB_TOKEN: ${{ github.token }}"))
+        });
+    if !push_step_has_token {
+        return Err(
+            "the GITHUB_TOKEN injection must sit in the publish job's `id: push` step".to_string(),
+        );
     }
     Ok(())
 }
 
 #[test]
-fn re_arms_qualification_after_the_push() -> Result<(), String> {
+fn pr_code_and_write_token_live_in_separate_jobs() -> Result<(), String> {
     let source = repo_file(WORKFLOW)?;
     let lines = executable_lines(&source);
+    let bless = job_block(&lines, "bless");
+    let publish = job_block(&lines, "publish");
+    if bless.is_empty() || publish.is_empty() {
+        return Err("expected separate `bless` and `publish` jobs".to_string());
+    }
+    for line in &bless {
+        if line.contains(": write") || line.contains("github.token") {
+            return Err(format!(
+                "the bless job runs PR-authored code and must hold no write scope or token: `{}`",
+                line.trim()
+            ));
+        }
+    }
+    require(&bless, "contents: read", "the bless job is read-only")?;
+    for line in &publish {
+        if line.contains("cargo ") {
+            return Err(format!(
+                "the publish job holds the write token and must execute no PR-authored code: `{}`",
+                line.trim()
+            ));
+        }
+    }
     require(
+        &publish,
+        "contents: write",
+        "the publish job owns the one push scope",
+    )?;
+    let prepare = job_block(&lines, "prepare");
+    for line in &prepare {
+        if line.contains("actions/checkout") || line.contains("cargo ") {
+            return Err(
+                "the prepare job is gh api only: no checkout and no PR-authored code".to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn publish_validates_and_commits_on_the_head() -> Result<(), String> {
+    let source = repo_file(WORKFLOW)?;
+    let lines = executable_lines(&source);
+    let publish = job_block(&lines, "publish");
+    require(
+        &publish,
+        "ref: ${{ needs.prepare.outputs.head_sha }}",
+        "the bless commit is built on the preflight PR head, never on the merge ref",
+    )?;
+    require(
+        &publish,
+        "git rev-parse HEAD)\" = \"$HEAD_SHA\"",
+        "the checked-out tree is verified to be the preflight head",
+    )?;
+    require(
+        &publish,
+        "git apply --numstat",
+        "every touched path is enumerated and validated before it is applied",
+    )?;
+    require(
+        &publish,
+        "/expected/",
+        "only fixture expected-files are accepted from the PR-code job",
+    )?;
+    require(
+        &publish,
+        "mode 120000",
+        "symlinks in the artifact are refused",
+    )?;
+    require(
+        &publish,
+        "git apply --index",
+        "the validated patch is the only change committed",
+    )?;
+    forbid(
+        &publish,
+        "git add fixtures/",
+        "staging a whole directory would commit whatever PR-authored code wrote",
+    )
+}
+
+#[test]
+fn re_arm_is_comment_only() -> Result<(), String> {
+    let source = repo_file(WORKFLOW)?;
+    let lines = executable_lines(&source);
+    forbid(
         &lines,
         "labels/merge-ready",
-        "the GITHUB_TOKEN push fires no events, so the route re-arms \
-         qualification itself by removing the label",
+        "GITHUB_TOKEN label edits start no workflow runs, so a label flip would \
+         claim a re-arm that never happens and could strand the PR unlabeled",
     )?;
-    require(
+    forbid(
         &lines,
         "labels[]=merge-ready",
-        "and re-adding it, so the fresh labeled event re-runs admission and \
-         qualification on the new head",
+        "the route never adds a qualification request nobody made",
     )?;
     require(
         &lines,
-        "was_merge_ready",
-        "the label is re-armed only when it was already present; otherwise the \
-         route comments the exact command instead of adding a qualification \
-         request nobody made",
+        "goldens-rebless-rearm",
+        "the exact re-arm command is commented on the PR after the push",
     )
 }
 
@@ -403,8 +533,13 @@ fn refusals_are_visible_and_push_nothing() -> Result<(), String> {
     )?;
     require(
         &lines,
-        "steps.judge_gates.outcome == 'failure'",
+        "steps.judge_gates.outcome",
         "the refusal comment is bound to a judged failure, not to any crash",
+    )?;
+    require(
+        &lines,
+        "needs.bless.outputs.refusal == 'true'",
+        "the refuse job runs only for a judged refusal",
     )?;
     forbid(
         &lines,
@@ -446,7 +581,7 @@ fn workflow_stays_inside_its_write_boundary() -> Result<(), String> {
     require(
         &lines,
         "pull-requests: write",
-        "the job's comment and label re-arm authority",
+        "the comment authority for claim, refusal and re-arm notes",
     )
 }
 

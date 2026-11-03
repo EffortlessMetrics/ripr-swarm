@@ -201,8 +201,9 @@ entries, empty semantic arrays, plus a byte-identity `git diff --no-index`
 witness stricter than the classifier's `formatting_only` label), blesses
 all-or-nothing per fixture with reasons derived from each fixture's own
 `SPEC.md` id, requires a clean second `goldens check`, and pushes one
-bot-authored commit — re-arming the `merge-ready` qualification when that
-label was present. Use it when the drift is renderer-prose formatting-only
+bot-authored commit on the PR head, then comments the command to re-arm
+`merge-ready` (a `GITHUB_TOKEN` push starts no workflows, so the route cannot
+re-arm it itself). Use it when the drift is renderer-prose formatting-only
 and a human has decided the flip is intended; a refused dispatch pushes
 nothing and the manual WSL route above remains the local fallback. Semantic
 drift (`check.json` or any non-empty semantic array) is never auto-blessed;
