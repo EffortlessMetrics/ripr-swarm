@@ -118,15 +118,14 @@ fn collect_exit_literal_findings() -> Result<Vec<ExitLiteralFinding>, String> {
             continue;
         }
         let text = read_text_lossy(Path::new(&path))?;
-        for (index, line) in text.lines().enumerate() {
-            for literal in exit_literals_on_line(line) {
-                findings.push(ExitLiteralFinding {
-                    path: path.clone(),
-                    line: index + 1,
-                    literal,
-                    line_text: line.to_string(),
-                });
-            }
+        let lines = text.lines().collect::<Vec<_>>();
+        for (line, literal) in exit_literals_in_text(&text) {
+            findings.push(ExitLiteralFinding {
+                path: path.clone(),
+                line,
+                literal,
+                line_text: lines.get(line - 1).copied().unwrap_or_default().to_string(),
+            });
         }
     }
     findings.sort_by(|left, right| {
@@ -141,44 +140,168 @@ fn should_scan_path(path: &str) -> bool {
         .any(|prefix| path == *prefix || path.starts_with(prefix))
 }
 
-fn exit_literals_on_line(line: &str) -> Vec<i32> {
-    let mut literals = Vec::new();
-    let mut search = line;
-    while let Some(index) = search.find("process::exit(") {
-        let line_index = line.len() - search.len() + index;
-        if is_process_exit_inside_string(&line[..line_index]) {
-            search = &search[index + 1..];
+/// `(line, literal)` for every `process::exit(<integer literal>)` call in
+/// executable code. Comments, string and char literals are masked first, so an
+/// example in a comment or message never counts, and whitespace or newlines
+/// inside the call do not hide it. A non-literal argument (`code`, `1 + x`)
+/// is not a literal exit.
+fn exit_literals_in_text(text: &str) -> Vec<(usize, i32)> {
+    let masked = mask_comments_and_literals(text);
+    let bytes = masked.as_bytes();
+    let needle = "process::exit";
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(offset) = masked[from..].find(needle) {
+        let start = from + offset;
+        from = start + needle.len();
+        let mut at = from;
+        let skip_space = |at: &mut usize| {
+            while bytes
+                .get(*at)
+                .is_some_and(|byte| byte.is_ascii_whitespace())
+            {
+                *at += 1;
+            }
+        };
+        skip_space(&mut at);
+        if bytes.get(at) != Some(&b'(') {
             continue;
         }
-        let tail = &search[index + "process::exit(".len()..];
-        if let Some(literal) = parse_exit_literal_prefix(tail) {
-            literals.push(literal);
+        at += 1;
+        skip_space(&mut at);
+        let digits_start = at;
+        while bytes.get(at).is_some_and(u8::is_ascii_digit) {
+            at += 1;
         }
-        search = &search[index + 1..];
+        if at == digits_start {
+            continue;
+        }
+        let digits = &masked[digits_start..at];
+        skip_space(&mut at);
+        if bytes.get(at) != Some(&b')') {
+            continue;
+        }
+        if let Ok(literal) = digits.parse() {
+            let line = masked[..start].matches('\n').count() + 1;
+            found.push((line, literal));
+        }
     }
-    literals
+    found
 }
 
-fn is_process_exit_inside_string(prefix: &str) -> bool {
-    let mut in_string = false;
-    for ch in prefix.chars() {
-        if ch == '"' {
-            in_string = !in_string;
+/// Replace comments and the contents of string, raw-string and char literals
+/// with spaces, keeping newlines so line numbers stay exact.
+fn mask_comments_and_literals(text: &str) -> String {
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut out = String::with_capacity(text.len());
+    let blank = |ch: char| if ch == '\n' { '\n' } else { ' ' };
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        let next = chars.get(i + 1).copied();
+        if ch == '/' && next == Some('/') {
+            while i < chars.len() && chars[i] != '\n' {
+                out.push(' ');
+                i += 1;
+            }
+        } else if ch == '/' && next == Some('*') {
+            let mut depth = 0_usize;
+            while i < chars.len() {
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    out.push_str("  ");
+                    i += 2;
+                } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    out.push_str("  ");
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    out.push(blank(chars[i]));
+                    i += 1;
+                }
+            }
+        } else if ch == 'r'
+            && matches!(next, Some('"') | Some('#'))
+            && raw_string_hashes(&chars, i).is_some()
+        {
+            let hashes = raw_string_hashes(&chars, i).unwrap_or(0);
+            let open = i + 2 + hashes;
+            out.extend(std::iter::repeat_n(' ', open - i));
+            i = open;
+            while i < chars.len() {
+                if chars[i] == '"' && (0..hashes).all(|n| chars.get(i + 1 + n) == Some(&'#')) {
+                    out.extend(std::iter::repeat_n(' ', 1 + hashes));
+                    i += 1 + hashes;
+                    break;
+                }
+                out.push(blank(chars[i]));
+                i += 1;
+            }
+        } else if ch == '"' {
+            out.push(' ');
+            i += 1;
+            while i < chars.len() {
+                if chars[i] == '\\' {
+                    out.push(' ');
+                    if let Some(escaped) = chars.get(i + 1) {
+                        out.push(blank(*escaped));
+                    }
+                    i += 2;
+                } else if chars[i] == '"' {
+                    out.push(' ');
+                    i += 1;
+                    break;
+                } else {
+                    out.push(blank(chars[i]));
+                    i += 1;
+                }
+            }
+        } else if ch == '\'' && is_char_literal(&chars, i) {
+            out.push(' ');
+            i += 1;
+            while i < chars.len() && chars[i] != '\'' {
+                if chars[i] == '\\' {
+                    out.push(' ');
+                    i += 1;
+                }
+                if i < chars.len() {
+                    out.push(blank(chars[i]));
+                    i += 1;
+                }
+            }
+            out.push(' ');
+            i += 1;
+        } else {
+            out.push(ch);
+            i += 1;
         }
     }
-    in_string
+    out
 }
 
-fn parse_exit_literal_prefix(tail: &str) -> Option<i32> {
-    let trimmed = tail.trim_start();
-    let digits = trimmed
-        .chars()
-        .take_while(|ch| ch.is_ascii_digit())
-        .collect::<String>();
-    if digits.is_empty() {
+/// Number of `#` after `r` when `chars[at..]` opens a raw string (`r"`,
+/// `r#"`), so an identifier ending in `r` is not mistaken for one.
+fn raw_string_hashes(chars: &[char], at: usize) -> Option<usize> {
+    if at > 0 && (chars[at - 1].is_alphanumeric() || chars[at - 1] == '_') {
         return None;
     }
-    digits.parse().ok()
+    let mut hashes = 0;
+    while chars.get(at + 1 + hashes) == Some(&'#') {
+        hashes += 1;
+    }
+    (chars.get(at + 1 + hashes) == Some(&'"')).then_some(hashes)
+}
+
+/// A `'` opens a char literal (`'x'`, `'\n'`), not a lifetime (`'a`).
+fn is_char_literal(chars: &[char], at: usize) -> bool {
+    match (chars.get(at + 1), chars.get(at + 2)) {
+        (Some('\\'), _) => true,
+        (Some(_), Some('\'')) => true,
+        _ => false,
+    }
 }
 
 /// A missing allowlist pins nothing, so every literal exit is reported; it
@@ -257,7 +380,7 @@ fn flush_allow_entry(fields: &BTreeMap<String, String>) -> Result<Option<AllowEn
 #[cfg(test)]
 mod tests {
     use super::{
-        AllowEntry, ExitLiteralFinding, exit_literal_violations, exit_literals_on_line,
+        AllowEntry, ExitLiteralFinding, exit_literal_violations, exit_literals_in_text,
         parse_allowlist,
     };
 
@@ -279,14 +402,37 @@ mod tests {
         }
     }
 
+    fn lits(text: &str) -> Vec<i32> {
+        exit_literals_in_text(text)
+            .into_iter()
+            .map(|(_, literal)| literal)
+            .collect()
+    }
+
     #[test]
-    fn exit_literals_on_line_finds_numeric_process_exit() {
+    fn numeric_process_exit_is_found_including_multiline_calls() {
+        assert_eq!(lits("Err(x) => std::process::exit(1),"), vec![1]);
+        assert_eq!(lits("std::process::exit(\n    9\n);"), vec![9]);
+        assert_eq!(lits("std::process::exit (7 );"), vec![7]);
         assert_eq!(
-            exit_literals_on_line("Err(x) => std::process::exit(1),"),
-            vec![1]
+            exit_literals_in_text("fn a() {}\nstd::process::exit(\n 4\n);"),
+            vec![(2, 4)]
         );
-        assert!(exit_literals_on_line("std::process::exit(code)").is_empty());
-        assert!(exit_literals_on_line("let s = \"process::exit(7)\";").is_empty());
+    }
+
+    #[test]
+    fn comments_strings_and_non_literals_are_not_literal_exits() {
+        assert!(lits("std::process::exit(code)").is_empty());
+        assert!(lits("std::process::exit(1 + code)").is_empty());
+        assert!(lits("// Avoid std::process::exit(9) here").is_empty());
+        assert!(lits("/* std::process::exit(9) */ let x = 1;").is_empty());
+        assert!(lits("let s = \"process::exit(7)\";").is_empty());
+        assert!(lits("let s = \"esc \\\" process::exit(7)\";").is_empty());
+        assert!(lits("let s = r#\"process::exit(7)\"#;").is_empty());
+        assert_eq!(
+            lits("let c = '\"'; let lt: &'a str = \"\"; std::process::exit(3);"),
+            vec![3]
+        );
     }
 
     #[test]

@@ -596,9 +596,32 @@ mod tests {
             "cold disclosure: {cold}"
         );
         let cache = crate::analysis::seam_cache::RepoSeamFactCache::at(&workspace_root);
-        for (dir, _) in cache.entry_dirs() {
+        // Leftovers of a skipped or failed store are not entries (#12505
+        // review): a publication lock and an empty key directory.
+        for (dir, sharded) in cache.entry_dirs() {
             std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
-            std::fs::write(dir.join("presence-probe"), b"x").map_err(|err| err.to_string())?;
+            std::fs::write(dir.join("abc.lock"), b"x").map_err(|err| err.to_string())?;
+            if sharded {
+                std::fs::create_dir_all(dir.join("empty-key")).map_err(|err| err.to_string())?;
+            }
+        }
+        let leftovers = format
+            .repo_audit_path_disclosure(&workspace_root)
+            .ok_or("missing leftovers disclosure")?;
+        assert!(
+            leftovers.contains("no seam-facts cache present yet"),
+            "lock-only cache must not promise warm reruns: {leftovers}"
+        );
+        for (dir, sharded) in cache.entry_dirs() {
+            if sharded {
+                let key_dir = dir.join("published-key");
+                std::fs::create_dir_all(&key_dir).map_err(|err| err.to_string())?;
+                std::fs::write(key_dir.join("manifest.json"), b"{}")
+                    .map_err(|err| err.to_string())?;
+            } else {
+                std::fs::write(dir.join("presence-probe.json"), b"{}")
+                    .map_err(|err| err.to_string())?;
+            }
         }
         let warm = format
             .repo_audit_path_disclosure(&workspace_root)
