@@ -49,7 +49,7 @@ By board, so the weak areas show before the full table:
 | Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
 | Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | 0.0% | <= 5.0% | meets the bar | first receipt (verdict corpus, upstream cases only; all 842 cases: 0.1%) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | 0.0% | <= 5.0% | meets the bar | first receipt (verdict corpus, upstream cases only; all 842 cases: 0.0%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **11.0%** | <= 5.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits where ripr gives no specific verdict | **37.1%** | <= 20.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 2af3f38) |
@@ -106,7 +106,7 @@ Not measured, and why:
 
 Each line below is computed from the receipts above. Detail sections follow.
 
-- **Wrong gaps.** On changes from real repositories ripr reported a gap on 0 of 22 whose tests caught every listed mutant (0.0%): no case recorded. On the authored cases, which were written to fill empty corpus cells, it did so on 1 of 409 (0.2%).
+- **Wrong gaps.** On changes from real repositories ripr reported a gap on 0 of 22 whose tests caught every listed mutant (0.0%): no case recorded. On the authored cases, which were written to fill empty corpus cells, it did so on 0 of 409 (0.0%).
 - **Mostly unsure.** On real-repository changes it abstained on 36 of 41 cases (87.8%); on the authored cases, 286 of 801 (35.7%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 12 mutants on seams ripr called ungripped, real mutation testing caught 0 that ripr said nothing would catch; ripr agreed on 12. No false-gap examples are recorded.
 - **Thin ground truth.** Only 75 of 1745 mutants (4.3%) enter an agreement rate. 493 join a ripr seam precisely, and 418 of those still do not enter a rate.
@@ -162,11 +162,11 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 1/842 (0.1%) | 0/41 (0.0%) | 1/801 (0.1%) |
-| False actionable (of discriminated) | 1/431 (0.2%) | 0/22 (0.0%) | 1/409 (0.2%) |
+| False verdicts (all cases) | 0/842 (0.0%) | 0/41 (0.0%) | 0/801 (0.0%) |
+| False actionable (of discriminated) | 0/431 (0.0%) | 0/22 (0.0%) | 0/409 (0.0%) |
 | False exposed (of not fully discriminated) | 0/411 (0.0%) | 0/19 (0.0%) | 0/392 (0.0%) |
 | False silent (of not fully discriminated) | 0/411 (0.0%) | 0/19 (0.0%) | 0/392 (0.0%) |
-| Ideal verdict | 519/842 (61.6%) | 5/41 (12.2%) | 514/801 (64.2%) |
+| Ideal verdict | 520/842 (61.8%) | 5/41 (12.2%) | 515/801 (64.3%) |
 | Abstained (limited or silent where acceptable) | 322/842 (38.2%) | 36/41 (87.8%) | 286/801 (35.7%) |
 | Findings with a contradiction | 0/1031 (0.0%) | not split by origin | not split by origin |
 
@@ -615,7 +615,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `shape-op-add-impl` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `shape-op-neg-smoke` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `shape-op-same-name-confirmed` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `shape-op-same-name-unconfirmed` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `shape-op-same-name-unconfirmed` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `shape-op-self-ctor-withheld` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `shape-partialord-swapped-fields` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `shape-refcell-interior-mutation` | authored | discriminated | credited | credited | exposed | ideal | none |
