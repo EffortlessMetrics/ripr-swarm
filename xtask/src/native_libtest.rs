@@ -1516,7 +1516,10 @@ mod tests {
     }
 
     fn filetime_or_ignore(path: &Path, later: SystemTime) -> Result<(), String> {
-        fs::File::open(path)
+        // Windows refuses `set_modified` on a handle opened read-only.
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)
             .and_then(|file| file.set_modified(later))
             .map_err(|error| error.to_string())
     }
