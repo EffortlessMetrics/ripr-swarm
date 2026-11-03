@@ -14,7 +14,8 @@ Linked issues:
 Support-tier impact:
 
 - None. The binding is an internal `pub(crate)` decision surface with no CLI,
-  JSON, SARIF, LSP or MCP output and no support-tier effect.
+  JSON, SARIF, LSP or MCP output and no support-tier effect; the canonical
+  boundary remains [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
