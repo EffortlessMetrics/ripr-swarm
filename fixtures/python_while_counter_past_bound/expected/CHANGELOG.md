@@ -85,3 +85,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_while_counter_past_bound (8)
+
+Reason:
+RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
+
+Command:
+`cargo xtask goldens bless python_while_counter_past_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

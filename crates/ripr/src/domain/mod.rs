@@ -1,3 +1,4 @@
+pub(crate) mod analysis_execution_identity;
 mod candidate_relation;
 mod canonical_item;
 mod causal_delta;
@@ -32,10 +33,14 @@ mod refusal_remedy;
 mod repair_card;
 mod summary;
 mod support;
+mod test_candidate_set;
 mod test_evidence_identity;
 mod test_evidence_summary;
 mod verification_result;
 
+pub(crate) use analysis_execution_identity::{
+    AnalysisAttemptId, CompletedAnalysisSnapshotId, ContinuationId, DiagnosticResultId,
+};
 pub use candidate_relation::CandidateRelation;
 pub use canonical_item::{CanonicalItemId, CanonicalItemParseError};
 pub use causal_delta::{
@@ -163,6 +168,7 @@ pub(crate) use probe::boundary_input_observed_with_weak_oracle;
 pub(crate) use probe::declared_const_name;
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};
+pub use test_candidate_set::{TestCandidateNextRoute, TestCandidateRow, TestCandidateSet};
 pub(crate) use test_evidence_identity::normalize_transport_path;
 pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};
 pub(crate) use verification_result::CommandSpecDigest;

@@ -2550,7 +2550,10 @@ fn push_packet_json(
     ));
     out.push_str(&format!(
         "\"discriminate\": \"{}\"",
-        evidence.discriminate.state.as_str()
+        crate::output::gap_vocabulary::seam_discriminate_evidence_token(
+            entry.class,
+            &evidence.discriminate.state,
+        )
     ));
     out.push_str("},\n");
 
@@ -4534,6 +4537,29 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn weakly_gripped_packet_evidence_discriminate_is_not_yes() -> Result<(), String> {
+        let json = render_agent_seam_packets_json(&[weakly_gripped_classified()], None);
+        if json.contains("\"discriminate\": \"yes\"") {
+            return Err(format!(
+                "discriminate must not be yes for weakly_gripped packet: {json}"
+            ));
+        }
+        if !json.contains("\"discriminate\": \"weak\"") {
+            return Err(format!(
+                "expected reconciled weak discriminate token: {json}"
+            ));
+        }
+        Ok(())
+    }
+
+    // No strongly-gripped keep-yes test at this surface: strongly-gripped
+    // seams are not repair-queue-visible, so packets never carry one
+    // (`given_strongly_gripped_seam_when_packets_are_requested_then_no_actionable_packet_is_emitted`).
+    // The keep-yes control lives on the repo-exposure surface
+    // (`json_keeps_discriminate_yes_for_strongly_gripped_seam`) and in the
+    // shared-token unit tests in `gap_vocabulary`.
 
     #[test]
     fn missing_discriminators_carry_value_and_reason_objects() -> Result<(), String> {

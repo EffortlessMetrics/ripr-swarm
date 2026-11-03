@@ -68,6 +68,7 @@ pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
 mod value_resolution;
+pub(crate) mod verification_plan;
 mod witness;
 mod workspace;
 
@@ -160,9 +161,10 @@ pub(crate) use seam_inventory::{
     DiffScopedCacheStatsAttribution, FileSeamIndex, PilotInventoryDefault,
     PreparedDiffScopedClassifiedWorkspace, PreparedDiffScopedEvaluationInput,
     REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer,
-    SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
-    classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
-    diff_only_rust_files, evaluate_diff_scoped_classified_seams_from_prepared,
+    SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError, announce_seam_facts_cache_misses,
+    apply_pilot_seam_budget, classify_seams_in_file_with_shared_index,
+    classify_seams_in_files_at_with_config, diff_only_rust_files,
+    evaluate_diff_scoped_classified_seams_from_prepared,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,

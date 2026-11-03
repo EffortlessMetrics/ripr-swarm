@@ -115,3 +115,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_caplog_alias_in_literal (10)
+
+Reason:
+RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
+
+Command:
+`cargo xtask goldens bless python_caplog_alias_in_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

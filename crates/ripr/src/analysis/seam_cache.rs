@@ -650,7 +650,25 @@ pub(crate) struct CachedSeamLimitInfo {
 /// no oracle once a test that runs the owner is related (#12671).
 /// `1.146`: a bare `assert_*snapshot!` counts as insta's only when no workspace
 /// file defines a macro of that name (#12720).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.146";
+/// `1.147`: a multi-line `assert_ok_eq!` / `assert_some_eq!` of a literal is
+/// nominated like its one-line form and reads `exact_value` / strong under the
+/// same owner-pin gates (RIPR-SPEC-0197, #12394). Old entries keep `unknown`.
+/// `1.148`: an exact error-variant pin is no oracle on a returned-value seam it
+/// cannot see (#12722).
+/// `1.149`: a doc example registers as a test only when no gate on an enclosing
+/// `mod`, `impl`, `trait` or `mod name;` declaration may leave it uncompiled (#12453).
+/// `1.150`: a pinned literal that neither the owner before the diff nor after
+/// it returns for the call's literal arguments is no exact-value pin, so it no
+/// longer credits (#12716).
+/// `1.151`: a test that invokes an assertion macro under a `use ..::assert_x as
+/// name` rename names `rust_macro_wrapped_assertion_unresolved` instead of
+/// reading as a gap (#12779). Old entries keep the gap.
+/// `1.152`: an exact pin of a one-field integer tuple struct's `.0` (or through
+/// a tuple-constructor receiver, under an imported std operator trait) now
+/// credits the changed `T(e)` tail (#12796).
+/// `1.153`: a bounded `.map(owner)` iterator chain with a resolved owner path and
+/// matching literal `Vec` expectation credits through the owner-return pin (#9478).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.153";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -838,7 +856,14 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.146";
 /// `0.146`: same missing-committed-snapshot rule as full `1.144` (#12189).
 /// `0.147`: same returned-value other-function refusal as full `1.145` (#12671).
 /// `0.148`: same shadowed-snapshot-macro rule as full `1.146` (#12720).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.148";
+/// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
+/// `0.150`: same error-pin refusal as full `1.148` (#12722).
+/// `0.151`: same enclosing-cfg doctest rule as full `1.149` (#12453).
+/// `0.152`: same neither-version literal refusal as full `1.150` (#12716).
+/// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
+/// `0.154`: same tuple-projection pin as full `1.152` (#12796).
+/// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.155";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1028,7 +1053,14 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.148";
 /// `0.146`: same missing-committed-snapshot rule as full `1.144` (#12189).
 /// `0.147`: same returned-value other-function refusal as full `1.145` (#12671).
 /// `0.148`: same shadowed-snapshot-macro rule as full `1.146` (#12720).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.148";
+/// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
+/// `0.150`: same error-pin refusal as full `1.148` (#12722).
+/// `0.151`: same enclosing-cfg doctest rule as full `1.149` (#12453).
+/// `0.152`: same neither-version literal refusal as full `1.150` (#12716).
+/// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
+/// `0.154`: same tuple-projection pin as full `1.152` (#12796).
+/// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.155";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1235,7 +1267,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// stored binding candidates may name them (#12304); `1.53` facts cannot.
 /// `1.55`: an assertion whose `Err(..)` constructor feeds a value-supplying
 /// adapter is a weak relation, not an exact oracle fact of any kind (#12610).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.55";
+/// `1.56`: bounded `.map(owner)` iterator chains emit synthetic owner call
+/// facts for reach (#9478); `1.55` facts lack them.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.56";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -2307,6 +2341,27 @@ impl RepoModuleTreeScanCache {
     }
 }
 
+/// A published entry: a single-entry `*.json` file, or a per-key sharded
+/// directory holding `manifest.json`. Publication `.lock` files, temporary
+/// files and empty key directories left by a skipped or failed store are not
+/// entries, so they never earn a warm-rerun promise. This is a presence probe
+/// for the layer, not a hit check for the current workspace key.
+fn cache_entry_layer_has_any_entry(dir: &Path, sharded: bool) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        if sharded {
+            path.join("manifest.json").is_file()
+        } else {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+                && path.is_file()
+        }
+    })
+}
+
 /// Crate-private cache I/O surface. Holds the directory the cache lives
 /// in but not in-memory state; safe to construct cheaply per call.
 pub(crate) struct RepoSeamFactCache {
@@ -2344,6 +2399,19 @@ impl RepoSeamFactCache {
             ClassifiedCacheFamily::CompactClassifiedSeams,
             COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION,
         )
+    }
+
+    /// Cheap cache-presence probe for invocation-time cost disclosure (#12505).
+    pub(crate) fn seam_facts_cache_has_stored_entries(
+        workspace_root: &Path,
+        compact: bool,
+    ) -> bool {
+        let cache = if compact {
+            Self::at_compact_classified(workspace_root)
+        } else {
+            Self::at(workspace_root)
+        };
+        cache.has_stored_entries()
     }
 
     fn at_named(
@@ -2388,6 +2456,13 @@ impl RepoSeamFactCache {
     /// (see `publish_sharded_generation`), hence `true` only there.
     pub(crate) fn entry_dirs(&self) -> [(PathBuf, bool); 2] {
         [(self.dir.clone(), false), (self.sharded_dir.clone(), true)]
+    }
+
+    /// True when either cache layer directory contains at least one entry.
+    pub(crate) fn has_stored_entries(&self) -> bool {
+        self.entry_dirs()
+            .iter()
+            .any(|(dir, sharded)| cache_entry_layer_has_any_entry(dir, *sharded))
     }
 
     pub(crate) fn rooted_at(dir: PathBuf, sharded_dir: PathBuf, base: PathBuf) -> Self {
@@ -5713,7 +5788,8 @@ mod tests {
         // 1.47 -> 1.48: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.48 -> 1.49: call-in-term accumulator probe (RIPR-SPEC-0360, #9478).
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.55");
+        // 1.55 -> 1.56: path-value `.map(owner)` synthetic call facts (#9478).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.56");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5888,7 +5964,14 @@ mod tests {
         // 1.143 -> 1.144: file-backed snapshot with no committed `.snap` (#12189).
         // 1.144 -> 1.145: returned-value seams refuse another function's oracle (#12671).
         // 1.145 -> 1.146: shadowed bare snapshot macro (#12720).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.146");
+        // 1.146 -> 1.147: multi-line claims payload-equality nomination (#12394).
+        // 1.147 -> 1.148: an exact error-variant pin is no oracle on an Ok-value seam (#12722).
+        // 1.148 -> 1.149: enclosing cfg gates on a doctest (#12453).
+        // 1.149 -> 1.150: a pinned literal neither owner version returns does not credit (#12716).
+        // 1.150 -> 1.151: renamed assertion-macro imports name the macro limit (#12779).
+        // 1.151 -> 1.152: a tuple `.0` pin credits the changed `T(e)` tail (#12796).
+        // 1.152 -> 1.153: bounded `.map(owner)` chains credit via the owner pin (#9478).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.153");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -6016,8 +6099,15 @@ mod tests {
         // 0.145 -> 0.146: same missing-snapshot rule as full 1.144 (#12189).
         // 0.146 -> 0.147: same returned-value refusal as full 1.145 (#12671).
         // 0.147 -> 0.148: same shadowed-macro rule as full 1.146 (#12720).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.148");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.148");
+        // 0.148 -> 0.149: same multi-line claims nomination as full 1.147 (#12394).
+        // 0.149 -> 0.150: same error-pin refusal as full 1.148 (#12722).
+        // 0.150 -> 0.151: same enclosing-cfg doctest rule as full 1.149 (#12453).
+        // 0.151 -> 0.152: same neither-version literal refusal as full 1.150 (#12716).
+        // 0.152 -> 0.153: same renamed-assertion-import limit as full 1.151 (#12779).
+        // 0.153 -> 0.154: same tuple-projection pin as full 1.152 (#12796).
+        // 0.154 -> 0.155: same path-value crediting as full 1.153 (#9478).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.155");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.155");
     }
 
     #[test]

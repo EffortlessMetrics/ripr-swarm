@@ -64,6 +64,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::Metrics => super::reports::metrics_report(),
         XtaskCommand::RustRepairTrustReport => super::reports::rust_repair_trust_report(),
         XtaskCommand::RepairCardUsabilityReport => super::reports::repair_card_usability_report(),
+        XtaskCommand::RepairFunnelReport => super::reports::repair_funnel_report(),
         XtaskCommand::BlindJourneyContract => super::reports::blind_journey_contract_report(),
         XtaskCommand::BlindJourneyExecute => super::reports::blind_journey_execute_report(),
         XtaskCommand::OrchestrationScorecard(args) => {
@@ -135,6 +136,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::LspCockpitReport => super::reports::lsp_cockpit_report(),
         XtaskCommand::OperatorCockpitReport => super::reports::operator_cockpit_report(),
         XtaskCommand::ReleaseReadiness(args) => super::reports::release_readiness(&args),
+        XtaskCommand::ReadinessSnapshot(args) => super::readiness_snapshot::run(&args),
         XtaskCommand::ReleaseNegativeCorpus(args) => super::reports::release_negative_corpus(&args),
         XtaskCommand::ReleaseManifestProposal(args) => {
             super::reports::release_manifest_proposal(&args)
@@ -225,6 +227,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckPublicApi => super::check_public_api(),
         XtaskCommand::CheckOutputContracts => super::check_output_contracts(),
         XtaskCommand::CheckIdentityRegistry => super::identity_registry::check_identity_registry(),
+        XtaskCommand::CheckToolCapabilities(args) => super::tool_capabilities::run(&args),
         XtaskCommand::CheckDocArtifacts => super::check_doc_artifacts(),
         XtaskCommand::CheckSupportTiers => super::check_support_tiers(),
         XtaskCommand::CheckCapabilityProducers(args) => {
@@ -266,6 +269,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckDependencies => super::check_dependencies(),
         XtaskCommand::CheckSupplyChain => super::check_supply_chain(),
         XtaskCommand::CheckProcessPolicy => super::check_process_policy(),
+        XtaskCommand::CheckCliExitContract => super::check_cli_exit_contract(),
         XtaskCommand::CheckNetworkPolicy => super::check_network_policy(),
         XtaskCommand::CheckLintPolicy => super::check_lint_policy(),
         XtaskCommand::CheckCiLaneWhitelist => super::check_ci_lane_whitelist(),

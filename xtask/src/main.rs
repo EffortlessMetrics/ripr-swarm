@@ -30,6 +30,7 @@ mod cache;
 mod cache_payload_tamper_recovery;
 mod check_fast_cli;
 mod check_fast_selector;
+mod cli_exit_contract;
 mod command;
 pub mod convergence;
 mod dispatch;
@@ -59,6 +60,7 @@ mod no_panic;
 mod orchestration_attempt;
 mod output_enum_contracts;
 mod package_qualification;
+mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
@@ -69,11 +71,13 @@ mod python_judged_panel;
 mod python_judged_panel_feedback;
 mod python_judged_panel_replay;
 mod python_judged_panel_report;
+mod readiness_snapshot;
 mod repo_readiness;
 mod ripr_agent_disposition;
 mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
+mod tool_capabilities;
 mod types;
 mod warm_ab;
 mod work_adapter_identity;
@@ -299,12 +303,12 @@ use no_panic::{
     strip_toml_value_comment,
 };
 use policy::{
-    check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist, check_covered_by,
-    check_doc_roles, check_droid_review_config, check_executable_files, check_file_policy,
-    check_local_context, check_network_policy, check_no_panic_family, check_packaged_readme,
-    check_positioning_language, check_process_policy, check_product_copy, check_proof_packs,
-    check_release_targets, check_static_language, check_text_encoding, check_user_text,
-    check_workflows, qualify_python_wheelhouse,
+    check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist,
+    check_cli_exit_contract, check_covered_by, check_doc_roles, check_droid_review_config,
+    check_executable_files, check_file_policy, check_local_context, check_network_policy,
+    check_no_panic_family, check_packaged_readme, check_positioning_language, check_process_policy,
+    check_product_copy, check_proof_packs, check_release_targets, check_static_language,
+    check_text_encoding, check_user_text, check_workflows, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -23778,6 +23782,16 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     if path.starts_with(".github/actions/pr-candidate-admission/") && path.ends_with(".py") {
         return Some(
             "Pre-allocation admission runs before any Rust build exists, so its pure decision logic is stdlib Python on the hosted runner, kept out of embedded YAML shell (#5391, #2022).",
+        );
+    }
+
+    if path.starts_with(".agents/skills/finish-pr/")
+        && (path.starts_with(".agents/skills/finish-pr/scripts/")
+            || path.starts_with(".agents/skills/finish-pr/tests/"))
+        && path.ends_with(".py")
+    {
+        return Some(
+            "Exact-head merge guard runs from an agent session at merge time with only gh and stdlib Python; its fake-API tests are executed by the Rust-owned guarded_merge_selftest (#11781).",
         );
     }
 
