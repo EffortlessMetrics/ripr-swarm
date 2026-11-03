@@ -28,6 +28,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 80
     env:
+      # Half the default build and test parallelism (#12338): 0 wedges in 80
+      # shard-jobs at this setting vs 12 in 152 (7.9%) at the default.
+      CARGO_BUILD_JOBS: "2"
       # Tests that need a real NTFS deny ACL (#9688). Git for Windows bash enables
       # SeBackupPrivilege and SeRestorePrivilege and every child inherits them,
       # which bypass an icacls (AD) deny, so they run in the pwsh step below.
@@ -147,7 +150,7 @@ jobs:
           shard=${{ matrix.shard }}
           : "${JOB_CAP_SECS:=4800}" "${UPLOAD_RESERVE_SECS:=480}" "${WATCHDOG_POLLS:=264}" "${POLL_SECS:=10}"
           start=${JOB_START:-$(date +%s)}; remain=$((JOB_CAP_SECS - ($(date +%s) - start) - UPLOAD_RESERVE_SECS)); [ "$remain" -ge "$POLL_SECS" ] || remain=$POLL_SECS; polls=$(( (remain + POLL_SECS - 1) / POLL_SECS )); [ "$polls" -le "$WATCHDOG_POLLS" ] || polls=$WATCHDOG_POLLS
-          bash -c 'rc=0; for pkg in "-p xtask" "--workspace --exclude xtask"; do cargo nextest run --profile windows-advisory $pkg --no-fail-fast --partition count:$0/4 -E "not $ACL_TESTS" || rc=$?; done; exit $rc' "$shard" > target/shard-$shard.log 2>&1 &
+          bash -c 'rc=0; for pkg in "-p xtask" "--workspace --exclude xtask"; do cargo nextest run --profile windows-advisory $pkg --no-fail-fast --test-threads 2 --partition count:$0/4 -E "not $ACL_TESTS" || rc=$?; done; exit $rc' "$shard" > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
           tail -n +1 -F target/shard-$shard.log &
           tail_pid=$!
