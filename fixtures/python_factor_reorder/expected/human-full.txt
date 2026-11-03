@@ -78,6 +78,7 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `a table row whose operands distinguish multiplication order`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast probe:src_shop.py:python_preview:f5eb84b2
   ripr context --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast --at probe:src_shop.py:python_preview:f5eb84b2
 
@@ -144,6 +145,7 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `a table row whose operands distinguish multiplication order`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast probe:src_shop.py:python_preview:8bf754ea
   ripr context --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast --at probe:src_shop.py:python_preview:8bf754ea
 
@@ -210,6 +212,7 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `a table row whose operands distinguish multiplication order`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast probe:src_shop.py:python_preview:5bf163be
   ripr context --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast --at probe:src_shop.py:python_preview:5bf163be
 
@@ -276,6 +279,7 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `a table row whose operands distinguish multiplication order`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast probe:src_shop.py:python_preview:c5d74b8f
   ripr context --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast --at probe:src_shop.py:python_preview:c5d74b8f
 

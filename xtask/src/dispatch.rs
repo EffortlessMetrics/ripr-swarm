@@ -159,6 +159,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::reports::release_server::release_upload_assets(&args)
         }
         XtaskCommand::TargetedTestOutcome(args) => super::reports::targeted_test_outcome(&args),
+        XtaskCommand::NativeLibtest(args) => super::native_libtest::run(&args),
         XtaskCommand::MutationCalibration(args) => super::reports::mutation_calibration(&args),
         XtaskCommand::BunUbCalibration(args) => super::reports::bun_ub_calibration(&args),
         XtaskCommand::BunUbPreviewSummary(args) => super::reports::bun_ub_preview_summary(&args),

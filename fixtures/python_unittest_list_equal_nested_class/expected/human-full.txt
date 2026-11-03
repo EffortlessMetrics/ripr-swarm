@@ -54,6 +54,7 @@ Static limitation
   opaque_custom_assertion_helper — A custom assertion helper hides what is checked, so ripr cannot confirm the assertion would discriminate this change.
   Next: Assert inline on the changed value with the framework's own assertion (`assert_eq!`, `assert`, `expect`), or make the helper call one ripr can see.
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_unittest_list_equal_nested_class/input --diff <cwd>/fixtures/python_unittest_list_equal_nested_class/diff.patch --mode fast probe:src_labels.py:python_preview:a20a77e8
   ripr context --root <cwd>/fixtures/python_unittest_list_equal_nested_class/input --diff <cwd>/fixtures/python_unittest_list_equal_nested_class/diff.patch --mode fast --at probe:src_labels.py:python_preview:a20a77e8
 

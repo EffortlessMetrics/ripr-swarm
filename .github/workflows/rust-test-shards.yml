@@ -106,7 +106,7 @@ jobs:
         run: |
           ( while true; do echo "$(date +%T) $(free -m | awk '/^Mem:/{print "used_mb="$3" available_mb="$7}')"; sleep 5; done ) > "$RUNNER_TEMP/memory.log" &
           sampler=$!
-          trap 'kill "$sampler" 2>/dev/null || true; echo "peak memory sample:"; sort -t= -k2 -n -r "$RUNNER_TEMP/memory.log" | head -1' EXIT
+          trap 'kill "$sampler" 2>/dev/null || true; echo "peak memory sample:"; awk "{split(\$2,u,\"=\"); if (u[2]+0>m) {m=u[2]+0; l=\$0}} END{print l}" "$RUNNER_TEMP/memory.log"' EXIT
           cargo test --no-run --locked --workspace --exclude xtask
           cargo test --no-run --locked --workspace
 
