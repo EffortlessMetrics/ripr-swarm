@@ -1,0 +1,132 @@
+{
+  "changes": [
+    {
+      "behavior_hint": "return_value",
+      "change_id": "change:file:lib/App/Discount.pm:5:return",
+      "changed_observable": "5 if $amount < 25",
+      "changed_text_digest": "sha256:ce38eb02d3eda9e843efee5732aef98619ec2840cfc0d8368bc7eb0d4e6ad0ed",
+      "file_id": "file:lib/App/Discount.pm",
+      "missing_discriminator": null,
+      "owner_id": "owner:lib/App/Discount.pm:sub:App::Discount::discount:24-147",
+      "provenance_refs": [],
+      "range": {
+        "end_column": 30,
+        "end_line": 5,
+        "start_column": 1,
+        "start_line": 5
+      }
+    }
+  ],
+  "dynamic_boundaries": [],
+  "files": [
+    {
+      "digest": "sha256:fd80d0a5fd4f2a73f34267484674ec88c7424a101754d70061380e738679833a",
+      "file_id": "file:lib/App/Discount.pm",
+      "package_names": [
+        "App::Discount"
+      ],
+      "path": "lib/App/Discount.pm",
+      "provenance_refs": [],
+      "role": [
+        "source"
+      ]
+    }
+  ],
+  "input": {
+    "base": null,
+    "diff_id": null,
+    "head": "HEAD",
+    "requested_fact_classes": [
+      "files",
+      "owners",
+      "changes",
+      "tests",
+      "oracles",
+      "relations",
+      "dynamic_boundaries",
+      "verify_commands",
+      "limitations",
+      "provenance"
+    ]
+  },
+  "limitations": [
+    {
+      "evidence_refs": [],
+      "kind": "partial_emitter",
+      "limitation_id": "emitter-partial",
+      "message": "Parser-backed tests/oracles, relations/discriminators (incl. a parser-backed direct_owner_call), boundaries/commands, files/owners, (when a diff is supplied) diff-owned changes, and a deterministic packet_fingerprint are emitted. Export-aware relation reachability and the managed-producer diff source land in later slices."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "narrowed_representation",
+      "limitation_id": "oracle-representation",
+      "message": "oracle facts locate the whole assertion call range; the ripr-perl-facts-v1 schema has no observed/expected expression sub-range fields, so those are conveyed as string expressions only."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "unverified_provenance",
+      "limitation_id": "diff-provenance-unverified",
+      "message": "base/head/diff are caller-asserted and not verified against a repository; this packet does not confirm the supplied diff is the actual base->head diff."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "range_precision",
+      "limitation_id": "change-range-imprecise",
+      "message": "change ranges are line-granular with best-effort column data derived from the diff, not the byte-accurate LineIndex ranges used for owners."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "partial_inference",
+      "limitation_id": "change-behavior-hint-partial",
+      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped, but a die/return/comparison token inside a string literal can still be misclassified (a robust fix needs tokenization)."
+    }
+  ],
+  "oracles": [],
+  "owners": [
+    {
+      "confidence": "high",
+      "file_id": "file:lib/App/Discount.pm",
+      "kind": "sub",
+      "name": "discount",
+      "owner_id": "owner:lib/App/Discount.pm:sub:App::Discount::discount:24-147",
+      "package": "App::Discount",
+      "provenance_refs": [],
+      "range": {
+        "end_column": 2,
+        "end_line": 9,
+        "start_column": 1,
+        "start_line": 3
+      }
+    }
+  ],
+  "packet_fingerprint": "sha256:b56d3b4d3ed75d0e86ab030d462fe7b5db17d34c946f891527ef081646ce0319",
+  "packet_id": "perl-facts:sarif-identity:baseline_one",
+  "packet_status": "partial",
+  "producer": {
+    "capabilities": [
+      "files",
+      "owners",
+      "changes",
+      "tests",
+      "oracles",
+      "relations",
+      "dynamic_boundaries",
+      "verify_commands",
+      "limitations",
+      "provenance",
+      "test_facts"
+    ],
+    "name": "perl-lsp",
+    "version": "0.17.0-contract-fixture"
+  },
+  "provenance": [],
+  "relations": [],
+  "root": {
+    "path_style": "posix",
+    "repo_relative": "fixtures/perl_packet_contract_migration/producer-inputs/ordinary_discount",
+    "vcs_head": "HEAD"
+  },
+  "schema_version": "ripr-perl-facts-v1",
+  "tests": [],
+  "verify_commands": []
+}

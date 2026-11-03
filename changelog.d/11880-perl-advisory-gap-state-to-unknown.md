@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The Perl preview GapRecord projection now reports `gap_state: unknown` instead of the non-vocabulary word `advisory`, matching the TypeScript change. `unknown` is one of the five `EvidenceState` values and is never actionable or a clean result; the evidence-promotion gate already treats `gap_state: unknown` as blocked evidence. Consumers that matched the literal `advisory` in Perl GapRecord JSON need to read `unknown` (#11880).

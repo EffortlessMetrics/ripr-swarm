@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Python assertion that compares only a coarse projection of the changed value (`is None`, a sign such as `> 0`, a remainder such as `% 3`, `.__class__.__name__`, `len(str(..))`, or `len` over an element-only `yield` or comprehension edit) now reads `weakly_exposed` instead of `exposed`, because the edit usually leaves that projection unchanged; assertions that pin the value keep their verdict (RIPR-SPEC-0238 rule 30, #11630, #11839).

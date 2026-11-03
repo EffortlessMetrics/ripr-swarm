@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A changed line inside a `verus! { .. }` block is now reported as `static_unknown` with the named limitation `verus_macro_region_unsupported` and no requested test, instead of a `propagation_unknown`, `infection_unknown` or `weakly_exposed` probe on Verus spec and proof text. `use creusot_std::prelude::*;`, `use vstd::prelude::*;` and `use prusti_contracts::*;` no longer refuse assertion credit when the crate is its plain registry package, since none exports an assertion macro; no credit beyond ordinary assertions is added (#10747).

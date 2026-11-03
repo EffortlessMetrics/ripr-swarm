@@ -88,7 +88,7 @@ impl<'a> BooleanBoundaryPin<'a> {
             },
             syntax,
         ) || !matches!(
-            boolean_assertion_verdict_for_test(self.owner, &oracle.text, test),
+            boolean_assertion_verdict_for_test(self.owner, &oracle.text, test, index),
             ExactValueVerdict::Consistent
         ) {
             return false;

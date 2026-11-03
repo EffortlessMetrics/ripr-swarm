@@ -3,8 +3,7 @@ use crate::analysis::targeted_typescript_findings_for_scope;
 use crate::analysis::{
     TargetedTestInventoryError, canonical_gap::canonical_gap_identity,
     inventory_changed_test_classified_seams_at_with_config_node,
-    inventory_classified_seams_at_with_config,
-    inventory_diff_scoped_classified_seams_at_with_config, seam_cache::stable_input_hash,
+    inventory_classified_seams_at_with_config, seam_cache::stable_input_hash,
     workspace_cache_key_at_with_config,
 };
 use crate::app::repair_route_readiness;
@@ -527,7 +526,9 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             RerunSelector::ChangedTest { file, node }
         }
         (Some(_), None, Some(_)) => {
-            return Err("rerun --gap-ledger requires --gap".to_string());
+            return Err(
+                "rerun --gap-ledger requires --gap; add `--gap` to the command".to_string(),
+            );
         }
         (None, Some(canonical_gap_id), Some(gap_ledger)) => RerunSelector::Gap {
             canonical_gap_id,
@@ -545,10 +546,12 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             ));
         }
         (None, None, Some(_)) => {
-            return Err("rerun --gap-ledger requires --gap".to_string());
+            return Err(
+                "rerun --gap-ledger requires --gap; add `--gap` to the command".to_string(),
+            );
         }
         (None, None, None) => {
-            return Err("rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>".to_string());
+            return Err("rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>; pass one selector, for example `--changed-test tests/a.rs`".to_string());
         }
         (Some(_), Some(_), _) => return Err("rerun accepts exactly one selector".to_string()),
     };
@@ -759,6 +762,10 @@ fn rerun_gap(
     let mut cache = crate::analysis::seam_cache::FileFactCacheStats::default();
     let mut input_fingerprint = None;
     let mut seams = BTreeMap::<String, TargetedRerunSeam>::new();
+    let mut shared_rust_preparation: Option<
+        crate::analysis::PreparedDiffScopedClassifiedWorkspace,
+    > = None;
+    let mut shared_rust_cache_stats_recorded = false;
     for scope in scopes {
         #[cfg(feature = "lang-typescript")]
         if is_typescript_scope(&scope) {
@@ -867,15 +874,46 @@ fn rerun_gap(
 
         let changed_files = vec![scope.file.clone()];
         let changed_owner_names = scope.owner.iter().cloned().collect::<Vec<_>>();
-        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+        let absent_changed_files = crate::analysis::changed_source_files_absent_from_worktree(
             root,
-            config,
-            &changed_files,
-            &changed_owner_names,
-        )?;
+            changed_files.iter().map(PathBuf::as_path),
+        );
+        let cache_stats = if shared_rust_preparation.is_some() {
+            crate::analysis::DiffScopedCacheStatsAttribution::Omit
+        } else {
+            crate::analysis::DiffScopedCacheStatsAttribution::Preparation
+        };
+        let inventory = if let Some(prepared) = shared_rust_preparation.as_ref() {
+            crate::analysis::evaluate_diff_scoped_classified_seams_from_prepared(
+                prepared,
+                crate::analysis::PreparedDiffScopedEvaluationInput::canonical_gap_rerun_scope(
+                    &changed_files,
+                    &changed_owner_names,
+                    absent_changed_files,
+                    cache_stats,
+                ),
+            )?
+        } else {
+            let prepared =
+                crate::analysis::prepare_diff_scoped_classified_workspace(root, config, None)?;
+            let inventory = crate::analysis::evaluate_diff_scoped_classified_seams_from_prepared(
+                &prepared,
+                crate::analysis::PreparedDiffScopedEvaluationInput::canonical_gap_rerun_scope(
+                    &changed_files,
+                    &changed_owner_names,
+                    absent_changed_files,
+                    cache_stats,
+                ),
+            )?;
+            shared_rust_preparation = Some(prepared);
+            inventory
+        };
+        if !shared_rust_cache_stats_recorded {
+            add_cache_stats(&mut cache, &inventory.file_fact_cache);
+            shared_rust_cache_stats_recorded = true;
+        }
         input_fingerprint
             .get_or_insert_with(|| input_fingerprint_for(root, &inventory.workspace_cache_key));
-        add_cache_stats(&mut cache, &inventory.file_fact_cache);
         let scoped_record_seam_ids = seam_ids_for_scope(&records, &scope);
         let scope_seams = inventory
             .classified
@@ -1949,14 +1987,17 @@ fn parse_changed_test_selector(selector: &str) -> Result<(PathBuf, Option<String
         .split_once("::")
         .map_or((selector, None), |(file, node)| (file, Some(node)));
     if file.trim().is_empty() {
-        return Err("rerun --changed-test requires a file path".to_string());
+        return Err(
+            "rerun --changed-test requires a file path; pass the path right after --changed-test"
+                .to_string(),
+        );
     }
     let node = node
         .map(str::trim)
         .filter(|node| !node.is_empty())
         .map(str::to_string);
     if selector.contains("::") && node.is_none() {
-        return Err("rerun --changed-test test node must not be empty".to_string());
+        return Err("rerun --changed-test test node must not be empty; pass `--changed-test <file>::<test-name>`, or `--changed-test <file>` alone".to_string());
     }
     Ok((PathBuf::from(file), node))
 }
@@ -1979,10 +2020,14 @@ fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {
         .filter(|parent| !parent.as_os_str().is_empty())
     {
         std::fs::create_dir_all(parent)
-            .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
+            .map_err(|err| format!("create {} failed: {err}; check you can create directories there, or pass a different `--out`", parent.display()))?;
     }
-    crate::output::file_write::write(path, rendered.as_bytes())
-        .map_err(|err| format!("write {} failed: {err}", path.display()))
+    crate::output::file_write::write(path, rendered.as_bytes()).map_err(|err| {
+        format!(
+            "write {} failed: {err}; check you can write there, or pass a different `--out`",
+            path.display()
+        )
+    })
 }
 
 fn render_human(report: &TargetedRerunReport) -> String {
@@ -2667,7 +2712,7 @@ mod tests {
         assert_eq!(
             parse_options(&[]),
             Err(
-                "rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>"
+                "rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>; pass one selector, for example `--changed-test tests/a.rs`"
                     .to_string()
             )
         );
@@ -4038,7 +4083,9 @@ mod tests {
         ] {
             assert_eq!(
                 parse_options(&args(&[flag])),
-                Err(format!("missing value for {flag}")),
+                Err(format!(
+                    "missing value for {flag}; pass a value right after it"
+                )),
                 "{flag} without a value must name the flag"
             );
         }
@@ -4074,7 +4121,7 @@ mod tests {
             Err(conflict)
         );
         // A ledger needs a gap, with or without a changed-test selector.
-        let orphan = "rerun --gap-ledger requires --gap".to_string();
+        let orphan = "rerun --gap-ledger requires --gap; add `--gap` to the command".to_string();
         assert_eq!(
             parse_options(&args(&["--gap-ledger", "ledger.json"])),
             Err(orphan.clone())
@@ -4105,16 +4152,16 @@ mod tests {
     fn rerun_changed_test_selector_requires_a_file_and_trims_the_node() -> Result<(), String> {
         assert_eq!(
             parse_options(&args(&["--changed-test", "  "])),
-            Err("rerun --changed-test requires a file path".to_string())
+            Err("rerun --changed-test requires a file path; pass the path right after --changed-test".to_string())
         );
         assert_eq!(
             parse_options(&args(&["--changed-test", "::case"])),
-            Err("rerun --changed-test requires a file path".to_string())
+            Err("rerun --changed-test requires a file path; pass the path right after --changed-test".to_string())
         );
         // A whitespace-only node is empty, like no node after the separator.
         assert_eq!(
             parse_options(&args(&["--changed-test", "tests/a.rs::  "])),
-            Err("rerun --changed-test test node must not be empty".to_string())
+            Err("rerun --changed-test test node must not be empty; pass `--changed-test <file>::<test-name>`, or `--changed-test <file>` alone".to_string())
         );
         let options = parse_options(&args(&["--changed-test", "tests/a.rs:: case "]))?;
         if options.selector

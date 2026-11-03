@@ -474,3 +474,126 @@ Stale re-check cycles and the stub counters were not instrumented, so the
 receipt carries no value for them. The old passes' open findings (#5352,
 #5353, #5358, #5471, #6297 to #6300) were not re-triaged here; that remains
 step 2 of #10183.
+
+## Pass 2026-10-31: output size per command and the regression gate
+
+Scripted pass (#11816), not a new agent run. It adds to the receipt what the
+agent runs of 2026-10-25 could not carry: how many bytes the first `ripr check`
+writes in each output format, and what `--format agent` says on the unfixed gap
+commit. ripr `0.11.0 (9db2819f)`, release build (no debuginfo, no LTO), Linux.
+Gap commits built from the patches above on the pinned upstream commits.
+
+### Measured
+
+Bytes the first `ripr check` writes on the gap commit, stdout plus stderr
+(stderr is the same 138 bytes of four `ripr progress:` lines in every cell;
+`RIPR_QUIET=1` removes them). The checkout path is echoed in some output, so
+sizes move by a few bytes with the directory; the gate margins cover that.
+
+| Target | human (default) | `--format agent` | `--json` | Gaps `--format agent` names before any fix |
+|---|---|---|---|---|
+| bytesize | 3,773 | 773 | 57,586 | 2 |
+| humantime | 3,797 | 391 | 110,467 | 0 |
+| semver | 3,155 | 984 | 70,880 | 4 |
+
+`--format agent` is 20 percent, 10 percent and 31 percent of the human size.
+`--json` is 15 to 29 times the human size, so an agent that reads the JSON
+document spends most of its output budget on one command.
+
+Carried over unchanged from the 2026-10-25 agent runs: answer key 3/3 on every
+target, ripr commands to fix 7, 8 and 10, tool steps 8, 9 and 9, non-exposed
+verdicts left after the fix 0, 4 and 1.
+
+### Finding: a false stop on humantime (fixed, #11825)
+
+On the unfixed humantime gap commit `ripr check --format agent` printed
+`findings=5 gaps=0 ... weakly_exposed=4` and
+`stop=ripr cannot tell from reading the code whether tests would notice;
+nothing more is fixable from the test side`. The smoke-only `is_ok()` test is
+the gap: the answer key shows all three humantime mutants survive it. Every
+finding carried the reach-only `rust_transitive_reach_unresolved` limitation,
+so none counted as a gap, but each also carried a related-test row the
+producer read as `weak_assertion`. An agent that obeyed `stop=` ended at 0/3.
+
+After the fix the same commit prints `open=` (never `stop=`), the four
+weakly exposed findings with their `weak_assertion` row, and a
+`next=ripr explain` drill-in. They are still not counted in `gaps=`: reach is
+unresolved, so they are not confirmed gaps. The receipt records the named
+test-side work, four lines, as `agent.agent_format_gaps_before_fix` for
+humantime (it was 0, below its bar of 1). On the fixed tree (exact-value
+assertions) the weak row is gone and `stop=` is printed, as before. The
+count was measured with a debug build of the fix branch, not a release build.
+
+### Gate
+
+`cargo xtask dx-scoreboard --boards agent --ingest metrics/public-proof/agent-as-user.json
+--baseline metrics/dx-scoreboard/agent-baseline.json --gate`, also run by the
+xtask test `committed_agent_receipt_does_not_regress_the_agent_baseline`.
+Thresholds live in `benchmarks/dx_scoreboard/scoreboards.toml`; the allowance is
+the larger of the percentage and the floor:
+
+| Metric | Direction | Allowed worsening against the prior receipt |
+|---|---|---|
+| `agent.check_bytes_agent_format` | lower | 10 percent or 300 bytes |
+| `agent.check_bytes_human` | lower | 25 percent or 500 bytes |
+| `agent.check_bytes_json` | lower | 25 percent or 2,000 bytes |
+| `agent.agent_format_gaps_before_fix` | higher | none |
+| answer-key mutants caught, false weak findings, white-box tests | unchanged | none |
+| ripr commands, tool steps | lower | 25 percent or 3 |
+
+Negative experiments (xtask tests): `agent_gate_fails_when_command_output_grows_past_its_margin`
+shows growth equal to the margin passes and one byte more fails, naming the
+metric and repository, for each format; the existing
+`agent_coverage_check_names_dropped_metrics_and_samples` now also covers the
+three size metrics, and `agent_receipt_check_fails_when_a_measured_sample_disappears`
+shows the committed-receipt check (gate plus coverage) fails, rather than
+passes, when a measured metric or one target's sample is deleted. The
+`dx-scoreboard --gate` command alone still lists a missing sample as
+uncompared and exits 0; the enforcement is the xtask test run in CI.
+
+Run against the prior baseline, the new receipt passes with the four new
+metrics listed as uncompared (no prior sample). The baseline was then rebuilt
+from this receipt, so from the next pass on they are compared.
+
+### Trend
+
+| Pass | Receipt | ripr commands (b/h/s) | check bytes human / agent (b/h/s) |
+|---|---|---|---|
+| 2026-10-04 | first pass | 17 / 21 / 20 | not measured |
+| 2026-10-25 | agent runs | 7 / 8 / 10 | not measured |
+| 2026-10-31 | this pass | carried from 2026-10-25 | 3,773 / 3,797 / 3,155 and 773 / 391 / 984 |
+
+Before 2026-10-31 there is no byte count in a receipt, so there is no earlier
+point to compare. The trend column fills from the next pass.
+
+### Not established
+
+- No fresh agent ran: commands to fix, tool steps and answer-key results are
+  the 2026-10-25 values, measured with ripr a6909e94, not with this binary.
+- Run4 (`agent-experience/run4-*.md`, evaluator role-played the agent, one
+  pass each, an older binary e14f8b11) read 13,144, 25,455 and 17,240 bytes in
+  4, 6 and 5 commands, and the humantime pass wrote a white-box `parse_unit`
+  test. It is not ingested: the evaluator is not an independent agent, the
+  binary differs, and the zero allowance on
+  `agent.white_box_tests_to_satisfy_ripr` would fail the gate on that one pass,
+  which should be judged on a fresh agent rather than on a role-play.
+- Bytes are for the first `check` on the gap commit only, not for the whole
+  fix path or for the later commands (`explain`, `context`, `agent stub`).
+- Bytes are not tokens, and a smaller output is not shown to make an agent
+  succeed more often.
+- No `cargo mutants` result; the hand-written answer key was not re-scored.
+- Stale re-check cycles and stub counters stay uninstrumented.
+
+### Reproduce
+
+Build each gap tree, then, from inside it, with `RIPR` pointing at the binary:
+
+```bash
+for spec in "human:" "agent:--format agent" "json:--json"; do
+  "$RIPR" check ${spec#*:} 2>err.txt | wc -c; wc -c < err.txt
+done
+```
+
+Add the stdout and stderr counts per cell and put them in the receipt through
+`cargo xtask dx-scoreboard --boards agent --ingest metrics/public-proof/agent-as-user.json`
+(the baseline) and `cargo xtask public-proof` (the page).

@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0371"
+scope = "out"
+reason = "Kani lane for ripr own code; not a rust verdict example"

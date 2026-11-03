@@ -1,0 +1,9 @@
+# Register the captured-row lens and hover tests under the code lens spec (#10609).
+[[extend]]
+id = "RIPR-SPEC-0100"
+tests = [
+  "crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::analysis_snapshot_lens_rows_use_captured_editor_row",
+  "crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::analysis_snapshot_published_hover_matches_captured_row",
+  "crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::analysis_snapshot_unpublished_line_lookup_uses_captured_row",
+  "crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::analysis_snapshot_lens_excludes_deleted_findings_with_captured_origins",
+]

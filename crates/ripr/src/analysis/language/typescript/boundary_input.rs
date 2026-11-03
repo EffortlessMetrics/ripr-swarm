@@ -220,7 +220,11 @@ pub(crate) fn ts_boundary_input_in_source(
         (None, Some(index)) => (right, index, left),
         _ => return None,
     };
-    if !comparison_has_whole_sides(line_text, &parameter, &operand) {
+    if !comparison_has_whole_sides(
+        boundary_comparison_line(line_text, owner),
+        &parameter,
+        &operand,
+    ) {
         return None;
     }
     let literal = integer_literal(&operand);
@@ -265,7 +269,13 @@ pub(crate) fn ts_boundary_parameters_in_source(
 ) -> Option<TypeScriptBoundaryParameters> {
     let ((parameter, index), (operand, operand_index)) = discriminator_sides(line_text, owner)?;
     let (index, operand_index) = (index?, operand_index?);
-    if index == operand_index || !comparison_has_whole_sides(line_text, &parameter, &operand) {
+    if index == operand_index
+        || !comparison_has_whole_sides(
+            boundary_comparison_line(line_text, owner),
+            &parameter,
+            &operand,
+        )
+    {
         return None;
     }
     let request = ModuleRequest {
@@ -742,12 +752,29 @@ fn parameter_is_read_only(
 /// as `if (amount === 5000) return 0;` would stop the derived input before
 /// the changed comparison, so it fails closed. Expression-bodied and curried
 /// arrows, returned functions, and generators are not admitted.
+/// Line text used for whole-side comparison gates on a changed owner line.
+fn boundary_comparison_line<'a>(line_text: &'a str, owner: &TypeScriptOwner) -> &'a str {
+    if owner.start_line == owner.end_line {
+        one_line_function_first_statement(line_text)
+    } else {
+        line_text
+    }
+}
+
 fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &ModuleRequest) -> bool {
     let line_starts: Vec<usize> = std::iter::once(0)
         .chain(source.match_indices('\n').map(|(at, _)| at + 1))
         .collect();
     let changed = request.changed_line;
-    if changed <= request.owner_start_line || changed > request.owner_end_line {
+    let one_line_owner = request.owner_start_line == request.owner_end_line;
+    if changed > request.owner_end_line {
+        return false;
+    }
+    if one_line_owner {
+        if changed != request.owner_start_line {
+            return false;
+        }
+    } else if changed <= request.owner_start_line {
         return false;
     }
     let Some(&line_start) = line_starts.get(changed - 1) else {
@@ -764,7 +791,7 @@ fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &Modul
     let Some(close) = matching_close(tokens, open) else {
         return false;
     };
-    if tokens[close].end > line_start {
+    if !one_line_owner && tokens[close].end > line_start {
         return false;
     }
     // The changed line must start a fresh statement: the previous token ends
@@ -812,16 +839,33 @@ fn changed_line_runs_on_every_call(source: &str, tokens: &[Tok], request: &Modul
     });
     // The chosen `{` must enclose the changed line: a type literal in the
     // return type (`: { (): number } => () => {`) closes before it.
-    let encloses_line =
-        matching_close(tokens, body_open).is_some_and(|end| tokens[end].start >= line_end);
+    let encloses_line = matching_close(tokens, body_open).is_some_and(|end| {
+        if one_line_owner {
+            tokens[end].start >= line_start
+        } else {
+            tokens[end].start >= line_end
+        }
+    });
     if !plain_head || !encloses_line {
         return false;
     }
     let body = &tokens[close + 1..];
-    let before_line = body
-        .iter()
-        .take_while(|token| token.start < line_start)
-        .count();
+    let before_line = if one_line_owner {
+        let Some(at) = body.iter().position(|token| {
+            token.start >= line_start
+                && matches!(
+                    token.kind,
+                    Kind::If | Kind::Return | Kind::Const | Kind::Let | Kind::Var
+                )
+        }) else {
+            return false;
+        };
+        at
+    } else {
+        body.iter()
+            .take_while(|token| token.start < line_start)
+            .count()
+    };
     let starts_statement = body.get(before_line).is_some_and(|first| {
         first.start < line_end
             && matches!(

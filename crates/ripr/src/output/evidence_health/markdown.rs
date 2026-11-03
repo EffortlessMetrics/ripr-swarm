@@ -18,6 +18,7 @@ pub(crate) fn render_evidence_health_markdown(report: &EvidenceHealthReport) -> 
     push_evidence_quality_risks(&mut out, report);
     push_calibration_availability(&mut out, report);
     push_top_static_limitations(&mut out, report);
+    push_recommended_next_steps(&mut out, report);
     out
 }
 
@@ -265,6 +266,64 @@ fn push_calibration_availability(out: &mut String, report: &EvidenceHealthReport
     out.push('\n');
 }
 
+fn recommended_action(kind: &str) -> Option<&'static str> {
+    match kind {
+        "uncalibrated_records" => Some(
+            "Consider running `ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH` and passing the result to later commands via `--mutation-calibration` (advisory import only; ripr does not run mutation tests).",
+        ),
+        "missing_discriminators" => Some(
+            "Add discriminating assertions for the gaps listed under Missing Discriminators, then rerun `ripr check` on the affected seams (static evidence only).",
+        ),
+        "static_limitations" => Some(
+            "Review the limitation signals under Top Static Limitations above; address analyzer gaps or strengthen tests where a static path exists.",
+        ),
+        "duplicate_canonical_groups" => Some(
+            "Inspect the Largest Canonical Gap Groups table for repeated raw seams sharing one canonical gap id; consolidate tests or narrow the seam set if duplicates are unintentional.",
+        ),
+        "low_or_opaque_related_tests" => Some(
+            "Review Related Test Confidence counts and the linked tests for low-confidence or opaque rankings; ripr does not rerun tests or upgrade confidence automatically.",
+        ),
+        _ => None,
+    }
+}
+
+fn push_recommended_next_steps(out: &mut String, report: &EvidenceHealthReport) {
+    let risks = &report.evidence_quality.top_evidence_quality_risks;
+    if risks.is_empty() {
+        return;
+    }
+
+    let mut bullets = Vec::new();
+    let mut seen_kinds = BTreeMap::<&str, ()>::new();
+    for risk in risks {
+        if seen_kinds.insert(risk.kind.as_str(), ()).is_some() {
+            continue;
+        }
+        let Some(action) = recommended_action(risk.kind.as_str()) else {
+            continue;
+        };
+        bullets.push(format!(
+            "- `{kind}` ({count}): {action}",
+            kind = risk.kind,
+            count = risk.count,
+            action = action
+        ));
+    }
+    if bullets.is_empty() {
+        return;
+    }
+
+    out.push_str("## Recommended Next Steps\n\n");
+    out.push_str(
+        "_Advisory only; these steps do not change classifications or prove runtime mutation outcomes._\n\n",
+    );
+    for bullet in bullets {
+        out.push_str(&bullet);
+        out.push('\n');
+    }
+    out.push('\n');
+}
+
 fn push_top_static_limitations(out: &mut String, report: &EvidenceHealthReport) {
     out.push_str("## Top Static Limitations\n\n");
     if report.top_static_limitations.is_empty() {
@@ -336,4 +395,98 @@ fn push_counts_table_limited(
         ));
     }
     out.push('\n');
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::super::{
+        EvidenceHealthCalibration, EvidenceHealthMetrics, EvidenceHealthMovementAvailability,
+        EvidenceHealthQuality, EvidenceHealthReport, EvidenceHealthRisk,
+    };
+    use super::{recommended_action, render_evidence_health_markdown};
+
+    fn minimal_report(risks: Vec<EvidenceHealthRisk>) -> EvidenceHealthReport {
+        EvidenceHealthReport {
+            root: ".".to_string(),
+            metrics: EvidenceHealthMetrics {
+                seams_total: 0,
+                headline_eligible_total: 0,
+                weakly_gripped_total: 0,
+                ungripped_total: 0,
+                grip_class_counts: BTreeMap::new(),
+                stage_state_counts: BTreeMap::new(),
+                unknown_stage_counts: BTreeMap::new(),
+                unknown_stop_reason_counts: BTreeMap::new(),
+                missing_discriminators_total: 0,
+                seams_with_missing_discriminators: 0,
+                missing_discriminator_counts: BTreeMap::new(),
+                observed_values_total: 0,
+                seams_with_observed_values: 0,
+                observed_value_context_counts: BTreeMap::new(),
+                related_tests_total: 0,
+                seams_with_related_tests: 0,
+                related_test_confidence_counts: BTreeMap::new(),
+                oracle_strength_counts: BTreeMap::new(),
+                oracle_kind_counts: BTreeMap::new(),
+                opaque_oracle_count: 0,
+            },
+            evidence_quality: EvidenceHealthQuality {
+                canonical_gap_groups_total: 0,
+                duplicate_looking_groups_total: 0,
+                largest_canonical_groups: vec![],
+                actionability_class_counts: BTreeMap::new(),
+                static_limitation_stage_counts: BTreeMap::new(),
+                static_limitation_reason_counts: BTreeMap::new(),
+                static_limitation_category_counts: BTreeMap::new(),
+                calibration_availability_counts: BTreeMap::new(),
+                movement_availability: EvidenceHealthMovementAvailability::default(),
+                top_evidence_quality_risks: risks,
+            },
+            calibration: EvidenceHealthCalibration::not_provided(),
+            top_static_limitations: vec![],
+        }
+    }
+
+    #[test]
+    fn recommended_next_steps_mentions_calibrate_for_uncalibrated_records() {
+        let report = minimal_report(vec![EvidenceHealthRisk {
+            kind: "uncalibrated_records".to_string(),
+            count: 3,
+            summary: "Evidence records do not have imported runtime calibration data.".to_string(),
+        }]);
+        let markdown = render_evidence_health_markdown(&report);
+        assert!(markdown.contains("## Recommended Next Steps"));
+        assert!(markdown.contains("ripr calibrate cargo-mutants"));
+    }
+
+    #[test]
+    fn recommended_next_steps_omitted_when_no_risks() {
+        let markdown = render_evidence_health_markdown(&minimal_report(vec![]));
+        assert!(!markdown.contains("## Recommended Next Steps"));
+    }
+
+    #[test]
+    fn recommended_next_steps_follow_top_static_limitations() -> Result<(), String> {
+        let report = minimal_report(vec![EvidenceHealthRisk {
+            kind: "missing_discriminators".to_string(),
+            count: 1,
+            summary: "Headline evidence still lacks concrete discriminator coverage.".to_string(),
+        }]);
+        let markdown = render_evidence_health_markdown(&report);
+        let static_pos = markdown
+            .find("## Top Static Limitations")
+            .ok_or("missing static limitations section")?;
+        let next_pos = markdown
+            .find("## Recommended Next Steps")
+            .ok_or("missing recommended next steps section")?;
+        assert!(next_pos > static_pos);
+        Ok(())
+    }
+
+    #[test]
+    fn recommended_action_unknown_kind_is_none() {
+        assert!(recommended_action("not_a_real_risk").is_none());
+    }
 }

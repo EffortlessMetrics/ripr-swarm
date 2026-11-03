@@ -1,0 +1,1 @@
+crates/ripr/tests/generated_review_workflow.rs|curl|13|github-review-workflow|#6245: the local replay writes a stand-in curl script into a temp bin directory that serves fixture files; the Install ripr step is exercised without any real network call.

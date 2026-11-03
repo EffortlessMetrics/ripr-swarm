@@ -221,7 +221,7 @@ impl CompactTest<'_> {
             let file_scan = self
                 .file_value_scan
                 .get_or_init(|| FileValueScan::build(self.test, index));
-            ValueEnvFacts::build(self.test, file_scan)
+            ValueEnvFacts::build(self.test, file_scan, index)
         })
     }
 }

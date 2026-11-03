@@ -38,7 +38,7 @@ fn run_fixtures(strict: bool) -> Result<(), String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or_else(|| "xtask manifest has no workspace parent".to_string())?;
-    let reference = root.join(".agents/skills/finish-pr/references");
+    let reference = root.join("docs/agent-context");
     let markdown = fs::read_to_string(reference.join("review-conversations.md"))
         .map_err(|error| error.to_string())?
         .replace("\r\n", "\n");

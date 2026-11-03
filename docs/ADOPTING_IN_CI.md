@@ -89,6 +89,19 @@ Findings already in the baseline stay visible and non-blocking; new
 policy-eligible gaps block. Repair a blocked finding with a focused test, or
 acknowledge it visibly as the baseline ledger workflow describes.
 
+## Why a new gap stayed advisory
+
+`baseline-check` blocks a new gap only when the gate can hand the author a
+complete, bounded repair route. If a new gap shows as `advisory` with a reason
+such as `incomplete_repair_route: missing repair_target`, nothing is wrong with
+the workflow: the gate names the fields it could not fill and stays advisory
+rather than block on a repair it cannot describe. `repair_target` is the nearest
+strong existing test to imitate (or a production caller), so a repository whose
+only related tests are weak, such as `assert!(f(1) > 0)`, will not block until
+a stronger test exists. Open `gate-decision.md` for the exact reason on each
+candidate. The same applies when a test changed in the pull request next to the
+gap: that candidate stays advisory with the reason stated.
+
 ## Misconfiguration: baseline-check without a baseline
 
 `baseline-check` with no baseline, or an invalid one, is a `config_error` and

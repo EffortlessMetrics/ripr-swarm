@@ -3,7 +3,6 @@ use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub fn workspace() -> PathBuf {
@@ -15,25 +14,13 @@ mod help_capture_io;
 
 pub struct Scratch(pub PathBuf);
 
-// Concurrent tests in one process can read the same clock tick, so the
-// nonce also carries a process-wide sequence number.
-static SCRATCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-
 impl Scratch {
     pub fn new(label: &str) -> Result<Self, String> {
-        let parent = std::env::temp_dir();
-        help_capture_io::ensure_parent(&parent)?;
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| format!("scratch nonce clock relative to UNIX epoch: {error}"))?
             .as_nanos();
-        let sequence = SCRATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let root = parent.join(format!(
-            "ripr-{label}-{}-{nonce}-{sequence}",
-            std::process::id()
-        ));
-        help_capture_io::create_root(&root)?;
-        Ok(Self(root))
+        Ok(Self(help_capture_io::exclusive_scratch_root(label, nonce)?))
     }
 }
 
@@ -151,20 +138,37 @@ pub fn candidate_binary() -> Result<PathBuf, String> {
         .get_or_init(|| {
             // Always ask Cargo to select/build the current candidate. An existing
             // target/debug/ripr or an ambient PATH binary is not identity evidence.
-            let mut command = cargo();
-            command.args([
-                "build",
-                "-p",
-                "ripr",
-                "--bin",
-                "ripr",
-                "--locked",
-                "--offline",
-                "--jobs",
-                "1",
-                "--message-format=json",
-            ]);
-            let output = require_success(run(command)?, "candidate ripr build")?;
+            // Windows refuses to replace `ripr.exe` while a test running in
+            // parallel holds it (`Access is denied`, os error 5); the compile
+            // is done by then, so repeat the link step for about a minute.
+            let mut attempt = 1;
+            let output = loop {
+                let mut command = cargo();
+                command.args([
+                    "build",
+                    "-p",
+                    "ripr",
+                    "--bin",
+                    "ripr",
+                    "--locked",
+                    "--offline",
+                    "--jobs",
+                    "1",
+                    "--message-format=json",
+                ]);
+                match require_success(run(command)?, "candidate ripr build") {
+                    Err(error)
+                        if cfg!(windows)
+                            && attempt < 12
+                            && error.contains("failed to remove file")
+                            && error.contains("Access is denied") =>
+                    {
+                        attempt += 1;
+                        std::thread::sleep(Duration::from_secs(5));
+                    }
+                    other => break other?,
+                }
+            };
             let mut executables = BTreeSet::new();
             for line in output
                 .stdout

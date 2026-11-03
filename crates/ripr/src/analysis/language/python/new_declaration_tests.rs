@@ -181,7 +181,12 @@ fn new_def_header_shapes() {
 /// still marks it as a changed signature that keeps its probe.
 #[test]
 fn changed_header_paired_elsewhere_by_git_keeps_probe() -> Result<(), String> {
-    let source = PRICING_PY.replacen("def loyalty_price", "async def loyalty_price", 1);
+    // The old header sits at old line 7, so the file keeps lines after it: the
+    // reconstructed old side must contain that position.
+    let source = format!(
+        "{}\n\nTAIL = 1\n",
+        PRICING_PY.replacen("def loyalty_price", "async def loyalty_price", 1)
+    );
     let mut removed = line(7, "def loyalty_price(amount: int, years: int) -> int:");
     removed.new_side_line = 7;
     let findings = analyze("paired-elsewhere", &source, &[1, 2, 3, 4], vec![removed])?;

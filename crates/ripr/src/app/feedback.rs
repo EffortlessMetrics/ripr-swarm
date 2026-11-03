@@ -1272,7 +1272,13 @@ mod tests {
         );
         let warning = &warnings[0];
         assert!(
-            warning.contains(&bad_path.display().to_string()),
+            // Windows prints the canonical (verbatim-prefix) spelling of the
+            // path, so match the unique scratch directory and file name.
+            warning.contains("bad.json")
+                && root
+                    .path
+                    .file_name()
+                    .is_some_and(|dir| warning.contains(&dir.to_string_lossy().into_owned())),
             "skip warning must name the skipped file: {warning}"
         );
         assert!(

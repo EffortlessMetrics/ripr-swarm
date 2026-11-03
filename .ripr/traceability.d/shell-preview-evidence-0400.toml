@@ -1,0 +1,16 @@
+# Registers the shell preview evidence contract (#5723). Implementation evidence
+# is intentionally deferred to #5724–#5734; this behavior tracks the spec doc and
+# doc/spec index gates only.
+[[behavior]]
+id = "RIPR-SPEC-0400"
+name = "Shell preview dialect, expansion, pipeline, Bats, and system-effect evidence contract"
+spec = "docs/specs/RIPR-SPEC-0400-shell-preview-evidence-contract.md"
+tests = []
+fixtures = []
+code = []
+outputs = []
+metrics = [
+  "spec_format_compliance",
+  "capability_cell_registry_completeness",
+  "planned_test_obligation_registry",
+]

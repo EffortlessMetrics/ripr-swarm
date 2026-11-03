@@ -689,7 +689,7 @@ mod module_identity_tests {
             class_name: None,
             decorated: false,
             exported_as_default: false,
-            imports: Vec::new(),
+            imports: Default::default(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             default_object_member: false,

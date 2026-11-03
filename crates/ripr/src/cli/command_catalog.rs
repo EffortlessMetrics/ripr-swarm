@@ -540,6 +540,14 @@ const CATALOG: &[CommandCatalogEntry] = &[
         DiscoveryPosture::OrdinaryPublic,
     ),
     nested(
+        "cmd:reports.kani",
+        "reports kani",
+        CommandClass::Public,
+        CommandDispatch::Reports,
+        REPORTS,
+        DiscoveryPosture::OrdinaryPublic,
+    ),
+    nested(
         "cmd:reports.ts-limitations",
         "reports ts-limitations",
         CommandClass::Public,

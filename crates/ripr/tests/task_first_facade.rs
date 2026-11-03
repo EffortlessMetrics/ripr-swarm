@@ -271,6 +271,27 @@ fn assert_exit(output: &Output, expected: i32, label: &str) {
     );
 }
 
+/// #11597: a refusal prints exactly one typed `refusal code=` stderr line,
+/// beside its unchanged prose, and no other code line.
+fn assert_refusal_code(output: &Output, code: &str, disposition: &str, label: &str) {
+    let stderr = stderr_text(output);
+    let expected = format!("ripr: refusal code={code} disposition={disposition}");
+    let lines: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("refusal code="))
+        .collect();
+    assert_eq!(
+        lines,
+        vec![expected.as_str()],
+        "{label}: expected exactly the code line `{expected}`\nstderr:\n{stderr}"
+    );
+    // #12193: the machine line follows the prose; stderr never opens with it.
+    assert!(
+        !stderr.starts_with("ripr: refusal code="),
+        "{label}: the first stderr line must be plain words, not the code line\nstderr:\n{stderr}"
+    );
+}
+
 fn attempt_id_from_before_stderr(stderr: &str) -> Result<String, String> {
     stderr
         .lines()
@@ -295,6 +316,12 @@ fn repair_without_actionable_item_creates_no_attempt() -> Result<(), String> {
     let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
     // A deliberate named outcome, not a failure: exit 3, stdout empty.
     assert_exit(&repair, 3, "repair with no actionable item");
+    assert_refusal_code(
+        &repair,
+        "no_eligible_seam",
+        "not_started",
+        "no_eligible_seam",
+    );
     let stdout = stdout_text(&repair);
     assert!(
         stdout.is_empty(),
@@ -302,7 +329,7 @@ fn repair_without_actionable_item_creates_no_attempt() -> Result<(), String> {
     );
     let stderr = stderr_text(&repair);
     assert!(
-        stderr.contains("no seams visible"),
+        stderr.contains("no gaps visible"),
         "must report the honest setup outcome:\n{stderr}"
     );
     assert!(
@@ -430,7 +457,7 @@ fn repair_with_changed_non_rust_code_says_rust_only() -> Result<(), String> {
     assert_exit(&repair, 3, "repair with changed non-Rust code");
     let stderr = stderr_text(&repair);
     assert!(
-        stderr.contains("is Python and TypeScript, and `ripr repair` works from Rust seams only"),
+        stderr.contains("is Python and TypeScript, and `ripr repair` works from Rust gaps only"),
         "must say plainly that repair start is Rust only:\n{stderr}"
     );
     assert!(
@@ -471,7 +498,7 @@ fn repair_with_committed_only_non_rust_change_says_rust_only() -> Result<(), Str
     git_commit(root, "change ts")?;
     let stderr = nonrust_repair_stderr(root, &root_arg)?;
     assert!(
-        stderr.contains("is TypeScript, and `ripr repair` works from Rust seams only"),
+        stderr.contains("is TypeScript, and `ripr repair` works from Rust gaps only"),
         "committed-only change must be named:\n{stderr}"
     );
     assert!(!stderr.contains("ripr pilot"), "no pilot loop:\n{stderr}");
@@ -490,7 +517,7 @@ fn repair_with_quoted_non_rust_filename_says_rust_only() -> Result<(), String> {
     std::fs::write(root.join("café.ts"), "export const t = 11;\n").map_err(|e| e.to_string())?;
     let stderr = nonrust_repair_stderr(root, &root_arg)?;
     assert!(
-        stderr.contains("is TypeScript, and `ripr repair` works from Rust seams only"),
+        stderr.contains("is TypeScript, and `ripr repair` works from Rust gaps only"),
         "quoted filename must still be recognised:\n{stderr}"
     );
     Ok(())
@@ -559,7 +586,7 @@ fn repair_with_rust_only_change_keeps_the_generic_message() -> Result<(), String
         .map_err(|e| e.to_string())?;
     let stderr = nonrust_repair_stderr(root, &root_arg)?;
     assert!(
-        stderr.contains("no seams visible") && !stderr.contains("Rust seams only"),
+        stderr.contains("no gaps visible") && !stderr.contains("Rust gaps only"),
         "Rust-only change must keep the generic message:\n{stderr}"
     );
     Ok(())
@@ -709,6 +736,12 @@ fn repair_explicit_ineligible_seam_refuses_without_attempt_or_lock() -> Result<(
     git_commit(root, "grip the boundary")?;
     let repair = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
     assert_exit(&repair, 3, "repair with an explicit ineligible seam");
+    assert_refusal_code(
+        &repair,
+        "seam_not_repair_eligible",
+        "not_started",
+        "seam_not_repair_eligible",
+    );
     assert!(
         stdout_text(&repair).is_empty(),
         "ineligibility refusal must leave stdout empty:\n{}",
@@ -835,6 +868,77 @@ fn member_directory_commands_use_the_resolved_workspace_root() -> Result<(), Str
     assert!(
         !outer.join("target/ripr/pilot").exists(),
         "explicit --out must not also write the default packet directory"
+    );
+    Ok(())
+}
+
+/// #12417: `continue` with no attempt, run from a directory that no
+/// workspace, package or Git top level encloses, must say so and stop. The
+/// repair selector it used to consult reads the whole current directory, which
+/// on a large tree ran for minutes with no output. Unix-only like the other
+/// implicit-root smoke tests (the temp parent must hold no manifest or repo).
+#[cfg(unix)]
+#[test]
+fn continue_outside_any_workspace_refuses_without_scanning() -> Result<(), String> {
+    // The claim needs a directory no project encloses. `TMPDIR` can sit inside
+    // a checkout (an anchored root, where the refusal is the ordinary scan), so
+    // fall back to `/tmp` and fail loudly if neither is free of markers: a
+    // silent early return would leave the refusal unchecked.
+    let anchored = |dir: &Path| {
+        dir.ancestors().any(|ancestor| {
+            [
+                "Cargo.toml",
+                ".git",
+                "package.json",
+                "pyproject.toml",
+                "setup.py",
+                "setup.cfg",
+            ]
+            .iter()
+            .any(|name| ancestor.join(name).exists())
+        })
+    };
+    let base = [std::env::temp_dir(), PathBuf::from("/tmp")]
+        .into_iter()
+        .filter_map(|dir| dir.canonicalize().ok())
+        .find(|dir| !anchored(dir))
+        .ok_or("no temp directory outside every project was found for the unanchored control")?;
+    let outer = base.join(format!(
+        "ripr-facade-unanchored-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&outer).map_err(|e| e.to_string())?;
+    let _cleanup = Fixture {
+        root: outer.clone(),
+    };
+    std::fs::write(outer.join("loose.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    let output = run_ripr(&outer, &["continue"])?;
+    assert_exit(&output, 3, "continue outside any workspace");
+    let all = stderr_text(&output);
+    assert!(
+        all.contains("no current attempt to continue")
+            && all.contains("no workspace, package or Git repository was found"),
+        "must name the cause:\n{all}"
+    );
+    assert!(
+        !all.contains("starts nothing right now"),
+        "must not consult the repair selector:\n{all}"
+    );
+    assert!(
+        stdout_text(&output).is_empty(),
+        "typed refusal keeps stdout empty"
+    );
+
+    // A plain package manifest is a project even without a workspace marker:
+    // it keeps the ordinary explanation.
+    std::fs::write(outer.join("package.json"), "{\"name\":\"shop\"}").map_err(|e| e.to_string())?;
+    let packaged = run_ripr(&outer, &["continue"])?;
+    assert_exit(&packaged, 3, "continue in a plain package");
+    assert!(
+        !stderr_text(&packaged).contains("no workspace, package or Git repository was found"),
+        "a plain package must not be called unanchored:\n{}",
+        stderr_text(&packaged)
     );
     Ok(())
 }
@@ -1499,7 +1603,7 @@ fn explain_names_truncation_when_seam_reverse_cannot_check() -> Result<(), Strin
         "a truncated inventory must be named, not a clean miss:\n{stderr}"
     );
     assert!(
-        stderr.contains("wider seam budget"),
+        stderr.contains("wider gap budget"),
         "the refusal must name the wider-budget recovery:\n{stderr}"
     );
     assert!(
@@ -1518,7 +1622,7 @@ fn repair_accepts_the_producer_gap_id_check_prints() -> Result<(), String> {
     let fixture = Fixture::two_seam("facade-producer-gap")?;
     let root = &fixture.root;
     let root_arg = root.to_string_lossy().into_owned();
-    // Wrong discriminator: names no seam, starts nothing.
+    // Wrong discriminator: names no gap, starts nothing.
     let wrong = run_ripr(
         root,
         &[
@@ -1529,6 +1633,12 @@ fn repair_accepts_the_producer_gap_id_check_prints() -> Result<(), String> {
         ],
     )?;
     assert_exit(&wrong, 3, "repair with a producer gap naming no seam");
+    assert_refusal_code(
+        &wrong,
+        "item_names_no_seam",
+        "not_started",
+        "item_names_no_seam",
+    );
     assert!(
         attempt_ids(root).is_empty(),
         "an unmatched producer gap must create no attempt"
@@ -1570,9 +1680,15 @@ fn repair_refuses_a_producer_gap_id_that_names_several_seams() -> Result<(), Str
         ],
     )?;
     assert_exit(&repair, 3, "repair with an ambiguous producer gap ID");
+    assert_refusal_code(
+        &repair,
+        "item_names_several_seams",
+        "needs_selection",
+        "item_names_several_seams",
+    );
     let stderr = String::from_utf8_lossy(&repair.stderr);
     assert!(
-        stderr.contains("names 2 seams; select one explicitly"),
+        stderr.contains("names 2 gaps; select one explicitly"),
         "expected the ambiguous refusal, got: {stderr}"
     );
     assert!(
@@ -1719,7 +1835,7 @@ fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(
     assert_exit(&repair_stale, 3, "repair with a stale probe ID");
     let stale_stderr = stderr_text(&repair_stale);
     assert!(
-        stale_stderr.contains("names no seam") && stale_stderr.contains("stale"),
+        stale_stderr.contains("names no gap") && stale_stderr.contains("stale"),
         "stale probe refusal must name the stale mapping:\n{stale_stderr}"
     );
     assert!(
@@ -1771,6 +1887,288 @@ fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(
     Ok(())
 }
 
+fn run_agent_card_or_packet(
+    root: &Path,
+    surface: &str,
+    id: &str,
+    json: bool,
+) -> Result<Output, String> {
+    let root_arg = root.to_string_lossy().into_owned();
+    let mut args = vec!["agent", surface, "--root", &root_arg, "--seam-id", id];
+    if json || surface == "packet" {
+        args.push("--json");
+    }
+    run_ripr(root, &args)
+}
+
+/// #12420: any id `ripr check` or `ripr pilot` prints works in `agent card`
+/// and `agent packet`. A real `probe:` finding id, a real hash-form `gap:` id
+/// and a `file:line` each produce exactly the bytes the exact seam id does;
+/// the exact seam id keeps working; a stale id refuses as a typed
+/// `seam_not_found` in the surface's own terms and an unknown exact-shaped id
+/// keeps today's wording.
+#[test]
+fn agent_card_and_packet_accept_any_id_check_prints() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-any-id-card-packet")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let stdout = stdout_text(&check);
+    let seam_id = printed_repair_identity(&stdout)
+        .ok_or_else(|| format!("check must print a repair line:\n{stdout}"))?;
+    let probe_id = printed_probe_identity(&stdout)
+        .ok_or_else(|| format!("check must print a probe finding ID:\n{stdout}"))?;
+    let rerun = run_ripr(
+        root,
+        &[
+            "rerun",
+            "--root",
+            &root_arg,
+            "--changed-test",
+            "tests/pricing.rs",
+            "--json",
+        ],
+    )?;
+    let rerun_json: serde_json::Value =
+        serde_json::from_slice(&rerun.stdout).map_err(|err| format!("parse rerun JSON: {err}"))?;
+    let gap_id = rerun_json["seams"]
+        .as_array()
+        .and_then(|seams| {
+            seams
+                .iter()
+                .find_map(|seam| seam["canonical_gap_id"].as_str().map(str::to_string))
+        })
+        .ok_or_else(|| "rerun must carry a canonical_gap_id".to_string())?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+
+    for surface in ["card", "packet"] {
+        let exact = run_agent_card_or_packet(root, surface, &seam_id, true)?;
+        assert_exit(&exact, 0, "exact seam id keeps working");
+        for (label, id) in [
+            ("probe finding id", probe_id.as_str()),
+            ("gap id", gap_id.as_str()),
+            ("file:line", "src/lib.rs:2"),
+        ] {
+            let translated = run_agent_card_or_packet(root, surface, id, true)?;
+            assert_exit(&translated, 0, &format!("agent {surface} with a {label}"));
+            assert_eq!(
+                stdout_text(&translated),
+                stdout_text(&exact),
+                "agent {surface} with a {label} must print the exact-id bytes"
+            );
+        }
+        // Stale: a finding id no current seam carries.
+        let stale =
+            run_agent_card_or_packet(root, surface, "probe:src_lib.rs:predicate:00000000", true)?;
+        assert_exit(&stale, 3, &format!("agent {surface} with a stale id"));
+        let stale_stderr = stderr_text(&stale);
+        assert!(
+            stale_stderr.contains(&format!("agent {surface} --seam-id"))
+                && stale_stderr.contains("stale"),
+            "stale refusal must name this command and the stale id:\n{stale_stderr}"
+        );
+        assert!(
+            !stale_stderr.contains("agent repair"),
+            "stale refusal must not name a command the user did not run:\n{stale_stderr}"
+        );
+        // Unknown exact-shaped id: today's flow, today's wording.
+        let unknown = run_agent_card_or_packet(root, surface, "0000000000000000", true)?;
+        assert_exit(&unknown, 3, &format!("agent {surface} with an unknown id"));
+        assert!(
+            stderr_text(&unknown).contains(&format!(
+                "agent {surface} seam_id 0000000000000000 was not found"
+            )),
+            "{}",
+            stderr_text(&unknown)
+        );
+    }
+    let stale_card =
+        run_agent_card_or_packet(root, "card", "probe:src_lib.rs:predicate:00000000", true)?;
+    // A colon alone does not make an id a location: it goes to normal seam
+    // lookup and gets the exact-id not-found wording, not a stale-id refusal.
+    for surface in ["card", "packet"] {
+        for odd in ["seam:sample", "src/lib.rs:", "src/lib.rs:0", "src/lib.rs:x"] {
+            let output = run_agent_card_or_packet(root, surface, odd, true)?;
+            assert_exit(&output, 3, &format!("agent {surface} with {odd}"));
+            let stderr = stderr_text(&output);
+            assert!(
+                stderr.contains(&format!("agent {surface} seam_id {odd} was not found"))
+                    && !stderr.contains("stale")
+                    && !stderr.contains("names no current seam"),
+                "{odd} must take the normal lookup path:\n{stderr}"
+            );
+        }
+    }
+    let envelope: serde_json::Value = serde_json::from_slice(&stale_card.stdout)
+        .map_err(|err| format!("stale card must print the typed envelope: {err}"))?;
+    assert_eq!(envelope["error"]["kind"], "seam_not_found");
+    assert_eq!(
+        envelope["error"]["seam_id"],
+        "probe:src_lib.rs:predicate:00000000"
+    );
+    assert!(
+        attempt_ids(root).is_empty(),
+        "card and packet never start an attempt"
+    );
+    Ok(())
+}
+
+/// #12420: an id naming several gaps is refused by `agent card` and
+/// `agent packet` exactly as `ripr repair` refuses it: no pick, a bounded
+/// list, and the equivalent retry for the surface that was run.
+#[test]
+fn agent_card_and_packet_refuse_an_ambiguous_gap_id() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-any-id-ambiguous")?;
+    let root = &fixture.root;
+    populate_duplicate_expression_fixture(root)?;
+    let gap = "gap:rust:src/lib.rs:tiered:predicate_boundary:predicate:amount==threshold";
+    for surface in ["card", "packet"] {
+        let output = run_agent_card_or_packet(root, surface, gap, false)?;
+        assert_exit(
+            &output,
+            3,
+            &format!("agent {surface} with an ambiguous gap id"),
+        );
+        let stderr = stderr_text(&output);
+        assert!(
+            stderr.contains("names 2 gaps; select one explicitly")
+                && stderr.contains(&format!("Retry: `ripr agent {surface} --seam-id <seam-id>")),
+            "ambiguous refusal must list the gaps and name this command's retry:\n{stderr}"
+        );
+        // The printed retry must itself parse and run: paste it with a listed
+        // seam id in place of the placeholder.
+        let retry = stderr
+            .split("Retry: `")
+            .nth(1)
+            .and_then(|rest| rest.split('`').next())
+            .ok_or_else(|| format!("no retry command in:\n{stderr}"))?;
+        let listed = stderr
+            .split("select one explicitly: ")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .ok_or_else(|| format!("no listed seam in:\n{stderr}"))?;
+        let words: Vec<String> = retry
+            .replace("<seam-id>", listed)
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(words.first().map(String::as_str), Some("ripr"), "{retry}");
+        let args: Vec<&str> = words[1..].iter().map(String::as_str).collect();
+        let pasted = run_ripr(root, &args)?;
+        assert_exit(
+            &pasted,
+            0,
+            &format!("pasted agent {surface} retry `{retry}`"),
+        );
+    }
+    Ok(())
+}
+
+/// #12420 review: a translated id is as strict as `agent repair`. A changed
+/// guard covered only by a `#[should_panic]` test is a policy-admitted seam
+/// that is not repair-eligible (a named limitation): the exact seam id is
+/// still served, while the `file:line` that resolves to it is refused in the
+/// command's own terms with the limitation, not served.
+#[test]
+fn agent_card_and_packet_refuse_an_ineligible_location_but_serve_the_exact_seam()
+-> Result<(), String> {
+    let fixture = Fixture::dir("facade-any-id-ineligible")?;
+    let root = &fixture.root;
+    populate_should_panic_fixture(root, "")?;
+    let should_panic_seam = "498b9581c66564c1";
+    for surface in ["card", "packet"] {
+        let exact = run_agent_card_or_packet(root, surface, should_panic_seam, true)?;
+        assert_exit(
+            &exact,
+            0,
+            &format!("agent {surface} serves the exact seam id"),
+        );
+        let refused = run_agent_card_or_packet(root, surface, "src/lib.rs:2", true)?;
+        assert_exit(
+            &refused,
+            3,
+            &format!("agent {surface} with an ineligible file:line"),
+        );
+        let stderr = stderr_text(&refused);
+        assert!(
+            stderr.contains(&format!("agent {surface}: repair ID `src/lib.rs:2`"))
+                && stderr.contains("should_panic")
+                && !stderr.contains("agent repair")
+                && !stderr.contains("no repair attempt was started"),
+            "ineligible refusal must name this command and the reason:\n{stderr}"
+        );
+    }
+    assert!(attempt_ids(root).is_empty());
+    Ok(())
+}
+
+/// #12420 review: a failure of the resolver itself (here a broken
+/// `ripr.toml`) says nothing about the id, so a translated id fails exactly
+/// as the exact seam id does, not as a stale or unknown id.
+#[test]
+fn agent_card_and_packet_keep_operational_failures_operational() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-any-id-broken-config")?;
+    let root = &fixture.root;
+    std::fs::write(root.join("ripr.toml"), "this is = not [valid toml\n")
+        .map_err(|e| e.to_string())?;
+    for surface in ["card", "packet"] {
+        let exact = run_agent_card_or_packet(root, surface, FIXTURE_SEAM, true)?;
+        let exact_code = exact.status.code();
+        assert_ne!(exact_code, Some(0), "a broken config must not succeed");
+        for id in [FIXTURE_GAP, "src/lib.rs:2"] {
+            let translated = run_agent_card_or_packet(root, surface, id, true)?;
+            assert_eq!(
+                translated.status.code(),
+                exact_code,
+                "agent {surface} with {id} must fail like the exact seam id:\n{}",
+                stderr_text(&translated)
+            );
+            let stderr = stderr_text(&translated);
+            assert!(
+                stderr.contains("ripr.toml")
+                    && !stderr.contains("was not found")
+                    && !stderr.contains("stale"),
+                "a broken config must be reported as a config failure ({id}):\n{stderr}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// #12420 review: the repair resolver may widen a default-cut seam cap that
+/// the packet's own inventory does not, so a capped inventory must say it was
+/// cut instead of sending the reader to a listing that cannot show the seam.
+#[test]
+fn agent_packet_names_a_truncated_inventory_instead_of_not_found() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-packet-truncated")?;
+    let root = &fixture.root;
+    populate_two_seam_fixture(root)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let output = run_ripr_env(
+        root,
+        &[
+            "agent",
+            "packet",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            "0000000000000000",
+            "--json",
+        ],
+        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
+    )?;
+    assert_exit(&output, 3, "packet with an unknown id under a seam cap");
+    let stderr = stderr_text(&output);
+    assert!(
+        stderr.contains("was not found in the truncated seam inventory")
+            && stderr.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"),
+        "a capped inventory must be named with its remedy:\n{stderr}"
+    );
+    Ok(())
+}
+
 /// #8166 review: an invented probe ordinal (`.999` on the valid fingerprint
 /// of the sole seam) and a `.2` whose second occurrence is not among the
 /// remaining seams are both stale: they refuse with no attempt instead of
@@ -1793,7 +2191,7 @@ fn repair_refuses_unassignable_probe_ordinals() -> Result<(), String> {
         assert_exit(&repair, 3, "repair with an unassignable probe ordinal");
         let stderr = stderr_text(&repair);
         assert!(
-            stderr.contains("names no seam") && stderr.contains("stale"),
+            stderr.contains("names no gap") && stderr.contains("stale"),
             "an unassignable ordinal must refuse as stale ({forged}):\n{stderr}"
         );
     }
@@ -1860,7 +2258,7 @@ fn repair_with_second_occurrence_probe_id_refuses_as_ambiguous() -> Result<(), S
         assert_exit(&repair, 3, "repair with a diff probe ordinal");
         let stderr = stderr_text(&repair);
         assert!(
-            stderr.contains("names 2 seams; select one explicitly")
+            stderr.contains("names 2 gaps; select one explicitly")
                 && stderr.contains(&first_seam)
                 && stderr.contains(&second_seam),
             "a diff probe ordinal must refuse as ambiguous listing both seams ({forged}):\n{stderr}"
@@ -1929,7 +2327,7 @@ fn repair_with_diff_probe_ordinal_does_not_bind_unchanged_middle_seam() -> Resul
     );
     let stderr = stderr_text(&repair);
     assert!(
-        stderr.contains("names 2 seams; select one explicitly"),
+        stderr.contains("names 2 gaps; select one explicitly"),
         "diff .2 must refuse as ambiguous, not bind the middle seam:\n{stderr}"
     );
     assert!(
@@ -1993,7 +2391,7 @@ fn repair_accepts_a_unique_file_line_location() -> Result<(), String> {
     let stale = run_ripr(root, &["repair", "src/lib.rs:99", "--root", &root_arg])?;
     assert_exit(&stale, 3, "repair with a file:line naming no seam");
     assert!(
-        stderr_text(&stale).contains("names no seam"),
+        stderr_text(&stale).contains("names no gap"),
         "stale location refusal must name the miss:\n{}",
         stderr_text(&stale)
     );
@@ -2035,7 +2433,7 @@ fn repair_refuses_an_ambiguous_probe_id() -> Result<(), String> {
     assert_exit(&repair, 3, "repair with an ambiguous probe ID");
     let stderr = stderr_text(&repair);
     assert!(
-        stderr.contains("names 2 seams; select one explicitly"),
+        stderr.contains("names 2 gaps; select one explicitly"),
         "ambiguous probe ID must refuse with the candidate list:\n{stderr}"
     );
     assert!(
@@ -2356,6 +2754,12 @@ fn repair_choice_commands_pair_powershell_form_for_apostrophe_root() -> Result<(
     );
     let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
     assert_exit(&repair, 3, "repair with two actionable items");
+    assert_refusal_code(
+        &repair,
+        "several_eligible_seams",
+        "needs_selection",
+        "selection",
+    );
     assert!(
         stdout_text(&repair).is_empty(),
         "selection must leave stdout empty"
@@ -2410,6 +2814,12 @@ fn repair_two_items_requires_explicit_selection() -> Result<(), String> {
     let root_arg = root.to_string_lossy().into_owned();
     let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
     assert_exit(&repair, 3, "repair with two actionable items");
+    assert_refusal_code(
+        &repair,
+        "several_eligible_seams",
+        "needs_selection",
+        "selection",
+    );
     assert!(
         stdout_text(&repair).is_empty(),
         "selection must leave stdout empty"
@@ -2708,6 +3118,7 @@ fn continue_no_movement_uses_retained_target_and_recovers_after_edit() -> Result
         &["continue", "--root", &root_arg, "--attempt", &attempt_id],
     )?;
     assert_exit(&refused, 3, "continue before focused edit");
+    assert_refusal_code(&refused, "awaiting_edit", "retryable", "awaiting_edit");
     assert!(
         refused.stdout.is_empty(),
         "facade refusal stdout must stay empty"
@@ -2856,6 +3267,12 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
     assert_eq!(ids.len(), 2, "two current attempts must exist");
     let continued = run_ripr(root, &["continue", "--root", &root_arg])?;
     assert_exit(&continued, 3, "continue with two current attempts");
+    assert_refusal_code(
+        &continued,
+        "ambiguous_attempts",
+        "needs_selection",
+        "ambiguity",
+    );
     assert!(
         stdout_text(&continued).is_empty(),
         "selection must leave stdout empty"
@@ -2933,6 +3350,12 @@ fn continue_selection_retry_pairs_powershell_form_for_apostrophe_root() -> Resul
     assert_ne!(ids[0], ids[1], "the two attempts must be distinct");
     let continued = run_ripr(root, &["continue", "--root", &root_arg])?;
     assert_exit(&continued, 3, "continue with two current attempts");
+    assert_refusal_code(
+        &continued,
+        "ambiguous_attempts",
+        "needs_selection",
+        "ambiguity",
+    );
     assert!(
         stdout_text(&continued).is_empty(),
         "selection must leave stdout empty"
@@ -3375,14 +3798,42 @@ fn continue_on_a_terminal_attempt_is_already_complete() -> Result<(), String> {
         vec![attempt_id.clone()],
         "no further attempt may be created"
     );
-    // Without an ID, a lone terminal attempt is honestly no current
-    // attempt — terminality never masquerades as resumability.
-    let unselected = run_ripr(root, &["continue", "--root", &root_arg])?;
-    assert_exit(&unselected, 3, "continue with no current attempt");
-    assert!(
-        stderr_text(&unselected).contains("no current attempt"),
-        "must report no current attempt:\n{}",
-        stderr_text(&unselected)
+    // Without an ID, a repeated continue after a confirmed-complete attempt
+    // reports that attempt's already-complete status and exits 0 (#11597):
+    // the newest attempt is the confirmed one and nothing else is pending.
+    for _ in 0..2 {
+        let unselected = run_ripr(root, &["continue", "--root", &root_arg])?;
+        assert_exit(
+            &unselected,
+            0,
+            "continue after a confirmed-complete attempt",
+        );
+        assert_eq!(
+            stdout_text(&unselected),
+            stdout_text(&status),
+            "implicit already-complete output must equal the attempt status"
+        );
+        assert!(
+            stderr_text(&unselected).contains("already complete")
+                && stderr_text(&unselected).contains(&attempt_id),
+            "must say explicitly which attempt is complete:\n{}",
+            stderr_text(&unselected)
+        );
+        assert!(
+            !stderr_text(&unselected).contains("refusal code="),
+            "a completed attempt is not a refusal:\n{}",
+            stderr_text(&unselected)
+        );
+    }
+    assert_eq!(
+        manifest_bytes(root, &attempt_id)?,
+        sealed,
+        "terminal evidence must be byte-identical after implicit continue"
+    );
+    assert_eq!(
+        attempt_ids(root),
+        vec![attempt_id.clone()],
+        "no further attempt may be created"
     );
     Ok(())
 }
@@ -3732,11 +4183,11 @@ fn help_surfaces_stay_task_first() -> Result<(), String> {
             row["exit"]["kind"], "decision_or_refusal",
             "{id} must advertise its decision exits"
         );
-        assert_eq!(row["json_support"], false, "{id} has no --json flag");
+        assert!(row["accepts_json_flag"].is_null(), "{id} has no JSON flag");
     }
     let status = find("cmd:status")?;
     assert_eq!(status["exit"]["kind"], "completed_or_failed");
-    assert_eq!(status["json_support"], true);
+    assert_eq!(status["accepts_json_flag"], "--json");
     for id in ["cmd:agent.repair", "cmd:agent.status"] {
         let row = find(id)?;
         assert_eq!(row["class"], "advanced", "{id} must be advanced");
@@ -3870,6 +4321,12 @@ fn continue_on_unsuccessful_terminal_attempts_refuses_without_completion() -> Re
             &repeated,
             3,
             &format!("continue on a {state} attempt must refuse"),
+        );
+        assert_refusal_code(
+            &repeated,
+            "attempt_ended_without_receipt",
+            "terminal",
+            &format!("{state} attempt"),
         );
         let stderr = stderr_text(&repeated);
         assert!(
@@ -4020,6 +4477,28 @@ fn continue_on_unconfirmed_ready_to_finish_refuses_without_completion() -> Resul
         &refused,
         3,
         "continue on a receipt-less finished attempt must refuse",
+    );
+    assert_refusal_code(
+        &refused,
+        "attempt_completion_unconfirmed",
+        "terminal",
+        "unconfirmed finish",
+    );
+    // Discriminating negative: the receipt-less attempt is the newest, but
+    // an unconfirmed finish is never reported already complete, with or
+    // without naming the attempt (#11597).
+    let implicit = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&implicit, 3, "bare continue after an unconfirmed finish");
+    assert_refusal_code(
+        &implicit,
+        "no_current_attempt",
+        "not_started",
+        "bare continue after an unconfirmed finish",
+    );
+    assert!(
+        !stderr_text(&implicit).contains("already complete"),
+        "an unconfirmed finish is never already complete:\n{}",
+        stderr_text(&implicit)
     );
     let stderr = stderr_text(&refused);
     assert!(
@@ -4260,6 +4739,7 @@ fn status_and_continue_do_not_offer_a_start_the_repair_gate_refuses() -> Result<
     withheld("continue --attempt", &stderr_text(&cont));
     let bare = run_ripr(root, &["continue", "--root", &root_arg])?;
     assert_exit(&bare, 3, "bare continue with nothing to continue");
+    assert_refusal_code(&bare, "no_current_attempt", "not_started", "bare continue");
     let bare_text = stderr_text(&bare);
     assert!(
         !bare_text.contains("start with `ripr repair --root")
@@ -4286,7 +4766,7 @@ fn status_and_continue_do_not_offer_a_start_for_a_stale_seam_id() -> Result<(), 
         .map_err(|error| format!("shift lib: {error}"))?;
     let moved = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
     assert!(
-        stderr_text(&moved).contains("unknown") || stderr_text(&moved).contains("no seam"),
+        stderr_text(&moved).contains("unknown") || stderr_text(&moved).contains("no gap"),
         "precondition: the recorded seam id no longer resolves:\n{}",
         stderr_text(&moved)
     );
@@ -4422,6 +4902,20 @@ fn attempt_refused_by_stray_file(
     assert!(
         !after.status.success(),
         "precondition: the stray file must violate the edit cage"
+    );
+    // #11597: a cage violation is exit 2, terminal, and typed apart from a
+    // retryable missing edit.
+    assert_exit(&after, 2, "edit-cage violation");
+    assert_refusal_code(
+        &after,
+        "edit_cage_violation",
+        "terminal",
+        "edit-cage violation",
+    );
+    assert!(
+        stderr_text(&after).contains("is terminal"),
+        "the recovery must say the attempt is terminal:\n{}",
+        stderr_text(&after)
     );
     Ok((attempt_id, root_arg))
 }
@@ -4622,6 +5116,7 @@ fn bare_continue_still_offers_ripr_repair_for_an_admitted_picked_seam() -> Resul
     let root_arg = root.to_string_lossy().into_owned();
     let bare = run_ripr(root, &["continue", "--root", &root_arg])?;
     assert_exit(&bare, 3, "bare continue with nothing to continue");
+    assert_refusal_code(&bare, "no_current_attempt", "not_started", "bare continue");
     let text = stderr_text(&bare);
     assert!(
         text.contains("start with `ripr repair --root"),
@@ -5487,3 +5982,205 @@ fn member_context_selector_shadowed_by_a_root_package_file_is_refused() -> Resul
 
 #[path = "task_first_facade/brief_diff_status.rs"]
 mod brief_diff_status;
+
+/// #11598: `--quiet` (and `RIPR_QUIET`) on `repair` / `continue` drop the
+/// phase narration and `wrote <path>` lines but never the results (attempt
+/// id, next command) or refusal prose; `status` accepts the flag.
+#[test]
+fn quiet_drops_narration_and_keeps_results_and_refusals() -> Result<(), String> {
+    let loud = Fixture::boundary("facade-quiet-loud")?;
+    let quiet = Fixture::boundary("facade-quiet-quiet")?;
+    let loud_arg = loud.root.to_string_lossy().into_owned();
+    let quiet_arg = quiet.root.to_string_lossy().into_owned();
+
+    let loud_start = run_ripr_env(
+        &loud.root,
+        &["repair", FIXTURE_SEAM, "--root", &loud_arg],
+        &[("RIPR_QUIET", "0")],
+    )?;
+    assert_exit(&loud_start, 0, "loud repair start");
+    let loud_err = stderr_text(&loud_start);
+    assert!(
+        loud_err.contains("ripr: wrote ")
+            && loud_err.contains("ripr: agent repair --phase before for seam"),
+        "control: the loud start narrates and reports written files:\n{loud_err}"
+    );
+
+    let quiet_start = run_ripr_env(
+        &quiet.root,
+        &["repair", FIXTURE_SEAM, "--root", &quiet_arg, "--quiet"],
+        &[("RIPR_QUIET", "0")],
+    )?;
+    assert_exit(&quiet_start, 0, "quiet repair start");
+    let quiet_err = stderr_text(&quiet_start);
+    for dropped in ["ripr: wrote ", "agent repair --phase before for seam"] {
+        assert!(
+            !quiet_err.contains(dropped),
+            "--quiet must drop `{dropped}`:\n{quiet_err}"
+        );
+    }
+    for kept in [
+        "is waiting for your test",
+        "attempt next command: ripr continue",
+    ] {
+        assert!(
+            quiet_err.contains(kept),
+            "--quiet must keep the result line `{kept}`:\n{quiet_err}"
+        );
+    }
+    assert!(
+        !stdout_text(&quiet_start).is_empty(),
+        "--quiet leaves the stdout card in place"
+    );
+    assert_eq!(attempt_ids(&quiet.root).len(), 1, "one attempt started");
+
+    // A refused continue: refusal prose is identical in kind, only the
+    // phase narration is gone.
+    let loud_refusal = run_ripr_env(
+        &loud.root,
+        &["continue", "--root", &loud_arg],
+        &[("RIPR_QUIET", "0")],
+    )?;
+    assert_exit(&loud_refusal, 3, "loud continue before the edit");
+    assert!(
+        stderr_text(&loud_refusal).contains("consuming attempt manifest"),
+        "control: loud continue narrates:\n{}",
+        stderr_text(&loud_refusal)
+    );
+    // Oracle: the quiet refusal stderr equals the loud one once only the
+    // suppressed phase narration is removed (roots and attempt ids differ per
+    // workspace, so both are normalized).
+    let loud_normalized = normalize_refusal_stderr(&stderr_text(&loud_refusal), &loud_arg, true);
+    // Each variant refuses at the same ordinal as the loud control (the first
+    // refusal of a fresh attempt): the retry-budget line only prints from the
+    // second refusal of one attempt, so reusing one attempt would differ for a
+    // reason unrelated to quiet mode.
+    let env_quiet = Fixture::boundary("facade-quiet-env")?;
+    let env_arg = env_quiet.root.to_string_lossy().into_owned();
+    let env_start = run_ripr_env(
+        &env_quiet.root,
+        &["repair", FIXTURE_SEAM, "--root", &env_arg, "--quiet"],
+        &[("RIPR_QUIET", "0")],
+    )?;
+    assert_exit(&env_start, 0, "env-quiet fixture repair start");
+    for (label, root_arg, output) in [
+        (
+            "--quiet",
+            quiet_arg.as_str(),
+            run_ripr_env(
+                &quiet.root,
+                &["continue", "--root", &quiet_arg, "--quiet"],
+                &[("RIPR_QUIET", "0")],
+            )?,
+        ),
+        (
+            "RIPR_QUIET=1",
+            env_arg.as_str(),
+            run_ripr_env(
+                &env_quiet.root,
+                &["continue", "--root", &env_arg],
+                &[("RIPR_QUIET", "1")],
+            )?,
+        ),
+    ] {
+        assert_exit(&output, 3, &format!("{label} continue before the edit"));
+        let stderr = stderr_text(&output);
+        for dropped in [
+            "consuming attempt manifest",
+            "agent repair --phase after for attempt",
+        ] {
+            assert!(
+                !stderr.contains(dropped),
+                "{label} must drop `{dropped}`:\n{stderr}"
+            );
+        }
+        for kept in ["still awaits the focused test edit", "to recover:"] {
+            assert!(
+                stderr.contains(kept),
+                "{label} must keep refusal prose `{kept}`:\n{stderr}"
+            );
+        }
+        assert_refusal_stderr_has_prefix(&stderr);
+        assert_eq!(
+            normalize_refusal_stderr(&stderr, root_arg, false),
+            loud_normalized,
+            "{label} must differ from loud only by the dropped narration:\n{stderr}"
+        );
+    }
+
+    let status = run_ripr(&quiet.root, &["status", "--root", &quiet_arg, "--quiet"])?;
+    assert_exit(&status, 0, "status accepts --quiet");
+    let plain = run_ripr(&quiet.root, &["status", "--root", &quiet_arg])?;
+    assert_eq!(
+        stdout_text(&status),
+        stdout_text(&plain),
+        "status --quiet changes nothing"
+    );
+    Ok(())
+}
+
+/// Replaces the workspace root and attempt ids with placeholders and, for the
+/// loud control only, drops the phase narration `--quiet` suppresses.
+fn normalize_refusal_stderr(stderr: &str, root_arg: &str, drop_narration: bool) -> Vec<String> {
+    stderr
+        .lines()
+        .filter(|line| {
+            !(drop_narration
+                && (line.starts_with("ripr: consuming attempt manifest")
+                    || line.starts_with("ripr: agent repair --phase after for attempt")))
+        })
+        .map(|line| {
+            // `ripr` prints the root with forward slashes, so on Windows the
+            // native spelling alone never matches (#9272).
+            let line = line
+                .replace(root_arg, "<root>")
+                .replace(&root_arg.replace('\\', "/"), "<root>");
+            line.split_inclusive(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+                .map(|word| {
+                    let bare =
+                        word.trim_end_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '-'));
+                    if bare.starts_with("repair-attempt-") {
+                        format!("<attempt>{}", &word[bare.len()..])
+                    } else if bare.len() == 7 && bare.bytes().all(|b| b.is_ascii_hexdigit()) {
+                        // The fixture repos commit at different times, so the
+                        // short HEAD hash differs between workspaces.
+                        format!("<head>{}", &word[bare.len()..])
+                    } else {
+                        word.to_string()
+                    }
+                })
+                .collect::<String>()
+        })
+        .collect()
+}
+
+fn assert_refusal_stderr_has_prefix(stderr: &str) {
+    assert!(
+        stderr.lines().any(|line| line.starts_with("ripr: ")),
+        "refusal prose keeps the `ripr:` prefix:\n{stderr}"
+    );
+}
+
+/// #11600: `ripr status --attempt <bad>` is the façade the caller typed, so its
+/// failure names `status`, never the `agent status` spelling of the shared body.
+#[test]
+fn status_attempt_with_a_malformed_id_names_status_not_agent_status() -> Result<(), String> {
+    let root = unique_temp_workspace("status-bad-attempt");
+    std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
+    init_repo(&root)?;
+    let output = run_ripr(&root, &["status", "--attempt", "not-a-repair-attempt-id"])?;
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a malformed id could not complete"
+    );
+    assert!(output.stdout.is_empty(), "stdout stays empty on exit 2");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("status --attempt: repair attempt ID must start with"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("agent status"), "{stderr}");
+    Ok(())
+}

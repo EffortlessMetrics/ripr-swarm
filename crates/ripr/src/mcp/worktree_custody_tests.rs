@@ -124,7 +124,9 @@ fn assert_withheld(snapshot: &super::workspace::Snapshot, reason_part: &str) -> 
     let SourceCustody::NotEstablished { reason } = &snapshot.custody else {
         return Err(format!("custody must be withheld: {:?}", snapshot.custody));
     };
-    if !reason.contains(reason_part) {
+    // The refusal names the path with the host's separators; the control names
+    // the portable spelling.
+    if !reason.replace('\\', "/").contains(reason_part) {
         return Err(format!("withheld reason must name {reason_part}: {reason}"));
     }
     if snapshot.card_producers.is_some() {
@@ -885,7 +887,8 @@ fn card_request_refuses_after_an_unrefreshed_edit_to_a_bound_file() -> Result<()
             .err()
             .ok_or_else(|| format!("{tag}: a card was served over an unrefreshed edit"))?;
         if refusal.code != CODE_STALE_SNAPSHOT
-            || !refusal.detail.contains(relative)
+            // The detail prints the native path spelling (`tests\pricing.rs` on Windows).
+            || !refusal.detail.replace('\\', "/").contains(relative)
             || !refusal.recovery.contains("ripr_refresh")
         {
             return Err(format!(

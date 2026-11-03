@@ -178,12 +178,38 @@ method call (`other.sanitize_label()`) in the test neither blocks nor
 downgrades it.
 
 Named limit: the route does not look at how `fmt` uses the helper. A helper
-whose result is dropped (`let _ = sanitize_label(l);`) or called only in a
-conditional branch or loop body still reads as reached, because the existing
-helper-transfer chain records one call site and no control-flow condition. This
-is acceptable only because the route credits reach and nothing else: such a
-finding stays `propagation_unknown`, never `exposed`. A hop through a local
+whose result is dropped (`let _ = sanitize_label(l);`) still runs, and one
+called only in a conditional branch or loop body may run, so both read as
+reached, which is right for reach. A call inside a literal `if false` in `fmt`
+itself is also still credited, because the existing helper-transfer chain
+records one call site and no control-flow condition (the test-side dead code
+above is judged; the `fmt` body is not). This is acceptable only because the
+route credits reach and nothing else: such a finding stays
+`propagation_unknown`, never `exposed`. A hop through a local
 `macro_rules!` identifier argument carries no formatting reach.
+
+Live code only (#8999). A formatting call credits reach only when the test
+can run it. A `to_string()` or formatting macro whose result is dropped
+(`let _ = format!("{m}");`, `m.to_string();`) or that sits under an unknown
+condition (`if cond { .. }`, a `const` flag, a possibly empty `for`) still
+runs or may run, so it stays reached. The reader blanks, before any
+dispatch check, the code a syntactic reading proves never runs: the block of a
+literal `if false` / `while false` (an `else` branch stays live), the
+statement under `#[cfg(any())]` or `#[cfg(false)]`, a free nested `fn` whose name
+nothing else mentions (methods inside a local `impl`/`trait`/`mod` are called
+implicitly or by the harness and stay live), a `let name = |..| ..;` closure whose binding is never
+mentioned again (or is `_`), and the statements (not the hoisted items) after a top-level `return`.
+Shapes that do not match exactly stay live, so this only removes credit from
+dead code. It applies to the direct route and the helper-entry route alike
+because both go through `test_dispatches_to_fmt`.
+
+Package scope (#8999). The helper-entry route is in-package only, with the same
+rule as the plain inherent method entry: a member-package owner admits only a
+test under its package prefix, and a root-package owner admits only a test
+outside every member package (a dependent member's test that formats the
+re-exported type is not credited). A same-named type with the same `Display`
+impl in another package makes the formatted type declared twice, so no test
+relates in either package.
 
 ## Required Evidence
 
@@ -194,6 +220,17 @@ finding stays `propagation_unknown`, never `exposed`. A hop through a local
   macros, associated const/factory, inherent `to_string`, turbofish/closure
   comma argument shifts.
 - Discriminator: Display and Debug impls of one type are told apart.
+- Live code (#8999): positive for a dropped `let _ = format!(..)`, a dropped
+  `m.to_string();`, an unknown condition, the `else` of a literal `if false`,
+  a called closure and a called nested fn; negative for a literal `if false`
+  or `while false` block, `#[cfg(any())]`, code after `return`, a never-called
+  closure and a never-called nested fn, on the direct route and on the
+  helper-entry route (`crates/ripr/tests/fmt_dispatch_live_reach.rs`).
+- Package scope (#8999): positive for the owner's own package test (root
+  unit and integration tests, member tests); negative for a dependent member
+  package's test of a root owner, the root package's test of a member owner,
+  and a same-named twin type in an unrelated package
+  (`crates/ripr/tests/fmt_helper_entry_package_scope.rs`).
 - Helper entry (#8999): positive for `to_string()` in a multi-line
   `assert_eq!` on an annotated or struct-literal receiver; negative for an
   unproven factory receiver (positive for an indexed `Self`-returning inherent constructor), another type, the other trait, a doubly declared
@@ -220,6 +257,12 @@ finding stays `propagation_unknown`, never `exposed`. A hop through a local
 
 ## Test Mapping
 
+- `crates/ripr/tests/fmt_dispatch_live_reach.rs`: public-API controls for
+  dropped, conditional and provably dead formatting calls.
+- `crates/ripr/src/analysis/classify/related_tests/fmt_live.rs`: the `tests`
+  module, one test per dead-code shape and its live counterpart.
+- `crates/ripr/tests/fmt_helper_entry_package_scope.rs`: multi-package
+  workspaces for the in-package rule.
 - `crates/ripr/tests/fmt_helper_entry_dispatch.rs`: public-API controls for
   the helper-entry route, asserting the rendered `propagation_unknown` class.
 - `crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs`: the
@@ -235,6 +278,7 @@ finding stays `propagation_unknown`, never `exposed`. A hop through a local
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/classify/related_tests/fmt_live.rs`: `live_body`.
 - `crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs`:
   `FmtContext`, `test_dispatches_to_fmt`, `macro_dispatch`, `args_dispatch`,
   `expr_has_type`.

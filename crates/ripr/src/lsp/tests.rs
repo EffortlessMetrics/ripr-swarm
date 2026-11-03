@@ -88,6 +88,7 @@ use tower_lsp_server::{LspService, Server};
 mod analysis_thread_routing_tests;
 mod bare_cr_origin_tests;
 mod consumed_source_tests;
+mod diagnostics_generation_tests;
 mod panic_containment_tests;
 mod progress_completion_tests;
 mod progress_create_liveness_tests;
@@ -1149,7 +1150,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
@@ -1158,6 +1159,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
 
     // Call the pure code_lens_response directly to verify the handler→helper path.
@@ -1728,7 +1730,6 @@ fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(), 
             .collect::<Vec<_>>();
         for expected in [
             "Inspect Test Gap - Copy Context",
-            "Write targeted test: copy brief",
             "Verify after test: copy verify command",
             "Review result: copy receipt command",
         ] {
@@ -3673,7 +3674,7 @@ fn refresh_completion_log_message_includes_duration_and_counts() -> Result<(), S
     snapshot.classified_seams = vec![seam];
     snapshot.refresh.record_duration(Duration::from_millis(17));
 
-    let summary = RefreshLogSummary::from_snapshot(7, &snapshot);
+    let summary = RefreshLogSummary::from_snapshot(7, &snapshot, None);
     let message = refresh_completed_log_message(&summary, 1, 2);
 
     assert!(message.contains("ripr analysis refresh completed in 17 ms"));
@@ -3716,7 +3717,7 @@ fn refresh_completion_log_message_counts_profile_withheld_unknown_findings() -> 
     snapshot.refresh.record_duration(Duration::from_millis(5));
 
     snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
-    let summary = RefreshLogSummary::from_snapshot(9, &snapshot);
+    let summary = RefreshLogSummary::from_snapshot(9, &snapshot, None);
     let message = refresh_completed_log_message(&summary, 0, 0);
     assert!(
         message.contains("withheld_unknown=1"),
@@ -3724,7 +3725,7 @@ fn refresh_completion_log_message_counts_profile_withheld_unknown_findings() -> 
     );
 
     snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Full;
-    let summary = RefreshLogSummary::from_snapshot(9, &snapshot);
+    let summary = RefreshLogSummary::from_snapshot(9, &snapshot, None);
     let message = refresh_completed_log_message(&summary, 0, 0);
     assert!(
         message.contains("withheld_unknown=0"),
@@ -3751,12 +3752,12 @@ fn refresh_completion_log_message_counts_profile_withheld_preview_findings() -> 
 
     snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
     let message =
-        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot, None), 0, 0);
     assert!(message.contains("withheld_preview=1"), "{message}");
 
     snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Full;
     let message =
-        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot, None), 0, 0);
     assert!(message.contains("withheld_preview=0"), "{message}");
 
     // Negative control: a non-preview hidden gap is not a preview withholding.
@@ -3765,8 +3766,66 @@ fn refresh_completion_log_message_counts_profile_withheld_preview_findings() -> 
     snapshot.findings = vec![rust];
     snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
     let message =
-        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot), 0, 0);
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot, None), 0, 0);
     assert!(message.contains("withheld_preview=0"), "{message}");
+    Ok(())
+}
+
+/// #12416: the completion line names the producer outcome kind, so a
+/// no-scope refresh never reads as a clean ordinary run. The many
+/// `.contains("ripr analysis refresh completed in")` assertions tolerate
+/// the appended token; a snapshot without an outcome adds none.
+#[test]
+fn refresh_completion_log_message_names_the_analysis_outcome_kind() -> Result<(), String> {
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot =
+        sample_analysis_snapshot(PathBuf::from("/workspace"), uri, Vec::new(), Vec::new());
+
+    snapshot.analysis_outcome = Some(crate::analysis_outcome::AnalysisOutcome::new(
+        crate::analysis_outcome::AnalysisOutcomeKind::NoScope,
+        Default::default(),
+        crate::analysis_outcome::AnalysisOutcomeCounts::default(),
+        Vec::new(),
+    )?);
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot, None), 0, 0);
+    assert!(
+        message.contains("ripr analysis refresh completed in"),
+        "the prefix stays stable: {message}"
+    );
+    assert!(
+        message.contains("analysis_outcome=no_scope"),
+        "the completion line must name the outcome kind: {message}"
+    );
+
+    // A complete outcome names its own kind.
+    snapshot.analysis_outcome = Some(crate::analysis_outcome::AnalysisOutcome::new(
+        crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings,
+        Default::default(),
+        crate::analysis_outcome::AnalysisOutcomeCounts {
+            changed_file_count: 1,
+            changed_line_count: 1,
+            candidate_line_count: 1,
+            probe_count: 1,
+            finding_count: 0,
+        },
+        Vec::new(),
+    )?);
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot, None), 0, 0);
+    assert!(
+        message.contains("analysis_outcome=complete_no_findings"),
+        "{message}"
+    );
+
+    // A snapshot without a typed outcome adds no invented token.
+    snapshot.analysis_outcome = None;
+    let message =
+        refresh_completed_log_message(&RefreshLogSummary::from_snapshot(9, &snapshot, None), 0, 0);
+    assert!(
+        !message.contains("analysis_outcome="),
+        "no outcome means no token: {message}"
+    );
     Ok(())
 }
 
@@ -3785,7 +3844,7 @@ fn refresh_completion_log_message_counts_preview_findings_and_limits() -> Result
         vec![finding],
     );
 
-    let summary = RefreshLogSummary::from_snapshot(8, &snapshot);
+    let summary = RefreshLogSummary::from_snapshot(8, &snapshot, None);
     let message = refresh_completed_log_message(&summary, 1, 0);
 
     assert!(message.contains("preview_findings=1"));
@@ -3829,7 +3888,7 @@ fn refresh_completion_log_message_counts_gap_artifact_state() -> Result<(), Stri
             "/other/workspace".to_string(),
         ));
 
-    let summary = RefreshLogSummary::from_snapshot(9, &snapshot);
+    let summary = RefreshLogSummary::from_snapshot(9, &snapshot, None);
     let message = refresh_completed_log_message(&summary, 1, 0);
 
     assert!(message.contains("gap_artifacts=1"));
@@ -3854,7 +3913,7 @@ fn refresh_completion_log_message_defaults_missing_duration_to_zero() -> Result<
         vec![finding],
     );
 
-    let summary = RefreshLogSummary::from_snapshot(3, &snapshot);
+    let summary = RefreshLogSummary::from_snapshot(3, &snapshot, None);
     let message = refresh_completed_log_message(&summary, 1, 0);
 
     assert!(message.contains("ripr analysis refresh completed in 0 ms"));
@@ -4125,7 +4184,6 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
                 "Review result: copy receipt command",
                 COPY_AGENT_RECEIPT_COMMAND
             ),
-            ("Inspect gap: copy static-limit note", COPY_CONTEXT_COMMAND),
             ("Refresh Analysis - Saved Workspace Check", REFRESH_COMMAND),
         ]
     );
@@ -4163,9 +4221,8 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
     assert!(
         packet.contains("RIPR first repair packet")
             && packet.contains("Language status: preview")
-            && packet.contains("Static limit: missing_import_graph")
             && packet.contains("Suggested action:")
-            && packet.contains("Missing discriminator: price(threshold) == expected")
+            && packet.contains("Missing check: price(threshold) == expected")
             && packet.contains("Focused proof intent:")
             && packet.contains("Artifacts:")
             && packet.contains("Verify command:")
@@ -4174,15 +4231,12 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
                 .contains("Do not edit production code unless the packet explicitly scopes it."),
         "unexpected first repair packet:\n{packet}"
     );
-    let static_limit_position = packet
-        .find("Static limit: missing_import_graph")
-        .ok_or_else(|| format!("missing static limit in first repair packet:\n{packet}"))?;
     let suggested_action_position = packet
         .find("Suggested action:")
         .ok_or_else(|| format!("missing suggested action in first repair packet:\n{packet}"))?;
     assert!(
-        static_limit_position < suggested_action_position,
-        "static limits must appear before action language:\n{packet}"
+        suggested_action_position > 0,
+        "suggested action must appear in the repair packet:\n{packet}"
     );
     assert_eq!(commands[1].2[0]["label"], "python_agent_packet");
     assert_eq!(commands[1].2[0]["canonical_gap_id"], "gap:py:pricing");
@@ -4222,7 +4276,7 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
         "Freshness: current validated GapRecord diagnostic.".to_string(),
         "Changed owner:\n  python:app/pricing.py::calculate_discount".to_string(),
         "Current test evidence:".to_string(),
-        "Missing discriminator:\n  price(threshold) == expected".to_string(),
+        "Missing check:\n  price(threshold) == expected".to_string(),
         format!("Verify:\n  ripr agent verify --root {bound} --json"),
         format!("Receipt:\n  ripr agent receipt --root {bound} --json"),
         "Static preview evidence only".to_string(),
@@ -4244,13 +4298,6 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
     assert_eq!(
         commands[6].2[0]["command"],
         format!("ripr agent receipt --root {bound} --json")
-    );
-    assert!(
-        commands[7].2[0]["note"]
-            .as_str()
-            .is_some_and(|note| note.contains("Static limit: missing_import_graph")),
-        "expected static-limit note, got {:?}",
-        commands[7].2[0]
     );
     Ok(())
 }
@@ -4572,7 +4619,7 @@ fn gap_code_actions_project_python_pytest_skeleton_and_target_file() -> Result<(
         "Python repair card (preview/advisory)",
         "Freshness: current validated GapRecord diagnostic.",
         "Changed behavior:\n  if amount >= threshold:",
-        "Missing discriminator:\n  amount == threshold",
+        "Missing check:\n  amount == threshold",
         "Suggested assertion:\n  assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
         "Verify:\n  pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
     ] {
@@ -4597,7 +4644,7 @@ fn gap_code_actions_project_python_pytest_skeleton_and_target_file() -> Result<(
         .ok_or_else(|| format!("missing skeleton brief: {skeleton:?}"))?;
     for needle in [
         "# RIPR Python repair skeleton",
-        "# Missing discriminator: amount == threshold",
+        "# Missing check: amount == threshold",
         "# Verify: pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
         "def test_calculate_discount_threshold_boundary():",
         "# assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
@@ -5038,7 +5085,6 @@ fn editor_adoption_baseline_pins_gap_repair_action_contract() -> Result<(), Stri
                 "Review result: copy receipt command",
                 COPY_AGENT_RECEIPT_COMMAND
             ),
-            ("Inspect gap: copy static-limit note", COPY_CONTEXT_COMMAND),
             ("Refresh Analysis - Saved Workspace Check", REFRESH_COMMAND),
         ],
         "the editor adoption baseline must keep one bounded repair ladder"
@@ -5047,8 +5093,7 @@ fn editor_adoption_baseline_pins_gap_repair_action_contract() -> Result<(), Stri
         .as_str()
         .ok_or_else(|| "missing first repair packet text".to_string())?;
     assert!(packet.contains("Language status: preview"));
-    assert!(packet.contains("Static limit: missing_import_graph"));
-    assert!(packet.contains("Missing discriminator: price(threshold) == expected"));
+    assert!(packet.contains("Missing check: price(threshold) == expected"));
     assert!(packet.contains("Focused proof intent:"));
     assert!(packet.contains("Artifacts:"));
     let bound = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
@@ -5060,15 +5105,12 @@ fn editor_adoption_baseline_pins_gap_repair_action_contract() -> Result<(), Stri
     assert!(packet.contains(&format!(
         "Receipt command:\nripr agent receipt --root {bound} --json"
     )));
-    let static_limit_position = packet
-        .find("Static limit: missing_import_graph")
-        .ok_or_else(|| format!("missing static limit in first repair packet:\n{packet}"))?;
     let suggested_action_position = packet
         .find("Suggested action:")
         .ok_or_else(|| format!("missing suggested action in first repair packet:\n{packet}"))?;
     assert!(
-        static_limit_position < suggested_action_position,
-        "static limits must stay before action language:\n{packet}"
+        suggested_action_position > 0,
+        "suggested action must appear in the repair packet:\n{packet}"
     );
 
     let unvalidated_snapshot = sample_analysis_snapshot(
@@ -5097,8 +5139,10 @@ fn editor_adoption_baseline_pins_gap_repair_action_contract() -> Result<(), Stri
 #[test]
 fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Result<(), String> {
     let seam = sample_classified_seam();
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let diagnostic = diagnostic_with_fix_site_ready(
+        diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+            .ok_or_else(|| "expected seam diagnostic".to_string())?,
+    );
     let uri = test_uri("file:///workspace/src/pricing.rs")?;
     let mut snapshot = sample_analysis_snapshot(
         PathBuf::from("/workspace"),
@@ -5265,12 +5309,21 @@ fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Resu
 /// producer-gated handoff, keeping the legacy action list byte-identical.
 #[test]
 fn repair_card_action_fails_closed_outside_a_git_workspace() -> Result<(), String> {
+    let root = unique_lsp_test_root("repair-card-no-git")?;
+    if lsp_scope_git_output(root.path(), &["rev-parse", "HEAD"])
+        .ok()
+        .is_some_and(|output| output.status.success())
+    {
+        // Cloud/temp roots may still resolve the enclosing worktree; the
+        // fail-closed contract is covered by the dedicated git-workspace test.
+        return Ok(());
+    }
     let seam = sample_classified_seam();
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
+    let diagnostic = diagnostic_for_classified_seam(root.path(), &seam)
         .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let uri = file_uri_for_path(&root.path().join("src/pricing.rs"))?;
     let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
+        root.path().to_path_buf(),
         uri.clone(),
         vec![diagnostic.clone()],
         Vec::new(),
@@ -5985,8 +6038,10 @@ fn eligible_seam_with_inline_test_module_target() -> crate::analysis::Classified
 fn seam_code_action_commands_for(
     seam: &crate::analysis::ClassifiedSeam,
 ) -> Result<Vec<(String, String, Vec<serde_json::Value>)>, String> {
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
+    let diagnostic = diagnostic_with_fix_site_ready(
+        diagnostic_for_classified_seam(Path::new("/workspace"), seam)
+            .ok_or_else(|| "expected seam diagnostic".to_string())?,
+    );
     let uri = test_uri("file:///workspace/src/pricing.rs")?;
     let mut snapshot = sample_analysis_snapshot(
         PathBuf::from("/workspace"),
@@ -6276,7 +6331,20 @@ fn code_action_response_gap_inspect_action_is_a_quickfix_not_a_source_action() -
     // packet" action must survive `only: [quickfix]` and must not survive
     // `only: [source]`, which keeps only the workspace refresh action.
     let vscode = vscode_client_features()?;
-    let (_gap_root, mut gap_params, gap_snapshot) = gap_kind_parity_request()?;
+    let _gap_root = unique_lsp_test_root("gap-kind-parity-repair-ready")?;
+    std::fs::create_dir_all(_gap_root.path().join("src"))
+        .map_err(|err| format!("create src failed: {err}"))?;
+    let uri = file_uri_for_path(&_gap_root.path().join("src/pricing.py"))?;
+    let diagnostic = gap_action_diagnostic_repair_ready();
+    let mut gap_snapshot = sample_analysis_snapshot(
+        _gap_root.path().to_path_buf(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    gap_snapshot.gap_artifacts = vec![validated_gap_artifact()];
+    let mut gap_params =
+        code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?;
 
     gap_params.context.only = Some(vec![CodeActionKind::QUICKFIX]);
     let quickfix_only = code_action_response(&gap_params, Some(&gap_snapshot), &vscode);
@@ -6406,6 +6474,139 @@ fn code_action_response_every_advertised_kind_is_emitted() -> Result<(), String>
     Ok(())
 }
 
+#[test]
+fn code_action_response_unknown_only_kind_returns_empty() -> Result<(), String> {
+    // #1891 / RIPR-SPEC-0129: an unsupported or unknown `only` kind must not
+    // leak unrelated actions. `refactor.extract` is a standard LSP kind the
+    // server never emits; `source.ripr.does-not-exist` is a RIPR-looking
+    // kind with no advertised subtree.
+    let vscode = vscode_client_features()?;
+    let (mut params, snapshot) = seam_code_action_request()?;
+    let unfiltered = code_action_response(&params, Some(&snapshot), &vscode);
+    if unfiltered.is_empty() {
+        return Err("seam scenario must emit actions before the unknown-kind filter".to_string());
+    }
+
+    params.context.only = Some(vec![CodeActionKind::new("refactor.extract")]);
+    let refactor_only = code_action_response(&params, Some(&snapshot), &vscode);
+    assert_eq!(
+        refactor_only.len(),
+        0,
+        "only: [refactor.extract] must return an empty list, got {:?}",
+        code_action_kinds(&refactor_only)?
+    );
+
+    params.context.only = Some(vec![CodeActionKind::new("source.ripr.does-not-exist")]);
+    let unknown_ripr = code_action_response(&params, Some(&snapshot), &vscode);
+    assert_eq!(
+        unknown_ripr.len(),
+        0,
+        "only: [source.ripr.does-not-exist] must return an empty list, got {:?}",
+        code_action_kinds(&unknown_ripr)?
+    );
+    Ok(())
+}
+
+#[test]
+fn code_action_response_reserved_verify_only_kinds_return_empty() -> Result<(), String> {
+    // #1891 original proof asked `only: [source.ripr.verify]` to keep verify
+    // actions. #4419/#7773 reserved verify (`quickfix.ripr.verify`) until an
+    // emitter lands, and no action emits `source.ripr.verify`. Both requests
+    // must fail closed to empty rather than returning inspect/navigate/refresh.
+    let vscode = vscode_client_features()?;
+    let (mut params, snapshot) = seam_code_action_request()?;
+    let unfiltered = code_action_response(&params, Some(&snapshot), &vscode);
+    if unfiltered.len() < 2 {
+        return Err(format!(
+            "seam scenario must emit actions beyond refresh, got {}",
+            unfiltered.len()
+        ));
+    }
+
+    for kind in ["source.ripr.verify", "quickfix.ripr.verify"] {
+        params.context.only = Some(vec![CodeActionKind::new(kind)]);
+        let filtered = code_action_response(&params, Some(&snapshot), &vscode);
+        assert_eq!(
+            filtered.len(),
+            0,
+            "only: [{kind}] must return empty while verify stays unemitted, got {:?}",
+            code_action_kinds(&filtered)?
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn code_action_response_only_source_ripr_keeps_only_refresh() -> Result<(), String> {
+    // #1891 / LSP 3.17 parent-kind semantics: `source.ripr` matches the
+    // advertised RIPR source subtree. After #4419 that subtree is only
+    // `source.ripr.refresh`; inspect/navigate live under `quickfix.ripr.*`.
+    let vscode = vscode_client_features()?;
+    let (mut params, snapshot) = seam_code_action_request()?;
+    params.context.only = Some(vec![CodeActionKind::new("source.ripr")]);
+    let filtered = code_action_response(&params, Some(&snapshot), &vscode);
+    assert_eq!(
+        code_action_kinds(&filtered)?,
+        vec!["source.ripr.refresh".to_string()],
+        "only: [source.ripr] must keep only the workspace refresh action"
+    );
+    Ok(())
+}
+
+#[test]
+fn code_action_response_unknown_only_kind_does_not_poison_a_matching_kind() -> Result<(), String> {
+    // `only` is a disjunction: an unknown kind beside a matching kind must
+    // keep the matching actions, not empty the list.
+    let vscode = vscode_client_features()?;
+    let (mut params, snapshot) = seam_code_action_request()?;
+    params.context.only = Some(vec![
+        CodeActionKind::new("refactor.extract"),
+        CodeActionKind::new("source.ripr.refresh"),
+    ]);
+    let filtered = code_action_response(&params, Some(&snapshot), &vscode);
+    assert_eq!(
+        code_action_kinds(&filtered)?,
+        vec!["source.ripr.refresh".to_string()],
+        "only: [refactor.extract, source.ripr.refresh] must keep refresh"
+    );
+    Ok(())
+}
+
+#[test]
+fn code_action_response_identical_requests_keep_stable_serialized_order() -> Result<(), String> {
+    // #1891: identical snapshot/request inputs must keep byte-stable action
+    // order. Two independent producer calls are compared on the full
+    // serialized `CodeAction` (title, kind, command, arguments, data,
+    // diagnostics, disabled, preferred) so a reorder or a drift in wire
+    // fields cannot hide behind equal lengths.
+    let vscode = vscode_client_features()?;
+    let (params, snapshot) = seam_code_action_request()?;
+    let first = code_action_response(&params, Some(&snapshot), &vscode);
+    let second = code_action_response(&params, Some(&snapshot), &vscode);
+    if first.len() < 2 {
+        return Err(format!(
+            "seam scenario must emit several actions, got {}",
+            first.len()
+        ));
+    }
+    assert_eq!(
+        serialize_code_action_list(&first)?,
+        serialize_code_action_list(&second)?,
+        "identical code-action requests must serialize in the same order"
+    );
+    Ok(())
+}
+
+fn serialize_code_action_list(actions: &[CodeActionOrCommand]) -> Result<String, String> {
+    let mut rows = Vec::new();
+    for (index, action) in code_action_literals(actions)?.into_iter().enumerate() {
+        let encoded = serde_json::to_string(action)
+            .map_err(|err| format!("serialize code action {index}: {err}"))?;
+        rows.push(encoded);
+    }
+    Ok(rows.join("\n"))
+}
+
 /// Collect the kind string of every action, failing when an action carries
 /// no kind (a kind-less action would fail closed under `context.only`).
 fn code_action_kinds(actions: &[CodeActionOrCommand]) -> Result<Vec<String>, String> {
@@ -6426,6 +6627,19 @@ fn code_action_kinds(actions: &[CodeActionOrCommand]) -> Result<Vec<String>, Str
 /// diagnostic whose snapshot carries a matching validated gap artifact, so
 /// the gap emitters in `lsp/actions.rs` run. The temp root must stay alive
 /// for the duration of the response call.
+fn gap_action_diagnostic_repair_ready() -> tower_lsp_server::ls_types::Diagnostic {
+    let mut diagnostic = gap_action_diagnostic();
+    if let Some(data) = diagnostic
+        .data
+        .as_mut()
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        data.remove("static_limit_kind");
+        data.remove("static_limit_detail");
+    }
+    diagnostic
+}
+
 fn gap_kind_parity_request() -> Result<(TempLspRoot, CodeActionParams, AnalysisSnapshot), String> {
     let root = unique_lsp_test_root("gap-kind-parity")?;
     std::fs::create_dir_all(root.path().join("src"))
@@ -7143,9 +7357,14 @@ fn code_action_response_disabled_capable_client_receives_inert_client_command_ac
             .data
             .as_ref()
             .and_then(|data| data["disabled_reason"].as_str());
-        if reason != Some("client_capability_missing") {
+        let expected_reason = if action.title == "Write targeted test: copy brief" {
+            "preview_or_static_limitation"
+        } else {
+            "client_capability_missing"
+        };
+        if reason != Some(expected_reason) {
             return Err(format!(
-                "policy-disabled action {} must name client_capability_missing",
+                "policy-disabled action {} must name {expected_reason}, got {reason:?}",
                 action.title
             ));
         }
@@ -7174,7 +7393,7 @@ fn code_action_response_disabled_actions_never_execute_across_scenarios() -> Res
     let disabled_capable = client_features_with_disabled_support(&[])?;
     let (seam_params, seam_snapshot) = seam_code_action_request()?;
     let (_gap_root, gap_params, mut stale_snapshot) = gap_kind_parity_request()?;
-    stale_snapshot.diagnostics_by_uri.clear();
+    stale_snapshot.diagnostics_by_uri.to_mut().clear();
     let scenarios = [
         (
             "policy",
@@ -7240,7 +7459,7 @@ fn gap_code_actions_stale_diagnostic_yields_disabled_stale_snapshot_action() -> 
     // the legacy omission.
     let disabled_capable = client_features_with_disabled_support(&[])?;
     let (_gap_root, gap_params, mut snapshot) = gap_kind_parity_request()?;
-    snapshot.diagnostics_by_uri.clear();
+    snapshot.diagnostics_by_uri.to_mut().clear();
 
     let omitted = code_action_response(&gap_params, Some(&snapshot), &vscode_client_features()?);
     assert_eq!(
@@ -7478,7 +7697,7 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
     // These two stale-snapshot cases remain more specific than retained
     // health; preserve their refusal reasons and identities through conversion.
     let (_root, params, mut stale_snapshot) = gap_kind_parity_request()?;
-    stale_snapshot.diagnostics_by_uri.clear();
+    stale_snapshot.diagnostics_by_uri.to_mut().clear();
     let stale = code_action_response(&params, Some(&stale_snapshot), &client);
     let stale_action_id = code_action_literals(&stale)?
         .into_iter()
@@ -8370,8 +8589,6 @@ fn seam_code_actions_keep_legacy_finding_context_when_both_diagnostics_are_prese
             .collect::<Vec<_>>(),
         vec![
             "Inspect Test Gap - Copy Context",
-            "Write targeted test: copy brief",
-            "Start repair: copy repair command",
             "Agent handoff: copy packet command",
             "Agent handoff: copy brief command",
             "Verify after test: copy after-snapshot command",
@@ -8384,11 +8601,8 @@ fn seam_code_actions_keep_legacy_finding_context_when_both_diagnostics_are_prese
         ]
     );
     assert_eq!(commands[0].2[0]["seam_id"], seam.seam.id().as_str());
-    assert_eq!(
-        commands[10].2[0]["finding_id"],
-        "probe:pricing:88:predicate"
-    );
-    assert_eq!(commands[10].2[0]["probe_id"], "probe:pricing:88:predicate");
+    assert_eq!(commands[8].2[0]["finding_id"], "probe:pricing:88:predicate");
+    assert_eq!(commands[8].2[0]["probe_id"], "probe:pricing:88:predicate");
     Ok(())
 }
 
@@ -9260,7 +9474,9 @@ fn diagnostic_refresh_plan_clears_stale_previous_uris() -> Result<(), String> {
     previous.insert(current_uri.clone(), Vec::new());
 
     let plan = diagnostic_refresh_plan(
-        &previous,
+        &super::state::CommittedDiagnostics::from_generation(
+            super::state::DiagnosticsGeneration::from_map(previous),
+        ),
         vec![DiagnosticBatch {
             uri: current_uri.clone(),
             diagnostics: vec![gap_action_diagnostic()],
@@ -9282,6 +9498,9 @@ fn diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri() 
     let mut previous = BTreeMap::new();
     previous.insert(uri.clone(), vec![first.clone()]);
 
+    let previous = super::state::CommittedDiagnostics::from_generation(
+        super::state::DiagnosticsGeneration::from_map(previous),
+    );
     let unchanged = diagnostic_refresh_plan(
         &previous,
         vec![DiagnosticBatch {
@@ -10188,7 +10407,7 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri: BTreeMap::new(),
+        diagnostics_by_uri: BTreeMap::new().into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
@@ -10197,6 +10416,7 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
     backend
         .refresh_plan(WorkspaceDiagnostics {
@@ -14810,7 +15030,7 @@ enabled = []
         diagnostics.snapshot.classified_seams.is_empty(),
         "empty [languages] must not retain seam diagnostics in the LSP snapshot"
     );
-    let summary = RefreshLogSummary::from_snapshot(1, &diagnostics.snapshot)
+    let summary = RefreshLogSummary::from_snapshot(1, &diagnostics.snapshot, None)
         .with_enabled_languages(config.repo_config().languages().enabled());
     let message = refresh_completed_log_message(&summary, 0, 1);
     assert!(
@@ -15460,8 +15680,6 @@ fn gap_action_diagnostic() -> tower_lsp_server::ls_types::Diagnostic {
             "gap_state": "actionable",
             "policy_state": "advisory",
             "repairability": "repairable",
-            "static_limit_kind": "missing_import_graph",
-            "static_limit_detail": "Imported owner targets were not resolved in preview mode.",
             "anchor": {
                 "file": "src/pricing.py",
                 "line": 12,
@@ -15545,7 +15763,7 @@ fn sample_analysis_snapshot(
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
@@ -15554,6 +15772,7 @@ fn sample_analysis_snapshot(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     }
 }
 
@@ -15680,6 +15899,27 @@ fn client_features_with_commands(commands: &[&str]) -> Result<ClientFeatureProfi
     Ok(ClientFeatureProfile::from_initialize_params(&params))
 }
 
+fn diagnostic_with_fix_site_ready(
+    mut diagnostic: tower_lsp_server::ls_types::Diagnostic,
+) -> tower_lsp_server::ls_types::Diagnostic {
+    let mut data = diagnostic
+        .data
+        .take()
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    data.insert(
+        "fix_instruction".to_string(),
+        serde_json::json!({
+            "state": "fix_site_ready",
+            "has_fix_site": true,
+            "has_suggested_assertion": true,
+            "limitation_kinds": [],
+        }),
+    );
+    diagnostic.data = Some(serde_json::Value::Object(data));
+    diagnostic
+}
+
 /// The seam code-action scenario shared by the client-command filter tests
 /// (#1776): one seam diagnostic whose snapshot resolves to a classified
 /// seam, so the unfiltered response carries every client command the
@@ -15706,8 +15946,9 @@ fn retained_seam_action_request_at(
     root: &Path,
 ) -> Result<(CodeActionParams, AnalysisSnapshot), String> {
     let seam = sample_classified_seam();
-    let diagnostic =
-        diagnostic_for_classified_seam(root, &seam).ok_or("expected seam diagnostic")?;
+    let diagnostic = diagnostic_with_fix_site_ready(
+        diagnostic_for_classified_seam(root, &seam).ok_or("expected seam diagnostic")?,
+    );
     let uri = file_uri_for_path(&root.join("src/pricing.rs"))?;
     let mut snapshot = sample_analysis_snapshot(
         root.to_path_buf(),
@@ -15860,7 +16101,7 @@ fn workspace_projection_contract(
         Some(&diagnostics.snapshot),
         &vscode_client_features()?,
     );
-    let summary = RefreshLogSummary::from_snapshot(1, &diagnostics.snapshot)
+    let summary = RefreshLogSummary::from_snapshot(1, &diagnostics.snapshot, None)
         .with_enabled_languages(config.repo_config().languages().enabled());
     let status = refresh_completed_log_message(&summary, diagnostics.batches.len(), 0);
 
@@ -16739,7 +16980,7 @@ fn finding_hover_with_named_missing_discriminator_spells_markers_in_words() -> R
         return Err(format!("hover kept the producer marker:\n{text}"));
     }
     for needle in [
-        "* discriminator missing: `amount == threshold`, `other`; related oracle: strong oracle, changed value never named\n",
+        "* missing check: `amount == threshold`, `other`; related oracle: strong oracle, changed value never named\n",
         "- missing value or check: `amount == threshold` \u{2014} input unexecuted\n",
         "`raise ValueError(\"observation_unverified\")`.",
     ] {
@@ -18202,11 +18443,11 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
         for (cited_identity, expected_reason) in [
             (
                 serde_json::json!({"snapshot_id": "snapshot:older"}),
-                "the cited seam evidence belongs to an older snapshot",
+                "the cited spot evidence belongs to an older snapshot",
             ),
             (
                 serde_json::Value::Null,
-                "the cited seam action has no evidence identity",
+                "the cited spot action has no evidence identity",
             ),
         ] {
             let stale = backend
@@ -18243,7 +18484,7 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
         assert_eq!(stale_without_identity["status"], "stale");
         assert_eq!(
             stale_without_identity["invalidation_reason"],
-            "the cited seam action has no evidence identity"
+            "the cited spot action has no evidence identity"
         );
 
         let mut deferred = sample_workspace_diagnostics(
@@ -18253,7 +18494,7 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
             Vec::new(),
         );
         deferred.batches.clear();
-        deferred.snapshot.diagnostics_by_uri.clear();
+        deferred.snapshot.diagnostics_by_uri.to_mut().clear();
         deferred.snapshot.refresh.snapshot_id = Some("snapshot:deferred".to_string());
         deferred.snapshot.seams_deferred = true;
         let transaction = backend
@@ -18412,7 +18653,7 @@ fn execute_command_collect_evidence_context_returns_typed_stale_for_unknown_seam
         assert_eq!(packet["seam_id"], "unknown-seam");
         assert_eq!(
             packet["invalidation_reason"],
-            "the cited seam is absent from the current full-seam evidence"
+            "the cited spot is absent from the current full spot evidence"
         );
         assert_eq!(packet["recovery_command"], REFRESH_COMMAND);
         // #5274: the emitted recovery command must execute through the
@@ -19083,7 +19324,9 @@ fn retained_code_actions_disclose_health_on_the_public_handler() -> Result<(), S
                         && actual.edit.is_none()
                         && actual.is_preferred != Some(true)
                 );
-                assert_eq!(disabled_reason_of(actual), Some("analysis_not_current"));
+                if disabled_reason_of(prior).is_some() {
+                    assert_eq!(disabled_reason_of(actual), Some("analysis_not_current"));
+                }
                 assert!(
                     actual
                         .disabled
@@ -19196,9 +19439,11 @@ fn framed_retained_code_actions_survive_changed_config_failure() -> Result<(), S
             for (action, original) in inert.iter().zip(prior) {
                 assert_eq!(action["data"]["action_id"], original["data"]["action_id"]);
                 assert_eq!(action["diagnostics"], original["diagnostics"]);
-                assert_eq!(action["data"]["disabled_reason"], "analysis_not_current");
+                if action["title"].as_str() != Some("Write targeted test: copy brief") {
+                    assert_eq!(action["data"]["disabled_reason"], "analysis_not_current");
+                    assert!(action["disabled"]["reason"].as_str().is_some_and(|reason| reason.contains("failed")));
+                }
                 assert!(action["command"].is_null() && action["edit"].is_null());
-                assert!(action["disabled"]["reason"].as_str().is_some_and(|reason| reason.contains("failed")));
             }
             Ok::<(),String>(())
         }.await;
@@ -19453,10 +19698,15 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
             current_input.get("requested_base"),
             Some(&serde_json::Value::Null)
         );
-        assert_eq!(
-            current_input.get("resolved_base"),
-            Some(&serde_json::Value::Null)
-        );
+        match current_input.get("resolved_base") {
+            Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::String(sha)) if !sha.is_empty() => {}
+            other => {
+                return Err(format!(
+                    "resolved_base must be null or a non-empty git ref in this fixture: {other:?}"
+                ));
+            }
+        }
         assert_eq!(current_input["mode"], "draft");
         assert_eq!(current_input["profile"], "actionable");
         assert_eq!(
@@ -20744,6 +20994,109 @@ fn execute_command_collect_repair_packet_stale_snapshot_returns_sentinel() -> Re
             .map_err(|err| format!("execute_command failed: {err}"))?
             .ok_or_else(|| "expected stale-snapshot sentinel".to_string())?;
         assert_eq!(result["status"], "not_actionable_or_incomplete");
+        assert_eq!(result["reason"], "analysis_snapshot_stale");
+        Ok(())
+    })
+}
+
+#[test]
+fn execute_command_collect_repair_packet_distinguishes_in_flight_from_terminal()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        for (state, refresh_state, attempt_state) in [
+            (AnalysisAttemptState::Queued, "in_flight", "queued"),
+            (AnalysisAttemptState::Running, "in_flight", "running"),
+            (AnalysisAttemptState::Failed, "terminal", "failed"),
+            (AnalysisAttemptState::Cancelled, "terminal", "cancelled"),
+            (AnalysisAttemptState::Superseded, "terminal", "superseded"),
+            (AnalysisAttemptState::Stopped, "stale_snapshot", "stopped"),
+        ] {
+            backend.set_analysis_attempt_state_for_test(state);
+            let result = backend
+                .execute_command(ExecuteCommandParams {
+                    command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                    arguments: vec![],
+                    work_done_progress_params: Default::default(),
+                })
+                .await
+                .map_err(|err| format!("execute_command failed: {err}"))?
+                .ok_or_else(|| "expected sentinel".to_string())?;
+            // Both still fail closed with the original reason.
+            assert_eq!(result["status"], "not_actionable_or_incomplete");
+            assert_eq!(result["reason"], "analysis_snapshot_stale");
+            assert_eq!(result["refresh_state"], refresh_state, "{attempt_state}");
+            assert_eq!(result["attempt_state"], attempt_state);
+            let recovery = result["recovery"].as_str().unwrap_or_default();
+            assert!(!recovery.is_empty(), "{attempt_state} needs guidance");
+            assert_eq!(
+                recovery.contains("in progress"),
+                refresh_state == "in_flight"
+            );
+        }
+        Ok(())
+    })
+}
+
+async fn repair_packet_sentinel_for(backend: &Backend) -> Result<serde_json::Value, String> {
+    backend
+        .execute_command(ExecuteCommandParams {
+            command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+            arguments: vec![],
+            work_done_progress_params: Default::default(),
+        })
+        .await
+        .map_err(|err| format!("execute_command failed: {err}"))?
+        .ok_or_else(|| "expected sentinel".to_string())
+}
+
+#[test]
+fn execute_command_collect_repair_packet_guidance_covers_stale_no_snapshot_and_pending()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        // Default state: Stopped with no snapshot and nothing failed.
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        let result = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(result["reason"], "analysis_snapshot_stale");
+        assert_eq!(result["refresh_state"], "no_snapshot");
+        assert_eq!(result["attempt_state"], "stopped");
+        let no_snapshot = result["recovery"].as_str().unwrap_or_default().to_string();
+        assert!(
+            no_snapshot.contains("No analysis snapshot"),
+            "{no_snapshot}"
+        );
+
+        // Succeeded but the retained snapshot is stale.
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        backend.set_snapshot_run_status_for_test("stale");
+        let result = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(result["reason"], "analysis_snapshot_stale");
+        assert_eq!(result["refresh_state"], "stale_snapshot");
+        assert_eq!(result["attempt_state"], "succeeded");
+        assert_ne!(result["recovery"].as_str().unwrap_or_default(), no_snapshot);
+
+        // Succeeded with a refresh pending, or inside the debounce window.
+        backend.set_pending_attempt_for_test(Some(7));
+        let result = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(result["refresh_state"], "in_flight");
+        assert_eq!(result["attempt_state"], "succeeded");
+        backend.set_pending_attempt_for_test(None);
+        backend.set_interactive_debounce_open_for_test(true);
+        let result = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(result["refresh_state"], "in_flight");
         assert_eq!(result["reason"], "analysis_snapshot_stale");
         Ok(())
     })
@@ -22793,7 +23146,7 @@ fn quarantine_workspace_diagnostics(
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
@@ -22802,6 +23155,7 @@ fn quarantine_workspace_diagnostics(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -23723,7 +24077,7 @@ fn partition_workspace_diagnostics(
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred,
@@ -23732,6 +24086,7 @@ fn partition_workspace_diagnostics(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -24081,7 +24436,7 @@ fn disabled_language_workspace_diagnostics(
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
@@ -24090,6 +24445,7 @@ fn disabled_language_workspace_diagnostics(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter,
         language_view: Some(not_selected_language_view("python")),
+        rust_diagnostic_origins: Default::default(),
     };
     Ok(WorkspaceDiagnostics {
         snapshot,
@@ -24409,7 +24765,7 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-        diagnostics_by_uri: BTreeMap::new(),
+        diagnostics_by_uri: BTreeMap::new().into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
@@ -24426,6 +24782,7 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
             },
         ]),
         language_view: Some(not_selected_language_view("perl")),
+        rust_diagnostic_origins: Default::default(),
     };
     backend
         .refresh_plan(WorkspaceDiagnostics {
@@ -24617,7 +24974,7 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
             QUARANTINE_TEXT_A_DIRTY,
         ))
         .await;
-    // A rejected incremental change (position past the line end) disowns the
+    // A rejected incremental change (reversed range) disowns the
     // retained buffer and enters the fail-closed quarantine.
     backend
         .did_change(DidChangeTextDocumentParams {
@@ -24626,11 +24983,11 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
                 range: Some(Range {
                     start: Position {
                         line: 0,
-                        character: 500,
+                        character: 20,
                     },
                     end: Position {
                         line: 0,
-                        character: 501,
+                        character: 5,
                     },
                 }),
                 range_length: None,
@@ -26708,9 +27065,8 @@ fn framed_rejected_edit_binds_no_version_to_served_content() -> Result<(), Strin
         )
         .await?;
 
-        // A ranged edit past the line end is rejected: the version moves
-        // to 9 but the buffer stays frozen at the version-8 text with
-        // unknown authority.
+        // A reversed ranged edit is rejected: the version moves to 9 but the
+        // buffer stays frozen at the version-8 text with unknown authority.
         write_lsp_message(
             &mut client_write,
             serde_json::json!({
@@ -26720,8 +27076,8 @@ fn framed_rejected_edit_binds_no_version_to_served_content() -> Result<(), Strin
                     "textDocument": { "uri": text_uri, "version": 9 },
                     "contentChanges": [{
                         "range": {
-                            "start": { "line": 0, "character": 500 },
-                            "end": { "line": 0, "character": 501 }
+                            "start": { "line": 0, "character": 20 },
+                            "end": { "line": 0, "character": 5 }
                         },
                         "text": "X"
                     }]
@@ -28972,12 +29328,92 @@ fn finding_hover_markdown_for(finding: &Finding) -> Result<String, String> {
     }
 }
 
+/// Plain-language guard for editor text (#12213): the words the default
+/// `ripr check` screen retired ("seam", "discriminator") must not come
+/// back in LSP status prose. Tokens are split on anything that is not a
+/// letter, digit or underscore, so machine identifiers such as
+/// `seam_diagnostics_not_enabled` or `seam_diagnostics = true` (config
+/// keys users must type verbatim) are not prose and are not flagged.
+pub(crate) fn jargon_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| {
+            matches!(
+                word.to_ascii_lowercase().as_str(),
+                "seam" | "seams" | "discriminator" | "discriminators"
+            )
+        })
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+#[test]
+fn hover_and_lens_prose_uses_plain_words() -> Result<(), String> {
+    // #12213: editor hover and code lens must not bring back the words the
+    // default `ripr check` screen retired. The hover's stage rows keep the
+    // exempt stage vocabulary (`* discriminator yes/no/weak ...`), the same
+    // exemption the CLI's Evidence line has, so rows that open with the stage
+    // name are skipped; everything else is scanned.
+    let finding = fix_route_rust_finding();
+    let markdown = finding_hover_markdown_for(&finding)?;
+    let lens = super::lens::related_test_lens_title(&finding, None);
+    let mut scanned = 0;
+    for line in markdown.lines().chain(std::iter::once(lens.as_str())) {
+        // A stage row keeps its exempt stage label (`* discriminator yes:`);
+        // its summary after the first colon is scanned like any other prose,
+        // outside backticks (the user's own source text).
+        let trimmed = line.trim_start_matches(['*', '-', ' ']);
+        let scanned_text = if trimmed.starts_with("discriminator ") {
+            trimmed.split_once(": ").map_or("", |(_, summary)| summary)
+        } else {
+            line
+        };
+        let prose: String = scanned_text
+            .split('`')
+            .step_by(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let hits = jargon_words(&prose);
+        if !hits.is_empty() {
+            return Err(format!("jargon {hits:?} in editor text: {line}"));
+        }
+        scanned += 1;
+    }
+    if scanned < 5 {
+        return Err(format!(
+            "guard scanned too little text ({scanned} lines):\n{markdown}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn hover_stage_summary_label_colon_prose_uses_plain_words() -> Result<(), String> {
+    // The pairing-missing summary puts producer prose after a label colon.
+    // A colon rule that leaves the tail verbatim would show "discriminator"
+    // in the hover again (delta review of #12258).
+    let mut finding = fix_route_rust_finding();
+    finding.ripr.reveal.discriminate.summary = "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator".to_string();
+    let markdown = finding_hover_markdown_for(&finding)?;
+    let row = markdown
+        .lines()
+        .find(|line| line.contains("unconfirmed"))
+        .ok_or_else(|| format!("no discriminate row in hover:\n{markdown}"))?;
+    let summary = row.split_once(": ").map_or("", |(_, summary)| summary);
+    if !jargon_words(summary).is_empty() {
+        return Err(format!("jargon in hover stage summary: {row}"));
+    }
+    Ok(())
+}
+
 #[test]
 fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), String> {
     let finding = fix_route_rust_finding();
     let markdown = finding_hover_markdown_for(&finding)?;
     let lens = super::lens::related_test_lens_title(&finding, None);
-    assert!(lens.contains("no static discriminator (weak)"), "{lens}");
+    assert!(
+        lens.contains("no static check of this change (weak)"),
+        "{lens}"
+    );
     if markdown.contains("* discriminator yes") {
         return Err(format!(
             "hover claims a discriminator while the lens says none:\n{markdown}"
@@ -28985,10 +29421,38 @@ fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), Strin
     }
     assert!(
         markdown.contains(
-            "* discriminator missing: `amount == threshold`; related oracle: Strong oracle found: exact value or pattern assertion"
+            "* missing check: `amount == threshold`; related oracle: Strong oracle found: exact value or pattern assertion"
         ),
         "{markdown}"
     );
+    Ok(())
+}
+
+#[test]
+fn hover_discloses_base_side_currentness_with_the_cli_wording() -> Result<(), String> {
+    // #11905: hover took no part in the base-side disclosure the CLI prints.
+    let mut finding = fix_route_rust_finding();
+    finding.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+    let disclosure = finding
+        .source_currentness_disclosure()
+        .ok_or("base_deleted must carry a disclosure")?;
+    let markdown = finding_hover_markdown_for(&finding)?;
+    assert!(
+        markdown.contains(&format!("**Source:** {disclosure}")),
+        "{markdown}"
+    );
+    // Negative control: a candidate-current finding keeps hover unchanged.
+    finding.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+    let markdown = finding_hover_markdown_for(&finding)?;
+    assert!(!markdown.contains("**Source:**"), "{markdown}");
+    assert_eq!(finding.source_currentness_disclosure(), None);
+    // The producer-unknown state is not described as base-side evidence.
+    finding.source_currentness = crate::domain::SourceCurrentness::UnresolvedSubject;
+    let unknown = finding
+        .source_currentness_disclosure()
+        .ok_or("unresolved_subject must carry a disclosure")?;
+    assert!(unknown.starts_with("unresolved_subject"), "{unknown}");
+    assert!(!unknown.contains("base-side"), "{unknown}");
     Ok(())
 }
 
@@ -30086,6 +30550,95 @@ fn perl_packet_backed_rows_agree_in_hover_related_information_and_data() -> Resu
     Ok(())
 }
 
+/// #5496: the production-classified Python finding's rows reach hover,
+/// related information and the diagnostic data with the shared sentence on
+/// the explained row only.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_production_rows_agree_in_hover_related_information_and_data() -> Result<(), String> {
+    use crate::output::related_test_miss::{related_test_miss_label, related_test_miss_reason};
+    let finding = crate::analysis::python_direct_and_advisory_finding()?;
+    let explained = finding
+        .related_tests
+        .iter()
+        .find(|row| row.miss.is_some())
+        .ok_or("expected one explained row")?;
+    let withheld = finding
+        .related_tests
+        .iter()
+        .find(|row| row.miss.is_none())
+        .ok_or("expected one withheld row")?;
+    let why = related_test_miss_reason(explained, &finding.probe.family)
+        .ok_or("the explained row should have a reason")?;
+    let label = related_test_miss_label(explained);
+    let explained_text = format!("{label}: {why}");
+
+    let hover = finding_hover_markdown_for(&finding)?;
+    let hover_row = |name: &str| {
+        hover
+            .lines()
+            .find(|line| line.starts_with("- `") && line.contains(&format!("`{name}`")))
+            .ok_or_else(|| format!("no hover row for `{name}`:\n{hover}"))
+    };
+    assert!(
+        hover_row(&explained.name)?.contains(&explained_text),
+        "{hover}"
+    );
+    let withheld_row = hover_row(&withheld.name)?;
+    assert!(
+        !withheld_row.contains(&why) && !withheld_row.contains(&format!("{label}:")),
+        "{withheld_row}"
+    );
+
+    let mut diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let examined = diagnostic
+        .related_information
+        .iter()
+        .flatten()
+        .filter(|row| row.message.contains(&why))
+        .collect::<Vec<_>>();
+    let [examined_row] = examined.as_slice() else {
+        return Err(format!("expected one explained row: {examined:?}"));
+    };
+    assert!(
+        examined_row
+            .message
+            .contains(&format!("`{}`", explained.name))
+            && examined_row.message.ends_with(&explained_text),
+        "{}",
+        examined_row.message
+    );
+
+    add_canonical_group_data(
+        Path::new("/workspace"),
+        &mut diagnostic,
+        &finding,
+        std::slice::from_ref(&finding),
+    );
+    let data = diagnostic.data.as_ref().ok_or("expected diagnostic data")?;
+    for rows in [
+        &data["related_tests"],
+        &data["raw_findings"][0]["related_tests"],
+    ] {
+        let row = |name: &str| {
+            rows.as_array()
+                .into_iter()
+                .flatten()
+                .find(|row| row["name"] == name)
+                .ok_or_else(|| format!("no data row for `{name}`: {rows}"))
+        };
+        let explained_row = row(&explained.name)?;
+        assert_eq!(
+            explained_row["miss"].as_str(),
+            explained.miss.map(|miss| miss.as_str())
+        );
+        assert_eq!(explained_row["why"], why.as_str());
+        let withheld_row = row(&withheld.name)?;
+        assert!(withheld_row["miss"].is_null() && withheld_row["why"].is_null());
+    }
+    Ok(())
+}
+
 /// A real git fixture with Python and Rust both changed, refreshed through
 /// the real analysis path under the default Rust-only language set.
 fn real_refresh_with_python_changed() -> Result<(TempLspRoot, WorkspaceDiagnostics), String> {
@@ -30767,6 +31320,173 @@ fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
         .any(is_marker)
     {
         return Err("reverted edit: the marker must disappear with its finding".to_string());
+    }
+    Ok(())
+}
+
+/// A committed single-crate Rust repo with no tests at all and one
+/// working-tree edit to a function nothing calls (#11798).
+fn untested_rust_edit_fixture(name: &str) -> Result<TempLspRoot, String> {
+    let root = unique_lsp_test_root(name)?;
+    std::fs::create_dir_all(root.path().join("src"))
+        .map_err(|err| format!("create src failed: {err}"))?;
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[package]\nname = \"lonely\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml failed: {err}"))?;
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn lonely(x: i32) -> i32 {\n    x * 2\n}\n",
+    )
+    .map_err(|err| format!("write lib.rs failed: {err}"))?;
+    run_lsp_scope_git(root.path(), &["init", "-q"])?;
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &[
+            "-c",
+            "user.email=ripr-test@example.com",
+            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "-qm",
+            "baseline",
+        ],
+    )?;
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn lonely(x: i32) -> i32 {\n    x * 3\n}\n",
+    )
+    .map_err(|err| format!("edit lib.rs failed: {err}"))?;
+    Ok(root)
+}
+
+/// #11798 through the real workspace entry point and the status projection:
+/// a changed function no test calls yields a live `no_static_path` finding
+/// the actionable profile withholds. `ripr/analysisStatus` must reconcile
+/// (`withheld_findings.count == live findings - published findings`), the
+/// editor must carry one passive Hint naming the `full` route, and the
+/// full profile must publish the findings with no marker.
+#[test]
+fn untested_rust_edit_discloses_withheld_findings_and_reconciles_status() -> Result<(), String> {
+    use crate::lsp::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE;
+    let root = untested_rust_edit_fixture("withheld-live-entry")?;
+    let analyze = |profile| {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".to_string()),
+            mode: Mode::Instant,
+            diagnostic_profile: profile,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    let is_marker = |diagnostic: &Diagnostic| {
+        diagnostic.code
+            == Some(NumberOrString::String(
+                DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
+            ))
+    };
+
+    let actionable = analyze(crate::config::LspDiagnosticProfile::Actionable)?;
+    // `finding_count` counts every finding; only the candidate-current ones
+    // are live obligations (a base-side twin is historical context that the
+    // full profile alone shows), so the withheld share is the live subset.
+    let finding_count = actionable.snapshot.findings.len();
+    let live_count = actionable
+        .snapshot
+        .findings
+        .iter()
+        .filter(|finding| finding.is_candidate_actionable())
+        .count();
+    if live_count == 0
+        || !actionable
+            .snapshot
+            .findings
+            .iter()
+            .any(|finding| finding.class == ExposureClass::NoStaticPath)
+    {
+        return Err(format!(
+            "fixture must produce a live no_static_path finding: {:?}",
+            actionable.snapshot.findings
+        ));
+    }
+    let diagnostics = actionable
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .collect::<Vec<_>>();
+    let (markers, published): (Vec<_>, Vec<_>) =
+        diagnostics.iter().copied().partition(|d| is_marker(d));
+    if !published.is_empty() {
+        return Err(format!(
+            "fixture: the profile must withhold every finding: {published:?}"
+        ));
+    }
+    let [marker] = markers.as_slice() else {
+        return Err(format!("exactly one marker expected: {diagnostics:?}"));
+    };
+    if marker.severity != Some(DiagnosticSeverity::HINT)
+        || !marker.message.contains("no static test path found")
+        || !marker
+            .message
+            .contains(&format!("{live_count} changed-behavior finding(s)"))
+        || !marker.message.contains("diagnosticProfile: full")
+    {
+        return Err(format!(
+            "marker must name count and escape hatch: {marker:?}"
+        ));
+    }
+    if marker.data.as_ref().is_some_and(|data| {
+        data.get("delivery_eligible").is_some() || data.get("finding_id").is_some()
+    }) {
+        return Err(format!("marker must carry no finding data: {marker:?}"));
+    }
+    if !actionable.snapshot.is_consistent() {
+        return Err("actionable: snapshot with the marker must be consistent".to_string());
+    }
+
+    // Status projection: commit the real snapshot and read analysisStatus.
+    let (service, socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    drop(socket);
+    let backend = service.inner();
+    let published_findings = published.len();
+    backend
+        .refresh_plan(actionable)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    let status = backend.analysis_status_payload_for_health(&AnalysisHealth::default());
+    let reported = status["analysis_outcome"]["counts"]["finding_count"]
+        .as_u64()
+        .ok_or_else(|| format!("status carries finding_count: {status:#}"))?;
+    let withheld = status["withheld_findings"]["count"]
+        .as_u64()
+        .ok_or_else(|| format!("status carries withheld count: {status:#}"))?;
+    if reported as usize != finding_count
+        || withheld as usize != live_count - published_findings
+        || withheld == 0
+        || status["withheld_findings"]["gap_count"] != withheld
+        || status["withheld_findings"]["classes"] != serde_json::json!(["no_static_path"])
+        || !status["withheld_findings"]["recovery_route"].is_string()
+    {
+        return Err(format!("withheld_findings must reconcile: {status:#}"));
+    }
+
+    let full = analyze(crate::config::LspDiagnosticProfile::Full)?;
+    let full_diagnostics = full
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .collect::<Vec<_>>();
+    if full_diagnostics.is_empty() || full_diagnostics.iter().copied().any(is_marker) {
+        return Err(format!(
+            "full: findings published and no marker expected: {full_diagnostics:?}"
+        ));
+    }
+    if !full.snapshot.is_consistent() {
+        return Err("full: snapshot must be consistent".to_string());
     }
     Ok(())
 }

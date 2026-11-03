@@ -27,6 +27,11 @@
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_loading.py:python_preview:f9419b36",
         "family": "return_value",
@@ -48,7 +53,7 @@
         {"kind":"return_value","text":"return await client.total() + 2","line":2}
       ],
       "evidence": ["owner: load_total", "owner_kind: function", "owner_decorators: async_def", "test_framework: pytest (test_load_total_includes_fee)", "test_fixtures: client (test_load_total_includes_fee)", "test_verify_command: python -m pytest tests/test_loading.py::test_load_total_includes_fee (test_load_total_includes_fee)", "related_test_relation: syntactic_call (test_load_total_includes_fee)", "test_oracle: exact_value strong (test_load_total_includes_fee)"],
-      "missing": ["Related Python test reaches `load_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `load_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {

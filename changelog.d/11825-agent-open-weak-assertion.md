@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr check --format agent` no longer prints `stop=` ("nothing more is fixable from the test side") when every finding is held by the reach-only `rust_transitive_reach_unresolved` limit but a related test still has a `weak_assertion` row, as on the humantime fortnight gap commit. It prints `open=`, the findings and a `ripr explain` next step instead; they are not counted in `gaps=`. A limit with no weak-assertion row still stops (#11825).

@@ -124,6 +124,46 @@ fn expected_job_with_recovery_quote_repair() -> Result<String, String> {
     Ok(expected)
 }
 
+/// Pinned spelling in the staged job, then the tag spelling the retained
+/// predecessor fixture still names.
+/// Apply every `PIN_NORMALIZATION` pair, failing loudly on a pair that matches
+/// nothing: a no-op pair is a dead normalization that would otherwise surface
+/// only as an unreadable job diff.
+fn apply_pin_normalization(mut job: String) -> Result<String, String> {
+    for (pinned, tag) in PIN_NORMALIZATION {
+        if !job.contains(pinned) {
+            return Err(format!(
+                "pin normalization matches nothing in the staged job: {pinned}"
+            ));
+        }
+        job = job.replace(pinned, tag);
+    }
+    Ok(job)
+}
+
+const PIN_NORMALIZATION: [(&str, &str); 5] = [
+    (
+        "dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95",
+        "dtolnay/rust-toolchain@1.95",
+    ),
+    (
+        "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
+        "Swatinem/rust-cache@v2",
+    ),
+    (
+        "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0",
+        "actions/checkout@v6",
+    ),
+    (
+        "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2",
+        "actions/upload-artifact@v7",
+    ),
+    (
+        "uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0'",
+        "uses: Swatinem/rust-cache@v2'",
+    ),
+];
+
 #[test]
 fn production_producer_preserves_all_native_commands_oracles_and_cleanup() -> Result<(), String> {
     assert!(
@@ -132,21 +172,13 @@ fn production_producer_preserves_all_native_commands_oracles_and_cleanup() -> Re
         )
     );
     // The retained predecessor names action tags; mainline pins their commits.
-    let unpinned = normalized_job(STAGED)?
-        .replace(
-            "dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95",
-            "dtolnay/rust-toolchain@1.95",
-        )
-        .replace(
-            "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
-            "Swatinem/rust-cache@v2",
-        )
-        // The embedded Python assertions search the workflow for the pinned
-        // `uses:` spelling, so they carry the commit with no trailing comment.
-        .replace(
-            "uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0'",
-            "uses: Swatinem/rust-cache@v2'",
-        );
+    // Each pair must match the staged workflow: a pair that matches nothing is a
+    // no-op, so a pin bump (or a revert to a tag) would otherwise leave a dead
+    // normalization that only fails, if at all, as an unreadable job diff.
+    // The last pair is the embedded Python assertions, which search the
+    // workflow for the pinned `uses:` spelling and so carry the commit with no
+    // trailing comment.
+    let unpinned = apply_pin_normalization(normalized_job(STAGED)?)?;
     assert_eq!(unpinned, expected_job_with_recovery_quote_repair()?);
     Ok(())
 }
@@ -240,5 +272,23 @@ fn source_precheck_precedes_candidate_execution_and_keeps_source_receipt() -> Re
     ] {
         assert!(STAGED.contains(clause), "missing source binding {clause}");
     }
+    Ok(())
+}
+
+#[test]
+fn a_pin_bump_without_a_normalization_update_is_detected() -> Result<(), String> {
+    // Simulate Dependabot moving one pin while the normalization stays put.
+    let bumped = STAGED.replace(
+        "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0",
+        "actions/checkout@0000000000000000000000000000000000000000 # v6.2.0",
+    );
+    assert_ne!(bumped, STAGED, "control must mutate the staged workflow");
+    let error = apply_pin_normalization(normalized_job(&bumped)?)
+        .err()
+        .ok_or("a bumped pin must fail the normalization, not pass silently")?;
+    assert!(
+        error.contains("pin normalization matches nothing in the staged job"),
+        "{error}"
+    );
     Ok(())
 }

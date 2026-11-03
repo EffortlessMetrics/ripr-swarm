@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The macro-visibility resolvers (the facts pass and the classifier) share derived macro scopes instead of each parsing every Rust file again. On servo (436d98dc, empty cache) the cold pilot parsed 1,730 files three times each, 62% of the bytes it parsed; sharing cuts the cold pilot about 6% (CPU 55.6 to 51.7 s and 57.2 to 53.1 s, wall 43.5 to 40.6 s and 44.9 to 42.1 s, two paired runs on a loaded 4-core box), with the same `repo-exposure.json` and `agent-seam-packets.json` apart from paths, hashes and timestamps (#11948).

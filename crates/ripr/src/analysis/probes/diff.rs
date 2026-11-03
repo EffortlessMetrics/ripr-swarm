@@ -28,7 +28,9 @@ use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::cfg_predicates::{attributes_require_test, split_leading_attribute};
 use crate::analysis::language::changed_let_binding;
+use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::domain::{Probe, ProbeFamily, SourceLocation};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// Test surface: the probe vec without the #3294 relations. Production
@@ -64,13 +66,6 @@ pub(crate) fn probes_for_file_with_relations(
     // Added-run starts once per file: `added_run_start` used to scan every
     // added line at every step of the run, once per added line (#7524).
     let added_run_starts = changed.added_run_starts();
-    let build_context = ProbeBuildContext {
-        root,
-        changed,
-        index,
-        changed_nodes: &changed_nodes,
-        added_run_starts: &added_run_starts,
-    };
     let mut emitted_parser_shapes = std::collections::BTreeMap::<(usize, String), usize>::new();
     let propagation_subjects = super::propagation_boundary::closing_propagation_subjects(
         index,
@@ -86,6 +81,16 @@ pub(crate) fn probes_for_file_with_relations(
     // Rebuilt once per file and shared by every reader of the old file (#7637).
     let old_source = super::classify::old_source(index, changed);
     let old_source = old_source.as_deref();
+    let entirely_removed_function_old_lines =
+        entirely_removed_function_old_lines(root, registrations, old_source, changed);
+    let build_context = ProbeBuildContext {
+        root,
+        changed,
+        index,
+        changed_nodes: &changed_nodes,
+        added_run_starts: &added_run_starts,
+        entirely_removed_function_old_lines: &entirely_removed_function_old_lines,
+    };
     // A positional replacement, or a rewrapped block, that is only an
     // elided-lifetime or primitive constant path respelling changes no
     // behavior: no probe on either side. String and comment text is output or
@@ -95,6 +100,31 @@ pub(crate) fn probes_for_file_with_relations(
         .map(|facts| prose_lines(&facts.source))
         .unwrap_or_default();
     let removed_prose = old_source.map(prose_lines).unwrap_or_default();
+    let added_position = find_file_facts(index, &changed.path)
+        .map(|facts| position_macro_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_position = old_source.map(position_macro_lines).unwrap_or_default();
+    let added_string_continuations = find_file_facts(index, &changed.path)
+        .map(|facts| crate::analysis::syntax::string_literal_continuation_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_string_continuations = old_source
+        .map(crate::analysis::syntax::string_literal_continuation_lines)
+        .unwrap_or_default();
+    // RIPR-SPEC-0368: contract attributes and ghost/logic items are read by a
+    // verifier, never by a test; the run discloses them as a typed limitation
+    // instead of probing them.
+    let added_verification = find_file_facts(index, &changed.path)
+        .map(|facts| super::verification_erased::verification_only_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_verification = old_source
+        .map(super::verification_erased::verification_only_lines)
+        .unwrap_or_default();
+    for (flag, line) in skip_added.iter_mut().zip(&changed.added_lines) {
+        *flag |= added_verification.contains(&line.new_side_line);
+    }
+    for (flag, line) in skip_removed.iter_mut().zip(&changed.removed_lines) {
+        *flag |= removed_verification.contains(&line.line);
+    }
     let added_at = changed
         .added_lines
         .iter()
@@ -113,10 +143,21 @@ pub(crate) fn probes_for_file_with_relations(
         else {
             continue;
         };
-        if !added_prose.contains(&new_side_line)
+        let added_text = &changed.added_lines[added_index].text;
+        let removed_text = &removed.text;
+        let respelling = !added_prose.contains(&new_side_line)
             && !removed_prose.contains(&removed.line)
-            && is_behavior_neutral_respelling(&changed.added_lines[added_index].text, &removed.text)
-        {
+            && is_behavior_neutral_respelling(added_text, removed_text);
+        // #9166: trailing `//` and char literals sit in `prose_lines`, but
+        // rustfmt spacing there is still behavior-neutral when normalization
+        // agrees.
+        let whitespace_only =
+            is_whitespace_or_comment_spacing_only_change(added_text, removed_text)
+                && !added_position.contains(&new_side_line)
+                && !removed_position.contains(&removed.line)
+                && !added_string_continuations.contains(&new_side_line)
+                && !removed_string_continuations.contains(&removed.line);
+        if respelling || whitespace_only {
             skip_added[added_index] = true;
             skip_removed[removed_index] = true;
         }
@@ -206,6 +247,21 @@ pub(crate) fn probes_for_file_with_relations(
     // same-named definitions (for example cfg-exclusive pairs) stay distinct.
     let mut added_macro_seeded = std::collections::BTreeSet::<(String, usize)>::new();
     let mut removed_macro_seeded = std::collections::BTreeSet::<(String, usize)>::new();
+
+    let skip_added_string_continuation = |line: usize, text: &str| {
+        added_string_continuations.contains(&line)
+            && !changed
+                .removed_lines
+                .iter()
+                .any(|removed| removed.new_side_line == line && removed.text.trim() != text.trim())
+    };
+    let skip_removed_string_continuation = |removed: &crate::analysis::diff::ChangedLine,
+                                            text: &str| {
+        removed_string_continuations.contains(&removed.line)
+            && !changed.added_lines.iter().any(|added| {
+                added.new_side_line == removed.new_side_line && added.text.trim() != text.trim()
+            })
+    };
 
     // Type-bound lines of a wrapped signature are declarations of their own
     // (one visible `static_unknown` each) and are never grouped away; parsed
@@ -434,6 +490,11 @@ pub(crate) fn probes_for_file_with_relations(
                 }
                 emitted_parser_shapes.insert(key, probes.len());
                 let canonical_text = canonical_probe_text(text, shape.text);
+                if shape.family == ProbeFamily::StaticUnknown
+                    && skip_added_string_continuation(shape.start_line, text)
+                {
+                    continue;
+                }
                 let parser_span = parser_span_for_canonical_shape(&canonical_text, &shape);
                 let canonical_line = ChangedLine {
                     line: shape.start_line,
@@ -506,6 +567,11 @@ pub(crate) fn probes_for_file_with_relations(
         }
         if !parser_shapes.is_empty() {
             for shape in parser_shapes {
+                if shape.family == ProbeFamily::StaticUnknown
+                    && skip_added_string_continuation(added.new_side_line, text)
+                {
+                    continue;
+                }
                 let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
                     .map(|line| arm_before(&shape.family, line, changed, old_source));
                 probes.push(SeededProbe::from_probe(build_probe(
@@ -529,8 +595,26 @@ pub(crate) fn probes_for_file_with_relations(
         // names the actual behavioral predicate instead of a generic
         // changed-syntax limitation.
         if families == [ProbeFamily::StaticUnknown]
+            && skip_added_string_continuation(added.new_side_line, text)
+        {
+            continue;
+        }
+        if families == [ProbeFamily::StaticUnknown]
             && let Some(retargeted) =
                 retarget_changed_binding_predicates(&build_context, added, text, &changed_lines)
+        {
+            probes.extend(retargeted);
+            continue;
+        }
+        // #11400: a changed `const` value is its readers' new return value.
+        // When every same-file reader returns it on one line
+        // (`const_reader_returns`, the rule `ripr repair` scopes by), the
+        // finding moves to those returned expressions, the way #3294 moves a
+        // changed `let` to its predicates; otherwise the line stays a
+        // static-unknown const probe.
+        if families == [ProbeFamily::StaticUnknown]
+            && let Some(retargeted) =
+                retarget_changed_const_readers(&build_context, added, text, &changed_lines)
         {
             probes.extend(retargeted);
             continue;
@@ -542,6 +626,11 @@ pub(crate) fn probes_for_file_with_relations(
             .then(|| changed_binding_return_flow(&build_context, added, text))
             .flatten();
         for family in families {
+            if family == ProbeFamily::StaticUnknown
+                && skip_added_string_continuation(added.new_side_line, text)
+            {
+                continue;
+            }
             let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
                 .map(|line| arm_before(&family, line, changed, old_source));
             let mut seeded = SeededProbe::from_probe(build_probe(
@@ -626,6 +715,11 @@ pub(crate) fn probes_for_file_with_relations(
             classify_changed_line(text)
         };
         for family in families {
+            if family == ProbeFamily::StaticUnknown
+                && skip_removed_string_continuation(removed, text)
+            {
+                continue;
+            }
             // A bound replacement may collapse several old predicates into one.
             // Shared identifiers alone do not establish that the old subject
             // remained in the replacement's evidence.
@@ -798,6 +892,66 @@ fn retarget_changed_binding_predicates(
     (!retargeted.is_empty()).then_some(retargeted)
 }
 
+/// #11400: retarget a changed single-line `const` declaration to the
+/// returned expressions of its same-file readers (`const_reader_returns`).
+/// `None` keeps the generic static-unknown probe: a multi-line declaration,
+/// a reader without a one-line return of the name, or a reader return the
+/// diff already changes (that line carries its own probe).
+fn retarget_changed_const_readers(
+    context: &ProbeBuildContext<'_>,
+    added: &ChangedLine,
+    text: &str,
+    changed_lines: &[usize],
+) -> Option<Vec<SeededProbe>> {
+    // One plain declaration line: a brace could open or close an item on
+    // the same line.
+    if !text.trim_end().ends_with(';') || text.contains(['{', '}']) {
+        return None;
+    }
+    // Only a value that really changed: the removed declaration of the same
+    // name pairs with this one, and the two evaluate differently.
+    let pairs = crate::analysis::classify::ChangedConsts::from_changed_files([context.changed]);
+    let change = pairs.lookup(&context.changed.path, added.line)?;
+    if !crate::analysis::classify::const_value_changes(change) {
+        return None;
+    }
+    let readers = crate::analysis::classify::const_reader_returns(
+        context.root,
+        text,
+        added.line,
+        &context.changed.path,
+        context.index,
+    );
+    if readers.is_empty()
+        || readers
+            .iter()
+            .any(|shape| changed_lines.contains(&shape.start_line))
+    {
+        return None;
+    }
+    Some(
+        readers
+            .iter()
+            .map(|shape| {
+                let line = ChangedLine {
+                    line: shape.start_line,
+                    new_side_line: shape.start_line,
+                    text: shape.text.to_string(),
+                };
+                let mut seeded = SeededProbe::from_probe(build_probe(
+                    context,
+                    &line,
+                    ProbeFamily::ReturnValue,
+                    None,
+                    Some(shape.text.to_string()),
+                ));
+                seeded.const_reader = true;
+                seeded
+            })
+            .collect(),
+    )
+}
+
 /// Name the return flow of a changed complete single-line `let` (RIPR-SPEC-0357).
 fn changed_binding_return_flow(
     context: &ProbeBuildContext<'_>,
@@ -897,6 +1051,23 @@ fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
         && !prose(before)
         && raw_differs
         && neutral_spelling(after) == neutral_spelling(before)
+}
+
+/// Whether `after` differs from `before` only in runs of formatting whitespace
+/// or in spacing before a trailing line comment, so the active tokens are
+/// unchanged (#9166). Uses the same Rust expression normalization as finding
+/// ids. Fails closed when indentation changes, the texts are identical, or
+/// either side sits on a position-observing macro line or a multi-line string
+/// literal continuation (the caller's guards).
+fn is_whitespace_or_comment_spacing_only_change(after: &str, before: &str) -> bool {
+    if after == before {
+        return false;
+    }
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    if after.get(..indent(after)) != before.get(..indent(before)) {
+        return false;
+    }
+    normalize_rust_expression(after) == normalize_rust_expression(before)
 }
 
 /// Whether `after` is `before` with integer literals respelled to the same
@@ -1095,7 +1266,9 @@ fn is_item_level_closing_brace(index: &RustIndex, path: &Path, line: usize, text
     let masked = mask_comments_and_strings(text);
     let body = masked.trim().trim_end_matches([';', ',']).trim_end();
     !body.is_empty()
-        && body.chars().all(|ch| ch == '}' || ch.is_whitespace())
+        && body
+            .chars()
+            .all(|ch| matches!(ch, '}' | ')' | ']') || ch.is_whitespace())
         && find_file_facts(index, path).is_some_and(|facts| !facts.functions.is_empty())
         && find_owner_function(index, path, line).is_none()
 }
@@ -1338,23 +1511,34 @@ fn position_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
 /// probes.
 fn macro_invocation_lines(source: &str, names: &[&str]) -> std::collections::BTreeSet<usize> {
     let masked = mask_comments_and_strings(source);
-    let bytes = masked.as_bytes();
-    let newlines = bytes
-        .iter()
+    let newlines = masked
+        .bytes()
         .enumerate()
-        .filter(|(_, byte)| **byte == b'\n')
+        .filter(|(_, byte)| *byte == b'\n')
         .map(|(at, _)| at)
         .collect::<Vec<_>>();
     let line_of = |at: usize| newlines.partition_point(|&newline| newline < at) + 1;
-    let mut lines = std::collections::BTreeSet::new();
-    let mut bangs = macro_bangs(&masked, names);
+    macro_invocation_extents(&masked, names)
+        .into_iter()
+        .flat_map(|(at, end)| line_of(at)..=line_of(end))
+        .collect()
+}
+
+/// Byte extents `(name offset, closing delimiter offset)` of each invocation
+/// of a macro named in `names` in `masked` text, outermost first. An
+/// invocation that never closes ends at `masked.len()` and is the last entry,
+/// since it already covers every later invocation.
+pub(super) fn macro_invocation_extents(masked: &str, names: &[&str]) -> Vec<(usize, usize)> {
+    let bytes = masked.as_bytes();
+    let mut extents = Vec::new();
+    let mut bangs = macro_bangs(masked, names);
     bangs.sort_unstable();
     let mut covered_to = 0usize;
     for (at, after_bang) in bangs {
         if at < covered_to {
             continue;
         }
-        let cursor = skip_rust_whitespace(&masked, after_bang);
+        let cursor = skip_rust_whitespace(masked, after_bang);
         if !matches!(bytes.get(cursor), Some(b'(' | b'[' | b'{')) {
             continue;
         }
@@ -1373,15 +1557,13 @@ fn macro_invocation_lines(source: &str, names: &[&str]) -> std::collections::BTr
                 _ => {}
             }
         }
-        lines.extend(line_of(at)..=line_of(end));
+        extents.push((at, end));
         if end == bytes.len() {
-            // Unclosed: it already runs to the end of the file, so every later
-            // invocation is covered and rescanning would be quadratic.
             break;
         }
         covered_to = end;
     }
-    lines
+    extents
 }
 
 fn neutral_spelling(line: &str) -> String {
@@ -1895,6 +2077,51 @@ struct ProbeBuildContext<'a> {
     index: &'a RustIndex,
     changed_nodes: &'a [SyntaxNodeFact],
     added_run_starts: &'a std::collections::BTreeMap<usize, usize>,
+    entirely_removed_function_old_lines: &'a BTreeSet<usize>,
+}
+
+/// Old-side line numbers that belonged to a function whose whole span the diff
+/// removed. A removed-only probe on such a line must not borrow a neighbour
+/// through the projected new-side coordinate (#9168).
+fn entirely_removed_function_old_lines(
+    root: &Path,
+    registrations: &[crate::config::TestHarnessRegistration],
+    old_source: Option<&str>,
+    changed: &ChangedFile,
+) -> BTreeSet<usize> {
+    let mut ownerless = BTreeSet::new();
+    let Some(source) = old_source else {
+        return ownerless;
+    };
+    if changed.removed_lines.is_empty() {
+        return ownerless;
+    }
+    let removed_old_lines: BTreeSet<usize> =
+        changed.removed_lines.iter().map(|line| line.line).collect();
+    let Ok(facts) = RaRustSyntaxAdapter.summarize_file(&changed.path, source) else {
+        return ownerless;
+    };
+    let mut old_index = RustIndex::default();
+    old_index.insert_file(changed.path.clone(), facts, true);
+    if crate::analysis::facts::normalize_reconstructed_source_roles(
+        &mut old_index,
+        root,
+        registrations,
+    )
+    .is_err()
+    {
+        return ownerless;
+    }
+    let Some(file_facts) = find_file_facts(&old_index, &changed.path) else {
+        return ownerless;
+    };
+    for function in &file_facts.functions {
+        let span = function.start_line..=function.end_line;
+        if span.clone().all(|line| removed_old_lines.contains(&line)) {
+            ownerless.extend(span);
+        }
+    }
+    ownerless
 }
 
 fn build_probe(
@@ -1929,15 +2156,24 @@ fn build_probe(
     // by its `source_currentness` disposition, and re-coordinating
     // deleted-side evidence is the #3212 projection slice's consumer work.
     let new_line = changed_line.new_side_line;
-    let owner = context
-        .changed_nodes
-        .iter()
-        .find(|node| node.start_line <= new_line && new_line <= node.end_line)
-        .and_then(|node| node.owner.clone())
-        .or_else(|| {
-            find_owner_function(context.index, &context.changed.path, new_line)
-                .map(|function| function.id.clone())
-        });
+    let owner = if before.is_some()
+        && after.is_none()
+        && context
+            .entirely_removed_function_old_lines
+            .contains(&changed_line.line)
+    {
+        None
+    } else {
+        context
+            .changed_nodes
+            .iter()
+            .find(|node| node.start_line <= new_line && new_line <= node.end_line)
+            .and_then(|node| node.owner.clone())
+            .or_else(|| {
+                find_owner_function(context.index, &context.changed.path, new_line)
+                    .map(|function| function.id.clone())
+            })
+    };
     // Ordinal 1 here; post-hoc dedup in probes_for_file handles collisions.
     let id = diff_probe_id(&context.changed.path, &family, owner.as_ref(), text, 1);
     let expected_sinks = expected_sinks(text, &family);
@@ -2508,6 +2744,32 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
     #[test]
+    fn removed_entire_function_body_does_not_borrow_neighbour_owner() -> Result<(), String> {
+        let candidate = "pub struct Wrapper(pub u32);\n\npub trait Ext: Sized {\n    fn take(self, limit: u64) -> u64 {\n        limit + 1\n    }\n}\n";
+        let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,14 +1,7 @@\n pub struct Wrapper(pub u32);\n \n pub trait Ext: Sized {\n     fn take(self, limit: u64) -> u64 {\n         limit + 1\n     }\n-\n-    fn compat(self) -> Wrapper\n-    where\n-        Self: Into<u32>,\n-    {\n-        Wrapper::new(self)\n-    }\n }\n";
+        let path = PathBuf::from("src/lib.rs");
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), candidate.to_string()),
+        );
+        let changed = crate::analysis::diff::parse_unified_diff(diff)
+            .into_iter()
+            .next()
+            .ok_or_else(|| "diff fixture yields no changed file".to_string())?;
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let body = probes
+            .iter()
+            .find(|probe| probe.before.as_deref() == Some("Wrapper::new(self)"))
+            .ok_or_else(|| format!("expected deleted compat body probe: {probes:?}"))?;
+        assert_eq!(
+            body.owner, None,
+            "deleted compat body must not borrow take as owner: {body:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn probes_for_file_uses_syntax_shape_owner_and_removed_context() {
         let path = PathBuf::from("src/lib.rs");
         let changed = ChangedFile {
@@ -2617,6 +2879,33 @@ mod tests {
         );
         let in_comment = probes_for("/*\n limit: threshold,\n*/\n");
         assert!(in_comment.is_empty(), "{in_comment:?}");
+    }
+
+    #[test]
+    fn multiline_string_literal_continuation_lines_seed_one_probe_on_the_opening_line() {
+        // #9174: string literal text is data, not behavior.
+        let source = "pub fn value() -> u32 { 1 }\npub const TEMPLATE: &str = \"\\\npub mod generated {\n    pub use crate::value;\n}\n\";\n";
+        let probes = block_probes(
+            source,
+            &[
+                (2, "pub const TEMPLATE: &str = \"\\"),
+                (3, "pub mod generated {"),
+                (4, "    pub use crate::value;"),
+                (5, "}"),
+                (6, "\";"),
+            ],
+            &[],
+        );
+        assert_eq!(probes.len(), 1, "{probes:?}");
+        assert_eq!(probes[0].location.line, 2);
+    }
+
+    #[test]
+    fn code_after_a_multiline_string_closing_quote_on_the_same_line_still_seeds_a_probe() {
+        let source = "let s = \"a\nb\"; let live = 1;\n";
+        let probes = block_probes(source, &[(3, "b\"; let live = 1;")], &[]);
+        assert_eq!(probes.len(), 1, "{probes:?}");
+        assert_eq!(probes[0].location.line, 3);
     }
 
     #[test]
@@ -2762,10 +3051,13 @@ mod tests {
             "control: the body line stays: {lines:?}"
         );
         assert!(!lines.contains(&9), "{lines:?}");
-        for closer in ["}", "};", "},", "} // end"] {
+        for closer in ["}", "};", "},", "} // end", "})", "],", "];"] {
             let lines = probe_lines(&trait_index, &[(9, closer)]);
             assert!(lines.is_empty(), "`{closer}`: {lines:?}");
         }
+        // A closer that is part of a changed expression line is not delimiter-only.
+        let lines = probe_lines(&trait_index, &[(9, "    foo(x) }")]);
+        assert!(lines.contains(&9), "expression closer: {lines:?}");
 
         // The same closer inside a function body keeps its probe (#4216): it
         // can end a branch that moves existing code.
@@ -3658,6 +3950,58 @@ mod tests {
             "",
         );
         assert!(!changed.is_empty());
+    }
+
+    /// #9166: rustfmt spacing and trailing-comment spacing seed no probes; token
+    /// merges and literal whitespace stay probed.
+    #[test]
+    fn whitespace_only_line_edits_seed_no_probe() {
+        for (added, removed) in [
+            (
+                "self.0 as usize  ==  filter_as_usize(other.0)",
+                "self.0 as usize == filter_as_usize(other.0)",
+            ),
+            (
+                "'\\x1b' => self.inner.write_str(\"\\\\x1b\")?, // ESC",
+                "'\\x1b' => self.inner.write_str(\"\\\\x1b\")?,  // ESC",
+            ),
+        ] {
+            assert!(
+                is_whitespace_or_comment_spacing_only_change(added, removed),
+                "{added} vs {removed}"
+            );
+        }
+        assert!(!is_whitespace_or_comment_spacing_only_change(
+            "let x = a && b;",
+            "let x = a & & b;",
+        ));
+        assert!(!is_whitespace_or_comment_spacing_only_change(
+            r#"let x = "a b";"#,
+            r#"let x = "a  b";"#,
+        ));
+        let source = "match c {\n    'a' => f()?, // ESC\n    _ => {}\n}\n";
+        let probes = block_probes(
+            source,
+            &[(2, "    'a' => f()?, // ESC")],
+            &[(2, 2, "    'a' => f()?,  // ESC")],
+        );
+        assert!(probes.is_empty(), "{probes:?}");
+        let column_shift = block_probes(
+            "fn f() {\n    let c = column!();\n}\n",
+            &[(2, "    let c = column!();")],
+            &[(2, 2, "    let c  = column!();")],
+        );
+        assert!(
+            !column_shift.is_empty(),
+            "column!() column move keeps its probe: {column_shift:?}"
+        );
+        let multiline = "fn f() -> String {\n    format!(\"a\n        b c\n        end\")\n}\n";
+        let string_interior =
+            block_probes(multiline, &[(3, "        b c")], &[(3, 3, "        b  c")]);
+        assert!(
+            !string_interior.is_empty(),
+            "multiline literal interior whitespace keeps its probe: {string_interior:?}"
+        );
     }
 
     #[test]
@@ -6787,6 +7131,115 @@ mod source_currentness_tests {
                 .iter()
                 .any(|probe| probe.location.line == 10 && probe.family == ProbeFamily::Predicate),
             "ordinary fn body beside the macro keeps its probe: {probes:?}"
+        );
+    }
+
+    /// RIPR-SPEC-0369: changed lines inside `verus! { .. }` are Verus syntax.
+    /// Exec text, `ensures`, `spec fn` and `proof` lines seed one
+    /// `static_unknown` probe per region and diff side (a replaced line pairs its
+    /// old text into the added-side probe), never an expression family; an
+    /// ordinary fn beside the block keeps its normal probe.
+    #[test]
+    fn verus_region_lines_seed_one_static_unknown_not_expression_probes() {
+        let source = "use vstd::prelude::*;\nverus! {\nfn inc(x: u32) -> (r: u32)\n    requires x < 100,\n    ensures r <= 200,\n{\n    x + 2\n}\nspec fn adult(age: u32) -> bool { age >= 21 }\nproof fn lemma(x: int) {\n    assert(x / 2 <= x + 1) by (nonlinear_arith);\n}\n}\nfn check(n: usize) -> bool {\n    n >= 4\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let line = |number: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: number,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![
+                line(4, "requires x < 100,"),
+                line(5, "ensures r <= 200,"),
+                line(7, "x + 2"),
+                line(9, "spec fn adult(age: u32) -> bool { age >= 21 }"),
+                line(11, "assert(x / 2 <= x + 1) by (nonlinear_arith);"),
+                line(15, "n >= 4"),
+            ],
+            removed_lines: vec![line(5, "ensures r <= 100,"), line(15, "n > 4")],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let inside = probes
+            .iter()
+            .filter(|probe| probe.location.line <= 13)
+            .collect::<Vec<_>>();
+        assert!(
+            inside
+                .iter()
+                .all(|probe| probe.family == ProbeFamily::StaticUnknown),
+            "{inside:?}"
+        );
+        // A removed line replaced by an added one is paired into the added-side
+        // probe (`before` carries the old text); only a removed line with no
+        // added counterpart gets a removed-side probe (see the removed-only test).
+        assert_eq!(
+            inside.len(),
+            1,
+            "one paired probe for the region: {inside:?}"
+        );
+        assert!(
+            inside[0].before.is_some() && inside[0].after.is_some(),
+            "removed text is paired into the added-side probe: {inside:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.location.line == 15 && probe.family == ProbeFamily::Predicate),
+            "ordinary fn beside the block keeps its probe: {probes:?}"
+        );
+    }
+
+    /// RIPR-SPEC-0369: a removed-only edit inside a region seeds exactly one
+    /// removed-side `static_unknown` probe from the old-source region, even when
+    /// the new file no longer holds the deleted lines.
+    #[test]
+    fn removed_only_verus_region_lines_seed_one_removed_side_static_unknown() {
+        let source =
+            "verus! {\nfn inc(x: u32) -> (r: u32)\n    requires x < 100,\n{\n    x + 2\n}\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let line = |number: usize, new_side: usize, text: &str| ChangedLine {
+            line: number,
+            new_side_line: new_side,
+            text: text.to_string(),
+        };
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![],
+            removed_lines: vec![line(4, 4, "ensures r <= 200,"), line(5, 4, "decreases x,")],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        assert_eq!(probes.len(), 1, "{probes:?}");
+        assert_eq!(probes[0].family, ProbeFamily::StaticUnknown);
+        assert!(probes[0].after.is_none() && probes[0].before.is_some());
+    }
+
+    /// RIPR-SPEC-0369: a changed line that also holds code outside the `verus!`
+    /// extent keeps ordinary seeding end to end.
+    #[test]
+    fn a_line_mixing_verus_region_and_outside_code_keeps_ordinary_probes() {
+        let source = "fn a(n: usize) -> bool { verus! { fn b() {} } n >= 4 }\n";
+        let path = PathBuf::from("src/lib.rs");
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![ChangedLine {
+                line: 1,
+                new_side_line: 1,
+                text: "fn a(n: usize) -> bool { verus! { fn b() {} } n >= 4 }".to_string(),
+            }],
+            removed_lines: vec![],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.family != ProbeFamily::StaticUnknown)
+                && !probes.is_empty(),
+            "{probes:?}"
         );
     }
 

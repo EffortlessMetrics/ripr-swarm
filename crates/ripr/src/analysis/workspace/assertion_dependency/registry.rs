@@ -25,6 +25,7 @@ pub(crate) struct RegistryIdentity {
 pub(crate) type LiteralJsonIdentity = RegistryIdentity;
 
 const PROPTEST_CHECKSUM: &str = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744";
+const BOLERO_CHECKSUM: &str = "327b100d52fa36bfa0008774e7ccfd6cce310fb9fcd7d05e90b0ef03a87dfa0a";
 
 pub(crate) fn eligible_proptest_root(root: &Path) -> bool {
     if !eligible_root(root, "proptest") {
@@ -32,28 +33,53 @@ pub(crate) fn eligible_proptest_root(root: &Path) -> bool {
     }
     // Cheap refusal keeps unaudited/default-newer proptest users off the
     // full metadata path. A lockfile only selects a candidate for proof.
-    let Some(lock) = root
-        .ancestors()
-        .map(|directory| directory.join("Cargo.lock"))
-        .find(|path| path.is_file())
-        .and_then(|path| read_optional(&path).flatten())
-        .and_then(|bytes| parse(&bytes))
-    else {
+    let Some(packages) = locked_packages(root, "proptest") else {
         return false;
     };
-    let Some(packages) = lock.get("package").and_then(toml::Value::as_array) else {
-        return false;
-    };
-    let packages = packages
-        .iter()
-        .filter(|package| package.get("name").and_then(toml::Value::as_str) == Some("proptest"))
-        .collect::<Vec<_>>();
     let [package] = packages.as_slice() else {
         return false;
     };
     package.get("version").and_then(toml::Value::as_str) == Some("1.11.0")
         && package.get("source").and_then(toml::Value::as_str) == Some(SOURCE)
         && package.get("checksum").and_then(toml::Value::as_str) == Some(PROPTEST_CHECKSUM)
+}
+
+/// The `[[package]]` entries named `name` in the nearest `Cargo.lock` at or
+/// above `root`. `None` is no readable lockfile; an empty list is a lockfile
+/// that does not lock the crate. This is the one lockfile reader of the audited
+/// registry profiles.
+fn locked_packages(root: &Path, name: &str) -> Option<Vec<toml::Value>> {
+    let lock = root
+        .ancestors()
+        .map(|directory| directory.join("Cargo.lock"))
+        .find(|path| path.is_file())
+        .and_then(|path| read_optional(&path).flatten())
+        .and_then(|bytes| parse(&bytes))?;
+    let packages = lock.get("package")?.as_array()?;
+    Some(
+        packages
+            .iter()
+            .filter(|package| package.get("name").and_then(toml::Value::as_str) == Some(name))
+            .cloned()
+            .collect(),
+    )
+}
+
+/// RIPR-SPEC-0369: whether the lockfile locks `name` exactly once, from the
+/// crates.io registry, at one of the `audited` versions. An unlocked, repeated,
+/// path, git, other-registry or unaudited-version package is not audited.
+pub(crate) fn locked_at_audited_version(root: &Path, name: &str, audited: &[&str]) -> bool {
+    let Some(packages) = locked_packages(root, name) else {
+        return false;
+    };
+    let [package] = packages.as_slice() else {
+        return false;
+    };
+    package.get("source").and_then(toml::Value::as_str) == Some(SOURCE)
+        && package
+            .get("version")
+            .and_then(toml::Value::as_str)
+            .is_some_and(|version| audited.contains(&version))
 }
 
 /// The function macro, Just strategy and assertion failure path audited in
@@ -92,6 +118,34 @@ pub(crate) fn verified_proptest_identity_result(
         identity.proptest_target_configs = configurations;
         Some(identity)
     })())
+}
+
+pub(crate) fn eligible_bolero_root(root: &Path) -> bool {
+    if !eligible_root(root, "bolero") {
+        return false;
+    }
+    let Some(packages) = locked_packages(root, "bolero") else {
+        return false;
+    };
+    let [package] = packages.as_slice() else {
+        return false;
+    };
+    package.get("version").and_then(toml::Value::as_str) == Some("0.13.7")
+        && package.get("source").and_then(toml::Value::as_str) == Some(SOURCE)
+        && package.get("checksum").and_then(toml::Value::as_str) == Some(BOLERO_CHECKSUM)
+}
+
+pub(crate) fn verified_bolero_identity(root: &Path) -> Option<RegistryIdentity> {
+    verified_bolero_identity_result(root).ok().flatten()
+}
+
+pub(crate) fn verified_bolero_identity_result(
+    root: &Path,
+) -> Result<Option<RegistryIdentity>, MetadataProbeFailure> {
+    if !eligible_bolero_root(root) {
+        return Ok(None);
+    }
+    verified_registry_identity_result(root, "bolero", "0.13.7", BOLERO_CHECKSUM)
 }
 
 fn proptest_target_configurations(
@@ -182,6 +236,100 @@ fn proptest_configuration_allowed(root: &Path) -> bool {
 }
 
 impl RegistryIdentity {
+    /// The empty-String profile depends on the consumer's standard crate
+    /// names as well as the provider identity: provider macro expansions use
+    /// `extern crate alloc` and `::core`. Reuse the resolved consumer metadata;
+    /// a canonical proptest edge cannot authorize a substituted standard root.
+    pub(crate) fn proptest_standard_crates_unshadowed(&self, root: &Path, file: &Path) -> bool {
+        let Ok(file) = root.join(file).canonicalize() else {
+            return false;
+        };
+        let Some(packages) = self
+            .metadata
+            .get("packages")
+            .and_then(serde_json::Value::as_array)
+        else {
+            return false;
+        };
+        let owners = packages
+            .iter()
+            .filter(|package| {
+                package
+                    .get("targets")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|targets| {
+                        targets.iter().any(|target| {
+                            target
+                                .get("src_path")
+                                .and_then(serde_json::Value::as_str)
+                                .and_then(|path| Path::new(path).canonicalize().ok())
+                                .as_ref()
+                                == Some(&file)
+                        })
+                    })
+            })
+            .collect::<Vec<_>>();
+        let [owner] = owners.as_slice() else {
+            return false;
+        };
+        let ordinary_name = |name: &serde_json::Value| {
+            name.as_str().is_some_and(|name| {
+                !matches!(name.replace('-', "_").as_str(), "std" | "core" | "alloc")
+            })
+        };
+        // Declarations catch renamed, optional and inactive dependencies;
+        // resolved edge names additionally catch a dependency's [lib] name.
+        if !owner
+            .get("dependencies")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|dependencies| {
+                dependencies.iter().all(|dependency| {
+                    dependency
+                        .get("rename")
+                        .filter(|rename| !rename.is_null())
+                        .or_else(|| dependency.get("name"))
+                        .is_some_and(ordinary_name)
+                })
+            })
+            || !owner
+                .get("targets")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|targets| {
+                    // An integration test also receives its own package's library as
+                    // an extern crate, even though it is absent from resolve.deps.
+                    targets
+                        .iter()
+                        .all(|target| target.get("name").is_some_and(ordinary_name))
+                })
+        {
+            return false;
+        }
+        let Some(owner_id) = owner.get("id").and_then(serde_json::Value::as_str) else {
+            return false;
+        };
+        let Some(nodes) = self
+            .metadata
+            .pointer("/resolve/nodes")
+            .and_then(serde_json::Value::as_array)
+        else {
+            return false;
+        };
+        let nodes = nodes
+            .iter()
+            .filter(|node| node.get("id").and_then(serde_json::Value::as_str) == Some(owner_id))
+            .collect::<Vec<_>>();
+        let [node] = nodes.as_slice() else {
+            return false;
+        };
+        node.get("deps")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|edges| {
+                edges
+                    .iter()
+                    .all(|edge| edge.get("name").is_some_and(ordinary_name))
+            })
+    }
+
     /// This first property profile covers a real lib/test target root, not a
     /// file that merely looks like a test or a configured harness subject.
     pub(crate) fn admits_proptest_target(&self, root: &Path, file: &Path) -> bool {
@@ -354,6 +502,12 @@ impl RegistryIdentity {
                     })
                 })
         })
+    }
+
+    pub(crate) fn admits_bolero_target(&self, root: &Path, file: &Path) -> bool {
+        self.crate_name == "bolero"
+            && snapshot(root).as_ref() == Some(&self.input_snapshot)
+            && self.admits_file(root, file)
     }
 
     pub(crate) fn admits_file(&self, root: &Path, file: &Path) -> bool {

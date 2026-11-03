@@ -339,6 +339,192 @@ fn xml_attribute(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn fixture_evals_source() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/python-real-repo-evals")
+    }
+
+    fn copy_native_evals_fixture(label: &str) -> Result<PathBuf, String> {
+        let root = crate::tests::temp_dir(&format!("native-python-negative-{label}"));
+        let source = fixture_evals_source();
+        crate::tests::copy_dir_recursive(
+            &source.join("itsdangerous-future-age"),
+            &root.join("itsdangerous-future-age"),
+        )?;
+        fs::copy(source.join("corpus.json"), root.join("corpus.json"))
+            .map_err(|error| error.to_string())?;
+        Ok(root)
+    }
+
+    fn write_json(path: &Path, value: &Value) -> Result<(), String> {
+        let bytes = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
+        fs::write(path, bytes).map_err(|error| error.to_string())
+    }
+
+    fn expect_err_contains(result: Result<(), String>, needle: &str) {
+        if let Err(error) = result {
+            assert!(
+                error.contains(needle),
+                "expected error containing {needle:?}, got {error:?}"
+            );
+        } else {
+            assert!(
+                result.is_err(),
+                "expected validation failure containing {needle:?}"
+            );
+        }
+    }
+
+    fn sync_manifest_file_entry(
+        manifest: &mut Value,
+        rel_path: &str,
+        file: &Path,
+    ) -> Result<(), String> {
+        let bytes = fs::metadata(file).map_err(|error| error.to_string())?.len();
+        let digest = hash_file(file)?;
+        let files = manifest["files"]
+            .as_array_mut()
+            .ok_or("missing native artifact inventory")?;
+        for entry in files {
+            if entry["path"] == rel_path {
+                entry["sha256"] = json!(digest);
+                entry["bytes"] = json!(bytes);
+                return Ok(());
+            }
+        }
+        Err(format!("native artifact inventory lacks {rel_path}"))
+    }
+
+    #[test]
+    fn copied_native_registration_passes_unchanged_fixture() -> Result<(), String> {
+        let root = copy_native_evals_fixture("unchanged-registration")?;
+        validate_native_case_registration(&root)
+    }
+
+    #[test]
+    fn native_registration_rejects_metrics_eligible_true() -> Result<(), String> {
+        let root = copy_native_evals_fixture("metrics-eligible-true")?;
+        let corpus_path = root.join("corpus.json");
+        let mut corpus = read_json(&corpus_path)?;
+        corpus["native_cases"][0]["metrics_eligible"] = json!(true);
+        write_json(&corpus_path, &corpus)?;
+        expect_err_contains(
+            validate_native_case_registration(&root),
+            "must remain outside analyzer metrics",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_registration_rejects_missing_metrics_boundary() -> Result<(), String> {
+        let root = copy_native_evals_fixture("metrics-eligible-missing")?;
+        let corpus_path = root.join("corpus.json");
+        let mut corpus = read_json(&corpus_path)?;
+        corpus["native_cases"][0]
+            .as_object_mut()
+            .ok_or("native case must be an object")?
+            .remove("metrics_eligible");
+        write_json(&corpus_path, &corpus)?;
+        expect_err_contains(
+            validate_native_case_registration(&root),
+            "must remain outside analyzer metrics",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_case_rejects_lost_manifest_pins() -> Result<(), String> {
+        let root = copy_native_evals_fixture("lost-pins")?;
+        let case_root = root.join("itsdangerous-future-age");
+        let manifest_path = case_root.join("manifest.json");
+        let mut manifest = read_json(&manifest_path)?;
+        manifest["fixed"] = json!("0000000000000000000000000000000000000000");
+        write_json(&manifest_path, &manifest)?;
+        expect_err_contains(validate_native_case_registration(&root), "lost its pins");
+        Ok(())
+    }
+
+    #[test]
+    fn native_case_rejects_stale_driver_identity_after_replay_mutation() -> Result<(), String> {
+        let root = copy_native_evals_fixture("stale-driver")?;
+        let case_root = root.join("itsdangerous-future-age");
+        let replay_path = case_root.join("replay.py");
+        let mut replay = fs::read(&replay_path).map_err(|error| error.to_string())?;
+        replay.push(b'\n');
+        fs::write(&replay_path, replay).map_err(|error| error.to_string())?;
+        let manifest_path = case_root.join("manifest.json");
+        let mut manifest = read_json(&manifest_path)?;
+        sync_manifest_file_entry(&mut manifest, "replay.py", &replay_path)?;
+        write_json(&manifest_path, &manifest)?;
+        expect_err_contains(
+            validate_native_case_registration(&root),
+            "stale native source/driver/lock identity",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_case_rejects_short_retained_inventory() -> Result<(), String> {
+        let root = copy_native_evals_fixture("short-retained")?;
+        let case_root = root.join("itsdangerous-future-age");
+        let retained_path = case_root.join("retained-files.json");
+        let mut retained = read_json(&retained_path)?;
+        retained
+            .as_array_mut()
+            .ok_or("missing retained inventory")?
+            .pop();
+        write_json(&retained_path, &retained)?;
+        let manifest_path = case_root.join("manifest.json");
+        let mut manifest = read_json(&manifest_path)?;
+        sync_manifest_file_entry(&mut manifest, "retained-files.json", &retained_path)?;
+        write_json(&manifest_path, &manifest)?;
+        expect_err_contains(validate_native_case_registration(&root), "all 17");
+        Ok(())
+    }
+
+    #[test]
+    fn native_case_rejects_truncated_receipt_rows() -> Result<(), String> {
+        let root = copy_native_evals_fixture("truncated-rows")?;
+        let case_root = root.join("itsdangerous-future-age");
+        let receipt_path = case_root.join("evidence/native.json");
+        let mut receipt = read_json(&receipt_path)?;
+        receipt["rows"]
+            .as_array_mut()
+            .ok_or("missing native observations")?
+            .pop();
+        write_json(&receipt_path, &receipt)?;
+        let manifest_path = case_root.join("manifest.json");
+        let mut manifest = read_json(&manifest_path)?;
+        sync_manifest_file_entry(&mut manifest, "evidence/native.json", &receipt_path)?;
+        write_json(&manifest_path, &manifest)?;
+        expect_err_contains(
+            validate_native_case_registration(&root),
+            "all 13 control rows",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_case_rejects_stale_test_variant_hash() -> Result<(), String> {
+        let root = copy_native_evals_fixture("stale-test-variant")?;
+        let case_root = root.join("itsdangerous-future-age");
+        let receipt_path = case_root.join("evidence/native.json");
+        let mut receipt = read_json(&receipt_path)?;
+        receipt["rows"][0]["test_sha256"] = json!("0".repeat(64));
+        write_json(&receipt_path, &receipt)?;
+        let manifest_path = case_root.join("manifest.json");
+        let mut manifest = read_json(&manifest_path)?;
+        sync_manifest_file_entry(&mut manifest, "evidence/native.json", &receipt_path)?;
+        write_json(&manifest_path, &manifest)?;
+        expect_err_contains(
+            validate_native_case_registration(&root),
+            "stale native test variant",
+        );
+        Ok(())
+    }
+
     #[test]
     fn retained_native_test_matrix_is_bound() -> Result<(), String> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))

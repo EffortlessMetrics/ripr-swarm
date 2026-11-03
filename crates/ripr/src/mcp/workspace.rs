@@ -41,6 +41,10 @@ pub(crate) const CODE_NO_SNAPSHOT: &str = "no_snapshot";
 pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
 pub(crate) const CODE_ITEM_NOT_FOUND: &str = "item_not_found";
+/// A call argument the model can correct (unknown name, wrong type, out of
+/// range, bad enum token). Returned as an `isError: true` tool result
+/// instead of a JSON-RPC `-32602`, which many hosts flatten (#11621).
+pub(crate) const CODE_INVALID_ARGUMENT: &str = "invalid_argument";
 /// #8736 review follow-up: one raw resource-id segment can resolve both as
 /// captured (legacy raw URI for a literal-`%` file) and as its percent-
 /// decoded form (a URI-emitting client addressing the decoded file) when
@@ -296,6 +300,7 @@ impl AttemptFailure {
             "code": self.code,
             "detail": self.detail,
             "recovery": self.recovery,
+            "remedy": crate::domain::RefusalRemedy::from_prose(&self.recovery),
             "data": self.data,
         })
     }
@@ -609,7 +614,9 @@ impl Snapshot {
         let snapshot_id = snapshot_identity(&outcome, &items, &scope, source, custody.commitment())
             .map_err(|error| {
                 AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
-            })?;
+            })?
+            .as_str()
+            .to_string();
         let profile_identity = format!(
             "mcp:{}:profile:diff:draft",
             root_identity.unwrap_or("root:unavailable")
@@ -687,7 +694,7 @@ fn snapshot_identity(
     scope: &ScopeFacts,
     source: RefreshSource,
     custody_commitment: Option<&str>,
-) -> Result<String, String> {
+) -> Result<crate::domain::CompletedAnalysisSnapshotId, String> {
     let outcome_digest = outcome.semantic_digest()?;
     let item_ids = items
         .iter()
@@ -723,7 +730,8 @@ fn snapshot_identity(
     }
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
-    Ok(format!("snapshot:sha256:{}", sha256_hex(&bytes)))
+    let wire = format!("snapshot:sha256:{}", sha256_hex(&bytes));
+    crate::domain::CompletedAnalysisSnapshotId::parse(&wire).map_err(|error| error.to_string())
 }
 
 fn evidence_identity(items: &[GapItem]) -> Result<String, String> {
@@ -1501,6 +1509,9 @@ fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         return Some(worktree_scope_disclosure(snapshot));
     }
     let mut disclosure = tracked_scope_disclosure(snapshot);
+    if disclosure.is_none() {
+        disclosure = explicit_base_scope_disclosure(snapshot);
+    }
     let scope = &snapshot.scope;
     if scope.ignored.is_empty() {
         return disclosure;
@@ -1633,6 +1644,18 @@ fn analyzed_label(snapshot: &Snapshot) -> String {
     }
 }
 
+/// #9190: a clean committed snapshot still names the explicit base it analyzed
+/// so refresh `scope` is not null when the client passed `base`.
+fn explicit_base_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
+    let base = snapshot.base.as_ref()?;
+    Some(json!({
+        "analyzed": analyzed_label(snapshot),
+        "analyzed_base": base,
+        "uncommitted_edits": "outside this analysis",
+        "note": "this snapshot analyzed the committed diff against the named base; no tracked edits were outside that analysis",
+    }))
+}
+
 fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
     let facts = tracked_scope_facts_disclosure(snapshot);
     let SourceCustody::CommittedOverUncommitted { reason } = &snapshot.custody else {
@@ -1729,28 +1752,22 @@ fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
 /// diff holds no analyzable change) and the `base`/`source` arguments to pass.
 fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
     let snapshot = session.last_good.as_ref()?;
-    let empty_kind = matches!(
-        snapshot.outcome.kind,
-        AnalysisOutcomeKind::NoScope
-            | AnalysisOutcomeKind::NoChangedLines
-            | AnalysisOutcomeKind::NoBehavioralCandidates
-    );
+    let empty_kind = snapshot.outcome.kind.is_empty_scope();
     if !empty_kind || !snapshot.items.is_empty() || snapshot.source != RefreshSource::Committed {
         return None;
     }
-    let why = match &session.desired_base {
-        Some(base) => format!(
-            "the committed diff against requested base `{base}` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
-        ),
-        None => match snapshot.outcome.kind {
-            AnalysisOutcomeKind::NoBehavioralCandidates => "no base was passed, so the default base was used; the diff has changed lines but none holds a behavior candidate to analyze (a different base may widen it). This is not an all-clear".to_string(),
-            _ => "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear".to_string(),
-        },
-    };
+    // #12416: the cause and retry wording live in the shared
+    // `AnalysisOutcomeKind` owner; the LSP scope disclosure consumes the
+    // same cause sentence, so the surfaces cannot drift. The bytes are the
+    // pre-refactor hint wording, pinned by the tests below.
+    let why = snapshot.outcome.kind.empty_scope_cause_sentence(
+        session.desired_base.as_deref(),
+        crate::analysis_outcome::EmptyScopeDiffAuthority::CommittedSnapshot,
+    );
     Some(json!({
         "why": why,
-        "pass_base": "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}",
-        "pass_source": "for saved uncommitted tracked edits retry with {\"source\": \"worktree\"}; repair cards and readiness are offered only when the findings and the seam inventory are shown to have consumed the same source bytes, and are withheld with the cause otherwise",
+        "pass_base": AnalysisOutcomeKind::EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE,
+        "pass_source": AnalysisOutcomeKind::EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE,
     }))
 }
 
@@ -1794,7 +1811,7 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
         "claim_boundary": "One bounded static analysis attempt over the workspace diff. The server never edits source, executes verification or mutation commands, or loads project-local provider configuration.",
         "limitations": [
             "an attempt runs to a terminal state; MCP cancellation of the request does not roll back a running attempt and never manufactures a snapshot",
-            "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits (#5254 item 2)",
+            "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits",
         ],
     });
     // Top-level currentness so an agent need not parse `scope`: `true` only
@@ -2454,6 +2471,23 @@ mod tests {
     };
     use std::path::PathBuf;
 
+    #[test]
+    fn check_retry_recovery_remedy_is_the_tool_not_the_conditional_command() {
+        // Real producer: the instructed step is `ripr_refresh`; the `ripr
+        // check` command is only the `if the failure persists` fallback.
+        let recovery = check_retry_recovery(Path::new("."), Some("main"), RefreshSource::Committed);
+        let value = AttemptFailure::new("analysis_failed", "x", recovery).value();
+        assert_eq!(value["remedy"]["kind"], "mcp_tool", "{value}");
+        assert_eq!(value["remedy"]["tool"], "ripr_refresh", "{value}");
+        assert_eq!(value["remedy"]["command"], Value::Null, "{value}");
+        assert!(
+            value["remedy"]["alternatives"]
+                .as_array()
+                .is_some_and(|alternatives| alternatives.len() == 1),
+            "{value}"
+        );
+    }
+
     fn limitation(kind: AnalysisLimitationKind) -> Result<AnalysisLimitation, String> {
         Ok(AnalysisLimitation::new(
             kind,
@@ -2893,6 +2927,37 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    #[test]
+    fn a_missing_stale_or_unknown_limitation_read_never_yields_a_limitation_document()
+    -> Result<(), String> {
+        // #11821: the limitation read is committed-facts only. Every state in
+        // which the item's limitation cannot be established answers with a
+        // typed failure (and its recovery), never with a limitation document a
+        // client could read as "no limitation, so a repair route".
+        expect_code(
+            WorkspaceSession::default().get_limitation("gap:any", None),
+            CODE_NO_SNAPSHOT,
+        )?;
+        expect_code(
+            WorkspaceSession {
+                in_flight: true,
+                ..Default::default()
+            }
+            .get_limitation("gap:any", None),
+            CODE_ANALYSIS_IN_FLIGHT,
+        )?;
+        let session = session_with_findings(1)?;
+        expect_code(
+            session.get_limitation("gap:any", Some("snapshot:sha256:old")),
+            CODE_STALE_SNAPSHOT,
+        )?;
+        expect_code(
+            session.get_limitation("gap:does-not-exist", None),
+            CODE_ITEM_NOT_FOUND,
+        )?;
+        Ok(())
     }
 
     /// A snapshot carrying `count` distinct canonical items, built from the
@@ -4549,6 +4614,19 @@ mod tests {
     }
 
     #[test]
+    fn refresh_limitations_contain_no_internal_issue_references() -> Result<(), String> {
+        use crate::mcp::agent_facing_text_tests::assert_agent_text_has_no_internal_issue_or_adr_references;
+        let session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        let document = refresh_document(&session);
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "refresh document lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        assert_agent_text_has_no_internal_issue_or_adr_references(&text)
+    }
+
+    #[test]
     fn refresh_document_reports_failure_without_dropping_last_known_good() -> Result<(), String> {
         let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
         let failure = AttemptFailure::new(CODE_ANALYSIS_FAILED, "producer hiccup", "retry");
@@ -5087,7 +5165,7 @@ mod tests {
                 RefreshSource::Committed,
                 None,
             )?;
-            assert_eq!(snapshot.snapshot_id, original_id);
+            assert_eq!(snapshot.snapshot_id, original_id.as_str());
 
             let session = WorkspaceSession {
                 in_flight: false,
@@ -5104,9 +5182,9 @@ mod tests {
                 .first()
                 .ok_or_else(|| "the original item oracle must not be empty".to_string())?;
             let document = session
-                .get_gap(&item.canonical_id, Some(&original_id))
+                .get_gap(&item.canonical_id, Some(original_id.as_str()))
                 .map_err(|f| f.detail)?;
-            assert_eq!(document, item.document(&original_id));
+            assert_eq!(document, item.document(original_id.as_str()));
         }
         assert_eq!(lengths.len(), 2);
         assert_eq!(
@@ -5124,6 +5202,26 @@ mod tests {
                 return Err(format!("reserved code is not a wire token: {code}"));
             }
         }
+        Ok(())
+    }
+
+    /// #9190: an explicit-base committed refresh names the analyzed base in
+    /// `scope` even when the worktree is clean.
+    #[test]
+    fn explicit_base_scope_disclosure_on_clean_committed_snapshot() -> Result<(), String> {
+        let mut snapshot = Snapshot::from_output(
+            &output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?,
+            Some("root:sha256:test"),
+        )
+        .map_err(|failure| failure.detail)?;
+        assert!(scope_disclosure(&snapshot).is_none());
+        snapshot.base = Some("trunk".to_string());
+        let disclosure = scope_disclosure(&snapshot).ok_or("explicit base must disclose")?;
+        assert_eq!(disclosure.get("analyzed_base"), Some(&json!("trunk")));
+        assert_eq!(
+            disclosure.get("uncommitted_edits"),
+            Some(&json!("outside this analysis"))
+        );
         Ok(())
     }
 

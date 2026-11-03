@@ -398,16 +398,45 @@ pub(in crate::analysis) fn apply_complete_proximity_macro_limit(
     }
 }
 
+/// Leaf names of the numeric tolerance assertion macros of `approx` and
+/// `float-cmp` that pass when the values are within the tolerance. The name only
+/// selects the wording of the next step: it never classifies the macro, grades
+/// an oracle or earns credit (#6645).
+const TOLERANCE_EQ_ASSERTION_MACROS: [&str; 4] = [
+    "assert_relative_eq",
+    "assert_abs_diff_eq",
+    "assert_ulps_eq",
+    "assert_approx_eq",
+];
+
+/// The inequality forms pass when the values differ by more than the
+/// tolerance, so a tighter tolerance is the wrong advice for them.
+const TOLERANCE_NE_ASSERTION_MACROS: [&str; 3] =
+    ["assert_relative_ne", "assert_abs_diff_ne", "assert_ulps_ne"];
+
+/// The next step for a named macro limitation. A tolerance macro gets a
+/// numeric next step, because the open question is how the tolerance compares
+/// with the change, which static analysis cannot bound.
+fn macro_witness_next_step(macro_name: &str) -> String {
+    let leaf = macro_name.rsplit("::").next().unwrap_or(macro_name);
+    if matches!(leaf, "prop_assert" | "prop_assert_eq" | "prop_assert_ne") {
+        "Inspect the property assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.".to_string()
+    } else if TOLERANCE_EQ_ASSERTION_MACROS.contains(&leaf) {
+        format!(
+            "`{leaf}!` reads like a floating-point tolerance comparison that passes when the values are within the tolerance, but ripr cannot establish its tolerance semantics or bound how far this change moves the value. Check that the tolerance is tighter than the smallest difference the change can make, then run the existing test against the changed code."
+        )
+    } else if TOLERANCE_NE_ASSERTION_MACROS.contains(&leaf) {
+        format!(
+            "`{leaf}!` reads like a floating-point tolerance comparison that passes when the values differ by more than the tolerance, but ripr cannot establish its tolerance semantics or bound how far this change moves the value. Check that the original value stays outside the tolerance and the changed value would fall inside it, then run the existing test against the changed code."
+        )
+    } else {
+        "Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.".to_string()
+    }
+}
+
 fn apply_macro_assertion_witness(finding: &mut Finding, witness: RustMacroAssertionWitness) {
     finding.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
-    finding.recommended_next_step = Some(if matches!(
-        witness.macro_name.rsplit("::").next(),
-        Some("prop_assert" | "prop_assert_eq" | "prop_assert_ne")
-    ) {
-        "Inspect the property assertion macro's definition and run the existing test; its spelling does not establish assertion semantics."
-    } else {
-        "Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics."
-    }.to_string());
+    finding.recommended_next_step = Some(macro_witness_next_step(&witness.macro_name));
     finding.evidence.push(
         "A related Rust test uses an assertion-like macro that ripr does not classify as an oracle."
             .to_string(),
@@ -971,6 +1000,59 @@ fn rust_macro_assertion_limitation_detail_lines(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_tolerance_macro_gets_a_numeric_next_step_and_nothing_else_changes() {
+        for name in [
+            "assert_relative_eq",
+            "approx::assert_abs_diff_eq",
+            "::approx::assert_ulps_eq",
+            "float_cmp::assert_approx_eq",
+        ] {
+            let step = super::macro_witness_next_step(name);
+            assert!(step.contains("floating-point tolerance"), "{name}: {step}");
+            assert!(step.contains("cannot establish"), "{name}: {step}");
+            assert!(!step.contains("custom assertion macro"), "{name}: {step}");
+            // An equality form needs a tighter tolerance than the change.
+            assert!(step.contains("within the tolerance"), "{name}: {step}");
+            assert!(step.contains("tighter than the smallest"), "{name}: {step}");
+        }
+        // An inequality form passes when the values differ by more than the
+        // tolerance, so tightening it is the wrong advice (Devin, #12248).
+        for name in [
+            "assert_abs_diff_ne",
+            "approx::assert_relative_ne",
+            "::approx::assert_ulps_ne",
+        ] {
+            let step = super::macro_witness_next_step(name);
+            assert!(
+                step.contains("differ by more than the tolerance"),
+                "{name}: {step}"
+            );
+            assert!(
+                step.contains("changed value would fall inside"),
+                "{name}: {step}"
+            );
+            assert!(
+                !step.contains("tighter than the smallest"),
+                "{name}: {step}"
+            );
+        }
+        // Everything else keeps its previous wording, including look-alikes.
+        let custom = "Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.";
+        for name in [
+            "assert_result",
+            "check_eq",
+            "my::assert_relative_eq_all",
+            "assert_approx",
+        ] {
+            assert_eq!(super::macro_witness_next_step(name), custom, "{name}");
+        }
+        assert!(
+            super::macro_witness_next_step("proptest::prop_assert_eq")
+                .starts_with("Inspect the property assertion macro's definition")
+        );
+    }
+
     #[test]
     fn only_a_plain_literal_expected_value_is_independent_of_the_owner() {
         for attribute in [

@@ -26,7 +26,7 @@ fn diff_format_errors_preserve_exit_and_suggestions() {
     }
     assert_usage_error(
         run_ripr(&["diff", "--format"]),
-        "missing value for --format",
+        "missing value for --format; pass a value right after it",
     );
 }
 
@@ -63,7 +63,7 @@ fn pilot_format_help_agrees_with_accepted_values() {
     for value in ["human", "json"] {
         assert_usage_error(
             run_ripr(&["pilot", "--format", value, "--max-seams", "0"]),
-            "--max-seams requires a positive integer; got \"0\"",
+            "--max-seams requires a positive integer; pass a whole number of 1 or more, got \"0\"",
         );
     }
     assert_usage_error(
@@ -91,7 +91,7 @@ fn doctor_profile_help_agrees_with_accepted_values() {
     for value in ["analysis", "source-build"] {
         assert_usage_error(
             run_ripr(&["doctor", "--profile", value, "--root"]),
-            "missing value for --root",
+            "missing value for --root; pass a value right after it",
         );
     }
     assert_usage_error(
@@ -100,6 +100,6 @@ fn doctor_profile_help_agrees_with_accepted_values() {
     );
     assert_usage_error(
         run_ripr(&["doctor", "--profile"]),
-        "missing value for --profile",
+        "missing value for --profile; pass a value right after it",
     );
 }

@@ -20,9 +20,19 @@ pub(crate) enum InitAgent {
     Codex,
     Cursor,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InitCi {
     Github,
+    Gitlab,
+}
+
+impl InitCi {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            InitCi::Github => "github",
+            InitCi::Gitlab => "gitlab",
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PilotStdoutFormat {

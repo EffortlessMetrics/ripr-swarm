@@ -209,6 +209,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
 }
 
 #[cfg(test)]
+mod agent_facing_text_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

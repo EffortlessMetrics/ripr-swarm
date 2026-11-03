@@ -1,5 +1,35 @@
 use std::path::{Component, Path, PathBuf};
 
+use crate::output::path::{host_paths_case_insensitive, path_identity_key_on};
+
+/// Equality key for matching a git-spelled [`ChangedFile`](super::ChangedFile)
+/// path against a walked or indexed workspace path (#8419).
+///
+/// Display and `ChangedFile.path` keep git's byte spelling (#7937). This key
+/// is membership only: on macOS it folds NFC/NFD through the shared owner
+/// [`path_identity_key_on`]; Linux and Windows keep byte-distinct names
+/// distinct.
+pub(crate) fn diff_path_identity_key(path: &Path) -> String {
+    path_identity_key_on(path, cfg!(windows), host_paths_case_insensitive())
+}
+
+/// [`diff_path_identity_key`] with host rules explicit so the macOS
+/// normalization fold is testable on every host (#8419).
+#[cfg(test)]
+pub(crate) fn diff_path_identity_key_with(
+    path: &Path,
+    backslash_is_separator: bool,
+    case_insensitive: bool,
+    normalization_insensitive: bool,
+) -> String {
+    crate::output::path::path_identity_key_with(
+        path,
+        backslash_is_separator,
+        case_insensitive,
+        normalization_insensitive,
+    )
+}
+
 /// Deepest accepted diff path, in components. Real repositories sit far below
 /// this; a crafted header with tens of thousands of `a/` components made
 /// ancestor walks and path comparisons quadratic in time and memory (hang or
@@ -383,6 +413,16 @@ impl DecodedPath {
     }
 }
 
+/// Native identity of one git path token under `core.quotePath=true`.
+///
+/// C-quoted tokens decode octal and backslash escapes the same way the
+/// unified-diff parser does (#3601, #3609). Unquoted tokens pass through.
+pub(crate) fn native_path_from_git_token(raw: &str) -> PathBuf {
+    parse_diff_path_token(raw)
+        .map(|decoded| decoded.as_path().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from(raw.trim().trim_matches('"')))
+}
+
 fn parse_diff_path_token(raw: &str) -> Option<DecodedPath> {
     let raw = raw.trim_end_matches('\r');
     if let Some(quoted) = raw.strip_prefix('"') {
@@ -654,6 +694,40 @@ pub(crate) fn artifact_root_gitignore_entry(root: &Path) -> String {
     entry
 }
 
+/// The untrack command printed to the user, bound to the selected root:
+/// pasted from another directory, a bare `git rm --cached` would untrack
+/// files in whatever repository the shell happens to be in (#8301 review).
+/// The default `.` root keeps the short form. The command pins the global
+/// `--literal-pathspecs` switch and passes each root PLAIN: shell quoting
+/// only protects the argument from the shell, while git pathspec magic
+/// (`*`, `?`, `[`) would otherwise wildcard-match a configured root like
+/// `build/cache*` against `build/cache1` (PR #8901 review, graphite
+/// finding) — and the earlier glob-escaped form (`build/cache\*`) does not
+/// match the literal-star directory's indexed descendants at all (verified
+/// against git 2.47; the escaped form fails both with and without
+/// `--literal-pathspecs`). Plain roots under `--literal-pathspecs` match
+/// literal-star directories and glob-free roots alike.
+///
+/// One builder for every surface that names the cure — doctor's tracking
+/// fact, the first-`check` ignore note, and the tracked-cache-base advisory
+/// (#12432) — so one condition carries one wording and a binding fix lands
+/// everywhere at once.
+pub(crate) fn untrack_artifacts_command(root: &Path, artifact_roots: &[PathBuf]) -> String {
+    let pathspecs = artifact_roots
+        .iter()
+        .map(|root| crate::agent::loop_commands::shell_arg(&artifact_root_pathspec(root)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if root == Path::new(".") {
+        format!("git --literal-pathspecs rm --cached -r -- {pathspecs}")
+    } else {
+        format!(
+            "git -C {} --literal-pathspecs rm --cached -r -- {pathspecs}",
+            crate::agent::loop_commands::shell_arg(&crate::output::path::human_path(root))
+        )
+    }
+}
+
 /// Whether a repository-relative diff path names content under one of
 /// ripr's own artifact roots (#7663, relocated bases #8751). Python
 /// `.gitignore` templates do not cover `target/`, so a routine `git add -A`
@@ -675,6 +749,53 @@ pub(crate) fn is_ripr_artifact_path_under(path: &Path, roots: &[PathBuf]) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::path::path_identity_key_with;
+
+    #[test]
+    fn nfc_diff_path_matches_nfd_walk_path_only_when_normalization_insensitive() {
+        // #8419: Linux-runnable macOS rule. NFC git spelling vs NFD walk
+        // spelling of café.rs share an identity key only when the fold is on.
+        let nfc = Path::new("caf\u{e9}.rs");
+        let nfd = Path::new("cafe\u{301}.rs");
+        assert_eq!(
+            path_identity_key_with(nfc, false, true, true),
+            path_identity_key_with(nfd, false, true, true),
+            "NFC and NFD café.rs must match when normalization is injected"
+        );
+        assert_eq!(
+            diff_path_identity_key_with(nfc, false, true, true),
+            diff_path_identity_key_with(nfd, false, true, true)
+        );
+        assert_ne!(
+            path_identity_key_with(nfc, false, true, false),
+            path_identity_key_with(nfd, false, true, false),
+            "NFC and NFD café.rs must stay distinct when the fold is off"
+        );
+        assert_ne!(
+            diff_path_identity_key_with(nfc, false, true, false),
+            diff_path_identity_key_with(nfd, false, true, false)
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn host_diff_path_identity_key_keeps_nfc_and_nfd_distinct_off_macos() {
+        assert_ne!(
+            diff_path_identity_key(Path::new("caf\u{e9}.rs")),
+            diff_path_identity_key(Path::new("cafe\u{301}.rs")),
+            "Linux/Windows host keys must not fold NFC/NFD (#8419)"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn host_diff_path_identity_key_folds_nfc_and_nfd_on_macos() {
+        assert_eq!(
+            diff_path_identity_key(Path::new("caf\u{e9}.rs")),
+            diff_path_identity_key(Path::new("cafe\u{301}.rs")),
+            "macOS host keys fold NFC/NFD café.rs (#8419)"
+        );
+    }
 
     #[test]
     fn artifact_root_gitignore_entry_escapes_patterns_separately_from_paths() {
@@ -1207,6 +1328,15 @@ mod tests {
         // byte-for-byte, on every platform.
         let decoded = parse_new_path_marker("+++ \"b/caf\\303\\251.rs\"");
         assert_eq!(decoded, Some(PathBuf::from("café.rs")));
+        assert_eq!(
+            native_path_from_git_token("\"venv/caf\\303\\251.py\""),
+            PathBuf::from("venv/café.py"),
+            "numstat C-quoted tokens must decode to the same native identity"
+        );
+        assert_eq!(
+            native_path_from_git_token("src/plain.py"),
+            PathBuf::from("src/plain.py")
+        );
     }
 
     #[cfg(unix)]

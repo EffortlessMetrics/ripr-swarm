@@ -37,7 +37,7 @@ Preview actionability
   gap state: unknown
   category: missing_target_shape
   repair packet ready: false
-  why not actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  why not actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
   repair route: add probe-specific discriminator extraction for this expression before repair packet projection
   missing fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
   evidence needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
@@ -68,7 +68,7 @@ TypeScript preview card (advisory)
   oracle: exact_value (strong)
   suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
   repair packet ready: false
-  why not actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  why not actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
   repair route: add probe-specific discriminator extraction for this expression before repair packet projection
   limits:
     - Syntax-first TypeScript/JavaScript preview evidence only.
@@ -77,12 +77,13 @@ TypeScript preview card (advisory)
 
 TypeScript repair packet (advisory)
   status: not actionable
-  limitation: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  limitation: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
   next capability needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
 
 Next step
   TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/ts_field_update_overwrite_computed/input --diff <cwd>/fixtures/ts_field_update_overwrite_computed/diff.patch --mode fast probe:src_stats.ts:typescript_preview:d2fea2a2
   ripr context --root <cwd>/fixtures/ts_field_update_overwrite_computed/input --diff <cwd>/fixtures/ts_field_update_overwrite_computed/diff.patch --mode fast --at probe:src_stats.ts:typescript_preview:d2fea2a2
 

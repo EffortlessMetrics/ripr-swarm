@@ -27,6 +27,11 @@
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_lib.py:python_preview:fc6faa73",
         "family": "predicate",
@@ -48,7 +53,7 @@
         {"kind":"unknown","text":"if not x:","line":2}
       ],
       "evidence": ["owner: pick", "owner_kind: function", "test_framework: pytest (test_pick)", "test_verify_command: python -m pytest tests/test_lib.py::test_pick (test_pick)", "related_test_relation: syntactic_call (test_pick)", "test_oracle: exact_value strong (test_pick)"],
-      "missing": ["Related Python test reaches `pick` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `pick` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {

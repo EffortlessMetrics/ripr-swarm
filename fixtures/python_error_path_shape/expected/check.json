@@ -11,7 +11,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_validation.py:python_preview:82db397b",
+      "id": "probe:src_validation.py:python_preview:v1-4edbf6b8",
       "canonical_gap_id": "gap:python:src/validation.py:require_positive:exception_path:error_path:valueerror_positive_required",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -27,8 +27,14 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "oracle_below_strong", "summary": "related tests hold no exact-value oracle (weak or smoke assertion)"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.",
       "probe": {
-        "id": "probe:src_validation.py:python_preview:82db397b",
+        "id": "probe:src_validation.py:python_preview:v1-4edbf6b8",
         "family": "error_path",
         "delta": "control",
         "file": "src/validation.py",
@@ -125,8 +131,8 @@
       "stop_reasons": [],
       "oracle_kind": "broad_error",
       "oracle_strength": "weak",
-      "recommended_next_step": "Python preview: strengthen the existing related test with an exception assertion for missing discriminator `raises ValueError matching \"positive required\"`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with an exception assertion for missing discriminator `raises ValueError matching \"positive required\"`.",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exception assertion for the missing check `raises ValueError matching \"positive required\"`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exception assertion for the missing check `raises ValueError matching \"positive required\"`.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",

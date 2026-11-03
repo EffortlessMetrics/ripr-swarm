@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A `Type::name(..)` call in a test is no longer credited to a trait-impl operator or method as its sole implementation when an impl the index cannot see could define the same method for that type: a `#[derive(..)]` naming a derive that defines it (or one ripr cannot read), a blanket `impl<T> Trait for T` that defines it, or a macro in the workspace that writes an `impl` for the type or is invoked naming it. Such a call now stays `static_unknown`. Spelling collisions between types only ever reduce this credit (#10625).

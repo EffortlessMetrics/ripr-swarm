@@ -49,7 +49,18 @@ pub(crate) fn typescript_actionability_for(
     has_owner_call_evidence: bool,
     missing_discriminators: &[MissingDiscriminatorFact],
     observed_evidence_label: &'static str,
+    private_member_unknown: bool,
 ) -> TypeScriptActionability {
+    if private_member_unknown {
+        return TypeScriptActionability {
+            gap_state: EvidenceState::Unknown.as_str(),
+            category: "private_member_reach_unknown",
+            why_not_actionable: "reach into the private member through public callers is not established; no related-test path or missing assertion is inferred".to_string(),
+            repair_route: "establish reach through a public caller before selecting an assertion shape; a private member cannot be called directly from a test".to_string(),
+            missing_fields: vec!["related_test_or_observer"],
+            evidence_needed: "modeled public-to-private reach and an observer of the changed behavior",
+        };
+    }
     if let Some(limit) = static_limit {
         return TypeScriptActionability {
             gap_state: EvidenceState::StaticLimitation.as_str(),
@@ -137,7 +148,7 @@ pub(crate) fn typescript_actionability_for(
             gap_state: EvidenceState::Unknown.as_str(),
             category: "missing_target_shape",
             why_not_actionable:
-                "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+                "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
                     .to_string(),
             repair_route:
                 "add probe-specific discriminator extraction for this expression before repair packet projection"
@@ -232,4 +243,125 @@ pub(crate) fn typescript_raw_evidence_ref(
         parts.push(format!("owner={}", owner.name));
     }
     format!("raw_evidence_ref: {}", parts.join(";"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn sample_missing_discriminator() -> MissingDiscriminatorFact {
+        MissingDiscriminatorFact {
+            value: "amount == threshold".to_string(),
+            reason: "missing exact boundary".to_string(),
+            flow_sink: None,
+        }
+    }
+
+    #[test]
+    fn private_member_unknown_maps_to_non_actionable_unknown_state() {
+        let actionability = typescript_actionability_for(
+            &ExposureClass::StaticUnknown,
+            None,
+            false,
+            &[],
+            "related test",
+            true,
+        );
+        assert_eq!(actionability.category, "private_member_reach_unknown");
+        assert_eq!(
+            EvidenceState::parse(actionability.gap_state),
+            Some(EvidenceState::Unknown)
+        );
+        assert!(!EvidenceState::Unknown.is_actionable());
+    }
+
+    #[test]
+    fn private_member_unknown_wins_over_incomplete_packet_branch() {
+        let fact = sample_missing_discriminator();
+        let actionability = typescript_actionability_for(
+            &ExposureClass::StaticUnknown,
+            None,
+            true,
+            std::slice::from_ref(&fact),
+            "related test",
+            true,
+        );
+        assert_eq!(actionability.category, "private_member_reach_unknown");
+        assert_eq!(
+            EvidenceState::parse(actionability.gap_state),
+            Some(EvidenceState::Unknown)
+        );
+        assert!(!EvidenceState::Unknown.is_actionable());
+    }
+
+    #[test]
+    fn incomplete_repair_packet_when_discriminators_present() {
+        let fact = sample_missing_discriminator();
+        let actionability = typescript_actionability_for(
+            &ExposureClass::StaticUnknown,
+            None,
+            true,
+            std::slice::from_ref(&fact),
+            "related test",
+            false,
+        );
+        assert_eq!(actionability.category, "incomplete_repair_packet");
+        assert_eq!(
+            EvidenceState::parse(actionability.gap_state),
+            Some(EvidenceState::Unknown)
+        );
+        assert!(!EvidenceState::Unknown.is_actionable());
+        assert!(!actionability.missing_fields.is_empty());
+    }
+
+    #[test]
+    fn every_returnable_gap_state_is_an_evidence_state_word() {
+        let limit = TypeScriptStaticLimit {
+            kind: StaticLimitKind::DynamicDispatch,
+            evidence: Vec::new(),
+            missing: String::new(),
+            repair_route: "Repair route: resolve the dispatch.".to_string(),
+        };
+        let one_fact = sample_missing_discriminator();
+        let mut categories = HashSet::new();
+        for class in ExposureClass::ALL {
+            for static_limit in [None, Some(&limit)] {
+                for owner_call in [false, true] {
+                    for private_member in [false, true] {
+                        for missing_discriminators in [&[][..], std::slice::from_ref(&one_fact)] {
+                            let actionability = typescript_actionability_for(
+                                &class,
+                                static_limit,
+                                owner_call,
+                                missing_discriminators,
+                                "related test",
+                                private_member,
+                            );
+                            categories.insert(actionability.category);
+                            let gap_state = actionability.gap_state;
+                            assert!(
+                                EvidenceState::parse(gap_state).is_some(),
+                                "gap_state `{gap_state}` for {class:?} is outside EvidenceState",
+                            );
+                            assert!(
+                                !EvidenceState::is_actionable_word(gap_state),
+                                "gap_state `{gap_state}` for {class:?} must not be actionable",
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        for required in [
+            "private_member_reach_unknown",
+            "missing_target_shape",
+            "incomplete_repair_packet",
+        ] {
+            assert!(
+                categories.contains(required),
+                "drift guard sweep must exercise `{required}`"
+            );
+        }
+    }
 }

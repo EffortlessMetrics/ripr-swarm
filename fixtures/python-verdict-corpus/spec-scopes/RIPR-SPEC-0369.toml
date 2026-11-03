@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0369"
+scope = "out"
+reason = "The verus! macro region and verification-prelude glob handling is a Rust-only contract; not a python verdict example"

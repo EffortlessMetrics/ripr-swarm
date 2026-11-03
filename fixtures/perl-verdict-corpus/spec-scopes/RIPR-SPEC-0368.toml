@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0368"
+scope = "out"
+reason = "Disclosure of verifier-only contract and ghost edits is a Rust-only contract; not a perl verdict example"

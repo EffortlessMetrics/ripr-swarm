@@ -1,0 +1,46 @@
+[[extend]]
+id = "RIPR-SPEC-0117"
+code = [
+  "crates/ripr/src/analysis/syntax/proptest.rs",
+  "crates/ripr/src/analysis/facts/proptest.rs",
+  "crates/ripr/src/analysis/facts/index.rs",
+  "crates/ripr/src/analysis/facts/mod.rs",
+  "crates/ripr/src/analysis/workspace/assertion_dependency/registry.rs",
+  "crates/ripr/src/analysis/classify/owner_pin.rs",
+  "crates/ripr/src/analysis/classify/argument_fold.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
+  "crates/ripr/src/analysis/value_resolution.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+  "crates/ripr/src/domain/language_capability.rs",
+]
+tests = [
+  "crates/ripr/src/analysis/syntax/proptest.rs::original_empty_string_property_keeps_typed_borrow_and_result_flow",
+  "crates/ripr/src/analysis/syntax/proptest.rs::original_empty_string_profile_refuses_changed_bindings_and_flow",
+  "crates/ripr/src/analysis/syntax/proptest.rs::opaque_property_tokens_cannot_change_the_admitted_siblings_macro_bindings",
+  "crates/ripr/src/analysis/syntax/proptest.rs::transitive_macro_dependencies_need_no_literal_call_to_be_shadowed",
+  "crates/ripr/src/analysis/syntax/proptest.rs::a_refused_sibling_keeps_its_limitation_without_erasing_the_supported_property",
+  "crates/ripr/src/analysis/facts/proptest_tests.rs::original_empty_property_receipts_survive_index_paths_and_revoke_on_unchanged_source",
+  "crates/ripr/tests/registered_proptest_profile/empty_string.rs::original_empty_string_has_nonzero_native_and_cli_owner_evidence",
+  "crates/ripr/tests/registered_proptest_profile/empty_string.rs::original_empty_string_rejects_shadowed_discarded_and_rewritten_evidence",
+  "crates/ripr/tests/registered_proptest_profile/empty_string.rs::original_empty_string_refuses_consumer_standard_crate_substitution",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0197"
+code = ["crates/ripr/src/analysis/classify/owner_pin.rs"]
+tests = [
+  "crates/ripr/tests/registered_proptest_profile/empty_string.rs::original_empty_string_has_nonzero_native_and_cli_owner_evidence",
+  "crates/ripr/tests/registered_proptest_profile/empty_string.rs::original_empty_string_rejects_shadowed_discarded_and_rewritten_evidence",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0005"
+code = [
+  "crates/ripr/src/analysis/value_resolution.rs",
+  "crates/ripr/src/analysis/classify/argument_fold.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
+]
+tests = [
+  "crates/ripr/src/analysis/facts/proptest_tests.rs::original_empty_property_receipts_survive_index_paths_and_revoke_on_unchanged_source",
+  "crates/ripr/tests/registered_proptest_profile/empty_string.rs::original_empty_string_has_nonzero_native_and_cli_owner_evidence",
+]

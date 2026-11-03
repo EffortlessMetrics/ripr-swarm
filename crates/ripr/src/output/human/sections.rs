@@ -1,7 +1,7 @@
 use crate::config::RiprConfig;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, ExposureClass, Finding, LanguageId, LanguageStatus,
-    MISSING_DISCRIMINATOR_VALUE_PREFIX, ProbeFamily, RiprEvidence, StageState,
+    MISSING_DISCRIMINATOR_VALUE_PREFIX, ProbeFamily, RelatedTestMiss, RiprEvidence, StageState,
 };
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
@@ -58,9 +58,9 @@ pub(super) fn trim_field_period(value: &str) -> &str {
 pub(crate) const HUMAN_EVIDENCE_LEGEND: &str = concat!(
     "    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;\n",
     "      propagation = changed effect reaches output; observation = related test/assertion evidence;\n",
-    "      discriminator = assertion distinguishes intended from wrong behavior\n",
+    "      assertion = a test assertion tells intended from wrong behavior\n",
     "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
-    "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused\n",
+    "      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused\n",
     "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
     "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
     "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
@@ -155,6 +155,7 @@ pub(crate) fn render_finding_digest_with_config(
     // WHY the finding is at this class without reading the full form.
     let refused_macro = refused_assertion_macro(finding);
     if let Some(hint) = unresolved_fixture_hint(finding)
+        .or_else(|| crate::domain::guard_refusal_digest_classification_hint(finding))
         .or_else(|| classification_hint(&finding.class, &finding.ripr, refused_macro))
     {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
@@ -204,7 +205,7 @@ pub(crate) fn render_finding_digest_with_config(
         // A typed static limitation is the analyzer naming what it could not
         // bind, never an assertion a test could add.
         let label = if finding.class == ExposureClass::Exposed {
-            "Discriminator (observed, advisory)"
+            "Check (observed, advisory)"
         } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX)
             || ((matches!(
                 finding.class,
@@ -244,8 +245,18 @@ pub(crate) fn render_finding_digest_with_config(
         // with no pointer to the rest). Wrap like the next-step and
         // not-credited lines instead of truncating; `--format human-full`
         // keeps the same text in its Weakness section.
-        let value = trim_field_period(&missing.split_whitespace().collect::<Vec<_>>().join(" "))
-            .to_string();
+        let plain_missing = if missing == "No strong discriminator was detected" {
+            "No strong check was detected"
+        } else {
+            missing.as_str()
+        };
+        let value = trim_field_period(
+            &plain_missing
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+        .to_string();
         let prefix = format!("  {label}: ");
         if prefix.chars().count() + value.chars().count() <= LINE_BUDGET {
             out.push_str(&format!("{prefix}{value}\n"));
@@ -271,11 +282,25 @@ pub(crate) fn render_finding_digest_with_config(
             "Related test".to_string()
         };
         // #5344: say why the named test misses, so the reader can open it
-        // and disagree without re-deriving the analysis.
-        let why =
+        // and disagree without re-deriving the analysis. Borrow the typed
+        // refusal only when it names this headline row (#6541).
+        let why = (matches!(test.miss, Some(RelatedTestMiss::AssertionNotCredited))
+            .then(|| {
+                let entry = crate::domain::assertion_not_credited_entry_for_test(
+                    &finding.evidence,
+                    &test.name,
+                )?;
+                let body = entry.strip_prefix(crate::domain::ASSERTION_NOT_CREDITED_PREFIX)?;
+                let reason = body.rsplit_once(": ").map(|(_, reason)| reason.trim())?;
+                crate::domain::guard_refusal_kind(reason)?;
+                Some(format!(" ({entry})"))
+            })
+            .flatten())
+        .or_else(|| {
             crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family)
                 .map(|why| format!(" ({why})"))
-                .unwrap_or_default();
+        })
+        .unwrap_or_default();
         out.push_str(&format!(
             "  {label}: {}:{} {}{why}\n",
             display_path(&test.file),
@@ -337,7 +362,7 @@ pub(crate) fn render_finding_digest_with_config(
         // every finding — and keep only the per-stage prose detail inside
         // the window.
         out.push_str(&format!(
-            "  Evidence: reach {} · infection {} · propagation {} · observation {} · discriminator {}\n",
+            "  Evidence: reach {} · infection {} · propagation {} · observation {} · assertion {}\n",
             finding.ripr.reach.state.as_str(),
             finding.ripr.infect.state.as_str(),
             finding.ripr.propagate.state.as_str(),
@@ -570,7 +595,7 @@ pub(crate) fn render_finding_with_config(
     root: &Path,
     wording: JsonPointerWording,
 ) -> String {
-    render_finding_with_shared_sections(finding, config, root, wording, None, None)
+    render_finding_with_shared_sections(finding, config, root, wording, None, None, true)
 }
 
 pub(super) fn render_finding_with_shared_sections(
@@ -580,6 +605,7 @@ pub(super) fn render_finding_with_shared_sections(
     wording: JsonPointerWording,
     shared: Option<&super::shared::SharedSections>,
     files: Option<&[Option<std::path::PathBuf>]>,
+    plain_repair_card_wording: bool,
 ) -> String {
     let mut out = String::new();
     let severity = display_severity(finding, config);
@@ -619,11 +645,8 @@ pub(super) fn render_finding_with_shared_sections(
     // Revision labelling (#3281): base-side evidence stays visible here —
     // the human surface explicitly supports historical context — but is
     // labelled non-actionable so it cannot read as a current obligation.
-    if !finding.is_candidate_actionable() {
-        out.push_str(&format!(
-            "  source:  {} — base-side evidence, not a candidate edit target\n",
-            finding.source_currentness.as_str()
-        ));
+    if let Some(disclosure) = finding.source_currentness_disclosure() {
+        out.push_str(&format!("  source:  {disclosure}\n"));
     }
 
     // #10691: lead with the plain change type; the stable family/delta tokens
@@ -750,7 +773,7 @@ pub(super) fn render_finding_with_shared_sections(
     }
 
     if let Some(card) = python_repair_card(finding) {
-        push_python_repair_card(&mut out, &card, finding, root);
+        push_python_repair_card(&mut out, &card, finding, root, plain_repair_card_wording);
     } else if let Some(card) = typescript_preview_card(finding) {
         push_typescript_preview_card(&mut out, &card);
         // §PR8 (RIPR-SPEC-0088): surface the full work-packet field-note when
@@ -951,6 +974,7 @@ fn push_python_repair_card(
     card: &PythonRepairCard,
     finding: &Finding,
     root: &Path,
+    plain_wording: bool,
 ) {
     out.push_str("\nPython repair card (preview/advisory)\n");
     out.push_str(&format!("  card version: {}\n", card.card_version));
@@ -967,7 +991,12 @@ fn push_python_repair_card(
         card.current_test_evidence
     ));
     out.push_str(&format!(
-        "  missing discriminator: {}\n",
+        "  {}: {}\n",
+        if plain_wording {
+            "missing check"
+        } else {
+            crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_LABEL
+        },
         card.missing_discriminator
     ));
     out.push_str(&format!(
@@ -1006,7 +1035,12 @@ fn push_python_repair_card(
     out.push_str(&format!("  receipt guidance: {}\n", card.receipt_guidance));
     out.push_str("  stop conditions:\n");
     for condition in &card.stop_conditions {
-        out.push_str(&format!("    - {condition}\n"));
+        let line = if plain_wording {
+            super::evidence_lines::plain_stop_condition(condition)
+        } else {
+            condition.clone()
+        };
+        out.push_str(&format!("    - {line}\n"));
     }
     out.push_str("  limits:\n");
     for limit in &card.limits {
@@ -1869,8 +1903,8 @@ mod trim_field_period_tests {
     #[test]
     fn strips_a_single_trailing_period() {
         assert_eq!(
-            trim_field_period("add a co-located test so a discriminator exists."),
-            "add a co-located test so a discriminator exists"
+            trim_field_period("add a co-located test so an assertion can notice if it is wrong."),
+            "add a co-located test so an assertion can notice if it is wrong"
         );
     }
 
