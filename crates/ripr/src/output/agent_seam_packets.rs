@@ -1658,14 +1658,21 @@ pub(crate) fn targeted_test_brief_outline_for_classified_seam(
         .into_iter()
         .next()
         .map(|value| value.value);
-    let assertion_shape = assertion_shape_for_entry(entry);
+    // #12711: a route that proposes a pushed collection's contents check
+    // names that check here too, so the brief does not suggest a
+    // `_full_contents` test while asking for observer setup.
+    let assertion_shape = crate::analysis::repair_route::collection_contents_check_suggestion(
+        entry,
+        &eligibility.readiness,
+    )
+    .unwrap_or_else(|| assertion_shape_for_entry(entry).human_summary());
 
     TargetedTestBriefOutline {
         suggested_file: recommended.file,
         suggested_name: recommended.name,
         suggested_reason: recommended.reason,
         candidate_value,
-        assertion_shape: assertion_shape.human_summary(),
+        assertion_shape,
     }
 }
 
@@ -2543,7 +2550,10 @@ fn push_packet_json(
     ));
     out.push_str(&format!(
         "\"discriminate\": \"{}\"",
-        evidence.discriminate.state.as_str()
+        crate::output::gap_vocabulary::seam_discriminate_evidence_token(
+            entry.class,
+            &evidence.discriminate.state,
+        )
     ));
     out.push_str("},\n");
 
@@ -2716,6 +2726,7 @@ fn push_packet_json(
                 seam.owner_call(),
                 Some(seam.required_discriminator()),
                 evidence,
+                crate::analysis::field_write_read(seam),
             )
         } else {
             Vec::new()
@@ -2930,12 +2941,20 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
             "producer-owned route readiness is not eligible for a repair target",
         );
     }
+    // #12711: the new test for a pushed collection checks its full contents,
+    // so its suggested name does not call it an observer.
+    let name = if readiness.proposes_collection_contents_check(entry.class) {
+        crate::analysis::repair_route::collection_contents_test_name(owner_short)
+    } else {
+        name
+    };
     let selected_target = match &readiness.target_selection {
         RepairTargetSelection::Existing(selected_target) => selected_target,
         RepairTargetSelection::Proposed(proposal) => {
+            let file = display_path(&proposal.file);
             return RecommendedTest {
-                name,
-                file: display_path(&proposal.file),
+                name: uniquify_recommended_test_name(&name, entry, &file),
+                file,
                 target_kind: match proposal.kind {
                     NewTestKind::InlineUnit => RecommendedTestTargetKind::NewInlineTestModule,
                     NewTestKind::Integration => RecommendedTestTargetKind::NewIntegrationTest,
@@ -2963,14 +2982,34 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
             "producer-owned target identity has no matching related-test record",
         );
     };
+    let file = display_path(&test.file);
     RecommendedTest {
-        name,
-        file: display_path(&test.file),
+        name: uniquify_recommended_test_name(&name, entry, &file),
+        file,
         target_kind: RecommendedTestTargetKind::ExistingTest,
         symbol_id: Some(selected_target.symbol_id().0.clone()),
         source: RecommendedTestSource::RelatedTestEvidence,
         reason: "place the new targeted test next to the producer-owned related test".to_string(),
     }
+}
+
+/// Avoid suggesting a new test name that already exists in the target file
+/// (#4217 F15-9). Pilot and packet surfaces reuse this recommendation.
+fn uniquify_recommended_test_name(base: &str, entry: &ClassifiedSeam, target_file: &str) -> String {
+    let taken: Vec<&str> = entry
+        .evidence
+        .related_tests
+        .iter()
+        .filter(|test| display_path(&test.file) == target_file)
+        .map(|test| test.test_name.as_str())
+        .collect();
+    if !taken.contains(&base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|suffix| format!("{base}_{suffix}"))
+        .find(|candidate| !taken.contains(&candidate.as_str()))
+        .unwrap_or_else(|| format!("{base}_2"))
 }
 
 /// Whether `ripr agent repair` can route its edit to the target that
@@ -3325,6 +3364,7 @@ pub(crate) fn assertion_shape_for_entry(entry: &ClassifiedSeam) -> AssertionShap
             entry.seam.owner_call(),
             Some(entry.seam.required_discriminator()),
             &entry.evidence,
+            crate::analysis::field_write_read(&entry.seam),
         )
     };
     assertion_shape_from_guidance(guidance)
@@ -3340,6 +3380,7 @@ fn assertion_guidance_for(
     owner_call: &OwnerCallShape,
     required: Option<&RequiredDiscriminator>,
     evidence: &TestGripEvidence,
+    field_write: Option<crate::analysis::FieldWriteRead>,
 ) -> AssertionGuidance {
     let assertion_kind = assertion_kind_for(kind);
     let observer_required = match kind {
@@ -3347,13 +3388,20 @@ fn assertion_guidance_for(
         SeamKind::CallPresence => Some(ObserverKind::CallSite),
         _ => None,
     };
-    let derived_example = suggested_assertions_for(kind, owner, owner_call, required, evidence)
-        .into_iter()
-        .find(|suggestion| {
-            let trimmed = suggestion.trim_start();
-            !trimmed.starts_with("//") && trimmed.contains("assert")
-        });
-    let basis = if assertion_template_uses_required_discriminator(kind, required) {
+    let derived_example =
+        suggested_assertions_for(kind, owner, owner_call, required, evidence, field_write)
+            .into_iter()
+            .find(|suggestion| {
+                let trimmed = suggestion.trim_start();
+                !trimmed.starts_with("//") && trimmed.contains("assert")
+            });
+    let basis = if assertion_template_uses_required_discriminator(kind, required)
+        || (matches!(kind, SeamKind::FieldConstruction)
+            && field_write.is_some()
+            && matches!(
+                required,
+                Some(RequiredDiscriminator::FieldValue { field }) if !field.trim().is_empty()
+            )) {
         Some(AssertionBasis::SeamRequiredDiscriminator)
     } else if required.is_none() && !evidence.observed_values.is_empty() {
         Some(AssertionBasis::ObservedValueFact)
@@ -3616,12 +3664,67 @@ fn oracle_strength_recipe(oracle_kind: &str, current_strength: &str) -> String {
 
 /// Best-effort assertion templates the agent can fill in. These are
 /// guidance, not generated tests — placeholders are intentional.
+/// Path assigned in a `self.<path>` field write (`timeout` for `self.timeout = t`).
+fn field_write_assignment_path(expression: &str) -> Option<&str> {
+    let rest = expression.trim().strip_prefix("self.")?;
+    let path_len = rest
+        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'))
+        .unwrap_or(rest.len());
+    let (path, after) = rest.split_at(path_len);
+    let after = after.trim_start();
+    let op_len = after.find('=')?;
+    let assigns = matches!(
+        &after[..op_len],
+        "" | "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
+    ) && !after[op_len + 1..].starts_with(['=', '>']);
+    (assigns
+        && !path.is_empty()
+        && path.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                && part
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        }))
+    .then_some(path)
+}
+
+fn field_construction_field_path(
+    required: Option<&RequiredDiscriminator>,
+    field_write: Option<crate::analysis::FieldWriteRead>,
+) -> &str {
+    if field_write.is_none() {
+        return "field";
+    }
+    if let Some(RequiredDiscriminator::FieldValue { field }) = required {
+        let field = field.trim();
+        if let Some(path) = field_write_assignment_path(field) {
+            return path;
+        }
+        if !field.is_empty() && !field.contains('=') {
+            return field;
+        }
+    }
+    "/* changed field */"
+}
+
+fn field_write_assertion_receiver(owner_call: &OwnerCallShape) -> String {
+    match owner_call {
+        OwnerCallShape::Method { self_type } => format!("/* {self_type} value */"),
+        _ => "subject".to_string(),
+    }
+}
+
 fn suggested_assertions_for(
     kind: SeamKind,
     owner: &str,
     owner_call: &OwnerCallShape,
     required: Option<&RequiredDiscriminator>,
     evidence: &TestGripEvidence,
+    field_write: Option<crate::analysis::FieldWriteRead>,
 ) -> Vec<String> {
     let owner_short = owner.rsplit("::").next().unwrap_or(owner);
     // #5357: the owner's parser facts decide the call syntax, so a method
@@ -3662,10 +3765,31 @@ fn suggested_assertions_for(
             "assert_eq!({}, /* expected */)",
             call("/* input */")
         )],
-        SeamKind::FieldConstruction => vec![format!(
-            "let result = {}; assert_eq!(result.field, /* expected */);",
-            call("/* input */")
-        )],
+        SeamKind::FieldConstruction => {
+            use crate::analysis::FieldWriteRead;
+            let field = field_construction_field_path(required, field_write);
+            match field_write {
+                Some(FieldWriteRead::Receiver) => {
+                    let receiver = field_write_assertion_receiver(owner_call);
+                    vec![format!(
+                        "{}; assert_eq!({receiver}.{field}, /* expected */);",
+                        call("/* input */")
+                    )]
+                }
+                Some(FieldWriteRead::CallResult) => vec![format!(
+                    "let result = {}; assert_eq!(result.{field}, /* expected */);",
+                    call("/* input */")
+                )],
+                Some(FieldWriteRead::Unspecified) => vec![
+                    "// assert the changed field after the call with an exact equality check"
+                        .to_string(),
+                ],
+                None => vec![format!(
+                    "let result = {}; assert_eq!(result.field, /* expected */);",
+                    call("/* input */")
+                )],
+            }
+        }
         SeamKind::SideEffect => vec![format!(
             "// arrange a mock/observer; assert {} produced the expected effect",
             call("...")
@@ -4128,6 +4252,32 @@ mod tests {
     }
 
     #[test]
+    fn outline_names_the_contents_check_not_observer_setup_for_a_ready_push() -> Result<(), String>
+    {
+        // #12711: the outline's assertion guidance agrees with the suggested
+        // `_full_contents` name for a ready pushed collection, and a parked
+        // route keeps its not-applicable outline.
+        use crate::analysis::repair_route::marked_push_seam_for_tests;
+        let ready = marked_push_seam_for_tests(SeamGripClass::WeaklyGripped);
+        let outline = targeted_test_brief_outline_for_classified_seam(&ready);
+        if !outline.assertion_shape.contains("full contents of `buf`")
+            || outline.assertion_shape.contains("observer")
+            || !outline.suggested_name.ends_with("_full_contents")
+        {
+            return Err(format!(
+                "ready push outline: {} / {}",
+                outline.suggested_name, outline.assertion_shape
+            ));
+        }
+        let parked = marked_push_seam_for_tests(SeamGripClass::Suppressed);
+        let outline = targeted_test_brief_outline_for_classified_seam(&parked);
+        if !outline.is_not_applicable() || outline.assertion_shape != "not_applicable" {
+            return Err(format!("parked push outline: {}", outline.assertion_shape));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn targeted_outline_accessor_identifies_limited_routes() {
         let limited = TargetedTestBriefOutline {
             suggested_file: "not_applicable".to_string(),
@@ -4387,6 +4537,29 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn weakly_gripped_packet_evidence_discriminate_is_not_yes() -> Result<(), String> {
+        let json = render_agent_seam_packets_json(&[weakly_gripped_classified()], None);
+        if json.contains("\"discriminate\": \"yes\"") {
+            return Err(format!(
+                "discriminate must not be yes for weakly_gripped packet: {json}"
+            ));
+        }
+        if !json.contains("\"discriminate\": \"weak\"") {
+            return Err(format!(
+                "expected reconciled weak discriminate token: {json}"
+            ));
+        }
+        Ok(())
+    }
+
+    // No strongly-gripped keep-yes test at this surface: strongly-gripped
+    // seams are not repair-queue-visible, so packets never carry one
+    // (`given_strongly_gripped_seam_when_packets_are_requested_then_no_actionable_packet_is_emitted`).
+    // The keep-yes control lives on the repo-exposure surface
+    // (`json_keeps_discriminate_yes_for_strongly_gripped_seam`) and in the
+    // shared-token unit tests in `gap_vocabulary`.
 
     #[test]
     fn missing_discriminators_carry_value_and_reason_objects() -> Result<(), String> {
@@ -6563,6 +6736,55 @@ mod tests {
     }
 
     #[test]
+    fn recommended_test_name_avoids_existing_test_in_target_file() {
+        let mut entry = weakly_gripped_classified();
+        let expected_base = recommended_test_for(&entry).name;
+        entry
+            .evidence
+            .related_tests
+            .push(std::sync::Arc::new(RelatedTestGrip {
+                test_name: expected_base.clone(),
+                file: PathBuf::from("tests/pricing.rs"),
+                line: 40,
+                test_target: None,
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                evidence_summary: "existing targeted test".to_string(),
+                relation_reason:
+                    crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
+                relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+            }));
+        let recommended = recommended_test_for(&entry);
+        assert_eq!(
+            recommended.name,
+            format!("{expected_base}_2"),
+            "pilot must not suggest a test name that already exists in the file"
+        );
+
+        entry
+            .evidence
+            .related_tests
+            .push(std::sync::Arc::new(RelatedTestGrip {
+                test_name: format!("{expected_base}_2"),
+                file: PathBuf::from("tests/pricing.rs"),
+                line: 41,
+                test_target: None,
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                evidence_summary: "second collision".to_string(),
+                relation_reason:
+                    crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
+                relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+            }));
+        let recommended = recommended_test_for(&entry);
+        assert_eq!(
+            recommended.name,
+            format!("{expected_base}_3"),
+            "must skip every taken spelling in the target file"
+        );
+    }
+
+    #[test]
     fn producer_owned_inline_unit_proposal_projects_as_new_inline_module() {
         use crate::analysis::repair_route::{
             NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
@@ -8529,6 +8751,139 @@ mod tests {
         assert!(
             missing_oracle_shape_for(SeamKind::FieldConstruction, ExpectedSink::ReturnValue, None)
                 != by_value
+        );
+    }
+
+    /// #11726: field-write assertion templates follow `field_write_read`, not
+    /// the returned-struct paste shape.
+    fn field_write_assertion_templates(borrows: Option<bool>) -> Vec<String> {
+        let seam = RepoSeam::new(
+            "src/req.rs",
+            "req::Req::timeout",
+            SeamKind::FieldConstruction,
+            10,
+            11,
+            "self.timeout = t * 2",
+            RequiredDiscriminator::FieldValue {
+                field: "timeout".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        )
+        .with_owner_borrows_receiver(borrows)
+        .with_owner_call(OwnerCallShape::Method {
+            self_type: "Req".to_string(),
+        });
+        suggested_assertions_for(
+            seam.kind(),
+            seam.owner(),
+            seam.owner_call(),
+            Some(seam.required_discriminator()),
+            &TestGripEvidence {
+                seam_id: seam.id().clone(),
+                related_tests: Vec::new(),
+                reach: stage(StageState::Yes),
+                activate: stage(StageState::Yes),
+                propagate: stage(StageState::Weak),
+                observe: stage(StageState::Weak),
+                discriminate: stage(StageState::No),
+                observed_values: Vec::new(),
+                missing_discriminators: Vec::new(),
+                statically_contradicted_related_tests: 0,
+                new_test_target: None,
+            },
+            crate::analysis::field_write_read(&seam),
+        )
+    }
+
+    #[test]
+    fn field_write_suggested_assertion_on_receiver_reads_mutated_field() {
+        let templates = field_write_assertion_templates(Some(true));
+        assert_eq!(
+            templates,
+            vec![
+                "/* Req value */.timeout(/* input */); assert_eq!(/* Req value */.timeout, /* expected */);"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn field_write_suggested_assertion_on_call_result_when_self_by_value() {
+        let templates = field_write_assertion_templates(Some(false));
+        assert_eq!(
+            templates,
+            vec![
+                "let result = /* Req value */.timeout(/* input */); assert_eq!(result.timeout, /* expected */);"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn field_write_suggested_assertion_without_recorded_receiver_mode_is_neutral() {
+        let templates = field_write_assertion_templates(None);
+        assert_eq!(
+            templates,
+            vec![
+                "// assert the changed field after the call with an exact equality check"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn struct_field_construction_suggested_assertion_unchanged_without_field_write() {
+        let seam = seam_with(
+            "quote::build",
+            SeamKind::FieldConstruction,
+            RequiredDiscriminator::FieldValue {
+                field: "quote.total".to_string(),
+            },
+            ExpectedSink::OutputField,
+        );
+        let entry = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+        let templates = suggested_assertions_for(
+            entry.seam.kind(),
+            entry.seam.owner(),
+            entry.seam.owner_call(),
+            Some(entry.seam.required_discriminator()),
+            &entry.evidence,
+            crate::analysis::field_write_read(&entry.seam),
+        );
+        assert_eq!(
+            templates,
+            vec!["let result = build(/* input */); assert_eq!(result.field, /* expected */);"]
+        );
+    }
+
+    #[test]
+    fn field_write_assertion_guidance_example_follows_receiver_mode() {
+        let seam = RepoSeam::new(
+            "src/req.rs",
+            "req::Req::timeout",
+            SeamKind::FieldConstruction,
+            10,
+            11,
+            "self.timeout = t * 2",
+            RequiredDiscriminator::FieldValue {
+                field: "timeout".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        )
+        .with_owner_borrows_receiver(Some(true))
+        .with_owner_call(OwnerCallShape::Method {
+            self_type: "Req".to_string(),
+        });
+        let entry = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+        let shape = assertion_shape_for_entry(&entry);
+        let example = shape.example();
+        assert!(
+            example.is_some_and(|example| {
+                example.contains("assert_eq!(/* Req value */.timeout, /* expected */);")
+                    && !example.contains("let result =")
+            }),
+            "expected receiver field-write concrete example, got {:?}",
+            example
         );
     }
 }

@@ -2457,6 +2457,53 @@ fn two_workspace_folders_warn_a_generic_client_at_startup() -> Result<(), String
     shutdown_exit_and_wait(&mut session)
 }
 
+// ── Workspace-folder membership bounds (#4483) ──
+
+/// Must stay aligned with `lsp/workspace_folder_bounds.rs`.
+const WORKSPACE_FOLDER_ENTRY_LIMIT: usize = 64;
+
+#[test]
+fn initialize_rejects_workspace_folder_membership_over_limit_on_real_binary() -> Result<(), String>
+{
+    let folders: Vec<serde_json::Value> = (0..=WORKSPACE_FOLDER_ENTRY_LIMIT)
+        .map(|index| {
+            serde_json::json!({
+                "uri": format!("file:///ripr-wf-cap/{index}"),
+                "name": format!("f{index}"),
+            })
+        })
+        .collect();
+    let mut session = LspSession::spawn()?;
+    let notifications = initialize_with(
+        &mut session,
+        serde_json::json!({
+            "processId": null,
+            "workspaceFolders": folders,
+            "capabilities": {},
+        }),
+        |seen: &[serde_json::Value]| {
+            messages_of(seen, "window/showMessage")
+                .iter()
+                .any(|message| message.contains("membership_capacity_exceeded"))
+        },
+    )?;
+    let shown = messages_of(&notifications, "window/showMessage");
+    let warning = shown
+        .iter()
+        .find(|message| message.contains("membership_capacity_exceeded"))
+        .ok_or_else(|| format!("expected membership_capacity_exceeded warning, got: {shown:?}"))?;
+    if warning.len() > 512 {
+        return Err(format!(
+            "rejection warning must stay bounded, got {} bytes",
+            warning.len()
+        ));
+    }
+    if warning.contains("file:///ripr-wf-cap/") {
+        return Err("rejection warning must not echo hostile folder URIs".to_string());
+    }
+    shutdown_exit_and_wait(&mut session)
+}
+
 #[test]
 fn missing_workspace_root_warns_a_generic_client_at_startup() -> Result<(), String> {
     let mut session = LspSession::spawn()?;
