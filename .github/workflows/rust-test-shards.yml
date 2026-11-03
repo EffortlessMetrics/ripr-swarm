@@ -103,7 +103,7 @@ jobs:
       # one rustc over a 1.4M-line crate: about 11 GB resident before codegen starts
       # (frontend 3.7 GB, MIR borrowck +4.3 GB, monomorphisation +1.8 GB) and 13-14
       # GB at its peak, whatever the build parallelism (local 16 GB runs with 2 jobs,
-      # or with the lib test built alone first, were still OOM-killed). Scheduling
+      # or with the lib test built alone first, were still ended by the kernel OOM handler). Scheduling
       # cannot lower that floor, so give the runner 8 GB of swap so a spike pages out
       # instead of starving the runner agent. This only adds memory; it relaxes no
       # check, and a swap setup failure is logged and the build still runs.
