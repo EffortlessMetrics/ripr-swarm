@@ -2863,7 +2863,8 @@ assertions. This repair shares the existing callback without that larger migrati
 - Claims payload equality pins (#12304):
   `crates/ripr/tests/claims_payload_eq_owner_pin.rs` (the credited twins and
   one negative control per refusal above, the early-`Err` and `None` exit
-  directions, the non-`return_value` families and a multi-line invocation).
+  directions, the non-`return_value` families, and multi-line invocations: credited
+  when the closing line holds only the `;` and a comment, unknown otherwise).
   The inventory rows `claims_assert_ok_eq` / `claims_assert_some_eq` in
   `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs` use a
   `predicate` probe and therefore stay `unknown` on purpose; the

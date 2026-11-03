@@ -21440,6 +21440,33 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0410"
+name = "First-hour repair funnel projection"
+spec = "docs/specs/RIPR-SPEC-0410-first-hour-repair-funnel-projection.md"
+tests = [
+  "xtask/src/reports/repair_funnel.rs::tests::repair_funnel_controls_corpus_projects_and_enforces_controls",
+  "xtask/src/reports/repair_funnel.rs::tests::verified_improvement_requires_verification_and_movement",
+  "xtask/src/reports/repair_funnel.rs::tests::verification_pass_alone_does_not_claim_improvement",
+  "xtask/src/reports/repair_funnel.rs::tests::repair_funnel_to_input_zero_cases_is_not_measured",
+]
+fixtures = [
+  "fixtures/repair_funnel/controls/corpus.json",
+]
+code = [
+  "xtask/src/reports/repair_funnel.rs",
+  "xtask/src/reports/dx_scoreboard.rs",
+  "benchmarks/dx_scoreboard/scoreboards.toml",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0410-first-hour-repair-funnel-projection.md",
+]
+metrics = [
+  "repair_time_to_verified_improvement_ms",
+  "repair_time_to_first_honest_result_ms",
+  "repair_selected_case_count",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0378"
 name = "Cross-language edge registry v1"
 spec = "docs/specs/RIPR-SPEC-0378-cross-language-edge-registry-v1.md"
@@ -21553,4 +21580,35 @@ metrics = [
   "terraform_evidence_contract_registered",
   "terraform_capability_cell_index_complete",
   "terraform_generic_hcl_non_claim_registered",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0408"
+name = "Verification run snapshot binding and requested/prepared compatibility"
+spec = "docs/specs/RIPR-SPEC-0408-verification-run-snapshot-binding.md"
+tests = [
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::corpus_cases_match_acceptance_fixtures",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::root_relocation_preserves_portable_identity_while_concrete_root_differs",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::plan_config_resource_change_changes_portable_identity",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/tests.rs::plan_digest_alone_changes_portable_identity",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::committed_pair_is_compatible",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::dirty_worktree_rejects_committed_request",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::capture_policy_mismatch_is_incompatible",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::captured_external_original_path_mismatch_is_incompatible",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs::decide_tests::unsupported_inventory_contents_change_binding_identity",
+]
+fixtures = [
+  "fixtures/verification_run_snapshot_binding",
+]
+code = [
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/decide.rs",
+  "crates/ripr/src/analysis/verification_plan/snapshot_binding/model.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0408-verification-run-snapshot-binding.md",
+  "docs/spec-index.d/RIPR-SPEC-0408.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0408.toml",
+]
+metrics = [
+  "unit_test_pass_rate",
 ]

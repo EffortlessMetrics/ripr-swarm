@@ -98,9 +98,11 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_blind_journey_contract_fixture_corpus(&mut violations)?;
     validate_cache_payload_tamper_recovery_fixture_corpus(&mut violations)?;
     validate_incomplete_diff_corpus_fixture_corpus(&mut violations)?;
+    validate_repair_funnel_fixture_corpus(&mut violations)?;
     validate_orchestration_attempt_receipts_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_attempts_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_intake_fixture_corpus(&mut violations)?;
+    validate_verification_run_snapshot_binding_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_contract_plan_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_real_rows_corpus(&mut violations)?;
     crate::work_portfolio::validate_work_portfolio_fixture_corpus(&mut violations);

@@ -68,7 +68,7 @@ const FIRST_RUN_WORKFLOW_LINES: &str = "workflow_lines";
 const DEFAULT_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
 const DEFAULT_CORPUS_DIR: &str = "target/ripr/dx-scoreboard/corpus";
 const DEFAULT_TIMEOUT_MS: u64 = 900_000;
-const BOARDS: [&str; 8] = [
+const BOARDS: [&str; 9] = [
     "speed",
     "ci",
     "trust",
@@ -77,6 +77,7 @@ const BOARDS: [&str; 8] = [
     "agent",
     "corpus",
     "ranking",
+    "repair",
 ];
 
 const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>]
@@ -85,7 +86,7 @@ Measures the developer-experience scoreboards declared in
 benchmarks/dx_scoreboard/scoreboards.toml and writes
 target/ripr/reports/dx-scoreboard.{json,md}.
 
-  --boards <list>     comma-separated subset of speed,ci,trust,paste,first_run,agent,corpus,ranking
+  --boards <list>     comma-separated subset of speed,ci,trust,paste,first_run,agent,corpus,ranking,repair
   --repo <id>         limit corpus measurements to these corpus ids
   --include-heavy     also measure corpus entries marked heavy
   --corpus-dir <dir>  where pinned corpus checkouts live
@@ -803,9 +804,14 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
         let converted = pilot_ranking_to_input(value)?;
         return parse_ingest(&converted, config);
     }
+    if value["schema_version"].as_str() == Some(super::REPORT_SCHEMA_VERSION) {
+        let converted = super::repair_funnel_to_input(value)?;
+        return parse_ingest(&converted, config);
+    }
     if value["schema_version"].as_str() != Some(INPUT_SCHEMA_VERSION) {
         return Err(format!(
-            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, `{RUST_CORPUS_SMOKE_SCHEMA_VERSION}`, `{PILOT_RANKING_SCHEMA_VERSION}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines"
+            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, `{RUST_CORPUS_SMOKE_SCHEMA_VERSION}`, `{PILOT_RANKING_SCHEMA_VERSION}`, `{}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines",
+            super::REPORT_SCHEMA_VERSION
         ));
     }
     let source = value["source"]
