@@ -30,8 +30,8 @@ Support-tier impact:
 ## Problem
 
 RIPR already advertises a fail-closed `experimental.riprAgent` capability and
-reserves request and error names. A generic headless client still cannot rely
-on a typed wire contract: protocol and DTO schema versions are not distinct,
+reserves request and error names. Third-party headless clients must not treat
+this surface as standard LSP or MCP integration: protocol and DTO schema versions are not distinct,
 reserved requests do not have schema entries, and success/error recovery fields
 are not bounded by a repository-owned contract.
 

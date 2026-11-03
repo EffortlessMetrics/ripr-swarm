@@ -223,6 +223,47 @@ impl Drop for Fixture {
     }
 }
 
+/// A fresh directory under a temp base that no workspace, package or Git top
+/// level encloses, for the #12417 discovery-gate controls. `TMPDIR` can sit
+/// inside a checkout (an anchored root, where the gate is silent), so fall
+/// back to the process temp dir and `/tmp`, and fail loudly if none is free
+/// of markers: a silent early return would leave the refusal unchecked.
+#[cfg(unix)]
+fn marker_free_dir(label: &str) -> Result<PathBuf, String> {
+    let anchored = |dir: &Path| {
+        dir.ancestors().any(|ancestor| {
+            [
+                "Cargo.toml",
+                ".git",
+                "package.json",
+                "pyproject.toml",
+                "setup.py",
+                "setup.cfg",
+            ]
+            .iter()
+            .any(|name| ancestor.join(name).exists())
+        })
+    };
+    let candidates = [
+        std::env::var_os("TMPDIR").map(PathBuf::from),
+        Some(std::env::temp_dir()),
+        Some(PathBuf::from("/tmp")),
+    ];
+    let base = candidates
+        .into_iter()
+        .flatten()
+        .filter_map(|dir| dir.canonicalize().ok())
+        .find(|dir| !anchored(dir))
+        .ok_or("no temp directory outside every project was found for the unanchored control")?;
+    let outer = base.join(format!(
+        "ripr-{label}-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&outer).map_err(|e| e.to_string())?;
+    Ok(outer)
+}
+
 fn attempt_ids(root: &Path) -> Vec<String> {
     let dir = root.join("target/ripr/repair-attempts");
     let mut ids = Vec::new();
@@ -873,42 +914,16 @@ fn member_directory_commands_use_the_resolved_workspace_root() -> Result<(), Str
 }
 
 /// #12417: `continue` with no attempt, run from a directory that no
-/// workspace, package or Git top level encloses, must say so and stop. The
-/// repair selector it used to consult reads the whole current directory, which
-/// on a large tree ran for minutes with no output. Unix-only like the other
-/// implicit-root smoke tests (the temp parent must hold no manifest or repo).
+/// workspace, package or Git top level encloses, must say so and stop at the
+/// discovery gate — not answer "no current attempt to continue" about a tree
+/// that is not a project. The repair selector it used to consult reads the
+/// whole current directory, which on a large tree ran for minutes with no
+/// output. Unix-only like the other implicit-root smoke tests (the temp
+/// parent must hold no manifest or repo).
 #[cfg(unix)]
 #[test]
 fn continue_outside_any_workspace_refuses_without_scanning() -> Result<(), String> {
-    // The claim needs a directory no project encloses. `TMPDIR` can sit inside
-    // a checkout (an anchored root, where the refusal is the ordinary scan), so
-    // fall back to `/tmp` and fail loudly if neither is free of markers: a
-    // silent early return would leave the refusal unchecked.
-    let anchored = |dir: &Path| {
-        dir.ancestors().any(|ancestor| {
-            [
-                "Cargo.toml",
-                ".git",
-                "package.json",
-                "pyproject.toml",
-                "setup.py",
-                "setup.cfg",
-            ]
-            .iter()
-            .any(|name| ancestor.join(name).exists())
-        })
-    };
-    let base = [std::env::temp_dir(), PathBuf::from("/tmp")]
-        .into_iter()
-        .filter_map(|dir| dir.canonicalize().ok())
-        .find(|dir| !anchored(dir))
-        .ok_or("no temp directory outside every project was found for the unanchored control")?;
-    let outer = base.join(format!(
-        "ripr-facade-unanchored-{}-{}",
-        std::process::id(),
-        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&outer).map_err(|e| e.to_string())?;
+    let outer = marker_free_dir("facade-unanchored")?;
     let _cleanup = Fixture {
         root: outer.clone(),
     };
@@ -917,9 +932,16 @@ fn continue_outside_any_workspace_refuses_without_scanning() -> Result<(), Strin
     assert_exit(&output, 3, "continue outside any workspace");
     let all = stderr_text(&output);
     assert!(
-        all.contains("no current attempt to continue")
-            && all.contains("no workspace, package or Git repository was found"),
+        all.contains("no workspace, package or Git repository was found"),
         "must name the cause:\n{all}"
+    );
+    assert!(
+        all.contains("refusal code=unanchored_root disposition=not_started"),
+        "must carry the discovery gate code:\n{all}"
+    );
+    assert!(
+        !all.contains("no current attempt to continue"),
+        "a marker-less directory is a discovery refusal, not an attempt answer:\n{all}"
     );
     assert!(
         !all.contains("starts nothing right now"),
@@ -935,10 +957,112 @@ fn continue_outside_any_workspace_refuses_without_scanning() -> Result<(), Strin
     std::fs::write(outer.join("package.json"), "{\"name\":\"shop\"}").map_err(|e| e.to_string())?;
     let packaged = run_ripr(&outer, &["continue"])?;
     assert_exit(&packaged, 3, "continue in a plain package");
+    let packaged_all = stderr_text(&packaged);
     assert!(
-        !stderr_text(&packaged).contains("no workspace, package or Git repository was found"),
+        !packaged_all.contains("no workspace, package or Git repository was found"),
         "a plain package must not be called unanchored:\n{}",
-        stderr_text(&packaged)
+        packaged_all
+    );
+    assert!(
+        packaged_all.contains("no current attempt to continue"),
+        "a plain package keeps the ordinary attempt answer:\n{}",
+        packaged_all
+    );
+    Ok(())
+}
+
+/// #12417: the shared discovery gate refuses `repair` and `status` too, with
+/// the same typed code: a directory no project anchors has no repair start to
+/// pick and no repair state to report. `status --root` pins the directory and
+/// skips the gate. Unix-only like the other implicit-root smoke tests.
+#[cfg(unix)]
+#[test]
+fn repair_and_status_outside_any_workspace_refuse_with_the_discovery_gate() -> Result<(), String> {
+    let outer = marker_free_dir("facade-gate-repair-status")?;
+    let _cleanup = Fixture {
+        root: outer.clone(),
+    };
+    std::fs::write(outer.join("loose.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    for command in ["repair", "status"] {
+        let output = run_ripr(&outer, &[command])?;
+        assert_exit(&output, 3, &format!("{command} outside any workspace"));
+        let all = stderr_text(&output);
+        assert!(
+            all.contains("no workspace, package or Git repository was found"),
+            "{command} must name the cause:\n{all}"
+        );
+        assert!(
+            all.contains("refusal code=unanchored_root disposition=not_started"),
+            "{command} must carry the discovery gate code:\n{all}"
+        );
+        assert!(
+            stdout_text(&output).is_empty(),
+            "{command} typed refusal keeps stdout empty"
+        );
+    }
+    // An explicit --root skips the gate: status answers about the named
+    // directory instead of refusing it.
+    let pinned = outer.to_string_lossy().into_owned();
+    let explicit = run_ripr(&outer, &["status", "--root", &pinned])?;
+    assert!(
+        explicit.status.code() != Some(3),
+        "an explicit --root must skip the gate, got exit {:?}: {}",
+        explicit.status.code(),
+        stderr_text(&explicit)
+    );
+    assert!(
+        !stderr_text(&explicit).contains("no workspace, package or Git repository was found"),
+        "an explicit --root must not be called unanchored:\n{}",
+        stderr_text(&explicit)
+    );
+    Ok(())
+}
+
+/// #12417: `agent status` spells the same typed refusal as `ripr status`,
+/// while `agent repair` keeps the root-resolution convention (exit 2, the
+/// plain cause on stderr, no code line). Unix-only like the other
+/// implicit-root smoke tests.
+#[cfg(unix)]
+#[test]
+fn agent_status_and_repair_spell_the_discovery_gate_like_the_facade() -> Result<(), String> {
+    let outer = marker_free_dir("facade-gate-agent")?;
+    let _cleanup = Fixture {
+        root: outer.clone(),
+    };
+    std::fs::write(outer.join("loose.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+
+    let status = run_ripr(&outer, &["agent", "status"])?;
+    assert_exit(&status, 3, "agent status outside any workspace");
+    let status_all = stderr_text(&status);
+    assert!(
+        status_all.contains("no workspace, package or Git repository was found")
+            && status_all.contains("refusal code=unanchored_root disposition=not_started"),
+        "agent status must spell the typed refusal:\n{status_all}"
+    );
+    assert!(
+        stdout_text(&status).is_empty(),
+        "agent status typed refusal keeps stdout empty"
+    );
+
+    // A missing --seam-id is a usage refusal before any root resolution, so
+    // the gate control names a subject: the gate fires before it is used.
+    let repair = run_ripr(
+        &outer,
+        &["agent", "repair", "--seam-id", "probe:gate-control"],
+    )?;
+    assert_exit(&repair, 2, "agent repair outside any workspace");
+    let repair_all = stderr_text(&repair);
+    assert!(
+        repair_all.contains("no workspace, package or Git repository was found"),
+        "agent repair must name the cause:\n{repair_all}"
+    );
+    assert!(
+        !repair_all.contains("refusal code="),
+        "the agent repair root error keeps the prose-only convention:\n{repair_all}"
+    );
+    assert!(
+        stdout_text(&repair).is_empty(),
+        "agent repair refusal keeps stdout empty"
     );
     Ok(())
 }
@@ -4186,8 +4310,12 @@ fn help_surfaces_stay_task_first() -> Result<(), String> {
         assert!(row["accepts_json_flag"].is_null(), "{id} has no JSON flag");
     }
     let status = find("cmd:status")?;
-    assert_eq!(status["exit"]["kind"], "completed_or_failed");
+    // #12417: the unanchored discovery refusal is a typed decision, so both
+    // status spellings advertise decision exits beside their 0/2 outcomes.
+    assert_eq!(status["exit"]["kind"], "decision_or_refusal");
     assert_eq!(status["accepts_json_flag"], "--json");
+    let agent_status = find("cmd:agent.status")?;
+    assert_eq!(agent_status["exit"]["kind"], "decision_or_refusal");
     for id in ["cmd:agent.repair", "cmd:agent.status"] {
         let row = find(id)?;
         assert_eq!(row["class"], "advanced", "{id} must be advanced");

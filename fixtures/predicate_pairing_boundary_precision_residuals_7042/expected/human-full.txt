@@ -49,6 +49,7 @@ Evidence
   shared evidence: E2, E3, E4, E5, E6, E7, E8, E9, E10, E11, E12, E13, E14, E15
   - source values (showing 8 of 9 read from related tests; full list in --format json)
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/predicate_pairing_boundary_precision_residuals_7042/input --diff <cwd>/fixtures/predicate_pairing_boundary_precision_residuals_7042/diff.patch --mode fast probe:src_lib.rs:predicate:fa1d51d0
   ripr context --root <cwd>/fixtures/predicate_pairing_boundary_precision_residuals_7042/input --diff <cwd>/fixtures/predicate_pairing_boundary_precision_residuals_7042/diff.patch --mode fast --at probe:src_lib.rs:predicate:fa1d51d0
 
@@ -72,5 +73,6 @@ Evidence
   shared evidence: E2, E3, E4, E5, E6, E7, E8, E9, E10, E11, E12, E13, E14, E15
   - source values (showing 8 of 9 read from related tests; full list in --format json)
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/predicate_pairing_boundary_precision_residuals_7042/input --diff <cwd>/fixtures/predicate_pairing_boundary_precision_residuals_7042/diff.patch --mode fast probe:src_lib.rs:return_value:c71d52af
   ripr context --root <cwd>/fixtures/predicate_pairing_boundary_precision_residuals_7042/input --diff <cwd>/fixtures/predicate_pairing_boundary_precision_residuals_7042/diff.patch --mode fast --at probe:src_lib.rs:return_value:c71d52af
