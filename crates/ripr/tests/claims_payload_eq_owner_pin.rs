@@ -433,6 +433,73 @@ fn a_pinned_literal_neither_owner_version_returns_does_not_credit() -> Result<()
     Ok(())
 }
 
+/// #12705: the `assert_ok_eq` / `assert_some_eq` import is read through the
+/// same scope rule as the payload macros (#12564), so an import that is not in
+/// scope of the test, or is compiled out, grants no credit.
+#[test]
+fn the_eq_macro_import_must_be_in_scope_of_the_test() -> Result<(), String> {
+    let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("claims_payload_eq_scope");
+    let ok = "assert_ok_eq!(checked_div(17, 5), 3);";
+    let some = "assert_some_eq!(half(8), 4);";
+    let mut cases = vec![
+        // Control: the import at the file root, outside the test module.
+        Case {
+            owner_extra: "use claims::assert_ok_eq;\n",
+            ..result_case("eq_ok_file_root_import", "", ok, true)
+        },
+        Case {
+            owner_extra: "use claims::assert_some_eq;\n",
+            ..option_case("eq_some_file_root_import", "", some, true)
+        },
+        // The same import inside another function is not in scope of the test.
+        Case {
+            owner_extra: "fn unrelated() {\n    use claims::assert_ok_eq;\n}\n",
+            ..result_case("eq_ok_import_in_another_function", "", ok, false)
+        },
+        Case {
+            owner_extra: "fn unrelated() {\n    use claims::assert_some_eq;\n}\n",
+            ..option_case("eq_some_import_in_another_function", "", some, false)
+        },
+        // Compiled out.
+        result_case(
+            "eq_ok_import_under_cfg_any_empty",
+            "#[cfg(any())]\nuse claims::assert_ok_eq;",
+            ok,
+            false,
+        ),
+        option_case(
+            "eq_some_import_under_cfg_any_empty",
+            "#[cfg(any())]\nuse claims::assert_some_eq;",
+            some,
+            false,
+        ),
+    ];
+    // An import inside the test's own body is in scope.
+    cases.push(result_case(
+        "eq_ok_import_inside_the_test",
+        "",
+        "use claims::assert_ok_eq;\nassert_ok_eq!(checked_div(17, 5), 3);",
+        true,
+    ));
+    for case in cases {
+        let outcome = run(&root_dir, &case, "return_value")?;
+        assert_eq!(
+            outcome.class == "exposed",
+            case.credited,
+            "{}: {}",
+            case.name,
+            outcome.class
+        );
+        let expected = if case.credited {
+            ("exact_value".to_string(), "strong".to_string())
+        } else {
+            ("unknown".to_string(), "none".to_string())
+        };
+        assert_eq!(outcome.oracle, expected, "{}: oracle", case.name);
+    }
+    Ok(())
+}
+
 /// RIPR-SPEC-0197 literal `matches!` pins read the same two owner versions as
 /// `assert_eq!`: a pattern that neither returns fails on both and is withheld,
 /// while the old or new value keeps its credit (#12716).
