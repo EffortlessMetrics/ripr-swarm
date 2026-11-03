@@ -7827,6 +7827,7 @@ fn absent_delimiter_boundary_returns_head() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         });
         assert!(is_binary_source_path(Path::new("src/main.rs")));
         assert!(super::find_subprocess_binary_test(&index, Path::new("src/main.rs")).is_some());

@@ -4649,6 +4649,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         attrs: Vec::new(),
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     };
     let mut index = RustIndex::default();
     index.insert_file_only(
@@ -13069,6 +13070,7 @@ fn assertion_targets_seam_returns_false_for_empty_token_list() {
         attrs: Vec::new(),
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     };
     assert!(!assertion_targets_seam(&test, &[]));
 }
@@ -15165,6 +15167,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 attrs: Vec::new(),
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });

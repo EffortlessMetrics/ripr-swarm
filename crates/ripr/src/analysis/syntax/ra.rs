@@ -753,6 +753,7 @@ fn summarize_file_with_collectors(
                 attrs,
                 nested_fn_names,
                 let_bindings,
+                generated: None,
             });
         }
 

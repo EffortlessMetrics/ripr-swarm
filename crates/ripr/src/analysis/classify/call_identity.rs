@@ -2482,6 +2482,7 @@ pub(in crate::analysis) fn production_text_calls_owner(
         attrs: caller.attrs.clone(),
         nested_fn_names: caller.nested_fn_names.clone(),
         let_bindings: caller.let_bindings.clone(),
+        generated: None,
     };
     let text = caller.body.as_ref();
     if let Some(identity) = shared_owner_call_identity(index, owner) {
@@ -5046,5 +5047,67 @@ mod tests {
         assert!(!resolves(&root, "assert!(rival::root(1));"));
         assert!(!resolves(&root, "assert!(crate::pricing::root(1));"));
         assert!(!resolves(&thr, "assert!(super::thr(1));"));
+    }
+
+    /// #12320: a macro-generated test borrows the module scopes at its
+    /// invocation, except when its expansion declares its own import, which
+    /// could rebind the callee. End to end through the production index and
+    /// the call-identity consumer, with a rival owner.
+    #[test]
+    fn macro_generated_test_credit_follows_invocation_scopes_and_fails_closed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-macro-identity-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"modules\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub mod a;\npub mod b;\n")?;
+        std::fs::write(
+            root.join("src/a.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n",
+        )?;
+        std::fs::write(
+            root.join("src/b.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 2\n}\n",
+        )?;
+        std::fs::write(
+            root.join("tests/gen.rs"),
+            "macro_rules! plain {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            assert_eq!(render(1), 2);\n        }\n    };\n}\n\nmacro_rules! rebinding {\n    ($name:ident) => {\n        #[test]\n        fn $name() {\n            use modules::b::render;\n            assert_eq!(render(1), 3);\n        }\n    };\n}\n\nmod cases {\n    use modules::a::render;\n    plain!(plain_case);\n    rebinding!(rebinding_case);\n}\n",
+        )?;
+        let index = crate::analysis::facts::build_index(
+            &root,
+            &[
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("src/a.rs"),
+                PathBuf::from("src/b.rs"),
+                PathBuf::from("tests/gen.rs"),
+            ],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let index = index?;
+        // Positive control: the invocation-site `use crate::a::render` credits
+        // `a::render` and rules out the rival.
+        assert_eq!(
+            settle(&index, "/a.rs::render", "plain_case"),
+            Some(CallTarget::Owner)
+        );
+        assert_eq!(
+            settle(&index, "/b.rs::render", "plain_case"),
+            Some(CallTarget::Other)
+        );
+        // Rival control: the expansion imports `b::render` locally. No owner
+        // may be credited from the invocation-site import of `a::render`.
+        assert_ne!(
+            settle(&index, "/a.rs::render", "rebinding_case"),
+            Some(CallTarget::Owner)
+        );
+        Ok(())
     }
 }
