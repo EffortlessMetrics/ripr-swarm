@@ -1,0 +1,6 @@
+# Committed corpus tests gate on uncovered examples, not pinned counts (#9859).
+[[extend]]
+id = "RIPR-SPEC-0219"
+tests = [
+  "xtask/src/reports/verdict_corpus_coverage_tests.rs::committed_corpus_tests_do_not_pin_spec_example_counts",
+]

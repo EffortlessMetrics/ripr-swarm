@@ -1,0 +1,17 @@
+pub fn pick(n: u32) -> Option<u32> {
+    if n < 3 {
+        return None;
+    }
+    Some(n * 2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use claims::assert_some_eq;
+
+    #[test]
+    fn pick_doubles() {
+        assert_some_eq!(pick(5), 10);
+    }
+}

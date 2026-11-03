@@ -65,5 +65,6 @@ Limitation detail
 Next step
   `fixture_total` (src/lib.rs:52) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/fixture_receiver_extension_iter/input --diff <cwd>/fixtures/fixture_receiver_extension_iter/diff.patch --mode fast probe:src_lib.rs:return_value:d4907aca
   ripr context --root <cwd>/fixtures/fixture_receiver_extension_iter/input --diff <cwd>/fixtures/fixture_receiver_extension_iter/diff.patch --mode fast --at probe:src_lib.rs:return_value:d4907aca

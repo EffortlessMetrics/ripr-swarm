@@ -1,0 +1,14 @@
+[[extend]]
+id = "RIPR-SPEC-0207"
+tests = [
+  "crates/ripr/tests/packaged_repair_cli.rs::installed_binary_is_distinct_from_workspace_and_path_decoy",
+  "crates/ripr/tests/packaged_repair_cli.rs::canonical_positive_journey_completes_before_edit_after_with_closed_movement",
+  "crates/ripr/tests/packaged_repair_cli.rs::attempt_and_terminal_receipt_survive_fresh_installed_processes",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0057"
+tests = [
+  "crates/ripr/tests/packaged_repair_cli.rs::noop_edit_reports_unchanged_not_improved",
+  "crates/ripr/tests/packaged_repair_cli.rs::wrong_root_before_phase_fails_closed",
+]

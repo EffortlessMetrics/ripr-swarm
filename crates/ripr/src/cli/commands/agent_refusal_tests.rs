@@ -348,6 +348,10 @@ fn gap_before_phase_refuses_dirty_production_premise_before_the_snapshot() -> Re
 
 fn gap_premise_exercise(root: &Path) -> Result<(), String> {
     let mut refusal = AfterPhaseRefusalContext::default();
+    let identity = crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(
+        root,
+        "gap:0123456789abcdef",
+    )?;
     match run_gap_bound_before_phase(
         root,
         "gap:0123456789abcdef",
@@ -355,6 +359,7 @@ fn gap_premise_exercise(root: &Path) -> Result<(), String> {
         None,
         false,
         &mut refusal,
+        &identity,
     ) {
         Err(error) => {
             require_contains(&error, &["Uncommitted: src/lib.rs", "Nothing was started."])
