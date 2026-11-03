@@ -34,7 +34,7 @@ pub(super) fn public_path(index: &RustIndex, callee: &FunctionSummary) -> Option
     let root = PathBuf::from(format!("{prefix}src/lib.rs"));
 
     let mut current = root.clone();
-    let mut container = parsed_items(index, &current, !file_modules.is_empty())?;
+    let mut container = parsed_items(index, &current, !file_modules.is_empty(), false)?;
     for segment in &file_modules {
         let declaration = sole_public_module(&container, segment)?;
         if declaration.item_list().is_some() {
@@ -58,7 +58,7 @@ pub(super) fn public_path(index: &RustIndex, callee: &FunctionSummary) -> Option
             (false, true) => nested,
             _ => return None,
         };
-        container = parsed_items(index, &current, true)?;
+        container = parsed_items(index, &current, true, true)?;
     }
     if related_tests::normalize_path(&current) != normalized {
         return None;
@@ -79,7 +79,7 @@ pub(super) fn public_path(index: &RustIndex, callee: &FunctionSummary) -> Option
     let function = named.next()?;
     if named.next().is_some()
         || !is_plain_pub(function.visibility())
-        || crate::analysis::syntax::has_cfg_attr(&function)
+        || presence_may_change(&function)
     {
         return None;
     }
@@ -135,13 +135,24 @@ fn file_module_segments(relative: &str) -> Option<Vec<String>> {
 }
 
 /// The top-level items of `path`, refused when the file may splice items in
-/// (checked when `check_splice`, which is every file of a module chain).
-fn parsed_items(index: &RustIndex, path: &Path, check_splice: bool) -> Option<Vec<ast::Item>> {
+/// (checked when `check_splice`, which is every file of a module chain) or,
+/// for a module file, when it carries any inner attribute (`#![cfg(..)]`
+/// gates the whole module). The library root keeps its crate-level inner
+/// attributes (`#![deny(..)]`, `#![cfg_attr(docsrs, ..)]`).
+fn parsed_items(
+    index: &RustIndex,
+    path: &Path,
+    check_splice: bool,
+    module_file: bool,
+) -> Option<Vec<ast::Item>> {
     let source = &index.files().get(path)?.source;
     if check_splice && call_identity::source_may_splice_items(source, true) {
         return None;
     }
     let parse = crate::analysis::syntax::parse_clean_source_file(source)?;
+    if module_file && parse.tree().attrs().next().is_some() {
+        return None;
+    }
     Some(parse.tree().items().collect())
 }
 
@@ -179,6 +190,22 @@ fn declared_once(container: &SyntaxNode, name: &str) -> bool {
         })
         .count()
         == 1
+}
+
+/// Whether an attribute on the function can make it absent: a `#[cfg(..)]`, or
+/// a `#[cfg_attr(.., cfg(..))]` that adds one. A `cfg_attr` that only adds
+/// documentation or lint attributes (`#[cfg_attr(docsrs, doc(..))]`) does not.
+fn presence_may_change(function: &ast::Fn) -> bool {
+    function.attrs().any(|attr| match attr.meta() {
+        Some(ast::Meta::CfgMeta(_)) => true,
+        Some(ast::Meta::CfgAttrMeta(_)) => attr
+            .syntax()
+            .text()
+            .to_string()
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .any(|word| word == "cfg"),
+        _ => false,
+    })
 }
 
 fn is_named(name: &ast::Name, expected: &str) -> bool {
@@ -221,6 +248,15 @@ mod tests {
         assert_eq!(path_of(&[("wscore/src/lib.rs", FN)]), segments(&[]));
         assert_eq!(
             path_of(&[("wscore/src/lib.rs", &format!("#[inline]\n{FN}"))]),
+            segments(&[])
+        );
+        // Documentation and lint attributes do not change presence, and the
+        // library root keeps its crate-level inner attributes.
+        assert_eq!(
+            path_of(&[(
+                "wscore/src/lib.rs",
+                &format!("#![deny(missing_docs)]\n#[cfg_attr(docsrs, doc(hidden))]\n{FN}")
+            )]),
             segments(&[])
         );
         assert_eq!(
@@ -275,6 +311,40 @@ mod tests {
             (
                 "cfg function",
                 vec![("wscore/src/lib.rs", format!("#[cfg(test)]\n{FN}"))],
+            ),
+            (
+                "cfg_attr that adds a cfg",
+                vec![(
+                    "wscore/src/lib.rs",
+                    format!("#[cfg_attr(unix, cfg(test))]\n{FN}"),
+                )],
+            ),
+            (
+                "restricted-in module",
+                vec![(
+                    "wscore/src/lib.rs",
+                    format!("pub(in crate) mod pricing {{\n    {FN}}}\n"),
+                )],
+            ),
+            (
+                "inner attribute on a module file",
+                vec![
+                    ("wscore/src/lib.rs", "pub mod pricing;\n".to_string()),
+                    (
+                        "wscore/src/pricing.rs",
+                        format!("#![cfg(feature = \"x\")]\n{FN}"),
+                    ),
+                ],
+            ),
+            (
+                "re-export of a private module's function",
+                vec![
+                    (
+                        "wscore/src/lib.rs",
+                        "mod pricing;\npub use pricing::discount;\n".to_string(),
+                    ),
+                    ("wscore/src/pricing.rs", FN.to_string()),
+                ],
             ),
             (
                 "private module",

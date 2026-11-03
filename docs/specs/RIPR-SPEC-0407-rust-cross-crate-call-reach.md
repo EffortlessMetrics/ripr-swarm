@@ -158,11 +158,18 @@ tail for such a hop; the single admitted mention is what is checked.
 `wscore`. The path is read from the declarations (`cross_crate_path::public_path`),
 never from the spelled call, and every link must be exact:
 
-- the callee is a plain `pub fn` (not `pub(crate)` or any restricted form) with
-  no `#[cfg]`, and is the only function of its name in its file, directly in
+- the callee is a plain `pub fn` (not `pub(crate)`, `pub(super)`, `pub(in ..)`
+  or any restricted form; `const`, `async`, `unsafe` and `extern` qualifiers
+  are fine) with no attribute that can remove it (a `#[cfg(..)]`, or a
+  `#[cfg_attr(.., cfg(..))]` that adds one; a `cfg_attr` that only adds
+  documentation or lint attributes, such as `#[cfg_attr(docsrs, doc(..))]`,
+  does not refuse), and is the only function of its name in its file, directly in
   the library root file, an inline module, or a module file;
 - every module between the library root (`src/lib.rs`) and it is a plain
-  `pub mod` with no attribute at all (no `#[cfg]`, `#[path]`, `#[macro_use]`),
+  `pub mod` with no attribute at all (no `#[cfg]`, `#[cfg_attr]`, `#[path]`,
+  `#[macro_use]`) and whose own file, when it is a module file, has no inner
+  attribute (`#![cfg(..)]` gates the whole module; the library root keeps its
+  crate-level inner attributes),
   declared exactly once among its siblings, inline or out of line in the file
   layout it names (`pricing.rs` or `pricing/mod.rs`, exactly one of them
   existing; an inline module in the middle of a file chain refuses);
@@ -173,7 +180,9 @@ never from the spelled call, and every link must be exact:
 A private or `pub(crate)` module, an attribute on any link, a second
 declaration, a missing or doubled module file, a call that leaves a module out
 or names another, and an import of the module alone (`use wscore::pricing;`)
-keep the earlier no-path reading. A re-export (`pub use`) is not followed.
+keep the earlier no-path reading. A re-export (`pub use`) is not followed: a
+function in a private module re-exported at the root is not named by its
+declaration path.
 
 ### Calls over more than one crate
 
@@ -245,7 +254,7 @@ besides the owner's own (path-only scan; a virtual workspace root counts, and
 so does a nested manifest such as `fuzz/Cargo.toml`), and the owner is a `pub fn`
 (top-level or in an inline module) of a library source file of its package
 (`src/lib.rs` or a module file under `src/`; not `src/main.rs` or `src/bin/`),
-the shapes another crate can name as `<crate>::<fn>` or
+(`pub`, optionally `const`, `async`, `unsafe` or `extern`), the shapes another crate can name as `<crate>::<fn>` or
 `<crate>::<module>::<fn>`. Whether the path is really public is check's
 decision, not the pre-test's. A repository whose only manifest is the owner's own
 never runs it, and an unreadable owner file counts as passing. Refusals the pre-test excludes (a

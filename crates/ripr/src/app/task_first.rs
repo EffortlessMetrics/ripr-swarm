@@ -1210,7 +1210,10 @@ fn call_may_cross_a_crate(
     manifest_dirs: &[String],
 ) -> bool {
     let file = entry.seam.file();
-    let components: Vec<_> = file
+    // The manifest prefixes are workspace-relative; a seam file may be
+    // spelled absolute under the root.
+    let relative = file.strip_prefix(root).unwrap_or(file);
+    let components: Vec<_> = relative
         .components()
         .map(|part| part.as_os_str().to_string_lossy().into_owned())
         .collect();
@@ -1257,16 +1260,40 @@ fn call_may_cross_a_crate(
     let Ok(source) = std::fs::read_to_string(path) else {
         return true;
     };
-    source.lines().any(|line| {
-        line.trim_start()
-            .strip_prefix("pub fn ")
-            .or_else(|| line.trim_start().strip_prefix("pub async fn "))
-            .or_else(|| line.trim_start().strip_prefix("pub const fn "))
-            .is_some_and(|rest| {
-                rest.strip_prefix(name.as_str())
-                    .is_some_and(|tail| tail.starts_with(['(', '<']))
-            })
-    })
+    source
+        .lines()
+        .any(|line| declares_public_fn(line.trim_start(), &name))
+}
+
+/// Whether `line` opens `pub [const] [async] [unsafe] [extern "abi"] fn <name>`.
+fn declares_public_fn(line: &str, name: &str) -> bool {
+    let Some(mut rest) = line.strip_prefix("pub ") else {
+        return false;
+    };
+    loop {
+        rest = rest.trim_start();
+        if let Some(after) = ["const ", "async ", "unsafe "]
+            .iter()
+            .find_map(|word| rest.strip_prefix(word))
+        {
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("extern") {
+            let after = after.trim_start();
+            rest = match after
+                .strip_prefix('"')
+                .and_then(|quoted| quoted.split_once('"'))
+            {
+                Some((_, tail)) => tail,
+                None => after,
+            };
+        } else {
+            break;
+        }
+    }
+    rest.strip_prefix("fn ")
+        .map(str::trim_start)
+        .and_then(|rest| rest.strip_prefix(name))
+        .is_some_and(|tail| tail.starts_with(['(', '<']))
 }
 
 /// Why an already-gripped spot needs no repair, naming its limits.
@@ -4198,6 +4225,43 @@ pub(crate) mod tests {
             &root,
             &entry_for("wscore/src/main.rs", "discount"),
             &both
+        ));
+        assert!(declares_public_fn(
+            "pub unsafe fn discount(p: u32)",
+            "discount"
+        ));
+        assert!(declares_public_fn(
+            "pub const unsafe fn discount<T>()",
+            "discount"
+        ));
+        assert!(declares_public_fn(
+            "pub extern \"C\" fn discount()",
+            "discount"
+        ));
+        assert!(declares_public_fn("pub async fn discount()", "discount"));
+        assert!(!declares_public_fn("pub(crate) fn discount()", "discount"));
+        assert!(!declares_public_fn("pub fn discounted()", "discount"));
+        assert!(!declares_public_fn("fn discount()", "discount"));
+        // A seam file spelled absolute under the root reads as its relative
+        // form: the owner's own manifest is not "another" one.
+        let absolute = root
+            .join("wscore/src/lib.rs")
+            .to_string_lossy()
+            .into_owned();
+        std::fs::write(
+            root.join("wscore/src/lib.rs"),
+            "pub fn discount(price: u32) -> u32 {\n    price\n}\n",
+        )
+        .map_err(|e| e.to_string())?;
+        assert!(call_may_cross_a_crate(
+            &root,
+            &entry_for(&absolute, "discount"),
+            &both
+        ));
+        assert!(!call_may_cross_a_crate(
+            &root,
+            &entry_for(&absolute, "discount"),
+            &alone
         ));
         assert!(!call_may_cross_a_crate(
             &root,

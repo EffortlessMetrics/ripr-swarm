@@ -1003,6 +1003,7 @@ fn a_module_that_is_not_plainly_public_is_not_followed() -> Result<(), String> {
     for (label, lib) in [
         ("private module", "mod pricing;\n"),
         ("crate-visible module", "pub(crate) mod pricing;\n"),
+        ("restricted-in module", "pub(in crate) mod pricing;\n"),
         ("cfg module", "#[cfg(feature = \"x\")]\npub mod pricing;\n"),
         (
             "remapped module",
@@ -1218,4 +1219,64 @@ fn a_function_name_shared_along_the_chain_is_ambiguous() -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// `pricing_case` with `prefix` lines added above the function in `pricing.rs`
+/// (on the base and the changed commit alike), so the finding sits that many
+/// lines lower.
+fn pricing_with_prefix(prefix: &str, lines_added: usize, finding_line: usize) -> Case {
+    let mut case = pricing_case().with(PRICING_FILE, &format!("{prefix}{WSCORE_OLD}"));
+    case.changed = (PRICING_FILE, format!("{prefix}{WSCORE_NEW}"));
+    assert_eq!(finding_line, 2 + lines_added);
+    case.location = match finding_line {
+        3 => "./wscore/src/pricing.rs:3",
+        _ => "./wscore/src/pricing.rs:4",
+    };
+    case
+}
+
+#[test]
+fn an_inner_attribute_on_a_module_file_stops_the_module_path() -> Result<(), String> {
+    assert_not_noticed(
+        "inner cfg on the module file",
+        pricing_with_prefix("#![cfg(feature = \"x\")]\n", 1, 3),
+        NO_PATH,
+    )?;
+    // The same shape without the gate is the noticed positive.
+    assert_noticed("no inner attribute", pricing_with_prefix("\n", 1, 3))
+}
+
+#[test]
+fn an_attribute_that_can_remove_the_function_stops_the_module_path() -> Result<(), String> {
+    assert_not_noticed(
+        "cfg on the function",
+        pricing_with_prefix("#[cfg(feature = \"x\")]\n", 1, 3),
+        NO_PATH,
+    )?;
+    assert_not_noticed(
+        "cfg_attr that adds a cfg",
+        pricing_with_prefix("#[cfg_attr(unix, cfg(feature = \"x\"))]\n", 1, 3),
+        NO_PATH,
+    )?;
+    // A `cfg_attr` that only documents does not change presence.
+    assert_noticed(
+        "cfg_attr that only documents",
+        pricing_with_prefix("#[cfg_attr(docsrs, doc(hidden))]\n", 1, 3),
+    )
+}
+
+#[test]
+fn a_re_export_of_a_private_module_is_not_followed() -> Result<(), String> {
+    // `wscore::discount` is a real public path through `pub use`, but the
+    // declarations this reads name only the module path, which is private.
+    assert_not_noticed(
+        "re-export",
+        Case::in_file(
+            "mod pricing;\npub use pricing::discount;\n",
+            PRICING_FILE,
+            "pricing",
+        )
+        .with("app/src/lib.rs", APP_LIB),
+        NO_PATH,
+    )
 }
