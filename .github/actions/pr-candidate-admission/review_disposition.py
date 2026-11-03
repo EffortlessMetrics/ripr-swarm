@@ -9,6 +9,15 @@ fields. A current positive attestation is either:
   field on its own line outside fenced examples.
 
 Native APPROVED / CHANGES_REQUESTED / DISMISSED reviews remain a separate path.
+
+Documented decision (#12814): free prose cannot be enumerated, so the marker line
+is an allowlist built from the shapes of real review-of-record tails (full bodies
+are fixtures under tools/repo-policy/tests/fixtures/review_bodies). An unfamiliar
+tail refuses; a ready review refused for an unusual tail is the safe failure, and
+the reviewer re-posts with the plain marker. Fenced blocks cannot hide a
+retraction: retraction or blocker text inside a fence refuses. Later body prose is
+screened by a best-effort negation list; the closed controls are the marker-line
+allowlist and a later native review superseding the comment.
 """
 
 from __future__ import annotations
@@ -21,42 +30,54 @@ import sys
 from typing import Any
 
 READINESS_MARKERS = ("SOURCE_REVIEW_READY", "REVIEW_READY")
-# A marker line: the marker alone, or the marker followed by a dash, comma or "for"
-# and free text ("REVIEW_READY \u2014 head <sha>", "disposition: REVIEW_READY, subject to
-# CI"). The free text is screened separately so it cannot retract the marker.
+# A marker line: the marker alone, or the marker followed by a dash, comma or "for" and
+# a tail. The tail is admitted only from a closed vocabulary (see tail_allowed): any word
+# outside it refuses, so hedges, conditions and retractions cannot be enumerated away.
 POSITIVE_LINE = re.compile(
     r"^ {0,3}(?:disposition:[ \t]*)?(?:SOURCE_REVIEW_READY|REVIEW_READY)"
     r"(?P<tail>(?:[ \t]*[,\u2014\u2013]|[ \t]+-[ \t]|[ \t]+for\b)[^\n]*)?[ \t]*$",
     re.IGNORECASE,
 )
-# Words that turn a marker line into a hedge, condition or retraction. Marker-line tails
-# are short and the real ones use none of these; "subject to ..." is the one allowed
-# qualifier. Deliberately strict: a false refusal fails closed, a false admit does not.
-TAIL_BLOCK = re.compile(
-    r"\b(?:but|however|although|except|unless|until|if|only|after|pending|awaiting|waiting"
-    r"|blocked|blocking|blocker|failing|fails?|failed|incomplete|revoked?|retract\w*|withdraw\w*"
-    r"|hold|stale|tentative|provisional|conditional|not|never|requested|rejected)\b|n't",
-    re.IGNORECASE,
+# Vocabulary derived from the first lines and `disposition:` lines of the 11 real
+# REVIEW_READY native reviews on merged PRs #12736..#12793, plus connectors. Words that
+# can hedge or retract (not, but, if, only, pending, blocked, fix, wait, ...) are absent
+# on purpose; "change" is absent too and appears only inside the two literal phrases
+# stripped first. An unusual but genuine tail is refused: that is the safe failure.
+TAIL_VOCABULARY = frozenset(
+    """for the a an and or of to then with by current published diagnostics candidate selected
+    installed ordinary final fresh normal landed tree expected exact hash layout head source
+    native proof findings integration qualification review complete completed squash protected
+    enforcement refresh reconciliation issue subject unchanged gate conversation pr check
+    thread snapshot after release auto merge settings bypass admin""".split()
+)
+TAIL_LITERALS = (
+    re.compile(r"\bno[ \t]+admin[ \t]+bypass,?[ \t]+settings[ \t]+change,?[ \t]+release[ \t]+or[ \t]+auto-merge\b", re.IGNORECASE),
+    re.compile(r"\b[a-z0-9]+(?:-[a-z0-9]+)+[ \t]+change\b", re.IGNORECASE),
 )
 # Any line that speaks about disposition or readiness state. After the first line,
 # such a line is only allowed when it is itself an exact positive line.
-STATE_MENTION = re.compile(
-    r"disposition|(?:SOURCE_)?REVIEW_(?:READY|INCOMPLETE|BLOCKED)|REPAIR_REQUIRED"
+STATE_TOKEN = re.compile(
+    r"(?:SOURCE_)?REVIEW_(?:READY|INCOMPLETE|BLOCKED)|REPAIR_REQUIRED"
     r"|NOT_READY|WITHDRAWN|SUPERSEDED|CHANGES_REQUESTED",
     re.IGNORECASE,
 )
-# Negating phrases about readiness on a line after the marker. Deliberately narrow:
-# ordinary review prose ("nothing blocking", "not run", "fail-closed", "missing") is
-# fine, only phrases that retract or deny the disposition refuse.
+STATE_MENTION = re.compile(r"disposition|" + STATE_TOKEN.pattern, re.IGNORECASE)
+# Retraction and blocker phrases for body prose after the marker (and for fenced text,
+# which must not be able to hide one). Best effort: free prose cannot be enumerated, so
+# the closed control is the marker line plus later native reviews superseding this one.
 NEGATION = re.compile(
     r"\bnot[ \t]+(?:yet[ \t]+)?(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
     r"|\bno[ \t]+longer[ \t]+(?:(?:source[ _])?review[ _])?(?:ready|approved|mergeable)\b"
     r"|\b(?:repairs?|changes?|fixes)[ \t]+(?:(?:is|are)[ \t]+)?(?:still[ \t]+)?(?:required|needed)\b"
-    r"|\bneeds?[ \t]+(?:repair|changes|rework)\b"
-    r"|\b(?:do[ \t]+not|don't)[ \t]+merge\b|\btake[ \t]+(?:it|that)[ \t]+back\b"
+    r"|\bneeds?[ \t]+(?:work|a[ \t]+fix|fix|fixes|repair|changes|rework)\b"
+    r"|\b(?:do(?:es)?[ \t]+not|dont|don't|cannot|can't)[ \t]+(?:merge|approve|ship|land)\b"
+    r"|\btake[ \t]+(?:it|that)[ \t]+back\b|\bretract(?:ing|ed|s)?\b|\bwithdr(?:aw|awn|awing)\b"
     r"|\b(?:is|are|remains?|still)[ \t]+blocked\b|\bblocked[ \t]+(?:on|by)\b"
-    r"|\bon[ \t]+hold\b|\bhold[ \t]+(?:the[ \t]+)?merge\b|\bchanges[ \t]+requested\b",
-    re.IGNORECASE,
+    r"|\bblockers?[ \t]+(?:found|remains?|remaining|open|still|exists?)\b"
+    r"|\btests?[ \t]+(?:fail|fails|failed|failing)\b|\bci[ \t]+(?:is[ \t]+)?red\b"
+    r"|\bon[ \t]+hold\b|\bhold[ \t]+(?:the[ \t]+)?merge\b|\bchanges[ \t]+requested\b"
+    r"|^\W*(?:wait|hold|stop|stale|blocked|revoked|superseded)\b",
+    re.IGNORECASE | re.MULTILINE,
 )
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -65,11 +86,12 @@ TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
 
 def normalize_body(body: str) -> str:
-    return (body or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = (body or "").replace("\r\n", "\n").replace("\r", "\n")
+    return text.replace("\u2019", "'").replace("\u2018", "'")
 
 
-def visible_lines(body: str) -> list[str] | None:
-    """Return review-body lines outside fenced examples and HTML comments.
+def split_body(body: str) -> tuple[list[str], list[str]] | None:
+    """Return (visible lines, fenced lines); HTML comments are dropped.
 
     Returns ``None`` when the body is structurally ambiguous (unclosed fence or
     unclosed HTML comment); callers must refuse.
@@ -78,12 +100,15 @@ def visible_lines(body: str) -> list[str] | None:
     if "<!--" in text:
         return None
     visible: list[str] = []
+    fenced: list[str] = []
     fence: tuple[str, int] | None = None
     for line in text.split("\n"):
         if fence is not None:
             char, size = fence
             if re.fullmatch(rf"^ {{0,3}}{re.escape(char)}{{{size},}}[ \t]*$", line):
                 fence = None
+            else:
+                fenced.append(line)
             continue
         match = FENCE_OPEN.match(line)
         if match:
@@ -92,32 +117,46 @@ def visible_lines(body: str) -> list[str] | None:
         visible.append(line)
     if fence is not None:
         return None
-    return visible
+    return visible, fenced
+
+
+def tail_allowed(tail: str) -> bool:
+    """Whether a marker-line tail uses only the closed vocabulary."""
+    text = tail
+    for literal in TAIL_LITERALS:
+        text = literal.sub(" ", text)
+    for word in re.findall(r"[A-Za-z0-9]+", text):
+        if re.fullmatch(r"[0-9a-fA-F]{7,40}", word):
+            continue  # a commit sha, as in "\u2014 head <sha>"
+        if word.lower() not in TAIL_VOCABULARY:
+            return False
+    return True
 
 
 def positive_line(line: str) -> bool:
-    """Whether ``line`` is a marker line whose free-text tail does not retract it."""
-    match = POSITIVE_LINE.match(line)
+    """Whether ``line`` is a marker line whose tail stays inside the vocabulary."""
+    match = POSITIVE_LINE.match(normalize_body(line))
     if match is None:
         return False
     tail = match.group("tail") or ""
-    return not (
-        STATE_MENTION.search(tail) or NEGATION.search(tail) or TAIL_BLOCK.search(tail)
-    )
+    return not STATE_TOKEN.search(tail) and tail_allowed(tail)
 
 
 def comment_body_ready(body: str) -> bool:
     """Whether a COMMENT review body carries a current positive source disposition.
 
-    The first substantive line must be exactly a readiness marker (optionally as
-    ``disposition: MARKER``). Any later line that mentions disposition or a readiness
-    state must itself be an exact positive line; everything else refuses.
+    The first substantive line must be a marker line with an allowed tail. Any later
+    line that mentions disposition or a readiness state must itself be a positive
+    line; retraction or blocker text refuses on later lines and inside fenced blocks.
     """
-    lines = visible_lines(body)
-    if lines is None:
+    parts = split_body(body)
+    if parts is None:
         return False
-    substantive = [line for line in lines if line.strip()]
+    visible, fenced = parts
+    substantive = [line for line in visible if line.strip()]
     if not substantive or not positive_line(substantive[0]):
+        return False
+    if any(STATE_TOKEN.search(line) or NEGATION.search(line) for line in fenced):
         return False
     return all(
         positive_line(line)
@@ -134,10 +173,13 @@ def comment_body_negative(body: str) -> bool:
     """
     if comment_body_ready(body):
         return False
-    lines = visible_lines(body)
-    if lines is None:
+    parts = split_body(body)
+    if parts is None:
         return True
-    return any(STATE_MENTION.search(line) for line in lines)
+    visible, fenced = parts
+    return any(STATE_MENTION.search(line) for line in visible) or any(
+        STATE_TOKEN.search(line) or NEGATION.search(line) for line in fenced
+    )
 
 
 def _order(review: dict[str, Any]) -> tuple[str, int]:
@@ -277,7 +319,7 @@ def self_test() -> None:
         ("REVIEW_READY — head 7c50f64fa93c3e40533240fbe4fd0e9ac7398eab", True),
         ("REVIEW_READY \u2014 head 7c50f64fa\n\nAngles: correctness. Findings: nothing blocking; hosted CI not run; fail-closed on missing data.", True),
         ("REVIEW_READY - head 7c50f64\nNo findings.", True),
-        ("REVIEW_READY \u2014 head xyz", True),
+        ("REVIEW_READY \u2014 head xyz", False),
         ("REVIEW_READY for the current candidate.\n\ndisposition: REVIEW_READY, subject to final unchanged-head refresh.", True),
         ("REVIEW_READY \u2014 native qualification and integration review complete.\ndisposition: REVIEW_READY for the installed candidate.", True),
         ("REVIEW_READY \u2014 exact-head source, native-proof, current-findings and integration review complete.", True),
@@ -297,10 +339,29 @@ def self_test() -> None:
         ("REVIEW_READY\nDo not merge", False),
         ("REVIEW_READY\nI take it back", False),
         ("REVIEW_READY\nThe change is blocked on CI", False),
-        ("REVIEW_READY \u2014 no findings", True),
+        ("REVIEW_READY \u2014 no findings", False),
         ("REVIEW_READY for the candidate, but repairs required", False),
         ("SOURCE_REVIEW_READY, but repairs required", False),
-        ("REVIEW_READY\n```\nnot ready\n```\nChecked the oracle.", True),
+        ("REVIEW_READY\n```\nnot ready\n```\nChecked the oracle.", False),
+        ("REVIEW_READY\n~~~\nRetracting this review\n~~~", False),
+        ("REVIEW_READY \u2014 needs a fix", False),
+        ("REVIEW_READY \u2014 cannot merge", False),
+        ("REVIEW_READY \u2014 CI red", False),
+        ("REVIEW_READY \u2014 wait for CI", False),
+        ("REVIEW_READY \u2014 unverified", False),
+        ("REVIEW_READY \u2014 WIP", False),
+        ("REVIEW_READY \u2014 contingent on CI", False),
+        ("REVIEW_READY \u2014 subject to change", False),
+        ("REVIEW_READY\nDont merge", False),
+        ("REVIEW_READY\nDon\u2019t merge", False),
+        ("REVIEW_READY\nWait", False),
+        ("REVIEW_READY\nRetracting", False),
+        ("REVIEW_READY\nBlocker found", False),
+        ("REVIEW_READY\nTests fail", False),
+        ("REVIEW_READY\nNeeds work", False),
+        ("REVIEW_READY\nBlocked.", False),
+        ("REVIEW_READY\nStale", False),
+        ("REVIEW_READY\nI do not approve", False),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)

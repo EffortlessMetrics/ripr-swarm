@@ -88,7 +88,7 @@ fn review_disposition_self_test_passes() -> Result<(), String> {
 #[test]
 fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
     let head = "a".repeat(40);
-    let cases: [(&str, bool); 51] = [
+    let cases: [(&str, bool); 70] = [
         ("SOURCE_REVIEW_READY", true),
         ("REVIEW_INCOMPLETE", false),
         (
@@ -134,7 +134,7 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
             true,
         ),
         ("REVIEW_READY - head 7c50f64\nNo findings.", true),
-        ("REVIEW_READY \u{2014} head xyz", true),
+        ("REVIEW_READY \u{2014} head xyz", false),
         // Trimmed real first lines and summary lines from merged reviews of record.
         (
             "REVIEW_READY for the current candidate.\n\ndisposition: REVIEW_READY, subject to final unchanged-head refresh.",
@@ -167,15 +167,34 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
         ("REVIEW_READY\nDo not merge", false),
         ("REVIEW_READY\nI take it back", false),
         ("REVIEW_READY\nThe change is blocked on CI", false),
-        ("REVIEW_READY \u{2014} no findings", true),
+        ("REVIEW_READY \u{2014} no findings", false),
         (
             "REVIEW_READY for the candidate, but repairs required",
             false,
         ),
         (
             "REVIEW_READY\n```\nnot ready\n```\nChecked the oracle.",
-            true,
+            false,
         ),
+        ("REVIEW_READY\n~~~\nRetracting this review\n~~~", false),
+        ("REVIEW_READY \u{2014} needs a fix", false),
+        ("REVIEW_READY \u{2014} cannot merge", false),
+        ("REVIEW_READY \u{2014} CI red", false),
+        ("REVIEW_READY \u{2014} wait for CI", false),
+        ("REVIEW_READY \u{2014} unverified", false),
+        ("REVIEW_READY \u{2014} WIP", false),
+        ("REVIEW_READY \u{2014} contingent on CI", false),
+        ("REVIEW_READY \u{2014} subject to change", false),
+        ("REVIEW_READY\nDont merge", false),
+        ("REVIEW_READY\nDon\u{2019}t merge", false),
+        ("REVIEW_READY\nWait", false),
+        ("REVIEW_READY\nRetracting", false),
+        ("REVIEW_READY\nBlocker found", false),
+        ("REVIEW_READY\nTests fail", false),
+        ("REVIEW_READY\nNeeds work", false),
+        ("REVIEW_READY\nBlocked.", false),
+        ("REVIEW_READY\nStale", false),
+        ("REVIEW_READY\nI do not approve", false),
         ("", false),
     ];
     for (body, expected) in cases {
@@ -191,6 +210,45 @@ fn issue_8157_narrative_false_positive_controls() -> Result<(), String> {
             expected,
             &format!("{body:?}"),
         )?;
+    }
+    Ok(())
+}
+
+/// Full, untrimmed bodies of real review-of-record comments: every `ready-*`
+/// body must admit and every `refuse-*` body (REVIEW_INCOMPLETE shapes) must refuse.
+#[test]
+fn full_real_review_bodies_admit_or_refuse_as_recorded() -> Result<(), String> {
+    let head = "a".repeat(40);
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/review_bodies");
+    let mut ready = 0;
+    let mut refused = 0;
+    for entry in std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or("non-utf8 fixture name")?
+            .to_string();
+        let body = std::fs::read_to_string(&path).map_err(|e| format!("{name}: {e}"))?;
+        let admit = name.starts_with("ready-");
+        if admit {
+            ready += 1;
+        } else {
+            refused += 1;
+        }
+        let reviews = serde_json::json!([review(
+            "author",
+            "COMMENTED",
+            &head,
+            "2026-10-15T01:00:01Z",
+            &body
+        )]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, &name)?;
+    }
+    if ready != 11 || refused != 7 {
+        return Err(format!(
+            "expected 11 ready and 7 refuse fixtures, saw {ready}/{refused}"
+        ));
     }
     Ok(())
 }
