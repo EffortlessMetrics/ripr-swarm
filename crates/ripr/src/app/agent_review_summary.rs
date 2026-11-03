@@ -1046,7 +1046,7 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("No analysis yet. Run `ripr check` first."),
+            rendered.contains("Nothing to review yet: no repair has been run."),
             "{rendered}"
         );
 
