@@ -40,19 +40,46 @@ pub(crate) const COLLECTION_CONTENTS_CHECK_EVIDENCE: &str = "collection contents
 pub(crate) const COLLECTION_CONTENTS_CHECK_NEXT_STEP: &str =
     "Add an exact check of the full contents the test reads back after the call.";
 
-/// Whether side-effect guidance should name a collection contents check instead
-/// of a mock expectation. Uses the same reach/activation/propagation gate as
-/// the repair route's contents-check requirement (#11402).
-pub(crate) fn side_effect_needs_collection_contents_guidance(
-    side_effect_expression: &str,
-    reach: &StageState,
-    activation: &StageState,
-    propagate: &StageState,
+/// Repository-side: whether a side-effect seam's next step should name a
+/// collection contents check instead of a mock expectation. This is exactly
+/// the repair route's own `contents_check_proposed` condition (#11402): a
+/// side-effect seam pushing into a collection receiver whose propagation stage
+/// carries the count-pinned marker, which the propagation rule emits only for
+/// the sole-unconditional-push-into-a-`&mut Vec`/`String`-parameter owner
+/// shape (`sole_pushed_buffer_at`) with a test that reads the passed local
+/// back only by a count that pins the single push. Stage states alone never
+/// qualify (#12456).
+pub(crate) fn seam_needs_collection_contents_guidance(
+    seam: &RepoSeam,
+    evidence: &TestGripEvidence,
 ) -> bool {
-    matches!(
-        (reach, activation, propagate),
-        (&StageState::Yes, &StageState::Yes, &StageState::Yes)
-    ) && super::classify::direct_collection_mutation_receiver(side_effect_expression).is_some()
+    seam.kind() == SeamKind::SideEffect
+        && super::classify::direct_collection_mutation_receiver(seam.expression()).is_some()
+        && evidence.follows_push_to_counted_local()
+}
+
+/// Diff-side: the same decision for a changed side-effect probe. It reads the
+/// one owner of the count-pin rule (`test_count_pins_pushed_collection`, which
+/// applies the sole-push owner-shape precondition) over the finding's related
+/// tests, so a wrong, aliased, conditional or otherwise unfollowed receiver
+/// keeps the mock-expectation wording (#12456).
+pub(in crate::analysis) fn probe_needs_collection_contents_guidance(
+    probe: &crate::domain::Probe,
+    owner: Option<&super::rust_index::FunctionSummary>,
+    index: &super::rust_index::RustIndex,
+    tests: &[&super::rust_index::TestSummary],
+    pin_syntax: &super::classify::OwnerPinSyntax,
+) -> bool {
+    probe.family == crate::domain::ProbeFamily::SideEffect
+        && super::classify::direct_collection_mutation_receiver(&probe.expression)
+            .zip(owner)
+            .is_some_and(|(receiver, owner)| {
+                tests.iter().any(|test| {
+                    super::classify::test_count_pins_pushed_collection(
+                        receiver, owner, index, test, pin_syntax,
+                    )
+                })
+            })
 }
 
 /// Plain-language rendering of one readiness-evidence string for human
@@ -1086,33 +1113,6 @@ mod tests {
         StageEvidence::new(state, Confidence::Medium, "test stage")
     }
 
-    #[test]
-    fn side_effect_needs_collection_contents_guidance_requires_localized_sink() {
-        use super::{
-            COLLECTION_CONTENTS_CHECK_NEXT_STEP, side_effect_needs_collection_contents_guidance,
-        };
-
-        assert!(side_effect_needs_collection_contents_guidance(
-            "buf.push(msg.to_string())",
-            &StageState::Yes,
-            &StageState::Yes,
-            &StageState::Yes,
-        ));
-        assert!(!side_effect_needs_collection_contents_guidance(
-            "buf.push(msg.to_string())",
-            &StageState::Yes,
-            &StageState::Yes,
-            &StageState::Unknown,
-        ));
-        assert!(!side_effect_needs_collection_contents_guidance(
-            "client.send(value)",
-            &StageState::Yes,
-            &StageState::Yes,
-            &StageState::Yes,
-        ));
-        assert!(!COLLECTION_CONTENTS_CHECK_NEXT_STEP.contains("mock"));
-    }
-
     fn boundary_seam() -> RepoSeam {
         RepoSeam::new(
             "src/pricing.rs",
@@ -1242,6 +1242,32 @@ mod tests {
             },
         );
         entry
+    }
+
+    #[test]
+    fn collection_contents_next_step_gate_matches_the_repair_route_decision() {
+        use super::seam_needs_collection_contents_guidance;
+
+        // The next-step gate and the route's own contents-check proposal read
+        // the same marker, so wording and refusal cannot disagree (#12456).
+        let marked = push_seam(SeamKind::SideEffect, true);
+        assert!(seam_needs_collection_contents_guidance(
+            &marked.seam,
+            &marked.evidence
+        ));
+        // Same stages and push shape, but not followed to a count-pinned
+        // local: the mock-expectation wording stays.
+        let unmarked = push_seam(SeamKind::SideEffect, false);
+        assert!(!seam_needs_collection_contents_guidance(
+            &unmarked.seam,
+            &unmarked.evidence
+        ));
+        // A call-presence seam is not the changed pushed value.
+        let call = push_seam(SeamKind::CallPresence, true);
+        assert!(!seam_needs_collection_contents_guidance(
+            &call.seam,
+            &call.evidence
+        ));
     }
 
     #[test]

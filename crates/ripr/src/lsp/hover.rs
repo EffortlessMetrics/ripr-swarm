@@ -1689,11 +1689,9 @@ fn seam_next_step_for(entry: &ClassifiedSeam) -> String {
             "Assert on the specific field or use whole-object equality.".to_string()
         }
         SeamKind::SideEffect => {
-            if crate::analysis::repair_route::side_effect_needs_collection_contents_guidance(
-                entry.seam.expression(),
-                &entry.evidence.reach.state,
-                &entry.evidence.activate.state,
-                &entry.evidence.propagate.state,
+            if crate::analysis::repair_route::seam_needs_collection_contents_guidance(
+                &entry.seam,
+                &entry.evidence,
             ) {
                 crate::analysis::repair_route::COLLECTION_CONTENTS_CHECK_NEXT_STEP.to_string()
             } else {
@@ -1855,7 +1853,13 @@ mod seam_hover_tests {
             related_tests: Vec::new(),
             reach: stage(StageState::Yes, "test reaches owner"),
             activate: stage(StageState::Yes, "test activates change"),
-            propagate: stage(StageState::Yes, "push follows to local"),
+            propagate: stage(
+                StageState::Yes,
+                &format!(
+                    "Static propagation to `side_effect` sink is yes; {}",
+                    crate::analysis::test_grip_evidence::PUSHED_COLLECTION_COUNT_PINNED
+                ),
+            ),
             observe: stage(StageState::Yes, "count read observes"),
             discriminate: stage(StageState::Weak, "count read is weak"),
             observed_values: Vec::new(),
@@ -1871,6 +1875,16 @@ mod seam_hover_tests {
         let step = seam_next_step_for(&entry);
         assert_eq!(step, COLLECTION_CONTENTS_CHECK_NEXT_STEP);
         assert!(!step.contains("mock"), "{step}");
+
+        // Stage states and the push shape alone are not the repair route's
+        // precondition (#12456): without the count-pinned marker (aliased,
+        // conditional or unfollowed receiver) the mock wording stays.
+        let mut unmarked = entry;
+        unmarked.evidence.propagate = stage(StageState::Yes, "push follows to local");
+        assert_eq!(
+            seam_next_step_for(&unmarked),
+            "Add a mock expectation, event observer, or persistence assertion."
+        );
     }
 
     fn sample_diagnostic() -> Diagnostic {
