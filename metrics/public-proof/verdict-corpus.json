@@ -1,31 +1,31 @@
 {
   "schema_version": "ripr_verdict_corpus_report.v1",
   "spec": "RIPR-SPEC-0219",
-  "cases_total": 840,
+  "cases_total": 842,
   "by_truth": {
-    "discriminated": 429,
+    "discriminated": 431,
     "not_discriminated": 280,
     "partially_discriminated": 131
   },
   "by_outcome": {
-    "abstained": 320,
+    "abstained": 322,
     "false_actionable": 1,
     "ideal": 519
   },
   "by_observed_verdict": {
     "credited": 264,
     "gap": 256,
-    "limited": 307,
+    "limited": 309,
     "silent": 13
   },
   "false_verdict_rate": {
     "numerator": 1,
-    "denominator": 840,
+    "denominator": 842,
     "rate": "0.0012"
   },
   "false_actionable_rate": {
     "numerator": 1,
-    "denominator": 429,
+    "denominator": 431,
     "rate": "0.0023"
   },
   "false_exposed_rate": {
@@ -40,38 +40,38 @@
   },
   "ideal_rate": {
     "numerator": 519,
-    "denominator": 840,
-    "rate": "0.6179"
+    "denominator": 842,
+    "rate": "0.6164"
   },
   "abstention_rate": {
-    "numerator": 320,
-    "denominator": 840,
-    "rate": "0.3810"
+    "numerator": 322,
+    "denominator": 842,
+    "rate": "0.3824"
   },
   "contradiction_rate": {
     "numerator": 0,
-    "denominator": 1029,
+    "denominator": 1031,
     "rate": "0.0000"
   },
   "contradictions_by_code": {},
   "by_origin": {
     "authored": {
-      "cases_total": 799,
+      "cases_total": 801,
       "by_observed_verdict": {
         "credited": 261,
         "gap": 254,
-        "limited": 271,
+        "limited": 273,
         "silent": 13
       },
       "false_verdict_rate": {
         "numerator": 1,
-        "denominator": 799,
-        "rate": "0.0013"
+        "denominator": 801,
+        "rate": "0.0012"
       },
       "false_actionable_rate": {
         "numerator": 1,
-        "denominator": 407,
-        "rate": "0.0025"
+        "denominator": 409,
+        "rate": "0.0024"
       },
       "false_exposed_rate": {
         "numerator": 0,
@@ -85,13 +85,13 @@
       },
       "ideal_rate": {
         "numerator": 514,
-        "denominator": 799,
-        "rate": "0.6433"
+        "denominator": 801,
+        "rate": "0.6417"
       },
       "abstention_rate": {
-        "numerator": 284,
-        "denominator": 799,
-        "rate": "0.3554"
+        "numerator": 286,
+        "denominator": 801,
+        "rate": "0.3571"
       }
     },
     "upstream": {
@@ -17150,6 +17150,50 @@
       "anchor": "src/lib.rs:8",
       "behavior_family": "scalar_return_value",
       "test_shape": "package_renamed_claims_assert_ok_eq",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "spec0231r42b-renamed-claims-import",
+      "subject_id": "authored-spec0231-42b",
+      "origin": "authored",
+      "anchor": "src/lib.rs:8",
+      "behavior_family": "scalar_return_value",
+      "test_shape": "claims_assert_ok_eq_renamed_import",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "reachable_unrevealed"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "spec0231r42c-path-qualified-claims-call",
+      "subject_id": "authored-spec0231-42c",
+      "origin": "authored",
+      "anchor": "src/lib.rs:8",
+      "behavior_family": "scalar_return_value",
+      "test_shape": "claims_assert_ok_eq_path_qualified",
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",

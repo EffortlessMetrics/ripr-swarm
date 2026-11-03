@@ -251,11 +251,12 @@ runs at most once per `resolve_repair_start` call, which both bare `ripr
 repair` and the `ripr continue` start suggestion use, and only when an open
 seam on the changed lines passes a cheap pre-test: there is a `Cargo.toml`
 besides the owner's own (path-only scan; a virtual workspace root counts, and
-so does a nested manifest such as `fuzz/Cargo.toml`), and the owner is a `pub fn`
-(top-level or in an inline module) of a library source file of its package
-(`src/lib.rs` or a module file under `src/`; not `src/main.rs` or `src/bin/`),
-(`pub`, optionally `const`, `async`, `unsafe` or `extern`), the shapes another crate can name as `<crate>::<fn>` or
-`<crate>::<module>::<fn>`. Whether the path is really public is check's
+so does a nested manifest such as `fuzz/Cargo.toml`), and the owner is declared
+as `pub fn` (`pub`, optionally `const`, `async`, `unsafe` or `extern`, with any
+whitespace between the words) at the top level or in an inline module of a
+library source file of its package (`src/lib.rs` or a module file under `src/`;
+not `src/main.rs` or `src/bin/`). These are the shapes another crate can name
+as `<crate>::<fn>` or `<crate>::<module>::<fn>`. Whether the path is really public is check's
 decision, not the pre-test's. A repository whose only manifest is the owner's own
 never runs it, and an unreadable owner file counts as passing. Refusals the pre-test excludes (a
 private owner, a method, a same-crate wrapper) keep the seam producer's
