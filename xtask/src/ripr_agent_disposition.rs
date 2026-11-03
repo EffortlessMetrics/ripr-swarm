@@ -309,7 +309,12 @@ fn check_forbidden_public_claims() -> Result<Vec<String>, String> {
 }
 
 fn claim_violations(relative: &str, text: &str) -> Vec<String> {
-    let lower = text.to_ascii_lowercase();
+    // Normalize whitespace so a phrase hard-wrapped across lines is still caught.
+    let lower = text
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     FORBIDDEN_PUBLIC_CLAIMS
         .iter()
         .filter(|phrase| lower.contains(*phrase))
@@ -432,6 +437,12 @@ mod tests {
             "Generic LSP clients can use riprAgent",
         );
         assert_eq!(violations.len(), 1, "{violations:?}");
+    }
+
+    #[test]
+    fn hard_wrapped_generic_headless_claim_is_rejected() {
+        let violations = claim_violations("x", "wire contract for generic headless\nclients");
+        assert!(!violations.is_empty(), "{violations:?}");
     }
 
     #[test]
