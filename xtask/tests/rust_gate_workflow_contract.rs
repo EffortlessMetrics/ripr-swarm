@@ -528,3 +528,288 @@ fn routed_result_cannot_pass_without_the_hosted_shards() {
         );
     }
 }
+
+fn test_build_script(workflow: &str) -> Result<String, String> {
+    let step = workflow
+        .split_once("      - name: Build the test binaries one memory-heavy crate at a time\n")
+        .ok_or_else(|| "missing serialized test-build step".to_owned())?
+        .1
+        .split("\n      - ")
+        .next()
+        .ok_or_else(|| "missing test-build step body".to_owned())?;
+    let body = step
+        .split_once("        run: |\n")
+        .ok_or_else(|| "test-build step must keep a literal run block".to_owned())?
+        .1;
+    Ok(body
+        .lines()
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+#[test]
+fn hosted_build_metrics_keep_commands_and_the_existing_artifact_root() -> Result<(), String> {
+    let script = test_build_script(SHARDS)?;
+    let commands: Vec<_> = script
+        .lines()
+        .filter(|line| line.starts_with("build_phase "))
+        .collect();
+    assert_eq!(
+        commands,
+        [
+            "build_phase without-xtask cargo test --no-run --locked --workspace --exclude xtask",
+            "build_phase workspace cargo test --no-run --locked --workspace",
+        ]
+    );
+    for required in [
+        "metrics=target/nextest/ci/build-metrics",
+        "time_tool=/usr/bin/time",
+        "elapsed_seconds=%e\\nlargest_process_max_rss_kib=%M",
+        "rss_scope=largest_command_or_waited_descendant_process_not_aggregate",
+        "sample_period_seconds=5",
+        "system-memory.tsv",
+        "sampled_min_available_mb=",
+        "sampled_max_swap_used_mb=",
+        "measurement=unavailable",
+    ] {
+        assert!(
+            script.contains(required),
+            "missing metric contract: {required}"
+        );
+    }
+    assert!(
+        !script.contains("%x"),
+        "GNU time's exit field is not native status"
+    );
+    assert!(!script.contains("$RUNNER_TEMP"));
+    assert!(SHARDS.contains("            target/nextest/ci/build-metrics/\n"));
+    assert!(SHARDS.contains("            target/nextest/ci/junit.xml\n"));
+    assert!(SHARDS.contains("            target/nextest/ci/run-context.txt\n"));
+    Ok(())
+}
+
+/// Execute the literal workflow Bash with bounded stand-ins. This proves command
+/// selection, status and evidence handling, not GNU time or a hosted Rust build.
+#[cfg(target_os = "linux")]
+mod hosted_build_metrics {
+    use super::{test_build_script, SHARDS};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    struct Scratch(PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const CARGO: &str = r#"#!/bin/bash
+printf '%s\n' "$*" >> "$TRACE"
+for ((i=0; i<100; i++)); do
+  [ "$CASE" == no-samples ] && break
+  [ -s target/nextest/ci/build-metrics/system-memory.tsv ] && break
+  /bin/sleep 0.01
+done
+if [ "$CASE" == first-signal137 ]; then kill -KILL "$$"; fi
+if [ "$CASE" == second-signal143 ] && [[ "$*" != *--exclude* ]]; then kill -TERM "$$"; fi
+if [[ "$*" == *--exclude* ]]; then exit "$FIRST_EXIT"; else exit "$SECOND_EXIT"; fi
+"#;
+    const GIT: &str = r#"#!/bin/bash
+[[ "$*" == 'rev-parse HEAD' ]] || exit 93
+printf '%s\n' "$CHECKOUT_SHA"
+"#;
+    const FREE: &str = r#"#!/bin/bash
+[ "$CASE" == no-samples ] && exit 0
+printf '%s\n' 'Mem: 16384 11000 1000 10 4384 4200' 'Swap: 12288 375 11913'
+if [ "$CASE" == multiple-samples ]; then
+  printf '%s\n' 'Mem: 16384 12000 1000 10 3384 3000' 'Swap: 12288 450 11838'
+  printf '%s\n' 'Mem: 16384 11500 1000 10 3884 3500' 'Swap: 12288 500 11788'
+fi
+"#;
+    const AWK: &str = r#"#!/bin/bash
+if [[ "$BROKEN_REPORTER" == 1 && ( "$*" == *sampled_min_available_mb* || "$*" == *elapsed_seconds* ) ]]; then exit 92; fi
+exec /usr/bin/awk "$@"
+"#;
+    const TIMER: &str = r#"#!/bin/bash
+[[ "$1" == -q && "$2" == -f && "$4" == -o ]] || exit 94
+format="$3"; destination="$5"; shift 5
+[[ "$format" == 'elapsed_seconds=%e\nlargest_process_max_rss_kib=%M' ]] || exit 95
+if "$@"; then status=0; else status=$?; fi
+case "$TIMER_MODE" in
+  valid) printf 'elapsed_seconds=1.25\nlargest_process_max_rss_kib=12345\n' > "$destination" ;;
+  malformed) printf 'elapsed_seconds=broken\nlargest_process_max_rss_kib=0\n' > "$destination" ;;
+  empty) : > "$destination" ;;
+esac
+exit "$status"
+"#;
+
+    #[test]
+    fn extracted_build_keeps_native_status_when_measurements_fail() -> TestResult {
+        let script = test_build_script(SHARDS)?;
+        assert_eq!(script.matches("time_tool=/usr/bin/time").count(), 1);
+        // Only the instrument's path and Actions' shard expression are supplied
+        // by the fixture; the production Bash, Cargo argv and reporters are real.
+        let script = script
+            .replace("time_tool=/usr/bin/time", "time_tool=\"$TEST_TIMER\"")
+            .replace("${{ matrix.shard }}", "2");
+        for (name, first, second, mode, reporter_fails) in [
+            ("success", 0, 0, "valid", false),
+            ("first-fails", 17, 0, "valid", false),
+            ("second-fails", 0, 17, "valid", false),
+            ("first-signal137", 137, 0, "valid", false),
+            ("second-signal143", 0, 143, "valid", false),
+            ("missing-timer", 0, 0, "absent", false),
+            ("missing-timer-fails", 17, 0, "absent", false),
+            ("malformed-timer", 0, 0, "malformed", false),
+            ("empty-timer", 0, 0, "empty", false),
+            ("multiple-samples", 0, 0, "valid", false),
+            ("no-samples", 0, 0, "valid", false),
+            ("reporter-fails", 17, 0, "valid", true),
+            ("reporter-fails-success", 0, 0, "valid", true),
+        ] {
+            let path = std::env::temp_dir()
+                .join(format!("ripr-build-metrics-{}-{name}", std::process::id()));
+            fs::create_dir(&path)?;
+            let scratch = Scratch(path);
+            let bin = scratch.0.join("bin");
+            fs::create_dir(&bin)?;
+            for (binary, source) in [
+                ("cargo", CARGO),
+                ("time", TIMER),
+                ("git", GIT),
+                ("free", FREE),
+                // End the sampler after its first sample; no descendant outlives
+                // this bounded source replay or delays its cleanup.
+                ("sleep", "#!/bin/bash\nexit 1\n"),
+                ("awk", AWK),
+            ] {
+                let file = bin.join(binary);
+                fs::write(&file, source)?;
+                fs::set_permissions(&file, fs::Permissions::from_mode(0o755))?;
+            }
+            let old_path = std::env::var_os("PATH").ok_or("PATH is unavailable")?;
+            let path = std::env::join_paths(
+                std::iter::once(bin.clone()).chain(std::env::split_paths(&old_path)),
+            )?;
+            let output = Command::new("timeout")
+                .args(["--kill-after=1s", "5s", "bash", "-e", "-c", &script])
+                .current_dir(&scratch.0)
+                .env_remove("BASH_ENV")
+                .env_remove("ENV")
+                .env_remove("SHELLOPTS")
+                .env_remove("BASHOPTS")
+                .env("PATH", path)
+                .env(
+                    "TEST_TIMER",
+                    bin.join(if mode == "absent" { "missing" } else { "time" }),
+                )
+                .env("TRACE", scratch.0.join("trace"))
+                .env("CASE", name)
+                .env("FIRST_EXIT", first.to_string())
+                .env("SECOND_EXIT", second.to_string())
+                .env("TIMER_MODE", mode)
+                .env("BROKEN_REPORTER", if reporter_fails { "1" } else { "0" })
+                .env("CHECKOUT_SHA", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                .env("GITHUB_REPOSITORY", "fixture/repo")
+                .env("GITHUB_RUN_ID", "123")
+                .env("GITHUB_RUN_ATTEMPT", "4")
+                .output()?;
+            let expected_exit = if first != 0 { first } else { second };
+            assert_eq!(
+                output.status.code(),
+                Some(expected_exit),
+                "{name}: {output:?}"
+            );
+            let trace = fs::read_to_string(scratch.0.join("trace"))?;
+            let expected = if first != 0 {
+                "test --no-run --locked --workspace --exclude xtask\n"
+            } else {
+                "test --no-run --locked --workspace --exclude xtask\ntest --no-run --locked --workspace\n"
+            };
+            assert_eq!(trace, expected, "{name}: Cargo count/order/argv changed");
+            let metrics = scratch.0.join("target/nextest/ci/build-metrics");
+            let context = fs::read_to_string(metrics.join("context.txt"))?;
+            for field in [
+                "repository=fixture/repo",
+                "checkout_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "run_id=123",
+                "run_attempt=4",
+                "shard=2/4",
+                "sample_period_seconds=5",
+            ] {
+                assert!(context.contains(field), "{name}: missing {field}");
+            }
+            let samples = fs::read_to_string(metrics.join("system-memory.tsv"))?;
+            assert_eq!(samples.is_empty(), name == "no-samples", "{name}");
+            if reporter_fails {
+                assert!(String::from_utf8_lossy(&output.stdout).contains("::warning::"));
+                assert_eq!(
+                    fs::read_to_string(metrics.join("system-summary.txt"))?,
+                    "measurement=unavailable\n"
+                );
+                assert_eq!(
+                    fs::read_to_string(metrics.join("without-xtask.txt"))?,
+                    format!("native_exit={first}\nmeasurement=unavailable\n")
+                );
+                continue;
+            }
+            let system = fs::read_to_string(metrics.join("system-summary.txt"))?;
+            let fields: &[&str] = match name {
+                "multiple-samples" => &[
+                    "sample_count=3",
+                    "sampled_min_available_mb=3000",
+                    "sampled_max_swap_used_mb=500",
+                ],
+                "no-samples" => &["sample_count=0", "measurement=unavailable"],
+                _ => &[
+                    "measurement=sampled",
+                    "sampled_min_available_mb=4200",
+                    "sampled_max_swap_used_mb=375",
+                ],
+            };
+            for &field in fields {
+                assert!(system.contains(field), "{name}: {system}");
+            }
+            if name == "no-samples" {
+                assert!(!system.contains("sampled_min_available_mb="), "{system}");
+                assert!(!system.contains("sampled_max_swap_used_mb="), "{system}");
+            }
+            for (phase, status) in [("without-xtask", first), ("workspace", second)] {
+                if phase == "workspace" && first != 0 {
+                    assert!(!metrics.join("workspace.txt").exists(), "{name}");
+                    continue;
+                }
+                let result = fs::read_to_string(metrics.join(format!("{phase}.txt")))?;
+                assert!(
+                    result.contains(&format!("native_exit={status}\n")),
+                    "{name}: {result}"
+                );
+                if mode == "valid" {
+                    for field in [
+                        "measurement=available",
+                        "elapsed_seconds=1.25",
+                        "largest_process_max_rss_kib=12345",
+                    ] {
+                        assert!(result.contains(field), "{name}: {result}");
+                    }
+                } else {
+                    assert!(
+                        result.contains("measurement=unavailable"),
+                        "{name}: {result}"
+                    );
+                    assert!(
+                        !result.contains("largest_process_max_rss_kib="),
+                        "{name}: {result}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}
