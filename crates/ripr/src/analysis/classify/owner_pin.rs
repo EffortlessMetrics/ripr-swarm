@@ -47,6 +47,7 @@ mod expected_binding;
 mod fallible_check;
 mod fixture_receiver;
 mod helper_arguments;
+pub(in crate::analysis::classify) mod path_value;
 pub(super) mod result_map;
 pub(super) mod returned_closure;
 mod shared_macro_scan;
@@ -5351,6 +5352,7 @@ impl OwnerReturnPin {
         let matches_operands: [String; 2];
         let expect_operands: [String; 2];
         let pointer_call;
+        let path_value_call: Option<(usize, String)>;
         // RIPR-SPEC-0197: `assert!(owner(..) == v)` and its guard twin
         // `if owner(..) != v { return Err(..) }` read like `assert_eq!`. A
         // guard reads only its condition, never a macro inside its body,
@@ -5532,9 +5534,52 @@ impl OwnerReturnPin {
                 })
             })
             .flatten();
-            let operands = match &pointer_call {
-                Some((0, call)) => [call.as_str(), operands[1]],
-                Some((1, call)) => [operands[0], call.as_str()],
+            path_value_call = if pointer_call.is_none() {
+                (!self.awaited
+                    && self.returns_scalar
+                    && matches!(self.call, PinCall::Bare)
+                    && matches!(self.path, ReturnPathGate::Any)
+                    && (test.start_line..=test.end_line).contains(&assertion.line)
+                    // Only a `.map(owner)` chain can substitute; skip the owner
+                    // lookup for every other assertion.
+                    && operands.iter().any(|operand| operand.contains("map")))
+                .then(|| {
+                    index.functions().iter().find(|function| {
+                        function.name == self.name
+                            && function.start_line == self.owner_start_line
+                            && function.file == self.owner_file
+                    })
+                })
+                .flatten()
+                .and_then(|owner| {
+                    [(0usize, 1usize), (1, 0)]
+                        .into_iter()
+                        .find_map(|(at, other)| {
+                            let call = path_value::substitute_owner_call(
+                                test,
+                                operands[at],
+                                operands[other],
+                                owner,
+                                index,
+                            )?;
+                            self.awaited_call_shape(poll_context, &call, &self.name)?;
+                            self.pointer_mask_gate.admits(&call).then_some(())?;
+                            if self
+                                .pointer_return_change
+                                .as_ref()
+                                .is_some_and(|change| change.is_invisible_at_call(&call))
+                            {
+                                return None;
+                            }
+                            Some((at, call))
+                        })
+                })
+            } else {
+                None
+            };
+            let operands = match (&pointer_call, &path_value_call) {
+                (Some((0, call)), _) | (_, Some((0, call))) => [call.as_str(), operands[1]],
+                (Some((1, call)), _) | (_, Some((1, call))) => [operands[0], call.as_str()],
                 _ => operands,
             };
             // trap-shine-debug-exact-control: the std rendering of a

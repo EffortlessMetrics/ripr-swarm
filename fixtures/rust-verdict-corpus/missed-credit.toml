@@ -341,10 +341,6 @@ case = "shape-hostile-macro-defined-owner"
 reason = "Tests discriminate the change but ripr withholds the gap under `rust_indirect_owner_call_unresolved` (RIPR-SPEC-0240, #9442, #9443); fail-closed by design until the owner can be paired with its assertion (#9478)."
 
 [[entry]]
-case = "shape-hostile-owner-as-path-value"
-reason = "Tests discriminate the change but ripr withholds the gap under `rust_indirect_owner_call_unresolved` (RIPR-SPEC-0240, #9442, #9443); fail-closed by design until the owner can be paired with its assertion (#9478)."
-
-[[entry]]
 case = "shape-impl-trait-return-filter"
 reason = "Tests discriminate the change but ripr abstains because the boundary operand is a local or computed value ripr cannot map to the related test input (#12771; parent #12766). Delete this entry when the row credits."
 
