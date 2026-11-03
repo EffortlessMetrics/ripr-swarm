@@ -89,6 +89,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: the changed owner is a `#private` class member, so no test can reference it directly and reach through a public method is not established; no new assertion is needed on that evidence, and no repair packet is emitted
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_private_method_unknown/input --diff <cwd>/fixtures/typescript_private_method_unknown/diff.patch --mode fast probe:src_counter.ts:typescript_preview:1aa358b1
   ripr context --root <cwd>/fixtures/typescript_private_method_unknown/input --diff <cwd>/fixtures/typescript_private_method_unknown/diff.patch --mode fast --at probe:src_counter.ts:typescript_preview:1aa358b1
 
