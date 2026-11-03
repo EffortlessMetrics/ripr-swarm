@@ -43,7 +43,7 @@ Evidence
   - observation yes: Strongest extracted Python oracle kind: `exact_error_variant` (rank 5)
   - discriminator weak: Related Python test uses an `exact_error_variant` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches error variant: raise ValueError("negative value: must be at most zero") (line 3)
-  - related test tests/test_check.py:6 test_negative_is_rejected uses strong exact error variant oracle: pytest.raises(ValueError, match="negative value")
+  - related test tests/test_check.py:6 test_negative_is_rejected uses strong exact error variant oracle: pytest.raises(ValueError, match="negative value"); misses: no assertion pins `message "negative value: must be at most zero"`
 
 Weakness
   - A strong Python oracle reaches `check`, but every strong related error assertion pins `ValueError` with a literal message pattern (`negative value`) that matches the old message "negative value: must be at least zero" and the new message "negative value: must be at most zero" alike, so it pins only the exception class. Add a `match=` pattern that the old message does not satisfy
@@ -78,6 +78,7 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with an exception assertion for the missing check `message "negative value: must be at most zero"`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_message_pin_no_exposed_credit/input --diff <cwd>/fixtures/python_message_pin_no_exposed_credit/diff.patch --mode fast probe:src_check.py:python_preview:v1-b9c384c2
   ripr context --root <cwd>/fixtures/python_message_pin_no_exposed_credit/input --diff <cwd>/fixtures/python_message_pin_no_exposed_credit/diff.patch --mode fast --at probe:src_check.py:python_preview:v1-b9c384c2
 
