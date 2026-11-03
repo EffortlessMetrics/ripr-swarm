@@ -305,6 +305,11 @@ Follow-up fixtures and tests cover:
   when the current binary lacks the Julia preview feature.
 - Generated CI fixtures for Rust-default and language-grouped advisory
   summaries.
+- Rust discovery floor (#8547): under Instant, Draft and Fast a diff with no
+  analyzable Rust file and no open index document returns the empty complete
+  result without walking the Rust workspace, keeps the generated-file skip
+  count and the registered harness identities, and Deep, Ready, open
+  documents and real Rust edits still walk.
 
 Per-language tests belong to RIPR-SPEC-0027 and RIPR-SPEC-0028.
 

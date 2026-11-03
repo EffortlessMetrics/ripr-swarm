@@ -69,3 +69,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_boundary_module_constant_rebound_not_credited (7)
+
+Reason:
+RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
+
+Command:
+`cargo xtask goldens bless python_boundary_module_constant_rebound_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
