@@ -478,6 +478,7 @@ pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelR
         }
         if let Some(intent) = &issue.focused_proof_intent {
             out.push_str(&format!("- Focused proof intent: {intent}\n"));
+            crate::output::placeholder_assertion::push_fill_in_note(&mut out, "  ", intent);
         }
         if let Some(suggested) = &issue.suggested_test {
             out.push_str(&format!(

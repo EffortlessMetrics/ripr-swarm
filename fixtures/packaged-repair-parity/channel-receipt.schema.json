@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "packaged_repair_channel_receipt.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "qualification_state",
+    "channel",
+    "vsix_parity_claimed",
+    "artifact",
+    "semantic",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "packaged_repair_channel_receipt.v0"
+    },
+    "qualification_state": {
+      "type": "string",
+      "enum": [
+        "qualified",
+        "semantic_failure",
+        "missing_evidence",
+        "stale_or_wrong_head",
+        "infrastructure_tempfail",
+        "incomparable"
+      ]
+    },
+    "channel": {
+      "type": "string",
+      "enum": ["installed_cli", "packaged_vsix"]
+    },
+    "vsix_parity_claimed": {
+      "type": "boolean",
+      "const": false
+    },
+    "issues": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["installed_binary", "sha256", "full_version", "workspace_binary_excluded"],
+      "properties": {
+        "installed_binary": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "full_version": { "type": "string", "minLength": 1 },
+        "workspace_binary_excluded": { "type": "boolean", "const": true }
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "semantic": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["static_movement"],
+      "properties": {
+        "static_movement": {
+          "type": "string",
+          "enum": ["improved", "closed", "unchanged", "unknown"]
+        }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    }
+  }
+}

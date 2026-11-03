@@ -155,6 +155,10 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// itself, else `None` (`builder_override::method_cannot_store`).
     pub(in crate::analysis) call_cannot_store:
         &'a dyn Fn(&str, &str, &str, &str) -> Option<EarlierWrite>,
+    /// #6991 / #7120: exact-equality `.any()` membership over a captured
+    /// `log::` sink the test installs before calling the owner.
+    pub(in crate::analysis) captured_log_exact_membership_confirms:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
 }
 
 #[cfg(test)]
@@ -196,6 +200,7 @@ fn reveal_evidence(
             owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
+            captured_log_exact_membership_confirms: &|_, _| false,
         },
         None,
     );
@@ -244,6 +249,7 @@ fn reveal_evidence_with_exit(
             owner_may_exit_before_probe,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
+            captured_log_exact_membership_confirms: &|_, _| false,
         },
         None,
     );
@@ -311,6 +317,7 @@ fn reveal_evidence_proximity_reach_pinning(
             owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| false,
             call_cannot_store: &|_, _, _, _| None,
+            captured_log_exact_membership_confirms: &|_, _| false,
             out_parameter_read: &|_, _| None,
         },
         None,
@@ -1311,6 +1318,20 @@ pub(in crate::analysis) fn owner_call_precedes_read(
     !owner_calls_before_read(body, start_line, binding, method, read_line).is_empty()
 }
 
+/// Whether `binding.method(..)` ran before `read_line` but a rebinding or
+/// shadow of `binding` happened before the read, so the read no longer sees
+/// the call's receiver (#6579 review).
+pub(in crate::analysis) fn owner_call_preceded_but_rebound_before_read(
+    body: &str,
+    start_line: usize,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+) -> bool {
+    !owner_call_sites_before_read(body, start_line, binding, method, read_line).is_empty()
+        && owner_calls_before_read(body, start_line, binding, method, read_line).is_empty()
+}
+
 /// The offsets in `body` of the `binding.method(..)` calls that
 /// [`owner_call_precedes_read`] accepts.
 fn owner_calls_before_read(
@@ -1320,52 +1341,96 @@ fn owner_calls_before_read(
     method: &str,
     read_line: usize,
 ) -> Vec<usize> {
-    let masked = mask_comments_and_strings(body);
-    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
-    let line_at = |at: usize| start_line + masked[..at].matches('\n').count();
-    let bound_at = |at: usize| {
-        masked[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|before| !(ident(before) || before == '.'))
-    };
-    let name_ends = |at: usize| masked[at..].chars().next().is_none_or(|next| !ident(next));
-    // Offsets where `binding` stops naming the value the call wrote to: a
-    // `let [mut] binding` shadow or a plain `binding = ..` assignment. Offsets,
-    // not lines, so a rebinding on the call's own line still counts.
-    let mut rebindings: Vec<usize> = masked
-        .match_indices("let ")
-        .filter(|(at, _)| bound_at(*at))
-        .filter_map(|(at, keyword)| {
-            let rest = masked[at + keyword.len()..].trim_start();
-            let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
-            let after = rest.strip_prefix(binding)?;
-            let end = masked.len() - after.len();
-            name_ends(end).then_some(at)
-        })
-        .collect();
-    rebindings.extend(
-        masked
-            .match_indices(binding)
-            .filter(|(at, name)| bound_at(*at) && name_ends(at + name.len()))
-            .filter(|(at, name)| {
-                let rest = masked[at + name.len()..].trim_start();
-                rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>")
-            })
-            .map(|(at, _)| at),
-    );
-    let call = format!("{binding}.{method}(");
-    masked
-        .match_indices(&call)
-        .filter(|(at, _)| bound_at(*at) && runs_unconditionally(&masked, *at))
-        .map(|(at, _)| at)
+    let context = OwnerCallRebindingContext::new(body, start_line, binding);
+    context
+        .sites_before_read(binding, method, read_line)
+        .into_iter()
         .filter(|at| {
-            line_at(*at) < read_line
-                && !rebindings
-                    .iter()
-                    .any(|rebound| *rebound > *at && line_at(*rebound) <= read_line)
+            !context
+                .rebindings
+                .iter()
+                .any(|rebound| *rebound > *at && context.line_at(*rebound) <= read_line)
         })
         .collect()
+}
+
+/// Unconditional `binding.method(..)` call sites on lines before `read_line`.
+fn owner_call_sites_before_read(
+    body: &str,
+    start_line: usize,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+) -> Vec<usize> {
+    OwnerCallRebindingContext::new(body, start_line, binding)
+        .sites_before_read(binding, method, read_line)
+}
+
+struct OwnerCallRebindingContext {
+    masked: String,
+    start_line: usize,
+    rebindings: Vec<usize>,
+}
+
+impl OwnerCallRebindingContext {
+    fn new(body: &str, start_line: usize, binding: &str) -> Self {
+        let masked = mask_comments_and_strings(body);
+        let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+        let bound_at = |at: usize| {
+            masked[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|before| !(ident(before) || before == '.'))
+        };
+        let name_ends = |at: usize| masked[at..].chars().next().is_none_or(|next| !ident(next));
+        let mut rebindings: Vec<usize> = masked
+            .match_indices("let ")
+            .filter(|(at, _)| bound_at(*at))
+            .filter_map(|(at, keyword)| {
+                let rest = masked[at + keyword.len()..].trim_start();
+                let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+                let after = rest.strip_prefix(binding)?;
+                let end = masked.len() - after.len();
+                name_ends(end).then_some(at)
+            })
+            .collect();
+        rebindings.extend(
+            masked
+                .match_indices(binding)
+                .filter(|(at, name)| bound_at(*at) && name_ends(at + name.len()))
+                .filter(|(at, name)| {
+                    let rest = masked[at + name.len()..].trim_start();
+                    rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>")
+                })
+                .map(|(at, _)| at),
+        );
+        Self {
+            masked,
+            start_line,
+            rebindings,
+        }
+    }
+
+    fn line_at(&self, at: usize) -> usize {
+        self.start_line + self.masked[..at].matches('\n').count()
+    }
+
+    fn sites_before_read(&self, binding: &str, method: &str, read_line: usize) -> Vec<usize> {
+        let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+        let bound_at = |at: usize| {
+            self.masked[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|before| !(ident(before) || before == '.'))
+        };
+        let call = format!("{binding}.{method}(");
+        self.masked
+            .match_indices(&call)
+            .filter(|(at, _)| bound_at(*at) && runs_unconditionally(&self.masked, *at))
+            .map(|(at, _)| at)
+            .filter(|at| self.line_at(*at) < read_line)
+            .collect()
+    }
 }
 
 /// One accepted owner call a keyed read is checked against.
@@ -2434,12 +2499,22 @@ fn analyze_related_assertions(
         // standard-method dispatch is not an observation witness. Indexed
         // implicit trait dispatch in this test retains its authority (#7820). Keep
         // token/collection confirmation and opaque macro allowances.
+        let claims_candidates: Vec<OracleFact> = if matches!(probe.family, ProbeFamily::ReturnValue)
+        {
+            super::owner_pin::claims_payload_eq_candidates(test)
+                .into_iter()
+                .filter(|candidate| (return_admission.owner_return_pin)(test, candidate))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let assertions: Vec<_> = test
             .assertions
             .iter()
             .filter(|assertion| (return_admission.assertion_admitted)(test, assertion))
+            .chain(claims_candidates.iter())
             .collect();
-        let refused_here = assertions.len() != test.assertions.len();
+        let refused_here = assertions.len() != test.assertions.len() + claims_candidates.len();
         refused_context |= refused_here;
         if assertions.is_empty() {
             related.push(RelatedTest {
@@ -2539,6 +2614,29 @@ fn analyze_related_assertions(
                     ..assertion.clone()
                 };
                 &excluded_sibling
+            } else {
+                assertion
+            };
+            // RIPR-SPEC-0197 / RIPR-SPEC-0231 rule 10: extraction is text-only
+            // and keeps `assert_ok_eq!(call, literal)` `unknown`. The owner
+            // pin's verified-import decision is the only authority that
+            // grades it, so the re-grade lives here, per probe, and only
+            // where that decision admits it: no verified import, a refused
+            // direction, a non-literal expected operand or an unestablished
+            // owner call leaves the oracle `unknown`.
+            let claims_graded;
+            let assertion = if matches!(probe.family, ProbeFamily::ReturnValue)
+                && assertion.kind == OracleKind::Unknown
+                && assertion.strength == OracleStrength::None
+                && super::owner_pin::is_claims_payload_eq_text(&assertion.text)
+                && (return_admission.owner_return_pin)(test, assertion)
+            {
+                claims_graded = OracleFact {
+                    kind: OracleKind::ExactValue,
+                    strength: OracleStrength::Strong,
+                    ..assertion.clone()
+                };
+                &claims_graded
             } else {
                 assertion
             };
@@ -2908,6 +3006,9 @@ fn analyze_related_assertions(
                                 || collection_argument_read
                                 || out_parameter_confirmed
                                 || recording_double_read
+                                || (return_admission.captured_log_exact_membership_confirms)(
+                                    test, assertion,
+                                )
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
@@ -4922,10 +5023,55 @@ enum ImportMatch {
 /// this workspace (`crate`, `self`, `super`, or a workspace package), at
 /// any depth (#4478). Glob imports are not read: they prove nothing about
 /// which items they bring in.
+/// Whether a foreign glob `use` in `source` makes a bare call of `callee`
+/// ambiguous when the file does not explicitly import that callee from the
+/// workspace (#8053, #3731 glob residual). Own-crate globs (`use crate::*`,
+/// `use self::*`, `use this_package::*`) do not defeat.
+pub(in crate::analysis) fn file_foreign_glob_defeats_bare_callee_name(
+    source: &str,
+    callee: &str,
+    crate_names: &std::collections::BTreeSet<String>,
+) -> bool {
+    if file_imports_own_item_mode(source, callee, crate_names, ImportMatch::Binding) {
+        return false;
+    }
+    flattened_use_paths(source).iter().any(|import| {
+        let path = import.path.as_str();
+        if !path.ends_with('*') {
+            return false;
+        }
+        let Some(prefix) = path.strip_suffix("::*").or_else(|| path.strip_suffix('*')) else {
+            return true;
+        };
+        let Some(first_segment) = prefix
+            .split("::")
+            .next()
+            .filter(|segment| !segment.is_empty())
+        else {
+            return true;
+        };
+        first_segment != "crate"
+            && first_segment != "self"
+            && first_segment != "super"
+            && !crate_names
+                .iter()
+                .any(|name| name == first_segment || crate_identifier(name) == first_segment)
+    })
+}
+
 pub(in crate::analysis) fn file_imports_own_item(
     source: &str,
     name: &str,
     crate_names: &std::collections::BTreeSet<String>,
+) -> bool {
+    file_imports_own_item_mode(source, name, crate_names, ImportMatch::Item)
+}
+
+fn file_imports_own_item_mode(
+    source: &str,
+    name: &str,
+    crate_names: &std::collections::BTreeSet<String>,
+    mode: ImportMatch,
 ) -> bool {
     if name.is_empty() {
         return false;
@@ -4946,7 +5092,7 @@ pub(in crate::analysis) fn file_imports_own_item(
         own && statement
             .trim_start()
             .strip_prefix("use")
-            .is_some_and(|rest| use_items_bind(rest.trim_start(), name, ImportMatch::Item))
+            .is_some_and(|rest| use_items_bind(rest.trim_start(), name, mode))
     })
 }
 
@@ -6424,6 +6570,7 @@ mod tests {
             owner_may_exit_before_probe: false,
             constructor_starts_empty: &|_, _, _| true,
             call_cannot_store: &|_, _, _, _| Some(EarlierWrite::Reads),
+            captured_log_exact_membership_confirms: &|_, _| false,
         };
         let confirms = |test: &TestSummary| {
             keyed_field_read_confirms(
@@ -7897,6 +8044,7 @@ mod tests {
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         )
@@ -7996,6 +8144,7 @@ mod tests {
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    captured_log_exact_membership_confirms: &|_, _| false,
                 },
                 None,
             )
@@ -8182,6 +8331,7 @@ mod tests {
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    captured_log_exact_membership_confirms: &|_, _| false,
                 },
                 None,
             )
@@ -8295,6 +8445,7 @@ mod tests {
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    captured_log_exact_membership_confirms: &|_, _| false,
                 },
                 None,
                 None,
@@ -8721,6 +8872,7 @@ mod tests {
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -8816,6 +8968,7 @@ mod tests {
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -10626,6 +10779,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -10700,6 +10854,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -10745,6 +10900,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -10809,6 +10965,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -10875,6 +11032,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -11015,6 +11173,42 @@ return Err(\"typed pin\".into());
     /// #7985: the shared gate (also read by the owner-pin callers) treats a
     /// macro that may define the name as a rebind; an unrelated macro is not.
     #[test]
+    fn foreign_glob_defeats_bare_callee_without_own_import() {
+        let demo: std::collections::BTreeSet<String> =
+            ["demo"].into_iter().map(str::to_string).collect();
+        let glob = "use foreign_parser::*;\n";
+        assert!(file_foreign_glob_defeats_bare_callee_name(
+            glob,
+            "parse_num",
+            &demo
+        ));
+        let named = "use foreign_parser::parse_num;\n";
+        assert!(!file_foreign_glob_defeats_bare_callee_name(
+            named,
+            "parse_num",
+            &demo
+        ));
+        let own = "use foreign_parser::*;\nuse demo::parse_num;\n";
+        assert!(!file_foreign_glob_defeats_bare_callee_name(
+            own,
+            "parse_num",
+            &demo
+        ));
+        let own_glob = "use demo::*;\n";
+        assert!(!file_foreign_glob_defeats_bare_callee_name(
+            own_glob,
+            "parse_num",
+            &demo
+        ));
+        let renamed = "use foreign_parser::*;\nuse demo::parse_num as original;\n";
+        assert!(file_foreign_glob_defeats_bare_callee_name(
+            renamed,
+            "parse_num",
+            &demo
+        ));
+    }
+
+    #[test]
     fn macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller() {
         let crate_names = std::collections::BTreeSet::new();
         let defines = "macro_rules! fake {\n    () => { fn expect_response() {} };\n}\nfake!();\n";
@@ -11085,6 +11279,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -11133,6 +11328,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -11575,6 +11771,7 @@ return Err(\"typed pin\".into());
                         recording_double_observed: &|_, _| false,
                         expected_operand_value: &|_, _| None,
                         call_cannot_store: &|_, _, _, _| None,
+                        captured_log_exact_membership_confirms: &|_, _| false,
                         constructor_starts_empty: &|_, _, _| false,
                         owner_may_exit_before_probe: false,
                         owner_returns_value: true,
@@ -11658,6 +11855,7 @@ return Err(\"typed pin\".into());
                     recording_double_observed: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     call_cannot_store: &|_, _, _, _| None,
+                    captured_log_exact_membership_confirms: &|_, _| false,
                     constructor_starts_empty: &|_, _, _| false,
                     owner_may_exit_before_probe: false,
                     owner_returns_value: true,
@@ -11783,6 +11981,7 @@ return Err(\"typed pin\".into());
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    captured_log_exact_membership_confirms: &|_, _| false,
                 },
                 None,
             )
@@ -12122,6 +12321,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -12231,6 +12431,7 @@ return Err(\"typed pin\".into());
                     owner_may_exit_before_probe: false,
                     constructor_starts_empty: &|_, _, _| false,
                     call_cannot_store: &|_, _, _, _| None,
+                    captured_log_exact_membership_confirms: &|_, _| false,
                 },
                 None,
             );
@@ -12283,6 +12484,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -12786,6 +12988,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );
@@ -13337,6 +13540,7 @@ return Err(\"typed pin\".into());
                 owner_may_exit_before_probe: false,
                 constructor_starts_empty: &|_, _, _| false,
                 call_cannot_store: &|_, _, _, _| None,
+                captured_log_exact_membership_confirms: &|_, _| false,
             },
             None,
         );

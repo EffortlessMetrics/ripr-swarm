@@ -40,5 +40,6 @@ Evidence
   - source assertion argument value 1 at line 20
   - source assertion argument value 1_209_600 at line 20
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/helper_chain_method_entry/input --diff <cwd>/fixtures/helper_chain_method_entry/diff.patch --mode fast probe:src_lib.rs:return_value:f3ed720d
   ripr context --root <cwd>/fixtures/helper_chain_method_entry/input --diff <cwd>/fixtures/helper_chain_method_entry/diff.patch --mode fast --at probe:src_lib.rs:return_value:f3ed720d

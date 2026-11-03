@@ -56,32 +56,15 @@ pub(in crate::analysis) fn reach_evidence(
             .filter(|(_, reason)| *reason != RelationReason::SeamCalleeCall)
             .all(|(_, reason)| !relation_establishes_reach(*reason, owner_is_function));
     if proximity_only {
-        let names = owner_anchored
-            .iter()
-            .take(3)
-            .map(|t| t.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let summary = proximity_look_summary(target, related_tests);
         if owner_anchored
             .iter()
             .any(|test| invokes_opaque_macro(&test.body))
             || owner_may_be_reached_unseen()
         {
-            return StageEvidence::new(
-                StageState::Weak,
-                Confidence::Low,
-                format!(
-                    "No test is seen calling {target}; tests share only its file or a name token: {names}"
-                ),
-            );
+            return StageEvidence::new(StageState::Weak, Confidence::Low, summary);
         }
-        return StageEvidence::new(
-            StageState::No,
-            Confidence::Medium,
-            format!(
-                "No test is seen calling {target}; tests share only its file or a name token: {names}"
-            ),
-        );
+        return StageEvidence::new(StageState::No, Confidence::Medium, summary);
     }
     // #7003: callee-only relations never invoke the changed owner — the
     // callee summary says so itself — so reporting `Yes` contradicted the
@@ -765,6 +748,34 @@ pub(in crate::analysis) fn invokes_opaque_macro(body: &str) -> bool {
     })
 }
 
+/// Reach-stage look-text for proximity-only relations.
+///
+/// File and module neighbours may still be named. A `weak_token_substring`
+/// match is not a place to look (#8387): naming it sent readers to unrelated
+/// `next`/`fold`/`visit` tests while the author-added test stayed unmentioned.
+fn proximity_look_summary(
+    target: &str,
+    related_tests: &[(&TestSummary, RelationReason)],
+) -> String {
+    let names = related_tests
+        .iter()
+        .filter(|(_, reason)| {
+            *reason != RelationReason::SeamCalleeCall
+                && *reason != RelationReason::WeakTokenSubstring
+        })
+        .take(3)
+        .map(|(test, _)| test.name.as_str())
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        format!("No test is seen calling {target}; tests share only a name token")
+    } else {
+        format!(
+            "No test is seen calling {target}; tests share only its file or a name token: {}",
+            names.join(", ")
+        )
+    }
+}
+
 /// Whether a relation by itself is evidence that the test runs a seam's
 /// owner, shared by diff-mode reach and repo-mode seam reach (#5335). The
 /// rule lives on [`RelationReason::establishes_reach`] so the classifier's
@@ -842,9 +853,45 @@ mod tests {
 
         assert_eq!(evidence.state, StageState::No);
         assert_eq!(evidence.confidence, Confidence::Medium);
+        // #8387: a name-token neighbour is not a place to look. File and
+        // module rows may still be named; the token match must not lead.
         assert_eq!(
             evidence.summary,
-            "No test is seen calling untested_rounding; tests share only its file or a name token: discount_applies_at_100, rounding_table_loads, module_smoke"
+            "No test is seen calling untested_rounding; tests share only its file or a name token: discount_applies_at_100, module_smoke"
+        );
+        assert!(
+            !evidence.summary.contains("rounding_table_loads"),
+            "name-token tests must not appear in reach look-text: {}",
+            evidence.summary
+        );
+    }
+
+    /// #8387: when every related row is a name-token match, reach still
+    /// reports the honest no-call fact but must not name those tests as
+    /// where to look.
+    #[test]
+    fn given_only_name_token_relations_when_building_reach_evidence_then_names_no_test() {
+        let owner = function("pad_using");
+        let next_token = test("next_returns_none");
+        let fold_token = test("fold_accumulates");
+        let related = vec![
+            (&next_token, RelationReason::WeakTokenSubstring),
+            (&fold_token, RelationReason::WeakTokenSubstring),
+        ];
+
+        let evidence = reach_evidence(&related, Some(&owner), || false);
+
+        assert_eq!(evidence.state, StageState::No);
+        assert_eq!(evidence.confidence, Confidence::Medium);
+        assert_eq!(
+            evidence.summary,
+            "No test is seen calling pad_using; tests share only a name token"
+        );
+        assert!(
+            !evidence.summary.contains("next_returns_none")
+                && !evidence.summary.contains("fold_accumulates"),
+            "name-token tests must not appear in reach look-text: {}",
+            evidence.summary
         );
     }
 
@@ -860,6 +907,44 @@ mod tests {
 
         assert_eq!(evidence.state, StageState::Weak);
         assert_eq!(evidence.confidence, Confidence::Low);
+        assert_eq!(
+            evidence.summary,
+            "No test is seen calling tax_total; tests share only a name token"
+        );
+        assert!(
+            !evidence
+                .summary
+                .contains("vat_boundary_is_checked_by_macro"),
+            "name-token tests must not appear in reach look-text: {}",
+            evidence.summary
+        );
+    }
+
+    #[test]
+    fn given_owner_named_and_token_relations_when_building_reach_evidence_then_omits_token_name() {
+        let owner = function("parse_summary");
+        let named = test("parse_summary_callee_witness_pins_variant");
+        let token_match = test("parse_summary_other_receiver_pins_same_variant");
+        let related = vec![
+            (&named, RelationReason::OwnerNamedTest),
+            (&token_match, RelationReason::WeakTokenSubstring),
+        ];
+
+        let evidence = reach_evidence(&related, Some(&owner), || true);
+
+        assert_eq!(evidence.state, StageState::Weak);
+        assert_eq!(evidence.confidence, Confidence::Low);
+        assert_eq!(
+            evidence.summary,
+            "No test is seen calling parse_summary; tests share only its file or a name token: parse_summary_callee_witness_pins_variant"
+        );
+        assert!(
+            !evidence
+                .summary
+                .contains("parse_summary_other_receiver_pins_same_variant"),
+            "name-token tests must not appear in reach look-text: {}",
+            evidence.summary
+        );
     }
 
     #[test]
@@ -872,6 +957,17 @@ mod tests {
 
         assert_eq!(evidence.state, StageState::Weak);
         assert_eq!(evidence.confidence, Confidence::Low);
+        assert_eq!(
+            evidence.summary,
+            "No test is seen calling check_score_invariants; tests share only a name token"
+        );
+        assert!(
+            !evidence
+                .summary
+                .contains("validate_score_accepts_in_range_values"),
+            "name-token tests must not appear in reach look-text: {}",
+            evidence.summary
+        );
     }
 
     #[test]
