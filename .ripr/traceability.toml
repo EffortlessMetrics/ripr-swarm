@@ -1948,7 +1948,7 @@ tests = [
   "crates/ripr/tests/task_first_facade.rs::repair_two_items_requires_explicit_selection",
   "crates/ripr/tests/repair_check_recommended_start.rs::boundary_change_starts_the_seam_check_recommends",
   "crates/ripr/tests/repair_check_recommended_start.rs::error_variant_change_starts_the_changed_branch_check_recommends",
-  "crates/ripr/tests/repair_check_recommended_start.rs::a_change_check_offers_no_start_for_keeps_the_selection",
+  "crates/ripr/tests/repair_check_recommended_start.rs::a_change_check_reads_as_noticed_and_unknown_lists_no_start",
   "crates/ripr/tests/repair_check_recommended_start.rs::an_unscoped_change_keeps_the_selection",
   "crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run",
   "crates/ripr/src/app/task_first.rs::tests::check_pick_narrows_only_when_eligible_and_committed",
