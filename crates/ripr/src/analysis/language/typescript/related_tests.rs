@@ -3831,7 +3831,7 @@ fn import_source_resolution(
     }
 }
 
-fn owner_name_shadowed_by_unrelated_import(
+pub(crate) fn owner_name_shadowed_by_unrelated_import(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
     alias_map: Option<&TsAliasMap>,

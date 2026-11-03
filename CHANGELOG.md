@@ -11,13 +11,6 @@ are scoped or reviewed.
 
 ### Changed
 
-- **Rust analysis (#9478 slice A):** a bounded `.map(owner)` iterator chain whose
-  bare path resolves to the changed owner and whose `assert_eq!` names the
-  matching literal `Vec` credits through the owner-return pin; unresolved paths,
-  shadowed bindings and foreign same-name modules stay fail-closed. Verdict-corpus
-  row `shape-hostile-owner-as-path-value` is credited; `FILE_FACT_CACHE_SCHEMA_VERSION`
-  moves to `1.53` for synthetic path-value call facts.
-
 - `ripr cache status|export|clear --help` now open with the command's catalog
   summary before the `Usage:` line, and `ripr policy|reports|baseline|pr-comments
   <leaf> --help` lead with that leaf's catalog summary (the sentence

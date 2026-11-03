@@ -281,6 +281,7 @@ fn canonical_next_action_for_card(
         check_item: None,
         card_item: Some(input.subject.seam_id.clone()),
         item_candidates: Vec::new(),
+        item_candidate_labels: Vec::new(),
         attempts,
         currentness: NextActionCurrentness {
             head_expected: Some(input.snapshot.repository_head.clone()),
@@ -455,6 +456,8 @@ mod tests {
             has_fix_site: state == FixInstructionState::FixSiteReady,
             has_suggested_assertion: true,
             limitation_kinds: Vec::new(),
+            instruction_semantic_id: None,
+            instruction_instance_id: None,
         }
     }
 

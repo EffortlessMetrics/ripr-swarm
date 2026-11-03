@@ -20,7 +20,8 @@ Linked plan:
 
 Linked issues:
 
-- None yet
+- #12109: internal Kani claim boundaries.
+- #12468: ambiguous harness-to-result joins.
 
 Linked PRs:
 
@@ -80,6 +81,14 @@ row per harness. Each row is exactly one of:
   CBMC reports a timeout, not a counterexample, so it is never `FAILED`), or the
   output held no successful verdict.
 
+A row can consume a result only when its bare name is unique in the selected
+discovered inventory and exactly one parsed native block matches it. Duplicate
+source names, multiple matching qualified names and repeated identical headers
+are `NOT-ESTABLISHED`, independent of result order or whether the duplicates
+agree. They do not borrow a verification time. An unrelated unique row keeps
+its own result. This is conservative name-based attribution, not a claim that
+the source path establishes the native module identity.
+
 The command exits nonzero when any harness is `FAILED` or `NOT-ESTABLISHED`,
 when `cargo kani` is not runnable, and when no harness is found unless
 `--allow-empty` is passed. `--allow-empty` is a local opt-out for sparse
@@ -125,7 +134,9 @@ It does not claim:
 - Kani compiles the whole `ripr` library; a run takes minutes and several GB of
   memory.
 - Harness discovery is textual (`#[kani::proof` followed by `fn name`) and
-  assumes a harness name is unique within `crates/ripr/src`.
+  rejects duplicate names in the selected inventory. It does not establish
+  a complete native harness inventory, source-to-module identity or source/run
+  provenance.
 - The lane trusts Kani's own output verdict lines; a change to their wording
   degrades to `NOT-ESTABLISHED`, never to a pass.
 
@@ -140,6 +151,9 @@ It does not claim:
 1. With the tool absent, `cargo xtask kani` reports `NOT-ESTABLISHED` and fails.
 2. With a harness whose `cover!` is unreachable, the row is `FAILED`.
 3. With a clean harness set, every row is `VERIFIED` and the command succeeds.
+4. Two same-named declarations cannot consume one successful block; multiple
+   matching or repeated blocks also remain `NOT-ESTABLISHED`. `--allow-empty`
+   does not bypass this nonempty ambiguous result.
 
 ## Test Mapping
 
@@ -148,6 +162,9 @@ It does not claim:
   `classification_requires_an_explicit_success_verdict`,
   `unreachable_cover_makes_the_proof_vacuous`,
   `blocks_join_to_harnesses_and_a_missing_block_is_not_established`,
+  `duplicate_source_names_never_share_a_native_result`,
+  `duplicate_native_blocks_are_not_first_match_wins`,
+  `unique_native_join_retains_status_time_and_separator_boundary`,
   `lane_never_passes_by_absence`,
   `arguments_parse_and_reject_unknown_flags`,
   `report_names_every_status_word`.

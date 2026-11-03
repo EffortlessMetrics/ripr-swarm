@@ -3,7 +3,7 @@
 
 use super::closure_adaptor::literal_sequence;
 use crate::analysis::classify::indirect_owner::{
-    names_value, owner_path_names, qualifier_may_name_owner,
+    names_owner_value, owner_path_names, qualifier_may_name_owner,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::extract::{IteratorChain, parse_chain_at, parse_iterator_chain};
@@ -18,14 +18,14 @@ pub(in crate::analysis::classify) fn substitute_owner_call(
     chain_operand: &str,
     expected_operand: &str,
     owner: &FunctionFact,
-    _index: &RustIndex,
+    index: &RustIndex,
 ) -> Option<String> {
     let chain = parse_iterator_chain(chain_operand)?;
     let expected = literal_sequence(expected_operand)?;
     if expected.is_empty() {
         return None;
     }
-    if !value_path_names_owner(&test.body, &chain.owner_path, owner) {
+    if !value_path_names_owner(&test.body, &chain.owner_path, owner, test, index) {
         return None;
     }
     let outputs = folded_outputs(owner, &chain)?;
@@ -46,12 +46,17 @@ fn folded_outputs(owner: &FunctionFact, chain: &IteratorChain) -> Option<Vec<Str
     Some(out)
 }
 
-fn value_path_names_owner(code: &str, path: &str, owner: &FunctionFact) -> bool {
+fn value_path_names_owner(
+    code: &str,
+    path: &str,
+    owner: &FunctionFact,
+    test: &TestSummary,
+    index: &RustIndex,
+) -> bool {
     let path = path.trim();
-    let leaf = match path.rsplit("::").next().filter(|name| !name.is_empty()) {
-        Some(leaf) if leaf == owner.name => leaf,
-        _ => return false,
-    };
+    if path.rsplit("::").next() != Some(owner.name.as_str()) {
+        return false;
+    }
     if path.contains("::") {
         let prefix = path
             .rsplit_once("::")
@@ -60,7 +65,9 @@ fn value_path_names_owner(code: &str, path: &str, owner: &FunctionFact) -> bool 
         if !qualifier_may_name_owner(&prefix, &owner_path_names(owner)) {
             return false;
         }
-    } else if !names_value(code, leaf, &owner_path_names(owner)) {
+    } else if !names_owner_value(&mask_comments_and_strings(code), owner, test, index, |_| {
+        false
+    }) {
         return false;
     }
     let masked = mask_comments_and_strings(code);
@@ -93,6 +100,8 @@ pub(in crate::analysis::classify) fn map_path_value_mention(
     code: &str,
     name_at: usize,
     owner: &FunctionFact,
+    test: &TestSummary,
+    index: &RustIndex,
 ) -> bool {
     let Some(open) = code[..name_at].rfind(".map(") else {
         return false;
@@ -115,7 +124,7 @@ pub(in crate::analysis::classify) fn map_path_value_mention(
     if leaf != owner.name {
         return false;
     }
-    value_path_names_owner(code, &chain.owner_path, owner)
+    value_path_names_owner(code, &chain.owner_path, owner, test, index)
 }
 
 #[cfg(test)]

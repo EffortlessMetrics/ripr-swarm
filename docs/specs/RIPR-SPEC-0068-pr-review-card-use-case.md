@@ -129,9 +129,10 @@ Every rendered review card must include:
   `suggested_test.recommended_name`, `suggested_test.near_test`) —
   or a named limitation with a `repair_route` when the repair
   contract cannot be satisfied. The card carries a structured related-test
-  object `{name, file, line}` or null, and card-level `oracle_kind` /
-  `oracle_strength`; these project existing evidence rather than inventing
-  an observer.
+  object `{name, file, line}` or null, a `suggested_test.proposed_target`
+  object or null for a producer-owned new-test proposal, and card-level
+  `oracle_kind` / `oracle_strength`; these project existing evidence rather
+  than inventing an observer or a test location.
 - `verify_command` when the card is actionable; working-set cards write its
   output to the workflow verify artifact consumed by the receipt command.
 - a receipt command when the card is actionable.
@@ -385,6 +386,25 @@ and is `null` only when the domain marks a seam ineligible for canonical identit
   gap-ledger path) and documented in `docs/OUTPUT_SCHEMA.md`.
 - Output-contract test `spec0068_card_carries_structured_related_test` pins
   the navigational object shape against rendered cards.
+
+### Shipped (proposed-target follow-up)
+
+- `suggested_test.proposed_target` on both card paths: `{proposal_kind, file,
+  owner, provenance}` projected from producer-owned `new_test_target`, or
+  `null` when the producer has no governed proposal. `proposal_kind` is
+  `inline_unit` or `integration`; `provenance` is `producer_owned`. This is
+  not an existing test. The working-set path reads
+  `ClassifiedSeam.evidence.new_test_target.proposal`; the gap-ledger path
+  reads `GapRepairRoute.proposed_target` and stays `null` unless that field
+  is populated. `recommended_file` is not a proposal.
+- `proposed_target` registered in `schemas/ripr/review-comments.schema.json`
+  and documented in `docs/OUTPUT_SCHEMA.md`. Gate `repair_target` prefers an
+  existing related test over this object (RIPR-SPEC-0067).
+- Output-contract tests `working_set_card_emits_proposed_inline_unit_target`,
+  `working_set_card_emits_proposed_integration_target`,
+  `working_set_card_keeps_related_test_when_a_proposal_is_also_present`, and
+  `gap_record_proposed_target_projects_object_or_null` pin the fail-closed
+  projection.
 
 ### Shipped (card-level oracle follow-up)
 

@@ -44,6 +44,7 @@ Weakness
 Next step
   - Assert the exact error variant or payload instead of only is_err()
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/error_path_sibling_oracle_fake_clean/input --diff <cwd>/fixtures/error_path_sibling_oracle_fake_clean/diff.patch --mode fast probe:src_lib.rs:error_path:162493bf
   ripr context --root <cwd>/fixtures/error_path_sibling_oracle_fake_clean/input --diff <cwd>/fixtures/error_path_sibling_oracle_fake_clean/diff.patch --mode fast --at probe:src_lib.rs:error_path:162493bf
 
@@ -68,5 +69,6 @@ Weakness
 Next step
   - Add a test input that reaches the changed error path and assert the exact error variant it returns
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/error_path_sibling_oracle_fake_clean/input --diff <cwd>/fixtures/error_path_sibling_oracle_fake_clean/diff.patch --mode fast probe:src_lib.rs:return_value:ae6d1b32
   ripr context --root <cwd>/fixtures/error_path_sibling_oracle_fake_clean/input --diff <cwd>/fixtures/error_path_sibling_oracle_fake_clean/diff.patch --mode fast --at probe:src_lib.rs:return_value:ae6d1b32

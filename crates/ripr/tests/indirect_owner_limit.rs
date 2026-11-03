@@ -328,6 +328,154 @@ fn a_direct_weak_assertion_keeps_the_gap() -> Result<(), String> {
     keeps_gap(&lib, BEFORE, AFTER, "direct weak assertion")
 }
 
+/// A `use super::inc;` inside a `macro_rules!` body is token text. A macro that
+/// is defined but never invoked is inert, so it must not read as the owner
+/// passed as a value and withhold the direct weak test's gap (#12231).
+#[test]
+fn an_unused_macro_definition_naming_the_owner_keeps_the_gap() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        macro_rules! unused {
+            () => {
+                use super::inc;
+            };
+        }
+        assert!(inc(1) > 0);
+    }
+",
+    );
+    keeps_gap(&lib, BEFORE, AFTER, "unused macro definition")
+}
+
+/// The same definition, invoked, may expand into the test: the limit stays.
+#[test]
+fn an_invoked_macro_definition_naming_the_owner_keeps_the_limit() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        macro_rules! used {
+            () => {
+                use super::inc;
+            };
+        }
+        used!();
+        assert!(inc(1) > 0);
+    }
+",
+    );
+    withheld(&lib, BEFORE, AFTER, "invoked macro definition")
+}
+
+/// A forwarded invocation never spells `unused!`: the name is a bare token
+/// argument that `$m!()` expands, so the definition is not inert (#12231).
+#[test]
+fn a_forwarded_macro_invocation_keeps_the_limit() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        macro_rules! unused {
+            () => {
+                use super::inc;
+            };
+        }
+        macro_rules! forward {
+            ($m:ident) => {
+                $m!();
+            };
+        }
+        forward!(unused);
+        assert!(inc(1) > 0);
+    }
+",
+    );
+    withheld(&lib, BEFORE, AFTER, "forwarded macro invocation")
+}
+
+/// A comment between the name and `!` is still an invocation (#12231).
+#[test]
+fn a_comment_separated_macro_invocation_keeps_the_limit() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        macro_rules! used {
+            () => {
+                use super::inc;
+            };
+        }
+        used/*note*/!();
+        assert!(inc(1) > 0);
+    }
+",
+    );
+    withheld(&lib, BEFORE, AFTER, "comment-separated macro invocation")
+}
+
+/// `include!` can expand an invocation this scan never sees (#12231 review).
+#[test]
+fn an_include_expansion_keeps_a_local_macro_live() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        macro_rules! unused {
+            () => {
+                use super::inc;
+            };
+        }
+        include!(\"invocation.rs\");
+        assert!(inc(1) > 0);
+    }
+",
+    );
+    withheld(&lib, BEFORE, AFTER, "include expansion")
+}
+
+/// An out-of-line `#[path]` module can invoke a local macro (#12231 review).
+#[test]
+fn a_path_module_keeps_a_local_macro_live() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        macro_rules! unused {
+            () => {
+                use super::inc;
+            };
+        }
+        #[path = \"child.rs\"]
+        mod child;
+        assert!(inc(1) > 0);
+    }
+",
+    );
+    withheld(&lib, BEFORE, AFTER, "path module")
+}
+
+/// A body the shared parser refuses cannot prove a declaration range, so the
+/// bare-name fold and the mention scan must stay silent there. A parse
+/// artifact must never withdraw a real gap under the indirect-owner limit's
+/// no-gap reading; the composed analysis answers with a typed unknown instead
+/// (RIPR-SPEC-0240, #10162 review).
+#[test]
+fn a_parse_refused_test_body_never_reads_as_the_indirect_owner_limit() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        use super::inc;
+        assert_eq!(inc(1), 2);
+        let x = ;
+    }
+",
+    );
+    let findings = edited(&lib, BEFORE, AFTER)?;
+    if findings.iter().any(limited) || findings.iter().any(is_gap) {
+        return Err(format!(
+            "parse-refused body: expected a typed unknown without the indirect-owner limit or a claimed gap, got {:?}",
+            summary(&findings)
+        ));
+    }
+    Ok(())
+}
+
 fn with_other_module(lib: &str) -> String {
     lib.replacen(
         "#[cfg(test)]",
@@ -717,6 +865,270 @@ mod tests {
     )
 }
 
+// #10162: an item the test brings into scope under the owner's leaf name is
+// not the owner, whether it is imported or defined in the test body.
+#[test]
+fn an_imported_same_leaf_value_beside_a_direct_call_keeps_the_gap() -> Result<(), String> {
+    for import in [
+        "use super::other::inc;",
+        "use super::other::{inc};",
+        "use super::other::inc as step;\n        use super::other::inc;",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]
+    fn positive() {{
+        {import}
+        assert!(super::inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [10, 11]);
+    }}
+"
+        )));
+        keeps_gap(&lib, BEFORE, AFTER, import)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_nested_fn_named_like_the_owner_keeps_the_gap() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        fn inc(x: u32) -> u32 {
+            x + 9
+        }
+        assert!(super::inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [10, 11]);
+    }
+",
+    );
+    keeps_gap(&lib, BEFORE, AFTER, "nested fn shadows the owner name")
+}
+
+#[test]
+fn importing_the_owner_itself_is_still_a_limit() -> Result<(), String> {
+    let lib = with_other_module(&values(
+        "    #[test]
+    fn positive() {
+        use super::inc;
+        assert!(inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [2, 3]);
+    }
+",
+    ));
+    withheld(&lib, BEFORE, AFTER, "use of the owner's own path")
+}
+
+// #10167 review: a bare-name shadow does not shadow the owner's qualified path,
+// and `use super::inc as inc;` still names the owner. Both keep the strong
+// indirect assertion's limit instead of reading as an actionable gap.
+#[test]
+fn a_shadow_beside_the_qualified_owner_value_is_still_a_limit() -> Result<(), String> {
+    for shadow in [
+        "fn inc(x: u32) -> u32 {
+            x + 9
+        }",
+        "use super::other::inc;",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]
+    fn positive() {{
+        {shadow}
+        assert!(super::inc(1) > 0);
+        assert_eq!([1, 2].map(super::inc), [2, 3]);
+    }}
+"
+        )));
+        withheld(&lib, BEFORE, AFTER, shadow)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn an_owner_preserving_same_name_alias_is_still_a_limit() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        use super::inc as inc;
+        assert!(inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [2, 3]);
+    }
+",
+    );
+    withheld(&lib, BEFORE, AFTER, "use super::inc as inc")
+}
+
+#[test]
+fn an_alias_of_another_item_under_the_owner_name_keeps_the_gap() -> Result<(), String> {
+    let lib = with_other_module(&values(
+        "    #[test]
+    fn positive() {
+        use super::other::inc as inc;
+        assert!(super::inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [10, 11]);
+    }
+",
+    ));
+    keeps_gap(&lib, BEFORE, AFTER, "use other::inc as inc")
+}
+
+// #10162: declaration syntax is not a function value, and lexical scopes
+// cannot lend their shadow to references in another block.
+#[test]
+fn item_declarations_alone_do_not_withhold_a_gap() -> Result<(), String> {
+    for declaration in [
+        "use super::other::\n            inc;",
+        "use super::\n            inc;",
+        "use super::{\n            inc\n        };",
+        "use super::inc as inc;",
+        "fn inc(x: u32) -> u32 { x + 9 }",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        {declaration}\n        assert!(super::inc(1) > 0);\n    }}\n"
+        )));
+        keeps_gap(&lib, BEFORE, AFTER, declaration)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_nested_scope_shadow_does_not_hide_an_outer_owner_value() -> Result<(), String> {
+    for shadow in [
+        "{ fn inc(x: u32) -> u32 { x + 9 } assert_eq!(inc(1), 10); }",
+        "{ use super::other::inc; assert_eq!(inc(1), 10); }",
+        "mod local { pub fn inc(x: u32) -> u32 { x + 9 } }",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        {shadow}\n        assert!(super::inc(1) > 0);\n        assert_eq!([1, 2].map(inc), [2, 3]);\n    }}\n"
+        )));
+        withheld(&lib, BEFORE, "    x + 2", shadow)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn grouped_imports_preserve_each_leafs_full_path() -> Result<(), String> {
+    for import in [
+        "use super::{other::inc};",
+        "use super::{other::{inc}};",
+        "use super::{other::inc as inc};",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        {import}\n        assert!(super::inc(1) > 0);\n        assert_eq!([1, 2].map(inc), [10, 11]);\n    }}\n"
+        )));
+        keeps_gap(&lib, BEFORE, AFTER, import)?;
+    }
+    for import in [
+        "use super::{other::{inc as other_inc}, inc};",
+        "use super::{other::{inc as other_inc}, inc as inc};",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        {import}\n        assert!(super::inc(1) > 0);\n        assert_eq!([1, 2].map(inc), [2, 3]);\n    }}\n"
+        )));
+        withheld(&lib, BEFORE, "    x + 2", import)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn an_inner_owner_import_overrides_an_outer_item_shadow() -> Result<(), String> {
+    let lib = with_other_module(&values(
+        "    #[test]
+    fn positive() {
+        use super::other::inc;
+        assert!(super::inc(1) > 0);
+        assert_eq!(inc(1), 10);
+        {
+            use super::inc;
+            assert_eq!([1, 2].map(inc), [2, 3]);
+        }
+    }
+",
+    ));
+    withheld(&lib, BEFORE, "    x + 2", "inner owner import")
+}
+
+#[test]
+fn an_opaque_or_conditional_import_cannot_remove_the_owner_limit() -> Result<(), String> {
+    for import in [
+        "#[cfg(any())] use super::other::inc;",
+        "#[cfg(any())] fn inc(x: u32) -> u32 { x + 9 }",
+        "use super::other::*;\n        use super::inc;",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        {import}\n        assert!(super::inc(1) > 0);\n        assert_eq!([1, 2].map(inc), [2, 3]);\n    }}\n"
+        )));
+        withheld(&lib, BEFORE, "    x + 2", import)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_real_value_after_an_import_on_the_same_line_is_still_a_limit() -> Result<(), String> {
+    for body in [
+        "use super::inc; assert!(super::inc(1) > 0); assert_eq!([1, 2].map(inc), [2, 3]);",
+        "use super::other::inc; assert!(super::inc(1) > 0); assert_eq!([1, 2].map(super::inc), [2, 3]);",
+    ] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        {body}\n    }}\n"
+        )));
+        withheld(&lib, BEFORE, "    x + 2", body)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn item_shadows_are_hoisted_only_within_their_own_block() -> Result<(), String> {
+    for declaration in ["fn inc(x: u32) -> u32 { x + 9 }", "use super::other::inc;"] {
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        assert!(super::inc(1) > 0);\n        assert_eq!([1, 2].map(inc), [10, 11]);\n        {declaration}\n    }}\n"
+        )));
+        keeps_gap(&lib, BEFORE, AFTER, declaration)?;
+        let lib = with_other_module(&values(&format!(
+            "    #[test]\n    fn positive() {{\n        assert!(super::inc(1) > 0);\n        assert_eq!([1, 2].map(inc), [2, 3]);\n        {{ {declaration} assert_eq!(inc(1), 10); }}\n    }}\n"
+        )));
+        withheld(&lib, BEFORE, "    x + 2", declaration)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn an_import_from_the_owners_inline_module_is_still_a_limit() -> Result<(), String> {
+    let lib = "pub mod math {
+    pub fn inc(x: u32) -> u32 {
+    x + 1
+    }
+}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn positive() {
+        use super::math::inc;
+        assert!(super::math::inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [2, 3]);
+    }
+}
+";
+    withheld(lib, BEFORE, "    x + 2", "owner inline-module import")
+}
+
+#[test]
+fn an_unresolved_reexport_of_the_owner_is_still_a_limit() -> Result<(), String> {
+    for rival in ["", "pub mod rival { pub fn inc(x: u32) -> u32 { x + 9 } }"] {
+        let lib = values(
+            "    #[test]
+    fn positive() {
+        use super::other::inc;
+        assert!(super::inc(1) > 0);
+        assert_eq!([1, 2].map(inc), [2, 3]);
+    }
+",
+        );
+        let lib = format!("{lib}\npub mod other {{ pub use super::inc; }}\n{rival}\n");
+        withheld(&lib, BEFORE, "    x + 2", "owner reexport")?;
+    }
+    Ok(())
+}
+
 #[test]
 fn a_shadowed_polling_helper_cannot_credit_the_owner() -> Result<(), String> {
     let lib = ASYNC_OWNER.replace(
@@ -774,6 +1186,59 @@ fn a_polling_assertion_borrowed_from_a_helper_is_unresolved() -> Result<(), Stri
         summary(&findings)
     );
     Ok(())
+}
+
+#[test]
+fn a_raw_qualified_owner_value_beside_a_shadow_is_still_a_limit() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        fn inc(x: u32) -> u32 { x + 9 }
+        assert!(super::inc(1) > 0);
+        assert_eq!([1, 2].map(super::r#inc), [2, 3]);
+    }
+",
+    );
+    withheld(&lib, BEFORE, "    x + 2", "raw qualified owner")
+}
+
+#[test]
+fn a_nested_module_owner_value_does_not_inherit_a_block_shadow() -> Result<(), String> {
+    let lib = values(
+        "    #[test]
+    fn positive() {
+        fn inc(x: u32) -> u32 { x + 9 }
+        mod inner {
+            use crate::inc;
+            pub fn mapped() -> [u32; 2] { [1, 2].map(inc) }
+        }
+        assert!(super::inc(1) > 0);
+        assert_eq!(inner::mapped(), [2, 3]);
+    }
+",
+    );
+    withheld(&lib, BEFORE, "    x + 2", "nested module owner")
+}
+
+#[test]
+fn a_nested_module_import_does_not_borrow_the_test_module_context() -> Result<(), String> {
+    let lib = values(
+        "    fn inc(x: u32) -> u32 { x + 9 }
+    #[test]
+    fn positive() {
+        mod inner {
+            use crate::inc;
+            pub fn mapped() -> [u32; 2] {
+                use self::inc;
+                [1, 2].map(inc)
+            }
+        }
+        assert!(crate::inc(1) > 0);
+        assert_eq!(inner::mapped(), [2, 3]);
+    }
+",
+    );
+    withheld(&lib, BEFORE, "    x + 2", "nested module import context")
 }
 
 #[test]

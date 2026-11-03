@@ -758,7 +758,13 @@ reintroduce a line-at-a-time mutation scan; unmutated bindings, including a
 `let` on its own line inside a block, must keep pairing. Register a `let`
 only when the masked line still looks like one; `CallFact` text stays on the
 original line. Otherwise a string-interior `let got = gate(10);` can replace
-a real binding, while `gate("alpha")` must still pair.
+a real binding, while `gate("alpha")` must still pair. Whole-test voiding used
+to ignore assertion position (#7042 item 1): a mutation after the assertion
+voided an earlier valid pairing; voiding now stops at each assertion line.
+Bindings are tracked per brace depth (#7042 item 3) so an inner block's
+mutation of a shadow name does not void an outer boundary binding. Whole-body
+masking already applies to mutation scans (#7042 item 2): comment and string
+interiors must not void a live binding.
 
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 
@@ -3382,3 +3388,48 @@ Durable rules:
 - Pair every negative assertion with a positive control built from the same
   fixture shape, or the negative can pass because the comparison is
   unsatisfiable.
+
+## 2026-11-01: Premises rot at fleet velocity
+
+The Oct 29 – Nov 2 convergence campaign (~140 agent-lane merges) measured how
+fast a researched premise decays on a moving main. Three of ten investigation
+briefs had their central hypothesis falsified at implementation time, and four
+of six open owner decisions dissolved before any ruling — main merged the
+resolution while the decision was still waiting on the #11501 ledger. The
+sharpest instance: #11770 was filed 2026-10-31 15:55Z with live, reproducible
+evidence — two named renderer strings, "…there is no seam to start a repair
+from…" (`app/navigation.rs`) and the `kind: static_unknown` state-token rows
+in default human text — and main reworded both the same day, via #11764
+(18:41Z, `kind: unclear`) and #10297 (22:34Z, "no gap to start a repair
+from"), well inside the ~31-hour premise-rot window the campaign measured.
+The 2026-05-04 "Step 0 Premise Check" still holds, but at fleet velocity a
+check at session start is not sufficient.
+
+Durable rules:
+
+- Re-verify every premise against current `origin/main` at the moment of
+  filing AND at the moment of ruling, not only when the session starts. An
+  anchor that no longer matches the brief at code time is a stop-and-record,
+  not an improvisation prompt.
+- Prefer class-keyed process rules over string-keyed ones. A rule naming two
+  specific renderer strings decayed within hours of being filed; the
+  class-keyed version — "new fixture goldens inherit live renderer wording" —
+  does not, because it keys on the mechanism, not the wording.
+
+## 2026-11-01: A green compile is not a green product — run the built tests
+
+In the same campaign, a Windows compile break (#11187-era) masked two runtime
+test failures behind it: once the break was repaired, `cargo test --no-run`
+went green while 2 of the 4 `capture_error` tests still failed at runtime.
+The defect was not a compile error at all — the tests hard-coded Unix
+single-quoted refspecs where the producer quotes with `shell_arg` (host-aware
+single quotes on Unix, double quotes on Windows), so only executing the built
+test binary could observe it. #11608 fixed the quoting ("host-aware quoting
+and printed paths in Windows-failing tests", #11444). This is the
+compile-specific sibling of the 2026-07-25 "A green check is not evidence"
+entry: there the passing signal was a platform-blind branch; here it was a
+build gate standing in for the oracle.
+
+Durable rule: after any compile repair or test enablement, execute the
+affected tests, not just the compile. `--no-run` proves the code compiles; it
+proves nothing about the assertions inside it.
