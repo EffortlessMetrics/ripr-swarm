@@ -38,6 +38,7 @@ mod operand_pin;
 mod out_parameter;
 mod owner_pin;
 mod owner_shape;
+mod owner_value;
 mod pinned_shape;
 mod poll_helper;
 mod propagation_witness;
