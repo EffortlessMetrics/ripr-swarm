@@ -7,6 +7,7 @@ use crate::agent::loop_commands::{
 };
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::canonical_gap_identity;
+use crate::analysis::new_test_target::{NewTestKind, NewTestProposalProvenance};
 use crate::app::Mode;
 use crate::app::agent_brief::AgentBriefSelectedSeam;
 use crate::app::causal_projection::CausalDeltaArtifact;
@@ -279,6 +280,7 @@ pub(super) fn gap_record_comment_json(
             "recommended_name": repair_route.related_test.as_deref(),
             "near_test": repair_route.related_test.as_deref(),
             "related_test": gap_record_related_test(repair_route),
+            "proposed_target": gap_record_proposed_target(repair_route),
         },
         "repair_card": {
             "gap_kind": record.kind.as_str(),
@@ -391,6 +393,61 @@ pub(super) fn gap_record_related_test(route: &GapRepairRoute) -> Value {
         }),
         None => Value::Null,
     }
+}
+
+/// Project a producer-owned new-test proposal, or `null` when the producer
+/// has no governed proposal. Never inferred from `recommended_file`.
+fn proposed_target_json(entry: &ClassifiedSeam) -> Value {
+    let Some(proposal) = entry
+        .evidence
+        .new_test_target
+        .as_ref()
+        .and_then(|admission| admission.proposal.as_ref())
+    else {
+        return Value::Null;
+    };
+    proposed_target_object(
+        match proposal.kind {
+            NewTestKind::InlineUnit => "inline_unit",
+            NewTestKind::Integration => "integration",
+        },
+        &display_path(&proposal.file),
+        &proposal.owner,
+        match proposal.provenance {
+            NewTestProposalProvenance::ProducerOwned => "producer_owned",
+        },
+    )
+}
+
+pub(super) fn gap_record_proposed_target(route: &GapRepairRoute) -> Value {
+    let Some(proposed) = route.proposed_target.as_ref() else {
+        return Value::Null;
+    };
+    proposed_target_object(
+        proposed.proposal_kind.as_str(),
+        proposed.file.as_str(),
+        proposed.owner.as_str(),
+        proposed.provenance.as_deref().unwrap_or(""),
+    )
+}
+
+fn proposed_target_object(proposal_kind: &str, file: &str, owner: &str, provenance: &str) -> Value {
+    let proposal_kind = proposal_kind.trim();
+    let file = file.trim();
+    let owner = owner.trim();
+    if !matches!(proposal_kind, "inline_unit" | "integration")
+        || file.is_empty()
+        || owner.is_empty()
+        || provenance.trim() != "producer_owned"
+    {
+        return Value::Null;
+    }
+    json!({
+        "proposal_kind": proposal_kind,
+        "file": file,
+        "owner": owner,
+        "provenance": "producer_owned",
+    })
 }
 
 pub(super) fn repair_text(route: &GapRepairRoute) -> String {
@@ -575,6 +632,7 @@ pub(super) fn review_recommendation_json(
             "recommended_name": recommended.name.as_str(),
             "near_test": nearest.map(|test| test.test_name.clone()),
             "related_test": related_test,
+            "proposed_target": proposed_target_json(entry),
         })
     } else {
         json!({
@@ -587,6 +645,7 @@ pub(super) fn review_recommendation_json(
             "recommended_name": "not_applicable",
             "near_test": null,
             "related_test": null,
+            "proposed_target": proposed_target_json(entry),
         })
     };
 

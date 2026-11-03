@@ -4,6 +4,7 @@
 //! are exclusive. The span covers the TOML value, including its quotes, in the
 //! original source. These are presentation coordinates, not LSP UTF-16 offsets.
 
+use serde::Serialize;
 use std::ops::Range;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,7 +37,83 @@ pub struct ConfigDiagnostic {
     pub message: String,
 }
 
+/// Machine-readable semantic validation fields for doctor/JSON consumers (#2624).
+///
+/// Carries coordinates and expected values without embedding `ripr.toml` source
+/// text (RIPR-SPEC-0007). Structural TOML parse failures do not populate this
+/// shape; they keep the parser's native location in the human summary only.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ConfigValidationMachine {
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_path: Option<String>,
+    pub file: &'static str,
+    pub location_status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_column: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invalid_value: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expected_values: Vec<String>,
+    pub message: String,
+}
+
 impl ConfigDiagnostic {
+    /// First human line for a load error: `path:line:column: message` when the
+    /// span is exact, otherwise `path: message`.
+    pub(crate) fn human_first_line(&self, config_path: &str) -> String {
+        let message = self.message.trim();
+        if let Some(location) = &self.location {
+            format!(
+                "{}:{}:{}: {}",
+                config_path, location.start.line, location.start.column, message
+            )
+        } else {
+            format!("{config_path}: {message}")
+        }
+    }
+
+    pub(crate) fn machine_validation(&self) -> Option<ConfigValidationMachine> {
+        if self.kind != "config_validation" {
+            return None;
+        }
+        let (start_line, start_column, end_line, end_column) = match &self.location {
+            Some(location) => (
+                Some(location.start.line),
+                Some(location.start.column),
+                Some(location.end.line),
+                Some(location.end.column),
+            ),
+            None => (None, None, None, None),
+        };
+        Some(ConfigValidationMachine {
+            kind: self.kind,
+            config_path: self.config_path.clone(),
+            file: self.file,
+            location_status: match self.location_status {
+                ConfigLocationStatus::Exact => "exact",
+                ConfigLocationStatus::Unavailable => "unavailable",
+            },
+            start_line,
+            start_column,
+            end_line,
+            end_column,
+            invalid_value: self.invalid_value.clone(),
+            expected_values: self
+                .expected_values
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+            message: self.message.clone(),
+        })
+    }
+
     pub(super) fn structural(message: String) -> Self {
         let mut diagnostic = Self::unavailable(message);
         diagnostic.kind = "config_syntax";

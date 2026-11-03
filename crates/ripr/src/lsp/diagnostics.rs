@@ -5,8 +5,8 @@ use super::gap_artifacts::{
     validate_gap_artifact, validate_workspace_gap_artifact_report, workspace_path_is_safe,
 };
 use super::state::{
-    AnalysisFailureKind, AnalysisSnapshot, DocumentStalenessReason, HarnessFactsOnSnapshot,
-    RefreshMetadata,
+    AnalysisFailureKind, AnalysisSnapshot, CommittedDiagnostics, DocumentStalenessReason,
+    HarnessFactsOnSnapshot, RefreshMetadata,
 };
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, path_from_file_uri,
@@ -64,7 +64,7 @@ pub(super) struct DiagnosticRefreshPlan {
 }
 
 pub(super) fn diagnostic_refresh_plan(
-    previous: &BTreeMap<Uri, Vec<Diagnostic>>,
+    previous: &CommittedDiagnostics,
     batches: Vec<DiagnosticBatch>,
 ) -> DiagnosticRefreshPlan {
     let batches = canonicalize_diagnostic_batches(batches);
@@ -73,7 +73,7 @@ pub(super) fn diagnostic_refresh_plan(
         .map(|batch| (batch.uri.clone(), batch.diagnostics.clone()))
         .collect::<BTreeMap<_, _>>();
     let current_uris = current.keys().cloned().collect::<BTreeSet<_>>();
-    let previous_uris = previous.keys().cloned().collect::<BTreeSet<_>>();
+    let previous_uris = previous.uris();
     let clear_uris = previous_uris
         .difference(&current_uris)
         .cloned()
@@ -84,7 +84,7 @@ pub(super) fn diagnostic_refresh_plan(
     let mut suppressed_payload_bytes: usize = 0;
     for batch in batches {
         let payload_bytes = diagnostic_payload_bytes(&batch.diagnostics);
-        if previous.get(&batch.uri) == Some(&batch.diagnostics) {
+        if previous.get(&batch.uri) == Some(batch.diagnostics.as_slice()) {
             unchanged_uri_count += 1;
             suppressed_payload_bytes = suppressed_payload_bytes.saturating_add(payload_bytes);
         } else {
@@ -312,7 +312,7 @@ fn overlap_signature(finding: &Finding) -> Option<String> {
     let object = value.as_object_mut()?;
     object.remove("id");
     object.remove("canonical_gap");
-    let probe = object.get_mut("probe")?.as_object_mut()?;
+    let probe = object.get_mut("probe")?.as_object_mut()?; // user-text-exempt: JSON key of the finding, not shown
     for field in [
         "id",
         "family",
@@ -1162,6 +1162,12 @@ pub(super) struct DiagnosticResultIdCache {
     workspace_id: String,
 }
 
+fn bind_diagnostic_result_id(wire: String) -> String {
+    crate::domain::DiagnosticResultId::from_producer_id(&wire)
+        .map(|id| id.as_str().to_string())
+        .unwrap_or(wire)
+}
+
 impl DiagnosticResultIdCache {
     pub(super) fn for_snapshot(snapshot: Arc<AnalysisSnapshot>) -> Self {
         // Derived once from the committed selection, never a second budget
@@ -1171,17 +1177,15 @@ impl DiagnosticResultIdCache {
             .diagnostics_by_uri
             .keys()
             .map(|uri| {
-                (
-                    uri.clone(),
-                    document_diagnostic_result_id_with_omissions(
-                        &snapshot,
-                        uri,
-                        &delivery_omissions,
-                    ),
-                )
+                let wire = document_diagnostic_result_id_with_omissions(
+                    &snapshot,
+                    uri,
+                    &delivery_omissions,
+                );
+                (uri.clone(), bind_diagnostic_result_id(wire))
             })
             .collect();
-        let workspace_id = workspace_diagnostic_result_id(&snapshot);
+        let workspace_id = bind_diagnostic_result_id(workspace_diagnostic_result_id(&snapshot));
         Self {
             snapshot,
             document_ids,
@@ -1197,10 +1201,9 @@ impl DiagnosticResultIdCache {
     pub(super) fn document_id(&self, snapshot: &AnalysisSnapshot, uri: &Uri) -> String {
         // Exact-key cache lookup; admitted aliases fall back to the same
         // stored-document projection used for payload membership.
-        self.document_ids
-            .get(uri)
-            .cloned()
-            .unwrap_or_else(|| document_diagnostic_result_id(snapshot, uri))
+        self.document_ids.get(uri).cloned().unwrap_or_else(|| {
+            bind_diagnostic_result_id(document_diagnostic_result_id(snapshot, uri))
+        })
     }
 
     pub(super) fn delivered_diagnostics_for_uri(
@@ -1706,7 +1709,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             .map(|(uri, diagnostics)| DiagnosticBatch { uri, diagnostics })
             .collect(),
     );
-    let diagnostics_by_uri = batches
+    let diagnostics_by_uri: BTreeMap<Uri, Vec<Diagnostic>> = batches
         .iter()
         .map(|batch| (batch.uri.clone(), batch.diagnostics.clone()))
         .collect();
@@ -1725,7 +1728,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         gap_artifacts: gap_artifact_report.artifacts,
         gap_artifact_rejections: gap_artifact_report.rejections,
         harness_facts,
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -1749,9 +1752,13 @@ pub(super) fn finding_is_withheld_gap(finding: &Finding) -> bool {
     finding.is_candidate_actionable() && is_actionable_gap_class(&finding.class)
 }
 
-/// The preview-language share of [`finding_is_withheld_gap`] (#11296).
-pub(super) fn finding_is_withheld_preview_gap(finding: &Finding) -> bool {
-    finding.language_status == Some(LanguageStatus::Preview) && finding_is_withheld_gap(finding)
+/// Every preview-language finding the actionable profile withholds from
+/// diagnostics (#11296), including gap-class, `*_unknown`, and
+/// static-limited preview evidence.
+pub(super) fn finding_is_withheld_preview_profile_finding(finding: &Finding) -> bool {
+    finding.language_status == Some(LanguageStatus::Preview)
+        && finding.is_candidate_actionable()
+        && !finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, finding)
 }
 
 /// The raw findings of unpublished canonical groups that are withheld gaps
@@ -1772,14 +1779,19 @@ pub(super) fn withheld_gap_findings(
         .collect()
 }
 
-/// The preview-language subset of [`withheld_gap_findings`] (#11296).
+/// The preview-language findings the actionable profile withholds (#11296).
 pub(super) fn withheld_preview_gap_findings(
     profile: LspDiagnosticProfile,
     findings: &[Finding],
 ) -> Vec<&Finding> {
-    withheld_gap_findings(profile, findings)
+    if profile != LspDiagnosticProfile::Actionable {
+        return Vec::new();
+    }
+    canonical_group_members(findings)
         .into_iter()
-        .filter(|finding| finding_is_withheld_preview_gap(finding))
+        .filter(|(primary, _)| !finding_is_visible_in_profile(profile, primary))
+        .flat_map(|(_, members)| members)
+        .filter(|finding| finding_is_withheld_preview_profile_finding(finding))
         .collect()
 }
 
@@ -1803,6 +1815,15 @@ fn append_withheld_preview_diagnostics(
 ) {
     let mut by_file = BTreeMap::<PathBuf, Vec<&Finding>>::new();
     for finding in withheld_gap_findings(config.diagnostic_profile, findings) {
+        by_file
+            .entry(finding.probe.location.file.clone())
+            .or_default()
+            .push(finding);
+    }
+    for finding in withheld_preview_gap_findings(config.diagnostic_profile, findings) {
+        if finding_is_withheld_gap(finding) {
+            continue;
+        }
         by_file
             .entry(finding.probe.location.file.clone())
             .or_default()
@@ -1834,7 +1855,7 @@ fn append_withheld_preview_diagnostics(
         let count = members.len();
         let recovery = "set diagnosticProfile: full or run `ripr check`";
         let path = display_repo_path(root, &file).to_string();
-        let marker = if finding_is_withheld_preview_gap(first) {
+        let marker = if finding_is_withheld_preview_profile_finding(first) {
             withheld_preview_diagnostic(anchor.range, language, count, recovery, &path)
         } else {
             let mut classes = members
@@ -2166,7 +2187,7 @@ fn git_timeout_limited_diagnostics(
         } else {
             HarnessFactsOnSnapshot::UnavailableLimitedRun
         },
-        diagnostics_by_uri: BTreeMap::new(),
+        diagnostics_by_uri: BTreeMap::new().into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -2246,7 +2267,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         }
         Err(_) => Vec::new(),
     };
-    let diagnostics_by_uri = batches
+    let diagnostics_by_uri: BTreeMap<Uri, Vec<Diagnostic>> = batches
         .iter()
         .map(|batch| (batch.uri.clone(), batch.diagnostics.clone()))
         .collect();
@@ -2273,7 +2294,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         } else {
             HarnessFactsOnSnapshot::UnavailableLimitedRun
         },
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -3404,6 +3425,28 @@ fn gap_record_diagnostic_data_with_causal(
         "receipt": record.receipt,
         "authority_boundary": record.authority_boundary,
     });
+    if let Some(package_root) = record.typescript_package_root.as_deref()
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert(
+            "typescript_package_root".to_string(),
+            serde_json::Value::String(package_root.to_string()),
+        );
+        if let Some(verify) = record.verification_commands.first()
+            && let Some(clipboard) = crate::output::markdown::verify_command_clipboard_for_record(
+                root,
+                &serde_json::json!({
+                    "typescript_package_root": package_root,
+                }),
+                verify,
+            )
+        {
+            object.insert(
+                "verify_command_clipboard".to_string(),
+                serde_json::Value::String(clipboard),
+            );
+        }
+    }
     if let Some(error) = regeneration_command_specs_error
         && let Some(object) = data.as_object_mut()
     {
@@ -3514,6 +3557,7 @@ fn diagnostic_for_classified_seam_with_causal(
     let line = seam.display_line().saturating_sub(1) as u32;
     let range = crate::lsp::position::line_span_range(line);
     let diagnostic_id = stable_diagnostic_id(
+        // user-text-exempt: machine id seed hashed into the diagnostic id, never shown
         "seam",
         [
             seam.owner(),
@@ -4894,6 +4938,92 @@ mod seam_diagnostic_tests {
     }
 
     #[test]
+    fn emitted_named_family_codes_keep_catalog_metadata() -> Result<(), String> {
+        use crate::domain::FixInstructionState;
+        use crate::lsp::diagnostic_budget::DocumentDeliveryOmission;
+        use crate::lsp::diagnostic_catalog::{
+            CatalogRecoveryKind, DIAGNOSTIC_ANALYSIS_PENDING_CODE, DIAGNOSTIC_BUDGET_OMITTED_CODE,
+            DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE, allow_recovery, metadata_for, resolve,
+        };
+
+        let pending = analysis_pending_diagnostic(AnalysisPendingRecovery::SaveOrRefresh);
+        let Some(NumberOrString::String(pending_code)) = pending.code.as_ref() else {
+            return Err(format!(
+                "pending diagnostic must emit a string code, got {:?}",
+                pending.code
+            ));
+        };
+        if pending_code != DIAGNOSTIC_ANALYSIS_PENDING_CODE {
+            return Err(format!("pending code drifted: {pending_code}"));
+        }
+        let pending_meta = metadata_for(pending_code)
+            .ok_or_else(|| "pending code must resolve to catalog metadata".to_string())?;
+        if pending_meta.actionability != FixInstructionState::InspectOnly
+            || !pending_meta
+                .recovery_kinds
+                .contains(&CatalogRecoveryKind::SelectWorkspaceRoot)
+        {
+            return Err("pending catalog metadata drifted".to_string());
+        }
+        if pending.data.as_ref().and_then(|data| data.get("recovery"))
+            != Some(&serde_json::json!("save_or_refresh"))
+        {
+            return Err(
+                "instance recovery id on the wire stays the honored route, not a catalog rewrite"
+                    .to_string(),
+            );
+        }
+
+        let overflow = delivery_omission_diagnostic(&DocumentDeliveryOmission {
+            scope: "document",
+            selected_count: 1,
+            omitted_count: 2,
+            total_count: 3,
+            count_budget: 1,
+            byte_budget: 1024,
+            snapshot_profile_budget_identity: "s:p:b".to_string(),
+            complete_evidence_identity: "complete".to_string(),
+            retrieval_route: "ripr.retrieveOverflow".to_string(),
+        });
+        let Some(NumberOrString::String(overflow_code)) = overflow.code.as_ref() else {
+            return Err(format!(
+                "overflow diagnostic must emit a string code, got {:?}",
+                overflow.code
+            ));
+        };
+        if overflow_code != DIAGNOSTIC_BUDGET_OMITTED_CODE {
+            return Err(format!("overflow code drifted: {overflow_code}"));
+        }
+        let overflow_meta = metadata_for(overflow_code)
+            .ok_or_else(|| "overflow code must resolve to catalog metadata".to_string())?;
+        if !overflow_meta
+            .recovery_kinds
+            .contains(&CatalogRecoveryKind::RetrieveOverflow)
+        {
+            return Err("overflow catalog metadata drifted".to_string());
+        }
+
+        let unsupported = language_not_analyzed_diagnostic(LanguageId::Python, "src/lib.py");
+        let Some(NumberOrString::String(unsupported_code)) = unsupported.code.as_ref() else {
+            return Err(format!(
+                "unsupported diagnostic must emit a string code, got {:?}",
+                unsupported.code
+            ));
+        };
+        if unsupported_code != DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE {
+            return Err(format!("unsupported code drifted: {unsupported_code}"));
+        }
+        let unsupported_entry = resolve(unsupported_code)
+            .ok_or_else(|| "unsupported code is catalogued".to_string())?;
+        if !unsupported_entry.recovery_kinds.is_empty()
+            || allow_recovery(unsupported_entry, CatalogRecoveryKind::RefreshAnalysis).is_some()
+        {
+            return Err("unsupported recovery must stay typed unavailable".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn gap_record_diagnostic_names_preview_inspection_route() -> Result<(), String> {
         let mut record = gap_record(true);
         record.repairability = "inspect_only".to_string();
@@ -5399,6 +5529,7 @@ mod seam_diagnostic_tests {
                 missing_discriminator: Some("amount == threshold".to_string()),
                 changed_behavior: Some("amount >= threshold".to_string()),
                 inspection_command: None,
+                proposed_target: None,
                 stop_conditions: vec!["Stop if the target owner moved.".to_string()],
             }),
             static_limit_kind: None,
@@ -5421,6 +5552,7 @@ mod seam_diagnostic_tests {
             receipt: None,
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
+            typescript_package_root: None,
         }
     }
 
@@ -6133,6 +6265,7 @@ mod diagnostic_policy_tests {
                 missing_discriminator: None,
                 changed_behavior: Some("amount >= threshold".to_string()),
                 inspection_command: None,
+                proposed_target: None,
                 stop_conditions: Vec::new(),
             }),
             static_limit_kind: None,
@@ -6156,6 +6289,7 @@ mod diagnostic_policy_tests {
             receipt: None,
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
+            typescript_package_root: None,
         }
     }
 
@@ -6705,8 +6839,8 @@ mod diagnostic_policy_tests {
 
     /// #11296 negative controls: the full profile publishes the real
     /// finding diagnostics instead of a duplicate marker, and a non-preview
-    /// hidden gap, an `*_unknown` preview finding, or a non-current finding
-    /// gets no marker.
+    /// hidden gap or a non-current finding gets no marker. Preview
+    /// `*_unknown` and static-limited findings still get the passive marker.
     #[test]
     fn withheld_preview_marker_stays_silent_for_every_other_case() {
         let preview = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:p");
@@ -6717,19 +6851,44 @@ mod diagnostic_policy_tests {
 
         let mut unknown = preview.clone();
         unknown.class = ExposureClass::StaticUnknown;
-        assert!(
-            withheld_markers(LspDiagnosticProfile::Actionable, &[unknown]).is_empty(),
-            "*_unknown preview findings keep their own disclosure"
+        assert_eq!(
+            withheld_markers(LspDiagnosticProfile::Actionable, &[unknown])
+                .values()
+                .flatten()
+                .count(),
+            1,
+            "*_unknown preview findings must disclose on the pull channel"
+        );
+
+        let mut limited = preview.clone();
+        limited.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
+        assert_eq!(
+            withheld_markers(LspDiagnosticProfile::Actionable, &[limited])
+                .values()
+                .flatten()
+                .count(),
+            1,
+            "static-limited preview findings must disclose on the pull channel"
         );
 
         // Positive control for the same input, so the silences above are not
         // a vacuous fixture.
         assert_eq!(
-            withheld_markers(LspDiagnosticProfile::Actionable, &[preview])
-                .values()
-                .flatten()
-                .count(),
+            withheld_markers(
+                LspDiagnosticProfile::Actionable,
+                std::slice::from_ref(&preview)
+            )
+            .values()
+            .flatten()
+            .count(),
             1
+        );
+
+        let mut stale = preview;
+        stale.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        assert!(
+            withheld_markers(LspDiagnosticProfile::Actionable, &[stale]).is_empty(),
+            "non-current preview findings stay silent"
         );
     }
 
@@ -8262,7 +8421,7 @@ mod delivery_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -8360,6 +8519,24 @@ mod delivery_tests {
                 "refresh clock or attempt snapshot_id entered the workspace result ID".to_string(),
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn producer_diagnostic_result_ids_satisfy_typed_identity_law() -> Result<(), String> {
+        let snapshot = snapshot_for_identity(
+            "/workspace",
+            &[("file:///workspace/src/lib.rs", vec![diagnostic("same", 4)])],
+        )?;
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<Uri>()
+            .map_err(|err| format!("parse URI failed: {err}"))?;
+        let document = document_diagnostic_result_id(&snapshot, &uri);
+        let workspace = workspace_diagnostic_result_id(&snapshot);
+        crate::domain::DiagnosticResultId::from_producer_id(&document)
+            .map_err(|error| error.to_string())?;
+        crate::domain::DiagnosticResultId::from_producer_id(&workspace)
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 
