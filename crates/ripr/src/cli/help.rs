@@ -1466,6 +1466,8 @@ mod tests {
     const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("../app/impacted_evidence.rs");
     const RIPR_PLUS_PARSER_RS: &str = include_str!("../app/ripr_plus.rs");
     const FIRST_PR_PARSER_RS: &str = include_str!("../output/first_pr/options.rs");
+    const ASSISTANT_LOOP_PARSER_RS: &str = include_str!("commands/assistant_loop.rs");
+    const FIRST_ACTION_PARSER_RS: &str = include_str!("commands/first_action.rs");
 
     /// Each registered command path and the function(s) in its parser source
     /// that accept argv flags.
@@ -1532,12 +1534,12 @@ mod tests {
         ),
         (
             "assistant-loop health",
-            CLI_COMMANDS_RS,
+            ASSISTANT_LOOP_PARSER_RS,
             &["parse_assistant_loop_health_options"],
         ),
         (
             "assistant-loop proof",
-            CLI_COMMANDS_RS,
+            ASSISTANT_LOOP_PARSER_RS,
             &["parse_assistant_loop_proof_options"],
         ),
         (
@@ -1607,7 +1609,7 @@ mod tests {
         ),
         (
             "first-action",
-            CLI_COMMANDS_RS,
+            FIRST_ACTION_PARSER_RS,
             &["parse_first_action_options"],
         ),
         ("first-pr", FIRST_PR_PARSER_RS, &["parse_options"]),
