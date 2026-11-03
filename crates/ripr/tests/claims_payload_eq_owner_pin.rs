@@ -474,6 +474,39 @@ fn the_eq_macro_import_must_be_in_scope_of_the_test() -> Result<(), String> {
             false,
         ),
     ];
+    // An import inside a sibling module is not in scope of the test.
+    cases.push(Case {
+        owner_extra: "mod other {\n    use claims::assert_ok_eq;\n}\n",
+        ..result_case("eq_ok_import_in_a_sibling_module", "", ok, false)
+    });
+    // An import in a nested block of the test, used outside that block.
+    cases.push(result_case(
+        "eq_ok_import_in_a_nested_block_used_outside",
+        "",
+        "{\n    use claims::assert_ok_eq;\n}\nassert_ok_eq!(checked_div(17, 5), 3);",
+        false,
+    ));
+    // A cfg that holds keeps the import; one that does not drops it. A rule
+    // that refused every cfg-attributed import would fail the first row.
+    cases.push(result_case(
+        "eq_ok_import_under_cfg_test",
+        "#[cfg(test)]\nuse claims::assert_ok_eq;",
+        ok,
+        true,
+    ));
+    cases.push(result_case(
+        "eq_ok_import_under_cfg_not_test",
+        "#[cfg(not(test))]\nuse claims::assert_ok_eq;",
+        ok,
+        false,
+    ));
+    // The `assert_some_eq` twin of the in-test row.
+    cases.push(option_case(
+        "eq_some_import_inside_the_test",
+        "",
+        "use claims::assert_some_eq;\nassert_some_eq!(half(8), 4);",
+        true,
+    ));
     // An import inside the test's own body is in scope.
     cases.push(result_case(
         "eq_ok_import_inside_the_test",
