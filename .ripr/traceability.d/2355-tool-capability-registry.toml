@@ -1,0 +1,39 @@
+[[behavior]]
+id = "RIPR-SPEC-0379"
+name = "Versioned tool-capability authority registry schema and report-only parser"
+spec = "docs/specs/RIPR-SPEC-0379-tool-capability-authority-registry.md"
+tests = [
+  "xtask/src/tool_capabilities/tests.rs::valid_seed_registry_parses_without_diagnostics",
+  "xtask/src/tool_capabilities/tests.rs::unknown_schema_version_fails",
+  "xtask/src/tool_capabilities/tests.rs::unknown_kind_fails",
+  "xtask/src/tool_capabilities/tests.rs::unknown_state_fails",
+  "xtask/src/tool_capabilities/tests.rs::unknown_decision_kind_fails",
+  "xtask/src/tool_capabilities/tests.rs::unknown_control_semantics_fails",
+  "xtask/src/tool_capabilities/tests.rs::duplicate_capability_ids_fail",
+  "xtask/src/tool_capabilities/tests.rs::duplicate_claim_ids_fail",
+  "xtask/src/tool_capabilities/tests.rs::dual_running_names_missing_dual_run_expires",
+  "xtask/src/tool_capabilities/tests.rs::deny_without_negative_proof_and_required_claim_fails",
+  "xtask/src/tool_capabilities/tests.rs::deny_with_docs_path_as_negative_proof_fails",
+  "xtask/src/tool_capabilities/tests.rs::deny_with_empty_test_prefix_fails",
+  "xtask/src/tool_capabilities/tests.rs::deny_with_whitespace_only_test_suffix_fails",
+  "xtask/src/tool_capabilities/tests.rs::deny_with_empty_receipt_prefix_fails",
+  "xtask/src/tool_capabilities/tests.rs::cutover_ready_empty_receipt_prefix_fails",
+  "xtask/src/tool_capabilities/tests.rs::metadata_only_cannot_satisfy_parity_or_cutover",
+  "xtask/src/tool_capabilities/tests.rs::expired_dual_run_reported_for_injected_as_of",
+  "xtask/src/tool_capabilities/tests.rs::same_dual_run_is_valid_on_expiry_date",
+  "xtask/src/tool_capabilities/tests.rs::dual_run_expires_the_day_after_expiry_date",
+  "xtask/src/tool_capabilities/tests.rs::output_is_byte_stable_for_identical_inputs",
+  "xtask/src/tool_capabilities/tests.rs::parser_source_has_no_network_or_github_client",
+  "xtask/src/tool_capabilities/tests.rs::issue_refs_are_syntax_only",
+  "xtask/src/tool_capabilities/tests.rs::review_after_is_not_hard_expiry",
+]
+code = [
+  "xtask/src/tool_capabilities.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  ".ripr/tool-capabilities.toml",
+  "docs/specs/RIPR-SPEC-0379-tool-capability-authority-registry.md",
+]
+metrics = ["unit_test_pass_rate"]
