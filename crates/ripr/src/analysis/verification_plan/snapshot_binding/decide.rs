@@ -82,6 +82,18 @@ pub(crate) fn requested_prepared_compatibility(
             detail: "staged deletion set mismatch".to_string(),
         };
     }
+    if requested.identities.extra != prepared.identities.extra {
+        return VerificationSnapshotCompatibilityV1::Incompatible {
+            first_mismatch_axis: extra_identity_axis(requested.subject_kind),
+            detail: "tagged subject identity fields mismatch".to_string(),
+        };
+    }
+    if requested.policy != prepared.policy {
+        return VerificationSnapshotCompatibilityV1::Incompatible {
+            first_mismatch_axis: CompatibilityMismatchAxis::SelectedClosure,
+            detail: "capture policy mismatch".to_string(),
+        };
+    }
     if requested.selected_closure_digest != prepared.selected_closure_digest {
         return VerificationSnapshotCompatibilityV1::Incompatible {
             first_mismatch_axis: CompatibilityMismatchAxis::SelectedClosure,
@@ -131,6 +143,21 @@ fn identity_triplet_mismatch(
         || left.tree != right.tree
         || left.base != right.base
         || left.head != right.head
+}
+
+/// Axis named when the kind-specific `extra` identity fields differ and no
+/// earlier cross-kind law already named a more specific mismatch.
+fn extra_identity_axis(
+    kind: super::model::VerificationSourceSubjectKindV2,
+) -> CompatibilityMismatchAxis {
+    use super::model::VerificationSourceSubjectKindV2 as Kind;
+    match kind {
+        Kind::CommittedHead | Kind::CommittedRange => CompatibilityMismatchAxis::BaseHeadIdentity,
+        Kind::StagedIndex => CompatibilityMismatchAxis::IndexIdentity,
+        Kind::SavedWorktree => CompatibilityMismatchAxis::WorktreeIdentity,
+        Kind::Overlay => CompatibilityMismatchAxis::OverlayIdentity,
+        Kind::CapturedExternal => CompatibilityMismatchAxis::CapturedExternalIdentity,
+    }
 }
 
 fn overlay_mismatch(
@@ -424,5 +451,69 @@ mod decide_tests {
             } => Ok(()),
             other => Err(format!("expected dirty-worktree rejection, got {other:?}")),
         }
+    }
+
+    #[test]
+    fn capture_policy_mismatch_is_incompatible() -> Result<(), String> {
+        let requested = sample_requested(VerificationSourceSubjectKindV2::CommittedHead)?;
+        let mut prepared = sample_prepared(VerificationSourceSubjectKindV2::CommittedHead)?;
+        prepared.policy.include_untracked_when_selected = false;
+        match requested_prepared_compatibility(&requested, &prepared) {
+            VerificationSnapshotCompatibilityV1::Incompatible {
+                first_mismatch_axis: CompatibilityMismatchAxis::SelectedClosure,
+                ..
+            } => Ok(()),
+            other => Err(format!("expected policy mismatch rejection, got {other:?}")),
+        }
+    }
+
+    #[test]
+    fn captured_external_original_path_mismatch_is_incompatible() -> Result<(), String> {
+        let mut requested = sample_requested(VerificationSourceSubjectKindV2::CapturedExternal)?;
+        let mut prepared = sample_prepared(VerificationSourceSubjectKindV2::CapturedExternal)?;
+        requested
+            .identities
+            .extra
+            .insert("original_path".to_string(), "/data/a".to_string());
+        prepared
+            .identities
+            .extra
+            .insert("original_path".to_string(), "/data/b".to_string());
+        match requested_prepared_compatibility(&requested, &prepared) {
+            VerificationSnapshotCompatibilityV1::Incompatible {
+                first_mismatch_axis: CompatibilityMismatchAxis::CapturedExternalIdentity,
+                ..
+            } => Ok(()),
+            other => Err(format!("expected extra identity rejection, got {other:?}")),
+        }
+    }
+
+    #[test]
+    fn unsupported_inventory_contents_change_binding_identity() -> Result<(), String> {
+        let plan = VerificationPlanBindingRefV1 {
+            plan_id: "plan".to_string(),
+            plan_digest: digest(7)?,
+            declared_model_generation: "gen:1".to_string(),
+        };
+        let decide = |entry: &str| -> Result<VerifiedContentDigest, String> {
+            let mut requested = sample_requested(VerificationSourceSubjectKindV2::CommittedHead)?;
+            let mut prepared = sample_prepared(VerificationSourceSubjectKindV2::CommittedHead)?;
+            requested.unsupported_entries = vec![entry.to_string()];
+            prepared.unsupported_entries = vec![entry.to_string()];
+            let decision = decide_snapshot_binding(
+                plan.clone(),
+                requested,
+                Some(prepared),
+                VerificationLiveSubjectRelationV1::NotApplicable,
+            )?;
+            Ok(decision.binding.normalized_binding_identity)
+        };
+        let first = decide("symlink:src/a")?;
+        let second = decide("symlink:src/b")?;
+        assert_ne!(
+            first, second,
+            "distinct unsupported inventories must not share a binding identity"
+        );
+        Ok(())
     }
 }

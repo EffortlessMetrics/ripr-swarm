@@ -291,6 +291,7 @@ pub(crate) struct PortableRequestedSubjectV1 {
     pub decision_bearing_inputs_digest: VerifiedContentDigest,
     pub resource_configuration_digest: Option<VerifiedContentDigest>,
     pub policy: SubjectCapturePolicyV1,
+    pub unsupported_entries: Vec<String>,
 }
 
 impl From<&RequestedVerificationSubjectV1> for PortableRequestedSubjectV1 {
@@ -304,6 +305,7 @@ impl From<&RequestedVerificationSubjectV1> for PortableRequestedSubjectV1 {
             decision_bearing_inputs_digest: value.decision_bearing_inputs_digest.clone(),
             resource_configuration_digest: value.resource_configuration_digest.clone(),
             policy: value.policy.clone(),
+            unsupported_entries: value.unsupported_entries.clone(),
         }
     }
 }
@@ -322,6 +324,7 @@ pub(crate) struct PortablePreparedSubjectV1 {
     pub resource_configuration_digest: Option<VerifiedContentDigest>,
     pub completeness: SubjectCompleteness,
     pub policy: SubjectCapturePolicyV1,
+    pub unsupported_entries: Vec<String>,
 }
 
 impl From<&PreparedVerificationSubjectRefV1> for PortablePreparedSubjectV1 {
@@ -338,6 +341,7 @@ impl From<&PreparedVerificationSubjectRefV1> for PortablePreparedSubjectV1 {
             resource_configuration_digest: value.resource_configuration_digest.clone(),
             completeness: value.completeness,
             policy: value.policy.clone(),
+            unsupported_entries: value.unsupported_entries.clone(),
         }
     }
 }

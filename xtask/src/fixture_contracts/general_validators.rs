@@ -2525,6 +2525,71 @@ pub(crate) fn validate_verification_run_snapshot_binding_fixture_corpus(
             cases.len()
         ));
     }
+    let mut seen_ids = std::collections::BTreeSet::new();
+    for (index, case) in cases.iter().enumerate() {
+        let id = case.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        if id.is_empty() {
+            violations.push(format!(
+                "verification run snapshot binding corpus case {index} must declare a non-empty id"
+            ));
+        } else if !seen_ids.insert(id.to_string()) {
+            violations.push(format!(
+                "verification run snapshot binding corpus case id `{id}` is duplicated"
+            ));
+        }
+        let label = if id.is_empty() {
+            format!("case {index}")
+        } else {
+            format!("case `{id}`")
+        };
+        if !case.get("requested").is_some_and(|v| v.is_object()) {
+            violations.push(format!(
+                "verification run snapshot binding corpus {label} must declare a requested subject object"
+            ));
+        }
+        if !case.get("plan").is_some_and(|v| v.is_object()) {
+            violations.push(format!(
+                "verification run snapshot binding corpus {label} must declare a plan object"
+            ));
+        }
+        let expect = case.get("expect");
+        let compatibility = expect
+            .and_then(|v| v.get("compatibility"))
+            .and_then(|v| v.as_str());
+        match compatibility {
+            Some("compatible") => {}
+            Some("incompatible") => {
+                let axis = expect
+                    .and_then(|v| v.get("first_mismatch_axis"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if axis.is_empty() {
+                    violations.push(format!(
+                        "verification run snapshot binding corpus {label} expects incompatible but names no first_mismatch_axis"
+                    ));
+                }
+                if !case.get("prepared").is_some_and(|v| v.is_object())
+                    && axis != "unsupported_or_partial_inventory"
+                {
+                    violations.push(format!(
+                        "verification run snapshot binding corpus {label} expects a subject mismatch but declares no prepared subject"
+                    ));
+                }
+            }
+            _ => violations.push(format!(
+                "verification run snapshot binding corpus {label} must expect compatibility `compatible` or `incompatible`"
+            )),
+        }
+        if expect
+            .and_then(|v| v.get("completeness"))
+            .and_then(|v| v.as_str())
+            .is_none()
+        {
+            violations.push(format!(
+                "verification run snapshot binding corpus {label} must declare expected completeness"
+            ));
+        }
+    }
     Ok(())
 }
 

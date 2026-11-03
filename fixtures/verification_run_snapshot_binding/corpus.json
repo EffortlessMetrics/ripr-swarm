@@ -79,7 +79,7 @@
         "first_mismatch_axis": null,
         "completeness": "complete",
         "live_relation": "same_as_captured",
-        "portable_binding_identity": null,
+        "portable_binding_identity": "sha256:d9c969d7ebce917ac4d5175eea78c2be613678da91d11d4a97a5cc30cce70adb",
         "reorder_invariance": true
       }
     },

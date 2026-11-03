@@ -373,3 +373,36 @@ fn plan_config_resource_change_changes_portable_identity() -> Result<(), String>
     );
     Ok(())
 }
+
+#[test]
+fn plan_digest_alone_changes_portable_identity() -> Result<(), String> {
+    let corpus = load_corpus()?;
+    let base = corpus
+        .cases
+        .iter()
+        .find(|case| case.id == "committed_exact_pair")
+        .ok_or_else(|| "base fixture missing".to_string())?;
+    let decide = |plan: VerificationPlanBindingRefV1| {
+        decide_snapshot_binding(
+            plan,
+            requested_from(&base.requested)?,
+            base.prepared.as_ref().map(prepared_from).transpose()?,
+            base.live_relation,
+        )
+    };
+    let original_plan = plan_from(&base.plan)?;
+    let mut changed_plan = original_plan.clone();
+    changed_plan.plan_digest =
+        digest("sha256:2020202020202020202020202020202020202020202020202020202020202020")?;
+    let original = decide(original_plan)?;
+    let changed = decide(changed_plan)?;
+    assert_eq!(
+        original.binding.compatibility, changed.binding.compatibility,
+        "plan digest alone must not change subject compatibility"
+    );
+    assert_ne!(
+        original.binding.normalized_binding_identity, changed.binding.normalized_binding_identity,
+        "plan digest alone must change the portable binding digest"
+    );
+    Ok(())
+}
