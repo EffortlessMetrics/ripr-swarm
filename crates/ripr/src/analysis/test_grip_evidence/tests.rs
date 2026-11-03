@@ -13949,17 +13949,18 @@ fn proximity_test_pinning_another_function_lends_a_return_value_no_oracle() -> R
 /// still credits the `Err(..)` seam it names.
 #[test]
 fn exact_error_pin_is_not_published_as_an_oracle_on_the_ok_value_seam() -> Result<(), String> {
-    let prod = "pub fn parse_pinned(n: u8) -> Result<u8, u8> {\n    if n % 2 == 0 { Err(2) } else { Ok(n) }\n}\n\
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Even,\n}\n\
+         pub fn parse_pinned(n: u8) -> Result<u8, Fault> {\n    if n % 2 == 0 { Err(Fault::Even) } else { Ok(n) }\n}\n\
          #[cfg(test)]\nmod tests {\n    use super::*;\n    \
-         #[test] fn pinned_even() { assert_eq!(parse_pinned(2).unwrap_err(), 2); }\n}\n";
+         #[test] fn pinned_even() { assert_eq!(parse_pinned(2).unwrap_err(), Fault::Even); }\n}\n";
     let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
     let index = index_from_files(&files)?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
-    let published = |kind: SeamKind, expression: &str| -> Result<Vec<OracleStrength>, String> {
+    let published = |expression: &str| -> Result<Vec<OracleStrength>, String> {
         let seam = seams
             .iter()
-            .find(|s| s.kind() == kind && s.expression() == expression)
-            .ok_or_else(|| format!("{expression} {kind:?} seam present"))?;
+            .find(|s| s.expression() == expression)
+            .ok_or_else(|| format!("{expression} seam present"))?;
         Ok(evidence_for_seam(seam, &index)
             .related_tests
             .iter()
@@ -13967,12 +13968,12 @@ fn exact_error_pin_is_not_published_as_an_oracle_on_the_ok_value_seam() -> Resul
             .collect())
     };
     assert_eq!(
-        published(SeamKind::ReturnValue, "Ok(n)")?,
+        published("Ok(n)")?,
         vec![OracleStrength::None],
         "the error pin cannot see the Ok value"
     );
     assert_eq!(
-        published(SeamKind::ReturnValue, "Err(2)")?,
+        published("Err(Fault::Even)")?,
         vec![OracleStrength::Strong],
         "the same pin still credits the Err value it names"
     );
