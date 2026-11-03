@@ -33,6 +33,13 @@ failed qualification, remove and re-apply `merge-ready` for a fresh run on the
 exact head; do not re-apply the label on an unchanged head while a required run
 is queued or running, because it cancels that run.
 
+The cancellation rides the workflow's concurrency group, so a fresh trigger
+from any other actor — a re-fired `merge-ready` label or any `routed-rust`
+event — cancels your in-flight qualification run. An in-flight run that
+disappears is usually someone else's fresh run, not an infrastructure
+failure; check the newest run on the head before re-firing the label again
+(observed on #10647).
+
 ## Merge refs: what the label event actually tests
 
 A `CONFLICTING` PR has no `refs/pull/<N>/merge`. A `merge-ready` label applied
@@ -80,6 +87,28 @@ After any `gh` error, verify the actual PR and merge state through the API
 before retrying: a non-zero merge exit is ambiguous, and a merge that actually
 landed makes a blind retry a second-merge error
 ([LEARNINGS: merge-then-cleanup](../LEARNINGS.md)).
+
+A green required check is not the last verification step either: fix tranches
+are followed by an empirical verification pass that re-runs the original
+failing scenarios on the merged build, with the results recorded in the
+campaign logs — a red witness before the fix and a green build after prove
+less than the scenario passing end-to-end.
+
+## GitHub API mechanics
+
+- The comments endpoints are not interchangeable: `pulls/{n}/comments`
+  returns only review comments, while issue comments live at
+  `issues/{n}/comments`. A detection or fetch routed through the pulls
+  endpoint silently returns an empty result and looks like "no data" — the
+  trap behind the ownership-signaling claim-comment design
+  ([PR automation](../PR_AUTOMATION.md#multi-actor-ownership-signaling)),
+  caught during #11736 research.
+- Issue and PR comment POSTs can 403 under a secondary content-creation
+  limit for around 40 minutes, independent of the core and GraphQL budgets.
+  The GraphQL `addComment` mutation is a separate surface and cleared the
+  limit in practice: on a comment-creation 403 that persists after the
+  standard 60-second retry, back off for minutes and fall back to
+  `addComment` instead of retrying the REST POST.
 
 ## Reconciliation traps
 
