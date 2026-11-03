@@ -379,8 +379,13 @@ fn required_digest_problems(
         .get("report_digest_required")
         .and_then(Value::as_array)
     else {
+        violations.push(
+            "report_digest_required: the corpus must carry this key as an array of report paths; without it the stamped captures are unguarded (#12816)"
+                .to_string(),
+        );
         return;
     };
+    let mut listed = Vec::new();
     for entry in entries {
         let Some(path) = entry
             .as_str()
@@ -401,6 +406,16 @@ fn required_digest_problems(
                 "{path}: the corpus requires this capture to carry `artifact.content_sha256`, but it has none (the field or its `artifact` block was removed). Recapture it with `ripr check --mode draft --format repo-exposure-json` (#12816)"
             )),
             Some(_) => {}
+        }
+        listed.push(path);
+    }
+    // The list is a rule, not a snapshot: a stamped capture added later must
+    // join it, or deleting its markers would pass unnoticed.
+    for (label, report) in reports {
+        if carries_digest(report) && !listed.contains(&label.as_str()) {
+            violations.push(format!(
+                "{label}: this capture carries `artifact.content_sha256` but is not in `report_digest_required`; add it so a later edit cannot strip its markers (#12816)"
+            ));
         }
     }
 }
@@ -637,6 +652,24 @@ mod tests {
         let mut violations = Vec::new();
         required_digest_problems(&corpus, &reports, &mut violations);
         assert_eq!(violations.len(), 3, "{violations:?}");
+        // A missing key or a non-array value disables nothing silently.
+        for bad in [json!({}), json!({"report_digest_required": {}})] {
+            let mut missing = Vec::new();
+            required_digest_problems(&bad, &[], &mut missing);
+            assert_eq!(missing.len(), 1, "{missing:?}");
+        }
+        // A stamped capture left off the list is a violation.
+        let unlisted = vec![("new.json".to_string(), capture(true))];
+        let mut off_list = Vec::new();
+        required_digest_problems(
+            &json!({"report_digest_required": []}),
+            &unlisted,
+            &mut off_list,
+        );
+        assert!(
+            off_list.len() == 1 && off_list[0].contains("not in `report_digest_required`"),
+            "{off_list:?}"
+        );
         // The same report with its digest passes.
         let stamped = vec![("a.json".to_string(), capture(true))];
         let mut clean = Vec::new();

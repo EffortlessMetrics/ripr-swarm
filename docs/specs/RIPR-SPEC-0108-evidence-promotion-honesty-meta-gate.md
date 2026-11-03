@@ -172,7 +172,10 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      `source_subject.corpus` from a trimmed projection, so the corpus also
      lists in `report_digest_required` every report that carries a digest, and
      each listed report must still carry one; an entry naming no committed
-     report fails (#12816).
+     report fails. The list is a rule, not a snapshot: a committed report that
+     carries a digest and is not listed fails, and a missing or non-array
+     `report_digest_required` is a violation rather than a disabled guard
+     (#12816).
      Scope of the guarantee: the digest is recomputed from the file's own
      bytes, so anyone who can recompute it can bless an edit. The check
      detects a stale or hand-edited capture. It is not a tamper-proof seal and
