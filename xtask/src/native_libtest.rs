@@ -1369,8 +1369,12 @@ mod tests {
         assert!(receipt.profile_test);
         assert!(receipt.json_complete);
         assert!(receipt.process_tree_settled);
+        // The receipt keeps `target_dir` as an absolute path and `executable` as the
+        // canonical one (the `\\?\` form on Windows), so compare canonical forms.
+        let canonical_target_dir =
+            std::fs::canonicalize(&receipt.target_dir).map_err(|error| error.to_string())?;
         assert!(
-            Path::new(&receipt.executable).starts_with(&receipt.target_dir),
+            Path::new(&receipt.executable).starts_with(&canonical_target_dir),
             "executable {} escaped {}",
             receipt.executable,
             receipt.target_dir
