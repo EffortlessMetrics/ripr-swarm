@@ -284,6 +284,14 @@ fn parse_snapshot(text: &str, label: &str) -> Result<Snapshot, String> {
             Err(_) => unknown_items += 1,
         }
     }
+    // A repeated gap identity makes matching order-dependent: the later base
+    // row wins the lookup and the earlier one is read as a disappearance. The
+    // downstream artifact already rejects duplicate output ids, so the
+    // producer withholds the whole snapshot instead of guessing which row to
+    // keep (#12727).
+    if let Some(reason) = duplicate_gap_reason(&items, label) {
+        return Ok(Snapshot::unavailable(reason));
+    }
     Ok(Snapshot {
         available: true,
         status,
@@ -291,6 +299,23 @@ fn parse_snapshot(text: &str, label: &str) -> Result<Snapshot, String> {
         items,
         unknown_items,
     })
+}
+
+fn duplicate_gap_reason(items: &[SnapshotItem], label: &str) -> Option<String> {
+    let mut seen = HashSet::new();
+    let mut repeated = BTreeSet::new();
+    for item in items {
+        if !seen.insert(item.gap_id.as_str()) {
+            repeated.insert(item.gap_id.as_str());
+        }
+    }
+    if repeated.is_empty() {
+        return None;
+    }
+    let ids = repeated.into_iter().take(3).collect::<Vec<_>>().join(", ");
+    Some(format!(
+        "{label} snapshot repeats canonical gap id(s) {ids}; withheld because attribution would depend on row order"
+    ))
 }
 
 fn snapshot_item(value: &Value) -> Result<SnapshotItem, String> {
@@ -838,6 +863,126 @@ mod tests {
             .is_none_or(|bases| !bases.iter().any(|basis| basis == "rename_or_move_mapped"))
         {
             return Err(format!("move basis missing: {value}"));
+        }
+        Ok(())
+    }
+
+    fn seam_json(gap_id: &str, strength: &str) -> Value {
+        json!({
+            "seam_id": format!("seam-{gap_id}"),
+            "file": "src/lib.rs",
+            "line": 10,
+            "kind": "predicate_boundary",
+            "related_tests": [{"oracle_strength": strength}],
+            "evidence_record": {
+                "owner": "owner",
+                "seam_kind": "predicate",
+                "canonical_item": {
+                    "canonical_gap_id": gap_id,
+                    "canonical_item_kind": "boundary",
+                    "evidence_class": "boundary",
+                    "gap_state": "actionable"
+                }
+            }
+        })
+    }
+
+    fn snapshot_text(seams: &[Value]) -> String {
+        json!({"run_status": "complete", "seams": seams}).to_string()
+    }
+
+    fn compare_text(base: &str, head: &str) -> Result<Value, String> {
+        let base = parse_snapshot(base, "base")?;
+        let head = parse_snapshot(head, "head")?;
+        Ok(compare_snapshots(
+            "base",
+            "head",
+            &base,
+            &head,
+            &BTreeSet::new(),
+        ))
+    }
+
+    #[test]
+    fn duplicate_base_rows_withhold_the_snapshot_in_either_order() -> Result<(), String> {
+        let head = snapshot_text(&[seam_json("gap:fixture", "strong")]);
+        let mut seen = Vec::new();
+        for order in [["weak", "strong"], ["strong", "weak"]] {
+            let base = snapshot_text(&[
+                seam_json("gap:fixture", order[0]),
+                seam_json("gap:fixture", order[1]),
+            ]);
+            let value = compare_text(&base, &head)?;
+            if value["coverage"]["complete"] != true && value["base"]["available"] == false {
+                seen.push(value);
+                continue;
+            }
+            return Err(format!("duplicate base rows were admitted: {value}"));
+        }
+        for value in &seen {
+            let reasons = value["limitations"].to_string();
+            if !reasons.contains("base snapshot repeats canonical gap id") {
+                return Err(format!("reason does not name the base side: {value}"));
+            }
+            if value["deltas"].as_array().is_some_and(|rows| {
+                rows.iter().any(|row| {
+                    row["delta_attribution"] == "resolved_by_change"
+                        || row["delta_attribution"] == "weakened_by_change"
+                })
+            }) {
+                return Err(format!("an order-selected relation was affirmed: {value}"));
+            }
+        }
+        // Reversing the duplicate rows must not change the refusal.
+        if seen[0]["deltas"] != seen[1]["deltas"] || seen[0]["coverage"] != seen[1]["coverage"] {
+            return Err("row order changed the result".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_head_rows_withhold_the_snapshot_and_name_the_head() -> Result<(), String> {
+        let base = snapshot_text(&[seam_json("gap:fixture", "weak")]);
+        let head = snapshot_text(&[
+            seam_json("gap:fixture", "strong"),
+            seam_json("gap:fixture", "strong"),
+        ]);
+        let value = compare_text(&base, &head)?;
+        if value["head"]["available"] != false
+            || value["coverage"]["complete"] != false
+            || !value["limitations"]
+                .to_string()
+                .contains("head snapshot repeats canonical gap id")
+        {
+            return Err(format!("duplicate head rows were admitted: {value}"));
+        }
+        let ids = value["deltas"]
+            .as_array()
+            .ok_or("missing deltas")?
+            .iter()
+            .filter_map(|row| row["canonical_gap_id"].as_str())
+            .collect::<Vec<_>>();
+        let unique = ids.iter().collect::<HashSet<_>>();
+        if ids.len() != unique.len() {
+            return Err(format!("output repeats a gap id: {ids:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unique_ids_and_distinct_gaps_on_one_owner_are_unaffected() -> Result<(), String> {
+        let base = snapshot_text(&[seam_json("gap:fixture", "weak")]);
+        let head = snapshot_text(&[seam_json("gap:fixture", "strong")]);
+        let value = compare_text(&base, &head)?;
+        if value["coverage"]["complete"] != true
+            || value["deltas"][0]["delta_attribution"] != "resolved_by_change"
+        {
+            return Err(format!("unique control changed: {value}"));
+        }
+        // Same owner and kind, genuinely different gap ids: not a collision.
+        let two = snapshot_text(&[seam_json("gap:a", "weak"), seam_json("gap:b", "weak")]);
+        if parse_snapshot(&two, "base").is_ok_and(|snapshot| !snapshot.available) {
+            return Err("distinct gap ids on one owner were treated as a collision".to_string());
         }
         Ok(())
     }
