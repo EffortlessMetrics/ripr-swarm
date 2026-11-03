@@ -45,7 +45,8 @@ use crate::analysis::rust_index::{
     classify_assertion_with, err_return_guard_oracles, extract_call_facts,
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_return_facts, guarded_result_match_scan_with_shadow_authority,
-    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
+    is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
+    unwrap_err_bound_variables,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2628,7 +2629,7 @@ fn extract_parser_oracles(
         };
         let macro_name = path.syntax().text().to_string().replace(' ', "");
         if !is_assertion_macro(&macro_name)
-            || drop_in_root_may_be_rebound(&macro_name, function.syntax(), drop_in_scope)
+            || qualified_drop_in_parser_rebound(&macro_name, function.syntax(), drop_in_scope)
         {
             continue;
         }
@@ -2644,7 +2645,8 @@ fn extract_parser_oracles(
             classification.kind,
             OracleKind::ExactValue | OracleKind::WholeObjectEquality
         ) && classification.strength == OracleStrength::Strong
-            && is_unwrap_err_bound_error_assertion(&assertion_text, &bound_error_vars)
+            && (is_unwrap_err_bound_error_assertion(&assertion_text, &bound_error_vars)
+                || is_inline_unwrap_err_error_assertion(&assertion_text))
         {
             classification.kind = OracleKind::ExactErrorVariant;
             classification.strength = OracleStrength::Strong;
@@ -3087,6 +3089,34 @@ pub(crate) fn assertion_root_is_available(path: &str, node: &ra_ap_syntax::Synta
                 }))
 }
 
+/// Parser oracle admission for qualified drop-in assertion paths. External
+/// drop-in crates (`pretty_assertions::`, etc.) fail closed on any whole-file
+/// glob import (#7641). Standard roots keep the existing parser path; their
+/// glob and manifest checks stay in owner-pin admission.
+fn qualified_drop_in_parser_rebound(
+    macro_name: &str,
+    node: &ra_ap_syntax::SyntaxNode,
+    scope: DropInScope,
+) -> bool {
+    if drop_in_root_may_be_rebound(macro_name, node, scope) {
+        return true;
+    }
+    let path = macro_name.strip_prefix("::").unwrap_or(macro_name);
+    let Some((root, _)) = path.split_once("::") else {
+        return false;
+    };
+    if matches!(root, "std" | "core") {
+        return false;
+    }
+    drop_in_assertion_leaf(macro_name).is_some()
+        && matches!(scope, DropInScope::WholeFile)
+        && node.ancestors().last().is_some_and(|file| {
+            file.descendants()
+                .filter_map(ast::UseTree::cast)
+                .any(|tree| tree.star_token().is_some())
+        })
+}
+
 /// Whether a crate-qualified drop-in assertion (`pretty_assertions::assert_eq!`)
 /// may name something other than the crate. It may when the file declares a
 /// module or an `extern crate` rename with the root's name, imports another
@@ -3095,8 +3125,9 @@ pub(crate) fn assertion_root_is_available(path: &str, node: &ra_ap_syntax::Synta
 /// anywhere in the file refuses, without resolving which module it sits in,
 /// so a local module that re-exports a non-checking `assert_eq` gains no
 /// assertion authority. A binding in another file reached through a glob
-/// import (`use super::*` in an out-of-line test module), and a Cargo package
-/// rename, are not visible here.
+/// import is refused at parser admission via
+/// [`qualified_drop_in_parser_rebound`]; a Cargo package rename is not visible
+/// here.
 fn drop_in_root_may_be_rebound(
     macro_name: &str,
     node: &ra_ap_syntax::SyntaxNode,

@@ -281,6 +281,7 @@ fn canonical_next_action_for_card(
         check_item: None,
         card_item: Some(input.subject.seam_id.clone()),
         item_candidates: Vec::new(),
+        item_candidate_labels: Vec::new(),
         attempts,
         currentness: NextActionCurrentness {
             head_expected: Some(input.snapshot.repository_head.clone()),
@@ -455,6 +456,8 @@ mod tests {
             has_fix_site: state == FixInstructionState::FixSiteReady,
             has_suggested_assertion: true,
             limitation_kinds: Vec::new(),
+            instruction_semantic_id: None,
+            instruction_instance_id: None,
         }
     }
 
@@ -599,6 +602,30 @@ mod tests {
         if canonical.is_executable() || canonical.command().is_some() {
             return Err("the witness gap must not expose an executable route".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_next_action_json_keeps_seam_wording_while_human_uses_spot() -> Result<(), String> {
+        let instruction = instruction(FixInstructionState::Unavailable);
+        let readiness = ready_readiness();
+        let input = base_input(&instruction, &readiness);
+        let card = build_repair_card(&input)?;
+        let canonical = card
+            .canonical_next_action
+            .as_ref()
+            .ok_or_else(|| "the card must mint a canonical action".to_string())?;
+        let human = crate::output::next_action::render_next_action_human(canonical);
+        assert!(
+            human.contains("names this spot"),
+            "human card text must use spot:\n{human}"
+        );
+        let json = serde_json::to_string(canonical)
+            .map_err(|error| format!("serialize canonical next action: {error}"))?;
+        assert!(
+            json.contains("names this seam"),
+            "JSON must keep producer seam wording:\n{json}"
+        );
         Ok(())
     }
 

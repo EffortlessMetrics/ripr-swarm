@@ -27,6 +27,7 @@ mod blind_journey;
 mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
+mod cache_payload_tamper_recovery;
 mod check_fast_cli;
 mod check_fast_selector;
 mod command;
@@ -43,14 +44,17 @@ mod kani_lane;
 mod public_proof;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
+mod exact_candidate_harness;
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
 mod gh_pr_status_snapshot;
 mod identity_registry;
+mod issue_4678_acceptance;
 mod issue_lifecycle_attempt;
 mod issue_lifecycle_contract_plan;
 mod issue_lifecycle_intake;
 mod issue_lifecycle_real_rows;
+mod native_libtest;
 mod no_panic;
 mod orchestration_attempt;
 mod output_enum_contracts;
@@ -92,6 +96,8 @@ mod rust_judged_panel;
 mod rust_region_scan;
 mod schema_cut_replay;
 mod schema_producer_sweep;
+mod verification_allocation_adapter;
+mod verification_allocation_policy;
 mod verification_contracts;
 mod verify_test_shards;
 mod version;
@@ -6906,7 +6912,9 @@ fn finish_traceability_report(violations: &[String], advisories: &[String]) -> R
          and the file paths named by registered references. It does not enumerate Rust tests. \
          It does not require every newly added test to appear in `.ripr/traceability.toml`. \
          A `::symbol` suffix remains advisory and is not proof that the symbol exists, has \
-         a test role, ran, or establishes the behavior (see #2345).\n\n",
+         a test role, ran, or establishes the behavior (see #2345). \
+         An explicit planned test mapping may satisfy an accepted contract's mapping obligation; \
+         it is not an existing evidence reference, implementation, executed proof, or support promotion.\n\n",
     );
 
     if violations.is_empty() {
@@ -6939,8 +6947,9 @@ fn finish_traceability_report(violations: &[String], advisories: &[String]) -> R
     if !advisories.is_empty() {
         body.push_str("## Advisories (non-blocking)\n\n");
         body.push_str(
-            "These references point to existing files but carry a `::symbol` suffix that the \
-             structural checker cannot verify yet. They do not fail the gate.\n\n",
+            "Symbol advisories describe existing-file references whose symbols are not verified. \
+             Planned-mapping advisories describe future test obligations, not existing or executed evidence. \
+             Neither advisory promotes implementation or support.\n\n",
         );
         for advisory in advisories {
             body.push_str("```text\n");
@@ -6970,7 +6979,8 @@ fn traceability_recommended_fixes() -> &'static [&'static str] {
         "Known spec IDs are listed in docs/specs/README.md and docs/spec-index.d/.",
         "Keep every docs/specs/RIPR-SPEC-*.md file represented in the manifest.",
         "Use valid RIPR-SPEC-NNNN IDs (exactly 4 digits) in specs, fixtures, and manifest entries.",
-        "List only paths that exist, or leave planned fields empty until the artifact exists.",
+        "List only existing paths in current reference arrays; leave those arrays empty until artifacts exist.",
+        "For an accepted contract without current tests or fixtures, declare named obligations under `Planned tests:` in its Test Mapping section.",
     ]
 }
 
@@ -7030,12 +7040,148 @@ fn validate_trace_behavior(
         && behavior.tests.is_empty()
         && behavior.fixtures.is_empty()
     {
-        violations.push(format!(
-            "{id} is accepted but has no current test or fixture mapping"
-        ));
+        let planned = match behavior.spec.as_deref() {
+            Some(spec) => has_explicit_planned_test_mapping(&read_text_lossy(Path::new(spec))?),
+            None => false,
+        };
+        if planned {
+            advisories.push(format!(
+                "{id} is accepted with an explicit planned test mapping and no current test or fixture references; \
+                 this is an obligation, not implemented behavior or executed/sufficient evidence"
+            ));
+        } else {
+            violations.push(format!(
+                "{id} is accepted but has no current test or fixture mapping or explicit planned test mapping"
+            ));
+        }
     }
 
     Ok(())
+}
+
+fn has_explicit_planned_test_mapping(text: &str) -> bool {
+    let mut in_mapping = false;
+    let mut planned_list = false;
+    let mut fence: Option<(char, usize)> = None;
+    let mut comment = false;
+    for line in text.lines() {
+        let fence_text = line.trim_start_matches(' ');
+        let fence_indent = line.len() - fence_text.len();
+        if let Some((delimiter, length)) = fence {
+            let count = fence_text.chars().take_while(|ch| *ch == delimiter).count();
+            if fence_indent <= 3
+                && count >= length
+                && fence_text[count..]
+                    .bytes()
+                    .all(|byte| byte == b' ' || byte == b'\t')
+            {
+                fence = None;
+            }
+            continue;
+        }
+        if !comment
+            && fence_indent <= 3
+            && (fence_text.starts_with("```") || fence_text.starts_with("~~~"))
+        {
+            let delimiter = if fence_text.starts_with('`') {
+                '`'
+            } else {
+                '~'
+            };
+            fence = Some((
+                delimiter,
+                fence_text.chars().take_while(|ch| *ch == delimiter).count(),
+            ));
+            continue;
+        }
+        let mut visible = String::new();
+        let mut remainder = line;
+        loop {
+            if comment {
+                let Some(end) = remainder.find("-->") else {
+                    break;
+                };
+                comment = false;
+                remainder = &remainder[end + 3..];
+            } else if let Some(start) = remainder.find("<!--") {
+                visible.push_str(&remainder[..start]);
+                comment = true;
+                remainder = &remainder[start + 4..];
+            } else {
+                visible.push_str(remainder);
+                break;
+            }
+        }
+        let trimmed = visible.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "## Test Mapping" {
+            in_mapping = true;
+            planned_list = false;
+            continue;
+        }
+        if !in_mapping {
+            continue;
+        }
+        if trimmed.starts_with("## ") || trimmed.starts_with("# ") {
+            break;
+        }
+        // The qualified native form is unindented, excluding Markdown code blocks.
+        if visible.starts_with(char::is_whitespace) && !trimmed.is_empty() {
+            planned_list = false;
+            continue;
+        }
+        if trimmed.eq_ignore_ascii_case("Planned tests:") {
+            planned_list = true;
+            continue;
+        }
+        let item = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "));
+        if let Some(item) = item {
+            let mut name = item.trim();
+            loop {
+                let previous_length = name.len();
+                name = name.trim_matches(['`', '*', '_', '~']).trim();
+                name = name
+                    .strip_prefix("[ ]")
+                    .or_else(|| name.strip_prefix("[x]"))
+                    .or_else(|| name.strip_prefix("[X]"))
+                    .unwrap_or(name)
+                    .trim();
+                if name.len() == previous_length {
+                    break;
+                }
+            }
+            let item = name.to_ascii_lowercase();
+            let sentinel = item.trim_end_matches(['.', '!', '?', ';', ':', ',']);
+            let placeholder = !sentinel.chars().any(char::is_alphanumeric)
+                || matches!(
+                    sentinel,
+                    "..."
+                        | "-"
+                        | "none"
+                        | "n/a"
+                        | "tbd"
+                        | "todo"
+                        | "planned"
+                        | "add test"
+                        | "add tests"
+                        | "write test"
+                        | "write tests"
+                )
+                || ["none ", "todo:", "todo ", "tbd:", "tbd ", "<!--", "<"]
+                    .iter()
+                    .any(|prefix| item.starts_with(prefix));
+            if planned_list && !placeholder {
+                return true;
+            }
+        } else {
+            planned_list = false;
+        }
+    }
+    false
 }
 
 fn validate_behavior_spec_path(
@@ -14546,22 +14692,22 @@ fn check_rust_source_role_authority() -> Result<(), String> {
             "#5563 source-text guard strips test modules from production text it scans for miss-based eligibility; it decides no analysis role",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/placement.rs",
             "starts_with(\"tests",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/placement.rs",
             "contains(\"/tests/\")",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/placement.rs",
             "ends_with(\"_test.rs\")",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/placement.rs",
             "ends_with(\"_tests.rs\")",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
@@ -15179,6 +15325,7 @@ fn check_output_contracts() -> Result<(), String> {
                     "python_repair_verification_check_report" => {
                         "xtask/src/reports/python_repair_verification.rs"
                     }
+                    "ripr_diff" => "crates/ripr/src/output/diff_report.rs",
                     other => {
                         violations.push(format!("unrecognized output kind `{other}`"));
                         continue;
@@ -15222,6 +15369,7 @@ fn check_output_contracts() -> Result<(), String> {
         "python_repair_driver_binding",
         "python_repair_verification_check_report",
         "python_repair_verification_receipt",
+        "ripr_diff",
     ] {
         if !seen.contains(&format!("kind|{value}")) {
             violations.push(format!("missing output contract entry: kind|{value}"));
@@ -19318,6 +19466,7 @@ fn ci_tables<'a>(document: &'a CiLedgerDocument, header: &str) -> Vec<&'a CiLedg
 const PROOF_PACK_MANIFEST_PATH: &str = "policy/proof-packs.toml";
 const PROOF_PACK_LANE_WHITELIST_PATH: &str = "policy/ci-lane-whitelist.toml";
 const PROOF_PACK_RELEASE_PACK_ID: &str = "release-package";
+const PROOF_PACK_OUTPUT_CONTRACTS_ID: &str = "output-contracts";
 
 /// Release surfaces the `release-package` pack MUST cover so that any change to
 /// a version file, the changelog, or a release workflow trips
@@ -19371,7 +19520,12 @@ fn check_proof_packs_impl() -> Result<(), String> {
 
     if let (Some(manifest), Some(lanes)) = (&manifest, &lanes) {
         let lane_ids = proof_pack_lane_ids(lanes);
+        let lane_commands = proof_pack_lane_commands(lanes);
         violations.extend(proof_pack_violations(manifest, &lane_ids));
+        violations.extend(proof_pack_output_contracts_lane_violations(
+            manifest,
+            &lane_commands,
+        ));
     }
 
     finish_policy_report(
@@ -19392,6 +19546,71 @@ fn check_proof_packs_impl() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+fn proof_pack_lane_commands(lanes: &CiLedgerDocument) -> BTreeMap<String, BTreeSet<String>> {
+    let path = PROOF_PACK_LANE_WHITELIST_PATH;
+    let mut lane_commands = BTreeMap::new();
+    let mut ignored = Vec::new();
+    for table in ci_tables(lanes, "lane") {
+        let Some(id_value) = table.values.get("id") else {
+            continue;
+        };
+        let Some(id) = ci_string_value(path, "table `[[lane]]`", "id", id_value, &mut ignored)
+        else {
+            continue;
+        };
+        let mut parse_violations = Vec::new();
+        let Some(commands) =
+            ci_required_table_array(path, table, "commands", &mut parse_violations)
+        else {
+            continue;
+        };
+        lane_commands.insert(id, commands.into_iter().collect());
+    }
+    lane_commands
+}
+
+pub(crate) fn proof_pack_output_contracts_lane_violations(
+    manifest: &CiLedgerDocument,
+    lane_commands: &BTreeMap<String, BTreeSet<String>>,
+) -> Vec<String> {
+    let path = PROOF_PACK_MANIFEST_PATH;
+    let mut violations = Vec::new();
+    let mut ignored = Vec::new();
+    let packs = policy::proof_packs::parse_proof_packs(manifest, &mut ignored);
+    let Some(pack) = packs
+        .iter()
+        .find(|pack| pack.id == PROOF_PACK_OUTPUT_CONTRACTS_ID)
+    else {
+        violations.push(format!(
+            "{path} must define an `{PROOF_PACK_OUTPUT_CONTRACTS_ID}` pack (P18 output-contracts routing slice)"
+        ));
+        return violations;
+    };
+    let Some(ci_lane) = &pack.ci_lane else {
+        violations.push(format!(
+            "{path}:{} proof pack `{PROOF_PACK_OUTPUT_CONTRACTS_ID}` must declare `ci_lane`",
+            pack.line
+        ));
+        return violations;
+    };
+    let Some(lane_commands) = lane_commands.get(ci_lane) else {
+        violations.push(format!(
+            "{path}:{} proof pack `{PROOF_PACK_OUTPUT_CONTRACTS_ID}` references unknown ci_lane `{ci_lane}`",
+            pack.line
+        ));
+        return violations;
+    };
+    for required in &pack.required_commands {
+        if !lane_commands.contains(required) {
+            violations.push(format!(
+                "{path}:{} proof pack `{PROOF_PACK_OUTPUT_CONTRACTS_ID}` requires `{required}` but ci_lane `{ci_lane}` at {PROOF_PACK_LANE_WHITELIST_PATH} does not list it\n  rule: P18 Correction #3 — the lane must run every required command the pack names (docs/PROOF_ROUTING.md slice 8)",
+                pack.line
+            ));
+        }
+    }
+    violations
 }
 
 fn proof_pack_lane_ids(lanes: &CiLedgerDocument) -> BTreeSet<String> {
@@ -19537,6 +19756,9 @@ fn proof_pack_command_is_known(command: &str) -> bool {
 
 fn check_dependencies() -> Result<(), String> {
     policy::check_dependency_suppression_expiry(Path::new("deny.toml"))?;
+    policy::check_post_0_11_dependency_defer_tracking(Path::new(
+        "docs/releases/0.11.0-dependency-graphs.md",
+    ))?;
     let allowlist = read_glob_allowlist("policy/dependency_allowlist.txt")?;
     let mut violations = Vec::new();
 

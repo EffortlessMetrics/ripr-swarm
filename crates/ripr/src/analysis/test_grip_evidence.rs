@@ -19,7 +19,9 @@ mod reach_limit;
 mod related_tests;
 pub(crate) mod shared_grips;
 mod snapshot_owner_binding;
+pub(crate) mod summary;
 pub(crate) use snapshot_owner_binding::{BindingReach, local_is_owner_result_before, text_calls};
+pub(crate) use summary::retain_test_grip_summary;
 mod value_contradiction;
 
 use boolean_boundary_pin::BooleanBoundaryPin;
@@ -41,9 +43,11 @@ use related_tests::{
 
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
-    call_text_may_call_free_function, direct_collection_mutation_receiver, is_ignored,
-    owner_call_text, predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
+    assertion_pins_pushed_collection_count, call_text_may_call_free_function,
+    direct_collection_mutation_receiver, is_ignored, owner_call_text,
+    predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
     related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
+    test_count_pins_pushed_collection, test_counts_pushed_collection_argument,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -117,6 +121,17 @@ impl TestGripEvidence {
         ]
         .iter()
         .any(|stage| stage.summary.contains(limit.as_str()))
+    }
+
+    /// #11402: whether the changed push is followed only to a local the
+    /// test reads back by a count that pins the single push, the
+    /// propagation stage's own marker.
+    pub(crate) fn follows_push_to_counted_local(&self) -> bool {
+        self.propagate.state == StageState::Yes
+            && self
+                .propagate
+                .summary
+                .contains(PUSHED_COLLECTION_COUNT_PINNED)
     }
 }
 
@@ -340,6 +355,14 @@ impl<'index> EvidencePass<'index> {
         // partial vector exactly as it did for the serial loop.
         let token = cancellation::current_token();
         let overlay = crate::analysis::committed_source::current_overlay();
+        // Capture the listener on this thread. Rayon workers do not inherit
+        // the inventory-progress thread-local, so they must hold the Arc.
+        let units_listener = super::inventory_progress::current_listener();
+        let total_units = u64::try_from(seams.len()).unwrap_or(u64::MAX);
+        // Report the honest denominator before the whole-index warm so a
+        // tens-of-seconds table build is not another unquantified stall
+        // (#8643).
+        super::inventory_progress::report_units(0, total_units);
         // #9211: a stage large enough to need the whole-index tables pays
         // for them here, before any seam is queued, instead of the first
         // worker to ask building one in line while its siblings wait. A first
@@ -365,6 +388,10 @@ impl<'index> EvidencePass<'index> {
                                 &format!("processed_{processed}_of_{}", seams.len()),
                                 evidence_started.elapsed(),
                             );
+                            if let Some(listener) = units_listener.as_ref() {
+                                let completed = u64::try_from(processed).unwrap_or(u64::MAX);
+                                listener(completed, total_units);
+                            }
                         }
                         Some(evidence)
                     })
@@ -372,6 +399,16 @@ impl<'index> EvidencePass<'index> {
             })
             .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
+        if out.is_empty()
+            && cancellation::current_token()
+                .as_ref()
+                .and_then(|token| token.observed_abort())
+                .is_some()
+        {
+            // #5341: a cancelled pass must not leave provisional shared-grip
+            // records pinned on the generation-local pool.
+            context.clear_window_memos();
+        }
         out
     }
 
@@ -420,6 +457,32 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
     evidence_for_seam_with_context(seam, &context)
 }
 
+/// Whether a test that pins another function lends this seam no oracle
+/// (#12060 match arms, #12434 predicate boundaries). Both kinds read a value
+/// another indexed function also produces, so an assertion on that function
+/// says nothing about the owner's branch.
+///
+/// A predicate boundary refuses only when some related test is tied to the
+/// owner by a relation that establishes reach. With no such test every
+/// related test is proximity-only, activation stays unknown, and stripping
+/// the lent oracle would move the seam from `activation_unknown` to
+/// `reachable_unrevealed` (rule 4 of seam classification), claiming tests run
+/// a seam nothing is seen calling. Callers pass the complete relation set,
+/// never a rank-limited or per-test slice, so every entry point agrees.
+fn refuses_other_function_oracle(
+    seam: &RepoSeam,
+    relations: impl IntoIterator<Item = RelationReason>,
+    owner_is_function: bool,
+) -> bool {
+    match seam.kind() {
+        SeamKind::MatchArm => true,
+        SeamKind::PredicateBoundary => relations
+            .into_iter()
+            .any(|reason| reason.establishes_reach(owner_is_function)),
+        _ => false,
+    }
+}
+
 /// #12060: the related tests as the stage evidence should read them. A match
 /// arm names an enum variant other functions also return, so a test related
 /// to the owner only by file or module cannot confirm the arm through an
@@ -427,15 +490,16 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
 /// owner (`assert_eq!(reduce(..), Reduction::Over(..))` for an arm of
 /// `consume`). Repo relation also ties such a test by assertion affinity,
 /// because the assertion names the arm's variant, so that tie is refused
-/// the same way. `ripr check` refuses the same assertion per assertion
-/// (RIPR-SPEC-0094, #11552); the repo seam must agree.
+/// the same way. A predicate boundary in the owner (`wait < 5` in `consume`)
+/// is refused alike (#12434). `ripr check` refuses the same assertion per
+/// assertion (RIPR-SPEC-0094, #11552); the repo seam must agree.
 fn credited_related_tests<'a>(
-    seam: &RepoSeam,
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
     related: &[(&'a TestSummary, RelationReason)],
+    refuse_other_function_oracle: bool,
 ) -> Vec<std::borrow::Cow<'a, TestSummary>> {
-    let owner_reach = (seam.kind() == SeamKind::MatchArm)
+    let owner_reach = refuse_other_function_oracle
         .then(|| owner_fn.map(|owner| context.transitive_reach.owner_reach(&owner.name)))
         .flatten();
     related
@@ -484,7 +548,12 @@ fn evidence_for_seam_with_context(
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();
-    let credited_views = credited_related_tests(seam, context, owner_fn, &related_reasons);
+    let refuse = refuses_other_function_oracle(
+        seam,
+        related_reasons.iter().map(|(_, reason)| *reason),
+        owner_fn.is_some(),
+    );
+    let credited_views = credited_related_tests(context, owner_fn, &related_reasons, refuse);
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
@@ -512,7 +581,7 @@ fn evidence_for_seam_with_context(
     // this count is the contradiction gate's completeness authority (#7007).
     let statically_contradicted_related_tests = related
         .iter()
-        .filter(|test| test_has_contradicted_assertion(test, owner_fn))
+        .filter(|test| test_has_contradicted_assertion(test, owner_fn, context.index))
         .count();
 
     // For a changed match arm: which related tests run the arm through their
@@ -2283,14 +2352,21 @@ pub(crate) fn compact_evidence_for_seam(
         .take(COMPACT_RELATED_TEST_LIMIT)
         .map(|(indexed, reason)| (indexed.test, *reason))
         .collect();
-    let credited_views = credited_related_tests(seam, context, owner_fn, &limited_reasons);
+    // The gate reads every ranked relation, not the rank-limited slice, so the
+    // compact view agrees with the full one (#12434).
+    let refuse = refuses_other_function_oracle(
+        seam,
+        related_reasons.iter().map(|(_, reason)| *reason),
+        owner_fn.is_some(),
+    );
+    let credited_views = credited_related_tests(context, owner_fn, &limited_reasons, refuse);
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
     let discriminate = discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let statically_contradicted_related_tests = related
         .iter()
-        .filter(|test| test_has_contradicted_assertion(test, owner_fn))
+        .filter(|test| test_has_contradicted_assertion(test, owner_fn, context.index))
         .count();
 
     let mut evidence = TestGripEvidence {
@@ -2425,7 +2501,7 @@ fn activate_evidence(
     let activation_credited: Vec<&CompactTest<'_>> = related
         .iter()
         .copied()
-        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn))
+        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn, context.index))
         .collect();
     let withheld_activation_tests = related.len() - activation_credited.len();
     let observed_argument_selection = owner_fn
@@ -3392,7 +3468,7 @@ fn compact_activate_evidence(
     let activation_credited: Vec<&CompactTest<'_>> = related
         .iter()
         .copied()
-        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn))
+        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn, context.index))
         .collect();
     let target_affinity_tokens =
         (!requires_concrete_activation_values(seam)).then(|| assertion_target_tokens(seam));
@@ -3824,21 +3900,43 @@ fn propagate_evidence(
     // matches the expected sink class (e.g., return value -> assert_eq!),
     // call it Yes. Otherwise Unknown.
     let any_oracle = related.iter().any(|t| !t.assertions.is_empty());
-    let any_matching_sink = related
+    let sink_matched = related
         .iter()
         .any(|t| oracles_match_sink(seam, t, owner_fn, index, pin_syntax));
-    let state = match (any_oracle, any_matching_sink) {
+    let pushed_followed = !sink_matched
+        && related
+            .iter()
+            .any(|t| pushed_collection_argument_followed(seam, t, owner_fn, index, pin_syntax));
+    let state = match (any_oracle, sink_matched || pushed_followed) {
         (true, true) => StageState::Yes,
         (true, false) => StageState::Unknown,
         (false, _) => StageState::Unknown,
     };
-    let summary = format!(
+    let mut summary = format!(
         "Static propagation to `{}` sink is {}",
         seam.expected_sink().as_str(),
         state.as_str()
     );
+    // #11402: name, for the repair route, that the value is followed only to
+    // a local the test reads back by a count that pins the single push, so
+    // an exact check of that local's contents is the one thing missing.
+    if state == StageState::Yes
+        && pushed_followed
+        && related
+            .iter()
+            .any(|t| pushed_collection_count_pins_push(seam, t, owner_fn, index, pin_syntax))
+    {
+        summary.push_str("; ");
+        summary.push_str(PUSHED_COLLECTION_COUNT_PINNED);
+    }
     StageEvidence::new(state, Confidence::Low, summary)
 }
+
+/// #11402: the propagation-stage marker for a push followed only to a local
+/// the test reads back by a count that pins the single push. Read through
+/// [`TestGripEvidence::follows_push_to_counted_local`].
+pub(crate) const PUSHED_COLLECTION_COUNT_PINNED: &str =
+    "followed to a local the test reads back only by a count that pins the single push";
 
 fn oracles_match_sink(
     seam: &RepoSeam,
@@ -3853,7 +3951,7 @@ fn oracles_match_sink(
         // the mutant's value, not the owner's (#6026).
         .filter(|oracle| {
             !matches!(
-                exact_value_assertion_verdict_for_test(owner_fn, &oracle.text, test),
+                exact_value_assertion_verdict_for_test(owner_fn, &oracle.text, test, index),
                 ExactValueVerdict::Contradicted { .. }
             )
         })
@@ -3883,6 +3981,42 @@ fn oracles_match_sink(
                 }
             }
         })
+}
+
+/// #11402: a push into a `&mut` collection parameter whose test passes its
+/// own fresh local there and reads it back. The pushed value is followed to
+/// that local, so propagation holds; the read is only a count, so it grants
+/// no assertion strength and the check stays weak.
+fn pushed_collection_argument_followed(
+    seam: &RepoSeam,
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> bool {
+    matches!(seam.kind(), SeamKind::SideEffect | SeamKind::CallPresence)
+        && direct_collection_mutation_receiver(seam.expression())
+            .zip(owner_fn)
+            .is_some_and(|(receiver, owner)| {
+                test_counts_pushed_collection_argument(receiver, owner, index, test, pin_syntax)
+            })
+}
+
+/// #11402: as [`pushed_collection_argument_followed`], and one count read
+/// pins the single push.
+fn pushed_collection_count_pins_push(
+    seam: &RepoSeam,
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> bool {
+    matches!(seam.kind(), SeamKind::SideEffect | SeamKind::CallPresence)
+        && direct_collection_mutation_receiver(seam.expression())
+            .zip(owner_fn)
+            .is_some_and(|(receiver, owner)| {
+                test_count_pins_pushed_collection(receiver, owner, index, test, pin_syntax)
+            })
 }
 
 fn observe_evidence(related: &[&TestSummary]) -> StageEvidence {
@@ -4002,7 +4136,7 @@ fn effective_oracle_strength(
     index: &RustIndex,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> (OracleStrength, Option<String>) {
-    match assertion_verdict_for_test(owner_fn, &oracle.text, test) {
+    match assertion_verdict_for_test(owner_fn, &oracle.text, test, index) {
         ExactValueVerdict::Contradicted {
             expected,
             evaluated,
@@ -4026,13 +4160,14 @@ fn assertion_verdict_for_test(
     owner: Option<&FunctionSummary>,
     oracle_text: &str,
     test: &TestSummary,
+    index: &RustIndex,
 ) -> ExactValueVerdict {
     let Some(owner) = owner else {
         return ExactValueVerdict::NotEvaluable;
     };
-    match exact_value_assertion_verdict_for_test(Some(owner), oracle_text, test) {
+    match exact_value_assertion_verdict_for_test(Some(owner), oracle_text, test, index) {
         ExactValueVerdict::NotEvaluable => {
-            boolean_assertion_verdict_for_test(owner, oracle_text, test)
+            boolean_assertion_verdict_for_test(owner, oracle_text, test, index)
         }
         verdict => verdict,
     }
@@ -4054,13 +4189,14 @@ fn assertion_verdict_for_test(
 pub(in crate::analysis) fn test_has_contradicted_assertion(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
 ) -> bool {
     let Some(owner_fn) = owner_fn else {
         return false;
     };
     test.assertions.iter().any(|oracle| {
         matches!(
-            assertion_verdict_for_test(Some(owner_fn), &oracle.text, test),
+            assertion_verdict_for_test(Some(owner_fn), &oracle.text, test, index),
             ExactValueVerdict::Contradicted { .. }
         )
     })
@@ -4087,6 +4223,7 @@ pub(in crate::analysis) fn test_fails_on_both_diff_versions(
     owner: &FunctionSummary,
     before: Option<&str>,
     after: Option<&str>,
+    index: &RustIndex,
 ) -> bool {
     let (Some(before), Some(after)) = (before, after) else {
         return false;
@@ -4102,7 +4239,7 @@ pub(in crate::analysis) fn test_fails_on_both_diff_versions(
     for oracle in &test.assertions {
         if !fails_on_candidate
             && matches!(
-                assertion_verdict_for_test(Some(owner), &oracle.text, test),
+                assertion_verdict_for_test(Some(owner), &oracle.text, test, index),
                 ExactValueVerdict::Contradicted { .. }
             )
         {
@@ -4110,7 +4247,7 @@ pub(in crate::analysis) fn test_fails_on_both_diff_versions(
         }
         if !fails_on_base
             && matches!(
-                assertion_verdict_for_test(Some(&baseline_owner), &oracle.text, test),
+                assertion_verdict_for_test(Some(&baseline_owner), &oracle.text, test, index),
                 ExactValueVerdict::Contradicted { .. }
             )
         {
@@ -4142,7 +4279,7 @@ pub(in crate::analysis) fn contradicted_assertion_reading_is_established(
 ) -> bool {
     test.assertions.iter().all(|assertion| {
         let contradicted = matches!(
-            assertion_verdict_for_test(Some(owner_fn), &assertion.text, test),
+            assertion_verdict_for_test(Some(owner_fn), &assertion.text, test, index),
             ExactValueVerdict::Contradicted { .. }
         );
         !contradicted
@@ -4190,6 +4327,15 @@ fn oracle_discriminates_seam_in_test(
     {
         return false;
     }
+    // #12189: a file-backed insta assertion whose committed `.snap` file is
+    // certainly missing fails on its first run, so it notices nothing. An
+    // inline snapshot, or a shape whose file name is not certain, keeps its
+    // grade.
+    if matches!(oracle.kind, OracleKind::Snapshot)
+        && crate::analysis::rust_snapshot_files::file_backed_snapshot_missing(index, test, oracle)
+    {
+        return false;
+    }
     // #11398: a field write is checked only by an exact read of the written
     // field that the diff probe's own rule confirms. The seam's field name
     // alone (any binding, any sibling) is never a discriminator.
@@ -4207,9 +4353,17 @@ fn oracle_discriminates_seam_in_test(
             .zip(owner)
             .is_some_and(|(receiver, owner)| {
                 collection_state_write_oracle_kind(&oracle.kind)
-                    && assertion_observes_collection_argument(
+                    && (assertion_observes_collection_argument(
                         receiver, owner, index, test, oracle, pin_syntax,
                     )
+                        // #11402: a count read that pins the single push
+                        // notices a deleted push into the passed local, by
+                        // the same rule the diff-side deleted-call probe
+                        // reads; it never notices a changed pushed value.
+                        || (seam.kind() == SeamKind::CallPresence
+                            && assertion_pins_pushed_collection_count(
+                                receiver, owner, index, test, oracle, pin_syntax,
+                            )))
             })
 }
 

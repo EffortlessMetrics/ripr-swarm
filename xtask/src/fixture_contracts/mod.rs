@@ -79,6 +79,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_surface_projection_alignment_fixture_corpus(&mut violations)?;
     validate_typescript_bun_ub_calibration_fixture_corpus(&mut violations)?;
     validate_cross_language_oracle_graph_fixture_corpus(&mut violations)?;
+    validate_dotnet_evidence_contract_fixture_corpus(&mut violations)?;
     validate_bun_ub_cross_language_dogfood_fixture_corpus(&mut violations)?;
     validate_typescript_preview_repair_loop_fixture_corpus(&mut violations)?;
     validate_typescript_preview_false_actionable_audit_fixture_corpus(&mut violations)?;
@@ -94,6 +95,8 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_release_scope_fixture_corpus(&mut violations)?;
     validate_intervention_study_fixture_corpus(&mut violations)?;
     validate_blind_journey_contract_fixture_corpus(&mut violations)?;
+    validate_cache_payload_tamper_recovery_fixture_corpus(&mut violations)?;
+    validate_incomplete_diff_corpus_fixture_corpus(&mut violations)?;
     validate_orchestration_attempt_receipts_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_attempts_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_intake_fixture_corpus(&mut violations)?;
@@ -118,6 +121,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_blind_journey_installed_rust_fixture(&mut violations)?;
     validate_blind_journey_installed_python_fixture(&mut violations)?;
     validate_blind_journey_installed_typescript_fixture(&mut violations)?;
+    validate_packaged_repair_parity_fixture(&mut violations)?;
     for entry in
         fs::read_dir(fixtures_dir).map_err(|err| format!("failed to read fixtures: {err}"))?
     {
@@ -1897,6 +1901,14 @@ pub(crate) const TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES: &[(&str, &str)] 
     (
         "javascript_already_observed_unchanged",
         "unanchored_relation_holds_advisory",
+    ),
+    (
+        "typescript_load_profile_already_observed_unchanged",
+        "already_observed_unchanged",
+    ),
+    (
+        "typescript_dynamic_oracle_spurious_already_observed_guard",
+        "intentionally_skipped",
     ),
     ("typescript_complete_boundary_packet_closed", "resolved"),
 ];

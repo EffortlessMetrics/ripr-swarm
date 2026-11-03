@@ -1,7 +1,7 @@
 use crate::config::RiprConfig;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, ExposureClass, Finding, LanguageId, LanguageStatus,
-    MISSING_DISCRIMINATOR_VALUE_PREFIX, ProbeFamily, RiprEvidence, StageState,
+    MISSING_DISCRIMINATOR_VALUE_PREFIX, ProbeFamily, RelatedTestMiss, RiprEvidence, StageState,
 };
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
@@ -155,6 +155,7 @@ pub(crate) fn render_finding_digest_with_config(
     // WHY the finding is at this class without reading the full form.
     let refused_macro = refused_assertion_macro(finding);
     if let Some(hint) = unresolved_fixture_hint(finding)
+        .or_else(|| crate::domain::guard_refusal_digest_classification_hint(finding))
         .or_else(|| classification_hint(&finding.class, &finding.ripr, refused_macro))
     {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
@@ -281,11 +282,25 @@ pub(crate) fn render_finding_digest_with_config(
             "Related test".to_string()
         };
         // #5344: say why the named test misses, so the reader can open it
-        // and disagree without re-deriving the analysis.
-        let why =
+        // and disagree without re-deriving the analysis. Borrow the typed
+        // refusal only when it names this headline row (#6541).
+        let why = (matches!(test.miss, Some(RelatedTestMiss::AssertionNotCredited))
+            .then(|| {
+                let entry = crate::domain::assertion_not_credited_entry_for_test(
+                    &finding.evidence,
+                    &test.name,
+                )?;
+                let body = entry.strip_prefix(crate::domain::ASSERTION_NOT_CREDITED_PREFIX)?;
+                let reason = body.rsplit_once(": ").map(|(_, reason)| reason.trim())?;
+                crate::domain::guard_refusal_kind(reason)?;
+                Some(format!(" ({entry})"))
+            })
+            .flatten())
+        .or_else(|| {
             crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family)
                 .map(|why| format!(" ({why})"))
-                .unwrap_or_default();
+        })
+        .unwrap_or_default();
         out.push_str(&format!(
             "  {label}: {}:{} {}{why}\n",
             display_path(&test.file),
@@ -580,7 +595,7 @@ pub(crate) fn render_finding_with_config(
     root: &Path,
     wording: JsonPointerWording,
 ) -> String {
-    render_finding_with_shared_sections(finding, config, root, wording, None, None)
+    render_finding_with_shared_sections(finding, config, root, wording, None, None, true)
 }
 
 pub(super) fn render_finding_with_shared_sections(
@@ -590,6 +605,7 @@ pub(super) fn render_finding_with_shared_sections(
     wording: JsonPointerWording,
     shared: Option<&super::shared::SharedSections>,
     files: Option<&[Option<std::path::PathBuf>]>,
+    plain_repair_card_wording: bool,
 ) -> String {
     let mut out = String::new();
     let severity = display_severity(finding, config);
@@ -757,7 +773,7 @@ pub(super) fn render_finding_with_shared_sections(
     }
 
     if let Some(card) = python_repair_card(finding) {
-        push_python_repair_card(&mut out, &card, finding, root);
+        push_python_repair_card(&mut out, &card, finding, root, plain_repair_card_wording);
     } else if let Some(card) = typescript_preview_card(finding) {
         push_typescript_preview_card(&mut out, &card);
         // §PR8 (RIPR-SPEC-0088): surface the full work-packet field-note when
@@ -958,6 +974,7 @@ fn push_python_repair_card(
     card: &PythonRepairCard,
     finding: &Finding,
     root: &Path,
+    plain_wording: bool,
 ) {
     out.push_str("\nPython repair card (preview/advisory)\n");
     out.push_str(&format!("  card version: {}\n", card.card_version));
@@ -974,7 +991,12 @@ fn push_python_repair_card(
         card.current_test_evidence
     ));
     out.push_str(&format!(
-        "  missing discriminator: {}\n",
+        "  {}: {}\n",
+        if plain_wording {
+            "missing check"
+        } else {
+            crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_LABEL
+        },
         card.missing_discriminator
     ));
     out.push_str(&format!(
@@ -1013,7 +1035,12 @@ fn push_python_repair_card(
     out.push_str(&format!("  receipt guidance: {}\n", card.receipt_guidance));
     out.push_str("  stop conditions:\n");
     for condition in &card.stop_conditions {
-        out.push_str(&format!("    - {condition}\n"));
+        let line = if plain_wording {
+            super::evidence_lines::plain_stop_condition(condition)
+        } else {
+            condition.clone()
+        };
+        out.push_str(&format!("    - {line}\n"));
     }
     out.push_str("  limits:\n");
     for limit in &card.limits {

@@ -400,16 +400,6 @@ pub(crate) fn receipt_binding_from(
         )
     })?;
     let packet_sha256 = sha256_bytes(&packet);
-    let mut policy = edit_cage_policy_from_packet(
-        std::str::from_utf8(&packet)
-            .map_err(|error| format!("repair packet is not UTF-8: {error}; pass the JSON packet that `ripr agent repair` wrote"))?,
-        seam_id,
-    )?;
-    include_explicit_store_operational_write(
-        &mut policy,
-        store.canonical_root(),
-        Some(Path::new(store.locator())),
-    )?;
     let (manifest_path, manifest) = if let Some(attempt_id) = attempt_id {
         let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
         let loaded = load_repair_attempt_by_id(&store, &attempt_id)?;
@@ -466,6 +456,17 @@ pub(crate) fn receipt_binding_from(
             "missing attempt; start one with `ripr agent repair`, then rerun".to_string()
         })?
     };
+    let mut policy = edit_cage_policy_from_packet(
+        std::str::from_utf8(&packet)
+            .map_err(|error| format!("repair packet is not UTF-8: {error}; pass the JSON packet that `ripr agent repair` wrote"))?,
+        seam_id,
+    )?;
+    include_explicit_store_operational_write(
+        &mut policy,
+        store.canonical_root(),
+        Some(Path::new(store.locator())),
+        Some(&manifest.repair_attempt_id),
+    )?;
     let after = manifest
         .after
         .as_ref()
@@ -1323,6 +1324,15 @@ fn recorded_workflow_path_matches(
         let mut normalized = PathBuf::new();
         for component in path.components() {
             match component {
+                // A verbatim `\\?\D:` root (what `canonicalize` yields on
+                // Windows) and a plain `D:` root name the same place; compare
+                // them as one spelling, drive letter case folded.
+                Component::Prefix(prefix) => match prefix.kind() {
+                    std::path::Prefix::VerbatimDisk(letter) | std::path::Prefix::Disk(letter) => {
+                        normalized.push(format!("{}:", char::from(letter.to_ascii_uppercase())))
+                    }
+                    _ => normalized.push(component.as_os_str()),
+                },
                 Component::CurDir => {}
                 Component::ParentDir => match normalized.components().next_back() {
                     Some(Component::Normal(_)) => {
@@ -1345,15 +1355,24 @@ fn recorded_workflow_path_matches(
             Ok(path) => path,
             Err(_) => return Ok(false),
         };
-        // `canonicalize` yields a verbatim-prefix path on Windows, which
-        // never equals a plain drive-letter root. Compare canonical forms on
-        // both sides so only a genuinely different directory is refused.
-        let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-        if canonical != canonical_root {
+        // `root` may be spelled plain or verbatim (`\\?\` prefix) depending
+        // on how the caller derived it; both name one place, so compare them
+        // with the same drive-prefix folding as the path match below.
+        let same_root = canonical == root || {
+            let reader = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+            matches!((lexical(&canonical), lexical(&reader)), (Some(a), Some(b)) if a == b)
+        };
+        if !same_root {
             return Ok(false);
         }
     }
-    let expected = lexical(&recorded_root.join(relative));
+    // Join `relative` one `/`-separated part at a time so the result is built
+    // from the same components on every host and root spelling.
+    let mut joined = recorded_root.to_path_buf();
+    for part in relative.split('/') {
+        joined.push(part);
+    }
+    let expected = lexical(&joined);
     let observed = actual.and_then(|path| lexical(Path::new(path)));
     Ok(expected.is_some() && expected == observed)
 }
@@ -1406,6 +1425,47 @@ mod recorded_workflow_path_tests {
             || recorded_workflow_path_matches(&root, other_text, Some(other_path), relative)?
         {
             return Err("root or escape decoy compared incorrectly".to_string());
+        }
+        Ok(())
+    }
+
+    /// #11444: the canonical root is a verbatim `\\?\D:\..` path on Windows,
+    /// while the producer records the invoked spelling (a drive-letter path, either
+    /// separator). Both name one place and must bind.
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_and_plain_windows_spellings_bind_the_same_path() -> Result<(), String> {
+        let root = std::env::current_dir()
+            .and_then(|path| path.canonicalize())
+            .map_err(|error| error.to_string())?;
+        let verbatim = root.to_str().ok_or("root is not UTF-8")?.to_string();
+        let plain = verbatim.trim_start_matches(r"\\?\").to_string();
+        assert!(verbatim.starts_with(r"\\?\"), "{verbatim}");
+        let relative = "target/ripr/workflow/after.check-findings.json";
+        let slashed = plain.replace('\\', "/");
+        for (recorded, observed) in [
+            (&verbatim, format!("{slashed}/{relative}")),
+            (&plain, format!("{slashed}/{relative}")),
+            (
+                &slashed,
+                format!("{plain}\\target\\ripr\\workflow\\after.check-findings.json"),
+            ),
+            (
+                &verbatim,
+                format!("{verbatim}\\target\\ripr\\workflow\\after.check-findings.json"),
+            ),
+        ] {
+            if !recorded_workflow_path_matches(&root, recorded, Some(&observed), relative)? {
+                return Err(format!("{recorded} did not bind {observed}"));
+            }
+        }
+        if recorded_workflow_path_matches(
+            &root,
+            &verbatim,
+            Some(&format!("{slashed}/target/ripr/workflow/other.json")),
+            relative,
+        )? {
+            return Err("a different file bound".to_string());
         }
         Ok(())
     }
@@ -2948,8 +3008,9 @@ pub(crate) fn include_explicit_store_operational_write(
     policy: &mut EditCagePolicy,
     root: &Path,
     store: Option<&Path>,
+    attempt_id: Option<&RepairAttemptId>,
 ) -> Result<(), String> {
-    let Some(locator) = explicit_store_locator(root, store)? else {
+    let Some(locator) = explicit_store_locator(root, store, attempt_id)? else {
         return Ok(());
     };
     if policy
@@ -2963,6 +3024,45 @@ pub(crate) fn include_explicit_store_operational_write(
     Ok(())
 }
 
+/// Adds the explicit-store operational write using the resolver's canonical
+/// root and portable locator (#4981 items 2–3).
+pub(crate) fn include_resolved_explicit_store_operational_write(
+    policy: &mut EditCagePolicy,
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: Option<&RepairAttemptId>,
+    _access: RepairAttemptStoreAccess,
+) -> Result<(), String> {
+    let (canonical_root, locator) = match resolve_store(root, store, RepairAttemptStoreAccess::Open)
+    {
+        Ok(resolved) => (
+            resolved.canonical_root().to_path_buf(),
+            resolved.locator().to_string(),
+        ),
+        Err(_) if store.is_some() => {
+            let store = store.ok_or_else(|| {
+                "explicit repair attempt store path missing after guard; report this as a ripr bug"
+                    .to_string()
+            })?;
+            let canonical_root = root.canonicalize().map_err(|error| {
+                format!(
+                    "canonicalize repair attempt repository root {} failed: {error}",
+                    root.display()
+                )
+            })?;
+            let locator = store.to_string_lossy().replace('\\', "/");
+            (canonical_root, locator)
+        }
+        Err(error) => return Err(error),
+    };
+    include_explicit_store_operational_write(
+        policy,
+        &canonical_root,
+        Some(Path::new(&locator)),
+        attempt_id,
+    )
+}
+
 /// The explicit store's operational-write locator, shared by the policy
 /// constructor above and the dirty-premise preflight
 /// (`conservative_dirty_premise_violations`) so the two cannot disagree on
@@ -2972,6 +3072,7 @@ pub(crate) fn include_explicit_store_operational_write(
 fn explicit_store_locator(
     root: &Path,
     store: Option<&Path>,
+    attempt_id: Option<&RepairAttemptId>,
 ) -> Result<Option<crate::edit_cage::CagePathRule>, String> {
     let Some(store) = store else {
         return Ok(None);
@@ -2990,7 +3091,15 @@ fn explicit_store_locator(
     } else {
         store.to_path_buf()
     };
-    Ok(Some(crate::edit_cage::CagePathRule::subtree(&relative)?))
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    if relative.is_empty() || relative == "target/ripr" || relative.starts_with("target/ripr/") {
+        return Ok(None);
+    }
+    let Some(attempt_id) = attempt_id else {
+        return Ok(None);
+    };
+    let scoped = format!("{relative}/{}", attempt_id.as_str());
+    Ok(Some(crate::edit_cage::CagePathRule::subtree(&scoped)?))
 }
 
 /// Captures the edit-cage baseline and writes it to a workflow compatibility
@@ -3813,9 +3922,13 @@ fn after_phase_not_awaiting_error(root_display: &str, manifest: &RepairAttemptMa
         .map_or("an unrecorded HEAD", |after| {
             short_head(&after.repository_head)
         });
+    let retained_receipt_directory = match manifest.store.as_ref() {
+        Some(store) => format!("`{}/{}`", store.locator, attempt_id),
+        None => format!("`{REPAIR_ATTEMPT_DIRECTORY}/{attempt_id}/`"),
+    };
     match manifest.state {
         RepairAttemptState::ReadyToFinish => format!(
-            "repair attempt {attempt_id} (seam `{seam_id}`) already finished: its after phase ran at HEAD {after_head} and the edit cage admitted the edit (state `ready_to_finish`), so there is no after phase left to run. Its retained receipt stays under `{REPAIR_ATTEMPT_DIRECTORY}/{attempt_id}/`; `{receipt}` is only a compatibility projection of the latest finish — the workflow keeps one receipt file, and a later attempt's after phase replaces it, so verify the file's `repair_attempt.attempt_id` names this attempt before relying on it. Next: `{status}` reads the attempt's outcome; if the receipt leaves the gap open, start a new attempt with `{restart}`",
+            "repair attempt {attempt_id} (seam `{seam_id}`) already finished: its after phase ran at HEAD {after_head} and the edit cage admitted the edit (state `ready_to_finish`), so there is no after phase left to run. Its retained receipt stays under {retained_receipt_directory}; `{receipt}` is only a compatibility projection of the latest finish — the workflow keeps one receipt file, and a later attempt's after phase replaces it, so verify the file's `repair_attempt.attempt_id` names this attempt before relying on it. Next: `{status}` reads the attempt's outcome; if the receipt leaves the gap open, start a new attempt with `{restart}`",
             receipt = crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT,
         ),
         RepairAttemptState::Stale
@@ -4615,8 +4728,9 @@ pub(crate) fn conservative_dirty_premise_violations(
     root: &Path,
     head: &str,
     store: Option<&Path>,
+    attempt_id: Option<&RepairAttemptId>,
 ) -> Result<Vec<String>, String> {
-    let operational = operational_write_rules(root, store)?;
+    let operational = operational_write_rules(root, store, attempt_id)?;
     Ok(tracked_dirty_paths(root, head)?
         .into_iter()
         .filter(|path| {
@@ -4634,11 +4748,12 @@ pub(crate) fn conservative_dirty_premise_violations(
 fn operational_write_rules(
     root: &Path,
     store: Option<&Path>,
+    attempt_id: Option<&RepairAttemptId>,
 ) -> Result<Vec<crate::edit_cage::CagePathRule>, String> {
     // Mirrors `edit_cage_policy_from_packet`: command-declared generated or
     // receipt writes that may occur alongside the authored test edit.
     let mut rules = vec![crate::edit_cage::CagePathRule::subtree("target/ripr")?];
-    if let Some(locator) = explicit_store_locator(root, store)?
+    if let Some(locator) = explicit_store_locator(root, store, attempt_id)?
         && !rules.iter().any(|rule| rule.matches(locator.path()))
     {
         rules.push(locator);
@@ -5372,6 +5487,7 @@ mod tests {
             &mut covered,
             Path::new("/repo"),
             Some(Path::new("target/ripr/alt-attempts")),
+            None,
         )?;
         if covered.expected_operational_writes.len() != 1
             || covered.expected_operational_writes[0].path() != "target/ripr"
@@ -5386,24 +5502,34 @@ mod tests {
             ));
         }
 
+        let attempt = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")?;
         let mut outside = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
         include_explicit_store_operational_write(
             &mut outside,
             Path::new("/repo"),
             Some(Path::new(".ripr/attempts")),
+            Some(&attempt),
         )?;
+        let scoped = format!(".ripr/attempts/{}", attempt.as_str());
         let paths = outside
             .expected_operational_writes
             .iter()
             .map(crate::edit_cage::CagePathRule::path)
             .collect::<Vec<_>>();
-        if !paths.contains(&"target/ripr") || !paths.contains(&".ripr/attempts") {
+        if !paths.contains(&"target/ripr") || !paths.contains(&scoped.as_str()) {
             return Err(format!(
                 "explicit store outside target/ripr must be an operational write: {paths:?}"
             ));
         }
-        if !outside.allows_path(".ripr/attempts/id/attempt.json") {
-            return Err("explicit store path was not admitted as an operational write".to_string());
+        if !outside.allows_path(&format!("{scoped}/attempt.json")) {
+            return Err(
+                "explicit store attempt path was not admitted as an operational write".to_string(),
+            );
+        }
+        if outside.allows_path(".ripr/attempts/other-attempt/attempt.json") {
+            return Err(
+                "explicit store operational write covered the whole store subtree".to_string(),
+            );
         }
         Ok(())
     }
@@ -5468,6 +5594,12 @@ mod tests {
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         if !error.contains("--store") || !error.contains(".ripr/attempts") {
             return Err(format!("finished-attempt recovery lost --store: {error}"));
+        }
+        let expected_receipt = format!(".ripr/attempts/{}", manifest.repair_attempt_id.as_str());
+        if !error.contains(&expected_receipt) {
+            return Err(format!(
+                "finished-attempt recovery named the wrong retained receipt directory: {error}"
+            ));
         }
         if !error.contains("ripr agent status") || !error.contains("--phase before") {
             return Err(format!(
@@ -6265,11 +6397,14 @@ mod tests {
     #[test]
     fn dirty_premise_preflight_defers_to_operational_write_subtrees() -> Result<(), String> {
         use crate::testing::fixture_git::fixture_git_ok;
+        let attempt = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")?;
+        let attempt_dir = format!(".ripr/attempts/{}", attempt.as_str());
+        let attempt_manifest = format!("{attempt_dir}/attempt.json");
         let root = test_repo_root("dirty-preflight-ops")?;
         let result = (|| -> Result<(), String> {
             for (name, content) in [
                 ("src/lib.rs", "pub fn f() {}\n"),
-                (".ripr/attempts/id/attempt.json", "{}\n"),
+                (attempt_manifest.as_str(), "{}\n"),
                 ("target/ripr/workflow/snap.json", "{}\n"),
             ] {
                 let path = root.join(name);
@@ -6282,7 +6417,7 @@ mod tests {
             fixture_git_ok(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
             std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\npub fn g() {}\n")
                 .map_err(|e| e.to_string())?;
-            std::fs::write(root.join(".ripr/attempts/id/attempt.json"), "{\"a\":1}\n")
+            std::fs::write(root.join(&attempt_manifest), "{\"a\":1}\n")
                 .map_err(|e| e.to_string())?;
             std::fs::write(root.join("target/ripr/workflow/snap.json"), "{\"b\":2}\n")
                 .map_err(|e| e.to_string())?;
@@ -6291,18 +6426,19 @@ mod tests {
                 &root,
                 &head,
                 Some(Path::new(".ripr/attempts")),
+                Some(&attempt),
             )?;
             if !plain.contains(&"src/lib.rs".to_string())
                 || plain.iter().any(|path| path != "src/lib.rs")
             {
                 return Err(format!("only the production path may be named: {plain:?}"));
             }
-            let unstored = conservative_dirty_premise_violations(&root, &head, None)?;
+            let unstored = conservative_dirty_premise_violations(&root, &head, None, None)?;
             if !unstored.contains(&"src/lib.rs".to_string())
-                || !unstored.contains(&".ripr/attempts/id/attempt.json".to_string())
+                || !unstored.contains(&attempt_manifest)
                 || unstored
                     .iter()
-                    .any(|path| path != "src/lib.rs" && path != ".ripr/attempts/id/attempt.json")
+                    .any(|path| path != "src/lib.rs" && path != attempt_manifest.as_str())
             {
                 return Err(format!(
                     "without the store the store file is named: {unstored:?}"

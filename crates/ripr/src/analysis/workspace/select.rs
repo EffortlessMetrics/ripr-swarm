@@ -150,7 +150,7 @@ pub(crate) fn with_module_context_files(
 /// `src/foo/tests.rs` is declared by `src/foo/mod.rs`, `src/foo/lib.rs`,
 /// `src/foo/main.rs`, or `src/foo.rs`; a `mod.rs` child
 /// (`src/foo/tests/mod.rs`) is declared from the parent directory instead.
-fn module_parent_candidates(file: &Path) -> Vec<PathBuf> {
+pub(crate) fn module_parent_candidates(file: &Path) -> Vec<PathBuf> {
     let file_name = file
         .file_name()
         .and_then(|name| name.to_str())

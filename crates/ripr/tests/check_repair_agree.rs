@@ -213,6 +213,38 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     Ok(())
 }
 
+#[test]
+fn untied_count_does_not_claim_gripped_sibling_is_repairable() -> Result<(), String> {
+    let sibling = "\npub fn doubled(x: i32) -> i32 {\n    x * 2\n}\n";
+    let old = format!(
+        "pub fn label(n: u32) -> &'static str {{\n    match n {{\n        0 => \"zero\",\n        1 => \"one\",\n        _ => \"many\",\n    }}\n}}\n{sibling}"
+    );
+    let new = old.replace("1 => \"one\"", "1 => \"uno\"");
+    let repo = Repo::create_uncommitted(
+        &old,
+        &new,
+        // Only `doubled` is gripped; the changed `label` arm has no matching
+        // test input, so check counts untied spots in the file while repair
+        // counts the gripped sibling outside the changed lines.
+        "use ar::doubled;\n\n#[test]\nfn doubled_works() {\n    assert_eq!(doubled(2), 4);\n}\n",
+    )?;
+    let repair = repo.ripr(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains("outside your changed lines is already noticed by existing tests"),
+        "gripped sibling precondition:\n{repair}"
+    );
+    let check = repo.ripr(&["check", "--base", "HEAD"])?;
+    assert!(
+        check.contains("spots in this finding's file, but could not tie one"),
+        "unbound precondition:\n{check}"
+    );
+    assert!(
+        !check.contains("repairable spots in this finding's file"),
+        "count must not assert eligibility:\n{check}"
+    );
+    Ok(())
+}
+
 const GRIPPED_BOUNDARY_OLD: &str =
     "pub fn f(x: i32) -> i32 {\n    let y = if x > 10 { 1 } else { 2 };\n    y\n}\n";
 const GRIPPED_BOUNDARY_NEW: &str =
@@ -359,6 +391,12 @@ const CONST_OLD: &str = "pub const GREETING: &str = \"hello\";\n\npub fn greet(n
 const CONST_NEW: &str = "pub const GREETING: &str = \"howdy\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n\npub fn shout(name: &str) -> String {\n    format!(\"{name}!\")\n}\n";
 const CONST_TEST: &str = "use ar::{greet, shout};\n\n#[test]\nfn greets() {\n    assert!(greet(\"a\").contains(\"a\"));\n    assert!(!shout(\"a\").is_empty());\n}\n";
 
+/// A reader that pads the constant (`{GREETING:>8}`) can hide the change for
+/// some inputs, so the changed constant keeps its own finding with no seam
+/// (#11400 follows only a plain `{GREETING}` in a whole-body `format!`).
+const CONST_PADDED_OLD: &str = "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING:>8}, {name}\")\n}\n\npub fn shout(name: &str) -> String {\n    format!(\"{name}!\")\n}\n";
+const CONST_PADDED_NEW: &str = "pub const GREETING: &str = \"howdy\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING:>8}, {name}\")\n}\n\npub fn shout(name: &str) -> String {\n    format!(\"{name}!\")\n}\n";
+
 /// #11111 (group 2): a changed string constant has no seam of its own, so
 /// `ripr check` offers no repair start for it ("no gap ID"). Bare repair must
 /// not start, or offer to choose, a repair on the unchanged functions that
@@ -366,7 +404,7 @@ const CONST_TEST: &str = "use ar::{greet, shout};\n\n#[test]\nfn greets() {\n   
 /// check reported.
 #[test]
 fn changed_constant_with_no_seam_does_not_start_repair_elsewhere() -> Result<(), String> {
-    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let repo = Repo::create_uncommitted(CONST_PADDED_OLD, CONST_PADDED_NEW, CONST_TEST)?;
     let check = repo.ripr(&["check", "--base", "HEAD"])?;
     assert!(
         check.contains("Changed behavior: pub const GREETING")
@@ -391,6 +429,37 @@ fn changed_constant_with_no_seam_does_not_start_repair_elsewhere() -> Result<(),
             && repair.contains("not offered")
             && repair.contains("`ripr repair <seam-id>`"),
         "repair must say why nothing is offered and how to name a seam:\n{repair}"
+    );
+    Ok(())
+}
+
+/// #11400: when the only reader returns the constant whole in one
+/// `format!`, check names that returned value and offers a start, and bare
+/// repair selects the same seam, not `shout` in the same file.
+#[test]
+fn changed_constant_returned_whole_selects_the_same_repair_in_both() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let check = repo.ripr(&["check", "--base", "HEAD"])?;
+    let id = check
+        .lines()
+        .find_map(|line| {
+            let rest = line.trim_start().strip_prefix("ripr repair ")?;
+            let id = rest.split_whitespace().next()?;
+            (id.len() == 16 && id.bytes().all(|b| b.is_ascii_hexdigit())).then_some(id)
+        })
+        .ok_or_else(|| format!("check must offer a repair start for greet:\n{check}"))?;
+    assert!(
+        check.contains("Changed behavior: format!(\"{GREETING}, {name}\")"),
+        "check must name greet's returned value:\n{check}"
+    );
+    // The change is uncommitted, so repair selects the seam and then asks
+    // for the commit before starting; the selection is what must agree.
+    let repair = repo.ripr(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains(&format!("--seam-id {id}"))
+            && !repair.contains("shout")
+            && !repair.contains("choose the change to repair"),
+        "repair must select the seam check offered ({id}):\n{repair}"
     );
     Ok(())
 }

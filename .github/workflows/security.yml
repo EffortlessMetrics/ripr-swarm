@@ -7,9 +7,12 @@ on:
     branches: [main, master]
   # New RUSTSEC advisories and yanked crates appear without any repository
   # change; a weekly run on main surfaces them instead of waiting for the next
-  # merge. Advisory check only, so it stays cheap (#11529).
+  # merge. A scheduled run that goes red opens one `deny-red` tracking issue
+  # (below), so a new advisory is a single findable record instead of a red
+  # run nobody opens, before it turns every PR red (RUSTSEC-2026-0433).
+  # Daily, since the check is a few minutes of one cheap runner (#11529).
   schedule:
-    - cron: "17 6 * * 1"
+    - cron: "17 6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -33,6 +36,44 @@ jobs:
           tool: cargo-deny
 
       - run: cargo-deny check advisories licenses bans sources
+
+  # Scheduled runs on main only, in a separate job so the PR-facing cargo-deny
+  # job and its checkout never hold issue-write authority. The merge-ready
+  # clause is the repository's required job guard; a schedule event never
+  # reaches the pull_request branch of it. A red run opens (or
+  # comments on) one `deny-red` issue; a later green run comments and closes it.
+  # Detection only: nothing here gates a PR or changes what the PR check decides.
+  deny-tracker:
+    name: Reconcile the deny-red tracker
+    needs: cargo-deny
+    if: always() && github.event_name == 'schedule' && (github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.ref == 'refs/heads/main' && github.repository == 'EffortlessMetrics/ripr-swarm' && (needs.cargo-deny.result == 'success' || needs.cargo-deny.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Reconcile the deny-red tracker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          OUTCOME: ${{ needs.cargo-deny.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="deny-red: scheduled cargo-deny found an advisory, license, ban or source failure on main"
+          number="$(gh api -X GET search/issues -f q="repo:$REPOSITORY is:issue is:open in:title deny-red" --jq "[.items[] | select(.title == \"$title\") | .number][0] // empty")"
+          if [ "$OUTCOME" = "failure" ]; then
+            body="The scheduled cargo-deny run failed on main at \`${GITHUB_SHA::7}\` ($RUN_URL). Read the job log for the RUSTSEC id and its fixed version, then land one dependency bump through the ordinary PR gate; do not add an ignore. This issue closes itself when a scheduled run passes."
+            if [ -z "$number" ]; then
+              gh api "repos/$REPOSITORY/issues" -f title="$title" -f body="$body" > /dev/null
+            else
+              gh api "repos/$REPOSITORY/issues/$number/comments" -f body="$body" > /dev/null
+            fi
+          elif [ -n "$number" ]; then
+            gh api "repos/$REPOSITORY/issues/$number/comments" -f body="Recovered: scheduled cargo-deny passed on main at \`${GITHUB_SHA::7}\` ($RUN_URL). Closing the tracker." > /dev/null
+            gh api -X PATCH "repos/$REPOSITORY/issues/$number" -f state=closed > /dev/null
+          fi
 
   dependency-review:
     name: dependency-review

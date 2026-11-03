@@ -390,6 +390,10 @@ pub(crate) struct MacroBindingSite {
     /// inline module or function body: that item's first and last line.
     /// `None` means the binding may reach any file in the workspace.
     pub(crate) scope: Option<(usize, usize)>,
+    /// Byte span of the item that bounds [`Self::scope`], when set. Same-line
+    /// siblings disambiguate through this span rather than line overlap alone
+    /// (#5695).
+    pub(crate) scope_bytes: Option<(u32, u32)>,
     /// The binding cannot leave the crate whose module tree holds this file:
     /// a private import, `#[macro_use] extern crate`, `#![no_implicit_prelude]`
     /// or a non-exported definition. Exported definitions, `pub` imports,
@@ -503,7 +507,12 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "assert_ne",
     "assert_none",
     "assert_ok",
+    // `assert_ok_eq!` and `assert_some_eq!` (RIPR-SPEC-0197 claims payload
+    // equality pins) evaluate their first operand once and compare its
+    // payload, like `assert_eq!`; trusted only on the same verified import.
+    "assert_ok_eq",
     "assert_some",
+    "assert_some_eq",
     "cfg",
     "column",
     "concat",
@@ -758,6 +767,7 @@ fn macro_binding_ambiguity_sets(
             line: 0,
             kind: MacroBindingKind::Unparsed,
             scope: None,
+            scope_bytes: None,
             crate_local: false,
             module_local: false,
         };
@@ -816,6 +826,7 @@ fn macro_binding_sites_in_tree(
                         line,
                         kind: kind.clone(),
                         scope: None,
+                        scope_bytes: None,
                         crate_local,
                         module_local: false,
                     },
@@ -835,8 +846,11 @@ fn macro_binding_sites_in_tree(
             let range = item.text_range();
             let lines = lines.get_or_init(|| LineIndex::new(source));
             (
-                lines.line(range.start()),
-                lines.line_for_range_end(range.end()),
+                (
+                    lines.line(range.start()),
+                    lines.line_for_range_end(range.end()),
+                ),
+                (u32::from(range.start()), u32::from(range.end())),
             )
         })
     };
@@ -913,6 +927,7 @@ fn macro_binding_sites_in_tree(
                     line: line_of(node),
                     kind: MacroBindingKind::Import,
                     scope: None,
+                    scope_bytes: None,
                     crate_local: false,
                     module_local: false,
                 },
@@ -928,13 +943,14 @@ fn macro_binding_sites_in_tree(
                 && ast::MacroRules::cast(node.clone()).is_some_and(|item| empty_catch_all(&item));
             if trusted.contains(&name) && !admitted_declaration {
                 let line = line_of(node);
-                let scope = scope_of(textual_scope(node));
+                let scoped = scope_of(textual_scope(node));
                 ambiguous.push((
                     name.to_string(),
                     MacroBindingSite {
                         line,
                         kind: MacroBindingKind::Definition,
-                        scope,
+                        scope: scoped.map(|(lines, _)| lines),
+                        scope_bytes: scoped.map(|(_, bytes)| bytes),
                         crate_local: !is_exported_macro(node),
                         module_local: false,
                     },
@@ -987,6 +1003,7 @@ fn macro_binding_sites_in_tree(
                         line: line_of(node),
                         kind: MacroBindingKind::MacroBody(macro_name.clone()),
                         scope: None,
+                        scope_bytes: None,
                         crate_local,
                         module_local: false,
                     },
@@ -1211,6 +1228,7 @@ fn macro_binding_sites_in_tree(
                             line,
                             kind: MacroBindingKind::MacroArgument(path.syntax().text().to_string()),
                             scope: None,
+                            scope_bytes: None,
                             crate_local: false,
                             module_local: false,
                         },
@@ -1342,7 +1360,7 @@ fn macro_binding_sites_in_tree(
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();
                     let line = line_of(node);
-                    let Some(scope) = scope_of(import_scope(&import)) else {
+                    let Some((scope, scope_bytes)) = scope_of(import_scope(&import)) else {
                         // A private file-level glob is visible only in this
                         // module and its descendants (`module_local`). Its
                         // descendants are the modules this file declares, so
@@ -1385,6 +1403,7 @@ fn macro_binding_sites_in_tree(
                                 line,
                                 kind: MacroBindingKind::ForeignGlob(path.clone()),
                                 scope: Some(scope),
+                                scope_bytes: Some(scope_bytes),
                                 crate_local: private,
                                 module_local: false,
                             },
@@ -1417,12 +1436,14 @@ fn macro_binding_sites_in_tree(
                     };
                     if let Some(kind) = kind {
                         let line = line_of(node);
+                        let scoped = scope_of(import_scope(&import));
                         ambiguous.push((
                             name.to_string(),
                             MacroBindingSite {
                                 line,
                                 kind,
-                                scope: scope_of(import_scope(&import)),
+                                scope: scoped.map(|(lines, _)| lines),
+                                scope_bytes: scoped.map(|(_, bytes)| bytes),
                                 crate_local: private,
                                 module_local: false,
                             },
@@ -1510,6 +1531,7 @@ fn macro_binding_sites_in_tree(
                             line,
                             kind: MacroBindingKind::MacroArgument(path.clone()),
                             scope: None,
+                            scope_bytes: None,
                             crate_local: false,
                             module_local: false,
                         },
@@ -1560,7 +1582,8 @@ const CLAIMS_CRATES: &[&str] = &["claims"];
 /// The crates whose export under `name` is a drop-in for the trusted macro.
 fn drop_in_crates(name: &str) -> &'static [&'static str] {
     match name {
-        "assert_ok" | "assert_err" | "assert_some" | "assert_none" => CLAIMS_CRATES,
+        "assert_ok" | "assert_err" | "assert_some" | "assert_none" | "assert_ok_eq"
+        | "assert_some_eq" => CLAIMS_CRATES,
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
@@ -1643,7 +1666,14 @@ pub(crate) fn source_imported_claims_macros(source: &str) -> Vec<&'static str> {
         .collect()
 }
 
-const CLAIMS_MACRO_NAMES: [&str; 4] = ["assert_err", "assert_none", "assert_ok", "assert_some"];
+const CLAIMS_MACRO_NAMES: [&str; 6] = [
+    "assert_err",
+    "assert_none",
+    "assert_ok",
+    "assert_ok_eq",
+    "assert_some",
+    "assert_some_eq",
+];
 
 /// Words that let tokens bind or import a name, or pull in unseen items,
 /// once a macro expansion parses them as items.
@@ -2733,7 +2763,15 @@ fn owner_pin_assertions_with_matches(
             &json_uses,
             matches_context,
         ) {
-            Some(refusal)
+            if let AssertionContextRefusal::OpaqueMacro(ref path) = refusal {
+                if super::bolero::bolero_macro_escape_allowed(&function, source, path) {
+                    None
+                } else {
+                    Some(refusal)
+                }
+            } else {
+                Some(refusal)
+            }
         } else if let Some(attr) = function.attrs().find(|attr| {
             !(runs_body_unchanged(attr, function.syntax())
                 || matches_context && matches_preserves_assertion_execution(attr, &function))
@@ -5167,7 +5205,9 @@ fn cfg_if_macro_use_modules(tree: &ast::TokenTree) -> Option<Vec<(TextSize, Stri
 
 /// The assertion macros the owner-pin collectors read (#8983), in the test body
 /// and in the check helpers it calls.
-const ASSERTION_CANDIDATES: [&str; 6] = [
+const ASSERTION_CANDIDATES: [&str; 8] = [
+    "assert_ok_eq",
+    "assert_some_eq",
     "assert_eq",
     "assert",
     "debug_assert_eq",
@@ -5257,6 +5297,9 @@ fn eager_path(
             }
             if through_closure {
                 return Err("a nested closure");
+            }
+            if let Some(statement) = super::bolero::bolero_for_each_consumer(&closure, function) {
+                return eager_path(statement, function, false, first_return);
             }
             if let Some(call) = closure_invocation(&closure, function, first_return) {
                 return eager_path(call.syntax().clone(), function, true, first_return);

@@ -51,6 +51,7 @@ Weakness
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_unreached_get_default_control/input --diff <cwd>/fixtures/python_unreached_get_default_control/diff.patch --mode fast probe:src_rates.py:python_preview:0a52360f
   ripr context --root <cwd>/fixtures/python_unreached_get_default_control/input --diff <cwd>/fixtures/python_unreached_get_default_control/diff.patch --mode fast --at probe:src_rates.py:python_preview:0a52360f
 

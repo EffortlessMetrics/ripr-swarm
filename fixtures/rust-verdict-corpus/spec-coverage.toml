@@ -62,7 +62,7 @@ overclaim_ceiling = 0
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 45
+trap_floor = 46
 false_credit_ceiling = 0
 
 # A case whose `behavior_family` names a different operator than its edit.
@@ -453,10 +453,6 @@ reason = "LSP/editor surface, not an analyzer verdict"
 [[spec]]
 id = "RIPR-SPEC-0224"
 scope = "in"
-
-[[spec.waived]]
-example = 1
-reason = "its real-repository edit (semver 1.0.23) now abstains as static_unknown because `comparator` is not a unique function name, and the synthetic analogue spec0224-parse-exact-arm-unobserved lists the test with observation_unconfirmed, so no corpus case yet produces the assertion_not_observing miss the example names"
 
 [[spec.waived]]
 example = 2

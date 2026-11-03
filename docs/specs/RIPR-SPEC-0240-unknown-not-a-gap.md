@@ -725,10 +725,31 @@ under `rust_indirect_owner_call_unresolved`:
 - **function value**: a non-ignored test with an assertion, in the owner's file
   or an integration test, names the owner without calling it: an argument
   (`.map(inc)`) or an untyped binding (`let f = inc; f(2)`; a typed `fn` pointer binding is left to RIPR-SPEC-0115). A call
-  `inc(..)`, a macro `inc!`, a method `.inc`, a `use` line, a field label
+  `inc(..)`, a macro `inc!`, a method `.inc`, a `use` declaration, a field label
   `inc:`, a `fn inc` definition and a test that binds a local or parameter
   named `inc` are not value uses. A mention only in production code keeps the
-  gap, since no test is shown to run it.
+  gap, since no test is shown to run it. Item declarations are not value
+  mentions, including multiline imports. A nested `fn` or an import of
+  another item only shadows bare references within its lexical block; an
+  owner-qualified value (including a raw identifier) remains a mention. A
+  nested module does not inherit the enclosing block's item shadows. Grouped
+  imports retain their full
+  paths, and an inner owner-preserving import overrides an outer shadow.
+  References after a declaration on the same line remain visible. Opaque,
+  conditional and glob bindings do not establish another owner. Imports suppress
+  a bare mention only when the shared call-identity resolver establishes a
+  different same-name definition; unresolved reexports and aliases retain the
+  limit. A test body the shared parser refuses proves no declaration range, so
+  a single-line `use` mention keeps its lexical exclusion there and the body's
+  remaining declarations stay unproven. The body of a `macro_rules!` definition
+  is token text, not a mention: it is inert only when the macro has no
+  `#[macro_export]` and its name occurs as no identifier token (comments and
+  strings counted) outside its own definition, so an unused macro cannot
+  withhold the gap (#12231). Any other occurrence, including a forwarded
+  `forward!(name)` that expands `$m!()` and a comment-separated `name/**/!()`,
+  keeps the limit, as does any scan containing `include!` or a `#[path]` module,
+  whose unseen text may invoke the macro. This is not general name resolution or
+  macro expansion (#10162).
 - **generated owner**: the changed line lies in no function of its file and the
   changed expression is an item-position macro invocation
   (`def_add!(add_five, 2 + 3);`). The definition the macro emits is not source
@@ -1229,8 +1250,8 @@ Integration: `crates/ripr/tests/owner_pin_execution.rs`
 `gap_admission.rs::tests::a_related_test_line_at_the_call_budget_withholds_a_gap_and_names_an_unknown`.
 
 `crates/ripr/tests/indirect_owner_limit.rs` (function value, pointer binding,
-local and known executors, item macro, `cfg_attr` and trailing-comment
-controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
+local and known executors, item macro, inert-macro, `cfg_attr` and
+trailing-comment controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
 
 Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 
