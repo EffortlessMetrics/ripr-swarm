@@ -66,7 +66,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             let message = if list_selectors {
                 let root = shell_arg(&bound_root(&options.root.to_string_lossy()));
                 format!(
-                    "agent stub: {message}. Run `ripr check --root {root}` to list finding locations or `ripr pilot --root {root}` to list seam IDs."
+                    "agent stub: {message}. Run `ripr check --root {root}` to list finding locations or `ripr pilot --root {root}` to list repair IDs."
                 )
             } else {
                 format!("agent stub: {message}")
@@ -117,7 +117,11 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
                 "seam_id": resolution.seam_id,
                 "owner": resolution.owner,
                 "state": "refused",
-                "refusal": {"kind": kind, "reason": reason},
+                "refusal": {
+                    "kind": kind,
+                    "reason": reason,
+                    "remedy": crate::domain::RefusalRemedy::from_prose(reason),
+                },
                 "grip_class": disclosure.grip_class,
                 "classification": disclosure.classification,
                 "warnings": disclosure.warnings,
@@ -415,7 +419,11 @@ fn render_selector_refusal_document(
         "seam_id": seam_id,
         "owner": serde_json::Value::Null,
         "state": "refused",
-        "refusal": {"kind": refusal_kind, "reason": message},
+        "refusal": {
+            "kind": refusal_kind,
+            "reason": message,
+            "remedy": crate::domain::RefusalRemedy::from_prose(message),
+        },
         "grip_class": serde_json::Value::Null,
         "classification": serde_json::Value::Null,
         "warnings": [],

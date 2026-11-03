@@ -238,6 +238,22 @@ pub fn resolve_language_availability_all(
     inputs.iter().map(resolve_language_availability).collect()
 }
 
+/// The shared unavailable-adapter recovery text, or `None` when the report's
+/// adapter route is not blocked on a missing build. The single place
+/// surfaces read the build prerequisite from, so none re-derives it from
+/// `is_available` alone.
+pub fn unavailable_recovery(report: &LanguageAvailabilityReport) -> Option<&str> {
+    let blocked = matches!(
+        report.state,
+        AvailabilityState::DetectedNotCompiled | AvailabilityState::ConfiguredEnabledButUnavailable
+    );
+    if blocked {
+        report.remediation.first().map(String::as_str)
+    } else {
+        None
+    }
+}
+
 fn enable_step(language: LanguageId) -> String {
     format!(
         "enable `{}` under `[languages]` in ripr.toml (`enabled = [..., \"{}\"]`)",
@@ -571,6 +587,53 @@ mod tests {
             resolve(&i).state,
             AvailabilityState::AdapterRanWithLimitations
         );
+    }
+
+    #[test]
+    fn unavailable_recovery_is_only_for_missing_builds() {
+        for l in PREVIEW {
+            let missing = resolve(&input(
+                l,
+                true,
+                false,
+                ConfiguredIntent::Unspecified,
+                AutoDetectionPolicy::Never,
+            ));
+            assert_eq!(
+                unavailable_recovery(&missing),
+                Some(l.unavailable_adapter_recovery().as_str())
+            );
+            let configured = resolve(&input(
+                l,
+                false,
+                false,
+                ConfiguredIntent::Enabled,
+                AutoDetectionPolicy::Never,
+            ));
+            assert_eq!(
+                unavailable_recovery(&configured),
+                Some(l.unavailable_adapter_recovery().as_str())
+            );
+            // Compiled adapters and explicit opt-outs never report a build gap.
+            for configured in [ConfiguredIntent::Unspecified, ConfiguredIntent::Disabled] {
+                let ok = resolve(&input(
+                    l,
+                    true,
+                    true,
+                    configured,
+                    AutoDetectionPolicy::Never,
+                ));
+                assert_eq!(unavailable_recovery(&ok), None);
+            }
+            let opted_out = resolve(&input(
+                l,
+                true,
+                false,
+                ConfiguredIntent::Disabled,
+                AutoDetectionPolicy::Never,
+            ));
+            assert_eq!(unavailable_recovery(&opted_out), None);
+        }
     }
 
     #[test]

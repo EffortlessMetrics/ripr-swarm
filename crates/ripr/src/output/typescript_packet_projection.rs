@@ -1390,6 +1390,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
             None
         },
         inspection_command: None,
+        proposed_target: None,
         stop_conditions,
     };
 
@@ -1450,7 +1451,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         language_status: "preview".to_string(),
         scope: "diff".to_string(),
         evidence_class: "weakly_exposed".to_string(),
-        gap_state: "advisory".to_string(),
+        gap_state: "unknown".to_string(),
         policy_state: "preview".to_string(),
         repairability: "repairable".to_string(),
         repair_route: Some(repair_route),
@@ -1467,6 +1468,8 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: TS_AUTHORITY_BOUNDARY.to_string(),
+        typescript_package_root: evidence_value(finding, "typescript_package_root: ")
+            .map(ToString::to_string),
     };
     // Receipt command (RIPR-SPEC-0079 `canonical_receipt_command` field rule):
     // the canonical `ripr receipt write …` form built by the shared receipt-write
@@ -1702,7 +1705,7 @@ pub(crate) mod tests {
             confidence: 0.4,
             evidence: vec![
                 "owner: applyDiscount".to_string(),
-                "gap_state: advisory".to_string(),
+                "gap_state: unknown".to_string(),
                 "actionability_category: incomplete_repair_packet".to_string(),
                 "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
                 "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),

@@ -185,7 +185,7 @@ impl EvidenceHealthCalibration {
 
     pub(crate) fn from_json(source: String, contents: &str) -> Result<Self, String> {
         let value: Value = serde_json::from_str(contents)
-            .map_err(|err| format!("failed to parse mutation calibration context: {err}"))?;
+            .map_err(|err| format!("failed to parse mutation calibration context: {err}; regenerate the input with the command that wrote it, then rerun"))?;
         Ok(Self {
             status: "loaded".to_string(),
             source: Some(source),

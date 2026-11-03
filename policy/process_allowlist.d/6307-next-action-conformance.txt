@@ -1,0 +1,1 @@
+crates/ripr/tests/next_action_conformance/fixture.rs|Command::new|2|6307-next-action-conformance|#6307: conformance harness fixture runs local git (init/commit) and the worktree-built ripr binary (CARGO_BIN_EXE_ripr) from fixture and foreign CWD roots; no shell or network.

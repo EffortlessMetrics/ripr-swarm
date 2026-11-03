@@ -424,9 +424,15 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
           range_end_line: diagnostic.range.end.line, range_end_character: diagnostic.range.end.character }, error);
       };
       // Observe the original request once; do not retry or alter cancellation.
+      // The server's diagnostic range ends past the end of its line (character
+      // 120 on a 28-character line); the host validates the range against the
+      // document before it reaches the provider, so the provider sees the
+      // clamped end. Match the range the provider actually receives.
+      const requestDocument = vscode.workspace.textDocuments.find(d => d.uri.toString() === uri.toString());
       const providerObservation = trace.observeProviderRequest(
-        vscode.workspace.textDocuments.find(d => d.uri.toString() === uri.toString()),
-        diagnostic.range, { client_id: clientIdentity(client)!, client_pid: client.serverProcess?.pid });
+        requestDocument,
+        requestDocument ? requestDocument.validateRange(diagnostic.range) : diagnostic.range,
+        { client_id: clientIdentity(client)!, client_pid: client.serverProcess?.pid });
       stages.push({ phase, code_action_request: requestEvidence() });
       trace.record('command.begin', { document_uri: uri.toString(), client_id: clientIdentity(client) });
       let actions: Array<vscode.CodeAction | vscode.Command>;

@@ -216,10 +216,52 @@ fn require_nullable_nonempty_string(
 ) -> Result<RiprAgentRequiredNullable<String>, String> {
     match require_nullable::<String>(value, field)? {
         RiprAgentRequiredNullable::Null => Ok(RiprAgentRequiredNullable::Null),
-        RiprAgentRequiredNullable::Value(text) if text.is_empty() => {
-            Err(format!("{field}: identity strings must be non-empty"))
-        }
+        RiprAgentRequiredNullable::Value(text) if text.is_empty() => Err(format!(
+            "{field}: identity strings must be non-empty; send the payload exactly as ripr returned it, without hand edits"
+        )),
         RiprAgentRequiredNullable::Value(text) => Ok(RiprAgentRequiredNullable::Value(text)),
+    }
+}
+
+fn require_nullable_analysis_attempt_id(
+    value: serde_json::Value,
+    field: &'static str,
+) -> Result<RiprAgentRequiredNullable<String>, String> {
+    match require_nullable_nonempty_string(value, field)? {
+        RiprAgentRequiredNullable::Null => Ok(RiprAgentRequiredNullable::Null),
+        RiprAgentRequiredNullable::Value(text) => {
+            crate::domain::AnalysisAttemptId::parse_agent_snapshot_id(&text)
+                .map(|id| RiprAgentRequiredNullable::Value(id.as_str().to_string()))
+                .map_err(|error| format!("{field}: {error}"))
+        }
+    }
+}
+
+fn require_nullable_continuation_id(
+    value: serde_json::Value,
+    field: &'static str,
+) -> Result<RiprAgentRequiredNullable<String>, String> {
+    match require_nullable_nonempty_string(value, field)? {
+        RiprAgentRequiredNullable::Null => Ok(RiprAgentRequiredNullable::Null),
+        RiprAgentRequiredNullable::Value(text) => {
+            crate::domain::ContinuationId::parse_request(&text)
+                .map(|id| RiprAgentRequiredNullable::Value(id.as_str().to_string()))
+                .map_err(|error| format!("{field}: {error}"))
+        }
+    }
+}
+
+fn require_nullable_continuation_success_alias(
+    value: serde_json::Value,
+    field: &'static str,
+) -> Result<RiprAgentRequiredNullable<String>, String> {
+    match require_nullable_nonempty_string(value, field)? {
+        RiprAgentRequiredNullable::Null => Ok(RiprAgentRequiredNullable::Null),
+        RiprAgentRequiredNullable::Value(text) => {
+            crate::domain::ContinuationId::parse_success_alias(&text)
+                .map(|id| RiprAgentRequiredNullable::Value(id.as_str().to_string()))
+                .map_err(|error| format!("{field}: {error}"))
+        }
     }
 }
 
@@ -269,7 +311,9 @@ fn resolve_route_readiness(
     let derived = match (route, command_spec) {
         (RiprAgentRequiredNullable::Null, None) => RiprAgentRequiredNullable::Null,
         (RiprAgentRequiredNullable::Null, Some(_)) => {
-            return Err(format!("{slot}: a command spec requires a non-null route"));
+            return Err(format!(
+                "{slot}: a command spec requires a non-null route; send the payload exactly as ripr returned it, without hand edits"
+            ));
         }
         (RiprAgentRequiredNullable::Value(_), None) => {
             RiprAgentRequiredNullable::Value(RiprAgentRouteReadiness::LegacyStringOnly)
@@ -277,7 +321,7 @@ fn resolve_route_readiness(
         (RiprAgentRequiredNullable::Value(_), Some(command_spec)) => {
             if command_spec.role != slot_role {
                 return Err(format!(
-                    "{slot}: command spec role does not match the slot role"
+                    "{slot}: command spec role does not match the slot role; send the payload exactly as ripr returned it, without hand edits"
                 ));
             }
             command_spec
@@ -307,7 +351,7 @@ fn resolve_route_readiness(
     };
     if !declared_matches {
         return Err(format!(
-            "{slot}: declared readiness does not match the route and command spec"
+            "{slot}: declared readiness does not match the route and command spec; send the payload exactly as ripr returned it, without hand edits"
         ));
     }
     Ok(derived)
@@ -575,8 +619,8 @@ impl TryFrom<RiprAgentRequestEnvelopeWire> for RiprAgentRequestEnvelope {
             request: value.request,
             mode: value.mode,
             profile: require_nullable(value.profile, "profile")?,
-            snapshot_id: require_nullable_nonempty_string(value.snapshot_id, "snapshot_id")?,
-            continuation_id: require_nullable_nonempty_string(
+            snapshot_id: require_nullable_analysis_attempt_id(value.snapshot_id, "snapshot_id")?,
+            continuation_id: require_nullable_continuation_id(
                 value.continuation_id,
                 "continuation_id",
             )?,
@@ -632,8 +676,9 @@ impl RiprAgentCapability {
             snapshot_handles: false,
             cancellation: true,
             claim_boundary: concat!(
-                "ripr/listActionableItems is implemented; ",
-                "all other riprAgent requests remain reserved."
+                "ripr/listActionableItems is implemented for the VS Code private adapter; ",
+                "all other riprAgent requests remain reserved; ",
+                "not generic third-party LSP client support."
             )
             .to_string(),
             ..Self::v0_1()
@@ -848,11 +893,11 @@ fn decode_command_spec(
         Some(value) => {
             let object = value
                 .as_object()
-                .ok_or_else(|| format!("{field}: command spec must be an object"))?;
+                .ok_or_else(|| format!("{field}: command spec must be an object; send the payload exactly as ripr returned it, without hand edits"))?;
             for key in object.keys() {
                 if !COMMAND_SPEC_WIRE_FIELDS.contains(&key.as_str()) {
                     return Err(format!(
-                        "{field}: command spec field `{key}` is not part of the published schema"
+                        "{field}: command spec field `{key}` is not part of the published schema; send the payload exactly as ripr returned it, without hand edits"
                     ));
                 }
             }
@@ -902,7 +947,7 @@ impl TryFrom<RiprAgentSuccessEnvelopeWire> for RiprAgentSuccessEnvelope {
             request: value.request,
             kind: value.kind,
             status: value.status,
-            snapshot_id: require_nullable_nonempty_string(value.snapshot_id, "snapshot_id")?,
+            snapshot_id: require_nullable_analysis_attempt_id(value.snapshot_id, "snapshot_id")?,
             input_identity: require_nullable_nonempty_string(
                 value.input_identity,
                 "input_identity",
@@ -927,7 +972,7 @@ impl TryFrom<RiprAgentSuccessEnvelopeWire> for RiprAgentSuccessEnvelope {
                 value.complete_evidence_identity,
                 "complete_evidence_identity",
             )?,
-            continuation_identity: require_nullable_nonempty_string(
+            continuation_identity: require_nullable_continuation_success_alias(
                 value.continuation_identity,
                 "continuation_identity",
             )?,
@@ -989,7 +1034,7 @@ impl TryFrom<RiprAgentErrorWire> for RiprAgentError {
             kind: value.kind,
             retryable: value.retryable,
             recovery_route: require_nullable(value.recovery_route, "recovery_route")?,
-            snapshot_id: require_nullable_nonempty_string(value.snapshot_id, "snapshot_id")?,
+            snapshot_id: require_nullable_analysis_attempt_id(value.snapshot_id, "snapshot_id")?,
         })
     }
 }
@@ -1078,7 +1123,7 @@ mod tests {
           "request": "ripr/listActionableItems",
           "kind": "actionable_items",
           "status": "ok",
-          "snapshot_id": "snapshot:abc",
+          "snapshot_id": "snapshot:1",
           "input_identity": "input:def",
           "root_identity": "root:ghi",
           "config_identity": "config:jkl",
@@ -1206,7 +1251,7 @@ mod tests {
             request: RiprAgentRequest::ListActionableItems,
             kind: RiprAgentResponseKind::ActionableItems,
             status: RiprAgentSuccessStatus::Ok,
-            snapshot_id: RiprAgentRequiredNullable::Value("snapshot:abc".to_string()),
+            snapshot_id: RiprAgentRequiredNullable::Value("snapshot:1".to_string()),
             input_identity: RiprAgentRequiredNullable::Value("input:def".to_string()),
             root_identity: RiprAgentRequiredNullable::Value("root:ghi".to_string()),
             config_identity: RiprAgentRequiredNullable::Value("config:jkl".to_string()),
@@ -1246,7 +1291,7 @@ mod tests {
             "kind": "stale_snapshot",
             "retryable": true,
             "recovery_route": "refresh",
-            "snapshot_id": "snapshot:old"
+            "snapshot_id": "snapshot:0"
           },
           "allowed_edit_surface": "read_only",
           "must_not_change": ["source_edits", "workspace_edit", "autonomous_repair"]
@@ -1546,7 +1591,7 @@ mod tests {
             return Err("diagnostic_modes drifted from push-only".to_string());
         }
         if capability.claim_boundary
-            != "ripr/listActionableItems is implemented; all other riprAgent requests remain reserved."
+            != "ripr/listActionableItems is implemented for the VS Code private adapter; all other riprAgent requests remain reserved; not generic third-party LSP client support."
         {
             return Err(format!(
                 "claim_boundary drifted: {}",
@@ -2093,7 +2138,7 @@ mod tests {
         );
         assert_decode_rejected(
             &alias_payload,
-            "verify_command_spec: command spec field `cwd` is not part of the published schema",
+            "verify_command_spec: command spec field `cwd` is not part of the published schema; send the payload exactly as ripr returned it, without hand edits",
         )?;
         // Unknown fields are equally rejected.
         let mut unknown_spec = serde_json::to_value(verify_command_spec_fixture())
@@ -2108,7 +2153,7 @@ mod tests {
         );
         assert_decode_rejected(
             &unknown_payload,
-            "verify_command_spec: command spec field `extra` is not part of the published schema",
+            "verify_command_spec: command spec field `extra` is not part of the published schema; send the payload exactly as ripr returned it, without hand edits",
         )?;
         Ok(())
     }
@@ -2133,13 +2178,13 @@ mod tests {
         }
 
         let missing_success_field =
-            success_fixture().replace("          \"snapshot_id\": \"snapshot:abc\",\n", "");
+            success_fixture().replace("          \"snapshot_id\": \"snapshot:1\",\n", "");
         if serde_json::from_str::<RiprAgentSuccessEnvelope>(&missing_success_field).is_ok() {
             return Err("success accepted an omitted nullable snapshot_id".to_string());
         }
 
         let missing_error_field = error_fixture().replace(
-            "            \"recovery_route\": \"refresh\",\n            \"snapshot_id\": \"snapshot:old\"\n",
+            "            \"recovery_route\": \"refresh\",\n            \"snapshot_id\": \"snapshot:0\"\n",
             "            \"recovery_route\": \"refresh\"\n",
         );
         if serde_json::from_str::<RiprAgentErrorEnvelope>(&missing_error_field).is_ok() {

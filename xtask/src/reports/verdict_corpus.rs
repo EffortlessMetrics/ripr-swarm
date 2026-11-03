@@ -1554,6 +1554,11 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
         }
         violations.extend(subject_violations(subject, dir));
     }
+    let cases_by_id: BTreeMap<&str, &Case> = corpus
+        .cases
+        .iter()
+        .map(|case| (case.case_id.as_str(), case))
+        .collect();
     let mut ids = BTreeSet::new();
     for case in &corpus.cases {
         if !ids.insert(case.case_id.as_str()) {
@@ -1565,7 +1570,12 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
                 case.case_id
             ));
         }
-        violations.extend(perl_facts_violations(case, is_perl_corpus(dir), dir));
+        violations.extend(perl_facts_violations(
+            case,
+            is_perl_corpus(dir),
+            dir,
+            &cases_by_id,
+        ));
         match subjects.get(case.subject_id.as_str()) {
             Some(subject) => violations.extend(case_violations(case, subject, dir)),
             None => violations.push(format!(
@@ -1630,7 +1640,12 @@ fn fact_producer_violations(producer: Option<&FactProducer>, is_perl: bool) -> V
 /// A Perl case must carry a packet whose bytes match its pin, under
 /// `packets/`; an edited packet must say what was edited and a producer
 /// packet must not. No other corpus's case takes a packet.
-pub(crate) fn perl_facts_violations(case: &Case, is_perl: bool, dir: &Path) -> Vec<String> {
+pub(crate) fn perl_facts_violations(
+    case: &Case,
+    is_perl: bool,
+    dir: &Path,
+    cases_by_id: &BTreeMap<&str, &Case>,
+) -> Vec<String> {
     let id = &case.case_id;
     let Some(facts) = &case.perl_facts else {
         return if is_perl {
@@ -1674,6 +1689,16 @@ pub(crate) fn perl_facts_violations(case: &Case, is_perl: bool, dir: &Path) -> V
             "case `{id}` names edits but calls its packet the producer's output; mark it edited_producer"
         )),
         _ => {}
+    }
+    if facts.provenance == PacketProvenance::EditedProducer {
+        violations.extend(
+            super::verdict_corpus_perl_edit_replay::edited_producer_packet_violations(
+                id,
+                facts,
+                dir,
+                cases_by_id,
+            ),
+        );
     }
     violations
 }
@@ -2679,8 +2704,42 @@ pub(crate) fn admit_measurement(
             "the diff is not routed to that language exactly once".to_string(),
         ));
     };
+    // The aggregate outcome can read complete while a sibling language carries
+    // the evidence. The producer's per-language row (#11272) says whether the
+    // expected language's own adapter ran: it must be present exactly once
+    // and evidenced, not skipped, unavailable, failed or out of scope.
+    let rows = check
+        .pointer("/language_completeness/languages")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            unestablished("it carries no language_completeness projection".to_string())
+        })?;
+    let mut own = rows
+        .iter()
+        .filter(|row| row.get("language").and_then(Value::as_str) == Some(subject.language));
+    let (Some(row), None) = (own.next(), own.next()) else {
+        return Err(unestablished(
+            "language_completeness has no single row for that language".to_string(),
+        ));
+    };
+    let status = row
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("missing");
+    if !EVIDENCED_LANGUAGE_STATUSES.contains(&status) {
+        return Err(unestablished(format!(
+            "its language_completeness row is `{status}`"
+        )));
+    }
     Ok(())
 }
+
+/// Per-language completeness statuses that evidence an adapter run over the
+/// case: it completed with findings, completed with none, or completed while
+/// disclosing its own limits. Every other status (`unavailable`, `invalid`,
+/// `failed`, `unsupported`, `not_selected`, `no_current_scope`) means the
+/// expected language was not measured.
+const EVIDENCED_LANGUAGE_STATUSES: [&str; 3] = ["complete", "complete_zero", "partial"];
 
 /// A non-aborting Perl failure can exit zero with no findings. It is a failed
 /// measurement, not a silent verdict. Successful runs may omit language_runs.
@@ -2792,17 +2851,18 @@ pub(crate) fn validated_corpus(dir: &Path) -> Result<(Corpus, SpecExampleCoverag
     }
 }
 
-/// Whether `check-all` gates a corpus on spec-example coverage. Scoring is
-/// universal — every discovered corpus compares its rows — but coverage is
-/// declared per corpus: a language without a ledger scores rows only, loudly,
-/// until it opts in. A present-but-invalid ledger still fails.
+/// Whether a corpus directory declares spec-example coverage via a ledger
+/// file. Used in unit tests of the ledgerless structural path; production
+/// validation requires the ledger for every committed corpus (#8775).
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CorpusCoverage {
+pub(crate) enum CorpusCoverage {
     Gated,
     Ungated,
 }
 
-fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
+#[cfg(test)]
+pub(crate) fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
     if dir.join(coverage::LEDGER_FILE).is_file() {
         CorpusCoverage::Gated
     } else {
@@ -2810,30 +2870,21 @@ fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
     }
 }
 
-/// Validate one corpus honoring its coverage declaration: a ledgered corpus
-/// gates coverage, a ledgerless one validates structurally with disclosure.
-/// Every subcommand funnels through here so `--language` behaves the same
-/// for `validate`, `report`, `check` and `bless`. Every corpus but Perl
-/// must carry its spec-example ledger (#6686 review for Rust, #7650 for
-/// Python and TypeScript), so a deleted or renamed ledger fails instead of
-/// silently dropping the coverage floor. Ledgerless operation is reserved
-/// for the Perl corpus, which carries a ledger but is not yet required to (#8775).
+/// Validate one corpus honoring its coverage declaration: every committed
+/// corpus must carry its spec-example ledger (#6686 review for Rust, #7650
+/// for Python and TypeScript, #8775 for Perl), so a deleted or renamed
+/// ledger fails instead of silently dropping the coverage floor. Every
+/// subcommand funnels through here so `--language` behaves the same for
+/// `validate`, `report`, `check` and `bless`.
 fn validated_corpus_declared(dir: &Path) -> Result<(Corpus, Option<SpecExampleCoverage>), String> {
-    if !is_perl_corpus(dir) || corpus_coverage_mode(dir) == CorpusCoverage::Gated {
-        return validated_corpus(dir).map(|(corpus, coverage)| (corpus, Some(coverage)));
-    }
-    println!(
-        "verdict-corpus: {} has no {}; scoring rows without the spec-example coverage gate",
-        normalize_path(dir),
-        coverage::LEDGER_FILE
-    );
-    validated_corpus_without_coverage(dir).map(|corpus| (corpus, None))
+    validated_corpus(dir).map(|(corpus, coverage)| (corpus, Some(coverage)))
 }
 
-/// `validated_corpus` without the coverage half, for a corpus that declares
-/// no ledger. Structural validation still applies; only the spec-example
-/// gate is skipped.
-fn validated_corpus_without_coverage(dir: &Path) -> Result<Corpus, String> {
+/// `validated_corpus` without the coverage half, for tests of a corpus that
+/// declares no ledger. Production paths require a ledger; structural
+/// validation still applies and only the spec-example gate is skipped.
+#[cfg(test)]
+pub(crate) fn validated_corpus_without_coverage(dir: &Path) -> Result<Corpus, String> {
     let corpus = load_corpus(dir)?;
     let mut violations = validate(&corpus, dir);
     violations.extend(oracle::ungated_label_violations(&corpus, dir));
@@ -3513,9 +3564,9 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
         "report" | "check" => score_corpus(dir, sub == "check", cases.as_deref(), out),
         "check-all" => {
             // Every language's corpus scores its rows, found by name so a
-            // new corpus is checked without a workflow change. Coverage is
-            // declared per corpus inside `score_corpus`: a language without
-            // a ledger scores rows only, loudly, until it opts in.
+            // new corpus is checked without a workflow change. Each committed
+            // corpus must carry its spec-example ledger; `score_corpus` fails
+            // before running cases when the ledger is missing.
             let checked = check_each(corpus_dirs(Path::new(FIXTURES_DIR))?, |dir| {
                 score_corpus(dir, true, None, None)
             })?;

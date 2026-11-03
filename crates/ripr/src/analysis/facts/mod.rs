@@ -51,6 +51,9 @@ pub(crate) fn register_macro_generated_tests_for_test(index: &mut model::RustInd
     // abort here.
     let _ = macro_generated_tests::register_macro_generated_tests(index);
 }
+mod bolero;
+#[cfg(test)]
+mod bolero_tests;
 pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
@@ -85,6 +88,8 @@ pub(crate) fn normalize_reconstructed_source_roles(
     test_styles::normalize_index_test_styles(index)?;
     index.refresh_memberships()?;
     proptest::register_proptest_tests(index, root)?;
+    index.refresh_memberships()?;
+    bolero::register_bolero_tests(index, root)?;
     index.refresh_memberships()?;
     harness_registry::apply_registrations(index, root, registrations);
     index.finalize()
@@ -121,6 +126,10 @@ pub fn build_index_with_test_harnesses(
     })?;
     index_phase("index_proptest_tests", || {
         proptest::register_proptest_tests(&mut index, root)?;
+        index.refresh_memberships()
+    })?;
+    index_phase("index_bolero_tests", || {
+        bolero::register_bolero_tests(&mut index, root)?;
         index.refresh_memberships()
     })?;
     // Composition runs strictly after the normalizer: the normalizer
@@ -199,9 +208,9 @@ pub(crate) fn build_analysis_index_from_loaded_files(
 /// as-is, new or changed files are parsed through the file-fact cache and
 /// inserted, files no longer in the list are removed, and the shared
 /// post-parse phases re-run once over the merged index. When nothing
-/// changed, the index is returned untouched, so one check invocation
-/// builds its workspace index once and reuses it instead of re-decoding
-/// the fact cache and re-running post-processing per consumer.
+/// changed, parsed facts are returned without another build or post-parse
+/// pass. Run-scoped manifest/export authority and dependent query memos are
+/// refreshed because auxiliary inputs need not be among the indexed files.
 pub(crate) fn reuse_cached_index_with_loaded_files(
     mut cached: build::CachedRustIndex,
     root: &Path,
@@ -212,13 +221,17 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
     // Rust bytes. Rebuild the post-parse authority from cached raw facts; do
     // not reuse a formerly admitted or formerly refused property generation.
     if !cached.index.proptest_receipts.is_empty()
+        || !cached.index.bolero_receipts.is_empty()
         || cached.index.files().iter().any(|(_, file)| {
-            file.unresolved_property_macros.iter().any(|property| {
-                matches!(
-                    property.name.as_str(),
-                    "proptest::proptest" | "::proptest::proptest"
-                )
-            })
+            (!file.used_lexical_fallback
+                && file.source.contains("bolero")
+                && !crate::analysis::syntax::bolero_profiles(&file.source).is_empty())
+                || file.unresolved_property_macros.iter().any(|property| {
+                    matches!(
+                        property.name.as_str(),
+                        "proptest" | "proptest::proptest" | "::proptest::proptest"
+                    )
+                })
         })
     {
         return build_cached_index_with_test_harnesses(
@@ -250,6 +263,11 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
         .filter(|path| !kept.contains(path.as_path()))
         .collect();
     if extras.is_empty() && dropped.is_empty() {
+        // #11810: a local macro exporter or its selected manifest can change
+        // without changing the indexed Rust files. Do not retain a cached
+        // absent/present export or the assertion sites derived from it.
+        cached.index.member_crates = member_crates::MemberCrates::new(root);
+        cached.index.call_identity_memos.clear();
         return Ok(cached);
     }
     // Post-processing is only incrementally exact when the file set grows by
@@ -368,6 +386,10 @@ fn post_process_cached_index(
         proptest::register_proptest_tests(&mut cached.index, root)?;
         cached.index.refresh_memberships()
     })?;
+    index_phase("index_bolero_tests", || {
+        bolero::register_bolero_tests(&mut cached.index, root)?;
+        cached.index.refresh_memberships()
+    })?;
     index_phase("index_role_composition", || {
         role_composition::compose_index_source_roles(&mut cached.index, root);
         Ok(())
@@ -409,8 +431,28 @@ pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses(
     paths: &[PathBuf],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
-    let cached = index_phase("index_cached_parse", || {
-        build::build_index_from_paths_with_cache(root, paths, MissAttribution::Named)
+    build_index_from_paths_with_cache_and_test_harnesses_and_consumed(
+        root,
+        paths,
+        registrations,
+        None,
+    )
+}
+
+pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses_and_consumed(
+    root: &Path,
+    paths: &[PathBuf],
+    registrations: &[TestHarnessRegistration],
+    consumed: Option<&mut crate::analysis::consumed_source::ConsumedRustSources>,
+) -> Result<build::CachedRustIndex, String> {
+    let cached = index_phase("index_cached_parse", || match consumed {
+        Some(consumed) => build::build_index_from_paths_with_cache_and_consumed(
+            root,
+            paths,
+            MissAttribution::Named,
+            Some(consumed),
+        ),
+        None => build::build_index_from_paths_with_cache(root, paths, MissAttribution::Named),
     })?;
     post_process_cached_index(cached, root, registrations)
 }
@@ -420,6 +462,7 @@ pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses(
 // misdeclared registration degrades identically everywhere.
 pub(crate) use harness_registry::validated_file_wide_harness_targets;
 pub(crate) use test_helpers::expanded_assertion_view;
+pub(crate) use test_styles::attributes_define_proof_harness;
 pub(crate) use test_styles::attributes_define_test;
 
 // Keep compilation-unit rebasing available at the facts facade for index consumers.

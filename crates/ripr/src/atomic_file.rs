@@ -93,7 +93,7 @@ fn ensure_default_output_contained_with(
             for entry in entries {
                 let entry = entry.map_err(|error| {
                     format!(
-                        "refusing to write ripr output: cannot enumerate {}: {error}",
+                        "refusing to write ripr output: cannot enumerate {}: {error}; check that the directory is readable, or set RIPR_CACHE_DIR to another location",
                         ripr_dir.display()
                     )
                 })?;
@@ -105,7 +105,7 @@ fn ensure_default_output_contained_with(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
             return Err(format!(
-                "refusing to write ripr output: cannot enumerate {}: {error}",
+                "refusing to write ripr output: cannot enumerate {}: {error}; check that the directory is readable, or set RIPR_CACHE_DIR to another location",
                 ripr_dir.display()
             ));
         }
@@ -122,7 +122,7 @@ fn ensure_default_output_contained_with(
         };
         return Err(format!(
             "refusing to write ripr output: {} {problem} (workspace {}). \
-             A repository can check in a link to redirect where ripr writes. Either replace it with a real directory, \
+             A repository can check in a link to redirect where ripr writes. Next step: replace it with a real directory, \
              or choose the location yourself, for example: RIPR_CACHE_DIR=/var/cache/ripr ripr check",
             path.display(),
             root.display()

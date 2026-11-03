@@ -1,3 +1,4 @@
+use super::init_agents;
 use crate::cli::commands_options::{InitCi, InitOptions};
 use crate::cli::help;
 use crate::cli::parse::expect_value;
@@ -6,7 +7,7 @@ use crate::config::{CONFIG_FILE_NAME, generated_init_config_for_root};
 use crate::output;
 use std::path::{Path, PathBuf};
 
-use super::init_workflow::{generated_github_actions_workflow, workflow_install_version};
+use super::init_workflow::{generated_ci_workflow, workflow_install_version};
 
 pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -49,19 +50,25 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     // not exist on crates.io, so the install step would fail. The workflow
     // pins the latest release instead; say so calmly, on stderr like the
     // root warning, in both dry-run and real runs.
-    if options.ci.is_some() {
+    if let Some(ci) = options.ci {
         let generator = env!("CARGO_PKG_VERSION");
         let pinned = workflow_install_version(generator);
         if pinned != generator {
-            let refresh = workflow_refresh_guidance(&options.root);
+            let refresh = workflow_refresh_guidance(&options.root, ci);
             let follow_up = if refresh.starts_with("refresh command omitted") {
                 format!("upgrade ripr and refresh the workflow ({refresh})")
             } else {
                 format!("upgrade ripr, then {refresh}")
             };
-            eprintln!(
-                "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. That release lacks commands this workflow runs (`ripr reports ci-packet`, `ripr pr-comments summary`), so its CI run fails until {generator} is published: hold off committing the workflow, or use it only to review the template. Once {generator} is published, {follow_up}"
-            );
+            let note = match ci {
+                InitCi::Github => format!(
+                    "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. That release lacks commands this workflow runs (`ripr reports ci-packet`, `ripr pr-comments summary`), so its CI run fails until {generator} is published: hold off committing the workflow, or use it only to review the template. Once {generator} is published, {follow_up}"
+                ),
+                InitCi::Gitlab => format!(
+                    "ripr: note: this build of ripr ({generator}) is a development version, so the generated pipeline installs ripr {pinned}, the latest published release. Once {generator} is published, {follow_up}"
+                ),
+            };
+            eprintln!("{note}");
         }
     }
     if options.dry_run {
@@ -219,7 +226,7 @@ fn non_git_root_warning_for_probe(
 
 /// What `ripr init` would do to one file.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum InitAction {
+pub(super) enum InitAction {
     /// The path does not exist; it would be created.
     Create,
     /// The path exists and `--force` was given; it would be replaced.
@@ -245,10 +252,10 @@ impl InitAction {
 }
 
 /// One file in the resolved plan, with the body that would be written.
-struct InitTarget {
-    path: PathBuf,
-    action: InitAction,
-    body: String,
+pub(super) struct InitTarget {
+    pub(super) path: PathBuf,
+    pub(super) action: InitAction,
+    pub(super) body: String,
 }
 
 /// Resolve what the run would do, or fail with the reason it cannot run.
@@ -276,17 +283,26 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     // written first, the run would half-initialize the repo before failing.
     // Checking every target up front also means a doomed run writes nothing.
     let mcp_path = options.mcp.then(|| options.root.join(MCP_CONFIG_FILE_NAME));
+    let cursor_mcp_path = (options.mcp && init_agents::wants_cursor(&options.agents))
+        .then(|| options.root.join(init_agents::CURSOR_MCP_FILE));
+    let agent_paths: Vec<PathBuf> = options
+        .agents
+        .iter()
+        .map(|agent| options.root.join(init_agents::instruction_file(*agent)))
+        .collect();
 
     for path in std::iter::once(&config_path)
         .chain(workflow_path.as_ref())
         .chain(mcp_path.as_ref())
+        .chain(cursor_mcp_path.as_ref())
+        .chain(agent_paths.iter())
     {
         ensure_creatable_parent(path)?;
     }
 
     // `--ci` and `--mcp` add files; they keep an existing ripr.toml rather
     // than refusing because it is already there.
-    let config_only = options.ci.is_none() && !options.mcp;
+    let config_only = options.ci.is_none() && !options.mcp && options.agents.is_empty();
     if path_is_occupied(&config_path)? && !options.force && config_only {
         return Err(existing_target_error(&config_path, &options.root, None));
     }
@@ -318,7 +334,7 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         action: config_action,
         body: generated_init_config_for_root(&options.root),
     }];
-    if let Some(path) = workflow_path {
+    if let (Some(path), Some(ci)) = (workflow_path, options.ci.as_ref()) {
         let action = if path_is_occupied(&path)? {
             InitAction::Overwrite
         } else {
@@ -327,11 +343,19 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         targets.push(InitTarget {
             path,
             action,
-            body: generated_github_actions_workflow(),
+            body: generated_ci_workflow(ci),
         });
     }
     if let Some(path) = mcp_path {
         targets.push(plan_mcp_target(path, options.force)?);
+    }
+    // Cursor reads its own project MCP file; reuse the same merge so the
+    // user's other servers are kept.
+    if let Some(path) = cursor_mcp_path {
+        targets.push(plan_mcp_target(path, options.force)?);
+    }
+    for (agent, path) in options.agents.iter().zip(agent_paths) {
+        targets.push(init_agents::plan_agent_target(*agent, path, options.force)?);
     }
     Ok(targets)
 }
@@ -353,8 +377,11 @@ fn ripr_mcp_server_entry() -> serde_json::Value {
 fn plan_mcp_target(path: PathBuf, force: bool) -> Result<InitTarget, String> {
     let shown = output::path::human_path(&path);
     let render = |document: &serde_json::Value| {
-        let mut body = serde_json::to_string_pretty(document)
-            .map_err(|err| format!("render {shown} failed: {err}"))?;
+        let mut body = serde_json::to_string_pretty(document).map_err(|err| {
+            format!(
+                "render {shown} failed: {err}; report this as a ripr bug with the command you ran"
+            )
+        })?;
         body.push('\n');
         Ok::<String, String>(body)
     };
@@ -380,8 +407,9 @@ fn plan_mcp_target(path: PathBuf, force: bool) -> Result<InitTarget, String> {
             "existing {shown} is a symlink; add the `ripr` server to its target by hand, nothing was written"
         ));
     }
-    let text = std::fs::read_to_string(&path)
-        .map_err(|err| format!("cannot read existing {shown}: {err}"))?;
+    let text = std::fs::read_to_string(&path).map_err(|err| {
+        format!("cannot read existing {shown}: {err}; check you can read that file, then rerun")
+    })?;
     let mut document: serde_json::Value = serde_json::from_str(&text).map_err(|err| {
         format!(
             "existing {shown} is not valid JSON ({err}); fix it or remove it, nothing was written"
@@ -389,13 +417,13 @@ fn plan_mcp_target(path: PathBuf, force: bool) -> Result<InitTarget, String> {
     })?;
     let servers = document
         .as_object_mut()
-        .ok_or_else(|| format!("existing {shown} is not a JSON object; nothing was written"))?
+        .ok_or_else(|| format!("existing {shown} is not a JSON object; nothing was written; fix the file so it is a JSON object, or move it aside, then rerun"))?
         .entry("mcpServers")
         .or_insert_with(|| serde_json::json!({}))
         .as_object_mut()
         .ok_or_else(|| {
             format!(
-                "existing {shown} has a `mcpServers` that is not an object; nothing was written"
+                "existing {shown} has a `mcpServers` that is not an object; nothing was written; fix that key so it is an object, then rerun"
             )
         })?;
     if servers.contains_key(MCP_SERVER_NAME) && !force {
@@ -424,7 +452,8 @@ fn existing_target_error(path: &Path, root: &Path, ci: Option<&InitCi>) -> Strin
         }
     };
     let root_arg = crate::agent::loop_commands::shell_arg(&root_display);
-    let workflow = format!("ripr init --ci github --force --root {root_arg}");
+    let provider = ci.map(InitCi::as_str).unwrap_or("github");
+    let workflow = format!("ripr init --ci {provider} --force --root {root_arg}");
     let overwrite = format!("ripr init --force --root {root_arg}");
     let preview = format!("ripr init --force --dry-run --root {root_arg}");
     let (mut message, commands) = if ci.is_some() {
@@ -475,7 +504,7 @@ fn without_current_dir_suffix(display: &str) -> String {
 
 /// Init and doctor prescribe the same workflow write. Bind it to the selected
 /// root just like init's successful follow-ups and existing-file retries.
-pub(super) fn workflow_refresh_guidance(root: &Path) -> String {
+pub(super) fn workflow_refresh_guidance(root: &Path, ci: InitCi) -> String {
     let root_display = match init_command_root(root) {
         Ok(root) => root,
         Err(error) => return format!("refresh command omitted: {error}."),
@@ -495,7 +524,7 @@ pub(super) fn workflow_refresh_guidance(root: &Path) -> String {
     } else {
         crate::agent::loop_commands::shell_arg(&root_display)
     };
-    let command = format!("ripr init --ci github --force --root {root_arg}");
+    let command = format!("ripr init --ci {} --force --root {root_arg}", ci.as_str());
     let mut guidance = format!("refresh with `{command}` and review the diff before committing.");
     if let Some(powershell) = output::markdown::powershell_text_variant(&command) {
         // Doctor escapes control characters in advisory evidence. Keep both
@@ -513,11 +542,14 @@ pub(super) fn workflow_refresh_guidance(root: &Path) -> String {
 /// dangling symlink — so planning has to ask the same question the write asks.
 /// `symlink_metadata` also surfaces permission errors instead of silently
 /// reading as "absent, will create".
-fn path_is_occupied(path: &Path) -> Result<bool, String> {
+pub(super) fn path_is_occupied(path: &Path) -> Result<bool, String> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(err) => Err(format!("cannot inspect {}: {err}", path.display())),
+        Err(err) => Err(format!(
+            "cannot inspect {}: {err}; check permissions on that path, then rerun",
+            path.display()
+        )),
     }
 }
 
@@ -539,7 +571,7 @@ fn ensure_creatable_parent(path: &Path) -> Result<(), String> {
             Ok(metadata) if metadata.is_dir() => return Ok(()),
             Ok(_) => {
                 return Err(format!(
-                    "cannot write {}: {} exists and is not a directory",
+                    "cannot write {}: {} exists and is not a directory; move or remove it, then rerun",
                     path.display(),
                     ancestor.display()
                 ));
@@ -648,18 +680,32 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
         }) {
             println!();
             println!(
-                "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`."
+                "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`. For Cursor add `--agents cursor`, which also writes `.cursor/mcp.json`."
             );
         }
-        if let Some(workflow) = plan
-            .iter()
-            .find(|target| target.path == init_ci_workflow_path(root, &InitCi::Github))
-        {
+        if plan.iter().any(|target| {
+            init_agents::is_instruction_file(&target.path)
+                && target.action != InitAction::LeaveUnchanged
+        }) {
             println!();
-            println!(
-                "CI next: review `{}` (advisory by default; blocking gates are opt-in via the RIPR_GATE_MODE repository variable), commit the generated files, then open or update a pull request and read the workflow's job summary.",
-                output::path::human_path(&workflow.path)
-            );
+            println!("{}", init_agents::FOLLOW_UP);
+        }
+        if let Some((workflow, ci)) = plan.iter().find_map(|target| {
+            [InitCi::Github, InitCi::Gitlab]
+                .into_iter()
+                .find(|ci| target.path == init_ci_workflow_path(root, ci))
+                .map(|ci| (target, ci))
+        }) {
+            println!();
+            let path = output::path::human_path(&workflow.path);
+            match ci {
+                InitCi::Github => println!(
+                    "CI next: review `{path}` (advisory by default; blocking gates are opt-in via the RIPR_GATE_MODE repository variable), commit the generated files, then open or update a pull request and read the workflow's job summary."
+                ),
+                InitCi::Gitlab => println!(
+                    "CI next: review `{path}` (advisory: `allow_failure: true`), commit the generated files, then open or update a merge request and download the `target/ripr/**` job artifacts."
+                ),
+            }
         }
         println!();
         if inside_git {
@@ -691,8 +737,12 @@ fn write_init_target(target: &InitTarget) -> Result<(), String> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
-        std::fs::create_dir_all(parent)
-            .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
+        std::fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "create {} failed: {err}; check you can create directories there, then rerun",
+                parent.display()
+            )
+        })?;
     }
     if matches!(target.action, InitAction::Overwrite | InitAction::Update) {
         // --force replaces the config atomically (#4883): the old file stays
@@ -715,7 +765,10 @@ fn write_init_target(target: &InitTarget) -> Result<(), String> {
             write_new_file_in_place(&target.path, target.body.as_bytes())?;
         }
         Err(CreateNewError::Staging(err) | CreateNewError::Link(err)) => {
-            return Err(format!("write {} failed: {err}", target.path.display()));
+            return Err(format!(
+                "write {} failed: {err}; check you can write there, then rerun",
+                target.path.display()
+            ));
         }
     }
     println!("Wrote {}", output::path::human_path(&target.path));
@@ -731,13 +784,21 @@ fn write_new_file_in_place(path: &std::path::Path, body: &[u8]) -> Result<(), St
         .write(true)
         .create_new(true)
         .open(path)
-        .map_err(|err| format!("write {} failed: {err}", path.display()))?;
+        .map_err(|err| {
+            format!(
+                "write {} failed: {err}; check you can write there, then rerun",
+                path.display()
+            )
+        })?;
     if let Err(err) = file.write_all(body).and_then(|()| file.sync_all()) {
         // Remove the file this call created rather than leave a truncated
         // config (#4883). Unlike the staged path, this unlinks by name.
         drop(file);
         return Err(match std::fs::remove_file(path) {
-            Ok(()) => format!("write {} failed: {err}", path.display()),
+            Ok(()) => format!(
+                "write {} failed: {err}; check you can write there, then rerun",
+                path.display()
+            ),
             Err(cleanup) => format!(
                 "write {} failed: {err}; removing the partial file also failed: {cleanup}",
                 path.display()
@@ -754,6 +815,7 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
         force: false,
         ci: None,
         mcp: false,
+        agents: Vec::new(),
     };
     let mut i = 0usize;
     while i < args.len() {
@@ -767,6 +829,10 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
                 options.ci = Some(parse_init_ci(expect_value(args, i, "--ci")?)?);
             }
             "--mcp" => options.mcp = true,
+            "--agents" => {
+                i += 1;
+                init_agents::parse_agents(expect_value(args, i, "--agents")?, &mut options.agents)?;
+            }
             "--dry-run" => options.dry_run = true,
             "--force" => options.force = true,
             other => return Err(unknown_argument("init", other)),
@@ -779,7 +845,12 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
 fn parse_init_ci(value: &str) -> Result<InitCi, String> {
     match value {
         "github" => Ok(InitCi::Github),
-        _ => Err(unknown_value("init --ci provider", value, &["github"])),
+        "gitlab" => Ok(InitCi::Gitlab),
+        _ => Err(unknown_value(
+            "init --ci provider",
+            value,
+            &["github", "gitlab"],
+        )),
     }
 }
 
@@ -818,11 +889,13 @@ fn render_init_dry_run(plan: &[InitTarget], windows: bool) -> String {
 fn init_ci_workflow_path(root: &Path, ci: &InitCi) -> PathBuf {
     match ci {
         InitCi::Github => root.join(".github/workflows/ripr.yml"),
+        InitCi::Gitlab => root.join(".gitlab-ci.yml"),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::init_workflow::generated_github_actions_workflow;
     use super::*;
     use crate::cli::commands_options::InitCi;
     use crate::config::generated_init_config;
@@ -964,9 +1037,10 @@ mod tests {
         for needle in [
             "Linux-X64) target=x86_64-unknown-linux-gnu ;;",
             "macOS-ARM64) target=aarch64-apple-darwin ;;",
-            r#"asset="ripr-server-v$version-$target.tar.gz""#,
+            "Windows-X64) target=x86_64-pc-windows-msvc ;;",
+            r#"asset="ripr-server-v$version-$target.$ext""#,
             r#"url="https://github.com/EffortlessMetrics/ripr/releases/download/v$version/$asset""#,
-            r#"curl -fsSL --retry 3 -O "$url.sha256"; then"#,
+            r#"curl -fsSL --retry 3 -O "$url.sha256" ||"#,
             r#"if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then"#,
             r#"echo "$RUNNER_TEMP/ripr-bin" >> "$GITHUB_PATH""#,
         ] {
@@ -974,11 +1048,12 @@ mod tests {
         }
         // The mismatch branch exits before the `else` that compiles.
         let mismatch = install.find("does not match its published SHA-256");
-        let exit = install.find("exit 1");
+        let exit = mismatch.and_then(|at| install[at..].find("exit 1").map(|rel| at + rel));
+        let extract = install.find("tar -xzf");
         let fallback = install.find("cargo install ripr");
         assert!(
-            mismatch < exit && exit < fallback && mismatch.is_some(),
-            "a checksum mismatch must fail before the cargo fallback"
+            mismatch < exit && exit < extract && extract < fallback && mismatch.is_some(),
+            "a checksum mismatch must fail before extraction and the cargo fallback"
         );
     }
 
@@ -1374,6 +1449,7 @@ mod tests {
             force: false,
             ci: None,
             mcp: false,
+            agents: Vec::new(),
         }
     }
 
@@ -1554,6 +1630,23 @@ mod tests {
     }
 
     #[test]
+    fn plan_adds_gitlab_ci_for_ci_gitlab() -> Result<(), String> {
+        let root = temp_root("ci-gitlab")?;
+        let mut opts = options(&root);
+        opts.ci = Some(InitCi::Gitlab);
+        let plan = init_plan(&opts)?;
+
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[1].action, InitAction::Create);
+        assert_eq!(plan[1].path, root.join(".gitlab-ci.yml"));
+        assert!(plan[1].body.contains("ripr-advisory:"));
+        assert!(plan[1].body.contains("allow_failure: true"));
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn plan_rejects_an_existing_config_without_force() -> Result<(), String> {
         let root = temp_root("exists")?;
         write(&root.join(CONFIG_FILE_NAME), "[analysis]\n")?;
@@ -1599,7 +1692,7 @@ mod tests {
         );
         assert!(!message.contains("/.`"), "{message}");
 
-        let guidance = workflow_refresh_guidance(&dotted);
+        let guidance = workflow_refresh_guidance(&dotted, InitCi::Github);
         assert!(
             guidance.contains(&format!("--root {}`", shell_quote_for_test(&shown))),
             "{guidance}"
@@ -1751,7 +1844,8 @@ mod tests {
             Ok(_) => return Err("an uncreatable parent must block".to_string()),
             Err(message) => {
                 assert!(
-                    message.contains("exists and is not a directory"),
+                    message
+                        .contains("exists and is not a directory; move or remove it, then rerun"),
                     "{message}"
                 );
                 assert!(

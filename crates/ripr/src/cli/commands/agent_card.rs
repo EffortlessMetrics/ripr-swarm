@@ -57,27 +57,38 @@ pub(super) fn run_agent_card(options: AgentCardOptions) -> Result<(), CommandErr
 /// to what [`run_agent_card`] writes on success.
 pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, CommandError> {
     ensure_command_root(&options.root, "agent card")?;
+    // Any id `ripr check` or `ripr pilot` prints works here: a finding id, a
+    // gap id or a `file:line` goes through the same shared resolver `ripr
+    // agent repair` uses; an exact seam id passes through untouched. A refused
+    // mapping is a typed `seam_not_found` refusal that keeps the id the caller
+    // typed, and a resolved id replaces it so the card matches the exact-id run.
+    let options = match super::translate_seam_id_for(
+        super::SeamIdSurface::Card,
+        &options.root,
+        &options.seam_id,
+    ) {
+        Ok(resolved) => AgentCardOptions {
+            seam_id: resolved,
+            ..options
+        },
+        // The resolver could not run (broken config, truncated inventory,
+        // analysis error): that says nothing about the id, so it stays the
+        // operational failure (exit 2) the card always reported.
+        Err(super::SeamIdTranslateError::Operational(message)) => {
+            return Err(CommandError::Failure(message));
+        }
+        Err(error) => {
+            return Err(card_refusal_error(
+                &options,
+                AgentCardRefusalKind::SeamNotFound,
+                error.message(),
+            ));
+        }
+    };
     let (card, hold) = match render_agent_card(&options) {
         Ok(card) => card,
         Err(AgentCardError::Refusal { kind, message }) => {
-            // A deliberate named refusal maps to the decision exit code 3,
-            // as the verify/verify-execute/repair siblings do. Under
-            // `--json` the typed envelope is the machine answer and goes to
-            // stdout, like `check`/`agent packet`; the prose message still
-            // reaches stderr through `CommandError` as the human rendering.
-            if options.json {
-                match render_agent_card_refusal(&options, kind, &message) {
-                    // A JSON document, not report text: bidi characters become
-                    // JSON escapes so the envelope stays parseable (#6309).
-                    Ok(rendered) => {
-                        write_stdout_refusal_json(rendered).map_err(CommandError::Failure)?
-                    }
-                    // No envelope could be produced, so no machine answer
-                    // exists: an operational failure (exit 2), not decision 3.
-                    Err(render_error) => return Err(CommandError::Failure(render_error)),
-                }
-            }
-            return Err(CommandError::Decision(message));
+            return Err(card_refusal_error(&options, kind, &message));
         }
         Err(AgentCardError::Operational(message)) => {
             return Err(CommandError::Failure(message));
@@ -112,6 +123,33 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
     Ok(rendered)
 }
 
+/// A deliberate named refusal maps to the decision exit code 3, as the
+/// verify/verify-execute/repair siblings do. Under `--json` the typed envelope
+/// is the machine answer and goes to stdout, like `check`/`agent packet`; the
+/// prose message still reaches stderr through `CommandError` as the human
+/// rendering.
+fn card_refusal_error(
+    options: &AgentCardOptions,
+    kind: AgentCardRefusalKind,
+    message: &str,
+) -> CommandError {
+    if options.json {
+        match render_agent_card_refusal(options, kind, message) {
+            // A JSON document, not report text: bidi characters become JSON
+            // escapes so the envelope stays parseable (#6309).
+            Ok(rendered) => {
+                if let Err(failure) = write_stdout_refusal_json(rendered) {
+                    return CommandError::Failure(failure);
+                }
+            }
+            // No envelope could be produced, so no machine answer exists: an
+            // operational failure (exit 2), not decision 3.
+            Err(render_error) => return CommandError::Failure(render_error),
+        }
+    }
+    CommandError::Decision(message.to_string())
+}
+
 /// Render the versioned typed-refusal document of an `agent card` refusal:
 /// the schema version, the document kind, and one typed `error` block
 /// naming the refusal kind, the seam id the call asked for, the exact
@@ -130,11 +168,12 @@ fn render_agent_card_refusal(
             "seam_id": options.seam_id,
             "message": message,
             "remedy_route": refusal_remedy_route(&options.root, &options.seam_id, kind),
+            "remedy": crate::domain::RefusalRemedy::from_prose(message),
         }
     });
     serde_json::to_string_pretty(&document)
         .map(|rendered| format!("{rendered}\n"))
-        .map_err(|error| format!("serialize agent card refusal document failed: {error}"))
+        .map_err(|error| format!("serialize agent card refusal document failed: {error}; report this as a ripr bug with the command you ran"))
 }
 
 /// The typed remedy route of one refusal kind: the opposite-remedy pairs the
@@ -386,7 +425,10 @@ pub(crate) fn agent_card_prose_lines(
     }
     lines.push(done_when_line(&card.done_when));
     for stop in &card.stop_conditions {
-        lines.push(format!("  stop: {stop}"));
+        lines.push(format!(
+            "  stop: {}",
+            crate::output::human::plain_repair_card_user_wording(stop)
+        ));
     }
     // Group only references with identical destination, state and reason.
     // Each family remains named, and a stale or missing reference cannot be
@@ -468,7 +510,7 @@ pub(crate) fn agent_card_plain_lines(
     paste_root: Option<&std::path::Path>,
     hold: Option<&CardStartHold>,
 ) -> Vec<String> {
-    let mut lines = vec![format!("Repair brief for gap {}", card.subject.seam_id)];
+    let mut lines = vec!["Repair brief for this gap".to_string()];
     lines.push(format!("  Changed behavior: {}", card.changed_behavior));
     // One verdict: the shared start gate (`hold`) outranks the card's own
     // evidence readiness, so "ready" is only printed when `ripr repair`
@@ -645,6 +687,9 @@ pub(crate) fn agent_card_plain_lines(
             format!("  Limits: {shown}; and {more} more (see --verbose)")
         });
     }
+    // The raw gap id is a copy-paste handle, not a title: it sits below the
+    // actionable lines, next to the machine-readable route that takes it.
+    lines.push(format!("  Repair ID: {}", card.subject.seam_id));
     lines.push("  This is a suggestion; ripr has not run or verified anything.".to_string());
     lines.push(format!(
         "  Machine-readable details (JSON): {packet_command}"
@@ -936,6 +981,8 @@ mod tests {
                 has_fix_site: true,
                 has_suggested_assertion: false,
                 limitation_kinds: Vec::new(),
+                instruction_semantic_id: None,
+                instruction_instance_id: None,
             },
             readiness: RepairCardReadinessFacts {
                 repair_ready: true,
@@ -1203,8 +1250,8 @@ mod tests {
         Ok(())
     }
 
-    /// #10693: the default brief is short, plain, and projects the same typed
-    /// fields; the ledger rows and internal vocabulary are `--verbose` only.
+    /// #10693: a card that is not ready names its missing evidence in plain
+    /// words and the default brief stays within its line cap.
     #[test]
     fn plain_brief_not_ready_uses_plain_words_and_stays_capped() -> Result<(), String> {
         let mut card = prose_test_card();
@@ -1307,7 +1354,10 @@ mod tests {
     /// plain-text command surface.
     #[test]
     fn plain_brief_pairs_new_commands_with_a_powershell_form() -> Result<(), String> {
-        let root = std::path::Path::new("/tmp/it's here");
+        // The `$` keeps the Bash single-quote form on Windows too: the Windows
+        // console form is identical in PowerShell, so a root with only a quote
+        // would print no PowerShell pair there.
+        let root = std::path::Path::new("/tmp/it's $here");
         let mut card = prose_test_card();
         card.instruction.state = FixInstructionState::Unavailable;
         let lines = agent_card_plain_lines(&card, "ripr agent packet --json", Some(root), None);
@@ -1344,6 +1394,9 @@ mod tests {
         Ok(())
     }
 
+    /// #10693: the default brief is short, plain, and projects the same typed
+    /// fields; the ledger rows and internal vocabulary are `--verbose` only.
+    /// The title is a plain label; the raw gap id is demoted to a `Repair ID:` row.
     #[test]
     fn plain_brief_is_short_and_free_of_ledger_vocabulary() -> Result<(), String> {
         let mut card = prose_test_card();
@@ -1357,7 +1410,8 @@ mod tests {
         );
         let text = lines.join("\n");
         for needle in [
-            "Repair brief for gap ",
+            "Repair brief for this gap",
+            "  Repair ID: ",
             "  Files you may change: tests/t.rs",
             "  Do not change: src/lib.rs",
             "  Done when: ",

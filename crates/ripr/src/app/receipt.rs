@@ -130,7 +130,7 @@ pub(crate) fn write_receipt(opts: &ReceiptWriteOptions) -> Result<String, String
     validate_write_options(opts)?;
 
     let repository_root = std::env::current_dir()
-        .map_err(|err| format!("resolve receipt repository root failed: {err}"))?;
+        .map_err(|err| format!("resolve receipt repository root failed: {err}; run ripr from an existing directory inside the repository"))?;
     let actual_head =
         crate::agent::artifact::current_git_head(&repository_root).map_err(|err| {
             format!("receipt requires a Git repository with a resolvable HEAD: {err}")
@@ -139,7 +139,7 @@ pub(crate) fn write_receipt(opts: &ReceiptWriteOptions) -> Result<String, String
         && !declared_head.eq_ignore_ascii_case(&actual_head)
     {
         return Err(format!(
-            "receipt --current-head `{declared_head}` does not match actual repository HEAD `{actual_head}`"
+            "receipt --current-head `{declared_head}` does not match actual repository HEAD `{actual_head}`; pass the output of `git rev-parse HEAD`, or drop --current-head"
         ));
     }
 
@@ -390,17 +390,17 @@ fn validate_write_options(opts: &ReceiptWriteOptions) -> Result<(), String> {
         return Err("receipt write requires a canonical_gap_id; re-run with --gap".to_string());
     }
     if opts.verify_command.trim().is_empty() {
-        return Err("receipt write requires --verify-command".to_string());
+        return Err("receipt write requires --verify-command; pass the command you ran to verify, as `--verify-command <cmd>`".to_string());
     }
     if opts.verify_status.trim().is_empty() {
         return Err(format!(
-            "receipt requires --status ({})",
+            "receipt requires --status ({}); pass one of them",
             VALID_VERIFY_STATUSES.join("|")
         ));
     }
     if !VALID_VERIFY_STATUSES.contains(&opts.verify_status.as_str()) {
         return Err(format!(
-            "invalid --status {:?}; valid values are: {}",
+            "invalid --status {:?}; valid values are: {}; pass one of them",
             opts.verify_status,
             VALID_VERIFY_STATUSES.join(", ")
         ));
@@ -417,7 +417,7 @@ fn validate_write_options(opts: &ReceiptWriteOptions) -> Result<(), String> {
         {
             return Err(format!(
                 "receipt --current-head {current_head} does not match the actual git HEAD at {} ({actual_head}); \
-                 the receipt must bind to the real commit, not a caller-provided value (#1941)",
+                 the receipt must bind to the real commit, not a caller-provided value (#1941); pass the output of `git rev-parse HEAD`",
                 root.display()
             ));
         }
@@ -428,7 +428,7 @@ fn validate_write_options(opts: &ReceiptWriteOptions) -> Result<(), String> {
 pub(crate) fn validate_current_head(value: &str) -> Result<(), String> {
     if value.len() != 40 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(
-            "receipt write --current-head requires a 40-character hexadecimal SHA".to_string(),
+            "receipt write --current-head requires a 40-character hexadecimal SHA; pass the output of `git rev-parse HEAD`".to_string(),
         );
     }
     Ok(())
@@ -482,7 +482,7 @@ fn validate_receipt_structure(value: &serde_json::Value, path: &Path) -> Result<
                 return Err(missing_current_head_error(value, path));
             }
             return Err(format!(
-                "receipt at {} is malformed: missing required field `{field}`",
+                "receipt at {} is malformed: missing required field `{field}`; rewrite it with `ripr receipt write`",
                 path.display()
             ));
         }
@@ -495,13 +495,13 @@ fn validate_receipt_structure(value: &serde_json::Value, path: &Path) -> Result<
         Some(id) if !id.trim().is_empty() => {}
         Some(_) => {
             return Err(format!(
-                "receipt at {} is malformed: `canonical_gap_id` must not be blank",
+                "receipt at {} is malformed: `canonical_gap_id` must not be blank; rewrite it with `ripr receipt write --gap <canonical_gap_id> ...`",
                 path.display()
             ));
         }
         None => {
             return Err(format!(
-                "receipt at {} is malformed: `canonical_gap_id` must be a string",
+                "receipt at {} is malformed: `canonical_gap_id` must be a string; rewrite it with `ripr receipt write --gap <canonical_gap_id> ...`",
                 path.display()
             ));
         }
@@ -518,7 +518,7 @@ fn validate_receipt_structure(value: &serde_json::Value, path: &Path) -> Result<
     if !VALID_VERIFY_STATUSES.contains(&status) {
         return Err(format!(
             "receipt at {} is malformed: `verify_status` {status:?} is not a valid value; \
-             expected one of: {}",
+             expected one of: {}; rewrite it with `ripr receipt write --status <value>`",
             path.display(),
             VALID_VERIFY_STATUSES.join(", ")
         ));
@@ -601,7 +601,7 @@ fn resolve_check_path_from(opts: &ReceiptCheckOptions, base: &Path) -> Result<Pa
                 .unwrap_or(current))
         }
         (None, None) => Err(
-            "receipt check requires --path <receipt_path> or --gap <canonical_gap_id>".to_string(),
+            "receipt check requires --path <receipt_path> or --gap <canonical_gap_id>; pass one of them".to_string(),
         ),
     }
 }

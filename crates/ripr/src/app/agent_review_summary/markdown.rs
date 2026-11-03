@@ -1,3 +1,6 @@
+use super::report::{
+    NO_ANALYSIS_YET, review_summary_before_analysis_artifact, reviewer_summary_headline_markdown,
+};
 use super::types::AgentReviewSummaryReport;
 use crate::output::markdown::{PowershellForm, command_shell_disclosure, powershell_form};
 
@@ -18,9 +21,16 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
         Some(seam) => rendered.push_str(&format!("Target seam: {}\n", seam.seam_id)),
         None => rendered.push_str("Target seam: unknown\n"),
     }
-    rendered.push_str(&format!("Movement: {}\n", report.static_movement.state));
-    if report.static_movement.state == "missing_artifact" {
+    let before_analysis =
+        review_summary_before_analysis_artifact(&report.surfaces, report.analysis_outcome.as_ref());
+    if before_analysis && report.static_movement.state == "missing_artifact" {
+        rendered.push_str("Movement: nothing to compare yet.\n");
         rendered.push_str(&format!("Receipt: {NO_RECEIPT_BEFORE_REPAIR}\n"));
+    } else {
+        rendered.push_str(&format!("Movement: {}\n", report.static_movement.state));
+        if report.static_movement.state == "missing_artifact" {
+            rendered.push_str(&format!("Receipt: {NO_RECEIPT_BEFORE_REPAIR}\n"));
+        }
     }
     match &report.analysis_outcome {
         Some(outcome) => rendered.push_str(&format!(
@@ -32,6 +42,9 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
                 "incomplete"
             }
         )),
+        None if before_analysis => {
+            rendered.push_str(&format!("Analysis outcome: {NO_ANALYSIS_YET}\n"));
+        }
         None => {
             rendered.push_str("Analysis outcome: unavailable (incomplete)\n");
             // Carry the producer-artifact reason (for example a findings-bounded
@@ -62,11 +75,20 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
     }
     rendered.push('\n');
     rendered.push_str("## Reviewer Focus\n\n");
-    rendered.push_str(&format!("{}\n\n", report.reviewer_summary.headline));
-    rendered.push_str(&format!(
-        "What changed: {}\n",
-        report.reviewer_summary.what_changed
-    ));
+    let headline = reviewer_summary_headline_markdown(
+        &report.status,
+        report.target_seam.as_ref(),
+        &report.static_movement,
+        report.analysis_outcome.as_ref(),
+        &report.surfaces,
+    );
+    rendered.push_str(&format!("{headline}\n\n"));
+    let what_changed = if before_analysis {
+        NO_ANALYSIS_YET.to_string()
+    } else {
+        report.reviewer_summary.what_changed.clone()
+    };
+    rendered.push_str(&format!("What changed: {what_changed}\n"));
     rendered.push_str(&format!("Evidence: {}\n", report.reviewer_summary.evidence));
     rendered.push_str(&format!(
         "Remaining: {}\n",

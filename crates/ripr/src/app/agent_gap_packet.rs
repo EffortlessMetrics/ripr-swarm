@@ -43,7 +43,7 @@ pub(crate) fn render_agent_packet_from_gap_ledger(
         .records
         .iter()
         .find(|record| record.gap_id == gap_id || record.canonical_gap_id == gap_id)
-        .ok_or_else(|| format!("agent packet gap_id {gap_id} was not found"))?;
+        .ok_or_else(|| format!("agent packet gap_id {gap_id} was not found in {}; pass a gap_id listed in that gap ledger", gap_ledger.display()))?;
     let currentness = output::agent_seam_packets::evaluate_gap_record_source_currentness(
         output::agent_seam_packets::GapRecordSourceInput {
             root,

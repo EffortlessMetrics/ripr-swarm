@@ -28,9 +28,12 @@ After the snapshot:
    new finding, completed required proof, or merged/closed disposition.
 2. Otherwise select another already-authorized independent claim, review,
    repair, or bounded evidence task. Preserve one writer per candidate.
-3. If no useful work remains, emit `GOAL_IN_FLIGHT` with the exact waits and
-   stop. Do not create a resident watcher, claim background monitoring, or keep
-   the conversation alive with status-only turns.
+3. If no useful work remains, retain `GOAL_IN_FLIGHT` with the exact waits and
+   accountable owner. A bounded worker may yield to that owner or a supported,
+   actually arranged continuation. The owner uses supported spaced waits or events
+   within the task window, then inspects the result. On interruption or exhaustion,
+   leave an exact durable handoff; never claim unarranged background monitoring or
+   create a resident polling worker.
 
 Unrelated work is not made relevant by spare capacity. Productive waiting uses
 the accepted goal and current backlog; it does not manufacture adjacent scope.
@@ -54,10 +57,29 @@ provider cache. The older cache-TTL watcher learning explains one historical
 cost tradeoff; current delivery law prefers useful work or an honest yield over
 an idle polling loop.
 
+## Failure, retry and uncertain writes
+
+Classify source, test/oracle, instrument and infrastructure failures using the
+actual head and applicable evidence; keep an unknown cause unknown. A deterministic
+failure calls for investigation or repair, not repeated identical runs. A bounded
+retry is appropriate for a demonstrated transient when it can change the decision.
+A denied operation blocks only dependent work: retain the tool, exact action,
+target and stated reason, and continue independent authorized work. A denied read
+does not by itself establish a denial of a distinct write. Assess each action's
+authorization, dependencies and actual holds separately; do not use a distinct
+write to obtain data from a denied read or otherwise route around that denial.
+Do not retry an unchanged denial
+or seek broader permissions as a generic remedy. If a denied operation is known
+not to have executed, retry it at most once after material new evidence changes
+the basis for that operation, subject to the host's restrictions. If a write's
+outcome is uncertain,
+read back the native object before deciding whether any retry is safe; never assume
+it failed or duplicate a merge, label request, reply or publication blindly.
+
 ## Resume contract
 
-A new user turn or observed event rehydrates the exact PR/head/run and resumes at
-the earliest missing judgment. Re-read native state; do not trust the old timer,
+A resumed owner rehydrates the exact PR/head/run on the relevant event or supported
+recheck and resumes at the earliest missing judgment. Re-read native state; do not trust the old timer,
 summary, or predicted completion.
 
 A wait may resolve to:
@@ -82,8 +104,10 @@ a one-minute timer is the wrong result.
 ### All lanes remote-owned
 
 Every accepted lane is waiting on CI or external review and no authorized local
-work remains. Return `GOAL_IN_FLIGHT` naming each exact wake event and stop.
-Starting a watcher agent is the wrong result.
+work remains. Retain `GOAL_IN_FLIGHT` with each exact wake event and accountable
+owner. A bounded worker may return to the owner, who continues within the actual
+task window or leaves an honest durable handoff on interruption. Starting an idle
+polling agent or claiming an unarranged watcher is the wrong result.
 
 ### Material event
 

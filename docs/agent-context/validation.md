@@ -11,6 +11,16 @@ and toolchain before composing commands. Read `rust-toolchain.toml` rather than
 copying a version from a retained session. Detect installed tools instead of
 assuming Unix utilities or PowerShell cmdlets exist.
 
+A PATH lookup miss alone does not establish that a tool is unavailable. Before
+claiming it missing, inspect permitted configured and local toolchain locations
+appropriate to the host, including process-local Cargo and rustup homes when
+applicable. Verify the resolved executable runs and reports its version with a
+matching toolchain configuration. Record the attempted location and result;
+distinguish absent, present but unusable, and access denied. Do not read a denied
+path or retry a denied source operation by another route. Use process-local
+configuration when needed; do not install tools automatically or alter persistent
+settings. A usable tool does not itself establish native-platform proof or a pass.
+
 The shell determines grammar; the OS does not. Use PowerShell syntax when the
 active shell is PowerShell, including PowerShell on Linux. Use the actual Bash
 or POSIX grammar in Bash/WSL/Linux/macOS. A native Windows qualification still
@@ -113,6 +123,7 @@ PR-native continuation record's `Validation:` line (see
 | Required Rust tests | `cargo nextest run -p <impacted package>` | Hosted runs `cargo nextest run --workspace --profile ci`. A `-p` run is focused proof, not that run; `cargo-nextest` may need installing, and `.config/nextest.toml` lists `--skip` filters for the slow LSP tests. |
 | Doctests | `cargo test --workspace --doc` | Nextest does not run doctests. |
 | Golden, fixture, verdict contracts | `cargo xtask goldens check`, `cargo xtask fixtures`, `cargo xtask verdict-corpus check-all` | Run when output, fixtures or analysis change. |
+| User-text plain-language gate | `cargo xtask check-user-text` | Runs inside `precommit` and the hosted gate (`--tree`). Run it with `main` fetched: a red `new path, 0 at the merge-base` on a new fixture golden is a dependency, not a fixture bug — see [PR automation](../PR_AUTOMATION.md#user-text-ordering-rule-for-new-fixture-goldens). |
 
 Do not report a row as passed unless it ran to a zero native exit status on the
 exact head; list the rows not run and why.
@@ -231,5 +242,5 @@ Run this with `check-workflows` for changes to:
 
 For secrets, workflows, dependency policy, release scripts or command execution,
 inspect permissions, event triggers, fork behavior, artifact/log exposure and
-whether secrets can be printed or written. Diagnose branch protection and
-rulesets read-only; ordinary PR repair never authorizes weakening them.
+whether secrets can be printed or written. Routine PR repair does not need to
+read branch-protection or ruleset settings and never authorizes weakening them.

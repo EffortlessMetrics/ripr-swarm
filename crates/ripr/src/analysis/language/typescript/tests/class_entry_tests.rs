@@ -211,12 +211,94 @@ fn an_instance_assignment_shadows_the_method() -> Result<(), String> {
 }
 
 #[test]
+fn method_reference_in_sync_callback_records_an_edge() {
+    for (label, call) in [
+        ("map callback", "this.items = [value].map(this._collect);"),
+        (
+            "forEach with thisArg",
+            "this.items = items.forEach(this._collect, this);",
+        ),
+        (
+            "bound map callback",
+            "this.items = items.map(this._collect.bind(this));",
+        ),
+        (
+            "call",
+            "this.items = this._collect.call(this, value, this.items);",
+        ),
+        (
+            "apply",
+            "this.items = this._collect.apply(this, [value, this.items]);",
+        ),
+        (
+            "bound immediate invoke",
+            "this.items = this._collect.bind(this)(value, this.items);",
+        ),
+    ] {
+        let source = COMMAND.replace(
+            "    this.items = this._collect(value, this.items);",
+            &format!("    {call}"),
+        );
+        assert_eq!(entry_names(&source, "_collect"), ["add"], "{label}: {call}");
+    }
+}
+
+#[test]
+fn method_reference_in_sync_callback_relates_weakly() -> Result<(), String> {
+    let source = COMMAND.replace(
+        "    this.items = this._collect(value, this.items);",
+        "    this.items = [value].map(this._collect);",
+    );
+    assert_entry_related("map-callback-ref", &source, ADD_TEST)?;
+    let finding = collect_finding("map-callback-ref-class", &source, ADD_TEST)?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn deferred_or_stored_method_references_record_no_edge() {
+    for (label, call) in [
+        ("deferred bind", "setTimeout(this._collect.bind(this));"),
+        ("stored bind", "const f = this._collect.bind(this);"),
+        ("push registration", "this.cbs.push(this._collect);"),
+        ("event listener", "emitter.on('x', this._collect);"),
+        (
+            "not first map arg",
+            "this.items = items.map(x, this._collect);",
+        ),
+        (
+            "longer callee name",
+            "this.items = items.map(this._collectAll);",
+        ),
+        ("private callee", "this.items = items.map(this.#_collect);"),
+        (
+            "other receiver call",
+            "this.items = other._collect.call(this, value);",
+        ),
+    ] {
+        let source = COMMAND.replace(
+            "    this.items = this._collect(value, this.items);",
+            &format!("    {call}"),
+        );
+        assert!(
+            entry_names(&source, "_collect").is_empty(),
+            "{label}: {call}"
+        );
+    }
+}
+
+#[test]
+fn deferred_bound_method_reference_does_not_relate() -> Result<(), String> {
+    let source = COMMAND.replace(
+        "    this.items = this._collect(value, this.items);",
+        "    setTimeout(this._collect.bind(this));",
+    );
+    assert_no_static_path("deferred-bind", &source, ADD_TEST)
+}
+
+#[test]
 fn mentions_that_are_not_this_calls_record_no_edge() {
     for (label, call) in [
-        (
-            "callback reference",
-            "this.items = [value].map(this._collect);",
-        ),
         (
             "other receiver",
             "this.items = other._collect(value, this.items);",

@@ -92,13 +92,13 @@ pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCar
             ))
     {
         return Err(
-            "repair card route gate is closed; the card must not present a runnable route"
+            "repair card route gate is closed, so no runnable route can be shown; report this as a ripr bug with the command you ran"
                 .to_string(),
         );
     }
     if input.instruction.has_suggested_assertion && input.assertion_goal_detail.is_none() {
         return Err(
-            "producer claims a suggested assertion but supplied no assertion text".to_string(),
+            "producer claims a suggested assertion but supplied no assertion text; this is a ripr bug, report it with the command you ran".to_string(),
         );
     }
     if input.subject.seam_id != input.readiness.seam_id {
@@ -116,7 +116,7 @@ pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCar
     }
     if input.rejected_alternatives.len() > crate::domain::MAX_REPAIR_CARD_REJECTED_ALTERNATIVES {
         return Err(
-            "repair card rejected_alternatives exceed the compact-card boundary".to_string(),
+            "repair card rejected_alternatives exceed the compact-card boundary; this is a ripr bug, report it with the command you ran".to_string(),
         );
     }
     let selected_basis = input
@@ -281,6 +281,7 @@ fn canonical_next_action_for_card(
         check_item: None,
         card_item: Some(input.subject.seam_id.clone()),
         item_candidates: Vec::new(),
+        item_candidate_labels: Vec::new(),
         attempts,
         currentness: NextActionCurrentness {
             head_expected: Some(input.snapshot.repository_head.clone()),
@@ -455,6 +456,8 @@ mod tests {
             has_fix_site: state == FixInstructionState::FixSiteReady,
             has_suggested_assertion: true,
             limitation_kinds: Vec::new(),
+            instruction_semantic_id: None,
+            instruction_instance_id: None,
         }
     }
 
@@ -599,6 +602,30 @@ mod tests {
         if canonical.is_executable() || canonical.command().is_some() {
             return Err("the witness gap must not expose an executable route".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_next_action_json_keeps_seam_wording_while_human_uses_spot() -> Result<(), String> {
+        let instruction = instruction(FixInstructionState::Unavailable);
+        let readiness = ready_readiness();
+        let input = base_input(&instruction, &readiness);
+        let card = build_repair_card(&input)?;
+        let canonical = card
+            .canonical_next_action
+            .as_ref()
+            .ok_or_else(|| "the card must mint a canonical action".to_string())?;
+        let human = crate::output::next_action::render_next_action_human(canonical);
+        assert!(
+            human.contains("names this spot"),
+            "human card text must use spot:\n{human}"
+        );
+        let json = serde_json::to_string(canonical)
+            .map_err(|error| format!("serialize canonical next action: {error}"))?;
+        assert!(
+            json.contains("names this seam"),
+            "JSON must keep producer seam wording:\n{json}"
+        );
         Ok(())
     }
 
@@ -761,7 +788,9 @@ mod tests {
         input.next_command = Some(&command);
         assert_eq!(
             build_repair_card(&input).err().as_deref(),
-            Some("repair card route gate is closed; the card must not present a runnable route")
+            Some(
+                "repair card route gate is closed, so no runnable route can be shown; report this as a ripr bug with the command you ran"
+            )
         );
         Ok(())
     }

@@ -27,6 +27,18 @@ fn tsconfig_path_aliases_resolve_by_default_and_explicit_false_opts_out() -> Res
 }
 
 #[test]
+fn semantic_config_diagnostic_human_first_line_includes_exact_coordinates() {
+    let source = "[analysis]\nmode = \"bad\"\n";
+    let diagnostic = parse_config_diagnostic(source).expect_err("invalid mode");
+    let line = diagnostic.human_first_line("/tmp/ripr.toml");
+    assert!(
+        line.starts_with("/tmp/ripr.toml:2:"),
+        "expected path:line:column prefix, got {line}"
+    );
+    assert!(line.contains("analysis.mode"));
+}
+
+#[test]
 fn semantic_config_diagnostic_locates_canonical_value_not_comment_or_other_leaf() {
     let source = "# reachable_unrevealed = \"eror\"\n[severity.seams]\nreachable_unrevealed = \"warning\"\n[severity.findings]\nreachable_unrevealed = \"eror\"\n";
     let diagnostic = parse_config_diagnostic(source).expect_err("invalid nested severity");
@@ -3038,6 +3050,22 @@ fn explicit_config_wins_when_markers_and_source_both_detect() -> Result<(), Stri
         "explicit list is used verbatim: no duplicate, order preserved"
     );
     let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #11563: the `toml` lexer needs ~27x the text size, so `parse_config` itself
+/// refuses text past the metadata cap (the candidate-tree blob never passes
+/// through the bounded file read).
+#[test]
+fn parse_config_refuses_text_over_the_metadata_cap() -> Result<(), String> {
+    let cap = crate::bounded_input::MAX_METADATA_TOML_BYTES as usize;
+    let at_cap = "\n".repeat(cap);
+    parse_config(&at_cap)?;
+    let over = "\n".repeat(cap + 1);
+    let error = parse_config(&over)
+        .err()
+        .ok_or("text over the cap must be refused")?;
+    assert!(error.contains("metadata limit"), "{error}");
     Ok(())
 }
 

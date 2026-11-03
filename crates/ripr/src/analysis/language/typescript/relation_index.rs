@@ -265,7 +265,7 @@ mod tests {
             class_name: None,
             decorated: false,
             exported_as_default: false,
-            imports: Vec::new(),
+            imports: Default::default(),
             params: Vec::new(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,

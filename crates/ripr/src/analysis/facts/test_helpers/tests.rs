@@ -1572,16 +1572,25 @@ fn plain_helper_keeps_credit_for_a_name_that_is_not_a_call_making_closure()
 }
 
 #[test]
-fn alias_of_a_named_closure_keeps_plain_helper_credit_as_a_disclosed_residual()
--> Result<(), Box<dyn Error>> {
-    // Known residual (#9997): `let h = c` is not a closure literal, so the
-    // alias is not followed. Pinned so a later fix flips this test knowingly.
+fn plain_helper_withheld_for_an_alias_of_a_named_call_making_closure() -> Result<(), Box<dyn Error>>
+{
     let index = index_for(&callback_source(
         UNUSED_CLOSURE_HELPER,
         "        let c = || gate(11);\n        let h = c;\n        run_test(true, h);\n",
     ))?;
     let test = test_named(&index, "boundary")?;
-    assert_eq!(assertion_texts(test), vec!["assert_eq!(want, true);"]);
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    Ok(())
+}
+
+#[test]
+fn plain_helper_withheld_for_a_boxed_named_call_making_closure() -> Result<(), Box<dyn Error>> {
+    let index = index_for(&callback_source(
+        UNUSED_CLOSURE_HELPER,
+        "        let c = Box::new(|| gate(11));\n        run_test(true, c);\n",
+    ))?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
     Ok(())
 }
 

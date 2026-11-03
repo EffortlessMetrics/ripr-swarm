@@ -159,7 +159,7 @@ pub(crate) fn analysis_outcome_artifact_path_for_verify(
     verify_path
         .parent()
         .map(|parent| parent.join("analysis-outcome.json"))
-        .ok_or_else(|| "agent verify path has no parent directory".to_string())
+        .ok_or_else(|| "agent verify path has no parent directory; pass the verify JSON as a file path inside a directory".to_string())
 }
 
 pub(crate) fn validate_analysis_outcome_artifact(

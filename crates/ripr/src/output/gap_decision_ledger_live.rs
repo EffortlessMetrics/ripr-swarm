@@ -15,8 +15,11 @@ pub(crate) fn parse_gap_record_source_with_provenance_json(
     contents: &str,
 ) -> Result<ParsedGapRecordSourceWithProvenance, String> {
     let parsed = gap_decision_ledger::parse_gap_record_source_json(contents)?;
-    let value: serde_json::Value =
-        serde_json::from_str(contents).map_err(|error| format!("invalid JSON: {error}"))?;
+    let value: serde_json::Value = serde_json::from_str(contents).map_err(|error| {
+        format!(
+            "invalid JSON: {error}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     let inputs = value.get("inputs").and_then(serde_json::Value::as_object);
 
     let (source_kind, source_kind_error) = provenance_string(inputs, "source_kind");

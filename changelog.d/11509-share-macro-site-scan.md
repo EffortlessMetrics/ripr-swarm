@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr check` on a large workspace no longer repeats the trusted-macro site scan for every analysis pass: the scan result is held on the index, keyed by the index state it was computed under (file text, workspace macro scope, module edges), and passes over that same state reuse it. Findings and classifications are unchanged; a changed file or macro context recomputes (#11509, #11205).

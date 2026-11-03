@@ -27,6 +27,8 @@ pub(super) struct FirstPrOptions {
     pub(super) out_dir: String,
     pub(super) check: bool,
     pub(super) preflight: bool,
+    /// `--run-chain` (#11720): run the missing-artifact chain before composing.
+    pub(super) run_chain: bool,
     /// Test-only ceiling for `GIT_CEILING_DIRECTORIES`; `None` in production.
     pub(crate) git_ceiling: Option<PathBuf>,
 }
@@ -81,6 +83,7 @@ impl Default for FirstPrOptions {
             out_dir: DEFAULT_OUT_DIR.to_string(),
             check: false,
             preflight: false,
+            run_chain: false,
             git_ceiling: None,
         }
     }
@@ -141,19 +144,30 @@ pub(super) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
                 options.out_dir = non_empty_arg(args, i, "--out-dir")?.to_string();
             }
             "--check" => options.check = true,
+            "--run-chain" => options.run_chain = true,
             other => return Err(unknown_argument("first-pr", other)),
         }
         i += 1;
+    }
+    if options.run_chain && options.check {
+        return Err("first-pr --run-chain cannot be combined with --check: --check only validates an existing packet and never runs analysis; run first-pr with only one of the two".to_string());
+    }
+    if options.run_chain && options.check_output.is_some() {
+        return Err("first-pr --run-chain cannot be combined with --check-output: a supplied check output already provides the gap ledger input, so there is no chain to run; run first-pr with only one of the two".to_string());
     }
     Ok(options)
 }
 
 fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
     let Some(value) = args.get(index) else {
-        return Err(format!("missing value for {flag}"));
+        return Err(format!(
+            "missing value for {flag}; pass a value right after it"
+        ));
     };
     if value.trim().is_empty() {
-        return Err(format!("first-pr {flag} requires a non-empty value"));
+        return Err(format!(
+            "first-pr {flag} requires a non-empty value; pass a value right after {flag}"
+        ));
     }
     Ok(value)
 }
@@ -170,8 +184,10 @@ pub(super) fn print_help() {
 /// option-list lines, not only inside the usage brackets.
 pub(crate) const FIRST_PR_HELP: &str = "\
 Create the start-here packet for one PR from existing RIPR artifacts.
+By default first-pr runs no analysis: it prints the next command for a missing
+artifact. Pass --run-chain to have it run the missing-artifact chain itself.
 
-Usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check]
+Usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check] [--run-chain]
 
 Options:
   --root <path>              Workspace root. Defaults to .
@@ -180,7 +196,7 @@ Options:
                              origin/master, main, and master.
   --head <rev>               PR head revision. Defaults to HEAD.
   --check-output <path>      Existing `ripr check --json` output to derive the gap ledger from.
-                             first-pr never runs analysis itself.
+                             Without --run-chain, first-pr never runs analysis itself.
   --gap-ledger <path>        Gap-decision ledger JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
   --first-action <path>      First-useful-action JSON. Defaults to target/ripr/reports/first-useful-action.json.
   --review-comments <path>   Review-comments JSON. Defaults to target/ripr/review/comments.json.
@@ -189,6 +205,15 @@ Options:
   --receipts-dir <path>      Receipt directory. Defaults to target/ripr/receipts.
   --out-dir <path>           Output directory. Defaults to target/ripr/reports.
   --check                    Verify the existing start-here packet is up to date.
+  --run-chain                Opt in to running the missing-artifact chain first: the repo-exposure
+                             report (a `ripr check` run on a Python or TypeScript root without a
+                             Cargo manifest), the gap ledger, then the review cards, each only when missing
+                             and each exactly the command first-pr prints, with the resolved
+                             --base and --head. This runs analysis (cost scales with the repository),
+                             writes the missing artifacts (by default under target/ripr/) and
+                             uses no network. The first failing step stops the chain with exit 2 and
+                             no start-here packet is written from partial artifacts. Cannot be
+                             combined with --check or --check-output.
 
 Exit status:
   0  the start-here packet was written, or --check found a current, unblocked packet

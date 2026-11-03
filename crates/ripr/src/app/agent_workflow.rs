@@ -431,11 +431,11 @@ fn workflow_seam_from_brief(
     requested_seam_id: &str,
 ) -> Result<AgentWorkflowSeam, String> {
     let value: Value = serde_json::from_str(agent_brief_json)
-        .map_err(|err| format!("failed to parse generated agent brief JSON: {err}"))?;
+        .map_err(|err| format!("failed to parse generated agent brief JSON: {err}; this is a ripr bug, report it with the command you ran"))?;
     let top_seams = value
         .get("top_seams")
         .and_then(Value::as_array)
-        .ok_or_else(|| "generated agent brief JSON is missing top_seams array".to_string())?;
+        .ok_or_else(|| "generated agent brief JSON is missing top_seams array; this is a ripr bug, report it with the command you ran".to_string())?;
     let seam = top_seams
         .iter()
         .find(|seam| string_field(seam, "seam_id").as_deref() == Some(requested_seam_id))

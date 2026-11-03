@@ -1,8 +1,0 @@
-crates/ripr/src/app/causal_projection.rs|canonical delta contains invalid delta: {error}
-crates/ripr/src/app/causal_projection.rs|canonical delta coverage missing {field} canonical_owner behavior_identity discriminator_identity gap_state or
-crates/ripr/src/app/causal_projection.rs|canonical delta missing coverage
-crates/ripr/src/app/causal_projection.rs|canonical delta missing deltas array canonical delta contains invalid delta: {error}
-crates/ripr/src/app/causal_projection.rs|canonical delta missing schema_version
-crates/ripr/src/app/causal_projection.rs|parse canonical delta failed: {error}
-crates/ripr/src/app/causal_projection.rs|read canonical delta failed: {error}
-crates/ripr/src/app/causal_projection.rs|unsupported canonical delta schema_version `{schema_version}`

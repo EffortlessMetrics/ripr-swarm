@@ -1,3 +1,0 @@
-crates/ripr/src/lsp/actions.rs|`{SHOW_RELATED_TEST_COMMAND}` target is not an existing file inside the workspace
-crates/ripr/src/lsp/actions.rs|code action carries no command and its payload cannot recover one
-crates/ripr/src/lsp/actions.rs|code action is missing its ripr data payload

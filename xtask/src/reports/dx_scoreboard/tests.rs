@@ -2076,6 +2076,7 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
         heavy: false,
         language: None,
         ceilings: BTreeMap::new(),
+        expected_partial: None,
     };
     let full = "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b";
     assert_eq!(validate_corpus(&[entry("a", full)]), Ok(()));
@@ -3416,6 +3417,7 @@ fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_par
         heavy: false,
         language: None,
         ceilings: BTreeMap::new(),
+        expected_partial: None,
     };
 
     let refused = super::measure::prepare_checkout(&entry, &options);
@@ -3652,6 +3654,7 @@ fn admission_subject() -> CheckSubject {
         mode: "draft".to_string(),
         base: "HEAD~1".to_string(),
         head: Some("abc123".to_string()),
+        expected_partial: None,
     }
 }
 
@@ -4605,17 +4608,57 @@ fn committed_agent_receipt() -> Result<Value, String> {
     serde_json::from_str(COMMITTED_AGENT_RECEIPT).map_err(|err| err.to_string())
 }
 
+/// The check the committed receipt must pass: the gate passes and no
+/// baseline-measured metric or repository is missing. A missing sample is an
+/// `Err` here, never a pass, even though the generic gate only lists it as
+/// uncompared.
+fn agent_receipt_check(receipt: &Value) -> Result<(), String> {
+    let report = agent_gate_report(receipt)?;
+    if report["gate"]["status"].as_str() != Some("pass") {
+        return Err(gate_failure_message(&report));
+    }
+    let gaps = agent_coverage_gaps(&report, &agent_baseline()?);
+    if gaps.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("receipt lost baseline coverage: {gaps:?}"))
+    }
+}
+
 #[test]
 fn committed_agent_receipt_does_not_regress_the_agent_baseline() -> Result<(), String> {
-    let report = agent_gate_report(&committed_agent_receipt()?)?;
-    assert_eq!(
-        report["gate"]["status"].as_str(),
-        Some("pass"),
-        "{}",
-        gate_failure_message(&report)
-    );
-    let gaps = agent_coverage_gaps(&report, &agent_baseline()?);
-    assert!(gaps.is_empty(), "receipt lost baseline coverage: {gaps:?}");
+    agent_receipt_check(&committed_agent_receipt()?)
+}
+
+/// Deleting a measured metric, or one repository's sample of it, must fail
+/// the receipt check (not merely be listed), for every size metric and the
+/// agent-format gap count.
+#[test]
+fn agent_receipt_check_fails_when_a_measured_sample_disappears() -> Result<(), String> {
+    for id in [
+        "agent.check_bytes_human",
+        "agent.check_bytes_agent_format",
+        "agent.check_bytes_json",
+        "agent.agent_format_gaps_before_fix",
+    ] {
+        let mut whole = committed_agent_receipt()?;
+        let rows = whole["metrics"].as_array_mut().ok_or("no metrics")?;
+        rows.retain(|row| row["id"].as_str() != Some(id));
+        let err = agent_receipt_check(&whole)
+            .err()
+            .ok_or_else(|| format!("dropping {id} passed the receipt check"))?;
+        assert!(err.contains(id), "{id} not named in: {err}");
+
+        let mut one = committed_agent_receipt()?;
+        let rows = one["metrics"].as_array_mut().ok_or("no metrics")?;
+        rows.retain(|row| {
+            !(row["id"].as_str() == Some(id) && row["repo"].as_str() == Some("humantime"))
+        });
+        let err = agent_receipt_check(&one)
+            .err()
+            .ok_or_else(|| format!("dropping {id} for humantime passed the receipt check"))?;
+        assert!(err.contains(id), "{id} not named in: {err}");
+    }
     Ok(())
 }
 
@@ -4638,6 +4681,96 @@ fn agent_gate_fails_the_receipt_from_before_the_rerun() -> Result<(), String> {
     Ok(())
 }
 
+/// Copy of the committed receipt with one repo's `id` value replaced.
+fn agent_receipt_with_value(id: &str, repo: &str, value: f64) -> Result<Value, String> {
+    let mut receipt = committed_agent_receipt()?;
+    let row = receipt["metrics"]
+        .as_array_mut()
+        .and_then(|rows| {
+            rows.iter_mut()
+                .find(|row| row["id"].as_str() == Some(id) && row["repo"].as_str() == Some(repo))
+        })
+        .ok_or_else(|| format!("receipt has no {id} for {repo}"))?;
+    row["value"] = json!(value);
+    Ok(receipt)
+}
+
+fn agent_receipt_value(id: &str, repo: &str) -> Result<f64, String> {
+    committed_agent_receipt()?["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["id"].as_str() == Some(id) && row["repo"].as_str() == Some(repo))
+        .and_then(|row| row["value"].as_f64())
+        .ok_or_else(|| format!("receipt has no {id} for {repo}"))
+}
+
+/// #11816: output size per command is gated per format against the prior
+/// receipt. Growth up to the margin (the larger of `regression_pct` percent
+/// and `regression_floor` bytes, read from the committed config) passes, one
+/// byte more fails and names the metric and repository, and shrinking never
+/// fails. `--format agent` carries the tightest margin.
+#[test]
+fn agent_gate_fails_when_command_output_grows_past_its_margin() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    for (id, repo) in [
+        ("agent.check_bytes_agent_format", "bytesize"),
+        ("agent.check_bytes_agent_format", "humantime"),
+        ("agent.check_bytes_agent_format", "semver"),
+        ("agent.check_bytes_human", "bytesize"),
+        ("agent.check_bytes_json", "semver"),
+    ] {
+        let def = config
+            .metric
+            .iter()
+            .find(|def| def.id == id)
+            .ok_or_else(|| format!("{id} not configured"))?;
+        let base = agent_receipt_value(id, repo)?;
+        let slack = (base * def.regression_pct / 100.0).max(def.regression_floor);
+
+        let at_margin = agent_gate_report(&agent_receipt_with_value(id, repo, base + slack)?)?;
+        assert_eq!(
+            at_margin["gate"]["status"].as_str(),
+            Some("pass"),
+            "{id} {repo}: growth equal to the margin must pass: {}",
+            gate_failure_message(&at_margin)
+        );
+
+        let over = agent_gate_report(&agent_receipt_with_value(id, repo, base + slack + 1.0)?)?;
+        assert_eq!(
+            over["gate"]["status"].as_str(),
+            Some("fail"),
+            "{id} {repo}: growth past the margin must fail"
+        );
+        let message = gate_failure_message(&over);
+        assert!(message.contains(id), "{id} not named in: {message}");
+        assert!(message.contains(repo), "{repo} not named in: {message}");
+
+        let smaller = agent_gate_report(&agent_receipt_with_value(id, repo, 1.0)?)?;
+        assert_eq!(smaller["gate"]["status"].as_str(), Some("pass"), "{id}");
+    }
+    Ok(())
+}
+
+/// The committed byte metrics are measurements, not placeholders: all three
+/// formats on all three pinned targets, and the compact format is smaller than
+/// the human one it is meant to replace for an agent.
+#[test]
+fn committed_agent_receipt_records_bytes_for_every_format_and_target() -> Result<(), String> {
+    for repo in ["bytesize", "humantime", "semver"] {
+        let human = agent_receipt_value("agent.check_bytes_human", repo)?;
+        let agent = agent_receipt_value("agent.check_bytes_agent_format", repo)?;
+        let json_bytes = agent_receipt_value("agent.check_bytes_json", repo)?;
+        assert!(agent > 0.0, "{repo}: agent-format bytes not measured");
+        assert!(
+            agent < human,
+            "{repo}: agent {agent} not under human {human}"
+        );
+        assert!(json_bytes > 0.0, "{repo}: json bytes not measured");
+    }
+    Ok(())
+}
+
 /// Dropping evidence passes the generic gate, so the coverage check is the
 /// control: each ratcheted metric, and one repository's sample of a per-repo
 /// metric, must be reported as lost.
@@ -4649,6 +4782,9 @@ fn agent_coverage_check_names_dropped_metrics_and_samples() -> Result<(), String
         "agent.tool_steps_to_fix",
         "agent.false_weak_findings_after_fix",
         "agent.white_box_tests_to_satisfy_ripr",
+        "agent.check_bytes_human",
+        "agent.check_bytes_agent_format",
+        "agent.check_bytes_json",
     ] {
         let mut receipt = committed_agent_receipt()?;
         let rows = receipt["metrics"].as_array_mut().ok_or("no metrics")?;
@@ -4990,6 +5126,16 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
             false,
         ),
         (
+            "vscode-typescript",
+            "c198526d8e64ba6f9944e9f7bcc079ed1f6d7fcc",
+            true,
+        ),
+        (
+            "typescript-compiler",
+            "ad04bf7488384a5dcdf7d250ccb8e5263021a8ff",
+            true,
+        ),
+        (
             "hono-typescript",
             "d54720da80134a180f5fe2dd98a7676cfc8f08b4",
             false,
@@ -4997,8 +5143,106 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
     ];
     if typescript != expected {
         return Err(format!(
-            "expected only the verified defu, ky, h3, execa, destr, zod, valibot, remeda and hono TypeScript rows, got {typescript:?}"
+            "expected only the verified defu, ky, h3, execa, destr, zod, valibot, remeda, vscode, typescript-compiler and hono TypeScript rows, got {typescript:?}"
         ));
+    }
+    // The large-workspace rows are regression gates (#11676, #11794): the
+    // pin above fixes what is measured, these fix how much slack it gets.
+    for (id, ms, rss) in [
+        ("vscode-typescript", 90_000.0, 1024.0),
+        ("typescript-compiler", 5_000.0, 256.0),
+    ] {
+        let entry = config
+            .corpus
+            .iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| format!("{id} row is missing"))?;
+        if entry.ceilings.get("speed.warm_check_ms") != Some(&ms)
+            || entry.ceilings.get("speed.warm_check_peak_rss_mb") != Some(&rss)
+        {
+            return Err(format!(
+                "{id} must gate warm checks at {ms} ms and {rss} MiB, got {:?}",
+                entry.ceilings
+            ));
+        }
+    }
+    // Only the over-the-walk-cap compiler row expects a partial outcome; a
+    // row that expected one by accident would admit an incomplete analysis.
+    for entry in &config.corpus {
+        let expected = (entry.id == "typescript-compiler").then_some("language_scope_unsupported");
+        if entry.expected_partial.as_deref() != expected {
+            return Err(format!(
+                "{} expected_partial must be {expected:?}, got {:?}",
+                entry.id, entry.expected_partial
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn an_expected_partial_limit_must_be_a_snake_case_name() -> Result<(), String> {
+    let mut config = ceilinged_config("\"speed.warm_check_ms\" = 2000.0")?;
+    let entry = config.corpus.first_mut().ok_or("config has no rows")?;
+    entry.expected_partial = Some("typescript_workspace_discovery_truncated".to_string());
+    validate_corpus(&config.corpus)?;
+    let entry = config.corpus.first_mut().ok_or("config has no rows")?;
+    entry.expected_partial = Some("made_up_limit".to_string());
+    if validate_corpus(&config.corpus).is_ok() {
+        return Err("a limit with no known typed cause must not validate".to_string());
+    }
+    for bad in ["", "Truncated", "two words", "limit-kind"] {
+        let entry = config.corpus.first_mut().ok_or("config has no rows")?;
+        entry.expected_partial = Some(bad.to_string());
+        if validate_corpus(&config.corpus).is_ok() {
+            return Err(format!("`{bad}` must not be a valid expected_partial"));
+        }
+    }
+    Ok(())
+}
+
+/// An expected partial outcome is a measured speed value that stays visibly
+/// partial, and its document never feeds the contradiction scan (#12052).
+#[cfg(unix)]
+#[test]
+fn an_expected_partial_warm_check_is_a_value_that_trust_does_not_scan() -> Result<(), String> {
+    use std::os::unix::process::ExitStatusExt;
+    let limit = "typescript_workspace_discovery_truncated";
+    let mut doc = complete_check_json(1);
+    doc["findings"][0]["classification"] = json!("static_unknown");
+    doc["findings"][0]["static_limit_kind"] = json!(limit);
+    doc["analysis_outcome"]["analysis_complete"] = json!(false);
+    doc["analysis_outcome"]["outcome"]["kind"] = json!("partial_with_limitations");
+    doc["analysis_outcome"]["outcome"]["limitations"] = json!([{ "kind": "diff_scope_oversized" }]);
+    let stdout = doc.to_string();
+    let run = || {
+        let mut run = measured(false, Some(64 * 1024 * 1024));
+        run.output.status = Some(std::process::ExitStatus::from_raw(0));
+        run.output.stdout = stdout.clone();
+        run
+    };
+    let mut subject = admission_subject();
+    subject.expected_partial = Some(limit.to_string());
+
+    let (samples, contradictions, missing) =
+        record_with_subject(&subject, Ok(run()), Ok(Some(run())));
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    if !matches!(warm.outcome, SampleOutcome::Value(_)) {
+        return Err(format!("expected a measured value, got {:?}", warm.outcome));
+    }
+    if !warm.detail.contains("expected partial outcome") || !warm.detail.contains(limit) {
+        return Err(format!("the row must read as partial, got {}", warm.detail));
+    }
+    if contradictions.is_some() || !missing.contains(&"warm check JSON") {
+        return Err(format!(
+            "a partial document must not be scanned: {contradictions:?} {missing:?}"
+        ));
+    }
+    // The same document on a row that did not declare it stays incomplete.
+    let (samples, _, _) = record_with_subject(&admission_subject(), Ok(run()), Ok(Some(run())));
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    if !matches!(warm.outcome, SampleOutcome::Incomplete(_)) {
+        return Err(format!("expected incomplete, got {:?}", warm.outcome));
     }
     Ok(())
 }

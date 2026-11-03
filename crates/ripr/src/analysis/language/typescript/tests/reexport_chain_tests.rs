@@ -369,3 +369,57 @@ fn unavailable_star_sibling_cannot_supply_negative_export_evidence() -> Result<(
     );
     Ok(())
 }
+
+/// The facts cache clears itself at its entry bound, which a workspace larger
+/// than the bound crosses inside phase 1. The index must then be built from
+/// the facts phase 1 already derived, not by parsing every dropped file again
+/// (VS Code: 55 s of a warm run).
+#[test]
+fn a_reexport_index_built_from_known_facts_does_not_reparse_and_matches() -> Result<(), String> {
+    let root = Path::new("");
+    let files = [
+        ("src/index.ts", "export * from './utils';\n"),
+        ("src/utils.ts", UTILS),
+    ];
+    let workspace_files: Vec<PathBuf> = files.iter().map(|(p, _)| PathBuf::from(p)).collect();
+    let sources: std::collections::HashMap<PathBuf, String> = files
+        .iter()
+        .map(|(p, s)| (PathBuf::from(p), (*s).to_string()))
+        .collect();
+    let not_test = |_: &Path| false;
+
+    extraction_cache::reset_caches_for_test();
+    let mut known = std::collections::HashMap::new();
+    for (path, source) in files {
+        let facts = extraction_cache::file_facts_cached(Path::new(path), source, root, None)?;
+        known.insert(PathBuf::from(path), facts.export_facts.clone());
+    }
+    let from_cache = ReExportIndex::build(&workspace_files, &sources, root, None, not_test);
+    assert!(
+        !from_cache.exposed_names_by_owner().is_empty(),
+        "control: the fixture must produce a star hop"
+    );
+
+    // The clear that a large workspace causes mid-loop.
+    extraction_cache::reset_caches_for_test();
+    let from_known = ReExportIndex::build_with_known_facts(
+        &workspace_files,
+        &sources,
+        root,
+        None,
+        not_test,
+        &known,
+    );
+    for (path, source) in files {
+        assert!(
+            !extraction_cache::file_facts_in_memory(Path::new(path), source, root, None),
+            "{path}: building from known facts must not have re-parsed it"
+        );
+    }
+    assert_eq!(
+        from_known.exposed_names_by_owner(),
+        from_cache.exposed_names_by_owner(),
+        "known facts must give the same index as the cache"
+    );
+    Ok(())
+}

@@ -1,0 +1,9 @@
+diff --git a/guards/label_none_taken.py b/guards/label_none_taken.py
+--- a/guards/label_none_taken.py
++++ b/guards/label_none_taken.py
+@@ -1,4 +1,4 @@
+ def label_none_taken(x):
+     if x is None:
+-        return 'none'
++        return 'nil'
+     return str(x)

@@ -196,6 +196,8 @@ impl ComparisonCoverage {
 /// `base_available` and `head_available` distinguish an absent item in a
 /// complete snapshot from an unavailable snapshot. An unavailable base or
 /// head is always `comparison_unknown`, even when the other side has a record.
+/// A present unknown gap state also remains unknown: oracle rank or item
+/// presence cannot establish a causal transition from unsupported evidence.
 pub fn compare_fixture_delta(
     canonical_gap_id: impl Into<String>,
     base_available: bool,
@@ -223,22 +225,45 @@ pub fn compare_fixture_delta(
         };
     }
 
+    let unknown_gap = base_state
+        .as_ref()
+        .is_some_and(|state| state.gap_state == GapState::Unknown)
+        || head_state
+            .as_ref()
+            .is_some_and(|state| state.gap_state == GapState::Unknown);
+
     match (base_state.as_ref(), head_state.as_ref()) {
         (None, Some(_)) => CanonicalDelta {
             canonical_gap_id,
-            delta_attribution: DeltaAttribution::IntroducedByChange,
+            delta_attribution: if unknown_gap {
+                DeltaAttribution::ComparisonUnknown
+            } else {
+                DeltaAttribution::IntroducedByChange
+            },
             base_state,
             head_state,
             attribution_basis: vec![AttributionBasis::BaseItemAbsent],
-            comparison_confidence: ComparisonConfidence::FixtureBacked,
+            comparison_confidence: if unknown_gap {
+                ComparisonConfidence::Unknown
+            } else {
+                ComparisonConfidence::FixtureBacked
+            },
         },
         (Some(_), None) => CanonicalDelta {
             canonical_gap_id,
-            delta_attribution: DeltaAttribution::ResolvedByChange,
+            delta_attribution: if unknown_gap {
+                DeltaAttribution::ComparisonUnknown
+            } else {
+                DeltaAttribution::ResolvedByChange
+            },
             base_state,
             head_state,
             attribution_basis: vec![AttributionBasis::HeadItemAbsent],
-            comparison_confidence: ComparisonConfidence::FixtureBacked,
+            comparison_confidence: if unknown_gap {
+                ComparisonConfidence::Unknown
+            } else {
+                ComparisonConfidence::FixtureBacked
+            },
         },
         (Some(base), Some(head)) if !base.same_identity(head) => CanonicalDelta {
             canonical_gap_id,
@@ -254,7 +279,15 @@ pub fn compare_fixture_delta(
                 AttributionBasis::SameBehaviorIdentity,
                 AttributionBasis::SameDiscriminator,
             ];
-            let (delta_attribution, comparison_confidence) = if is_reintroduced(base, head) {
+            let (delta_attribution, comparison_confidence) = if unknown_gap {
+                if base.gap_state != head.gap_state {
+                    attribution_basis.push(AttributionBasis::GapStateChanged);
+                }
+                (
+                    DeltaAttribution::ComparisonUnknown,
+                    ComparisonConfidence::Unknown,
+                )
+            } else if is_reintroduced(base, head) {
                 attribution_basis.push(AttributionBasis::GapStateChanged);
                 (
                     DeltaAttribution::ReintroducedByChange,
@@ -321,6 +354,10 @@ fn is_reintroduced(base: &CanonicalEvidenceState, head: &CanonicalEvidenceState)
 fn is_resolved_state(gap_state: GapState) -> bool {
     matches!(gap_state, GapState::Resolved | GapState::AlreadyObserved)
 }
+
+#[cfg(kani)]
+#[path = "causal_delta_kani.rs"]
+mod kani_proofs;
 
 #[cfg(test)]
 mod tests {

@@ -153,6 +153,7 @@ fn build_release_readiness_report(version: &str) -> ReleaseReadinessReport {
         vsix_packaging_check(),
         extension_version_match_check(version, crate_version.as_deref()),
         init_pin_version_check(version),
+        init_generator_self_pin_check(&installed_binary, version, crate_version.as_deref()),
         known_limits_docs_check(),
     ];
     let status = release_readiness_status(&checks).to_string();
@@ -1075,6 +1076,16 @@ fn run_git_output_in_dir(root: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn create_external_cli_fixture(root: &Path) -> Result<(String, String), String> {
+    create_external_cli_fixture_with_seams(root, 1)
+}
+
+/// `seams` independent boundary predicates, each with one positive-value test,
+/// so the base-to-head change yields that many eligible seams. The release
+/// journey uses one; #12081 uses more than the default packet bound (3).
+fn create_external_cli_fixture_with_seams(
+    root: &Path,
+    seams: usize,
+) -> Result<(String, String), String> {
     fs::create_dir_all(root.join("src"))
         .map_err(|err| format!("create external CLI fixture source failed: {err}"))?;
     fs::create_dir_all(root.join("tests"))
@@ -1084,16 +1095,38 @@ fn create_external_cli_fixture(root: &Path) -> Result<(String, String), String> 
         "[package]\nname = \"external-cli-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     )
     .map_err(|err| format!("write external CLI fixture manifest failed: {err}"))?;
-    fs::write(
-        root.join("src/lib.rs"),
-        "pub fn classify(value: i32) -> i32 {\n    if value > 0 { 1 } else { 0 }\n}\n",
-    )
-    .map_err(|err| format!("write external CLI fixture base source failed: {err}"))?;
-    fs::write(
-        root.join("tests/behavior.rs"),
-        "#[test]\nfn positive_value_is_classified() {\n    assert_eq!(external_cli_fixture::classify(1), 1);\n}\n",
-    )
-    .map_err(|err| format!("write external CLI fixture test failed: {err}"))?;
+    let source = |comparison: &str| -> String {
+        (0..seams)
+            .map(|index| {
+                let name = if index == 0 {
+                    "classify".to_string()
+                } else {
+                    format!("classify_{index}")
+                };
+                format!(
+                    "pub fn {name}(value: i32) -> i32 {{\n    if value {comparison} 0 {{ 1 }} else {{ 0 }}\n}}\n"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    fs::write(root.join("src/lib.rs"), source(">"))
+        .map_err(|err| format!("write external CLI fixture base source failed: {err}"))?;
+    let tests: String = (0..seams)
+        .map(|index| {
+            let name = if index == 0 {
+                "classify".to_string()
+            } else {
+                format!("classify_{index}")
+            };
+            format!(
+                "#[test]\nfn {name}_positive_value_is_classified() {{\n    assert_eq!(external_cli_fixture::{name}(1), 1);\n}}\n"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(root.join("tests/behavior.rs"), tests)
+        .map_err(|err| format!("write external CLI fixture test failed: {err}"))?;
     run_git_output_in_dir(root, &["init", "--quiet"])?;
     run_git_output_in_dir(
         root,
@@ -1104,11 +1137,8 @@ fn create_external_cli_fixture(root: &Path) -> Result<(String, String), String> 
     run_git_output_in_dir(root, &["commit", "--no-gpg-sign", "--quiet", "-m", "base"])?;
     let base = run_git_output_in_dir(root, &["rev-parse", "HEAD"])?;
 
-    fs::write(
-        root.join("src/lib.rs"),
-        "pub fn classify(value: i32) -> i32 {\n    if value >= 0 { 1 } else { 0 }\n}\n",
-    )
-    .map_err(|err| format!("write external CLI fixture head source failed: {err}"))?;
+    fs::write(root.join("src/lib.rs"), source(">="))
+        .map_err(|err| format!("write external CLI fixture head source failed: {err}"))?;
     run_git_output_in_dir(root, &["add", "."])?;
     run_git_output_in_dir(root, &["commit", "--no-gpg-sign", "--quiet", "-m", "head"])?;
     let head = run_git_output_in_dir(root, &["rev-parse", "HEAD"])?;
@@ -1395,81 +1425,15 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
                 "packaged CLI context did not retain the requested finding identity".to_string(),
             );
         }
-        let pilot_out = fixture_root.join("pilot-output");
-        let pilot_out_text = pilot_out.to_string_lossy().into_owned();
-        let pilot_args = vec![
-            "pilot".to_string(),
-            "--root".to_string(),
-            root_text,
-            "--out".to_string(),
-            pilot_out_text,
-            "--timeout-ms".to_string(),
-            "30000".to_string(),
-        ];
-        let pilot = run_command_in_dir(
+        let (retained_packet, retained_summary) = run_packaged_pilot(
             &binary_text,
-            &pilot_args,
+            &root_text,
             &fixture_root,
-            "installed packaged CLI pilot",
+            &report_dir,
+            &[],
+            &mut commands,
+            &mut details,
         )?;
-        record_journey_command(&mut commands, "pilot", &pilot_args, &pilot);
-        if !pilot.success {
-            return Err("packaged CLI pilot failed".to_string());
-        }
-        let packet = pilot_out.join("agent-seam-packets.json");
-        let summary = pilot_out.join("pilot-summary.json");
-        for path in [&packet, &summary] {
-            if !path.is_file() {
-                return Err(format!(
-                    "packaged CLI pilot did not write {}",
-                    crate::normalize_path(path)
-                ));
-            }
-            let text = fs::read_to_string(path)
-                .map_err(|err| format!("read packaged CLI pilot artifact failed: {err}"))?;
-            let value: Value = serde_json::from_str(&text)
-                .map_err(|err| format!("packaged CLI pilot artifact is malformed JSON: {err}"))?;
-            if path == &packet {
-                let run_status =
-                    value
-                        .get("run_status")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| {
-                            "packaged CLI pilot packet artifact omitted run_status".to_string()
-                        })?;
-                if run_status != "complete" {
-                    return Err(format!(
-                        "packaged CLI pilot did not complete: run_status={run_status}"
-                    ));
-                }
-                let packets_total = value
-                    .get("packets_total")
-                    .and_then(Value::as_u64)
-                    .ok_or_else(|| {
-                        "packaged CLI pilot packet artifact omitted numeric packets_total"
-                            .to_string()
-                    })?;
-                details.push(format!("pilot run status: {run_status}"));
-                details.push(format!("pilot packets: {packets_total}"));
-            } else {
-                let status = value
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "packaged CLI pilot summary omitted status".to_string())?;
-                if status != "complete" {
-                    return Err(format!(
-                        "packaged CLI pilot summary was not complete: status={status}"
-                    ));
-                }
-                details.push(format!("pilot summary status: {status}"));
-            }
-        }
-        let retained_packet = report_dir.join("packaged-cli-agent-seam-packets.json");
-        let retained_summary = report_dir.join("packaged-cli-pilot-summary.json");
-        fs::copy(&packet, &retained_packet)
-            .map_err(|err| format!("retain packaged CLI packet failed: {err}"))?;
-        fs::copy(&summary, &retained_summary)
-            .map_err(|err| format!("retain packaged CLI summary failed: {err}"))?;
         Ok(PublicCliJourney {
             base,
             head,
@@ -1560,6 +1524,109 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
             },
         ),
     }
+}
+
+/// The packaged-CLI pilot step: run the installed `ripr pilot`, validate its
+/// packet and summary artifacts, and retain them beside the readiness report.
+/// Split out so a fixture that makes the packet bound fire can drive the real
+/// binary through the same gate (#12081).
+fn run_packaged_pilot(
+    binary_text: &str,
+    root_text: &str,
+    fixture_root: &Path,
+    report_dir: &Path,
+    envs: &[(&str, &str)],
+    commands: &mut Vec<Value>,
+    details: &mut Vec<String>,
+) -> Result<(PathBuf, PathBuf), String> {
+    let pilot_out = fixture_root.join("pilot-output");
+    let pilot_out_text = pilot_out.to_string_lossy().into_owned();
+    let pilot_args = vec![
+        "pilot".to_string(),
+        "--root".to_string(),
+        root_text.to_string(),
+        "--out".to_string(),
+        pilot_out_text,
+        "--timeout-ms".to_string(),
+        "30000".to_string(),
+    ];
+    // The two budget controls are cleared so an ambient value cannot change
+    // which status this step observes; `envs` re-sets what a caller needs.
+    let cleared: Vec<&str> = ["RIPR_PILOT_PACKET_BUDGET", "RIPR_PILOT_SEAM_BUDGET"]
+        .into_iter()
+        .filter(|name| !envs.iter().any(|(set, _)| set == name))
+        .collect();
+    let output = crate::run::capture_output_in_dir_with_envs(
+        binary_text,
+        &pilot_args,
+        fixture_root,
+        "installed packaged CLI pilot",
+        envs,
+        &cleared,
+    )?;
+    let pilot = CommandResult {
+        status: output.status.code(),
+        success: output.status.success(),
+        stdout: output.stdout,
+        stderr: output.stderr,
+    };
+    record_journey_command(commands, "pilot", &pilot_args, &pilot);
+    if !pilot.success {
+        return Err("packaged CLI pilot failed".to_string());
+    }
+    let packet = pilot_out.join("agent-seam-packets.json");
+    let summary = pilot_out.join("pilot-summary.json");
+    for path in [&packet, &summary] {
+        if !path.is_file() {
+            return Err(format!(
+                "packaged CLI pilot did not write {}",
+                crate::normalize_path(path)
+            ));
+        }
+        let text = fs::read_to_string(path)
+            .map_err(|err| format!("read packaged CLI pilot artifact failed: {err}"))?;
+        let value: Value = serde_json::from_str(&text)
+            .map_err(|err| format!("packaged CLI pilot artifact is malformed JSON: {err}"))?;
+        if path == &packet {
+            let run_status = value
+                .get("run_status")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    "packaged CLI pilot packet artifact omitted run_status".to_string()
+                })?;
+            if !pilot_packet_run_status_is_complete(run_status) {
+                return Err(format!(
+                    "packaged CLI pilot did not complete: run_status={run_status}"
+                ));
+            }
+            let packets_total = value
+                .get("packets_total")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    "packaged CLI pilot packet artifact omitted numeric packets_total".to_string()
+                })?;
+            details.push(format!("pilot run status: {run_status}"));
+            details.push(format!("pilot packets: {packets_total}"));
+        } else {
+            let status = value
+                .get("status")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "packaged CLI pilot summary omitted status".to_string())?;
+            if status != "complete" {
+                return Err(format!(
+                    "packaged CLI pilot summary was not complete: status={status}"
+                ));
+            }
+            details.push(format!("pilot summary status: {status}"));
+        }
+    }
+    let retained_packet = report_dir.join("packaged-cli-agent-seam-packets.json");
+    let retained_summary = report_dir.join("packaged-cli-pilot-summary.json");
+    fs::copy(&packet, &retained_packet)
+        .map_err(|err| format!("retain packaged CLI packet failed: {err}"))?;
+    fs::copy(&summary, &retained_summary)
+        .map_err(|err| format!("retain packaged CLI summary failed: {err}"))?;
+    Ok((retained_packet, retained_summary))
 }
 
 fn clear_packaged_cli_artifacts(report_dir: &Path) -> Result<(), String> {
@@ -1768,6 +1835,15 @@ fn installed_command_surface_check(binary: &Path) -> ReleaseReadinessCheck {
             vec![format!("missing: {}", missing.join(", "))],
         )
     }
+}
+
+/// Whether a pilot `agent-seam-packets.json` `run_status` is a finished run
+/// (#12065). `packet_bound_applied` is a presentation cut of the packet file
+/// (#11951): the analysis completed and the file discloses the cut, so it
+/// passes the gate. `seam_limit_applied`, `limited_declined_files` and every
+/// other status mean the run itself was limited and still fail.
+fn pilot_packet_run_status_is_complete(run_status: &str) -> bool {
+    matches!(run_status, "complete" | "packet_bound_applied")
 }
 
 fn pilot_fixture_check(binary: &Path) -> ReleaseReadinessCheck {
@@ -2873,6 +2949,195 @@ fn github_workflow_check(binary: &Path) -> ReleaseReadinessCheck {
     }
 }
 
+const INIT_GENERATOR_SELF_PIN_ROOT: &str = "target/ripr/release-readiness/init-generator-self-pin";
+
+/// Failures for the release-commit generator self-pin smoke (#5245). The
+/// installed binary must behave like a published generator: no unreleased note
+/// on stderr and a workflow dry-run that self-pins `version`.
+pub(crate) fn init_generator_self_pin_problems(
+    version: &str,
+    stdout: &str,
+    stderr: &str,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    if !stderr.is_empty() {
+        problems.push(format!(
+            "stderr must be empty for a release generator (got {} byte(s))",
+            stderr.len()
+        ));
+    }
+    if stdout.contains("is unreleased") {
+        problems.push(
+            "generated workflow must not carry an unreleased-generator pin comment".to_string(),
+        );
+    }
+    let cargo_pin = format!("cargo install ripr --version {version} --locked");
+    if !stdout.contains(&cargo_pin) {
+        problems.push(format!(
+            "generated workflow must include `{cargo_pin}` on the fallback install route"
+        ));
+    }
+    let prebuilt_pin = format!("version={version}");
+    if !stdout.contains(&prebuilt_pin) {
+        problems.push(format!(
+            "generated workflow must pin `{prebuilt_pin}` on the prebuilt install route"
+        ));
+    }
+    problems
+}
+
+fn prepare_init_generator_self_pin_root() -> Result<PathBuf, String> {
+    let root = Path::new(INIT_GENERATOR_SELF_PIN_ROOT);
+    if root.exists() {
+        fs::remove_dir_all(root)
+            .map_err(|err| format!("reset {INIT_GENERATOR_SELF_PIN_ROOT}: {err}"))?;
+    }
+    fs::create_dir_all(root)
+        .map_err(|err| format!("create {INIT_GENERATOR_SELF_PIN_ROOT}: {err}"))?;
+    run_git_output_in_dir(root, &["init", "--quiet"])?;
+    Ok(root.to_path_buf())
+}
+
+fn init_generator_self_pin_check(
+    binary: &Path,
+    version: &str,
+    crate_version: Option<&str>,
+) -> ReleaseReadinessCheck {
+    let id = "init-generator-self-pin";
+    let command = format!(
+        "{} init --ci github --dry-run --root {}",
+        crate::normalize_path(binary),
+        INIT_GENERATOR_SELF_PIN_ROOT
+    );
+    let not_run = |summary: &str, details: Vec<String>| {
+        readiness_check(id, "not_run", false, &command, summary, Vec::new(), details)
+    };
+    let Some(crate_version) = crate_version else {
+        return not_run(
+            "crate version could not be read; release-prep should run this gate explicitly",
+            Vec::new(),
+        );
+    };
+    if crate_version != version {
+        return not_run(
+            "requested release version does not match the crate version yet",
+            vec![format!(
+                "requested version: {version}; crates/ripr version: {crate_version}"
+            )],
+        );
+    }
+    if version.contains('-') {
+        return not_run(
+            "release candidates keep an older LATEST_RELEASED_VERSION pin; run this on the stable release commit only",
+            Vec::new(),
+        );
+    }
+    let Some(release_commit) = fs::read_to_string("CHANGELOG.md")
+        .ok()
+        .map(|changelog| changelog_has_release_heading(&changelog, version))
+    else {
+        return readiness_check(
+            id,
+            "fail",
+            true,
+            &command,
+            "could not read CHANGELOG.md to tell the release commit from development",
+            Vec::new(),
+            vec!["CHANGELOG.md is missing or unreadable".to_string()],
+        );
+    };
+    if !release_commit {
+        return not_run(
+            "release-commit only; between releases a development generator is expected to warn and pin the latest published release (docs/INSTALLATION_VERIFICATION.md)",
+            Vec::new(),
+        );
+    }
+    if !binary.exists() {
+        return readiness_check(
+            id,
+            "fail",
+            true,
+            &command,
+            "installed binary is missing",
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    let root = match prepare_init_generator_self_pin_root() {
+        Ok(root) => root,
+        Err(err) => {
+            return readiness_check(
+                id,
+                "fail",
+                true,
+                &command,
+                "init self-pin smoke root could not be prepared",
+                vec![INIT_GENERATOR_SELF_PIN_ROOT.to_string()],
+                vec![err],
+            );
+        }
+    };
+    let root_arg = root.to_string_lossy().into_owned();
+    match run_command_path(
+        binary,
+        &[
+            "init",
+            "--ci",
+            "github",
+            "--dry-run",
+            "--root",
+            root_arg.as_str(),
+        ],
+    ) {
+        Ok(result) if result.success => {
+            let problems =
+                init_generator_self_pin_problems(version, &result.stdout, &result.stderr);
+            if problems.is_empty() {
+                readiness_check(
+                    id,
+                    "pass",
+                    true,
+                    &command,
+                    "release generator init --ci github --dry-run self-pins with no unreleased warning",
+                    vec![
+                        INIT_GENERATOR_SELF_PIN_ROOT.to_string(),
+                        ".github/workflows/ripr.yml (dry-run)".to_string(),
+                    ],
+                    Vec::new(),
+                )
+            } else {
+                readiness_check(
+                    id,
+                    "fail",
+                    true,
+                    &command,
+                    "release generator must self-pin; forgetting the LATEST_RELEASED_VERSION bump fails here",
+                    vec![".github/workflows/ripr.yml (dry-run)".to_string()],
+                    problems,
+                )
+            }
+        }
+        Ok(result) => readiness_check(
+            id,
+            "fail",
+            true,
+            &command,
+            "init --ci github --dry-run failed",
+            Vec::new(),
+            command_details(&result),
+        ),
+        Err(err) => readiness_check(
+            id,
+            "fail",
+            true,
+            &command,
+            "init --ci github --dry-run could not run",
+            Vec::new(),
+            vec![err],
+        ),
+    }
+}
+
 /// Text the generated workflow's summary step must print on a first run,
 /// before any start-here packet exists (#5375).
 const CI_SUMMARY_FIRST_RUN_NEEDLES: &[&str] = &[
@@ -3740,20 +4005,131 @@ mod tests {
         CommandResult, EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
         ReleaseReadinessCheck, ReleaseReadinessReport, changelog_has_release_heading,
         check_install_provenance, create_external_doctor_fixture, extension_version_check_from,
-        extract_packaged_crate, file_url_path, init_pin_version_check_from,
-        latency_parity_contradiction, latency_readiness_from, latest_released_version_in,
-        missing_required_needles, package_version, packaged_archive_commit,
-        parse_release_readiness_args, read_crate_version, readiness_check, records_ripr_bin,
-        release_readiness_json, release_readiness_markdown, release_readiness_status,
-        repo_exposure_latency_output_parity, repo_exposure_latency_status_reasons,
-        validate_binary_identity, validate_doctor_result, validate_install_provenance,
-        validate_installed_version, validate_installed_version_result, validate_package_entry,
-        vsix_start_current_repair_command_present,
+        extract_packaged_crate, file_url_path, init_generator_self_pin_problems,
+        init_pin_version_check_from, latency_parity_contradiction, latency_readiness_from,
+        latest_released_version_in, missing_required_needles, package_version,
+        packaged_archive_commit, parse_release_readiness_args, read_crate_version, readiness_check,
+        records_ripr_bin, release_readiness_json, release_readiness_markdown,
+        release_readiness_status, repo_exposure_latency_output_parity,
+        repo_exposure_latency_status_reasons, validate_binary_identity, validate_doctor_result,
+        validate_install_provenance, validate_installed_version, validate_installed_version_result,
+        validate_package_entry, vsix_start_current_repair_command_present,
     };
     use serde_json::{Value, json};
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn pilot_packet_run_status_accepts_complete_and_the_packet_bound_only() {
+        use super::pilot_packet_run_status_is_complete;
+        assert!(pilot_packet_run_status_is_complete("complete"));
+        assert!(pilot_packet_run_status_is_complete("packet_bound_applied"));
+        for limited in [
+            "seam_limit_applied",
+            "limited_declined_files",
+            "incomplete",
+            "",
+            "Complete",
+        ] {
+            assert!(
+                !pilot_packet_run_status_is_complete(limited),
+                "{limited:?} must keep failing the release gate"
+            );
+        }
+    }
+
+    /// Builds the real `ripr` binary next to the running test executable
+    /// (`target/<profile>/deps/xtask-*` -> `target/<profile>/ripr`).
+    fn built_ripr_binary() -> Result<String, String> {
+        let exe = std::env::current_exe().map_err(|err| format!("resolve test binary: {err}"))?;
+        let profile_dir = exe
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| "test binary has no profile directory".to_string())?
+            .to_path_buf();
+        let mut build_args = vec!["build", "-q", "-p", "ripr", "--bin", "ripr"];
+        if profile_dir
+            .file_name()
+            .is_some_and(|name| name == "release")
+        {
+            build_args.push("--release");
+        }
+        let build = super::run_command("cargo", &build_args)
+            .map_err(|err| format!("build ripr for the pilot gate test: {err}"))?;
+        if !build.success {
+            return Err("cargo build -p ripr --bin ripr failed (instrument failure)".to_string());
+        }
+        let name = if cfg!(windows) { "ripr.exe" } else { "ripr" };
+        let path = profile_dir.join(name);
+        if !path.is_file() {
+            return Err(format!("built ripr binary not found at {}", path.display()));
+        }
+        Ok(path.to_string_lossy().into_owned())
+    }
+
+    /// #12081: run the packaged-CLI pilot step against the real binary on a
+    /// fixture with more eligible seams than the default packet bound (3).
+    /// The producer and the gate helper are pinned separately elsewhere; this
+    /// joins them end to end.
+    #[test]
+    fn packaged_pilot_step_passes_when_the_packet_bound_really_fires_and_fails_on_a_seam_limit()
+    -> Result<(), String> {
+        let binary = built_ripr_binary()?;
+        let root = super::external_cli_fixture_root()?;
+        let report_dir = root.join("report");
+        let result = (|| -> Result<(), String> {
+            super::create_external_cli_fixture_with_seams(&root, 6)?;
+            fs::create_dir_all(&report_dir).map_err(|err| err.to_string())?;
+            let root_text = root.to_string_lossy().into_owned();
+
+            let mut commands = Vec::new();
+            let mut details = Vec::new();
+            let (packet, _summary) = super::run_packaged_pilot(
+                &binary,
+                &root_text,
+                &root,
+                &report_dir,
+                &[],
+                &mut commands,
+                &mut details,
+            )?;
+            let packet: Value =
+                serde_json::from_str(&fs::read_to_string(&packet).map_err(|err| err.to_string())?)
+                    .map_err(|err| err.to_string())?;
+            // The bound really fired: more eligible seams than the cut kept.
+            assert_eq!(packet["run_status"], "packet_bound_applied", "{packet}");
+            assert_eq!(packet["packets_total"], 3, "{packet}");
+            assert!(
+                details.contains(&"pilot run status: packet_bound_applied".to_string()),
+                "{details:?}"
+            );
+
+            // Discriminating negative: a run that genuinely hits the seam
+            // limit keeps failing the same step.
+            let mut commands = Vec::new();
+            let mut details = Vec::new();
+            let limited = super::run_packaged_pilot(
+                &binary,
+                &root_text,
+                &root,
+                &report_dir,
+                &[("RIPR_PILOT_SEAM_BUDGET", "2")],
+                &mut commands,
+                &mut details,
+            );
+            let error = limited.err().ok_or_else(|| {
+                "a seam-limited pilot run must fail the packaged-CLI pilot step".to_string()
+            })?;
+            assert!(
+                error.contains("did not complete: run_status=seam_limit_applied"),
+                "{error}"
+            );
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&root);
+        result
+    }
 
     #[test]
     fn latency_status_reasons_are_forwarded_into_readiness_detail() -> Result<(), String> {
@@ -4785,6 +5161,38 @@ mod tests {
                 value: lock.map(str::to_string),
             },
         ]
+    }
+
+    #[test]
+    fn init_generator_self_pin_problems_passes_quiet_self_pin_output() -> Result<(), String> {
+        let version = "0.11.0";
+        let stdout = format!(
+            "Would write .github/workflows/ripr.yml\n          version={version}\n            cargo install ripr --version {version} --locked\n"
+        );
+        let problems = init_generator_self_pin_problems(version, &stdout, "");
+        if !problems.is_empty() {
+            return Err(format!("expected pass, got {problems:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn init_generator_self_pin_problems_fails_when_bump_forgotten() -> Result<(), String> {
+        let version = "0.11.0";
+        let pinned = "0.10.0";
+        let stderr = format!(
+            "ripr: note: this build of ripr ({version}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release.\n"
+        );
+        let stdout = format!(
+            "Would write .github/workflows/ripr.yml\n      # Pinned to released ripr {pinned} ({version} is unreleased). The steps below use\n          version={pinned}\n            cargo install ripr --version {pinned} --locked\n"
+        );
+        let problems = init_generator_self_pin_problems(version, &stdout, &stderr);
+        if problems.len() < 3 {
+            return Err(format!(
+                "forgotten bump should fail stderr, unreleased comment, and pin needles; got {problems:?}"
+            ));
+        }
+        Ok(())
     }
 
     #[test]

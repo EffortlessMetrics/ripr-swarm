@@ -7,6 +7,10 @@
 //! initialization options after this file is loaded.
 
 use crate::app::{CheckInput, Mode};
+use crate::domain::language_availability::{
+    ConfiguredIntent, LanguageAvailabilityInput, resolve_language_availability,
+    unavailable_recovery,
+};
 use crate::domain::{LanguageId, OracleStrength};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
@@ -27,6 +31,7 @@ mod typescript;
 pub(crate) use diagnostic::ConfigDiagnostic;
 #[cfg(test)]
 use diagnostic::ConfigLocationStatus;
+pub(crate) use diagnostic::ConfigValidationMachine;
 /// `LanguagesConfig` is crate-visible beyond tests since #7386: the analysis
 /// pipeline and check entry points thread the per-language config (including
 /// `handwritten_files`) into diff-mode discovery, so production paths name the
@@ -298,7 +303,7 @@ fn is_repository_boundary(directory: &Path) -> bool {
     }
 
     let manifest = directory.join("Cargo.toml");
-    let Ok(contents) = crate::bounded_input::read_to_string(manifest) else {
+    let Ok(contents) = crate::bounded_input::read_metadata_toml(manifest) else {
         return false;
     };
     if !contents.contains("workspace") {
@@ -311,19 +316,70 @@ fn is_repository_boundary(directory: &Path) -> bool {
 }
 
 pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
+    load_for_root_failure(root).map_err(|failure| failure.human_display(root, cfg!(windows)))
+}
+
+/// Load configuration for a root, retaining semantic validation diagnostics
+/// when parse/validation fails (#2624).
+pub(crate) fn load_for_root_failure(root: &Path) -> Result<RiprConfig, ConfigLoadFailure> {
     let Some(path) = discover_config_path(root) else {
-        return default_config_for_root(root);
+        return default_config_for_root(root).map_err(ConfigLoadFailure::Read);
     };
-    let text = crate::bounded_input::read_to_string(&path)
-        .map_err(|err| config_load_read_error_for_host(&path, &err, cfg!(windows)))?;
-    let mut config = parse_config(&text)
-        .map_err(|err| config_load_parse_error_for_host(&path, &err, cfg!(windows)))?;
+    let text = crate::bounded_input::read_metadata_toml(&path).map_err(|err| {
+        ConfigLoadFailure::Read(config_load_read_error_for_host(&path, &err, cfg!(windows)))
+    })?;
+    let mut config =
+        parse_config_diagnostic(&text).map_err(|diagnostic| ConfigLoadFailure::Parse {
+            path: path.clone(),
+            diagnostic,
+        })?;
     // Identity stays the discovered canonical path: symlink equality and
     // `source_path` consumers compare filesystem identity, not the display
     // spelling (#7652).
     config.source_path = Some(path);
     config.source_text = Some(text);
     Ok(config)
+}
+
+/// Why [`load_for_root_failure`] refused a configuration.
+pub(crate) enum ConfigLoadFailure {
+    Read(String),
+    Parse {
+        path: PathBuf,
+        diagnostic: Box<ConfigDiagnostic>,
+    },
+}
+
+impl ConfigLoadFailure {
+    pub(crate) fn human_display(&self, _root: &Path, windows: bool) -> String {
+        match self {
+            Self::Read(message) => message.clone(),
+            Self::Parse { path, diagnostic } => {
+                let path_display = config_load_error_path_for_host(path, windows);
+                format!(
+                    "{}\n{CONFIG_LOAD_PARSE_HINT}",
+                    diagnostic.human_first_line(&path_display),
+                )
+            }
+        }
+    }
+
+    pub(crate) fn semantic_validation(&self) -> Option<ConfigValidationMachine> {
+        match self {
+            Self::Read(_) => None,
+            Self::Parse { diagnostic, .. } => diagnostic.machine_validation(),
+        }
+    }
+
+    pub(crate) fn human_summary_for_machine(&self) -> String {
+        match self {
+            Self::Read(message) => config_error_summary(message),
+            Self::Parse { path, diagnostic } => {
+                let path_display = config_load_error_path_for_host(path, cfg!(windows));
+                config_error_summary(&diagnostic.human_first_line(&path_display))
+            }
+        }
+    }
 }
 
 /// User-facing config path for load errors (#7652). Discovery and
@@ -353,6 +409,7 @@ const CONFIG_LOAD_READ_HINT: &str = concat!(
     config_removal_advice!()
 );
 
+#[cfg(test)]
 fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
     format!(
         "{}: {}\n{CONFIG_LOAD_PARSE_HINT}",
@@ -617,6 +674,17 @@ fn parse_config(text: &str) -> Result<RiprConfig, String> {
 /// The diagnostic is boxed: it is deliberately rich (spans, expected values),
 /// which would otherwise trip `clippy::result_large_err` on every parser hop.
 pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, Box<ConfigDiagnostic>> {
+    // Every caller (worktree load, candidate-tree blob, editor transports) goes
+    // through here, so the cap holds even when the text did not come from the
+    // bounded file read (#11563).
+    if text.len() as u64 > crate::bounded_input::MAX_METADATA_TOML_BYTES {
+        return Err(Box::new(ConfigDiagnostic::structural(format!(
+            "invalid ripr.toml: {} bytes exceeds the {} byte metadata limit ({} MiB); ripr parses repository metadata fully into memory, so trim the file",
+            text.len(),
+            crate::bounded_input::MAX_METADATA_TOML_BYTES,
+            crate::bounded_input::MAX_METADATA_TOML_BYTES / (1024 * 1024)
+        ))));
+    }
     let raw: RawConfig = toml::from_str(text).map_err(|err| {
         // A valid key in the wrong table names its table (#4534). The hint is
         // built from the fixed KEY_HOME_TABLES allowlist, never from file text.
@@ -1027,11 +1095,14 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
                 "languages.enabled lists `{value}` more than once; remove the duplicate"
             ));
         }
-        if !language.is_available() {
+        let report = resolve_language_availability(&LanguageAvailabilityInput {
+            configured: ConfiguredIntent::Enabled,
+            ..LanguageAvailabilityInput::for_language(language)
+        });
+        if let Some(recovery) = unavailable_recovery(&report) {
             return Err(format!(
-                "languages.enabled lists `{value}`, but this ripr binary was built without Cargo feature `{}`; {}",
-                language.required_feature(),
-                language.unavailable_adapter_recovery()
+                "languages.enabled lists `{value}`, but this ripr binary was built without Cargo feature `{}`; {recovery}",
+                report.compile_feature,
             ));
         }
         parsed.push(language);

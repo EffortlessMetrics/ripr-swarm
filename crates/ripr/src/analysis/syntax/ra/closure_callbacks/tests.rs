@@ -694,8 +694,38 @@ fn a_name_bound_earlier_to_a_call_making_closure_is_withheld() {
             false,
         ),
         (
-            "boxed named closure is a residual",
+            "boxed named closure is withheld",
             "fn t() { let f = Box::new(|| greet()); run(1, f); }",
+            true,
+        ),
+        (
+            "std boxed named closure is withheld",
+            "fn t() { let f = std::boxed::Box::new(|| greet()); run(1, f); }",
+            true,
+        ),
+        (
+            "arc named closure is withheld",
+            "fn t() { let f = Arc::new(|| greet()); run(1, f); }",
+            true,
+        ),
+        (
+            "rc named closure is withheld",
+            "fn t() { let f = Rc::new(|| greet()); run(1, f); }",
+            true,
+        ),
+        (
+            "boxed closure without a call",
+            "fn t() { let f = Box::new(|| 5); run(1, f); }",
+            false,
+        ),
+        (
+            "boxed non-closure value",
+            "fn t() { let f = Box::new(make()); run(1, f); }",
+            false,
+        ),
+        (
+            "boxed with two arguments",
+            "fn t() { let f = Box::new(a, b); run(1, f); }",
             false,
         ),
         (
@@ -714,8 +744,33 @@ fn a_name_bound_earlier_to_a_call_making_closure_is_withheld() {
             true,
         ),
         (
-            "alias of a named closure is a residual",
+            "alias of a named closure is withheld",
             "fn t() { let f = || greet(); let h = f; run(1, h); }",
+            true,
+        ),
+        (
+            "borrowed alias of a named closure is withheld",
+            "fn t() { let f = || greet(); let h = f; run(1, &h); }",
+            true,
+        ),
+        (
+            "two-hop alias of a named closure is withheld",
+            "fn t() { let f = || greet(); let g = f; let h = g; run(1, h); }",
+            true,
+        ),
+        (
+            "alias of a non-closure name",
+            "fn t() { let g = 5; let h = g; run(1, h); }",
+            false,
+        ),
+        (
+            "alias in a sibling block",
+            "fn t() { let f = || greet(); { let h = f; } run(1, h); }",
+            false,
+        ),
+        (
+            "alias after the helper call",
+            "fn t() { let f = || greet(); run(1, h); let h = f; }",
             false,
         ),
         (

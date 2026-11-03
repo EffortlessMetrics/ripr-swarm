@@ -81,7 +81,8 @@ class only when some strong value assertion (`exact_value`,
 observes the whole result of an owner call (`owner(...)`, `ns.owner(...)`,
 the `local(...)` of an `import { owner as local }` rename, optionally
 awaited, or a local bound once to that call; not `owner(...).field` or
-`f(owner(...))`; in `owner(owner(a, b), c)` the outer call's arguments) for
+`f(owner(...))`; in `owner(owner(a, b), c)`, or a local bound to it, the outer
+call's arguments) for
 which `t` folds to a number of magnitude at least `1e-6`. A double sum
 absorbs an addend below 2^-52 of its own magnitude (`6499 + 1e-13 ===
 6499`), and a term of at least `1e-6` changes every sum below about
@@ -105,7 +106,12 @@ The fold binds:
 - a constant-shaped name (`UPPER_CASE`) to the owner module's single
   immutable integer `const`.
 
-Calls, members, strings and anything unbound fail the fold. A term that
+Calls, members, strings and anything unbound fail the fold. When the term is
+`callee(args)` and `callee` is a same-module function whose body is
+`if (cmp) { return E; } return E;` or `return cmp ? E : E;`, the fold binds
+`callee`'s parameters from the call arguments and folds the selected branch;
+credit stays only on a non-zero fold (#7418). Other call shapes stay unwitnessed.
+A term that
 folds to `0` for every observed call reads "is 0 for every tested input";
 a term some call leaves unfolded reads "is not shown to be non-zero".
 
@@ -174,10 +180,10 @@ documented decisions and proceed"). Recorded on #6654.
    zero, which leaves the corpus case (a call term) credited. Rejected:
    `static_unknown`, which needs a new static-limit kind across every
    renderer for one shape.
-2. **No call evaluation yet.** Adopted: a call term is unwitnessed, which
-   can read a discriminated call-term change as a gap (false actionable,
-   never false credit). #7418 tracks folding a same-module `if`/ternary
-   callee.
+2. **Same-module call terms.** Adopted (#7418): a same-module `if`/ternary
+   callee whose parameters bind from literal owner-call arguments can witness
+   a non-zero dropped call term. Rejected: leaving every call term unwitnessed,
+   which reads a discriminated call-term change as a gap.
 3. **Literal terms excluded.** Adopted: a term with no identifier is out
    of scope. Five runner and oracle fixtures use `+ 0` / `+ ''` as a
    neutral edit; reading them as gaps would judge equivalence, which ripr

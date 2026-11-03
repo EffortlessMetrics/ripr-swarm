@@ -2,17 +2,21 @@ use super::capabilities::WorkspaceRootResolution;
 use super::component_outcome::ComponentOutcome;
 use super::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
 use super::input_identity::LspAnalysisInputIdentity;
-use super::uri::{file_uri_relative_to_root, file_uris_match, path_from_file_uri};
+use super::uri::{
+    RelativeKeyProjector, file_uri_is_lexically_non_rust, file_uri_relative_to_root,
+    file_uris_match, path_from_file_uri,
+};
 use crate::analysis::language_outcome::{LanguageCompletenessView, LanguageDisclosure};
 use crate::analysis::{ClassifiedSeam, PreviewLanguageAdvisory};
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::Mode;
 use crate::config::LspDiagnosticProfile;
 use crate::domain::{Finding, LanguageId};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use tower_lsp_server::ls_types::{
     Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
@@ -171,6 +175,7 @@ pub(super) enum WorkspaceFolderEventRejectionKind {
     DuplicateAddition,
     UnknownRemoval,
     ContradictoryEvent,
+    MembershipCapacityExceeded,
 }
 
 impl WorkspaceFolderEventRejectionKind {
@@ -180,7 +185,29 @@ impl WorkspaceFolderEventRejectionKind {
             Self::DuplicateAddition => "duplicate_addition",
             Self::UnknownRemoval => "unknown_removal",
             Self::ContradictoryEvent => "contradictory_event",
+            Self::MembershipCapacityExceeded => "membership_capacity_exceeded",
         }
+    }
+}
+
+fn membership_capacity_rejection() -> WorkspaceFolderEventRejection {
+    WorkspaceFolderEventRejection {
+        kind: WorkspaceFolderEventRejectionKind::MembershipCapacityExceeded,
+        detail: super::workspace_folder_bounds::membership_capacity_detail(),
+    }
+}
+
+fn check_membership_capacity(
+    entries: &[WorkspaceFolderEntry],
+) -> Result<(), WorkspaceFolderEventRejection> {
+    if super::workspace_folder_bounds::membership_within_capacity(
+        entries
+            .iter()
+            .map(|entry| (entry.uri.as_str(), entry.path.as_path())),
+    ) {
+        Ok(())
+    } else {
+        Err(membership_capacity_rejection())
     }
 }
 
@@ -255,6 +282,7 @@ fn canonical_folder_entries(
         entries.push(entry);
     }
     entries.sort_by(|left, right| left.path.cmp(&right.path));
+    check_membership_capacity(&entries)?;
     Ok(entries)
 }
 
@@ -376,17 +404,19 @@ impl WorkspaceFolderSet {
                 });
             }
         }
+        let mut tentative = self.entries.clone();
+        tentative.retain(|stored| {
+            !removed_entries
+                .iter()
+                .any(|removed| removed.path == stored.path)
+        });
+        tentative.extend(added_entries.clone());
+        tentative.sort_by(|left, right| left.path.cmp(&right.path));
+        check_membership_capacity(&tentative)?;
         self.last_applied_event = Some(event_id);
         let changed = !added_entries.is_empty() || !removed_entries.is_empty();
         if changed {
-            self.entries.retain(|stored| {
-                !removed_entries
-                    .iter()
-                    .any(|removed| removed.path == stored.path)
-            });
-            self.entries.extend(added_entries);
-            self.entries
-                .sort_by(|left, right| left.path.cmp(&right.path));
+            self.entries = tentative;
             self.folder_set_epoch = self.folder_set_epoch.saturating_add(1);
         }
         Ok(WorkspaceFolderEventOutcome {
@@ -719,6 +749,53 @@ impl AnalysisHealth {
     pub(super) fn pending(&self) -> bool {
         self.pending_attempt_id.is_some()
     }
+
+    /// Why `allows_current_repairs` is false, as `(refresh_state, recovery)`
+    /// (#4427). `in_flight`: a refresh is queued, running, pending or inside
+    /// the interactive debounce window (`refresh_debounced`), so a retry
+    /// shortly should succeed. `no_snapshot`: nothing has been analyzed yet
+    /// (or the input was invalidated) and nothing failed. `terminal`: the
+    /// latest attempt failed, was cancelled or was superseded without a
+    /// result. `stale_snapshot`: a snapshot is retained but is not current.
+    /// Every case still fails closed.
+    pub(super) fn repair_block_guidance(
+        &self,
+        refresh_debounced: bool,
+    ) -> (&'static str, &'static str) {
+        if refresh_debounced
+            || self.pending()
+            || matches!(
+                self.state,
+                AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+            )
+        {
+            return (
+                "in_flight",
+                "A refresh is in progress; retry the repair packet shortly.",
+            );
+        }
+        if matches!(
+            self.state,
+            AnalysisAttemptState::Failed
+                | AnalysisAttemptState::Cancelled
+                | AnalysisAttemptState::Superseded
+        ) {
+            return (
+                "terminal",
+                "The latest refresh did not produce a result; check ripr status and run a refresh to recover.",
+            );
+        }
+        if self.snapshot_id.is_none() {
+            return (
+                "no_snapshot",
+                "No analysis snapshot exists yet; open or save a Rust file or run a refresh, then retry the repair packet.",
+            );
+        }
+        (
+            "stale_snapshot",
+            "The retained snapshot is not current; run a refresh, then retry the repair packet.",
+        )
+    }
 }
 
 impl RefreshMetadata {
@@ -774,6 +851,229 @@ impl DiagnosticUriIndex {
     }
 }
 
+/// Immutable diagnostic payload for one refresh generation (#4998).
+///
+/// Clone copies the `Arc`, not the map or the diagnostic values. Construction
+/// and identity binding may copy-on-write through [`Self::to_mut`]; after a
+/// generation is shared, quarantine and last-known-good mutation go through
+/// [`CommittedDiagnostics`]'s sparse overlay instead of cloning the map.
+///
+/// Retained generations:
+/// 1. **steady state:** one current generation, shared by the committed
+///    snapshot and the committed view;
+/// 2. **refresh in flight:** that previous generation plus the candidate next;
+/// 3. **successful commit:** next becomes current; previous is released when
+///    no in-flight delivery still holds it;
+/// 4. **failure / cancellation / supersession:** the candidate is dropped and
+///    previous remains authoritative;
+/// 5. **shutdown / workspace reset:** [`CommittedDiagnostics::clear`] releases
+///    the retained generation.
+#[derive(Clone, Debug)]
+pub(super) struct DiagnosticsGeneration {
+    by_uri: Arc<BTreeMap<Uri, Vec<Diagnostic>>>,
+    #[cfg(test)]
+    id: u64,
+}
+
+#[cfg(test)]
+thread_local! {
+    static DIAGNOSTIC_MAP_CONSTRUCTIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static DIAGNOSTIC_MAP_DEEP_CLONES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+static NEXT_DIAGNOSTIC_GENERATION_ID: AtomicU64 = AtomicU64::new(1);
+
+impl DiagnosticsGeneration {
+    pub(super) fn empty() -> Self {
+        Self::from_map(BTreeMap::new())
+    }
+
+    pub(super) fn from_map(by_uri: BTreeMap<Uri, Vec<Diagnostic>>) -> Self {
+        #[cfg(test)]
+        DIAGNOSTIC_MAP_CONSTRUCTIONS.with(|count| count.set(count.get().saturating_add(1)));
+        Self {
+            by_uri: Arc::new(by_uri),
+            #[cfg(test)]
+            id: NEXT_DIAGNOSTIC_GENERATION_ID.fetch_add(1, Ordering::Relaxed),
+        }
+    }
+
+    pub(super) fn as_map(&self) -> &BTreeMap<Uri, Vec<Diagnostic>> {
+        self.by_uri.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(super) fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.by_uri, &other.by_uri)
+    }
+
+    /// Construction-time mutation. Copy-on-write clones the map only when
+    /// another handle already shares this generation.
+    pub(super) fn to_mut(&mut self) -> &mut BTreeMap<Uri, Vec<Diagnostic>> {
+        let shared = Arc::strong_count(&self.by_uri) > 1;
+        let map = Arc::make_mut(&mut self.by_uri);
+        if shared {
+            #[cfg(test)]
+            {
+                DIAGNOSTIC_MAP_DEEP_CLONES.with(|count| count.set(count.get().saturating_add(1)));
+                self.id = NEXT_DIAGNOSTIC_GENERATION_ID.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        map
+    }
+
+    #[cfg(test)]
+    pub(super) fn generation_id(&self) -> u64 {
+        self.id
+    }
+
+    #[cfg(test)]
+    pub(super) fn map_construction_count() -> u64 {
+        DIAGNOSTIC_MAP_CONSTRUCTIONS.with(std::cell::Cell::get)
+    }
+
+    #[cfg(test)]
+    pub(super) fn deep_clone_count() -> u64 {
+        DIAGNOSTIC_MAP_DEEP_CLONES.with(std::cell::Cell::get)
+    }
+
+    /// Discriminating negative: an owned map clone is a full-map construction
+    /// the refresh path must not take.
+    #[cfg(test)]
+    pub(super) fn deep_clone_map(&self) -> BTreeMap<Uri, Vec<Diagnostic>> {
+        DIAGNOSTIC_MAP_DEEP_CLONES.with(|count| count.set(count.get().saturating_add(1)));
+        (*self.by_uri).clone()
+    }
+}
+
+impl Default for DiagnosticsGeneration {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl From<BTreeMap<Uri, Vec<Diagnostic>>> for DiagnosticsGeneration {
+    fn from(by_uri: BTreeMap<Uri, Vec<Diagnostic>>) -> Self {
+        Self::from_map(by_uri)
+    }
+}
+
+impl Deref for DiagnosticsGeneration {
+    type Target = BTreeMap<Uri, Vec<Diagnostic>>;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_map()
+    }
+}
+
+impl DerefMut for DiagnosticsGeneration {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.to_mut()
+    }
+}
+
+impl<'a> IntoIterator for &'a DiagnosticsGeneration {
+    type Item = (&'a Uri, &'a Vec<Diagnostic>);
+    type IntoIter = std::collections::btree_map::Iter<'a, Uri, Vec<Diagnostic>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.as_map().iter()
+    }
+}
+
+impl PartialEq for DiagnosticsGeneration {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_map() == other.as_map()
+    }
+}
+
+impl Eq for DiagnosticsGeneration {}
+
+impl PartialEq<BTreeMap<Uri, Vec<Diagnostic>>> for DiagnosticsGeneration {
+    fn eq(&self, other: &BTreeMap<Uri, Vec<Diagnostic>>) -> bool {
+        self.as_map() == other
+    }
+}
+
+impl serde::Serialize for DiagnosticsGeneration {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.by_uri.serialize(serializer)
+    }
+}
+
+/// Committed diagnostic baseline: one shared generation plus a sparse overlay
+/// for quarantine/suppression (#4998). Overlay entries replace the generation
+/// for that URI (empty list = cleared baseline) without cloning the map.
+#[derive(Clone, Debug, Default)]
+pub(super) struct CommittedDiagnostics {
+    generation: DiagnosticsGeneration,
+    overlay: BTreeMap<Uri, Arc<[Diagnostic]>>,
+}
+
+impl CommittedDiagnostics {
+    #[cfg(test)]
+    pub(super) fn from_generation(generation: DiagnosticsGeneration) -> Self {
+        Self {
+            generation,
+            overlay: BTreeMap::new(),
+        }
+    }
+
+    pub(super) fn from_generation_with_cleared(
+        generation: DiagnosticsGeneration,
+        cleared: impl IntoIterator<Item = Uri>,
+    ) -> Self {
+        let overlay = cleared
+            .into_iter()
+            .map(|uri| (uri, Arc::<[Diagnostic]>::from(Vec::new())))
+            .collect();
+        Self {
+            generation,
+            overlay,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn generation(&self) -> &DiagnosticsGeneration {
+        &self.generation
+    }
+
+    pub(super) fn get(&self, uri: &Uri) -> Option<&[Diagnostic]> {
+        if let Some(overlaid) = self.overlay.get(uri) {
+            Some(overlaid.as_ref())
+        } else {
+            self.generation.get(uri).map(Vec::as_slice)
+        }
+    }
+
+    pub(super) fn insert(&mut self, uri: Uri, diagnostics: Vec<Diagnostic>) {
+        self.overlay.insert(uri, Arc::from(diagnostics));
+    }
+
+    pub(super) fn uris(&self) -> BTreeSet<Uri> {
+        let mut uris = self.generation.keys().cloned().collect::<BTreeSet<_>>();
+        uris.extend(self.overlay.keys().cloned());
+        uris
+    }
+
+    pub(super) fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    #[cfg(test)]
+    pub(super) fn overlay_uris(&self) -> Vec<Uri> {
+        self.overlay.keys().cloned().collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn overlay_contains_empty(&self, uri: &Uri) -> bool {
+        self.overlay
+            .get(uri)
+            .is_some_and(|diagnostics| diagnostics.is_empty())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct AnalysisSnapshot {
     pub(super) root: PathBuf,
@@ -820,7 +1120,7 @@ pub(super) struct AnalysisSnapshot {
     /// empty list; `Complete` carries the registered facts the editor
     /// surface reads. Never a claim that harness subjects were executed.
     pub(super) harness_facts: HarnessFactsOnSnapshot,
-    pub(super) diagnostics_by_uri: BTreeMap<Uri, Vec<Diagnostic>>,
+    pub(super) diagnostics_by_uri: DiagnosticsGeneration,
     /// Admitted root-relative keys prepared once for this immutable snapshot.
     /// `None` is unprepared; duplicate stored keys retain `None` values so an
     /// alias lookup refuses ambiguity instead of choosing an arbitrary URI.
@@ -879,6 +1179,13 @@ pub(super) struct AnalysisSnapshot {
     /// select) is read from here, not re-derived from limitation text.
     /// `None` when the producer returned no view (no analysis ran).
     pub(super) language_view: Option<LanguageCompletenessView>,
+    /// Numeric editor-row origins captured by the same Rust analysis pass that
+    /// produced `findings` (#10609). Code-lens placement, the lens-view
+    /// identity and unpublished line-hover lookup select their row from this
+    /// map, never from a later disk read or from diagnostic visibility. A
+    /// finding without a record (non-Rust, or a producer without origins)
+    /// takes the conservative analyzer-row fallback.
+    pub(super) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
 }
 
 /// Changed-file coverage for languages the run did not analyze because the
@@ -1163,8 +1470,10 @@ impl AnalysisSnapshot {
     pub(super) fn prepare_diagnostic_uri_index(&mut self) {
         let uris = self.diagnostics_by_uri.keys().cloned().collect::<Vec<_>>();
         let mut by_relative = BTreeMap::new();
+        let root = self.root.clone();
+        let mut projector = super::uri::RelativeKeyProjector::new(&root);
         for (position, uri) in uris.iter().enumerate() {
-            if let Some(relative) = file_uri_relative_to_root(&self.root, uri) {
+            if let Some(relative) = projector.relative(uri) {
                 by_relative
                     .entry(relative)
                     .and_modify(|stored| *stored = None)
@@ -1413,7 +1722,7 @@ pub(super) struct QuarantineLedger {
     /// produced; the revision lets a failed refresh drop only the digests no
     /// successful snapshot has covered yet.
     saved_content_digests: Mutex<BTreeMap<Uri, (String, u64)>>,
-    pub(super) last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
+    pub(super) last_diagnostics: Mutex<CommittedDiagnostics>,
 }
 
 impl QuarantineLedger {
@@ -1683,10 +1992,11 @@ fn document_position_byte_offset(
     let line = text.get(line_start..line_end)?;
 
     let relative = if *encoding == PositionEncodingKind::UTF8 {
-        if target_units > line.len() || !line.is_char_boundary(target_units) {
+        let clamped = target_units.min(line.len());
+        if !line.is_char_boundary(clamped) {
             return None;
         }
-        target_units
+        clamped
     } else if *encoding == PositionEncodingKind::UTF32 {
         encoded_units_to_byte_offset(line, target_units, |character| {
             let _ = character;
@@ -1718,7 +2028,8 @@ fn encoded_units_to_byte_offset(
             return None;
         }
     }
-    (units == target_units).then_some(line.len())
+    // LSP 3.17: a character offset past the line end is treated as the line end.
+    (target_units >= units).then_some(line.len())
 }
 
 /// Bounds on one `didChange` notification (#11508).
@@ -1745,6 +2056,25 @@ const CONTENT_CHANGE_LIMITS: ContentChangeLimits = ContentChangeLimits {
     max_changes: 1_024,
     max_document_bytes: crate::lsp::transport_bounds::MAX_MESSAGE_BYTES,
     max_scan_bytes: 256 * 1024 * 1024,
+};
+
+/// Store-wide bounds on simultaneously open documents (#11666).
+///
+/// One document is already bounded by [`CONTENT_CHANGE_LIMITS`] (16 MiB).
+/// Without a store-wide cap a client can still pin unbounded memory by
+/// opening many such documents. 4,096 URIs and 512 MiB of retained text are
+/// generous for a real editor workspace and far below 4,096 × 16 MiB.
+#[derive(Clone, Copy)]
+struct DocumentStoreLimits {
+    /// Most simultaneously retained URIs.
+    max_open_documents: usize,
+    /// Most retained buffer bytes across all open documents.
+    max_retained_document_bytes: usize,
+}
+
+const DOCUMENT_STORE_LIMITS: DocumentStoreLimits = DocumentStoreLimits {
+    max_open_documents: 4_096,
+    max_retained_document_bytes: 512 * 1024 * 1024,
 };
 
 fn apply_document_content_change(
@@ -1797,6 +2127,7 @@ fn apply_document_content_change(
 /// malformed later range cannot partially commit earlier changes from the
 /// same notification. Notification size, retained size and scan work are
 /// bounded by [`CONTENT_CHANGE_LIMITS`].
+#[cfg(test)]
 fn apply_document_content_changes(
     text: &mut String,
     changes: Vec<TextDocumentContentChangeEvent>,
@@ -1854,22 +2185,200 @@ fn invalidate_incremental_document_state(state: &mut DocumentState) -> Quarantin
     }
 }
 
-#[derive(Default)]
+/// In-session open-document store.
+///
+/// Store-wide bounds ([`DOCUMENT_STORE_LIMITS`]): at most 4,096 open
+/// documents and 512 MiB of retained buffer text. A new URI that would
+/// exceed either bound is still recorded so later `didChange`/`didClose`
+/// find it, but with empty retained text and `buffer_authority_unknown`
+/// so [`DocumentState::refresh_quarantine`] pins the existing
+/// invalid-incremental-change fail-closed path (no diagnostics). Reopening
+/// an existing URI replaces its bytes (the delta is counted, not doubled).
+/// Closing a document frees its share of both budgets.
 pub(super) struct DocumentStore {
     pub(super) documents: BTreeMap<Uri, DocumentState>,
+    /// Workspace-relative keys already resolved for open `.rs` candidates,
+    /// keyed by URI; each entry is valid only for the root recorded with it (#11763). Each
+    /// resolution canonicalizes the root and the candidate, so recomputing
+    /// every document on every refresh made N `didOpen`s cost O(N^2)
+    /// filesystem calls. An entry is dropped on reopen, close, a save of that
+    /// document and watched-file events at or above its path, and ignored when
+    /// the root differs.
+    rust_index_keys: BTreeMap<Uri, (PathBuf, Option<PathBuf>)>,
+    limits: DocumentStoreLimits,
+}
+
+impl Default for DocumentStore {
+    fn default() -> Self {
+        Self {
+            documents: BTreeMap::new(),
+            rust_index_keys: BTreeMap::new(),
+            limits: DOCUMENT_STORE_LIMITS,
+        }
+    }
 }
 
 impl DocumentStore {
-    pub(super) fn open(&mut self, params: DidOpenTextDocumentParams) -> QuarantineTransition {
-        let uri = params.text_document.uri;
-        let mut state = DocumentState::new(
-            uri.clone(),
-            Some(params.text_document.version),
-            params.text_document.text,
-        );
+    #[cfg(test)]
+    fn with_limits(limits: DocumentStoreLimits) -> Self {
+        Self {
+            limits,
+            ..Self::default()
+        }
+    }
+
+    fn retained_bytes_except(&self, uri: &Uri) -> usize {
+        self.documents
+            .iter()
+            .filter(|(stored, _)| *stored != uri)
+            .map(|(_, state)| state.text.len())
+            .sum()
+    }
+
+    fn is_store_overflow_placeholder(state: &DocumentState) -> bool {
+        state.buffer_authority_unknown && state.text.is_empty()
+    }
+
+    /// Occupancy that counts against [`DocumentStoreLimits::max_open_documents`].
+    /// Overflow placeholders stay in the map so later `didChange`/`didClose`
+    /// find them, but they do not consume an accepted slot.
+    fn accepted_document_count_except(&self, uri: &Uri) -> usize {
+        self.documents
+            .iter()
+            .filter(|(stored, state)| *stored != uri && !Self::is_store_overflow_placeholder(state))
+            .count()
+    }
+
+    fn accepted_slots_are_full(&self, uri: &Uri) -> bool {
+        self.accepted_document_count_except(uri) >= self.limits.max_open_documents
+    }
+
+    /// Per-notification change limits tightened to the store-wide retained-byte
+    /// headroom so a full replacement cannot bypass [`DOCUMENT_STORE_LIMITS`].
+    fn change_limits_for(&self, uri: &Uri) -> ContentChangeLimits {
+        let headroom = self
+            .limits
+            .max_retained_document_bytes
+            .saturating_sub(self.retained_bytes_except(uri));
+        ContentChangeLimits {
+            max_document_bytes: CONTENT_CHANGE_LIMITS.max_document_bytes.min(headroom),
+            ..CONTENT_CHANGE_LIMITS
+        }
+    }
+
+    fn insert_unknown_authority_document(
+        &mut self,
+        uri: Uri,
+        version: Option<i32>,
+    ) -> QuarantineTransition {
+        let mut state = DocumentState::new(uri.clone(), version, String::new());
+        state.buffer_authority_unknown = true;
         let transition = state.refresh_quarantine();
+        self.rust_index_keys.remove(&uri);
         self.documents.insert(uri, state);
         transition
+    }
+
+    pub(super) fn open(&mut self, params: DidOpenTextDocumentParams) -> QuarantineTransition {
+        let uri = params.text_document.uri;
+        let version = Some(params.text_document.version);
+        let incoming = params.text_document.text;
+        let replacing_accepted = self
+            .documents
+            .get(&uri)
+            .is_some_and(|state| !Self::is_store_overflow_placeholder(state));
+        let would_exceed_count = !replacing_accepted && self.accepted_slots_are_full(&uri);
+        let would_exceed_bytes = self
+            .retained_bytes_except(&uri)
+            .saturating_add(incoming.len())
+            > self.limits.max_retained_document_bytes;
+        if would_exceed_count || would_exceed_bytes {
+            return self.insert_unknown_authority_document(uri, version);
+        }
+        let mut state = DocumentState::new(uri.clone(), version, incoming);
+        let transition = state.refresh_quarantine();
+        self.rust_index_keys.remove(&uri);
+        self.documents.insert(uri, state);
+        transition
+    }
+
+    /// Workspace-relative paths of the open `.rs` documents under `root`.
+    /// Equivalent to resolving every document with `file_uri_relative_to_root`
+    /// and keeping `.rs` keys, without repeating the filesystem resolution for
+    /// documents whose key is already known or lexically cannot be `.rs`.
+    ///
+    /// Staleness boundary: a cached key is served until the document is
+    /// reopened, closed or saved, a watched-file event at or above its path
+    /// arrives, or the root changes. A symlink retargeted outside the editor
+    /// with no watcher covering it is therefore seen late. That is acceptable
+    /// because this index is not the containment authority: workspace
+    /// diagnostics still resolve their own projector on every refresh.
+    pub(super) fn open_rust_index_paths(&mut self, root: &Path) -> BTreeSet<PathBuf> {
+        let Self {
+            documents,
+            rust_index_keys,
+            limits: _,
+        } = self;
+        // One projector per pass, built on the first cache miss: the root and
+        // each directory are resolved once for all misses, not once per
+        // document, and a fully warm pass resolves nothing.
+        let mut projector: Option<RelativeKeyProjector<'_>> = None;
+        documents
+            .keys()
+            .filter_map(|uri| {
+                if let Some((cached_root, key)) = rust_index_keys.get(uri)
+                    && cached_root == root
+                {
+                    return key.clone();
+                }
+                if file_uri_is_lexically_non_rust(root, uri) {
+                    return None;
+                }
+                let key = projector
+                    .get_or_insert_with(|| RelativeKeyProjector::new(root))
+                    .relative(uri);
+                rust_index_keys.insert(uri.clone(), (root.to_path_buf(), key.clone()));
+                key
+            })
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect()
+    }
+
+    #[cfg(all(test, unix))]
+    pub(super) fn rust_index_key_is_cached(&self, uri: &Uri) -> bool {
+        self.rust_index_keys.contains_key(uri)
+    }
+
+    /// Forget the resolved index key of one document so its next refresh
+    /// re-resolves it against the current filesystem (a save can replace a
+    /// symlink with a regular file). Other documents keep their keys.
+    pub(super) fn invalidate_rust_index_key(&mut self, uri: &Uri) {
+        self.rust_index_keys.remove(uri);
+    }
+
+    /// Forget resolved index keys a filesystem event at `event` can affect:
+    /// the document at that path and any document below it (a directory
+    /// event can retarget or replace a symlinked ancestor). Entries elsewhere
+    /// stay warm, so unrelated watched events (build output, logs) cost no
+    /// re-resolution.
+    pub(super) fn invalidate_rust_index_keys_under(&mut self, event: &Uri) {
+        let prefix = event.as_str().trim_end_matches('/');
+        // Equivalent spellings of one file (`file://localhost/...`, percent
+        // escapes) differ as raw strings, so the decoded paths are compared
+        // too.
+        let event_path = path_from_file_uri(event);
+        self.rust_index_keys.retain(|uri, _| {
+            let candidate = uri.as_str();
+            let raw_below = candidate == prefix
+                || candidate
+                    .strip_prefix(prefix)
+                    .is_some_and(|rest| rest.starts_with('/'));
+            let path_below = match (&event_path, path_from_file_uri(uri)) {
+                (Some(event_path), Some(path)) => path.starts_with(event_path),
+                _ => false,
+            };
+            !(raw_below || path_below)
+        });
     }
 
     /// Whether the just-opened buffer already matches the persisted saved
@@ -1933,6 +2442,9 @@ impl DocumentStore {
         let uri = params.text_document.uri;
         let version = Some(params.text_document.version);
         let changes = params.content_changes;
+        let change_limits = self.change_limits_for(&uri);
+        let accepted_slots_full = self.accepted_slots_are_full(&uri);
+        let new_uri_over_count = !self.documents.contains_key(&uri) && accepted_slots_full;
 
         if let Some(state) = self.documents.get_mut(&uri) {
             state.version = version;
@@ -1952,16 +2464,24 @@ impl DocumentStore {
                     return QuarantineTransition::Unchanged;
                 };
                 let mut recovered = changes[last_full_replacement].text.clone();
-                if apply_document_content_changes(
-                    &mut recovered,
-                    changes
-                        .into_iter()
-                        .skip(last_full_replacement + 1)
-                        .collect(),
-                    position_encoding,
-                )
-                .is_err()
+                // The replacement is the recovered buffer, not a later change,
+                // so an empty follow-up list would not consult max_document_bytes.
+                if recovered.len() > change_limits.max_document_bytes
+                    || accepted_slots_full
+                    || apply_document_content_changes_within(
+                        &mut recovered,
+                        changes
+                            .into_iter()
+                            .skip(last_full_replacement + 1)
+                            .collect(),
+                        position_encoding,
+                        change_limits,
+                    )
+                    .is_err()
                 {
+                    // Store-wide bytes are part of `change_limits`: a
+                    // replacement that would exceed the retained-byte budget
+                    // must not clear `buffer_authority_unknown`.
                     return QuarantineTransition::Unchanged;
                 }
                 state.text = recovered;
@@ -1973,7 +2493,13 @@ impl DocumentStore {
                 return state.refresh_quarantine();
             }
 
-            if apply_document_content_changes(&mut state.text, changes, position_encoding).is_err()
+            if apply_document_content_changes_within(
+                &mut state.text,
+                changes,
+                position_encoding,
+                change_limits,
+            )
+            .is_err()
             {
                 return invalidate_incremental_document_state(state);
             }
@@ -1987,14 +2513,21 @@ impl DocumentStore {
         else {
             return QuarantineTransition::Unchanged;
         };
+        if new_uri_over_count {
+            return self.insert_unknown_authority_document(uri, version);
+        }
         let mut text = changes[last_full_replacement].text.clone();
-        if apply_document_content_changes(
+        if text.len() > change_limits.max_document_bytes {
+            return self.insert_unknown_authority_document(uri, version);
+        }
+        if apply_document_content_changes_within(
             &mut text,
             changes
                 .into_iter()
                 .skip(last_full_replacement + 1)
                 .collect(),
             position_encoding,
+            change_limits,
         )
         .is_err()
         {
@@ -2034,11 +2567,24 @@ impl DocumentStore {
         saved_digest: Option<String>,
         text: Option<String>,
     ) -> QuarantineTransition {
+        let other_bytes = self.retained_bytes_except(uri);
+        let max_bytes = self.limits.max_retained_document_bytes;
+        let accepted_slots_full = self.accepted_slots_are_full(uri);
         let Some(state) = self.documents.get_mut(uri) else {
             return QuarantineTransition::Unchanged;
         };
         if state.buffer_authority_unknown {
             if text.is_none() {
+                return state.refresh_quarantine();
+            }
+            // Client-provided save text restores authority only when it fits
+            // both store-wide budgets; otherwise the cap would be bypassed on
+            // the same path that clears `buffer_authority_unknown`.
+            if accepted_slots_full
+                || text
+                    .as_ref()
+                    .is_some_and(|incoming| other_bytes.saturating_add(incoming.len()) > max_bytes)
+            {
                 return state.refresh_quarantine();
             }
             state.buffer_authority_unknown = false;
@@ -2066,13 +2612,18 @@ impl DocumentStore {
     ) -> (BTreeMap<Uri, Option<String>>, Vec<Uri>) {
         let mut digests = BTreeMap::new();
         let mut entered = Vec::new();
+        // One projector per refresh: the root and each directory are
+        // canonicalized once, not once per open document (#11763).
+        let mut projector = super::uri::RelativeKeyProjector::new(root);
         for (uri, state) in &self.documents {
             let analyzed = if state
                 .path
                 .extension()
                 .is_some_and(|extension| extension == "rs")
             {
-                file_uri_relative_to_root(root, uri).and_then(|relative| consumed.digest(&relative))
+                projector
+                    .relative(uri)
+                    .and_then(|relative| consumed.digest(&relative))
             } else {
                 read_saved_digest(uri).or_else(|| state.saved_digest.clone())
             };
@@ -2125,6 +2676,7 @@ impl DocumentStore {
     }
 
     pub(super) fn close(&mut self, params: DidCloseTextDocumentParams) {
+        self.rust_index_keys.remove(&params.text_document.uri);
         self.documents.remove(&params.text_document.uri);
     }
 
@@ -2719,25 +3271,8 @@ mod tests {
         assert_eq!(edit("ab\rcd", 1, 1)?, "ab\rcXd");
         assert_eq!(edit("ab\r", 1, 0)?, "ab\rX");
         assert_eq!(edit("ab\r", 0, 2)?, "abX\r");
-        // A CR is not addressable as a character of its line.
-        let mut buffer = "ab\r".to_string();
-        let beyond = Position {
-            line: 0,
-            character: 3,
-        };
-        let refused = apply_document_content_changes(
-            &mut buffer,
-            vec![TextDocumentContentChangeEvent {
-                range: Some(tower_lsp_server::ls_types::Range {
-                    start: beyond,
-                    end: beyond,
-                }),
-                range_length: None,
-                text: "X".to_string(),
-            }],
-            &PositionEncodingKind::UTF16,
-        );
-        assert!(refused.is_err());
+        // An offset past the line end clamps to the line end (LSP 3.17).
+        assert_eq!(edit("ab\r", 0, 3)?, "abX\r");
         // Lines past the final terminator do not exist.
         assert_eq!(
             edit("ab\r", 2, 0),
@@ -2973,6 +3508,239 @@ mod tests {
         assert!(apply_document_content_changes(&mut big, few, &encoding).is_ok());
         let many: Vec<_> = (0..9).map(|_| ranged_insert(0, 0, "")).collect();
         assert!(apply_document_content_changes(&mut big, many, &encoding).is_err());
+    }
+
+    fn tiny_count_limits() -> DocumentStoreLimits {
+        DocumentStoreLimits {
+            max_open_documents: 2,
+            max_retained_document_bytes: 1_024,
+        }
+    }
+
+    fn tiny_byte_limits() -> DocumentStoreLimits {
+        DocumentStoreLimits {
+            max_open_documents: 8,
+            max_retained_document_bytes: 16,
+        }
+    }
+
+    fn open_params(uri: Uri, text: &str) -> DidOpenTextDocumentParams {
+        DidOpenTextDocumentParams {
+            text_document: tower_lsp_server::ls_types::TextDocumentItem::new(
+                uri,
+                "rust".to_string(),
+                1,
+                text.to_string(),
+            ),
+        }
+    }
+
+    fn close_params(uri: Uri) -> DidCloseTextDocumentParams {
+        DidCloseTextDocumentParams {
+            text_document: tower_lsp_server::ls_types::TextDocumentIdentifier::new(uri),
+        }
+    }
+
+    fn full_replace_params(uri: Uri, version: i32, text: &str) -> DidChangeTextDocumentParams {
+        DidChangeTextDocumentParams {
+            text_document: tower_lsp_server::ls_types::VersionedTextDocumentIdentifier {
+                uri,
+                version,
+            },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: text.to_string(),
+            }],
+        }
+    }
+
+    fn assert_overflow_quarantined(store: &DocumentStore, uri: &Uri) -> Result<(), String> {
+        let Some(state) = store.state_for_uri(uri) else {
+            return Err(format!("overflow URI must stay in the store: {uri:?}"));
+        };
+        if !state.text.is_empty() {
+            return Err(format!(
+                "overflow document must retain empty text, got {:?}",
+                state.text
+            ));
+        }
+        if !state.buffer_authority_unknown {
+            return Err("overflow document must pin buffer_authority_unknown".to_string());
+        }
+        if state
+            .quarantine
+            .as_ref()
+            .map(|quarantine| quarantine.reason)
+            != Some(DocumentStalenessReason::InvalidIncrementalChange)
+        {
+            return Err(
+                "overflow document must reuse invalid-incremental-change quarantine".into(),
+            );
+        }
+        Ok(())
+    }
+
+    fn assert_accepted_text(store: &DocumentStore, uri: &Uri, text: &str) -> Result<(), String> {
+        let Some(state) = store.state_for_uri(uri) else {
+            return Err(format!("accepted URI must stay in the store: {uri:?}"));
+        };
+        if state.text != text {
+            return Err(format!(
+                "accepted document must retain its text, got {:?}",
+                state.text
+            ));
+        }
+        if state.buffer_authority_unknown {
+            return Err("accepted document must not pin buffer_authority_unknown".to_string());
+        }
+        if state.quarantine.as_ref().is_some_and(|quarantine| {
+            quarantine.reason == DocumentStalenessReason::InvalidIncrementalChange
+        }) {
+            return Err(
+                "accepted document must not use invalid-incremental-change quarantine".into(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn open_document_count_cap_quarantines_the_overflow_uri() -> Result<(), String> {
+        let first = test_uri("file:///workspace/src/a.rs")?;
+        let second = test_uri("file:///workspace/src/b.rs")?;
+        let overflow = test_uri("file:///workspace/src/c.rs")?;
+        let mut store = DocumentStore::with_limits(tiny_count_limits());
+        store.open(open_params(first.clone(), "fn a() {}"));
+        store.open(open_params(second.clone(), "fn b() {}"));
+        store.open(open_params(overflow.clone(), "fn overflow() {}"));
+        assert_accepted_text(&store, &first, "fn a() {}")?;
+        assert_accepted_text(&store, &second, "fn b() {}")?;
+        assert_overflow_quarantined(&store, &overflow)?;
+        Ok(())
+    }
+
+    #[test]
+    fn closing_a_document_frees_the_open_count_budget() -> Result<(), String> {
+        let first = test_uri("file:///workspace/src/a.rs")?;
+        let second = test_uri("file:///workspace/src/b.rs")?;
+        let third = test_uri("file:///workspace/src/c.rs")?;
+        let mut store = DocumentStore::with_limits(tiny_count_limits());
+        store.open(open_params(first.clone(), "fn a() {}"));
+        store.open(open_params(second.clone(), "fn b() {}"));
+        store.open(open_params(third.clone(), "fn c() {}"));
+        assert_overflow_quarantined(&store, &third)?;
+        store.close(close_params(second.clone()));
+        store.close(close_params(third.clone()));
+        store.open(open_params(third.clone(), "fn c() {}"));
+        assert_accepted_text(&store, &first, "fn a() {}")?;
+        assert_accepted_text(&store, &third, "fn c() {}")?;
+        if store.documents.contains_key(&second) {
+            return Err("closed document must leave the store".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn full_replacement_of_a_count_overflow_uri_stays_quarantined() -> Result<(), String> {
+        let first = test_uri("file:///workspace/src/a.rs")?;
+        let second = test_uri("file:///workspace/src/b.rs")?;
+        let overflow = test_uri("file:///workspace/src/c.rs")?;
+        let mut store = DocumentStore::with_limits(tiny_count_limits());
+        store.open(open_params(first.clone(), "fn a() {}"));
+        store.open(open_params(second.clone(), "fn b() {}"));
+        store.open(open_params(overflow.clone(), "fn overflow() {}"));
+        assert_overflow_quarantined(&store, &overflow)?;
+        let over_cap = store.change(
+            full_replace_params(overflow.clone(), 2, "fn still_over() {}"),
+            &PositionEncodingKind::UTF16,
+        );
+        if over_cap != QuarantineTransition::Unchanged {
+            return Err("count-overflow full replacement must not restore authority".to_string());
+        }
+        assert_overflow_quarantined(&store, &overflow)?;
+        store.close(close_params(second));
+        let recovered = store.change(
+            full_replace_params(overflow.clone(), 3, "fn recovered() {}"),
+            &PositionEncodingKind::UTF16,
+        );
+        if recovered == QuarantineTransition::Unchanged
+            && store
+                .state_for_uri(&overflow)
+                .is_some_and(|state| state.buffer_authority_unknown)
+        {
+            return Err(
+                "closing an accepted document must free a slot for overflow recovery".into(),
+            );
+        }
+        assert_accepted_text(&store, &overflow, "fn recovered() {}")?;
+        Ok(())
+    }
+
+    #[test]
+    fn reopening_an_existing_uri_at_the_count_cap_is_accepted() -> Result<(), String> {
+        let first = test_uri("file:///workspace/src/a.rs")?;
+        let second = test_uri("file:///workspace/src/b.rs")?;
+        let mut store = DocumentStore::with_limits(tiny_count_limits());
+        store.open(open_params(first.clone(), "fn a() {}"));
+        store.open(open_params(second.clone(), "fn b() {}"));
+        store.open(open_params(first.clone(), "fn a_reopened() {}"));
+        assert_accepted_text(&store, &first, "fn a_reopened() {}")?;
+        assert_accepted_text(&store, &second, "fn b() {}")?;
+        if store.documents.len() != 2 {
+            return Err("reopen must replace the existing URI, not add a third".to_string());
+        }
+        let overflow = test_uri("file:///workspace/src/c.rs")?;
+        store.open(open_params(overflow.clone(), "fn overflow() {}"));
+        store.open(open_params(overflow.clone(), "fn overflow_reopen() {}"));
+        assert_overflow_quarantined(&store, &overflow)?;
+        Ok(())
+    }
+
+    #[test]
+    fn open_total_retained_bytes_are_capped_and_reopen_counts_the_delta() -> Result<(), String> {
+        let first = test_uri("file:///workspace/src/a.rs")?;
+        let second = test_uri("file:///workspace/src/b.rs")?;
+        let overflow = test_uri("file:///workspace/src/c.rs")?;
+        let mut store = DocumentStore::with_limits(tiny_byte_limits());
+        store.open(open_params(first.clone(), "aaaaaaaa"));
+        store.open(open_params(second.clone(), "bbbbbbbb"));
+        assert_accepted_text(&store, &first, "aaaaaaaa")?;
+        assert_accepted_text(&store, &second, "bbbbbbbb")?;
+        store.open(open_params(overflow.clone(), "c"));
+        assert_overflow_quarantined(&store, &overflow)?;
+        // Replacing first in place must count the delta (8 -> 8), not
+        // 8 + 8 + 8, or the reopen would be falsely refused.
+        store.open(open_params(first.clone(), "aaaaaaaa"));
+        assert_accepted_text(&store, &first, "aaaaaaaa")?;
+        Ok(())
+    }
+
+    #[test]
+    fn full_replacement_over_the_store_byte_cap_stays_quarantined() -> Result<(), String> {
+        let first = test_uri("file:///workspace/src/a.rs")?;
+        let overflow = test_uri("file:///workspace/src/b.rs")?;
+        let mut store = DocumentStore::with_limits(tiny_byte_limits());
+        store.open(open_params(first.clone(), "aaaaaaaa"));
+        store.open(open_params(overflow.clone(), "bbbbbbbbb"));
+        assert_overflow_quarantined(&store, &overflow)?;
+        let transition = store.change(
+            full_replace_params(overflow.clone(), 2, "bbbbbbbbb"),
+            &PositionEncodingKind::UTF16,
+        );
+        if transition != QuarantineTransition::Unchanged {
+            return Err("over-cap full replacement must not lift overflow quarantine".to_string());
+        }
+        assert_overflow_quarantined(&store, &overflow)?;
+        Ok(())
+    }
+
+    #[test]
+    fn under_cap_open_retains_text_and_does_not_pin_invalid_change() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut store = DocumentStore::default();
+        store.open(open_params(uri.clone(), "fn main() {}"));
+        assert_accepted_text(&store, &uri, "fn main() {}")?;
+        Ok(())
     }
 
     #[test]
@@ -3572,7 +4340,7 @@ mod tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -3581,6 +4349,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if !snapshot.is_consistent() {
@@ -3609,7 +4378,7 @@ mod tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -3618,6 +4387,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if snapshot.is_consistent() {
@@ -3656,7 +4426,7 @@ mod tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -3665,6 +4435,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if !snapshot.is_consistent() {
@@ -3678,7 +4449,7 @@ mod tests {
         let mut lookalike_by_uri = BTreeMap::new();
         lookalike_by_uri.insert(uri, vec![lookalike]);
         let lookalike_snapshot = AnalysisSnapshot {
-            diagnostics_by_uri: lookalike_by_uri,
+            diagnostics_by_uri: lookalike_by_uri.into(),
             ..snapshot
         };
 
@@ -3711,7 +4482,7 @@ mod tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -3720,6 +4491,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         })
     }
 
@@ -3895,6 +4667,82 @@ mod tests {
             || set.last_applied_event().is_some()
         {
             return Err("a rejected event must not mutate the stored set".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_folder_set_rejects_membership_capacity_at_exact_limit_plus_one()
+    -> Result<(), String> {
+        let folders: Vec<WorkspaceFolder> = (0
+            ..=super::super::workspace_folder_bounds::MAX_WORKSPACE_FOLDER_ENTRIES)
+            .map(|index| folder(&format!("file:///workspace/f{index}")))
+            .collect::<Result<Vec<_>, _>>()?;
+        let rejection = WorkspaceFolderSet::from_folder_list(&folders)
+            .err()
+            .ok_or_else(|| "one over the entry limit must be rejected".to_string())?;
+        if rejection.kind != WorkspaceFolderEventRejectionKind::MembershipCapacityExceeded {
+            return Err("expected membership_capacity_exceeded".to_string());
+        }
+        if rejection.detail.contains("file:///") {
+            return Err("rejection detail must not echo folder URIs".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_folder_set_apply_event_rejects_cumulative_growth() -> Result<(), String> {
+        let limit = super::super::workspace_folder_bounds::MAX_WORKSPACE_FOLDER_ENTRIES;
+        let mut set = WorkspaceFolderSet::default();
+        for index in 0..limit {
+            set.apply_event(&[folder(&format!("file:///workspace/f{index}"))?], &[])
+                .map_err(|rejection| format!("unexpected rejection at {index}: {rejection:?}"))?;
+        }
+        if set.entries().len() != limit {
+            return Err("exact limit must be retained".to_string());
+        }
+        let rejection = set
+            .apply_event(&[folder("file:///workspace/extra")?], &[])
+            .err()
+            .ok_or_else(|| "cumulative growth past the cap must be rejected".to_string())?;
+        if rejection.kind != WorkspaceFolderEventRejectionKind::MembershipCapacityExceeded {
+            return Err("expected membership_capacity_exceeded".to_string());
+        }
+        if set.entries().len() != limit {
+            return Err("a rejected event must not mutate membership".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_folder_set_removal_allows_addition_after_capacity_rejection() -> Result<(), String>
+    {
+        let limit = super::super::workspace_folder_bounds::MAX_WORKSPACE_FOLDER_ENTRIES;
+        let mut set = WorkspaceFolderSet::default();
+        for index in 0..limit {
+            set.apply_event(&[folder(&format!("file:///workspace/f{index}"))?], &[])
+                .map_err(|rejection| format!("unexpected rejection: {rejection:?}"))?;
+        }
+        set.apply_event(&[folder("file:///workspace/extra")?], &[])
+            .err()
+            .ok_or_else(|| "expected capacity rejection".to_string())?;
+        set.apply_event(&[], &[folder("file:///workspace/f0")?])
+            .map_err(|rejection| format!("removal must succeed: {rejection:?}"))?;
+        set.apply_event(&[folder("file:///workspace/recovered")?], &[])
+            .map_err(|rejection| format!("addition after removal must succeed: {rejection:?}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_folder_set_rejects_oversized_single_uri() -> Result<(), String> {
+        let long =
+            "a".repeat(super::super::workspace_folder_bounds::MAX_WORKSPACE_FOLDER_URI_BYTES + 1);
+        let rejection =
+            WorkspaceFolderSet::from_folder_list(&[folder(&format!("file:///workspace/{long}"))?])
+                .err()
+                .ok_or_else(|| "oversized URI must be rejected".to_string())?;
+        if rejection.kind != WorkspaceFolderEventRejectionKind::MembershipCapacityExceeded {
+            return Err("expected membership_capacity_exceeded for oversized URI".to_string());
         }
         Ok(())
     }
@@ -4385,5 +5233,119 @@ mod tests {
             WorkspaceRootResolution::Unavailable("no folders".to_string()),
         );
         assert_eq!(unavailable.detail.as_deref(), Some("no folders"));
+    }
+
+    /// Overlong LSP character offsets clamp to the line end for every negotiated
+    /// encoding (#7316). Mid-character and absent-line positions stay refused.
+    #[test]
+    fn overlong_incremental_character_offsets_clamp_to_line_end() -> Result<(), String> {
+        let line = "abc";
+        let past_end = 99u32;
+
+        for encoding in [
+            PositionEncodingKind::UTF8,
+            PositionEncodingKind::UTF16,
+            PositionEncodingKind::UTF32,
+        ] {
+            let end_units = if encoding == PositionEncodingKind::UTF8 {
+                line.len() as u32
+            } else if encoding == PositionEncodingKind::UTF16 {
+                line.chars().map(|c| c.len_utf16()).sum::<usize>() as u32
+            } else {
+                line.chars().count() as u32
+            };
+
+            let apply_range = |start: u32, end: u32, insert: &str| -> Result<String, String> {
+                let mut buffer = line.to_string();
+                apply_document_content_changes(
+                    &mut buffer,
+                    vec![TextDocumentContentChangeEvent {
+                        range: Some(tower_lsp_server::ls_types::Range {
+                            start: Position {
+                                line: 0,
+                                character: start,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: end,
+                            },
+                        }),
+                        range_length: None,
+                        text: insert.to_string(),
+                    }],
+                    &encoding,
+                )
+                .map_err(|()| format!("refused for {encoding:?} range {start}..{end}"))?;
+                Ok(buffer)
+            };
+
+            // Overlong start only: insert at line end.
+            assert_eq!(
+                apply_range(past_end, end_units, "X")?,
+                "abcX",
+                "overlong start, {encoding:?}"
+            );
+            // Overlong end only: replace suffix from true start to clamped end.
+            assert_eq!(
+                apply_range(1, past_end, "X")?,
+                "aX",
+                "overlong end, {encoding:?}"
+            );
+            // Both overlong: zero-width insert at line end.
+            assert_eq!(
+                apply_range(past_end, past_end, "X")?,
+                "abcX",
+                "both overlong, {encoding:?}"
+            );
+        }
+
+        // Absent line is still refused.
+        let mut buffer = line.to_string();
+        let absent = apply_document_content_changes(
+            &mut buffer,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: Position {
+                        line: 9,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 9,
+                        character: 0,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(absent.is_err());
+        assert_eq!(buffer, line);
+
+        // Mid-surrogate (UTF-16 code unit inside emoji) is still refused.
+        let mut emoji = "a🎉b".to_string();
+        let original = emoji.clone();
+        let mid = apply_document_content_changes(
+            &mut emoji,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: Position {
+                        line: 0,
+                        character: 2,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 3,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(mid.is_err());
+        assert_eq!(emoji, original);
+
+        Ok(())
     }
 }

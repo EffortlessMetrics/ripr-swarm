@@ -1,0 +1,10 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_verification_contract_only_edit/input
+
+Summary: 0 changed behaviors checked
+
+Analysis outcome: no changed line is behavior ripr checks (analysis complete)
+  Limitation: verifier-only contract or proof text changed; ripr does not evaluate it during change point detection; affected items: 1; recovery: inspect the failure — Verification contract or proof text changed. ripr does not evaluate contracts, proofs or ghost code and a test cannot observe them; re-run the verifier (for example cargo kani, cargo creusot or cargo prusti) on the affected items.
+
+No findings: ripr checked no changed behavior.

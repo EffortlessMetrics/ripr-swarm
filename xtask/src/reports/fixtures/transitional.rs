@@ -14,7 +14,7 @@ pub(super) const STILL_MISSING: &str =
 /// New openings (after the seam count is masked).
 pub(super) const EXPOSED: &str = "nothing to repair here";
 pub(super) const SEAM_GRIPPED: &str = "`ripr check` reads a gap or limit for this change";
-pub(super) const SEAMS_UNTIED: &str = "ripr found <n> seams in this finding's file, but could not tie one to this finding's changed line";
+pub(super) const SEAMS_UNTIED: &str = "ripr found <n> spots in this finding's file, but could not tie one to this finding's changed line";
 
 /// One approved migration: `fixture/surface` entries whose expected golden
 /// opens with `old` and whose actual output now opens with `new`.
@@ -58,6 +58,7 @@ pub(super) const NO_SEAM_UNTIED_SURFACES: &[&str] = &[
     "owner_return_pin_json_ignored_result/human.txt",
     "owner_return_pin_json_unrelated_equality/human.txt",
     "propagated_error_closing_early_path/human.txt",
+    "rust_adversarial_same_method_other_type/human.txt",
     "rust_adversarial_shared_error_variant_proximity/human.txt",
     "rust_array_element_drop_exit/human.txt",
     "rust_array_sibling_exit_field/human.txt",
@@ -142,7 +143,6 @@ pub(super) const NO_SEAM_GRIPPED_SURFACES: &[&str] = &[
     "predicate_pairing_reassigned_binding/human.txt",
     "proximity_unrelated_oracle_not_credited/human.txt",
     "returned_closure_arithmetic_masking/human.txt",
-    "rust_adversarial_same_method_other_type/human.txt",
     "rust_bool_assert_shadow_direct/human.txt",
     "rust_bool_assert_shadow_table/human.txt",
     "rust_const_expectation_self_computed/human.txt",

@@ -48,18 +48,18 @@ pub(super) fn resolve_repo_working_set_limit(
         Err(std::env::VarError::NotPresent) => Ok(TS_REPO_FILE_LIMIT),
         Ok(raw) => {
             let parsed = raw.trim().parse::<usize>().map_err(|err| {
-                format!("{TS_REPO_FILE_LIMIT_ENV} must be a positive integer, got {raw:?}: {err}")
+                format!("{TS_REPO_FILE_LIMIT_ENV} must be a positive integer, got {raw:?}: {err}; set it to a whole number above zero, or unset it to use the default")
             })?;
             if parsed == 0 {
                 return Err(format!(
-                    "{TS_REPO_FILE_LIMIT_ENV} must be a positive integer, got {raw:?}"
+                    "{TS_REPO_FILE_LIMIT_ENV} must be a positive integer, got {raw:?}; set it to a whole number above zero, or unset it to use the default"
                 ));
             }
             Ok(parsed)
         }
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err(format!("{TS_REPO_FILE_LIMIT_ENV} must be valid UTF-8"))
-        }
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{TS_REPO_FILE_LIMIT_ENV} must be valid UTF-8; set it to a whole number above zero, or unset it to use the default"
+        )),
     }
 }
 
@@ -76,7 +76,8 @@ pub(super) struct RepoInput {
     /// Production files beyond the working-set limit. Test files are the
     /// evidence index and are not capped here; the read bounds govern them.
     pub(super) capped: usize,
-    /// The discovery walk hit its entry cap, so source may be unseen.
+    /// The discovery walk hit its candidate-source cap or total-entry backstop,
+    /// so source may be unseen.
     pub(super) discovery_truncated: bool,
     /// Symlink/junction entries the walk did not follow.
     pub(super) links_skipped: usize,
@@ -236,7 +237,7 @@ fn select_and_analyze(
     }
     if input.discovery_truncated {
         reasons.push(
-            "typescript_repo_discovery_truncated: workspace discovery hit its entry cap, so TypeScript/JavaScript source may have been missed (raise RIPR_TS_MAX_WORKSPACE_FILES)".to_string(),
+            "typescript_repo_discovery_truncated: workspace discovery hit its source-file limit or its total directory-entry limit, so TypeScript/JavaScript source may have been missed (raise RIPR_TS_MAX_WORKSPACE_FILES)".to_string(),
         );
     }
     if input.links_skipped > 0 {

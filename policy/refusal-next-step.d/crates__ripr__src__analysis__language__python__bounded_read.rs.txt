@@ -1,3 +1,0 @@
-crates/ripr/src/analysis/language/python/bounded_read.rs|{PYTHON_MAX_WORKSPACE_FILES_ENV} must be a positive integer
-crates/ripr/src/analysis/language/python/bounded_read.rs|{env_name} must be a positive integer
-crates/ripr/src/analysis/language/python/bounded_read.rs|{env_name} must be a positive integer: {err}

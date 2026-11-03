@@ -566,7 +566,7 @@ mod tests {
             exported_as_default: false,
             commonjs_default_export: false,
             commonjs_whole_function: false,
-            imports: Vec::new(),
+            imports: Default::default(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             default_object_member: false,

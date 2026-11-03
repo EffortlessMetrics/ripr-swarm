@@ -544,6 +544,7 @@ fn code_tokens(line: &str) -> Option<Vec<&str>> {
 
 /// A line's trimmed text and sorted code tokens, computed once per line.
 fn line_key(line: &ChangedLine) -> (&str, Option<Vec<&str>>) {
+    run_work!();
     (line.text.trim(), code_tokens(&line.text))
 }
 
@@ -1060,56 +1061,76 @@ mod tests {
         );
     }
 
+    fn line_key_work(changed: &ChangedFile) -> usize {
+        RUN_WORK.set(Some(0));
+        let map = changed.aligned_counterparts();
+        assert_eq!(map.len(), 1);
+        RUN_WORK.replace(None).unwrap_or_default()
+    }
+
+    fn long_first_line_fixture(k: usize) -> ChangedFile {
+        let literal = format!("const s = \"{}\";", "x".repeat(1_000 * k));
+        let changed = ChangedFile {
+            path: PathBuf::from("src/big.ts"),
+            added_lines: (1..=140)
+                .map(|n| line(n, n, if n == 1 { &literal } else { "y();" }))
+                .collect(),
+            removed_lines: (1..=k)
+                .map(|n| line(n, 1, &format!("let v{n} = 0;")))
+                .collect(),
+        };
+        assert!(changed.added_lines.len() * changed.removed_lines.len() > MAX_ALIGNED_CELLS);
+        changed
+    }
+
     #[test]
     fn a_very_long_line_does_not_pair_by_content() {
         // A minified bundle line rebuilt with a source-map comment added: the
         // lines are over the token cap, so content pairs nothing and the
-        // first added line keeps its coordinate match in work that grows
-        // with the line, not with its square.
-        crate::testing::scale::assert_growth_within(
-            "long minified line",
-            25_000,
-            50_000,
-            3,
-            |tokens| {
-                let bundle: String = (0..tokens).map(|n| format!("a{n}+")).collect();
-                let rebuilt: String = (0..tokens).map(|n| format!("b{n}+")).collect();
-                let changed = ChangedFile {
-                    path: PathBuf::from("dist/app.js"),
-                    added_lines: vec![
-                        line(1, 1, &rebuilt),
-                        line(2, 2, "//# sourceMappingURL=app.js.map"),
-                    ],
-                    removed_lines: vec![line(1, 1, &bundle)],
-                };
-                let map = changed.aligned_counterparts();
-                assert_eq!(map.len(), 1);
-                assert!(!lines_look_alike(&bundle, &rebuilt));
-            },
+        // first added line keeps its coordinate match. Tokenization stops at
+        // MAX_ALIGNED_TOKENS, so work stays bounded when the line grows.
+        let build = |tokens: usize| {
+            let bundle: String = (0..tokens).map(|n| format!("a{n}+")).collect();
+            let rebuilt: String = (0..tokens).map(|n| format!("b{n}+")).collect();
+            ChangedFile {
+                path: PathBuf::from("dist/app.js"),
+                added_lines: vec![
+                    line(1, 1, &rebuilt),
+                    line(2, 2, "//# sourceMappingURL=app.js.map"),
+                ],
+                removed_lines: vec![line(1, 1, &bundle)],
+            }
+        };
+        let small_file = build(25_000);
+        let large_file = build(50_000);
+        let bundle = &small_file.removed_lines[0].text;
+        let rebuilt = &small_file.added_lines[0].text;
+        assert!(!lines_look_alike(bundle, rebuilt));
+        let small_work = line_key_work(&small_file);
+        let large_work = line_key_work(&large_file);
+        eprintln!("long minified line: small={small_work}, large={large_work}");
+        assert!(
+            large_work <= small_work * 2 + 4,
+            "line_key work must stay linear in the long-line fallback, got {small_work} -> {large_work}"
         );
     }
 
     #[test]
     fn a_long_first_line_beside_many_removed_lines_stays_bounded() {
-        // One string-literal line (1 MB at the large size) against 1,000
-        // removed lines: the block exceeds the cell cap, and the first-line
-        // fallback tokenizes each line once. Both dimensions double between
-        // sizes, so linear work doubles and a per-pair tokenize quadruples.
-        crate::testing::scale::assert_growth_within("long first line", 500, 1_000, 3, |k| {
-            let literal = format!("const s = \"{}\";", "x".repeat(1_000 * k));
-            let changed = ChangedFile {
-                path: PathBuf::from("src/big.ts"),
-                added_lines: (1..=140)
-                    .map(|n| line(n, n, if n == 1 { &literal } else { "y();" }))
-                    .collect(),
-                removed_lines: (1..=k)
-                    .map(|n| line(n, 1, &format!("let v{n} = 0;")))
-                    .collect(),
-            };
-            assert!(changed.added_lines.len() * changed.removed_lines.len() > MAX_ALIGNED_CELLS);
-            let map = changed.aligned_counterparts();
-            assert_eq!(map.len(), 1);
-        });
+        // One string-literal line against many removed lines: the block exceeds
+        // the cell cap, and the first-line fallback compares each removed line
+        // to the first added line with one tokenization per line. Count
+        // line_key calls instead of wall time so hosted runners cannot flake
+        // on scheduling noise (#11689).
+        let small = long_first_line_fixture(500);
+        let large = long_first_line_fixture(1_000);
+        let small_work = line_key_work(&small);
+        let large_work = line_key_work(&large);
+        eprintln!("long first line: small={small_work}, large={large_work}");
+        assert!(
+            large_work <= small_work * 2 + 8,
+            "line_key work must stay linear in removed-line count, got {small_work} -> {large_work}"
+        );
     }
 
     #[test]

@@ -6,7 +6,9 @@
 //! producer and registers the `#[test]` functions it yields as `TestFact`s
 //! of the invoking file. Every fact line is pinned to the invocation, so
 //! readers that locate a test or its calls by line point at the source the
-//! user wrote. Invocations the expander refuses register nothing.
+//! user wrote. Invocations the expander refuses register nothing. A local
+//! non-test `fn` that could shadow a callee the isolated expansion mentions
+//! is such a refusal (#9967): the generated test must not outrank its twin.
 
 use super::macro_visibility::MacroVisibility;
 use super::{RustIndex, TestFact};

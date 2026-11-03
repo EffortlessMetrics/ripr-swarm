@@ -1,5 +1,5 @@
 //! `cargo xtask verify-test-shards` (#10507): the verdict on the hosted required
-//! test phase when `rust-test-shards.yml` runs it as `--partition count:N/N`
+//! test phase when `rust-test-shards.yml` runs it as `--partition hash:N/N`
 //! jobs.
 //!
 //! Four green shard jobs are not yet the one unpartitioned `cargo nextest run
@@ -595,7 +595,7 @@ fn check_context(
         }
     }
     let command = format!(
-        "cargo nextest run --workspace --profile ci --partition count:{shard}/{}",
+        "cargo nextest run --workspace --profile ci --partition hash:{shard}/{}",
         options.shards
     );
     let expected = [
@@ -873,7 +873,7 @@ mod tests {
 
     fn context_attempt(shard: u32, shards: u32, attempt: u32) -> String {
         format!(
-            "repository=o/r\ncheckout_sha={SHA}\nrun_id=7\nrun_attempt={attempt}\nprofile=ci\nshard={shard}/{shards}\ncommand=cargo nextest run --workspace --profile ci --partition count:{shard}/{shards}\ncargo-nextest 0.9\nrustc 1.95.0\ncargo 1.95.0\n{INPUT_HEADER}\n{BLOB}\n{BLOB}\n{BLOB}\n{BLOB}\nnextest_exit=0\n"
+            "repository=o/r\ncheckout_sha={SHA}\nrun_id=7\nrun_attempt={attempt}\nprofile=ci\nshard={shard}/{shards}\ncommand=cargo nextest run --workspace --profile ci --partition hash:{shard}/{shards}\ncargo-nextest 0.9\nrustc 1.95.0\ncargo 1.95.0\n{INPUT_HEADER}\n{BLOB}\n{BLOB}\n{BLOB}\n{BLOB}\nnextest_exit=0\n"
         )
     }
 

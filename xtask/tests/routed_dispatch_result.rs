@@ -228,6 +228,7 @@ esac
     };
     let mut eligibility = true;
     let mut eligibility_outcome = "skipped";
+    let mut eligibility_log = String::new();
     if admission == "success"
         && status == "admitted"
         && (event == "merge_group"
@@ -240,23 +241,45 @@ esac
             .split_once("      - name: Recheck initially admitted eligibility\n")
             .ok_or("missing actual eligibility step")?;
         let (step, _) = job
-            .split_once("      - name: Summarize routed result\n")
+            .split_once("      - name: Require the extension e2e result for the admitted head\n")
             .ok_or("missing summary after eligibility")?;
         let eligibility_script = scratch.0.join("eligibility.sh");
         fs::write(&eligibility_script, result_shell(step)?).map_err(|e| e.to_string())?;
         let output = run_shell(&eligibility_script, &env)?;
         eligibility = output.status.success();
+        eligibility_log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
         eligibility_outcome = if eligibility { "success" } else { "failure" };
     }
     env.insert(
         "ELIGIBILITY_RESULT".to_string(),
         eligibility_outcome.to_string(),
     );
+    // The extension e2e step (#12122, #12252) judges this run's own `needs`
+    // results and runs only for an admitted merge-ready pull_request; its
+    // verdict matrix is exercised by repo-policy's docs_only_routing.
+    env.insert(
+        "VSCODE_CHECK_RESULT".to_string(),
+        if event == "pull_request" && eligibility_outcome != "skipped" {
+            "success"
+        } else {
+            "skipped"
+        }
+        .to_string(),
+    );
     let output = run_shell(&script, &env)?;
     let report =
         fs::read_to_string(summary).map_err(|e| format!("missing summary: {e}; {output:?}"))?;
     assert!(report.contains("### Ripr Rust Small Result"));
-    Ok((eligibility && output.status.success(), report))
+    // The eligibility step's own log follows the summary so a test can read
+    // the stage it named when it refused (#8858).
+    Ok((
+        eligibility && output.status.success(),
+        format!("{report}\n{eligibility_log}"),
+    ))
 }
 
 #[test]
@@ -399,6 +422,33 @@ fn hard_cut_refusal_of_admitted_candidate_names_the_cut_reason() -> Result<(), S
     assert!(
         !report.contains("candidate_current_unique_bounded —"),
         "result must not pair the success reason with the cut detail, got: {report}"
+    );
+    Ok(())
+}
+
+/// #11736 Proposal B v1: the result report carries the live ownership claims
+/// next to the competing PRs row, without failing an admitted qualification.
+#[test]
+fn live_ownership_claims_surface_in_the_result_report() -> Result<(), String> {
+    let claims = "root (@steven), updated 40m";
+    let (success, report) = run_result(
+        &workflow()?,
+        "pull_request",
+        "refs/pull/10/merge",
+        "success",
+        "admitted",
+        &[
+            ("ADMISSION_REASON", "candidate_current_unique_bounded"),
+            ("ADMISSION_CONCURRENT_CLAIMS", claims),
+        ],
+    )?;
+    assert!(
+        success,
+        "a live ownership claim annotates the run, it must not fail it: {report}"
+    );
+    assert!(
+        report.contains(&format!("- concurrent claims: `{claims}`")),
+        "result summary must carry the concurrent claims row next to competing PRs, got: {report}"
     );
     Ok(())
 }
@@ -649,6 +699,93 @@ fn terminal_result_rejects_late_eligibility_changes_and_old_attempts() -> Result
         )?
         .0
     );
+    Ok(())
+}
+
+#[test]
+fn refused_eligibility_names_the_stage_that_refused() -> Result<(), String> {
+    let source = workflow()?;
+    let closed = LIVE_PR.replace("\"open\"", "\"closed\"");
+    let unresolved = LIVE_GRAPHQL.replace("\"nodes\":[]", "\"nodes\":[{\"isResolved\":false}]");
+    // This invocation is attempt 1; a run read showing attempt 2 is superseded.
+    let advanced = run_entry("pull_request", 100, 7, 2);
+    let advanced_run = advanced.to_string();
+    let advanced_page = runs_page(1, &[advanced]);
+    for (overrides, stage) in [
+        (
+            vec![("MOCK_PR_AFTER", closed.as_str())],
+            "pull_request_state_after_threads",
+        ),
+        (
+            vec![
+                ("MOCK_RUN", advanced_run.as_str()),
+                ("MOCK_RUNS_1", advanced_page.as_str()),
+            ],
+            "same_head_succession",
+        ),
+        (vec![("MOCK_PR", closed.as_str())], "pull_request_state"),
+        (
+            vec![("MOCK_GRAPHQL", unresolved.as_str())],
+            "review_decision_and_threads",
+        ),
+        (vec![("EXPECTED_REQUEST", "100-0")], "admission_binding"),
+    ] {
+        let (success, report) = run_result(
+            &source,
+            "pull_request",
+            "refs/pull/10/merge",
+            "success",
+            "admitted",
+            &overrides,
+        )?;
+        assert!(!success, "{stage} must still refuse");
+        assert!(
+            report.contains(&format!("eligibility recheck refused at stage {stage} ")),
+            "the refused stage must be named: {stage}\n{report}"
+        );
+    }
+    // A re-run (attempt 2) of a request minted at attempt 1 is explained, not
+    // just refused, and the first attempt gets no such hint.
+    let (success, report) = run_result(
+        &source,
+        "pull_request",
+        "refs/pull/10/merge",
+        "success",
+        "admitted",
+        &[("GITHUB_RUN_ATTEMPT", "2")],
+    )?;
+    assert!(!success, "a re-run must still refuse");
+    assert!(
+        report.contains("this is attempt 2 but the admitted request was minted by attempt 1")
+            && report.contains("re-add merge-ready"),
+        "{report}"
+    );
+    // A queued commit cannot be re-qualified by a label, so the merge-group
+    // recovery text must not send the operator there.
+    let (success, report) = run_result(
+        &source,
+        "merge_group",
+        "queue",
+        "success",
+        "admitted",
+        &[("GITHUB_RUN_ATTEMPT", "2")],
+    )?;
+    assert!(!success, "a merge-group re-run must still refuse");
+    assert!(
+        report.contains("Re-queue the pull request") && !report.contains("re-add merge-ready"),
+        "{report}"
+    );
+    let (success, report) = run_result(
+        &source,
+        "pull_request",
+        "refs/pull/10/merge",
+        "success",
+        "admitted",
+        &[],
+    )?;
+    assert!(success, "a live request is unchanged");
+    assert!(!report.contains("eligibility recheck refused"));
+    assert!(!report.contains("minted by attempt 1"));
     Ok(())
 }
 
@@ -977,7 +1114,7 @@ fn succession_reads_are_pinned_read_only_gets_of_the_same_workflow_head_and_even
         .split_once("      - name: Recheck initially admitted eligibility\n")
         .ok_or("missing eligibility step")?;
     let (step, _) = job
-        .split_once("      - name: Summarize routed result\n")
+        .split_once("      - name: Require the extension e2e result for the admitted head\n")
         .ok_or("missing summary")?;
     for needle in [
         "gh api \"repos/$REPOSITORY/actions/runs/$GITHUB_RUN_ID\"",

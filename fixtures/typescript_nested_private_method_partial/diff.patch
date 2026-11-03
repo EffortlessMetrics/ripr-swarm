@@ -1,0 +1,12 @@
+diff --git a/src/counter.ts b/src/counter.ts
+--- a/src/counter.ts
++++ b/src/counter.ts
+@@ -1,7 +1,7 @@
+ export function entry(): number {
+   class Counter {
+     #limit(value: number): number {
+-      return value >= 61 ? 55 : 0;
++      return value >= 50 ? 55 : 0;
+     }
+     run(): number { return this.#limit(60); }
+   }

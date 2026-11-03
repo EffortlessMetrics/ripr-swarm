@@ -180,6 +180,9 @@ pub(crate) struct GapRecord {
     pub(crate) safe_gate_predicate: Option<SafeGatePredicate>,
     #[serde(default)]
     pub(crate) authority_boundary: String,
+    /// Nearest TypeScript `package.json` directory relative to the workspace root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) typescript_package_root: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -335,8 +338,23 @@ pub(crate) struct GapRepairRoute {
     /// consumers must not synthesize it from a path, line, or display label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) inspection_command: Option<String>,
+    /// Producer-owned new-test proposal. Distinct from `related_test`: kept
+    /// off the existing-test fields so a ledger cannot present a proposal as
+    /// an observed test. The gate projects this fail-closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) proposed_target: Option<GapProposedRepairTarget>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) stop_conditions: Vec<String>,
+}
+
+/// Governed new-test proposal carried on a gap-ledger repair route.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) struct GapProposedRepairTarget {
+    pub(crate) proposal_kind: String,
+    pub(crate) file: String,
+    pub(crate) owner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) provenance: Option<String>,
 }
 
 /// Reject ambiguous producer identity while preserving readable legacy rows.
@@ -964,7 +982,7 @@ pub(crate) fn render_gap_decision_ledger_json(
         warnings: &report.warnings,
         limits: &report.limits,
     })
-    .map_err(|err| format!("serialize gap decision ledger JSON failed: {err}"))
+    .map_err(|err| format!("serialize gap decision ledger JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 /// Derive the ledger's `source_subject` for the selected `root` (#4544).
@@ -1059,7 +1077,7 @@ pub(crate) fn check_output_gap_records(
 }
 
 fn gap_record_json_value(record: &GapRecord) -> Result<Value, String> {
-    serde_json::to_value(record).map_err(|err| format!("serialize gap record JSON failed: {err}"))
+    serde_json::to_value(record).map_err(|err| format!("serialize gap record JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 /// Producer-supplied typed command specs parsed from one canonical item.
@@ -1078,7 +1096,7 @@ fn command_specs_from_value(value: Option<&Value>) -> Result<ParsedCommandSpecCo
     };
     let object = command_specs
         .as_object()
-        .ok_or_else(|| "command_specs must be an object".to_string())?;
+        .ok_or_else(|| "command_specs must be an object; regenerate the input with the command that wrote it, then rerun".to_string())?;
     let parse = |field: &str, expected_role: CommandRole| -> Result<Vec<CommandSpec>, String> {
         let Some(value) = object.get(field) else {
             return Ok(Vec::new());
@@ -1087,18 +1105,22 @@ fn command_specs_from_value(value: Option<&Value>) -> Result<ParsedCommandSpecCo
             Value::Null => return Ok(Vec::new()),
             Value::Array(values) => values.clone(),
             Value::Object(_) => vec![value.clone()],
-            _ => return Err(format!("command_specs.{field} must be an object or array")),
+            _ => {
+                return Err(format!(
+                    "command_specs.{field} must be an object or array; regenerate the input with the command that wrote it, then rerun"
+                ));
+            }
         };
         values
             .into_iter()
             .map(|value| {
                 let spec: CommandSpec = serde_json::from_value(value)
-                    .map_err(|error| format!("command_specs.{field} is malformed: {error}"))?;
+                    .map_err(|error| format!("command_specs.{field} is malformed: {error}; regenerate the input with the command that wrote it, then rerun"))?;
                 spec.validate()
-                    .map_err(|error| format!("command_specs.{field} is invalid: {error}"))?;
+                    .map_err(|error| format!("command_specs.{field} is invalid: {error}; regenerate the input with the command that wrote it, then rerun"))?;
                 if spec.role != expected_role {
                     return Err(format!(
-                        "command_specs.{field} contains {} role, expected {}",
+                        "command_specs.{field} contains {} role, expected {}; regenerate the input with the command that wrote it, then rerun",
                         command_role_label(spec.role),
                         command_role_label(expected_role)
                     ));
@@ -1272,8 +1294,11 @@ fn parse_gap_record_source_json_with_root(
     contents: &str,
     selected_root: Option<&Path>,
 ) -> Result<ParsedGapRecordSource, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|err| {
+        format!(
+            "invalid JSON: {err}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     let root = value
         .as_object()
         .and_then(|object| object.get("root"))
@@ -1344,8 +1369,11 @@ fn input_findings_total_from_source_value(source_value: Option<&Value>) -> usize
 }
 
 fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|err| {
+        format!(
+            "invalid JSON: {err}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     let items = value
         .get("finding_alignment")
         .and_then(|alignment| alignment.get("items"))
@@ -1353,7 +1381,7 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
     let findings = value.get("findings").and_then(Value::as_array);
     if items.is_none() && findings.is_none() {
         return Err(
-            "expected check output object with finding_alignment.items or findings array"
+            "expected check output object with finding_alignment.items or findings array; regenerate the input with the command that wrote it, then rerun"
                 .to_string(),
         );
     }
@@ -1364,7 +1392,9 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
     if let Some(findings) = findings {
         for (index, finding) in findings.iter().enumerate() {
             if !finding.is_object() {
-                return Err(format!("findings array entry {index} is not a JSON object"));
+                return Err(format!(
+                    "findings array entry {index} is not a JSON object; regenerate the input with the command that wrote it, then rerun"
+                ));
             }
         }
     }
@@ -1453,12 +1483,15 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
 }
 
 fn gap_records_from_repo_exposure_json(contents: &str) -> Result<Vec<GapRecord>, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|err| {
+        format!(
+            "invalid JSON: {err}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     let seams = value
         .get("seams")
         .and_then(Value::as_array)
-        .ok_or_else(|| "expected repo exposure object with seams array".to_string())?;
+        .ok_or_else(|| "expected repo exposure object with seams array; regenerate the input with the command that wrote it, then rerun".to_string())?;
     let mut records = Vec::new();
     for (index, seam) in seams.iter().enumerate() {
         if let Some(canonical_item) = seam
@@ -1600,6 +1633,7 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "gate_decision_artifact_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -1745,6 +1779,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
                 .map(ToString::to_string),
             changed_behavior: string_at(card, &["changed_behavior"]).map(ToString::to_string),
             inspection_command: string_at(card, &["inspection_command"]).map(ToString::to_string),
+            proposed_target: None,
             stop_conditions: string_array_at(card, &["stop_conditions"]),
         })
     } else {
@@ -1825,6 +1860,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         authority_boundary: string_at(card, &["authority_boundary"])
             .unwrap_or("preview_advisory_only")
             .to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -1955,6 +1991,7 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
             changed_behavior: string_at(finding, &["typescript_preview_card", "changed_behavior"])
                 .map(ToString::to_string),
             inspection_command: string_at(packet, &["inspection_command"]).map(ToString::to_string),
+            proposed_target: None,
             stop_conditions: vec![
                 "Stop if the TypeScript preview packet loses repair_packet_ready=true.".to_string(),
                 "Stop if the verification command cannot run from this workspace.".to_string(),
@@ -2030,6 +2067,9 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
         authority_boundary: string_at(packet, &["authority_boundary"])
             .unwrap_or("preview_advisory_only")
             .to_string(),
+        typescript_package_root: crate::output::markdown::typescript_package_root_from_gap_record(
+            finding,
+        ),
     })
 }
 
@@ -2173,6 +2213,7 @@ fn gap_record_from_typescript_not_delegatable_finding(
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -2274,6 +2315,7 @@ fn gap_record_from_typescript_no_action_finding(
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -2342,6 +2384,7 @@ fn gap_record_from_perl_preview_finding(finding: &Value, index: usize) -> Option
         missing_discriminator: string_at(card, &["missing_discriminator"]).map(ToString::to_string),
         changed_behavior: string_at(card, &["changed_owner"]).map(ToString::to_string),
         inspection_command: string_at(card, &["inspection_command"]).map(ToString::to_string),
+        proposed_target: None,
         stop_conditions: string_array_at(card, &["stop_if"]),
     };
     let verification_commands = verify_command.into_iter().collect::<Vec<_>>();
@@ -2434,6 +2477,7 @@ fn gap_record_from_perl_preview_finding(finding: &Value, index: usize) -> Option
         authority_boundary: string_at(card, &["authority_boundary"])
             .unwrap_or("preview_advisory_only")
             .to_string(),
+        typescript_package_root: None,
     })
     .filter(|record| {
         record.repair_route.is_some()
@@ -2523,6 +2567,7 @@ fn gap_record_from_python_static_limit_finding(finding: &Value, index: usize) ->
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -2609,6 +2654,7 @@ fn gap_record_from_python_no_action_finding(finding: &Value, index: usize) -> Op
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -2740,6 +2786,7 @@ fn gap_record_from_python_no_repair_card_finding(
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -3131,6 +3178,7 @@ fn gap_record_from_finding_alignment_item(item: &Value, index: usize) -> Option<
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: "gate_decision_artifact_only".to_string(),
+        typescript_package_root: None,
     })
 }
 
@@ -3157,6 +3205,7 @@ fn presentation_text_repair_route_from_alignment_item(
             .or_else(|| presentation_text.and_then(|text| string_at(text, &["constant_name"])))
             .map(ToString::to_string),
         inspection_command: string_at(item, &["inspection_command"]).map(ToString::to_string),
+        proposed_target: None,
         stop_conditions: vec![
             "Stop if the changed text is not user-facing in the current product surface."
                 .to_string(),
@@ -3230,6 +3279,7 @@ fn repair_route_from_evidence(
         inspection_command: string_at(canonical_item, &["inspection_command"])
             .or_else(|| string_at(evidence, &["inspection_command"]))
             .map(ToString::to_string),
+        proposed_target: None,
         stop_conditions: vec![
             "Stop if the related test is outside the current workspace.".to_string(),
             "Stop if the suggested assertion would require changing production behavior first."
@@ -3427,7 +3477,7 @@ fn gap_records_from_value(value: &Value) -> Result<Vec<GapRecord>, String> {
         return parse_record_array(records);
     }
     let Some(object) = value.as_object() else {
-        return Err("expected object or array at gap record root".to_string());
+        return Err("expected object or array at gap record root; regenerate the input with the command that wrote it, then rerun".to_string());
     };
     if let Some(records) = object.get("records").and_then(Value::as_array) {
         return parse_record_array(records);
@@ -3440,7 +3490,9 @@ fn gap_records_from_value(value: &Value) -> Result<Vec<GapRecord>, String> {
         for case in cases {
             let case_id = case.get("id").and_then(Value::as_str).unwrap_or("unknown");
             let Some(record) = case.get("expected_gap_record") else {
-                return Err(format!("case {case_id} is missing expected_gap_record"));
+                return Err(format!(
+                    "case {case_id} is missing expected_gap_record; regenerate the input with the command that wrote it, then rerun"
+                ));
             };
             records.push(parse_record(record).map_err(|err| format!("case {case_id}: {err}"))?);
         }
@@ -3458,7 +3510,7 @@ fn parse_record_array(records: &[Value]) -> Result<Vec<GapRecord>, String> {
 }
 
 fn parse_record(record: &Value) -> Result<GapRecord, String> {
-    serde_json::from_value(record.clone()).map_err(|err| format!("invalid GapRecord: {err}"))
+    serde_json::from_value(record.clone()).map_err(|err| format!("invalid GapRecord: {err}; regenerate the input with the command that wrote it, then rerun"))
 }
 
 fn summarize_records(records: &[GapRecord]) -> GapDecisionLedgerSummary {
@@ -5605,6 +5657,9 @@ mod tests {
         // observe the owners but need operands that distinguish product order.
         // `python_factor_reorder_rebound` adds one direct-aligned weak card:
         // its rebound table operand leaves multiplication order unresolved.
+        // RIPR-SPEC-0028: `python_adversarial_attribute_sink_same_value_other_receiver`
+        // adds one orthogonal card: the same value on a foreign receiver is
+        // not observation of the changed `self.status` sink.
         // #9186: `python_truthiness_swap_no_exposed_credit` downgrades an
         // `is None` -> `not x` swap that every strong call leaves unseparated to
         // `weakly_exposed`; one more direct-aligned card. Its
@@ -5621,6 +5676,13 @@ mod tests {
         // `start == 0` boundary and carries one direct-aligned card.
         // #10707: `python_boundary_module_constant_rebound_not_credited` keeps a
         // twice-bound test-module constant unresolved, one more direct card.
+        // #10391: nine conservative patch-scope fixtures
+        // (`python_bool_owner_{environment_protocol, escaped_patch_target,
+        // fake_environment, mock_comprehension, mock_equality,
+        // mock_inspection_override, mock_result_escape, parameter_patch,
+        // patched_callee}`) carry one packet-eligible `no_strong_oracle` card
+        // each; the admitted-environment positive stays exposed and the
+        // formatted-patch limit contributes no card.
         // #9185: `python_message_pin_local_no_exposed_credit` is the two-step
         // `msg = "..."` / `raise Exc(msg)` form of the same downgrade, one more
         // direct-aligned weak card; `python_message_pin_local_control` is
@@ -5630,7 +5692,10 @@ mod tests {
         // inputs no call binds unresolved, so their weak boundary findings
         // name no discriminator and carry no repair card; the direct-aligned
         // inventory drops by two.
-        if (direct, no_strong, orthogonal, family_selection) != (21, 27, 30, 1) {
+        // #12182: `python_nested_result_discarded` is a weak return finding
+        // that names the result of the nested def as its discriminator, one
+        // more direct-aligned card.
+        if (direct, no_strong, orthogonal, family_selection) != (22, 36, 31, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

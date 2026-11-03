@@ -1,0 +1,44 @@
+{
+  "case_id": "authored-absorbing-min-literal-floor",
+  "subject_id": "authored-absorbing-tail",
+  "diff": "cases/authored-absorbing-min-literal-floor.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "exact_pin_behind_absorbing_min",
+  "hard_case": "The changed condition only chooses the value of a `u32` binding that `.min(0)` then pins to 0, so no input can make the returned value depend on it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let r: u32 = if n == 6 { 1 } else { 0 };",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: `r.min(0)` on a `u32` is 0 for every `r`, so the branch choice cannot reach the returned value (equivalent mutant). Run under rustc 1.95.0 with `cargo test` on the edited subject: tests_passed; `cargo xtask verdict-corpus relabel --case authored-absorbing-min-literal-floor` replayed it with 0 drifted."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`floor_hit` returns `r.min(0)` for a `u32` `r`, which is 0 whatever the changed condition picks, so the exact pin `floor_hit(5) == 0` cannot notice the edit and every listed mutant survives (#10875, clamp half). ripr must not read this exposed through the returned value. The rule is deliberately narrow: a non-literal operand (`r.min(cap)` with `cap = n / 6`, which differs at n == 6), a signed or non-primitive type, a custom `min`/`clamp` or `#![no_implicit_prelude]` anywhere in the workspace keep the ordinary sink.",
+  "labeling_observation": {
+    "ripr_commit": "a57b3f5b",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,18 @@
+diff --git a/src/equal_components.rs b/src/equal_components.rs
+--- a/src/equal_components.rs
++++ b/src/equal_components.rs
+@@ -4,1 +4,1 @@
+-        self.items.iter().map(|(value, _)| value).sum()
++        self.items.iter().map(|(_, value)| value).sum()
+diff --git a/src/single_product_sum.rs b/src/single_product_sum.rs
+--- a/src/single_product_sum.rs
++++ b/src/single_product_sum.rs
+@@ -4,1 +4,1 @@
+-        self.items.iter().map(|(_, value)| value).product()
++        self.items.iter().map(|(_, value)| value).sum()
+diff --git a/src/zero_product_sum.rs b/src/zero_product_sum.rs
+--- a/src/zero_product_sum.rs
++++ b/src/zero_product_sum.rs
+@@ -4,1 +4,1 @@
+-        self.items.iter().map(|(_, value)| value).product()
++        self.items.iter().map(|(_, value)| value).sum()

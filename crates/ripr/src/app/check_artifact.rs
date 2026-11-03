@@ -146,7 +146,7 @@ pub(crate) fn write_check_artifact(
         findings: rewrite_non_utf8_finding_paths(findings),
     };
     let json = serde_json::to_string_pretty(&artifact)
-        .map_err(|err| format!("failed to serialize check artifact: {err}"))?;
+        .map_err(|err| format!("failed to serialize check artifact: {err}; this is a ripr bug, report it with the command you ran"))?;
     crate::atomic_file::write(path, json.as_bytes(), "check artifact")
 }
 
@@ -491,12 +491,12 @@ fn resolve_diff_bytes(
         DiffSourceIdentity::BaseHead { base, .. } => {
             crate::analysis::load_diff(root, base.as_deref(), None, git_timeout)
                 .map(String::into_bytes)
-                .map_err(|err| format!("recorded base/head diff could not be re-resolved: {err}"))
+                .map_err(|err| format!("recorded base/head diff could not be re-resolved: {err}; fetch the recorded base and head commits, or regenerate the artifact with `ripr check`"))
         }
         DiffSourceIdentity::Worktree { base } => {
             crate::analysis::load_worktree_diff(root, base.as_deref(), git_timeout)
                 .map(String::into_bytes)
-                .map_err(|err| format!("recorded worktree diff could not be re-resolved: {err}"))
+                .map_err(|err| format!("recorded worktree diff could not be re-resolved: {err}; restore the recorded worktree state, or regenerate the artifact with `ripr check`"))
         }
     }
 }
@@ -589,9 +589,12 @@ fn resolved_enabled_languages(config: &RiprConfig, perl_facts_present: bool) -> 
 /// be resolved.
 fn canonical_optional_path(path: Option<&Path>) -> Result<Option<PathBuf>, String> {
     match path {
-        Some(path) => std::fs::canonicalize(path)
-            .map(Some)
-            .map_err(|err| format!("failed to canonicalize {}: {err}", path.display())),
+        Some(path) => std::fs::canonicalize(path).map(Some).map_err(|err| {
+            format!(
+                "failed to canonicalize {}: {err}; check the path exists",
+                path.display()
+            )
+        }),
         None => Ok(None),
     }
 }
@@ -600,7 +603,12 @@ fn canonical_optional_path(path: Option<&Path>) -> Result<Option<PathBuf>, Strin
 fn canonical_root(root: &Path) -> Result<String, String> {
     std::fs::canonicalize(root)
         .map(|path| path.to_string_lossy().to_string())
-        .map_err(|err| format!("failed to canonicalize root {}: {err}", root.display()))
+        .map_err(|err| {
+            format!(
+                "failed to canonicalize root {}: {err}; pass `--root` with an existing directory",
+                root.display()
+            )
+        })
 }
 
 #[cfg(test)]

@@ -158,7 +158,7 @@ pub(crate) fn load_exception_ledger_from_text(
     display: &str,
 ) -> Result<ExceptionLedger, String> {
     let raw: RawExceptionLedger = toml::from_str(text)
-        .map_err(|err| format!("exception policy `{display}` is not valid TOML: {err}"))?;
+        .map_err(|err| format!("exception policy `{display}` is not valid TOML: {err}; edit the file to fix it, then rerun"))?;
     validate_ledger(raw, display)
 }
 
@@ -253,7 +253,7 @@ fn validate_ledger(raw: RawExceptionLedger, display: &str) -> Result<ExceptionLe
 
     if !violations.is_empty() {
         return Err(format!(
-            "exception policy `{display}` is invalid:\n{}",
+            "exception policy `{display}` is invalid; edit the policy to fix each violation listed, then rerun:\n{}",
             violations.join("\n")
         ));
     }

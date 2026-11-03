@@ -33,6 +33,11 @@ pub(super) fn missing_field_value_facts(
     if *activation != StageState::Yes || seam.kind() != SeamKind::FieldConstruction {
         return Vec::new();
     }
+    // #11398: a field write names the written field, not an owner-result
+    // field; no start is offered from a weak read of it.
+    if crate::analysis::classify::field_assignment_target(seam.expression()).is_some() {
+        return Vec::new();
+    }
     let Some(owner_fn) = owner_fn else {
         return Vec::new();
     };

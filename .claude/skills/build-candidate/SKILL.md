@@ -21,7 +21,7 @@ One candidate implements the selected claim, extends its semantic owner, has dis
 
 # Environment and ownership
 
-Identify the actual shell, host/target platform, repository remote, root, worktree, branch, HEAD and available toolchain. Shell grammar is not inferred from OS: PowerShell can run on Linux; Bash/WSL can run on a Windows host. Read `docs/agent-context/validation.md` for native exit-status handling and proof ownership.
+Identify the actual shell, host/target platform, repository remote, root, worktree, branch, HEAD and available toolchain. Shell grammar is not inferred from OS: PowerShell can run on Linux; Bash/WSL can run on a Windows host. Read `docs/agent-context/validation.md` for the tool-discovery checkpoint, native exit-status handling and proof ownership.
 
 One writer owns the candidate worktree at a time. A delegated writer receives the claim, input identity, write boundary, non-goals, proof and handback; the root does not edit concurrently. Reviewers read committed objects or create their own detached inspection worktree. Preserve pre-existing changes and never move another writer's HEAD.
 
@@ -32,14 +32,14 @@ Bind background commands to retained task/session handles, candidate identities 
 # Procedure
 
 1. Bind the issue, acceptance/rollback boundary, existing candidate, exact base and semantic owner. Re-read current source, all-state/recent PRs and substantive issue decisions for an equivalent implementation before editing.
-2. Establish the inherited baseline before the first mutation:
+2. Establish the relevant available baseline before mutation, proportionate to the claim and its likely failure route:
    - run `cargo xtask worktree doctor` and read its report;
    - verify `git merge-base origin/main HEAD` equals the recorded base before using `check-fast` for base attribution. If it differs, reconcile the accepted basis or run base-aware gates directly; a mismatch is not a demand to chase unrelated main movement;
    - independently require `git diff --name-only origin/main...HEAD` to succeed. A zero-path result is expected only when HEAD is the recorded base, not when the selector failed;
-   - run `cargo xtask check-fast` on the new candidate's base. This policy floor is not compile or full-suite evidence;
-   - run the narrowest `cargo check` covering the owner on the exact base, normally `cargo check -p <package> --all-targets`. Widen for shared manifests or cross-package changes. Record the omitted compile dimension for non-Rust-only work;
+   - when base comparison is needed for attribution, run `cargo xtask check-fast` on the relevant exact base if admitted; this policy floor is not compile or full-suite evidence;
+   - when a base compile is relevant to attribution and admitted, use the narrowest `cargo check` covering the owner; widen for shared manifests or cross-package changes. Record omitted compile dimensions;
    - when resuming an already-mutated candidate, reproduce an apparently inherited failure in an isolated exact-base worktree before blaming the base. Use full `precommit` there only for a baseline-repair claim or an authoritative comparison;
-   - if local execution is unavailable, retain that missing baseline dimension and use the available hosted route. Do not fabricate a local pass or turn tool absence into a blanket prohibition on PR publication.
+   - if local execution is unavailable, including when resource admission refuses it, retain the missing dimension and reason; use an existing authorized hosted route where it establishes that dimension. Do not fabricate a pass or turn the limit into a blanket prohibition on PR publication.
 3. Read production consumers, tests, fixtures and the strongest wrong/boundary case. Route unrelated inherited failures to their own owner rather than absorbing them into this patch.
 4. Establish a discriminating control before repairing production:
    - add the smallest test/fixture/artifact assertion that rejects the missing behavior;
@@ -55,7 +55,7 @@ Bind background commands to retained task/session handles, candidate identities 
 11. Run `check-fast` on the committed candidate and compare its selector report and ran/skipped categories with the independently resolved path set. Reconcile a changed basis or run base-aware gates directly. Unexpected zero, omitted categories or selector failure is `INSTRUMENT_FAILURE`, not pass.
 12. Run `precommit`, focused tests and the relevant changed-surface checks. For gate-relevant changes (workflow, policy, process-launch, or other hosted-gate surfaces), run `cargo xtask ci-policy` as part of focused local proof before publication; local `precommit` is not equivalent to `ci-policy` coverage and does not substitute for it. Keep proof proportional: full local runs are for named failures or explicit qualification, not automatic duplication of the entire hosted matrix before publishing.
 13. Hand the committed candidate to `review-pr`. Missing hosted evidence normally yields `REVIEW_INCOMPLETE`; enter `finish-pr` to publish and obtain that evidence, then return to exact published-head review before merge.
-14. On `REPAIR_REQUIRED`, repair the same candidate and refresh affected proof/review dimensions. Before repairing any PR gate failure, reproduce the failing signal on current `origin/main` in an exact-base worktree (or equivalent) and record the classification — `inherited` (fails on main), `candidate` (passes on main, fails on head), or `not established` — in the PR body or owned comment. Do not repair the failure on the candidate before that classification exists; route an `inherited` failure to its mainline owner instead of absorbing it into this candidate. Before resolving an integration conflict, check whether upstream already delivered the claim; preserve only a genuine unique residual.
+14. On `REPAIR_REQUIRED`, repair the same candidate and refresh affected proof/review dimensions. Classify the failure from current head, source and relevant base evidence as `inherited`, `candidate`, or `not established`, recording the evidence and uncertainty in the PR body or owned comment. Reproduce on the relevant exact base when inheritance is plausible and that comparison changes the repair route. A safe candidate repair need not wait for an irrelevant or unavailable base build; do not call unknown inherited or passed. Route a demonstrated inherited failure to its mainline owner rather than duplicating its repair. Before resolving an integration conflict, check whether upstream already delivered the claim; preserve only a genuine unique residual.
 
 # Currentness and delivery
 

@@ -19,7 +19,9 @@ mod reach_limit;
 mod related_tests;
 pub(crate) mod shared_grips;
 mod snapshot_owner_binding;
+pub(crate) mod summary;
 pub(crate) use snapshot_owner_binding::{BindingReach, local_is_owner_result_before, text_calls};
+pub(crate) use summary::retain_test_grip_summary;
 mod value_contradiction;
 
 use boolean_boundary_pin::BooleanBoundaryPin;
@@ -41,9 +43,11 @@ use related_tests::{
 
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
-    call_text_may_call_free_function, direct_collection_mutation_receiver, is_ignored,
-    owner_call_text, reach_evidence as classify_reach_evidence,
+    assertion_pins_pushed_collection_count, call_text_may_call_free_function,
+    direct_collection_mutation_receiver, is_ignored, owner_call_text,
+    predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
     related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
+    test_count_pins_pushed_collection, test_counts_pushed_collection_argument,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -117,6 +121,17 @@ impl TestGripEvidence {
         ]
         .iter()
         .any(|stage| stage.summary.contains(limit.as_str()))
+    }
+
+    /// #11402: whether the changed push is followed only to a local the
+    /// test reads back by a count that pins the single push, the
+    /// propagation stage's own marker.
+    pub(crate) fn follows_push_to_counted_local(&self) -> bool {
+        self.propagate.state == StageState::Yes
+            && self
+                .propagate
+                .summary
+                .contains(PUSHED_COLLECTION_COUNT_PINNED)
     }
 }
 
@@ -340,6 +355,14 @@ impl<'index> EvidencePass<'index> {
         // partial vector exactly as it did for the serial loop.
         let token = cancellation::current_token();
         let overlay = crate::analysis::committed_source::current_overlay();
+        // Capture the listener on this thread. Rayon workers do not inherit
+        // the inventory-progress thread-local, so they must hold the Arc.
+        let units_listener = super::inventory_progress::current_listener();
+        let total_units = u64::try_from(seams.len()).unwrap_or(u64::MAX);
+        // Report the honest denominator before the whole-index warm so a
+        // tens-of-seconds table build is not another unquantified stall
+        // (#8643).
+        super::inventory_progress::report_units(0, total_units);
         // #9211: a stage large enough to need the whole-index tables pays
         // for them here, before any seam is queued, instead of the first
         // worker to ask building one in line while its siblings wait. A first
@@ -365,6 +388,10 @@ impl<'index> EvidencePass<'index> {
                                 &format!("processed_{processed}_of_{}", seams.len()),
                                 evidence_started.elapsed(),
                             );
+                            if let Some(listener) = units_listener.as_ref() {
+                                let completed = u64::try_from(processed).unwrap_or(u64::MAX);
+                                listener(completed, total_units);
+                            }
                         }
                         Some(evidence)
                     })
@@ -372,6 +399,16 @@ impl<'index> EvidencePass<'index> {
             })
             .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
+        if out.is_empty()
+            && cancellation::current_token()
+                .as_ref()
+                .and_then(|token| token.observed_abort())
+                .is_some()
+        {
+            // #5341: a cancelled pass must not leave provisional shared-grip
+            // records pinned on the generation-local pool.
+            context.clear_window_memos();
+        }
         out
     }
 
@@ -420,6 +457,76 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
     evidence_for_seam_with_context(seam, &context)
 }
 
+/// Whether a test that pins another function lends this seam no oracle
+/// (#12060 match arms, #12434 predicate boundaries, #12600/#12671 returned
+/// values). All three kinds read a value another indexed function also
+/// produces, so an assertion on that function says nothing about the owner's
+/// branch.
+///
+/// A predicate boundary or returned value refuses only when some related test
+/// is tied to the owner by a relation that establishes reach. With no such
+/// test every
+/// related test is proximity-only, activation stays unknown, and stripping
+/// the lent oracle would move the seam from `activation_unknown` to
+/// `reachable_unrevealed` (rule 4 of seam classification), claiming tests run
+/// a seam nothing is seen calling. Callers pass the complete relation set,
+/// never a rank-limited or per-test slice, so every entry point agrees.
+fn refuses_other_function_oracle(
+    seam: &RepoSeam,
+    relations: impl IntoIterator<Item = RelationReason>,
+    owner_is_function: bool,
+) -> bool {
+    match seam.kind() {
+        SeamKind::MatchArm => true,
+        SeamKind::PredicateBoundary | SeamKind::ReturnValue => relations
+            .into_iter()
+            .any(|reason| reason.establishes_reach(owner_is_function)),
+        _ => false,
+    }
+}
+
+/// #12060: the related tests as the stage evidence should read them. A match
+/// arm names an enum variant other functions also return, so a test related
+/// to the owner only by file or module cannot confirm the arm through an
+/// assertion that calls a different indexed function with no path to the
+/// owner (`assert_eq!(reduce(..), Reduction::Over(..))` for an arm of
+/// `consume`). Repo relation also ties such a test by assertion affinity,
+/// because the assertion names the arm's variant, so that tie is refused
+/// the same way. A predicate boundary in the owner (`wait < 5` in `consume`)
+/// is refused alike (#12434). `ripr check` refuses the same assertion per
+/// assertion (RIPR-SPEC-0094, #11552); the repo seam must agree.
+fn credited_related_tests<'a>(
+    context: &CompactGripContext<'_>,
+    owner_fn: Option<&FunctionSummary>,
+    related: &[(&'a TestSummary, RelationReason)],
+    refuse_other_function_oracle: bool,
+) -> Vec<std::borrow::Cow<'a, TestSummary>> {
+    let owner_reach = refuse_other_function_oracle
+        .then(|| owner_fn.map(|owner| context.transitive_reach.owner_reach(&owner.name)))
+        .flatten();
+    related
+        .iter()
+        .map(|(test, reason)| {
+            let Some(owner_reach) = owner_reach.as_ref() else {
+                return std::borrow::Cow::Borrowed(*test);
+            };
+            if !(reason.is_proximity_only() || *reason == RelationReason::AssertionTargetAffinity)
+                || !test
+                    .assertions
+                    .iter()
+                    .any(|oracle| owner_reach.assertion_pins_other_function(&oracle.text))
+            {
+                return std::borrow::Cow::Borrowed(*test);
+            }
+            let mut credited = (*test).clone();
+            credited
+                .assertions
+                .retain(|oracle| !owner_reach.assertion_pins_other_function(&oracle.text));
+            std::borrow::Cow::Owned(credited)
+        })
+        .collect()
+}
+
 fn evidence_for_seam_with_context(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
@@ -443,9 +550,16 @@ fn evidence_for_seam_with_context(
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();
-    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
-    let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
+    let refuse = refuses_other_function_oracle(
+        seam,
+        related_reasons.iter().map(|(_, reason)| *reason),
+        owner_fn.is_some(),
+    );
+    let credited_views = credited_related_tests(context, owner_fn, &related_reasons, refuse);
+    let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
+    let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    let observe = observe_evidence(&credited);
+    let discriminate = discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
 
     // One admission per test file for this seam: the verdict depends only on
     // the (test file, seam file) pair, and a file's tests share it (#5361).
@@ -469,17 +583,37 @@ fn evidence_for_seam_with_context(
     // this count is the contradiction gate's completeness authority (#7007).
     let statically_contradicted_related_tests = related
         .iter()
-        .filter(|test| test_has_contradicted_assertion(test, owner_fn))
+        .filter(|test| test_has_contradicted_assertion(test, owner_fn, context.index))
         .count();
 
+    // For a changed match arm: which related tests run the arm through their
+    // one call of the owner, passing the arm's own literal in the argument
+    // the arm's match reads (aligned with `related_tests`). Empty when the arm
+    // is not a plain literal arm of the owner's top-level match on a bare
+    // parameter, so the start withholds.
+    let arm_literal_tests: Vec<bool> = owner_fn
+        .filter(|_| seam.kind() == SeamKind::MatchArm)
+        .and_then(|owner| arm_scrutinee_argument(seam, owner).map(|arm| (owner, arm)))
+        .map(|(owner, (parameter, literal))| {
+            related_with_reason
+                .iter()
+                .map(|(indexed, _)| {
+                    test_runs_arm_in_its_one_owner_call(indexed.test, owner, parameter, &literal)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let mut missing_discriminators = missing_discriminators;
     let path_established = [&reach, &activate, &propagate]
         .iter()
         .all(|stage| stage.state == StageState::Yes);
     if let Some(fact) = return_value_missing_discriminator(
         seam,
-        &related_tests,
-        &related,
+        AlignedRelatedTests {
+            grips: &related_tests,
+            summaries: &related,
+            passes_arm_literal: &arm_literal_tests,
+        },
         path_established.then_some(&discriminate),
         statically_contradicted_related_tests,
         owner_fn,
@@ -532,18 +666,38 @@ fn evidence_for_seam_with_context(
 /// statically contradicted. Anything else emits nothing (fail-closed).
 const RETURN_VALUE_START_REASON: &str = "no related test asserts the exact changed return value";
 const ERROR_VARIANT_START_REASON: &str = "no related test asserts the exact changed error variant";
+/// A changed match arm under the same gates, and only when a related test
+/// passes the arm's own literal pattern, so the test is known to select the
+/// changed arm rather than a sibling one.
+const MATCH_ARM_START_REASON: &str =
+    "no related test asserts the exact result of the changed match arm";
+
+/// The related tests of one seam, aligned by position: each test's grip, its
+/// summary, and whether it passes the changed arm's literal as the matched
+/// argument (always `false` off a match arm).
+struct AlignedRelatedTests<'a> {
+    grips: &'a [Arc<RelatedTestGrip>],
+    summaries: &'a [&'a TestSummary],
+    passes_arm_literal: &'a [bool],
+}
 
 fn return_value_missing_discriminator(
     seam: &RepoSeam,
-    related_tests: &[Arc<RelatedTestGrip>],
-    related_summaries: &[&TestSummary],
+    related: AlignedRelatedTests<'_>,
     discriminate: Option<&StageEvidence>,
     statically_contradicted_related_tests: usize,
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
 ) -> Option<MissingDiscriminatorFact> {
-    if !matches!(seam.kind(), SeamKind::ReturnValue | SeamKind::ErrorVariant)
-        || statically_contradicted_related_tests > 0
+    let AlignedRelatedTests {
+        grips: related_tests,
+        summaries: related_summaries,
+        passes_arm_literal: arm_literal_tests,
+    } = related;
+    if !matches!(
+        seam.kind(),
+        SeamKind::ReturnValue | SeamKind::ErrorVariant | SeamKind::MatchArm
+    ) || statically_contradicted_related_tests > 0
     {
         return None;
     }
@@ -582,6 +736,11 @@ fn return_value_missing_discriminator(
         }
         super::seams::RequiredDiscriminator::ErrorVariant { variant } => {
             (variant, ERROR_VARIANT_START_REASON)
+        }
+        super::seams::RequiredDiscriminator::MatchArmTaken { arm }
+            if seam.kind() == SeamKind::MatchArm =>
+        {
+            (arm, MATCH_ARM_START_REASON)
         }
         _ => return None,
     };
@@ -633,9 +792,40 @@ fn return_value_missing_discriminator(
     {
         return None;
     }
-    let direct_call_with_target = related_tests.iter().any(|test| {
-        test.relation_reason == RelationReason::DirectOwnerCall && test.test_target.is_some()
-    });
+    let direct_call_with_target = if seam.kind() == SeamKind::MatchArm {
+        // A match-arm start needs ONE related test that does everything at
+        // once: passes the arm's literal in the argument the arm's match
+        // reads, calls the owner directly with an edit target under `check`'s
+        // own relation rules (no test-local shadow type, #6951), and asserts
+        // on the result. Gates satisfied by different tests prove nothing
+        // about the arm. (A struct-field change keeps its own producer route
+        // in `activate_evidence`.)
+        // The admitted assertions are trusted by name, so a workspace that
+        // rebinds `assert!`/`assert_eq!`/`assert_ne!` (a `macro_rules!` or a
+        // `use .. as assert`) may never evaluate the call: refuse, as the
+        // check-side evidence reader does.
+        impl_identity_is_unambiguous(owner_fn, index)
+            && free_owner_name_is_unique(owner_fn, index)
+            && !crate::analysis::classify::macro_names_rebound(
+                index,
+                &["assert", "assert_eq", "assert_ne"],
+            )
+            && related_tests
+                .iter()
+                .zip(related_summaries.iter())
+                .zip(arm_literal_tests.iter())
+                .any(|((test, summary), passes_literal)| {
+                    *passes_literal
+                        && test.relation_reason == RelationReason::DirectOwnerCall
+                        && test.test_target.is_some()
+                        && crate::analysis::classify::owner_call_is_direct(summary, owner_fn, index)
+                        && test_assertion_observes_owner(summary, owner_fn, index)
+                })
+    } else {
+        related_tests.iter().any(|test| {
+            test.relation_reason == RelationReason::DirectOwnerCall && test.test_target.is_some()
+        })
+    };
     direct_call_with_target.then(|| MissingDiscriminatorFact {
         value: description.clone(),
         reason: reason.to_string(),
@@ -1013,6 +1203,640 @@ fn source_declares_type_alias_masked(masked: &str, name: &str) -> bool {
     })
 }
 
+/// Whether an impl owner's self type (and trait, for a trait impl) is declared
+/// exactly once in the workspace and never renamed or aliased, so no test can
+/// be calling a same-named shadow type instead (#6950 / #6951 / #7067). A free
+/// function passes; an owner id whose impl type cannot be read withholds.
+fn impl_identity_is_unambiguous(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    if matches!(owner.impl_context, FunctionImplContext::Free) {
+        return true;
+    }
+    let Some(self_type) = crate::analysis::classify::impl_self_type_name(&owner.id.0) else {
+        return false;
+    };
+    let mut names: Vec<(String, &[&str])> = vec![(self_type, &["struct", "enum", "union"])];
+    if let Some(trait_name) = crate::analysis::classify::owner_trait_name(&owner.id.0) {
+        names.push((trait_name, &["trait"]));
+    }
+    names.iter().all(|(name, keywords)| {
+        let mut declarations = 0usize;
+        for facts in index.files().values() {
+            if !facts.source.contains(name.as_str()) {
+                continue;
+            }
+            let masked = crate::analysis::extract::mask_comments_and_strings(&facts.source);
+            if source_declares_type_alias_masked(&masked, name)
+                || !renamed_from(&masked, name).is_empty()
+            {
+                return false;
+            }
+            declarations += count_item_declarations(&masked, name, keywords);
+        }
+        declarations == 1
+    })
+}
+
+/// Whether a free-function owner is the only free function of its name in
+/// the workspace. A same-named free function in another module (`b::rate`
+/// beside `a::rate`) can be what a bare `rate(..)` call reaches through a
+/// file-level import, which the call reader does not resolve, so the start
+/// withholds. A method owner passes: its receiver and impl type are checked
+/// by [`impl_identity_is_unambiguous`] and the direct-call relation.
+fn free_owner_name_is_unique(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    !matches!(owner.impl_context, FunctionImplContext::Free)
+        || index
+            .functions()
+            .iter()
+            .filter(|function| {
+                function.name == owner.name
+                    && matches!(function.impl_context, FunctionImplContext::Free)
+            })
+            .count()
+            == 1
+}
+
+/// How many `<keyword> <name>` item declarations masked source holds.
+fn count_item_declarations(masked: &str, name: &str, keywords: &[&str]) -> usize {
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    keywords
+        .iter()
+        .map(|keyword| {
+            masked
+                .match_indices(keyword)
+                .filter(|(at, word)| {
+                    let rest = &masked[at + word.len()..];
+                    if part(masked[..*at].chars().next_back())
+                        || !rest.starts_with(char::is_whitespace)
+                    {
+                        return false;
+                    }
+                    let ident: String = rest
+                        .trim_start()
+                        .chars()
+                        .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+                        .collect();
+                    ident == *name
+                })
+                .count()
+        })
+        .sum()
+}
+
+/// Whether `pattern` is one plain literal: a string or char literal with no
+/// escape or inner quote, or a decimal integer. Anything else withholds.
+fn is_plain_literal_pattern(pattern: &str) -> bool {
+    let pattern = pattern.trim();
+    let is_string = pattern.len() >= 2
+        && pattern.starts_with('"')
+        && pattern.ends_with('"')
+        && !pattern[1..pattern.len() - 1].contains(['"', '\\']);
+    let is_char = pattern.len() >= 3
+        && pattern.starts_with('\'')
+        && pattern.ends_with('\'')
+        && !pattern[1..pattern.len() - 1].contains(['\'', '\\']);
+    let is_integer = {
+        let digits = pattern.strip_prefix('-').unwrap_or(pattern);
+        !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
+    };
+    is_string || is_char || is_integer
+}
+
+/// For a changed match arm, the owner parameter index the arm's match reads
+/// and the arm's literal, only when the shape makes "a test passes this
+/// literal in that argument" mean "the test runs this arm": the owner's whole
+/// body is one `match <parameter> { .. }` on a bare parameter, the changed arm
+/// is a top-level arm of it whose pattern is one plain literal, and every
+/// earlier arm is plain literals only (no guard, binding, wildcard, range or
+/// path that could take the input first). Anything else is `None`.
+fn arm_scrutinee_argument(seam: &RepoSeam, owner: &FunctionSummary) -> Option<(usize, String)> {
+    let target = seam.expression().trim().trim_end_matches("=>").trim();
+    if !is_plain_literal_pattern(target) {
+        return None;
+    }
+    let (scrutinee, arms) = whole_body_match_arms(owner)?;
+    let (_, parameters) = arm_owner_signature(owner)?;
+    let parameter = parameters.iter().position(|name| *name == scrutinee)?;
+    for (pattern, line) in arms {
+        if line == seam.display_line() && pattern.trim() == target {
+            return Some((parameter, target.to_string()));
+        }
+        // An earlier arm naming the same literal (alone or in a `|`
+        // alternation) takes that input first, so the changed arm never runs.
+        if !pattern.split('|').all(is_plain_literal_pattern)
+            || pattern
+                .split('|')
+                .any(|alternative| same_literal_value(alternative, target))
+        {
+            return None;
+        }
+    }
+    None
+}
+
+/// Whether two plain literal patterns can match the same input: equal text,
+/// or two integers of equal value however written (`01`, `-0`, `0`). An
+/// integer too large to read counts as equal, so the caller refuses.
+fn same_literal_value(left: &str, right: &str) -> bool {
+    let (left, right) = (left.trim(), right.trim());
+    let integer = |text: &str| {
+        let digits = text.strip_prefix('-').unwrap_or(text);
+        !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit())
+    };
+    if left == right {
+        return true;
+    }
+    if !(integer(left) && integer(right)) {
+        return false;
+    }
+    match (left.parse::<i128>(), right.parse::<i128>()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => true,
+    }
+}
+
+/// Whether `test` runs the changed arm through its one call of `owner`: the
+/// call's argument at `parameter` (as the owner's parameter list counts it,
+/// without `self`) is the arm's literal written directly in the call. A
+/// local, constant or computed argument refuses, since a later `let` or
+/// assignment may give the call another value; every other shape refuses
+/// too: see [`arm_owner_call_argument`].
+fn test_runs_arm_in_its_one_owner_call(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    parameter: usize,
+    literal: &str,
+) -> bool {
+    arm_owner_call_argument(test, owner, parameter).is_some_and(|argument| argument == literal)
+}
+
+/// The argument text at `parameter` of the ONE call of `owner` in `test`, so
+/// the result an assertion reads can only be the result of that call. `None`
+/// (refuse) when a credited helper also calls the owner, or when the test
+/// body is not one of the shapes [`arm_call_argument_in_body`] admits.
+fn arm_owner_call_argument(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    parameter: usize,
+) -> Option<String> {
+    let name = owner.name.as_str();
+    if name.is_empty() || test.calls.iter().filter(|call| call.name == name).count() > 1 {
+        return None;
+    }
+    let (takes_self, _) = arm_owner_signature(owner)?;
+    arm_call_argument_in_body(&test.body, name, takes_self, parameter)
+}
+
+/// The owner's parameter list read strictly from its first line: whether it
+/// takes a `self` receiver, and the other parameters' names in order. `None`
+/// (refuse) unless the line holds `fn <name>(..)` with no generic parameters
+/// on the function itself (an enclosing `impl<T>` keeps positions), and
+/// every parameter is `name: Type` (or `mut name: Type`) whose type is plain
+/// words, paths, references and lifetimes: a `<`, bracket, tuple or pattern
+/// could hold commas that would shift the parameter positions, and a
+/// visibility like `pub(crate)` is skipped by anchoring on the name.
+fn arm_owner_signature(owner: &FunctionSummary) -> Option<(bool, Vec<String>)> {
+    let signature = owner.body.lines().next()?;
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    let header = format!("fn {}", owner.name);
+    let at = signature
+        .match_indices(header.as_str())
+        .find(|(at, _)| {
+            !part(signature[..*at].chars().next_back())
+                && !part(signature[at + header.len()..].chars().next())
+        })
+        .map(|(at, _)| at + header.len())?;
+    let rest = signature[at..].trim_start().strip_prefix('(')?;
+    let list = &rest[..rest.find(')')?];
+    let mut takes_self = false;
+    let mut names = Vec::new();
+    for (position, parameter) in list.split(',').enumerate() {
+        let parameter = parameter.trim();
+        if parameter.is_empty() {
+            continue;
+        }
+        let (name, kind) = match parameter.split_once(':') {
+            Some((name, kind)) => (name.trim(), Some(kind.trim())),
+            None => (parameter, None),
+        };
+        let receiver = name.trim_start_matches('&').trim_start();
+        let receiver = match receiver.strip_prefix('\'') {
+            Some(lifetime) => lifetime
+                .trim_start_matches(|ch: char| ch.is_alphanumeric() || ch == '_')
+                .trim_start(),
+            None => receiver,
+        };
+        let receiver = receiver.strip_prefix("mut ").unwrap_or(receiver).trim();
+        if receiver == "self" {
+            if position != 0 || kind.is_some() {
+                return None;
+            }
+            takes_self = true;
+            continue;
+        }
+        let name = name.strip_prefix("mut ").unwrap_or(name).trim();
+        let kind = kind?;
+        let plain_type = !kind.is_empty()
+            && kind
+                .chars()
+                .all(|ch| ch.is_alphanumeric() || ch.is_whitespace() || "_&':".contains(ch));
+        if !plain_type
+            || name.is_empty()
+            || name.starts_with(|ch: char| ch.is_ascii_digit())
+            || !name.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        {
+            return None;
+        }
+        names.push(name.to_string());
+    }
+    Some((takes_self, names))
+}
+
+/// The assertion macros whose condition operands an arm call may sit in, and
+/// how many leading arguments are operands (the rest is the failure message,
+/// which runs only when the assertion fails).
+/// The `debug_assert` forms are left out: they are compiled out of release
+/// test builds.
+const ARM_CALL_ASSERTIONS: [(&str, usize); 3] = [("assert", 1), ("assert_eq", 2), ("assert_ne", 2)];
+
+/// Words that let a statement end the test early or skip code.
+const ARM_EARLY_EXIT_WORDS: [&str; 10] = [
+    "return",
+    "break",
+    "continue",
+    "else",
+    "loop",
+    "panic",
+    "unreachable",
+    "todo",
+    "unimplemented",
+    "exit",
+];
+
+/// The pure core of [`arm_owner_call_argument`] over one test body. An
+/// allowlist: the owner's name is written exactly once in the body, as a call
+/// whose arguments line up with the owner's parameters (a `self` method only
+/// as `value.method(..)`, any other owner never so) and are all simple tokens
+/// (a literal, a name, a field or path, optionally borrowed). That call is
+/// the whole right side of a top-level `let name = ..;`, or sits in the
+/// condition operands of a top-level `assert!`-family statement, with only
+/// plain operand text around it (no closure, block, branch, short-circuit,
+/// `?` or extra argument). No attribute appears in the body, and no other
+/// top-level statement can end the test early. Anything else is `None`.
+fn arm_call_argument_in_body(
+    body: &str,
+    name: &str,
+    takes_self: bool,
+    parameter: usize,
+) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let part = |ch: Option<char>| ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    let mut mentions = masked.match_indices(name).filter(|(at, _)| {
+        !part(masked[..*at].chars().next_back()) && !part(masked[at + name.len()..].chars().next())
+    });
+    let (at, _) = mentions.next()?;
+    if mentions.next().is_some() || masked[..at].trim_end().ends_with('.') != takes_self {
+        return None;
+    }
+    let after = at + name.len();
+    let open = after + (masked[after..].len() - masked[after..].trim_start().len());
+    if !masked[open..].starts_with('(') {
+        return None;
+    }
+    let close = matching_close(&masked, open)?;
+    let (statements, body_open) = top_level_statements(&masked)?;
+    // An outer `#[cfg(..)]` or inner `#![cfg(..)]` (or any attribute) inside
+    // the body may compile the call, an assertion or the whole test out.
+    if masked[body_open..].contains('#') {
+        return None;
+    }
+    let (start, end) = *statements
+        .iter()
+        .find(|(start, end)| *start <= at && close < *end)?;
+    let others_may_exit = statements
+        .iter()
+        .filter(|span| span.0 != start)
+        .any(|(from, to)| {
+            let text = &masked[*from..*to];
+            text.contains('?')
+                || ARM_EARLY_EXIT_WORDS
+                    .iter()
+                    .any(|word| mentions_identifier(text, word))
+        });
+    if others_may_exit || !call_statement_admits(&masked, start, end, at, close) {
+        return None;
+    }
+    let mut arguments = Vec::new();
+    let mut from = open + 1;
+    while let Some(comma) = find_top_level(&masked, from, close, ",") {
+        arguments.push(body.get(from..comma)?.trim());
+        from = comma + 1;
+    }
+    let last = body.get(from..close)?.trim();
+    if !last.is_empty() {
+        arguments.push(last);
+    }
+    if !arguments
+        .iter()
+        .all(|argument| is_simple_call_argument(argument))
+    {
+        return None;
+    }
+    arguments
+        .get(parameter)
+        .map(|argument| argument.to_string())
+}
+
+/// The top-level statement spans (split at `;` only) of a masked test body,
+/// inside its own braces when it starts with a `fn` header, and the offset
+/// the statements start at. `None` when the brackets do not balance.
+fn top_level_statements(masked: &str) -> Option<(Vec<(usize, usize)>, usize)> {
+    let header = masked.find('{').map_or("", |brace| &masked[..brace]);
+    let base = usize::from(mentions_identifier(header, "fn"));
+    let body_open = if base == 1 { masked.find('{')? + 1 } else { 0 };
+    let mut statements = Vec::new();
+    let mut stack: Vec<char> = Vec::new();
+    let mut start = body_open;
+    let mut cursor = body_open;
+    while cursor < masked.len() {
+        cursor = skip_literal(masked, cursor);
+        let Some(ch) = masked[cursor..].chars().next() else {
+            break;
+        };
+        match ch {
+            '(' | '[' | '{' => stack.push(ch),
+            ')' | ']' | '}' => {
+                let Some(_) = stack.pop() else {
+                    // The body's own closing brace.
+                    statements.push((start, cursor));
+                    return (base == 1).then_some((statements, body_open));
+                };
+            }
+            ';' if stack.is_empty() => {
+                statements.push((start, cursor));
+                start = cursor + 1;
+            }
+            _ => {}
+        }
+        cursor += ch.len_utf8();
+    }
+    (base == 0 && stack.is_empty()).then(|| {
+        statements.push((start, masked.len()));
+        (statements, body_open)
+    })
+}
+
+/// Whether the statement `start..end` holding the owner call `at..=close` is
+/// one admitted shape: `let <name>[: <type>] = <operand>` or an assertion
+/// macro from [`ARM_CALL_ASSERTIONS`] whose condition operand holds the call,
+/// with the operand around the call plain (see [`is_plain_operand_text`]).
+fn call_statement_admits(masked: &str, start: usize, end: usize, at: usize, close: usize) -> bool {
+    let statement = &masked[start..end];
+    let lead = statement.len() - statement.trim_start().len();
+    let text = statement.trim();
+    let text_start = start + lead;
+    let text_end = text_start + text.len();
+    let operand = if let Some(rest) = text.strip_prefix("let ") {
+        let Some(eq) = rest.find('=') else {
+            return false;
+        };
+        let pattern = &rest[..eq];
+        if rest[eq + 1..].starts_with('=')
+            || !pattern.chars().all(|ch| {
+                ch.is_alphanumeric() || ch == '_' || ch == ':' || ch == '&' || ch.is_whitespace()
+            })
+        {
+            return false;
+        }
+        (text_start + 4 + eq + 1, text_end)
+    } else {
+        let Some((_, operands)) = ARM_CALL_ASSERTIONS.iter().find(|(name, _)| {
+            text.strip_prefix(name)
+                .and_then(|rest| rest.strip_prefix('!'))
+                .is_some_and(|rest| rest.trim_start().starts_with('('))
+        }) else {
+            return false;
+        };
+        let Some(open_rel) = text.find('(') else {
+            return false;
+        };
+        let open = text_start + open_rel;
+        if matching_close(masked, open) != Some(text_end - 1) {
+            return false;
+        }
+        // The operand that holds the call must be one of the leading
+        // condition operands, never a message argument.
+        let mut from = open + 1;
+        let mut index = 0usize;
+        loop {
+            let to = find_top_level(masked, from, text_end - 1, ",").unwrap_or(text_end - 1);
+            if from <= at && close < to {
+                if index >= *operands {
+                    return false;
+                }
+                break (from, to);
+            }
+            if to >= text_end - 1 {
+                return false;
+            }
+            from = to + 1;
+            index += 1;
+        }
+    };
+    let (from, to) = operand;
+    from <= at
+        && close < to
+        && is_plain_operand_text(&masked[from..at])
+        && is_plain_operand_text(&masked[close + 1..to])
+}
+
+/// Operand text around the owner call that always evaluates the call: names,
+/// literals, paths, field and method access, arithmetic and comparison, but
+/// no closure bar, short-circuit `&&`, `?`, block, index, extra argument or
+/// early-exit word.
+fn is_plain_operand_text(text: &str) -> bool {
+    text.chars()
+        .all(|ch| ch.is_alphanumeric() || ch.is_whitespace() || "_.<>=!+-*/%()&:\"'".contains(ch))
+        && !text.contains("&&")
+        && !invokes_macro(text)
+        && !["return", "break", "continue", "async", "move", "await"]
+            .iter()
+            .any(|word| mentions_identifier(text, word))
+}
+
+/// Whether `text` invokes a macro (`name!(`, `name![`, `name!{`, with any
+/// whitespace around the `!`): a macro
+/// around the owner call may drop its argument or never evaluate it.
+fn invokes_macro(text: &str) -> bool {
+    // Whitespace (or a masked comment) may sit on either side of the `!`:
+    // `stringify ! (..)` and `keep /**/ !(..)` are macro calls too.
+    text.match_indices('!').any(|(at, _)| {
+        text[..at]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+            && text[at + 1..].trim_start().starts_with(['(', '[', '{'])
+    })
+}
+
+/// A call argument that is one simple token: a plain literal, or a name,
+/// field or path (`a`, `a.b`, `a::B`), optionally borrowed (`&`, `&mut`).
+/// A closure, generic, block, call or operator is not simple, and its commas
+/// could shift the argument count.
+fn is_simple_call_argument(argument: &str) -> bool {
+    let token = argument.trim().trim_start_matches('&').trim_start();
+    let token = token.strip_prefix("mut ").unwrap_or(token).trim();
+    is_plain_literal_pattern(token)
+        || (token.starts_with(|ch: char| ch.is_alphabetic() || ch == '_')
+            && token
+                .chars()
+                .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '.' || ch == ':'))
+}
+
+/// The scrutinee and top-level arms (pattern text, 1-based file line) of an
+/// owner whose body is exactly one `match <identifier> { .. }`. Comments,
+/// strings and chars are masked while scanning; any shape it cannot read is
+/// `None`.
+fn whole_body_match_arms(owner: &FunctionSummary) -> Option<(String, Vec<(String, usize)>)> {
+    // The structure is read on masked text, so a quote or bracket inside a
+    // comment or string cannot hide an arm; pattern text is read from the
+    // original at the same offsets (masking keeps the byte layout).
+    let original = owner.body.as_str();
+    let masked = crate::analysis::extract::mask_comments_and_strings(original);
+    let body = masked.as_str();
+    let params_open = body.find('(')?;
+    let body_open = params_open + body[params_open..].find('{')?;
+    let body_close = body.rfind('}')?;
+    if body_close <= body_open {
+        return None;
+    }
+    let inner = &body[body_open + 1..body_close];
+    let lead = inner.len() - inner.trim_start().len();
+    let rest = inner.trim_start().strip_prefix("match ")?;
+    let arms_open_rel = rest.find('{')?;
+    let scrutinee = rest[..arms_open_rel].trim();
+    if scrutinee.is_empty()
+        || !scrutinee
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    // Absolute offset of the arms block's `{` in `body`.
+    let arms_open = body_open + 1 + lead + "match ".len() + arms_open_rel;
+    let arms_close = matching_close(body, arms_open)?;
+    if !body[arms_close + 1..body_close].trim().is_empty() {
+        return None;
+    }
+    let line_of = |offset: usize| owner.start_line + body[..offset].matches('\n').count();
+    let mut arms = Vec::new();
+    let mut at = arms_open + 1;
+    loop {
+        // Skip separators only where the original has them too: a masked
+        // string pattern is blank in `body` but is the arm's pattern.
+        let separator = |text: &str| text.starts_with(char::is_whitespace) || text.starts_with(',');
+        while at < arms_close && separator(&body[at..]) && separator(original.get(at..)?) {
+            at += body[at..].chars().next()?.len_utf8();
+        }
+        if at >= arms_close {
+            break;
+        }
+        let arrow = find_top_level(body, at, arms_close, "=>")?;
+        arms.push((original.get(at..arrow)?.to_string(), line_of(at)));
+        let mut end = arrow + 2;
+        while let Some(ch) = body[end..].chars().next().filter(|ch| ch.is_whitespace()) {
+            end += ch.len_utf8();
+        }
+        end = if body[end..].starts_with('{') {
+            matching_close(body, end)? + 1
+        } else {
+            find_top_level(body, end, arms_close, ",").unwrap_or(arms_close)
+        };
+        at = end;
+    }
+    Some((scrutinee.to_string(), arms))
+}
+
+/// The offset of the bracket closing the one at `open`, skipping string and
+/// char literals.
+fn matching_close(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut at = open;
+    while at < text.len() {
+        at = skip_literal(text, at);
+        let ch = text[at..].chars().next()?;
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+        at += ch.len_utf8();
+    }
+    None
+}
+
+/// The first offset in `from..to` where `needle` starts outside any bracket
+/// or literal.
+fn find_top_level(text: &str, from: usize, to: usize, needle: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut at = from;
+    while at < to {
+        at = skip_literal(text, at);
+        if at >= to {
+            return None;
+        }
+        if depth == 0 && text[at..].starts_with(needle) {
+            return Some(at);
+        }
+        let ch = text[at..].chars().next()?;
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+        at += ch.len_utf8();
+    }
+    None
+}
+
+/// Past a string or char literal starting at `at` (with escapes), else `at`.
+/// A lifetime-like `'a` is not a char literal and is left in place.
+fn skip_literal(text: &str, at: usize) -> usize {
+    let bytes = text.as_bytes();
+    match bytes.get(at) {
+        Some(b'"') => {
+            let mut index = at + 1;
+            while index < bytes.len() {
+                match bytes[index] {
+                    b'\\' => index += 2,
+                    b'"' => return skip_literal(text, index + 1),
+                    _ => index += 1,
+                }
+            }
+            text.len()
+        }
+        Some(b'\'') => {
+            let closing = if bytes.get(at + 1) == Some(&b'\\') {
+                bytes
+                    .get(at + 3..)
+                    .and_then(|tail| tail.iter().position(|b| *b == b'\''))
+                    .map(|p| at + 3 + p)
+            } else if bytes.get(at + 2) == Some(&b'\'') {
+                Some(at + 2)
+            } else {
+                None
+            };
+            closing.map_or(at, |close| skip_literal(text, close + 1))
+        }
+        _ => at,
+    }
+}
+
 /// Whether `expression` is a struct literal, not a block, `if`, `match` or loop.
 fn is_struct_literal_expression(expression: &str) -> bool {
     let trimmed = expression.trim();
@@ -1070,11 +1894,52 @@ fn test_assertion_observes_owner(
         // Comments and string literals (including `assert!` messages) are not
         // observations.
         let masked = crate::analysis::extract::mask_comments_and_strings(&oracle.text);
-        calls_owner(&masked)
+        // Failure-message arguments run only when the assertion fails, so a
+        // result named only there is not observed by the assertion.
+        let operands = assertion_condition_operands(&masked);
+        calls_owner(operands)
             || locals
                 .iter()
-                .any(|local| mentions_identifier(&masked, local))
+                .any(|local| mentions_identifier(operands, local))
     })
+}
+
+/// The leading condition operands of a masked `assert!`, `assert_eq!` or
+/// `assert_ne!` (see [`ARM_CALL_ASSERTIONS`]), without the failure-message
+/// arguments. Any other text, or text that does not parse, is returned whole.
+fn assertion_condition_operands(masked: &str) -> &str {
+    let text = masked.trim_start();
+    for (name, operands) in ARM_CALL_ASSERTIONS {
+        let Some(rest) = text.strip_prefix(name) else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('!') else {
+            continue;
+        };
+        let open = text.len() - rest.len() + (rest.len() - rest.trim_start().len());
+        if !text[open..].starts_with('(') {
+            continue;
+        }
+        let Some(close) = matching_close(text, open) else {
+            return masked;
+        };
+        let mut end = close;
+        let mut from = open + 1;
+        for _ in 0..operands {
+            match find_top_level(text, from, close, ",") {
+                Some(comma) => {
+                    end = comma;
+                    from = comma + 1;
+                }
+                None => {
+                    end = close;
+                    break;
+                }
+            }
+        }
+        return &text[open + 1..end];
+    }
+    masked
 }
 
 /// Names bound by a `let` whose initializer calls `owner_name`
@@ -1289,6 +2154,16 @@ mod equality_pin_tests {
     }
 
     #[test]
+    fn assertion_condition_operands_exclude_the_failure_message() {
+        use super::assertion_condition_operands as operands;
+        assert_eq!(operands("assert!(r < 100, \"  \", r);"), "r < 100");
+        assert_eq!(operands("assert!(f(a, b) < 3);"), "f(a, b) < 3");
+        assert_eq!(operands("assert_eq!(f(a), r, \"\", w);"), "f(a), r");
+        assert_eq!(operands("assert_ne!(x, y);"), "x, y");
+        assert_eq!(operands("check(r, w);"), "check(r, w);");
+    }
+
+    #[test]
     fn derived_locals_and_destructures_are_followed_to_a_fixed_point() {
         let locals = |body: &str| owner_result_locals(body, "weight");
         assert_eq!(locals("let v = weight(4); let w = v;"), ["v", "w"]);
@@ -1474,12 +2349,26 @@ pub(crate) fn compact_evidence_for_seam(
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();
-    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
-    let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
+    let limited_reasons: Vec<(&TestSummary, RelationReason)> = ranked
+        .iter()
+        .take(COMPACT_RELATED_TEST_LIMIT)
+        .map(|(indexed, reason)| (indexed.test, *reason))
+        .collect();
+    // The gate reads every ranked relation, not the rank-limited slice, so the
+    // compact view agrees with the full one (#12434).
+    let refuse = refuses_other_function_oracle(
+        seam,
+        related_reasons.iter().map(|(_, reason)| *reason),
+        owner_fn.is_some(),
+    );
+    let credited_views = credited_related_tests(context, owner_fn, &limited_reasons, refuse);
+    let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
+    let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    let observe = observe_evidence(&credited);
+    let discriminate = discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let statically_contradicted_related_tests = related
         .iter()
-        .filter(|test| test_has_contradicted_assertion(test, owner_fn))
+        .filter(|test| test_has_contradicted_assertion(test, owner_fn, context.index))
         .count();
 
     let mut evidence = TestGripEvidence {
@@ -1614,7 +2503,7 @@ fn activate_evidence(
     let activation_credited: Vec<&CompactTest<'_>> = related
         .iter()
         .copied()
-        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn))
+        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn, context.index))
         .collect();
     let withheld_activation_tests = related.len() - activation_credited.len();
     let observed_argument_selection = owner_fn
@@ -2581,7 +3470,7 @@ fn compact_activate_evidence(
     let activation_credited: Vec<&CompactTest<'_>> = related
         .iter()
         .copied()
-        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn))
+        .filter(|indexed| !test_has_contradicted_assertion(indexed.test, owner_fn, context.index))
         .collect();
     let target_affinity_tokens =
         (!requires_concrete_activation_values(seam)).then(|| assertion_target_tokens(seam));
@@ -2996,25 +3885,60 @@ fn propagate_evidence(
             "No related tests; cannot infer propagation",
         );
     }
+    // A predicate whose one-line arms all hold the same statement changes no
+    // value a sink can carry, so an exact assertion on the owner's result
+    // cannot notice the condition (#12053; `ripr check` reads the same line
+    // as a limit since #10880).
+    if seam.kind() == SeamKind::PredicateBoundary
+        && predicate_line_arms_all_agree(owner_fn, seam.display_line())
+    {
+        return StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "The predicate's one-line arms hold the same statement, so no sink value depends on it",
+        );
+    }
     // Static heuristic: if any related test contains an oracle that
     // matches the expected sink class (e.g., return value -> assert_eq!),
     // call it Yes. Otherwise Unknown.
     let any_oracle = related.iter().any(|t| !t.assertions.is_empty());
-    let any_matching_sink = related
+    let sink_matched = related
         .iter()
         .any(|t| oracles_match_sink(seam, t, owner_fn, index, pin_syntax));
-    let state = match (any_oracle, any_matching_sink) {
+    let pushed_followed = !sink_matched
+        && related
+            .iter()
+            .any(|t| pushed_collection_argument_followed(seam, t, owner_fn, index, pin_syntax));
+    let state = match (any_oracle, sink_matched || pushed_followed) {
         (true, true) => StageState::Yes,
         (true, false) => StageState::Unknown,
         (false, _) => StageState::Unknown,
     };
-    let summary = format!(
+    let mut summary = format!(
         "Static propagation to `{}` sink is {}",
         seam.expected_sink().as_str(),
         state.as_str()
     );
+    // #11402: name, for the repair route, that the value is followed only to
+    // a local the test reads back by a count that pins the single push, so
+    // an exact check of that local's contents is the one thing missing.
+    if state == StageState::Yes
+        && pushed_followed
+        && related
+            .iter()
+            .any(|t| pushed_collection_count_pins_push(seam, t, owner_fn, index, pin_syntax))
+    {
+        summary.push_str("; ");
+        summary.push_str(PUSHED_COLLECTION_COUNT_PINNED);
+    }
     StageEvidence::new(state, Confidence::Low, summary)
 }
+
+/// #11402: the propagation-stage marker for a push followed only to a local
+/// the test reads back by a count that pins the single push. Read through
+/// [`TestGripEvidence::follows_push_to_counted_local`].
+pub(crate) const PUSHED_COLLECTION_COUNT_PINNED: &str =
+    "followed to a local the test reads back only by a count that pins the single push";
 
 fn oracles_match_sink(
     seam: &RepoSeam,
@@ -3029,7 +3953,7 @@ fn oracles_match_sink(
         // the mutant's value, not the owner's (#6026).
         .filter(|oracle| {
             !matches!(
-                exact_value_assertion_verdict_for_test(owner_fn, &oracle.text, test),
+                exact_value_assertion_verdict_for_test(owner_fn, &oracle.text, test, index),
                 ExactValueVerdict::Contradicted { .. }
             )
         })
@@ -3059,6 +3983,42 @@ fn oracles_match_sink(
                 }
             }
         })
+}
+
+/// #11402: a push into a `&mut` collection parameter whose test passes its
+/// own fresh local there and reads it back. The pushed value is followed to
+/// that local, so propagation holds; the read is only a count, so it grants
+/// no assertion strength and the check stays weak.
+fn pushed_collection_argument_followed(
+    seam: &RepoSeam,
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> bool {
+    matches!(seam.kind(), SeamKind::SideEffect | SeamKind::CallPresence)
+        && direct_collection_mutation_receiver(seam.expression())
+            .zip(owner_fn)
+            .is_some_and(|(receiver, owner)| {
+                test_counts_pushed_collection_argument(receiver, owner, index, test, pin_syntax)
+            })
+}
+
+/// #11402: as [`pushed_collection_argument_followed`], and one count read
+/// pins the single push.
+fn pushed_collection_count_pins_push(
+    seam: &RepoSeam,
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> bool {
+    matches!(seam.kind(), SeamKind::SideEffect | SeamKind::CallPresence)
+        && direct_collection_mutation_receiver(seam.expression())
+            .zip(owner_fn)
+            .is_some_and(|(receiver, owner)| {
+                test_count_pins_pushed_collection(receiver, owner, index, test, pin_syntax)
+            })
 }
 
 fn observe_evidence(related: &[&TestSummary]) -> StageEvidence {
@@ -3178,7 +4138,7 @@ fn effective_oracle_strength(
     index: &RustIndex,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
 ) -> (OracleStrength, Option<String>) {
-    match assertion_verdict_for_test(owner_fn, &oracle.text, test) {
+    match assertion_verdict_for_test(owner_fn, &oracle.text, test, index) {
         ExactValueVerdict::Contradicted {
             expected,
             evaluated,
@@ -3202,13 +4162,14 @@ fn assertion_verdict_for_test(
     owner: Option<&FunctionSummary>,
     oracle_text: &str,
     test: &TestSummary,
+    index: &RustIndex,
 ) -> ExactValueVerdict {
     let Some(owner) = owner else {
         return ExactValueVerdict::NotEvaluable;
     };
-    match exact_value_assertion_verdict_for_test(Some(owner), oracle_text, test) {
+    match exact_value_assertion_verdict_for_test(Some(owner), oracle_text, test, index) {
         ExactValueVerdict::NotEvaluable => {
-            boolean_assertion_verdict_for_test(owner, oracle_text, test)
+            boolean_assertion_verdict_for_test(owner, oracle_text, test, index)
         }
         verdict => verdict,
     }
@@ -3230,13 +4191,14 @@ fn assertion_verdict_for_test(
 pub(in crate::analysis) fn test_has_contradicted_assertion(
     test: &TestSummary,
     owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
 ) -> bool {
     let Some(owner_fn) = owner_fn else {
         return false;
     };
     test.assertions.iter().any(|oracle| {
         matches!(
-            assertion_verdict_for_test(Some(owner_fn), &oracle.text, test),
+            assertion_verdict_for_test(Some(owner_fn), &oracle.text, test, index),
             ExactValueVerdict::Contradicted { .. }
         )
     })
@@ -3263,6 +4225,7 @@ pub(in crate::analysis) fn test_fails_on_both_diff_versions(
     owner: &FunctionSummary,
     before: Option<&str>,
     after: Option<&str>,
+    index: &RustIndex,
 ) -> bool {
     let (Some(before), Some(after)) = (before, after) else {
         return false;
@@ -3278,7 +4241,7 @@ pub(in crate::analysis) fn test_fails_on_both_diff_versions(
     for oracle in &test.assertions {
         if !fails_on_candidate
             && matches!(
-                assertion_verdict_for_test(Some(owner), &oracle.text, test),
+                assertion_verdict_for_test(Some(owner), &oracle.text, test, index),
                 ExactValueVerdict::Contradicted { .. }
             )
         {
@@ -3286,7 +4249,7 @@ pub(in crate::analysis) fn test_fails_on_both_diff_versions(
         }
         if !fails_on_base
             && matches!(
-                assertion_verdict_for_test(Some(&baseline_owner), &oracle.text, test),
+                assertion_verdict_for_test(Some(&baseline_owner), &oracle.text, test, index),
                 ExactValueVerdict::Contradicted { .. }
             )
         {
@@ -3318,7 +4281,7 @@ pub(in crate::analysis) fn contradicted_assertion_reading_is_established(
 ) -> bool {
     test.assertions.iter().all(|assertion| {
         let contradicted = matches!(
-            assertion_verdict_for_test(Some(owner_fn), &assertion.text, test),
+            assertion_verdict_for_test(Some(owner_fn), &assertion.text, test, index),
             ExactValueVerdict::Contradicted { .. }
         );
         !contradicted
@@ -3366,14 +4329,43 @@ fn oracle_discriminates_seam_in_test(
     {
         return false;
     }
+    // #12189: a file-backed insta assertion whose committed `.snap` file is
+    // certainly missing fails on its first run, so it notices nothing. An
+    // inline snapshot, or a shape whose file name is not certain, keeps its
+    // grade.
+    if matches!(oracle.kind, OracleKind::Snapshot)
+        && crate::analysis::rust_snapshot_files::file_backed_snapshot_missing(index, test, oracle)
+    {
+        return false;
+    }
+    // #11398: a field write is checked only by an exact read of the written
+    // field that the diff probe's own rule confirms. The seam's field name
+    // alone (any binding, any sibling) is never a discriminator.
+    if let Some(path) = written_field(seam) {
+        return owner.is_some_and(|owner| {
+            oracle_kind_matches_seam_kind(seam.kind(), &oracle.kind)
+                && !test_may_skip_read(test)
+                && crate::analysis::classify::assigned_field_read_confirms(
+                    owner, path, test, oracle, index,
+                )
+        });
+    }
     oracle_discriminates_seam(seam, oracle)
         || direct_collection_mutation_receiver(seam.expression())
             .zip(owner)
             .is_some_and(|(receiver, owner)| {
                 collection_state_write_oracle_kind(&oracle.kind)
-                    && assertion_observes_collection_argument(
+                    && (assertion_observes_collection_argument(
                         receiver, owner, index, test, oracle, pin_syntax,
                     )
+                        // #11402: a count read that pins the single push
+                        // notices a deleted push into the passed local, by
+                        // the same rule the diff-side deleted-call probe
+                        // reads; it never notices a changed pushed value.
+                        || (seam.kind() == SeamKind::CallPresence
+                            && assertion_pins_pushed_collection_count(
+                                receiver, owner, index, test, oracle, pin_syntax,
+                            )))
             })
 }
 
@@ -3387,6 +4379,19 @@ fn collection_assertion_admitted(
     !matches!(seam.kind(), SeamKind::SideEffect | SeamKind::CallPresence)
         || direct_collection_mutation_receiver(seam.expression()).is_none()
         || pin_syntax.admits_effect_assertion(test, oracle, index)
+}
+
+/// #12722: an exact error-variant pin reads the owner's `Err` arm, so on a
+/// returned-value seam it is published as an oracle only when it names the
+/// exact `Err(..)` that seam constructs (#11111). Otherwise a test such as
+/// `assert_eq!(f(2).unwrap_err(), E::Even)` showed `strong` on the same
+/// owner's `Ok(n)` seam while the seam itself graded weak, because the
+/// assertion cannot see the value `Ok(n)` returns. Mirrors the rule
+/// `oracle_discriminates_seam` already applies to the grade.
+fn error_pin_can_see_return_value(seam: &RepoSeam, oracle: &OracleFact) -> bool {
+    seam.kind() != SeamKind::ReturnValue
+        || !matches!(oracle.kind, OracleKind::ExactErrorVariant)
+        || exact_err_return_matches_error_pin(seam, &oracle.text)
 }
 
 fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact) -> bool {
@@ -3580,8 +4585,37 @@ fn guarded_result_oracle_matches_seam_variant(
     }
 }
 
+/// The `self` field a field-write seam (`self.count += 1`) requires a test to
+/// check (#11398). `None` for every other seam, including a constructed field.
+/// A write seam's field is graded only by the exact-read rule, never by the
+/// by-name match that a constructed field uses.
+fn written_field(seam: &RepoSeam) -> Option<&str> {
+    use crate::analysis::seams::RequiredDiscriminator;
+
+    if seam.kind() != SeamKind::FieldConstruction
+        || crate::analysis::classify::field_assignment_target(seam.expression()).is_none()
+    {
+        return None;
+    }
+    match seam.required_discriminator() {
+        RequiredDiscriminator::FieldValue { field } => Some(field.as_str()),
+        _ => None,
+    }
+}
+
+/// Whether `test` never reads after the owner call in a default run: an
+/// `#[ignore]`d test does not run, and a `#[should_panic]` test passes by
+/// panicking before its read.
+fn test_may_skip_read(test: &TestSummary) -> bool {
+    is_ignored(test) || is_should_panic(test)
+}
+
 fn field_construction_oracle_matches_seam_field(seam: &RepoSeam, oracle_text: &str) -> bool {
     use crate::analysis::seams::RequiredDiscriminator;
+
+    if written_field(seam).is_some() {
+        return false;
+    }
 
     let RequiredDiscriminator::FieldValue { field } = seam.required_discriminator() else {
         return false;
@@ -4198,7 +5232,9 @@ fn best_oracle(
     let mut best_matching_strength = OracleStrength::None;
     let mut best_matching_contradiction = None;
     for oracle in &test.assertions {
-        if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
+        if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax)
+            || !error_pin_can_see_return_value(seam, oracle)
+        {
             continue;
         }
         let (strength, contradiction) =

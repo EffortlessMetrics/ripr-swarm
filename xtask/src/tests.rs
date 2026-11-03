@@ -10,11 +10,13 @@ mod evidence_promotion_semantics;
 mod fixture_cache;
 mod fixture_variants;
 mod operand_callee_honesty;
+mod packaged_repair_receipt;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
 #[cfg(windows)]
 mod review_conversations;
 mod rust_corpus_projection;
+mod traceability_planning;
 
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
@@ -172,24 +174,23 @@ use super::{
     parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
     parse_inline_array, parse_mutation_calibration_args, parse_mutation_outcomes_json,
     parse_pr_triage_pull_requests, parse_reason, parse_repo_badge_artifact_options,
-    parse_repo_exposure_static_seams, parse_repo_exposure_summary_counts,
-    parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
-    parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
-    parse_targeted_test_outcome_args, pin_report_packet_index_generated_at,
-    pr_actionable_delta_front_panel_from_inputs, pr_body_from_input_text,
-    pr_body_template_missing_error, pr_body_template_missing_lines, pr_body_validation_warning,
-    pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
-    pr_sensitive_file_reason, pr_shape_report_body, pr_shape_warnings, pr_summary_body,
-    pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
-    pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-    public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
-    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
-    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
-    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
-    repo_exposure_authenticated_cache_load, repo_exposure_cache_family_store_from_stderr,
-    repo_exposure_file_fact_cache_from_stderr, repo_exposure_latency_json,
-    repo_exposure_latency_markdown, repo_exposure_latency_run,
+    parse_repo_exposure_static_seams, parse_repo_exposure_summary_counts, parse_ripr_swarm_args,
+    parse_ripr_swarm_plan_args, parse_sarif_policy_args, parse_sarif_policy_results,
+    parse_static_language_allowlist, parse_targeted_test_outcome_args,
+    pin_report_packet_index_generated_at, pr_actionable_delta_front_panel_from_inputs,
+    pr_body_from_input_text, pr_body_template_missing_error, pr_body_template_missing_lines,
+    pr_body_validation_warning, pr_checks_summary, pr_ready_json, pr_ready_markdown,
+    pr_ready_next_action, pr_ready_status, pr_sensitive_file_reason, pr_shape_report_body,
+    pr_shape_warnings, pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json,
+    pr_triage_markdown, pr_triage_queue_dispositions, precommit_report_body,
+    public_badge_basis_violations, public_contract_rows, read_badge_artifact_diff_governed,
+    read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
+    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
+    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
+    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
+    repo_badge_artifacts_summary_markdown, repo_exposure_authenticated_cache_load,
+    repo_exposure_cache_family_store_from_stderr, repo_exposure_file_fact_cache_from_stderr,
+    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_status_reasons, repo_exposure_latency_trace,
     repo_exposure_normalized_output, repo_exposure_parity_leg_receipts, repo_exposure_parity_run,
@@ -257,16 +258,130 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+// Concurrent tests in one process can observe the same clock tick; a process-wide
+// sequence keeps `create_dir` exclusive (#10613).
+static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn temp_dir_path(name: &str, stamp: u128, sequence: u64) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "ripr-xtask-{name}-{}-{stamp}-{sequence}",
+        std::process::id()
+    ))
+}
+
 pub(crate) fn temp_dir(name: &str) -> PathBuf {
+    loop {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let dir = temp_dir_path(name, stamp, sequence);
+        match fs::create_dir(&dir) {
+            Ok(()) => return dir,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                eprintln!("create exclusive temp root at {dir:?}: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+#[test]
+fn temp_dir_same_stamp_allocations_claim_distinct_exclusive_roots() -> Result<(), String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .map_err(|error| error.to_string())?
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("ripr-xtask-{name}-{stamp}"));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    let first_seq = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let first = temp_dir_path("collision-control", stamp, first_seq);
+    fs::create_dir(&first).map_err(|error| error.to_string())?;
+    let second_seq = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let second = temp_dir_path("collision-control", stamp, second_seq);
+    fs::create_dir(&second).map_err(|error| error.to_string())?;
+    if first == second {
+        return Err(format!(
+            "same-stamp allocations reused exclusive root {first:?}"
+        ));
+    }
+    fs::remove_dir_all(&first).map_err(|error| error.to_string())?;
+    fs::remove_dir_all(&second).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn temp_dir_deterministic_collision_preserves_existing_owner() -> Result<(), String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let path = temp_dir_path("collision-control", stamp, sequence);
+    fs::create_dir(&path).map_err(|error| error.to_string())?;
+    let sentinel = path.join("owned.txt");
+    fs::write(&sentinel, "retained").map_err(|error| error.to_string())?;
+    match fs::create_dir(&path) {
+        Ok(()) => Err(format!(
+            "deterministic collision path was accepted: {path:?}"
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let contents = fs::read_to_string(&sentinel).map_err(|e| e.to_string())?;
+            if contents != "retained" {
+                return Err(format!("collision overwrote owner sentinel: {contents:?}"));
+            }
+            fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        Err(error) => Err(format!("unexpected collision error: {error}")),
+    }
+}
+
+#[test]
+fn temp_dir_concurrent_allocations_all_claim_distinct_roots() -> Result<(), String> {
+    use std::sync::Barrier;
+
+    const THREADS: usize = 8;
+    let barrier = Barrier::new(THREADS);
+    let results = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    temp_dir("concurrent-schema-sweep")
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| match handle.join() {
+                Ok(path) => Ok(path),
+                Err(_) => Err("temp_dir worker panicked".to_string()),
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    let mut paths = BTreeSet::new();
+    for path in &results {
+        if !path.is_dir() {
+            return Err(format!("temp root is not a directory: {path:?}"));
+        }
+        if !paths.insert(path.clone()) {
+            return Err(format!("duplicate temp root {path:?}"));
+        }
+    }
+    if paths.len() != THREADS {
+        return Err(format!(
+            "expected {THREADS} distinct roots, got {}",
+            paths.len()
+        ));
+    }
+    for path in results {
+        fs::remove_dir_all(path).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub(crate) fn write(path: &Path, text: &str) {
@@ -7597,13 +7712,13 @@ jobs:
   dependency-review:
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8363,14 +8478,14 @@ fn workflow_runtime_policy_rejects_dependency_review_over_allowlisted_count() {
 jobs:
   dependency-review:
     steps:
-      - uses: actions/dependency-review-action@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8379,7 +8494,7 @@ jobs:
         workflow_runtime_violations(".github/workflows/security.yml", workflow, &allowlist);
 
     assert!(violations.iter().any(|violation| {
-        violation.contains("uses `actions/dependency-review-action@v4` 2 time(s), allowed 1")
+        violation.contains("uses `actions/dependency-review-action@` 2 time(s), allowed 1")
     }));
 }
 
@@ -9526,8 +9641,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
     );
     assert_ne!(
         skippable_result, workflow,
@@ -9540,6 +9655,78 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         "a skippable result reports success when skipped: {:?}",
         routed_rust_ready_event_contract_violations(&skippable_result)
     );
+    for (what, from, to, needle) in [
+        (
+            "the extension e2e result step",
+            "      - name: Require the extension e2e result for the admitted head\n        id: vscode\n",
+            "      - name: Read something else\n        id: other\n",
+            "require the extension e2e result for the admitted head",
+        ),
+        (
+            "the summary branch that fails the Result",
+            "[ \"$VSCODE_CHECK_RESULT\" != success ]",
+            "[ \"$VSCODE_CHECK_RESULT\" = never ]",
+            "fail the Result when the selected extension e2e did not succeed",
+        ),
+        (
+            "the e2e job of this run",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: [vscode-select]\n",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: []\n",
+            "run the extension e2e as a job of this run",
+        ),
+        (
+            "the label selection",
+            "case \",$LABELS,\" in *,full-ci,*|*,vscode,*) return 0 ;; esac",
+            "case \",$LABELS,\" in *,never,*) return 0 ;; esac",
+            "select the extension e2e from the admitted diff and the full-ci and vscode labels",
+        ),
+        (
+            "the e2e job call and its selection condition",
+            "    if: ${{ !cancelled() && needs.vscode-select.result == 'success' && needs.vscode-select.outputs.selected == 'true' }}\n    uses: ./.github/workflows/vscode-e2e.yml\n",
+            "    if: ${{ !cancelled() }}\n    uses: ./.github/workflows/noop.yml\n",
+            "run the extension e2e only when selected",
+        ),
+        (
+            "the Result's reading of this run's results",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-e2e.result }}\n",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-select.result }}\n",
+            "read this run's own selection and e2e results",
+        ),
+        (
+            "the selection's admitted head and labels",
+            "          HEAD_SHA: ${{ needs.admission.outputs.head }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "          HEAD_SHA: ${{ github.sha }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "classify the admitted head and labels",
+        ),
+        (
+            "the Result's dependency on the extension jobs",
+            "docs-gate, vscode-select, vscode-e2e]",
+            "docs-gate]",
+            "make the Result depend on the extension selection and e2e jobs",
+        ),
+        (
+            "the selected-and-succeeded pass",
+            "true:success)",
+            "true:never)",
+            "pass a selected extension e2e only when it succeeded",
+        ),
+        (
+            "the unselected-and-skipped pass",
+            "false:skipped)",
+            "false:never)",
+            "pass an unselected extension e2e only when it was skipped",
+        ),
+    ] {
+        let mutated = workflow.replacen(from, to, 1);
+        assert_ne!(mutated, workflow, "fixture must remove {what}");
+        assert!(
+            routed_rust_ready_event_contract_violations(&mutated)
+                .iter()
+                .any(|violation| violation.contains(needle)),
+            "removing {what} must be rejected (#12122): {:?}",
+            routed_rust_ready_event_contract_violations(&mutated)
+        );
+    }
     for job in ["route", "detect-docs-only", "admission"] {
         let unguarded = workflow.replace(
             "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'\n",
@@ -17826,6 +18013,21 @@ fn dogfood_typescript_preview_repair_loop_receipts_are_checked() -> Result<(), S
         );
         assert!(
             scenarios.iter().any(|scenario| {
+                scenario.gap_state == "already_observed"
+                    && scenario.outcome == "already_observed_unchanged"
+            }),
+            "TypeScript preview repair-loop receipts should retain a positive already_observed control"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .filter(|scenario| scenario.must_not_claim_already_observed)
+                .count()
+                >= 2,
+            "TypeScript preview repair-loop receipts should pin spurious already_observed guards"
+        );
+        assert!(
+            scenarios.iter().any(|scenario| {
                 scenario.name == "typescript_complete_boundary_packet_closed"
                     && scenario.repair_packet_ready
                     && scenario.gap_state == "actionable"
@@ -18382,6 +18584,7 @@ fn valid_typescript_preview_repair_loop_scenario() -> DogfoodTypescriptPreviewRe
             must_have_receipt_command: true,
             must_not_invent_verify_command: true,
             must_not_emit_repair_packet: true,
+            must_not_claim_already_observed: false,
             authority_boundary: "preview_advisory_only".to_string(),
             expected_test_or_observer_shape: "exact equality-boundary assertion".to_string(),
             verify_command: "npm test -- discount".to_string(),
@@ -19082,8 +19285,7 @@ jobs:
 RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.
 
 ### Start here
-- Open `target/ripr/reports/start-here.md` first when it exists.
-- Gate authority: `ripr gate evaluate` remains the pass/fail source only when `RIPR_GATE_MODE` is configured.
+- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
 - {GENERATED_CI_FIRST_ACTION_REPAIR}
 - {GENERATED_CI_FIRST_PR_REPAIR}
 - {GENERATED_CI_FRONT_PANEL_REPAIR}
@@ -19143,6 +19345,43 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
         mutated.errors
     );
     assert!(!mutated.start_here);
+
+    // Dropping the gate boundary wording must fail the scenario (#12261).
+    let no_gate = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "missing-gate-authority",
+        command,
+        10,
+        workflow,
+        &summary.replace("remains pass/fail authority", "remains the decision source"),
+    );
+    assert!(!no_gate.gate_authority_boundary);
+    assert!(
+        no_gate
+            .errors
+            .iter()
+            .any(|error| error.contains("gate-decision authority")),
+        "{:?}",
+        no_gate.errors
+    );
+
+    let no_gate_command = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "missing-gate-command",
+        command,
+        10,
+        workflow,
+        &summary.replace("ripr gate evaluate", "the gate"),
+    );
+    assert!(!no_gate_command.gate_authority_boundary);
+
+    // Unconditional gate authority (no explicit-configuration condition) must fail.
+    let unconditional = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "unconditional-gate-authority",
+        command,
+        10,
+        workflow,
+        &summary.replace(" when explicitly configured", ""),
+    );
+    assert!(!unconditional.gate_authority_boundary);
 
     // Workflow text that still carries the retired shell cannot satisfy the
     // summary properties.
@@ -25010,6 +25249,55 @@ fn local_context_findings_are_sorted_deterministically() {
 }
 
 #[test]
+fn ripr_spec_0140_cli_smoke_trace_reference_matches_live_test_fn() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let manifest_path = root.join(".ripr/traceability.toml");
+    let (behaviors, manifest_violations) = super::load_traceability_behaviors(&manifest_path)?;
+    if !manifest_violations.is_empty() {
+        return Err(format!(
+            "manifest parse violations: {manifest_violations:?}"
+        ));
+    }
+    let behavior = behaviors
+        .iter()
+        .find(|entry| entry.id.as_deref() == Some("RIPR-SPEC-0140"))
+        .ok_or_else(|| "RIPR-SPEC-0140 missing from .ripr/traceability.toml".to_string())?;
+    if let Some(stale) = behavior.tests.iter().find(|entry| {
+        entry.contains("crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain")
+            && entry.contains("byte_identical")
+    }) {
+        return Err(format!(
+            "stale renamed test still referenced in manifest: {stale}"
+        ));
+    }
+    let reference = behavior
+        .tests
+        .iter()
+        .find(|entry| {
+            entry.contains("crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain")
+        })
+        .ok_or_else(|| {
+            "RIPR-SPEC-0140 missing cli_smoke check-artifact reuse test reference".to_string()
+        })?;
+    let (path_text, suffix) = super::split_trace_reference(reference);
+    let Some(symbol) = suffix else {
+        return Err(format!(
+            "expected `::symbol` proof reference, got `{reference}`"
+        ));
+    };
+    let path = root.join(path_text);
+    let text = std::fs::read_to_string(&path)
+        .map_err(|error| format!("read `{path_text}` for symbol audit: {error}"))?;
+    let needle = format!("fn {symbol}");
+    if !text.contains(&needle) {
+        return Err(format!(
+            "manifest references `{reference}` but `{path_text}` has no `{needle}` (#2345 live-manifest audit)"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn traceability_symbol_suffix_is_advisory_without_blocking() -> Result<(), String> {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs");
     let references = vec![format!("{}::tests::example", source.display())];
@@ -28195,6 +28483,7 @@ fn triage_pr(number: u64, title: &str, files: &[&str]) -> PrTriagePullRequest {
         review_decision: String::new(),
         labels: Vec::new(),
         files: files.iter().map(|file| file.to_string()).collect(),
+        checks_rollup_available: true,
         checks: vec![PrTriageCheck {
             name: "rust".to_string(),
             status: "COMPLETED".to_string(),
@@ -28316,10 +28605,6 @@ fn parse_gh_pr_status_reads_view_json() -> Result<(), String> {
     assert_eq!(pr.checks.len(), 2);
     assert_eq!(pr.reviews.len(), 1);
     assert_eq!(pr.reviews[0].author, "droid");
-    assert_eq!(
-        parse_required_status_contexts(r#"["rust","msrv","rust"]"#)?,
-        vec!["msrv".to_string(), "rust".to_string()]
-    );
     Ok(())
 }
 
@@ -28328,7 +28613,10 @@ fn gh_pr_status_readiness_selects_safe_next_action() {
     let contexts = vec!["rust".to_string()];
     let clean = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
     let clean_readiness = gh_pr_status_readiness(&clean, &contexts, true, Vec::new());
-    assert_eq!(clean_readiness.safe_next_action, "merge");
+    assert_eq!(
+        clean_readiness.safe_next_action,
+        "inspect final merge gates"
+    );
 
     let pending = gh_pr_status_pr(vec![gh_pr_status_check("rust", "IN_PROGRESS", "")]);
     let pending_readiness = gh_pr_status_readiness(&pending, &contexts, true, Vec::new());
@@ -28351,6 +28639,75 @@ fn gh_pr_status_readiness_selects_safe_next_action() {
         gh_pr_safe_next_action(&behind, &behind_readiness),
         "inspect integration"
     );
+}
+
+#[test]
+fn gh_pr_status_unknown_required_checks_are_not_passed_or_classified() -> Result<(), String> {
+    let pending = gh_pr_status_pr(vec![gh_pr_status_check("rust", "IN_PROGRESS", "")]);
+    let readiness = gh_pr_status_readiness(&pending, &[], false, Vec::new());
+    assert!(readiness.required_checks_outstanding.is_empty());
+    assert_eq!(readiness.pending_checks.len(), 1);
+    assert_eq!(readiness.safe_next_action, "wait");
+    let markdown = gh_pr_status_markdown(&pending, &[], &readiness);
+    assert!(markdown.contains("Required-check classification and completeness are unknown"));
+    let json: Value = serde_json::from_str(&gh_pr_status_json(&pending, &[], &readiness))
+        .map_err(|error| error.to_string())?;
+    assert_eq!(json["required_contexts_available"], false);
+    assert_eq!(json["pending_checks"].as_array().map(Vec::len), Some(1));
+
+    let clean = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
+    let readiness = gh_pr_status_readiness(&clean, &[], false, Vec::new());
+    assert_eq!(readiness.safe_next_action, "inspect final merge gates"); // advisory, not merge authority
+    assert!(gh_pr_status_markdown(&clean, &[], &readiness).contains("completeness are unknown"));
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_rejects_missing_rollup_and_waits_on_unknown_check_states() -> Result<(), String> {
+    let mut fixture = gh_pr_status_subject_fixture("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    for value in [Value::Null, serde_json::json!({})] {
+        fixture["statusCheckRollup"] = value;
+        parse_gh_pr_status_pull_request(&fixture.to_string())
+            .err()
+            .ok_or("invalid rollup was accepted")?;
+    }
+    fixture
+        .as_object_mut()
+        .ok_or("fixture object")?
+        .remove("statusCheckRollup");
+    parse_gh_pr_status_pull_request(&fixture.to_string())
+        .err()
+        .ok_or("missing rollup was accepted")?;
+    fixture["statusCheckRollup"] = serde_json::json!([]);
+    let empty = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+    let empty_readiness = gh_pr_status_readiness(&empty, &[], false, Vec::new());
+    assert_eq!(
+        empty_readiness.safe_next_action,
+        "inspect final merge gates"
+    );
+    assert!(
+        gh_pr_status_markdown(&empty, &[], &empty_readiness).contains("completeness are unknown")
+    );
+    for (name, status, conclusion) in [
+        ("rust", "UNKNOWN", ""),
+        ("rust", "COMPLETED", ""),
+        ("", "COMPLETED", "SUCCESS"),
+        ("rust", "", "SUCCESS"),
+    ] {
+        let pr = gh_pr_status_pr(vec![gh_pr_status_check(name, status, conclusion)]);
+        let readiness = gh_pr_status_readiness(&pr, &[], false, Vec::new());
+        assert_eq!(
+            readiness.safe_next_action, "wait",
+            "{name} {status} {conclusion}"
+        );
+        assert!(
+            readiness
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("unknown"))
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -28414,7 +28771,7 @@ fn gh_pr_status_behind_preserves_failure_and_wait_routes() {
 fn gh_pr_status_behind_does_not_hide_a_conflict_or_grant_merge() {
     let contexts = vec!["rust".to_string()];
     for (state, expected) in [
-        ("CLEAN", "merge"),
+        ("CLEAN", "inspect final merge gates"),
         ("BEHIND", "inspect integration"),
         ("DIRTY", "inspect failure"),
         ("UNKNOWN", "wait"),
@@ -28490,7 +28847,7 @@ fn gh_pr_status_markdown_reports_reviews_checks_and_action() {
     let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
     let markdown = gh_pr_status_markdown(&pr, &contexts, &readiness);
     assert!(markdown.contains("# GitHub PR Status"));
-    assert!(markdown.contains("safe next action: `merge`"));
+    assert!(markdown.contains("safe next action: `inspect final merge gates`"));
     assert!(markdown.contains("## Required Checks Outstanding"));
     assert!(markdown.contains("## Reviews"));
     assert!(markdown.contains("droid/review"));
@@ -28513,7 +28870,7 @@ fn gh_pr_status_json_reports_merge_readiness_packet() -> Result<(), String> {
     assert_eq!(json["merge_state"], "CLEAN");
     assert_eq!(json["behind_main"], false);
     assert_eq!(json["review_decision"], "APPROVED");
-    assert_eq!(json["safe_next_action"], "merge");
+    assert_eq!(json["safe_next_action"], "inspect final merge gates");
     assert_eq!(
         json["advisory_checks"][0],
         "droid/review (status=COMPLETED, conclusion=SUCCESS)"
@@ -28641,6 +28998,31 @@ fn pr_triage_queue_dispositions_name_actionable_queue_state() {
         dispositions.get(&6).map(String::as_str),
         Some("close_duplicate")
     );
+}
+
+#[test]
+fn pr_triage_merge_candidate_requests_final_gate_inspection_on_both_surfaces() -> Result<(), String>
+{
+    let pr = triage_pr(1, "devex: ready", &["xtask/src/main.rs"]);
+    let prs = std::slice::from_ref(&pr);
+    let today = days_from_civil(2026, 5, 14);
+    let expected = "Inspect current final merge gates, reviews, proof and findings, then decide on a normal server-enforced merge if the scope remains canonical.";
+    let markdown = pr_triage_markdown(prs, &[], today);
+    let row = markdown
+        .lines()
+        .find(|row| row.starts_with("| #1 |"))
+        .ok_or("missing candidate row")?;
+    assert!(row.contains("merge_candidate"), "{row}");
+    assert!(row.contains(expected), "{row}");
+    let json: Value = serde_json::from_str(&pr_triage_json(prs, &[], today, "fixture"))
+        .map_err(|err| err.to_string())?;
+    assert_eq!(json["mode"], "advisory");
+    assert_eq!(
+        json["queue_disposition"][0]["disposition"],
+        "merge_candidate"
+    );
+    assert_eq!(json["queue_disposition"][0]["recommended_action"], expected);
+    Ok(())
 }
 
 #[test]
@@ -29334,7 +29716,11 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
         ],
         Some(&repo_root()?),
         &[(CHILD_ENV, "1")],
-        crate::run::tool_build_timeout()?,
+        // The child runs the real file-policy Cargo builds, each allowed
+        // FILE_POLICY_COVERED_BY_BUILD_BUDGET by the check itself. A shorter
+        // child deadline fires inside that budget (#12510: Windows runs
+        // finished in ~14 of 15 minutes).
+        crate::run::tool_build_timeout()?.max(crate::policy::FILE_POLICY_COVERED_BY_BUILD_BUDGET),
         "isolated policy facade checks",
     )?
     .output;
@@ -29359,18 +29745,28 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
 }
 
 fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
+    // Each phase is announced on stderr before it starts. When the child outlives
+    // its tool-build deadline the parent's diagnostic carries this stream, so a
+    // stall names the check it was inside instead of an anonymous TIMEOUT (#12035).
+    fn phase(name: &str, check: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        eprintln!("policy facade phase: {name}");
+        check()
+    }
     with_repo_cwd(|| {
-        check_static_language()?;
-        check_no_panic_family()?;
-        check_allow_attributes()?;
-        check_local_context()?;
-        check_file_policy()?;
-        assert_packet_coverage_report()?;
-        check_executable_files()?;
-        check_workflows()?;
-        check_droid_review_config()?;
-        check_process_policy()?;
-        check_network_policy()
+        phase("check_static_language", check_static_language)?;
+        phase("check_no_panic_family", check_no_panic_family)?;
+        phase("check_allow_attributes", check_allow_attributes)?;
+        phase("check_local_context", check_local_context)?;
+        phase("check_file_policy", check_file_policy)?;
+        phase(
+            "assert_packet_coverage_report",
+            assert_packet_coverage_report,
+        )?;
+        phase("check_executable_files", check_executable_files)?;
+        phase("check_workflows", check_workflows)?;
+        phase("check_droid_review_config", check_droid_review_config)?;
+        phase("check_process_policy", check_process_policy)?;
+        phase("check_network_policy", check_network_policy)
     })
 }
 
@@ -30444,6 +30840,9 @@ fn command_catalog_pins_ci_enforced_classification() -> Result<(), String> {
     assert!(ci_enforced("precommit")?);
     assert!(ci_enforced("check-architecture")?);
     assert!(ci_enforced("check-doc-artifacts")?);
+    assert!(!ci_enforced(
+        "check-tool-capabilities [--as-of YYYY-MM-DD] [--registry <path>]"
+    )?);
     assert!(ci_enforced("markdown-links")?);
     assert!(!ci_enforced("goldens bless <name> --reason <reason>")?);
     assert!(!ci_enforced("check-supply-chain")?);
@@ -30987,6 +31386,7 @@ fn known_commands_include_current_report_and_policy_commands() {
     assert!(commands.contains(&"cockpit"));
     assert!(commands.contains(&"release-readiness --version <version>"));
     assert!(commands.contains(&"targeted-test-outcome --before <path> --after <path>"));
+    assert!(commands.contains(&"native-libtest --root <path> --package <name> [--target-dir <path>] [--locked] [--offline] [--replay-filter <name>] [--out <path>]"));
     assert!(commands.contains(&"mutation-calibration [root] --mutants-json <path>"));
     assert!(
         commands.contains(&"bun-ub-calibration [--corpus <path>] [--out <path>] [--out-md <path>]")
@@ -49046,7 +49446,7 @@ fn vscode_job_block(workflow: &str) -> Result<&str, String> {
     const HEADER: &str = "\n  vscode:\n";
     let start = workflow
         .find(HEADER)
-        .ok_or_else(|| "ci.yml is missing the vscode job".to_string())?;
+        .ok_or_else(|| "vscode-e2e.yml is missing the vscode job".to_string())?;
     let mut offset = start + HEADER.len();
     while offset < workflow.len() {
         let rest = &workflow[offset..];
@@ -49101,8 +49501,13 @@ fn vscode_host_diagnostics_contract_violations(job: &str) -> Vec<String> {
     if upload.contains("if: always()") || upload.contains("if: success()") {
         violations.push("diagnostics upload must not run on success".to_string());
     }
-    if !upload.contains("actions/upload-artifact@v7") {
-        violations.push("diagnostics upload must use actions/upload-artifact@v7".to_string());
+    // The repo pins first-party actions to a commit SHA with the major in the
+    // trailing comment (`actions/upload-artifact@<sha> # v7.x.y`).
+    let pinned_v7 = upload
+        .lines()
+        .any(|line| line.contains("actions/upload-artifact@") && line.contains("# v7"));
+    if !pinned_v7 {
+        violations.push("diagnostics upload must use actions/upload-artifact v7".to_string());
     }
     if !upload.contains("target/ripr/vscode-test-host-diagnostics/") {
         violations
@@ -49187,8 +49592,10 @@ fn vscode_host_diagnostics_contract_rejects_success_uploads_and_exit_laundering(
 #[test]
 fn vscode_host_diagnostics_ci_job_retains_failure_only() -> Result<(), String> {
     let root = repo_root()?;
-    let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
-        .map_err(|err| format!("read ci.yml: {err}"))?;
+    // #12252: the e2e job lives in the reusable workflow both ci.yml and the
+    // routed run call.
+    let workflow = fs::read_to_string(root.join(".github/workflows/vscode-e2e.yml"))
+        .map_err(|err| format!("read vscode-e2e.yml: {err}"))?;
     let job = vscode_job_block(&workflow)?;
     let violations = vscode_host_diagnostics_contract_violations(job);
     assert!(
@@ -49245,16 +49652,23 @@ fn lsp_cockpit_report_reads_boundary_gap_fixture_expectations() -> Result<(), St
     assert!(
         boundary_gap
             .action_titles
-            .contains(&"Write targeted test: copy brief".to_string())
-    );
-    assert!(
-        boundary_gap
-            .action_titles
             .contains(&"Write targeted test: open best related test".to_string())
     );
+    assert!(
+        !boundary_gap
+            .action_titles
+            .contains(&"Write targeted test: copy brief".to_string()),
+        "repair-packet brief is gated on fix_site_ready (#1663)"
+    );
     assert!(boundary_gap.context.seam_packet_available);
-    assert!(boundary_gap.context.targeted_test_brief_available);
-    assert!(boundary_gap.context.agent_repair_command_available);
+    assert!(
+        !boundary_gap.context.targeted_test_brief_available,
+        "pinned fixtures omit copyTargetedTestBrief until fix_site_ready"
+    );
+    assert!(
+        !boundary_gap.context.agent_repair_command_available,
+        "pinned fixtures omit copyAgentRepairCommand until fix_site_ready"
+    );
     assert!(boundary_gap.context.agent_packet_command_available);
     assert!(boundary_gap.context.agent_brief_command_available);
     assert!(boundary_gap.context.after_snapshot_command_available);
@@ -49285,8 +49699,14 @@ fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String>
     assert_eq!(editor_fixture.diagnostic_count, 1);
     assert_eq!(editor_fixture.seam_diagnostic_count, 1);
     assert!(editor_fixture.context.seam_packet_available);
-    assert!(editor_fixture.context.targeted_test_brief_available);
-    assert!(editor_fixture.context.agent_repair_command_available);
+    assert!(
+        !editor_fixture.context.targeted_test_brief_available,
+        "editor_lsp_workflow pins repair-packet suppression without fix_site_ready"
+    );
+    assert!(
+        !editor_fixture.context.agent_repair_command_available,
+        "editor_lsp_workflow pins repair start suppression without fix_site_ready"
+    );
     assert!(editor_fixture.context.agent_packet_command_available);
     assert!(editor_fixture.context.agent_brief_command_available);
     assert!(editor_fixture.context.after_snapshot_command_available);
@@ -49469,7 +49889,7 @@ fn lsp_cockpit_report_json_and_markdown_are_structured() -> Result<(), String> {
         serde_json::from_str(&json).map_err(|err| format!("cockpit JSON should parse: {err}"))?;
     assert_eq!(value["schema_version"], "0.1");
     assert_eq!(value["tool"], "ripr");
-    assert!(json.contains("Write targeted test: copy brief"));
+    assert!(json.contains("Write targeted test: copy suggested assertion"));
 
     let markdown = lsp_cockpit_report_markdown(&report);
     assert!(markdown.contains("# ripr LSP cockpit report"));
@@ -52306,6 +52726,31 @@ fn require_proof_pack_violation(violations: &[String], needle: &str) -> Result<(
 }
 
 #[test]
+fn check_proof_packs_rejects_output_contracts_lane_missing_pack_command() -> Result<(), String> {
+    let manifest = ci_document(
+        "policy/proof-packs.toml",
+        include_str!("../../policy/proof-packs.toml"),
+    )?;
+    let mut lane_commands = std::collections::BTreeMap::new();
+    lane_commands.insert(
+        "output-contracts".to_string(),
+        [
+            "cargo xtask check-output-contracts",
+            "cargo xtask check-fixture-contracts",
+            "cargo xtask check-generated",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    );
+    let violations = super::proof_pack_output_contracts_lane_violations(&manifest, &lane_commands);
+    require_proof_pack_violation(
+        &violations,
+        "requires `cargo xtask goldens check` but ci_lane `output-contracts`",
+    )
+}
+
+#[test]
 fn check_proof_packs_accepts_current_manifest() -> Result<(), String> {
     with_repo_cwd(super::check_proof_packs_impl)
 }
@@ -54294,7 +54739,7 @@ fn gh_pr_status_current_review_subject_control() -> Result<(), String> {
         "current_head"
     );
     let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
-    assert_eq!(readiness.safe_next_action, "merge");
+    assert_eq!(readiness.safe_next_action, "inspect final merge gates");
     assert!(readiness.warnings.is_empty());
     Ok(())
 }
@@ -54511,7 +54956,7 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
     assert!(markdown.contains("not evidence of review completion"));
     assert!(markdown.contains("not attributed to the current head"));
     assert_eq!(
-        readiness.safe_next_action, "merge",
+        readiness.safe_next_action, "inspect final merge gates",
         "advisory provider disclosure must not silently become a new gate"
     );
     Ok(())
@@ -54520,7 +54965,13 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
 #[test]
 fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Result<(), String> {
     for (status, conclusion, review, expected) in [
-        ("COMPLETED", "SUCCESS", "APPROVED", "merge"),
+        (
+            "COMPLETED",
+            "SUCCESS",
+            "APPROVED",
+            "inspect final merge gates",
+        ),
+        ("EMPTY", "", "APPROVED", "inspect final merge gates"),
         ("IN_PROGRESS", "", "APPROVED", "wait"),
         ("COMPLETED", "FAILURE", "APPROVED", "inspect failure"),
         (
@@ -54540,37 +54991,39 @@ fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Resu
         });
         let mut last = first.clone();
         last["reviewDecision"] = serde_json::json!(review);
-        last["statusCheckRollup"][0]["status"] = serde_json::json!(status);
-        last["statusCheckRollup"][0]["conclusion"] = serde_json::json!(conclusion);
+        if status == "EMPTY" {
+            last["statusCheckRollup"] = serde_json::json!([]);
+        } else {
+            last["statusCheckRollup"][0]["status"] = serde_json::json!(status);
+            last["statusCheckRollup"][0]["conclusion"] = serde_json::json!(conclusion);
+        }
         let mut reads = 0;
-        let observation = super::gh_pr_status_snapshot::collect_current(
-            42,
-            || {
-                reads += 1;
-                super::collect_gh_pr_status_json_with(42, |program, args| {
-                    assert_eq!(program, "gh");
-                    if args.first().is_some_and(|arg| arg == "api") {
-                        return Ok(gh_pr_status_identity_response(if reads == 1 {
-                            &first
-                        } else {
-                            &last
-                        }));
-                    }
-                    assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
-                    let fields = args[4].split(',').collect::<Vec<_>>();
-                    assert!(fields.contains(&"headRefOid") && !fields.contains(&"baseRefOid"));
-                    Ok(if reads == 1 {
-                        first.to_string()
+        let observation = super::gh_pr_status_snapshot::collect_current(42, || {
+            reads += 1;
+            super::collect_gh_pr_status_json_with(42, |program, args| {
+                assert_eq!(program, "gh");
+                if args.first().is_some_and(|arg| arg == "api") {
+                    assert_eq!(args.get(1).map(String::as_str), Some("graphql"));
+                    assert!(
+                        args.iter()
+                            .all(|arg| !arg.contains("protection") && !arg.contains("rulesets"))
+                    );
+                    return Ok(gh_pr_status_identity_response(if reads == 1 {
+                        &first
                     } else {
-                        last.to_string()
-                    })
+                        &last
+                    }));
+                }
+                assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
+                let fields = args[4].split(',').collect::<Vec<_>>();
+                assert!(fields.contains(&"headRefOid") && !fields.contains(&"baseRefOid"));
+                Ok(if reads == 1 {
+                    first.to_string()
+                } else {
+                    last.to_string()
                 })
-            },
-            |target| {
-                assert_eq!(target, "main");
-                Ok(vec!["rust".to_string()])
-            },
-        )?;
+            })
+        })?;
         assert_eq!(reads, 2);
         let pr = parse_gh_pr_status_pull_request(&observation.pr.to_string())?;
         let readiness = gh_pr_status_readiness(
@@ -54584,7 +55037,9 @@ fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Resu
             serde_json::from_str(&gh_pr_status_json(&pr, &observation.contexts, &readiness))
                 .map_err(|error| error.to_string())?;
         assert_eq!(json["safe_next_action"], expected);
+        assert_eq!(json["required_contexts_available"], false);
         let markdown = gh_pr_status_markdown(&pr, &observation.contexts, &readiness);
+        assert!(markdown.contains("Required-check classification and completeness are unknown"));
         assert!(markdown.contains(&format!("safe next action: `{expected}`")));
         assert!(markdown.contains("1111111111111111111111111111111111111111"));
         assert!(markdown.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
@@ -55468,5 +55923,208 @@ fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String>
             ));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn pr_triage_unknown_check_is_not_a_pass_or_merge_candidate() -> Result<(), String> {
+    let prs = parse_pr_triage_pull_requests(
+        r#"[{"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"__typename":"CheckRun","name":"rust","status":"COMPLETED","conclusion":""}]}]"#,
+    )?;
+    assert_eq!(prs.len(), 1);
+    let today = days_from_civil(2026, 5, 14);
+    let findings = pr_triage_findings(&prs, today);
+    let markdown = pr_triage_markdown(&prs, &findings, today);
+    let value: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+        .map_err(|err| err.to_string())?;
+    assert_eq!(value["open_prs"][0]["checks_summary"], "1 unknown");
+    assert_eq!(
+        value["queue_disposition"][0]["disposition"],
+        "needs_fresh_validation"
+    );
+    assert!(markdown.contains("1 unknown"));
+    assert!(markdown.contains("unknown checks:"));
+    let expected_action = "Wait for checks, inspect failures or unknown evidence, or update the PR body with actual commands run.";
+    assert_eq!(
+        value["queue_disposition"][0]["recommended_action"],
+        expected_action
+    );
+    let queue = markdown
+        .split_once("\n## Queue Disposition\n\n")
+        .ok_or("missing queue")?
+        .1
+        .split_once("\n## Open PRs\n\n")
+        .ok_or("missing open PRs")?
+        .0;
+    assert!(
+        queue
+            .lines()
+            .any(|row| row.starts_with("| #42 |") && row.contains(expected_action))
+    );
+    assert!(!markdown.contains("1 passed"));
+    Ok(())
+}
+
+#[test]
+fn pr_triage_parsed_check_states_reach_reports_and_queue() -> Result<(), String> {
+    let today = days_from_civil(2026, 5, 14);
+    for (check, summary, disposition) in [
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"SUCCESS"}),
+            "1 passed",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"NEUTRAL"}),
+            "1 neutral/skipped",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"SKIPPED"}),
+            "1 neutral/skipped",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"FUTURE"}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":""}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"status":"COMPLETED","conclusion":"SUCCESS"}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"MYSTERY","conclusion":"SUCCESS"}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"context":"ci","state":"SUCCESS"}),
+            "1 passed",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"context":"ci","state":"PENDING"}),
+            "1 pending",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"context":"ci","state":"FAILURE"}),
+            "1 failed",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"status":"IN_PROGRESS"}),
+            "1 pending",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"status":"COMPLETED","conclusion":"FAILURE"}),
+            "1 failed",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!(null),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+    ] {
+        let fixture = serde_json::json!([{"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN","statusCheckRollup":[check]}]);
+        let prs = parse_pr_triage_pull_requests(&fixture.to_string())?;
+        let findings = pr_triage_findings(&prs, today);
+        let markdown = pr_triage_markdown(&prs, &findings, today);
+        let json: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+            .map_err(|e| e.to_string())?;
+        assert_eq!(json["open_prs"][0]["checks_summary"], summary, "{fixture}");
+        assert_eq!(
+            json["queue_disposition"][0]["disposition"], disposition,
+            "{fixture}"
+        );
+        assert_eq!(
+            pr_triage_queue_dispositions(&prs, &[])[0].disposition,
+            disposition,
+            "{fixture}"
+        );
+        assert!(markdown.contains(summary), "{fixture}");
+        if summary == "1 unknown" {
+            assert!(markdown.contains("unknown checks:"), "{fixture}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_triage_rollup_availability_is_not_conflated_with_empty() -> Result<(), String> {
+    let today = days_from_civil(2026, 5, 14);
+    for (rollup, expected, available) in [
+        (None, "unknown rollup", false),
+        (Some(serde_json::json!(null)), "unknown rollup", false),
+        (Some(serde_json::json!({})), "unknown rollup", false),
+        (Some(serde_json::json!([])), "none", true),
+    ] {
+        let mut fixture = serde_json::json!({"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN"});
+        if let Some(rollup) = rollup {
+            fixture["statusCheckRollup"] = rollup;
+        }
+        let prs = parse_pr_triage_pull_requests(&serde_json::json!([fixture]).to_string())?;
+        let findings = pr_triage_findings(&prs, today);
+        let markdown = pr_triage_markdown(&prs, &findings, today);
+        let json: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+            .map_err(|e| e.to_string())?;
+        assert_eq!(json["open_prs"][0]["checks_summary"], expected);
+        assert_eq!(json["open_prs"][0]["checks_rollup_available"], available);
+        assert_eq!(
+            json["queue_disposition"][0]["disposition"],
+            "needs_fresh_validation"
+        );
+        assert_eq!(
+            pr_triage_queue_dispositions(&prs, &[])[0].disposition,
+            "needs_fresh_validation"
+        );
+        assert!(markdown.contains(expected));
+        assert!(markdown.contains(if available {
+            "no check rollup entries returned"
+        } else {
+            "check rollup missing or malformed"
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_triage_mixed_rollup_keeps_unknown_visible_alongside_other_results() -> Result<(), String> {
+    let fixture = serde_json::json!([{"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN","statusCheckRollup":[
+        {"name":"success","status":"COMPLETED","conclusion":"SUCCESS"},
+        {"name":"skip","status":"COMPLETED","conclusion":"SKIPPED"},
+        {"name":"pending","status":"IN_PROGRESS","conclusion":""},
+        {"name":"failure","status":"COMPLETED","conclusion":"FAILURE"},
+        {"name":"unknown","status":"COMPLETED","conclusion":"FUTURE"}
+    ]}]);
+    let prs = parse_pr_triage_pull_requests(&fixture.to_string())?;
+    let today = days_from_civil(2026, 5, 14);
+    let findings = pr_triage_findings(&prs, today);
+    let markdown = pr_triage_markdown(&prs, &findings, today);
+    let json: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+        .map_err(|e| e.to_string())?;
+    let summary = "1 failed, 1 pending, 1 unknown, 1 neutral/skipped, 1 passed";
+    assert_eq!(json["open_prs"][0]["checks_summary"], summary);
+    assert_eq!(
+        json["queue_disposition"][0]["disposition"],
+        "needs_fresh_validation"
+    );
+    assert!(markdown.contains(summary));
+    assert!(markdown.contains("unknown checks: unknown"));
+    assert!(json["findings"].as_array().unwrap().iter().any(|f| {
+        f["details"].as_array().unwrap().iter().any(|d| {
+            d.as_str()
+                .is_some_and(|d| d.contains("unknown checks: unknown"))
+        })
+    }));
     Ok(())
 }

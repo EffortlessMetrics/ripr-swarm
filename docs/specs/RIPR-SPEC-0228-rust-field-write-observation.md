@@ -265,6 +265,49 @@ rejected alternative. Any can be reversed later without touching the rest.
    the receiver after the call, matching constructed fields. Rejected:
    keep them non-actionable until the read set is established another way.
 
+4. **Repository seam (#11398).** Adopted: a field write the diff rule reads as
+   the owner's last word on one plain `self` field (`assigned_field_path`)
+   has a `field_construction` repository seam whose required check is that
+   field (`count` for `self.count += 1`). The seam is graded only by the diff
+   probe's own exact-read rule (`assigned_field_read_confirms`): an
+   `assert_eq!` that reads the whole field from the binding that ran the
+   owner, after the call, with a non-default expected value, in a test that is
+   neither `#[ignore]`d nor `#[should_panic]`. A sibling-field read, a read on
+   another binding, a later write and no read never credit it. The owner must borrow
+   its receiver (`&self`, `&mut self`, `self: &Self`): a by-value receiver
+   (`self`, `mut self`, a builder's `fn retries(mut self, n) -> Self`) writes a
+   moved copy, and for a `Copy` type the test's binding keeps its old field,
+   so no read of that binding confirms the write. Such a write stays unjudged;
+   ripr cannot yet confirm it through the value the call chain returns. `fixtures/rust_copy_builder_field_write`
+   pins this in the RIPR-SPEC-0108 honesty corpus. The guidance follows the receiver: for a borrowed
+   receiver the hover, the agent packet's `missing_oracle_shape` and the
+   hand-written step say to assert the field on the value the method was called
+   on; for a by-value receiver they say to assert it on the value the call
+   returns (the stub refusal is `field_written_by_value`, not
+   `field_written_in_method`); when the receiver mode is not recorded they name
+   neither value. Repository
+   scope resolves no `self` methods, so a later `self.m()` call counts as a
+   possible write and the write gets no seam. Only a field this file declares
+   plain `pub` gets the seam: a private or `pub(crate)` field is observed
+   through a getter or `Display`, so a missing direct read is not a gap a test
+   can close and the pilot ranking would recommend a well-observed setter
+   (bytesize's `format` setters displaced confirmed picks). A builder's tail `self` hands the
+   value to the caller; it is not a later write, for the diff probe and the
+   seam alike. A field write offers no repair start (no new start policy):
+   `ripr check` and `ripr repair` both refuse with "a test assertion that
+   checks the changed field value" instead of "touch no code". Rejected:
+   crediting a seam by the field name alone, which any binding or sibling
+   read would satisfy; and starting a repair from a weak read of the written
+   field, which needs its own start policy and proof.
+
+`ripr agent stub` refuses a field-write seam with its own reason
+(`field_written_in_method`): the value to check is the receiver after the
+call, which the stub cannot write. The `ripr check` hand-written step for it
+says to call the method with an input for which old and new code store
+different values and assert the changed field on the value the method was
+called on (for a builder, on the value the chain returns), instead of the
+struct-literal wording about a wrapper or `Err` variant.
+
 ## Required Evidence
 
 - The reproduction reads `exposed` with a `field_construction` finding and no

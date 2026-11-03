@@ -48,8 +48,9 @@
 //!   the affirmative claim.
 //! - `assertion_not_credited`: no typed established refusal exists (#5446);
 //!   skip / xfail rows stay `activation_limited` with no oracle credit.
-//! - `missing_exact_assertion`: no row-owned exact-discriminator fact exists;
-//!   `missing_discriminators` is finding-wide.
+//! - `missing_exact_assertion`: the row observes the changed sink with a strong
+//!   family-selected assertion but does not pin the finding's exact
+//!   discriminator (#5575 / `row_discriminator_coverage`).
 //!
 //! `missing_input` carries `RelatedTest::miss_support` (#5564): the finding's
 //! predicate boundary fact, attached only because this row's own omission
@@ -61,9 +62,10 @@ use super::admission::PythonAssertionAdmission;
 use super::assertion_selection::PythonAssertionFocus;
 use super::boundary::python_row_boundary_omission;
 use super::related_tests::{PythonRelatedCandidate, PythonRelationKind};
+use super::row_discriminator_coverage::evaluate_row_discriminator_coverage;
 use super::row_reach::row_cannot_reach_owner;
 use super::sink_alignment::{AlignmentPrep, classify_sink_alignment_prepared};
-use super::{PythonOwner, PythonTest};
+use super::{PythonOracleShape, PythonOwner, PythonTest};
 use crate::domain::{
     ExposureClass, MissingDiscriminatorFact, OracleStrength, ProbeFamily, RelatedTest,
     RelatedTestMiss, RelatedTestMissSupport,
@@ -85,6 +87,8 @@ pub(super) struct RowMissChange<'a> {
     /// row: a row may carry it as `miss_support` only after that row's own
     /// omission proof (`python_row_boundary_omission`) holds against it.
     pub(super) boundary_fact: Option<&'a MissingDiscriminatorFact>,
+    /// The finding's typed exact-discriminator for this probe family (#5575).
+    pub(super) exact_discriminator_fact: Option<&'a MissingDiscriminatorFact>,
 }
 
 /// Annotate `rows` (one per `candidates` entry, in order) in place.
@@ -124,6 +128,9 @@ pub(super) fn annotate_row_misses(
             Some(RelatedTestMiss::MissingInput) => {
                 change.boundary_fact.map(RelatedTestMissSupport::from_fact)
             }
+            Some(RelatedTestMiss::MissingExactAssertion) => change
+                .exact_discriminator_fact
+                .map(RelatedTestMissSupport::from_fact),
             _ => None,
         };
     }
@@ -217,5 +224,34 @@ fn strong_row_miss(
         change.guard_entered,
         change.literal_pair,
     );
-    (!alignment.observes()).then_some(RelatedTestMiss::ObservationUnconfirmed)
+    if !alignment.observes() {
+        return Some(RelatedTestMiss::ObservationUnconfirmed);
+    }
+    let oracle_shape = selected_assertion_shape(row, candidate);
+    let result = evaluate_row_discriminator_coverage(
+        change.focus.family(),
+        change.exact_discriminator_fact,
+        true,
+        oracle_shape,
+        row.oracle.as_deref(),
+        &row.oracle_kind,
+        &row.oracle_strength,
+    );
+    (result.coverage
+        == super::row_discriminator_coverage::PythonRowDiscriminatorCoverage::ObservesSurfaceButNotExact)
+    .then_some(RelatedTestMiss::MissingExactAssertion)
+}
+
+fn selected_assertion_shape(
+    row: &RelatedTest,
+    candidate: &PythonRelatedCandidate<'_>,
+) -> Option<PythonOracleShape> {
+    row.oracle.as_ref().and_then(|text| {
+        candidate
+            .test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.text == *text)
+            .map(|assertion| assertion.oracle_shape)
+    })
 }

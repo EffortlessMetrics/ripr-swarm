@@ -100,7 +100,7 @@ fn validate<'a, T: 'a>(
         }
         if id.offset >= arena.len() {
             return Err(format!(
-                "invalid {kind} fact membership: {} >= {}",
+                "invalid {kind} fact membership: {} >= {}; report this as a ripr bug with the command and workspace shape",
                 id.offset,
                 arena.len()
             ));
@@ -165,6 +165,13 @@ pub struct RustIndex {
     /// Complete-source syntax and lexical answers, owned by immutable source
     /// snapshots rather than by individual owners or probe computations.
     pub(crate) source_syntax: crate::analysis::syntax::SourceSyntaxMemos,
+    /// The committed `.snap` files under the workspace root, read on first
+    /// use (#12189). Not serialized: a rebuilt or deserialized index reads
+    /// the listing again.
+    pub(crate) snapshot_listing: crate::analysis::rust_snapshot_files::SnapshotListingCell,
+    /// `assert_*snapshot` macros any workspace file defines, read on first
+    /// use (#12720). Not serialized, like the listing.
+    pub(crate) local_snapshot_macros: crate::analysis::rust_snapshot_files::LocalSnapshotMacrosCell,
     /// The display name and synthetic source of each registered doc
     /// example test, keyed by (file, start line) (#6648). A doctest is its
     /// own crate: its scopes come from this text, not from the file that
@@ -176,6 +183,7 @@ pub struct RustIndex {
     /// serialized provider receipt. Rebuilt together with property registration.
     pub(super) proptest_metadata_failures:
         BTreeMap<(PathBuf, usize, String), super::proptest::ProptestMetadataFailure>,
+    pub(super) bolero_receipts: BTreeMap<(PathBuf, usize, String), super::bolero::BoleroReceipt>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -510,6 +518,15 @@ impl RustIndex {
             .map(|receipt| std::sync::Arc::clone(&receipt.name_scopes))
     }
 
+    /// One proved singleton input, supplied only with the exact live property
+    /// receipt. This does not rewrite its String or shared-borrow type.
+    pub(crate) fn proptest_singleton_value(&self, test: &TestFact) -> Option<(&str, &str)> {
+        self.proptest_receipt(test)?
+            .singleton_value
+            .as_ref()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+    }
+
     fn proptest_receipt(&self, test: &TestFact) -> Option<&super::proptest::ProptestReceipt> {
         self.proptest_receipts
             .get(&(test.file.clone(), test.start_line, test.name.clone()))
@@ -722,6 +739,8 @@ impl RustIndex {
         self.proptest_receipts
             .retain(|(file, _, _), _| file.as_path() != path);
         self.proptest_metadata_failures
+            .retain(|(file, _, _), _| file.as_path() != path);
+        self.bolero_receipts
             .retain(|(file, _, _), _| file.as_path() != path);
         // Positions follow the retained orders; rebuild them now so slot
         // lookups never answer from the pre-removal layout.

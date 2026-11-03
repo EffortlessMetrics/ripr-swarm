@@ -1,2 +1,0 @@
-crates/ripr/src/analysis/language/python/repo/discovery.rs|{PYTHON_REPO_FILE_LIMIT_ENV} must be a positive integer
-crates/ripr/src/analysis/language/python/repo/discovery.rs|{PYTHON_REPO_FILE_LIMIT_ENV} must be valid UTF-8

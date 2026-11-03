@@ -743,52 +743,69 @@ fn path_arg_text(path: &Path) -> String {
 /// no-network, no-write `ripr agent verify ... --json` invocation.
 fn is_executable_verify_route(spec: &CommandSpec) -> Result<(), String> {
     if spec.role != CommandRole::Verify {
-        return Err("role is not verify".into());
+        return Err("role is not verify; regenerate the packet with `ripr agent repair`".into());
     }
     if spec.authority_boundary != CommandAuthorityBoundary::VerificationRouteOnly {
-        return Err("authority boundary is not verification-route-only".into());
+        return Err("authority boundary is not verification-route-only; regenerate the packet with `ripr agent repair`".into());
     }
     if spec.execution_mode != CommandExecutionMode::Direct {
-        return Err("execution mode is not direct".into());
+        return Err(
+            "execution mode is not direct; regenerate the packet with `ripr agent repair`".into(),
+        );
     }
     if spec.program != "ripr" {
-        return Err("program is not ripr".into());
+        return Err("program is not ripr; regenerate the packet with `ripr agent repair`".into());
     }
     if spec.cwd != "." {
-        return Err("cwd is not the invocation root".into());
+        return Err(
+            "cwd is not the invocation root; regenerate the packet with `ripr agent repair`".into(),
+        );
     }
     if spec.environment_policy != EnvironmentPolicy::Clean
         || !spec.env_set.is_empty()
         || !spec.env_passthrough.is_empty()
     {
-        return Err("environment policy is not clean".into());
+        return Err(
+            "environment policy is not clean; regenerate the packet with `ripr agent repair`"
+                .into(),
+        );
     }
     if spec.stdin != StdinPolicy::Null {
-        return Err("stdin policy is not null".into());
+        return Err(
+            "stdin policy is not null; regenerate the packet with `ripr agent repair`".into(),
+        );
     }
     if spec.network_policy != NetworkPolicy::Forbidden {
-        return Err("network policy is not forbidden".into());
+        return Err(
+            "network policy is not forbidden; regenerate the packet with `ripr agent repair`"
+                .into(),
+        );
     }
     if spec.cancellation != CancellationPolicy::Allowed {
-        return Err("cancellation is not allowed".into());
+        return Err(
+            "cancellation is not allowed; regenerate the packet with `ripr agent repair`".into(),
+        );
     }
     if spec.expected_result_parser != ExpectedResultParser::DeclaredJson {
-        return Err("expected result parser is not declared JSON".into());
+        return Err("expected result parser is not declared JSON; regenerate the packet with `ripr agent repair`".into());
     }
     if !spec.expected_writes.is_empty() {
-        return Err("route declares writes".into());
+        return Err("route declares writes; regenerate the packet with `ripr agent repair`".into());
     }
     if !spec.expected_exit_codes.contains(&0) {
-        return Err("route does not accept exit code 0".into());
+        return Err(
+            "route does not accept exit code 0; regenerate the packet with `ripr agent repair`"
+                .into(),
+        );
     }
     if spec.timeout_ms == 0 {
-        return Err("route has no timeout".into());
+        return Err("route has no timeout; regenerate the packet with `ripr agent repair`".into());
     }
     if spec.args.first().map(String::as_str) != Some("agent")
         || spec.args.get(1).map(String::as_str) != Some("verify")
         || spec.args.last().map(String::as_str) != Some("--json")
     {
-        return Err("args are not the canonical agent verify route".into());
+        return Err("args are not the canonical agent verify route; regenerate the packet with `ripr agent repair`".into());
     }
     Ok(())
 }
@@ -960,7 +977,7 @@ fn spawn_capture<R: Read + Send + 'static>(
         loop {
             let read = reader
                 .read(&mut buffer)
-                .map_err(|error| format!("read process output failed: {error}"))?;
+                .map_err(|error| format!("read process output failed: {error}; rerun `ripr agent verify-execute`, and report a repeat as a ripr bug with this message"))?;
             if read == 0 {
                 break;
             }
@@ -1102,10 +1119,10 @@ fn confined_output_path(root: &Path, path: &Path, label: &str) -> Result<PathBuf
 fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
-        .ok_or_else(|| "result path has no parent".to_string())?;
+        .ok_or_else(|| "result path has no parent directory; pass `--result-json` a file path inside a directory".to_string())?;
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|error| format!("clock failed: {error}"))?
+        .map_err(|error| format!("clock failed: {error}; fix the system clock and rerun"))?
         .as_nanos();
     let temporary = parent.join(format!(
         ".{}.{}.{}.tmp",
@@ -1117,14 +1134,16 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
         .write(true)
         .create_new(true)
         .open(&temporary)
-        .map_err(|error| format!("create temporary result failed: {error}"))?;
+        .map_err(|error| format!("create temporary result failed: {error}; make the `--result-json` directory writable and rerun"))?;
     if let Err(error) = file.write_all(contents).and_then(|_| file.sync_all()) {
         let _ = fs::remove_file(&temporary);
-        return Err(format!("write temporary result failed: {error}"));
+        return Err(format!(
+            "write temporary result failed: {error}; make the `--result-json` directory writable or free disk space, then rerun"
+        ));
     }
     if path.exists() {
         let _ = fs::remove_file(&temporary);
-        return Err("refusing to overwrite an existing result".into());
+        return Err("refusing to overwrite an existing result; remove it or pass a new `--result-json` path".into());
     }
     fs::rename(&temporary, path).map_err(|error| {
         let _ = fs::remove_file(&temporary);

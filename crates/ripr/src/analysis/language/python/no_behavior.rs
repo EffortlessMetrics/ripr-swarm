@@ -260,6 +260,112 @@ fn def_signature_skeleton(line: &str) -> Option<DefSignatureSkeleton> {
     ))
 }
 
+/// Legacy `class` header base list: no bases (`class X:` / `class X():`) or a
+/// sole bare `object` base (`class X(object):`). Anything else fails closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LegacyClassBaseShape {
+    NoBases,
+    SoleObject,
+}
+
+fn legacy_class_header_shape(line: &str) -> Option<(String, LegacyClassBaseShape)> {
+    if line.contains('\n') {
+        return None;
+    }
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with("class ") {
+        return None;
+    }
+    let snippet = format!("{trimmed}\n    pass\n");
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("object_base_probe.py"), &snippet)
+    else {
+        return None;
+    };
+    let class = module.body.iter().find_map(|stmt| match stmt {
+        Stmt::ClassDef(class) => Some(class),
+        _ => None,
+    })?;
+    if !class.decorator_list.is_empty() || !class.keywords.is_empty() {
+        return None;
+    }
+    let shape = match class.bases.as_slice() {
+        [] => LegacyClassBaseShape::NoBases,
+        [Expr::Name(name)] if name.id.as_str() == "object" => LegacyClassBaseShape::SoleObject,
+        _ => return None,
+    };
+    // PEP 695 type parameters (`class A[T]:`) are part of the header's meaning:
+    // they ride in the name key so `A[T]` against `A[U]` is a different class.
+    let type_params: Vec<&str> = class
+        .type_params
+        .iter()
+        .map(|param| {
+            snippet
+                .get(usize::from(param.range().start())..usize::from(param.range().end()))
+                .unwrap_or_default()
+        })
+        .collect();
+    let name = if type_params.is_empty() {
+        class.name.to_string()
+    } else {
+        format!("{}[{}]", class.name, type_params.join(", "))
+    };
+    Some((name, shape))
+}
+
+/// Whether a single-line `class` header change only adds or removes the legacy
+/// no-op `object` base (`class X(object):` ↔ `class X:` / `class X():`). Closed
+/// allow-list for #11888; anything else (another base, multiple bases, metaclass,
+/// decorators, or a renamed class) returns false.
+fn is_object_base_only_class_change(old_line: &str, new_line: &str) -> bool {
+    if old_line.trim() == new_line.trim() {
+        return false;
+    }
+    if empty_parens_class_header_only_change(old_line, new_line) {
+        return true;
+    }
+    let Some((old_name, old_shape)) = legacy_class_header_shape(old_line) else {
+        return false;
+    };
+    let Some((new_name, new_shape)) = legacy_class_header_shape(new_line) else {
+        return false;
+    };
+    if old_name != new_name {
+        return false;
+    }
+    matches!(
+        (old_shape, new_shape),
+        (
+            LegacyClassBaseShape::NoBases,
+            LegacyClassBaseShape::SoleObject
+        ) | (
+            LegacyClassBaseShape::SoleObject,
+            LegacyClassBaseShape::NoBases
+        )
+    )
+}
+
+/// `class Name():` ↔ `class Name:` with no bases, decorators, or keywords.
+fn empty_parens_class_header_only_change(old_line: &str, new_line: &str) -> bool {
+    let Some((old_name, old_shape)) = legacy_class_header_shape(old_line) else {
+        return false;
+    };
+    let Some((new_name, new_shape)) = legacy_class_header_shape(new_line) else {
+        return false;
+    };
+    if old_name != new_name
+        || old_shape != LegacyClassBaseShape::NoBases
+        || new_shape != LegacyClassBaseShape::NoBases
+    {
+        return false;
+    }
+    let uses_empty_parens = |line: &str, name: &str| {
+        line.trim()
+            .strip_prefix(&format!("class {name}"))
+            .is_some_and(|rest| rest.trim_start().starts_with("():"))
+    };
+    uses_empty_parens(old_line, &old_name) != uses_empty_parens(new_line, &new_name)
+}
+
 /// Whether the `def`-header change modifies ONLY type annotations, leaving the
 /// callable's runtime signature unchanged. Python does not enforce annotations at
 /// runtime, so such a change has no behavior delta (#1289). Fails closed: returns
@@ -267,7 +373,13 @@ fn def_signature_skeleton(line: &str) -> Option<DefSignatureSkeleton> {
 /// identical, or when anything beyond an annotation differs (e.g. a default-value
 /// change, an added/removed/renamed/reordered parameter, a `/`/`*` marker move, or
 /// an async-ness change).
+///
+/// Also treats a legacy `object`-base-only `class` header edit as non-behavioral
+/// (#11888) via [`is_object_base_only_class_change`].
 pub(super) fn is_annotation_only_def_change(old_line: &str, new_line: &str) -> bool {
+    if is_object_base_only_class_change(old_line, new_line) {
+        return true;
+    }
     if old_line.trim() == new_line.trim() {
         return false;
     }

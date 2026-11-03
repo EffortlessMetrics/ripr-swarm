@@ -8,11 +8,15 @@
 
 use serde_json::Value;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::cli::unknown_argument;
 use crate::output::workflow_escape::{
     escape_data, escape_property, path_is_unplaceable, unplaced_location_prefix,
+};
+
+use super::subcommand::{
+    NonEmptyPlaceholder, invocation_repo_root_with_directory_hint, non_empty_arg,
 };
 
 const DEFAULT_COMMENTS_JSON: &str = "target/ripr/review/comments.json";
@@ -41,7 +45,7 @@ pub(crate) fn run_annotations(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let options = parse_options(args)?;
-    let repo = repo_root()?;
+    let repo = invocation_repo_root_with_directory_hint()?;
     let generated = render_annotations(&repo, &options)?;
     let out = repo.join(&options.out);
     if options.check {
@@ -58,11 +62,20 @@ fn parse_options(args: &[String]) -> Result<AnnotationOptions, String> {
         match args[i].as_str() {
             "--comments" => {
                 i += 1;
-                options.comments = non_empty_arg(args, i, "--comments")?.to_string();
+                options.comments = non_empty_arg(
+                    "annotations",
+                    args,
+                    i,
+                    "--comments",
+                    NonEmptyPlaceholder::Path,
+                )?
+                .to_string();
             }
             "--out" => {
                 i += 1;
-                options.out = non_empty_arg(args, i, "--out")?.to_string();
+                options.out =
+                    non_empty_arg("annotations", args, i, "--out", NonEmptyPlaceholder::Path)?
+                        .to_string();
             }
             "--check" => options.check = true,
             other => return Err(unknown_argument("annotations", other)),
@@ -70,16 +83,6 @@ fn parse_options(args: &[String]) -> Result<AnnotationOptions, String> {
         i += 1;
     }
     Ok(options)
-}
-
-fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
-    let Some(value) = args.get(index) else {
-        return Err(format!("missing value for {flag}"));
-    };
-    if value.trim().is_empty() {
-        return Err(format!("annotations {flag} requires a non-empty value"));
-    }
-    Ok(value)
 }
 
 fn print_help() {
@@ -119,15 +122,18 @@ fn render_annotations(
             });
         }
         Err(err) => {
-            return Err(format!("failed to read {}: {err}", options.comments));
+            return Err(format!(
+                "failed to read {}: {err}; check the file is readable or pass another path with `--comments`",
+                options.comments
+            ));
         }
     };
     let packet: Value = serde_json::from_str(&text)
-        .map_err(|err| format!("{} is not valid JSON: {err}", options.comments))?;
+        .map_err(|err| format!("{} is not valid JSON: {err}; regenerate the comments packet with `ripr review-comments`", options.comments))?;
     let comments = packet
         .get("comments")
         .and_then(Value::as_array)
-        .ok_or_else(|| format!("{} is missing comments[]", options.comments))?;
+        .ok_or_else(|| format!("{} is missing comments[]; regenerate the comments packet with `ripr review-comments`", options.comments))?;
 
     let mut out = String::new();
     for item in comments {
@@ -151,19 +157,19 @@ fn annotation_from_comment(item: &Value) -> Result<String, String> {
     let placement = item
         .get("placement")
         .and_then(Value::as_object)
-        .ok_or_else(|| "comments[] item is missing placement object".to_string())?;
+        .ok_or_else(|| "comments[] item is missing placement object; regenerate the comments packet with `ripr review-comments`".to_string())?;
     let path = string_key(placement, "path")?;
     let line = placement
         .get("line")
         .and_then(Value::as_u64)
-        .ok_or_else(|| "comments[] placement.line is missing or not an integer".to_string())?;
+        .ok_or_else(|| "comments[] placement.line is missing or not an integer; regenerate the comments packet with `ripr review-comments`".to_string())?;
     let mode = string_key(placement, "mode")?;
     if !matches!(
         mode.as_str(),
         "exact_seam_line" | "owner_function_changed_line" | "same_file_changed_line"
     ) {
         return Err(format!(
-            "comments[] placement mode {mode:?} is not annotation-safe"
+            "comments[] placement mode {mode:?} is not annotation-safe; regenerate the comments packet with `ripr review-comments`"
         ));
     }
     let severity = item
@@ -216,7 +222,7 @@ fn string_key(object: &serde_json::Map<String, Value>, key: &str) -> Result<Stri
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string)
-        .ok_or_else(|| format!("comments[] placement.{key} is missing or empty"))
+        .ok_or_else(|| format!("comments[] placement.{key} is missing or empty; regenerate the comments packet with `ripr review-comments`"))
 }
 
 fn check_annotations(
@@ -228,8 +234,12 @@ fn check_annotations(
         println!("RIPR annotations skipped: {} is missing", options.comments);
         return Ok(());
     }
-    let actual = fs::read_to_string(path)
-        .map_err(|err| format!("missing or unreadable {}: {err}", options.out))?;
+    let actual = fs::read_to_string(path).map_err(|err| {
+        format!(
+            "missing or unreadable {}: {err}; run `ripr annotations` to write it",
+            options.out
+        )
+    })?;
     if actual == generated.text {
         println!("RIPR annotations contract ok: {}", options.out);
         Ok(())
@@ -244,10 +254,13 @@ fn write_annotations(
     options: &AnnotationOptions,
 ) -> Result<(), String> {
     let Some(parent) = path.parent() else {
-        return Err(format!("{} has no parent directory", options.out));
+        return Err(format!(
+            "{} has no parent directory; pass `--out` with a file path inside a directory",
+            options.out
+        ));
     };
     fs::create_dir_all(parent)
-        .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+        .map_err(|err| format!("failed to create {}: {err}; check that the directory is writable or pass `--out` in a writable location", parent.display()))?;
     crate::output::file_write::write(path, generated.text.as_bytes())
         .map_err(|err| crate::output::file_write::write_failure_message(path, &err))?;
     if generated.comments_missing {
@@ -264,13 +277,10 @@ fn write_annotations(
     Ok(())
 }
 
-fn repo_root() -> Result<PathBuf, String> {
-    std::env::current_dir().map_err(|err| format!("failed to determine working directory: {err}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn parse_supports_paths_and_check() -> Result<(), String> {

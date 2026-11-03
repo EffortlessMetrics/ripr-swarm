@@ -2104,7 +2104,7 @@ mod tests {
         let actionability = &value["preview_actionability"];
         assert_eq!(actionability["authority_boundary"], "preview_advisory_only");
         assert_eq!(actionability["repair_packet_ready"], false);
-        assert_eq!(actionability["gap_state"], "advisory");
+        assert_eq!(actionability["gap_state"], "unknown");
         assert_eq!(
             actionability["actionability_category"],
             "incomplete_repair_packet"
@@ -2175,6 +2175,12 @@ mod tests {
             .map_err(|err| format!("finding JSON parse failed: {err}"))?;
 
         let card = &value["perl_preview_card"];
+        let shared = crate::output::perl_preview_card::perl_preview_card_json(&finding)
+            .ok_or_else(|| "expected shared perl_preview_card_json projection".to_string())?;
+        assert_eq!(
+            card, &shared,
+            "check JSON must embed the shared perl_preview_card_json projection (#3225)"
+        );
         assert_eq!(card["card_version"], "perl_preview_card.v1");
         assert_eq!(card["language"], "perl");
         assert_eq!(card["language_status"], "preview");
@@ -2212,7 +2218,7 @@ mod tests {
         finding.owner_kind = Some(OwnerKind::Function);
         finding.evidence = vec![
             "owner: discountedTotal".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
             "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),

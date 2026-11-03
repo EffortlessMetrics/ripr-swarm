@@ -1,2 +1,0 @@
-crates/ripr/src/analysis/workspace/discover.rs|failed to read dir entry: {err}
-crates/ripr/src/analysis/workspace/discover.rs|failed to read {}: {err}

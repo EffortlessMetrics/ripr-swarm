@@ -257,8 +257,10 @@ movement is not automatic invalidation.
 
 `finish-pr` publishes coherent `REVIEW_INCOMPLETE` candidates to obtain hosted
 evidence. It arms merge only with current published-head `REVIEW_READY`, actual
-required proof and addressed material findings. Diagnose branch protection and
-active rulesets read-only; never weaken them or use admin bypass to clear a PR.
+required proof and addressed material findings. For routine progression inspect
+PR-visible checks and reviews, not branch-protection or ruleset settings. Unknown
+checks are not passed; a forbidden settings read is not a blanket blocker. Use
+the normal merge endpoint for server enforcement; never weaken rules or bypass it.
 
 After merge/closure, verify the actual repository object, reconcile delivered
 and remaining issue acceptance, update the parent, preserve residual work,
@@ -312,7 +314,7 @@ has several inline test modules enabled under plain `cfg(test)`, the stub goes
 into the one that already names the owner, else the nearest one after it, else
 the nearest one before it; feature- or target-gated modules are never chosen.
 An owner behind a cfg in its own file that a plain `cargo test` build may not
-enable (a gate on the parent's `mod` declaration is not yet seen, #5616), or in an impl
+enable (a gate on the parent's `mod` declaration is refused via the declaring-module chain, #5616), or in an impl
 local to a function body or `const` block, is refused as `owner_unsupported`.
 The expected value is a labelled `todo!()`, so the test fails until it is
 written. `--write` applies it; `--json` emits the `rust_test_stub` document.

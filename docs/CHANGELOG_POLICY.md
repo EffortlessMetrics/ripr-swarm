@@ -51,6 +51,15 @@ stays in the user-facing section that describes the behavior. Generated
 `Internal / CI` fragments into a short rolled-up summary under that heading
 rather than one bullet per case batch.
 
+`check-changelog-fragments` enforces two parts of this (#11815). An entry that
+opens with a backticked `cargo xtask` command, `.github/` workflow, `policy/`
+file, `AGENTS.md`, `CLAUDE.md`, or a maintainer doc (`docs/CI.md`,
+`docs/CLIPPY_POLICY.md`, `docs/IMPLEMENTATION_PLAN.md`, `docs/MERGE_FLOW.md`,
+`docs/POLICY_ALLOWLISTS.md`) belongs under `Internal / CI`, as do `Verdict
+corpus:` and `Repo ops:` entries. And an entry whose text, with whitespace
+collapsed, equals another fragment or Unreleased entry fails. Near duplicates
+and superseded claims are not checked; a reviewer reads those.
+
 ## Retiring A `ripr.toml` Key
 
 Teams commit `ripr.toml` as reviewed policy, and every config table rejects

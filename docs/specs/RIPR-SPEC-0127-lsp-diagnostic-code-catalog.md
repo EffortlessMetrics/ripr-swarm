@@ -53,7 +53,8 @@ constructor that is the single source of truth for that family:
   language adapter is not enabled, so an empty list for it is not a clean
   result (served for every document of that language when the producer's file sample is incomplete);
   `ripr-diagnostic-preview-withheld` (#11296) is the Hint on a file whose
-  preview-language findings the actionable profile withheld, outside the
+  preview-language findings the actionable profile withheld, or (#11798) any
+  other gap-class finding it withheld, outside the
   delivery budget. These are not analyzer findings or actionable repairs.
 
 Each catalog entry carries the code identity used today: the stable `code` and

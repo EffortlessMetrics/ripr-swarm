@@ -284,7 +284,7 @@ fn verdict_for(
                 "the shared repair gate (`ripr repair`) names seam `{seam_id}` for this item and refuses it: {reason}"
             ),
         },
-        RepairSubjectOutcome::Ambiguous(seam_ids) => SeamVerdict::Refused {
+        RepairSubjectOutcome::Ambiguous { seam_ids, .. } => SeamVerdict::Refused {
             code: SEAM_AMBIGUOUS,
             detail: format!(
                 "the shared repair gate (`ripr repair`) resolves this item to {} seams and never picks one",

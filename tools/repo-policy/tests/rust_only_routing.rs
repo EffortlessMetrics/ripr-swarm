@@ -419,7 +419,7 @@ const GATED: [(&str, &str); 12] = [
 
 fn gated_jobs(workflow: &str) -> &[&str] {
     match workflow {
-        "ci.yml" => &["release-proof", "rust-only-features", "msrv", "vscode"],
+        "ci.yml" => &["release-proof", "rust-only-features", "msrv"],
         "coverage.yml" => &["coverage"],
         "future-clippy.yml" => &["future-clippy"],
         "macos-advisory.yml" => &["macos-advisory"],
@@ -558,10 +558,11 @@ fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
             const REQUEST: &str = "github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
             // Staged callable leaves key the group by admitted request/subject
             // first; direct events fall through to the merge-ready group rule.
-            let callable_leaf = name == "ci.yml";
+            let callable_leaf = matches!(name, "ci.yml" | "printed-command-paste.yml");
             let prefix = match name {
                 "pilot-ranking.yml" => "pilot-ranking",
                 "public-proof.yml" => "public-proof",
+                "printed-command-paste.yml" => "printed-command-paste",
                 _ => "${{ github.workflow }}",
             };
             let cancels_non_pr = matches!(name, "pilot-ranking.yml" | "public-proof.yml");
@@ -643,6 +644,11 @@ fn job_guard_violations(workflow: &str, source: &str) -> Vec<String> {
             ("ci.yml", "ci-result") => {
                 Some("always() && contains(toJSON(inputs), '\"subject_sha\"')")
             }
+            // #12252: pull requests run the extension e2e from routed-rust.yml, so this
+            // job runs for pushes, manual dispatch and a frozen callable selection only.
+            ("ci.yml", "vscode") => Some(
+                "always() && !cancelled() && ((contains(toJSON(inputs), '\"subject_sha\"') && needs.source-identity.result == 'success' && inputs.run_vscode) || (!contains(toJSON(inputs), '\"subject_sha\"') && github.event_name != 'pull_request'))",
+            ),
             ("windows-advisory.yml", "windows-advisory-subset") => {
                 // The standalone advisory subset is unchanged from main: it runs on
                 // schedule/manual and on an explicit merge-ready labeled request.
@@ -714,6 +720,17 @@ fn callable_and_diagnostic_job_authorities_are_exact_and_unknown_jobs_are_checke
         assert_ne!(broadened, source);
         assert!(!job_guard_violations(workflow, &broadened).is_empty());
     }
+    // #12252: `vscode` is no longer a pull-request lane, so its exact authority is
+    // checked on its own (the multi-line condition cannot be swapped in place).
+    let removed = without_job_condition(WORKFLOW, "vscode");
+    assert!(!job_guard_violations("ci.yml", &removed).is_empty());
+    let widened = WORKFLOW.replacen(
+        "(!contains(toJSON(inputs), '\"subject_sha\"') && github.event_name != 'pull_request'))",
+        "(!contains(toJSON(inputs), '\"subject_sha\"')))",
+        1,
+    );
+    assert_ne!(widened, WORKFLOW);
+    assert!(!job_guard_violations("ci.yml", &widened).is_empty());
     let unknown = format!("{WORKFLOW}\n# keep enumerating\n  surprise:\n    runs-on: fixture\n");
     assert!(
         job_guard_violations("ci.yml", &unknown)

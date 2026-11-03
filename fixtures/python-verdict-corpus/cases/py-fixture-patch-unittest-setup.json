@@ -1,0 +1,44 @@
+{
+  "case_id": "py-fixture-patch-unittest-setup",
+  "subject_id": "authored-py-pytest-fixture-patch",
+  "diff": "cases/py-fixture-patch-unittest-setup.diff",
+  "anchor": {
+    "file": "fxpatch/core.py",
+    "line": 10
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "unittest_setup_patch_replaces_owner",
+  "hard_case": "False-credit trap: the test looks like it checks the owner but runs against a stand-in a fixture installed.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.18, pytest 9.2.0, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return x * 3",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the owner returns 9 for 3, not 6"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "setUp starts mock.patch.object over the owner with a stand-in that returns x * 2, so the test asserts the stand-in and cannot notice the edit.",
+  "labeling_observation": {
+    "ripr_commit": "a561a277",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

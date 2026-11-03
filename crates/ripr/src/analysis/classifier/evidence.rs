@@ -1,22 +1,23 @@
 use crate::analysis::classify::{
-    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, ConstFlow, EffectStateCarrier,
-    HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin, ProbeContext,
-    PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
-    activation_and_boundary_input, assertion_compares_hand_built_field,
+    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, BindingReturnFlow, ConstFlow,
+    EffectStateCarrier, HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin,
+    ProbeContext, PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex,
+    WrapperEntryPairing, activation_and_boundary_input, assertion_compares_hand_built_field,
     assertion_observes_collection_argument, assertion_observes_scope_end, assertion_out_parameter,
-    body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
-    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
-    confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
-    direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
+    assertion_pins_pushed_collection_count, body_contains_owner_call, call_parameter_names,
+    callee_is_unique, chain_entry_pin_admits, chain_forwards_to_observed_hops,
+    chain_passes_effect_target_to_observed_hops, classify, confidence_score,
+    constructor_starts_empty, contains_as_whole_word, current_path_witness_with, direct_call_name,
+    direct_collection_mutation_receiver, error_path_arm_probe, expected_operand_value,
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_for_owner, is_drop_destructor, local_flow_sinks,
     method_cannot_store, observes_returned_element_field, operand_only_pin,
     oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
     parameter_rebound, propagation_evidence_with_witness, pushed_collection_compared_whole,
-    pushed_literal_path, reach_evidence, reveal_outcome, same_test_pairing_missing_summary,
-    setter_plainly_writes, signature_parameters, unconditional_owner_insert_field,
-    unexercised_mask_bits, wrapper_return_boundary_pinned,
+    pushed_literal_path, reach_evidence, returned_array_construction_plain, reveal_outcome,
+    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+    unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -48,6 +49,8 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) reach: StageEvidence,
     pub(in crate::analysis) infect: StageEvidence,
     pub(in crate::analysis) propagate: StageEvidence,
+    /// The credited fixture-specific pin has read its actual receiver data.
+    pub(in crate::analysis) literal_fixture_receiver_pinned: bool,
     pub(in crate::analysis) observe: StageEvidence,
     pub(in crate::analysis) discriminate: StageEvidence,
     /// Reach is `No` for a resolved owner that nothing in the workspace
@@ -93,6 +96,29 @@ pub(in crate::analysis) struct AssertionRefusalNote {
     /// Whether the refusal is a limit of ripr's own reading rather than a
     /// shape that can keep the assertion from running (RIPR-SPEC-0240).
     pub(in crate::analysis) is_analyzer_limit: bool,
+}
+
+/// #9643: a test inside a `cfg` gate the changed owner carries too is compiled
+/// whenever the changed code is, so the gate cannot separate them. Which
+/// feature set a run enables is not known statically, so the refusal rests on
+/// what ripr cannot read, never on a test that provably does not run. A gate
+/// only the test carries, one that is provably off, or an owner outside the
+/// file keeps the refusal a real gap.
+fn test_shares_owner_cfg_gates(context: &ProbeContext<'_>, test: &TestSummary) -> bool {
+    let Some(owner) = context.owner_fn else {
+        return false;
+    };
+    let gates = |file: &Path, name: &str, line: usize| {
+        let facts = context.index.files().get(file)?;
+        crate::analysis::syntax::unestablished_cfg_gates_of_fn(&facts.source, name, line)
+    };
+    let (Some(test_gates), Some(owner_gates)) = (
+        gates(&test.file, &test.name, test.start_line),
+        gates(&owner.file, &owner.name, owner.start_line),
+    ) else {
+        return false;
+    };
+    !test_gates.is_empty() && test_gates.is_subset(&owner_gates)
 }
 
 /// #9871: reach for a changed constant whose same-file readers are called by
@@ -179,6 +205,16 @@ impl ClassifiedProbeEvidence {
             const_reader_reach(context)
         };
         let mut flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
+        // #10875: std's `Ord::min`/`clamp` pins the returned value to one
+        // literal, so the changed condition cannot reach it.
+        if let Some(sink) = crate::analysis::classify::absorbing_tail_sink(
+            context.probe,
+            context.owner_fn,
+            context.index,
+            context.workspace_complete,
+        ) {
+            flow_sinks = vec![sink];
+        }
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
                 context.index.files().get(&owner.file).and_then(|file| {
@@ -321,6 +357,7 @@ impl ClassifiedProbeEvidence {
                             owner,
                             context.probe.before.as_deref(),
                             context.probe.after.as_deref(),
+                            context.index,
                         ) || !contradicted_assertion_reading_is_established(
                             test,
                             owner,
@@ -454,13 +491,26 @@ impl ClassifiedProbeEvidence {
             assertion_macros_rebound,
         );
         // #10980: when the whole-test contradiction withheld EVERY credited
-        // activation path (the repo-seam authority's own branch condition,
-        // #7007), the stage discloses the withholding instead of reading the
-        // withheld tests' literals as if they still ran. A credited test
-        // keeps its normal infection reading even when it passes no
-        // comparable values (a zero-argument owner), so this fires only on
-        // an empty credited set, never on empty observed values.
-        let infect = if withheld_activation_tests > 0 && activation_credited.is_empty() {
+        // activation path that establishes reach (#7007), the stage
+        // discloses the withholding instead of reading the withheld tests'
+        // literals as if they still ran. Credited reach, not credited count,
+        // is the gate (#12412): proximity-only mates (`SameTestFile` and
+        // friends) keep the credited set non-empty but never run the owner,
+        // so composing unrelated same-file tests beside the contradicted
+        // test must not restore the infection stage's default yes — credit
+        // by count would promote a finding whose every reaching test fails
+        // at baseline. A credited test that establishes reach
+        // (`RelationReason::establishes_reach`, the one rule the reach stage
+        // and the advice selection read) keeps its normal infection reading
+        // even when it passes no comparable values (a zero-argument owner),
+        // so this never fires on empty observed values.
+        let activation_credited_establishes_reach = activation_credited.iter().any(|credited| {
+            context.related_tests.iter().any(|(test, reason)| {
+                std::ptr::eq(*test, *credited)
+                    && reason.establishes_reach(context.owner_fn.is_some())
+            })
+        });
+        let infect = if withheld_activation_tests > 0 && !activation_credited_establishes_reach {
             StageEvidence::new(
                 StageState::Unknown,
                 Confidence::Low,
@@ -492,6 +542,7 @@ impl ClassifiedProbeEvidence {
                 &owner_parameter_names(owner),
                 &chain_tests,
                 Some(chain),
+                context.index,
             )
             .is_empty(),
             _ => false,
@@ -690,14 +741,24 @@ impl ClassifiedProbeEvidence {
         // A same-named function elsewhere (a trait method on another enum
         // with the same variant names) makes a direct call ambiguous; a
         // partial index cannot show the name is unique.
+        // #12110: an `error_path` probe on a whole match arm reads the same
+        // selector through its arm view, so a pin of the variant the change
+        // removed can be tied to an input that reaches this arm.
+        let selector_probe = match context.probe.family {
+            ProbeFamily::MatchArm => Some(context.probe.clone()),
+            ProbeFamily::ErrorPath => context
+                .owner_fn
+                .and_then(|owner| error_path_arm_probe(context.probe, owner)),
+            _ => None,
+        };
         let arm_selector = context
             .owner_fn
             .filter(|owner| {
-                matches!(context.probe.family, ProbeFamily::MatchArm)
+                selector_probe.is_some()
                     && context.workspace_complete
                     && callee_is_unique(&owner.name, context.index)
             })
-            .and_then(|owner| ArmSelector::establish(context.probe, owner))
+            .and_then(|owner| ArmSelector::establish(selector_probe.as_ref()?, owner))
             .map(|selector| {
                 selector
                     .in_workspace(
@@ -737,6 +798,7 @@ impl ClassifiedProbeEvidence {
             });
         let field_oracle_needs_admission = arm_selector
             .as_ref()
+            .filter(|_| matches!(context.probe.family, ProbeFamily::MatchArm))
             .is_some_and(ArmSelector::field_oracle_needs_admission);
         // RIPR-SPEC-0297 / #9836: an unsafe Display write edit needs its
         // admitted owner pin; generic token overlap cannot establish that
@@ -907,6 +969,16 @@ impl ClassifiedProbeEvidence {
                         })
                     },
                     pin_syntax,
+                ) || pin.admits_claims_payload_eq(
+                    test,
+                    assertion,
+                    context.index,
+                    &|file, name| {
+                        context.index.files().get(file).is_some_and(|facts| {
+                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
+                        })
+                    },
+                    pin_syntax,
                 )
             })
         };
@@ -945,6 +1017,17 @@ impl ClassifiedProbeEvidence {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
                 })
                 || direct_owner_pin_admits(test, assertion)
+        };
+        // #9766: the per-assertion fact that the fixture-receiver owner gate
+        // itself admitted this assertion. Another owner-pin route (chain
+        // entry, display, projection or fallible-check receipt) credits the
+        // pin without reading any literal fixture data.
+        let fixture_receiver_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
+            owner_return_pin
+                .as_ref()
+                .is_some_and(OwnerReturnPin::reads_literal_fixture_receiver)
+                && owner_pin_admits(test, assertion)
+                && direct_owner_pin_admits(test, assertion)
         };
         let recording_double = context.owner_fn.and_then(|owner| {
             EffectStateCarrier::recording_double(
@@ -997,6 +1080,7 @@ impl ClassifiedProbeEvidence {
                         )
                     }),
                 owner_return_pin: &owner_pin_admits,
+                fixture_receiver_pin: &fixture_receiver_pin_admits,
                 owner_return_pin_required: map_callback_pin_required,
                 wrapper_return_pin: &|test, assertion| {
                     wrapper_boundary_probe.is_some()
@@ -1088,6 +1172,21 @@ impl ClassifiedProbeEvidence {
                             .test_may_reach(test)
                     })
                 },
+                assertion_pins_other_function: &|test, assertion| {
+                    context.owner_fn.is_some_and(|owner| {
+                        // #12056: a local the assertion reads is the function
+                        // that bound it, so its initializer joins the text.
+                        let text = assertion_text_with_local_initializers(
+                            context.index,
+                            test,
+                            &assertion.text,
+                            owner,
+                        );
+                        owner_reach
+                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
+                            .assertion_pins_other_function(&text)
+                    })
+                },
                 owner_parameters: &owner_parameters,
                 expected_reaches_owner: &expected_reaches_owner,
                 expected_operand_value: &|test, operand| {
@@ -1115,6 +1214,18 @@ impl ClassifiedProbeEvidence {
                                 assertion,
                                 pin_syntax,
                             )
+                            // #11402: a count read that pins the single push
+                            // into the passed local notices the deleted push,
+                            // by the rule the call-presence seam reads too.
+                            || (matches!(context.probe.family, ProbeFamily::CallDeletion)
+                                && assertion_pins_pushed_collection_count(
+                                    receiver,
+                                    owner,
+                                    context.index,
+                                    test,
+                                    assertion,
+                                    pin_syntax,
+                                ))
                         })
                 },
                 pushed_literal_observed: &|test, assertion| {
@@ -1179,6 +1290,34 @@ impl ClassifiedProbeEvidence {
                 call_cannot_store: &|impl_type, method, field, expected| {
                     method_cannot_store(context.index, impl_type, method, field, expected)
                 },
+                captured_log_exact_membership_confirms: &|test, assertion| {
+                    let Some(owner_id) = context.probe.owner.as_ref() else {
+                        return false;
+                    };
+                    let free_fn_owner = context.index.functions().iter().any(|function| {
+                        function.id == *owner_id
+                            && function.impl_context
+                                == crate::analysis::facts::FunctionImplContext::Free
+                    });
+                    if !free_fn_owner {
+                        return false;
+                    }
+                    let Some(owner) = owner_id
+                        .0
+                        .rsplit("::")
+                        .next()
+                        .filter(|name| !name.is_empty())
+                    else {
+                        return false;
+                    };
+                    crate::analysis::classify::assertion_confirms_captured_log_exact_membership(
+                        &context.probe.expression,
+                        test,
+                        assertion,
+                        owner,
+                        context.index,
+                    )
+                },
             },
             arm_selector.as_ref(),
             context.diff_touched,
@@ -1190,6 +1329,23 @@ impl ClassifiedProbeEvidence {
             reveal.related,
             reveal.related_total,
         );
+        // #9766: only the fixture-specific owner gate reads the nonempty
+        // literal tuples and their numeric projection through the returned
+        // sum. Reveal's credited bit retains all assertion/relation/name
+        // defeats; an unreadable or empty fixture cannot supply this flow.
+        let literal_fixture_receiver_pinned = reveal.fixture_receiver_credited
+            && owner_return_pin
+                .as_ref()
+                .is_some_and(OwnerReturnPin::reads_literal_fixture_receiver);
+        let propagate = if propagate.state == StageState::Weak && literal_fixture_receiver_pinned {
+            StageEvidence::new(
+                StageState::Yes,
+                Confidence::Medium,
+                "Literal fixture receiver data reaches the changed tuple projection and returned sum through a credited exact pin",
+            )
+        } else {
+            propagate
+        };
         let direct_rows = reveal.direct_rows;
         // #6692: a clone-field pin (`assert_eq!(recv.clone(), recv)` through
         // a derived `PartialEq`) observes the constructed field, so the
@@ -1232,6 +1388,17 @@ impl ClassifiedProbeEvidence {
                             )
                     })
             });
+        // #12110: an exact pin of the removed variant discriminates the
+        // change, so the new variant's missing exact assertion is obsolete.
+        if matches!(context.probe.family, ProbeFamily::ErrorPath)
+            && reveal.removed_variant_pin_credited
+        {
+            activation.missing_discriminators.retain(|fact| {
+                fact.flow_sink
+                    .as_ref()
+                    .is_none_or(|sink| sink.kind != FlowSinkKind::ErrorVariant)
+            });
+        }
         if matches!(context.probe.family, ProbeFamily::FieldConstruction)
             && (reveal.owner_pin_credited || element_field_pinned)
         {
@@ -1442,6 +1609,27 @@ impl ClassifiedProbeEvidence {
         } else {
             discriminate
         };
+        // #8084: the generic oracle path can credit an indexed field assertion
+        // as observing the whole returned array; when any element field or
+        // non-record element may exit during construction (blocks, calls, and
+        // similar), constructing the array may exit before the test reaches
+        // its assertion. Ordinary arithmetic on literals and paths does not
+        // demote, mirroring the indexed pin refusal scope in
+        // `element_field_pin`.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
+            && discriminate.state == StageState::Yes
+            && context
+                .owner_fn
+                .is_some_and(|owner| !returned_array_construction_plain(owner))
+        {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                "Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion (observation_unverified)",
+            )
+        } else {
+            discriminate
+        };
         // Tests kept only as suggested locations never run the owner, so
         // they neither activate the change nor observe it.
         let reach_ruled_out = reach.state == StageState::No
@@ -1515,8 +1703,9 @@ impl ClassifiedProbeEvidence {
         // `preferred_refusal_note` for which one.
         let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
         // A value guard is a limit only when the call it reads is the owner's.
-        let is_limit = |refusal: &AssertionRefusal| {
-            refusal.is_analyzer_limit()
+        let is_limit = |refusal: &AssertionRefusal, test: &TestSummary| {
+            (refusal.is_analyzer_limit()
+                || (refusal.is_gated_item() && test_shares_owner_cfg_gates(context, test)))
                 && refusal
                     .value_guard_subject()
                     .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
@@ -1566,7 +1755,7 @@ impl ClassifiedProbeEvidence {
                             macro_name,
                             reason: refusal.describe(),
                             calls_owner,
-                            is_analyzer_limit: is_limit(&refusal),
+                            is_analyzer_limit: is_limit(&refusal, test),
                         };
                         if note.calls_owner && credits(*reason) {
                             crediting_owner_refusals.push(note.is_analyzer_limit);
@@ -1605,17 +1794,21 @@ impl ClassifiedProbeEvidence {
                 .iter()
                 .filter(|(_, reason)| credits(*reason))
                 .flat_map(|(test, _)| {
-                    test.assertions.iter().filter_map(|assertion| {
-                        pin_syntax.equality_assertion_refusal(
-                            context.probe,
-                            test,
-                            assertion,
-                            context.index,
-                        )
+                    test.assertions.iter().filter_map(move |assertion| {
+                        pin_syntax
+                            .equality_assertion_refusal(
+                                context.probe,
+                                test,
+                                assertion,
+                                context.index,
+                            )
+                            .map(|refusal| (refusal, test))
                     })
                 });
-            refusals.next().is_some_and(|first| is_limit(&first))
-                && refusals.all(|refusal| is_limit(&refusal))
+            refusals
+                .next()
+                .is_some_and(|(first, test)| is_limit(&first, test))
+                && refusals.all(|(refusal, test)| is_limit(&refusal, test))
         };
 
         let implicit_dispatch_tests = match context.owner_fn {
@@ -1719,6 +1912,7 @@ impl ClassifiedProbeEvidence {
             reach,
             infect,
             propagate,
+            literal_fixture_receiver_pinned,
             observe,
             discriminate,
             reach_ruled_out,
@@ -1811,6 +2005,99 @@ impl ClassifiedProbeEvidence {
                 format!(
                     "No related assertion fails when `{}` changes from {} to {}",
                     detail.constant, detail.old_value, detail.new_value
+                ),
+            );
+        }
+        self.ripr = RiprEvidence {
+            reach: self.reach.clone(),
+            infect: self.infect.clone(),
+            propagate: self.propagate.clone(),
+            reveal: RevealEvidence {
+                observe: self.observe.clone(),
+                discriminate: self.discriminate.clone(),
+            },
+        };
+        self.evidence = evidence_summaries([
+            &self.reach,
+            &self.infect,
+            &self.propagate,
+            &self.observe,
+            &self.discriminate,
+        ]);
+        self.assertion_refusal = None;
+        if discriminated {
+            ExposureClass::Exposed
+        } else {
+            ExposureClass::WeaklyExposed
+        }
+    }
+
+    /// RIPR-SPEC-0096: replace the stage evidence of a changed `let` returned
+    /// unmodified with what evaluating it showed. Only called with a flow the
+    /// evaluator fully decided.
+    pub(in crate::analysis) fn apply_binding_return_flow(
+        &mut self,
+        flow: &BindingReturnFlow,
+    ) -> ExposureClass {
+        let (detail, discriminated) = match flow {
+            BindingReturnFlow::Discriminated(detail) => (detail, true),
+            BindingReturnFlow::Indistinguishable(detail) => (detail, false),
+        };
+        let stage = |state, summary: String| StageEvidence::new(state, Confidence::Medium, summary);
+        let call = format!("`{}`", detail.assertion);
+        self.reach = stage(
+            StageState::Yes,
+            format!(
+                "`{}` calls `{}`, which returns the changed binding `{}`: {}",
+                detail.test, detail.owner, detail.binding, call
+            ),
+        );
+        self.infect = stage(
+            StageState::Yes,
+            format!(
+                "`{}` initializer changes from `{}` to `{}`",
+                detail.binding, detail.old_init, detail.new_init
+            ),
+        );
+        self.observe = stage(
+            StageState::Yes,
+            format!(
+                "{} compares the result of `{}` to a literal",
+                call, detail.owner
+            ),
+        );
+        if discriminated {
+            self.propagate = stage(
+                StageState::Yes,
+                format!(
+                    "`{}` returns {} instead of {} when `{}` is `{}`",
+                    detail.owner,
+                    detail.new_result,
+                    detail.old_result,
+                    detail.binding,
+                    detail.new_init
+                ),
+            );
+            self.discriminate = stage(
+                StageState::Yes,
+                format!(
+                    "{} holds with `{}` = `{}` and fails with `{}`",
+                    call, detail.binding, detail.old_init, detail.new_init
+                ),
+            );
+        } else {
+            self.propagate = stage(
+                StageState::Weak,
+                format!(
+                    "Each of the {} related test(s) gives the same assertion outcome under both initializers; for the cited assertion `{}` returns {} before and {} after",
+                    detail.tests_evaluated, detail.owner, detail.old_result, detail.new_result
+                ),
+            );
+            self.discriminate = stage(
+                StageState::No,
+                format!(
+                    "No related assertion fails when `{}` changes from `{}` to `{}`",
+                    detail.binding, detail.old_init, detail.new_init
                 ),
             );
         }
@@ -2299,6 +2586,61 @@ fn macro_rules_bodies(source: &str) -> Vec<String> {
     bodies
 }
 
+/// `assertion` followed by the initializer of each local it reads (#12056).
+///
+/// `let r = tb.reduce(2500); assert_eq!(r, Reduction::Over(..))` pins what
+/// `reduce` returned, but the assertion text holds no call. The reader
+/// [`expected_operand_value`] already resolves a test's single immutable
+/// `let` (or a workspace constant) to its value text, so the per-assertion
+/// "pins another function" decision sees the call the local came from.
+/// A local with several bindings, a `mut` one or one the scan cannot read adds
+/// nothing, which leaves the assertion unattributed (credit stays as before).
+fn assertion_text_with_local_initializers(
+    index: &RustIndex,
+    test: &TestSummary,
+    assertion: &str,
+    owner: &FunctionSummary,
+) -> String {
+    // Only the compared operands are read: a trailing diagnostic argument is
+    // formatted after the comparison and never observes the local.
+    let operands = crate::analysis::extract::assertion_oracle_text(assertion);
+    let masked = mask_comments_and_strings(operands.as_deref().unwrap_or(assertion));
+    let mut seen = BTreeSet::new();
+    let mut text = assertion.to_string();
+    let bytes = masked.as_bytes();
+    let mut start = 0;
+    while start < bytes.len() {
+        if !(bytes[start].is_ascii_alphabetic() || bytes[start] == b'_') {
+            start += 1;
+            continue;
+        }
+        let mut end = start;
+        while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+            end += 1;
+        }
+        let word = &masked[start..end];
+        let after = masked[end..].trim_start();
+        let before = masked[..start].trim_end();
+        // A call, a path segment, a macro, a field or a method name is not a
+        // local read.
+        let reads_local = !after.starts_with(['(', '!', ':'])
+            && !before.ends_with('.')
+            && !before.ends_with("::")
+            && word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_');
+        if reads_local
+            && seen.insert(word.to_string())
+            && let Some(value) = expected_operand_value(index, test, word, owner)
+        {
+            // A new line, so a trailing `// note` on the assertion cannot
+            // comment the initializer out.
+            text.push('\n');
+            text.push_str(&value);
+        }
+        start = end;
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::evidence_summaries;
@@ -2494,6 +2836,77 @@ mod tests {
         Ok(())
     }
 
+    /// #8084: a sibling element field built from a block may exit before the
+    /// test reaches its assertion, so `return_value` on the array must not
+    /// stay exposed through the generic oracle path.
+    #[test]
+    fn a_sibling_field_that_may_exit_keeps_return_value_weakly() -> Result<(), String> {
+        use crate::domain::ExposureClass;
+
+        let class_for = |array_tail: &str| -> Result<ExposureClass, String> {
+            let source = format!(
+                "pub struct Row {{\n    pub total: u32,\n}}\n\npub fn rows(a: u32, b: u32) -> [Row; 2] {{\n    {array_tail}\n}}\n\n#[test]\nfn pins_second_row() {{\n    let rows = rows(30, 3);\n    assert_eq!(rows[1].total, 33);\n}}\n"
+            );
+            let path = PathBuf::from("src/lib.rs");
+            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: facts.functions.clone(),
+                tests: facts.tests.clone(),
+                files: [(path, facts)].into_iter().collect(),
+                ..Default::default()
+            });
+            crate::analysis::facts::compose_fixture_source_roles(
+                &mut index,
+                std::path::Path::new(""),
+            );
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.name == "rows")
+                .ok_or("missing owner")?;
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == "pins_second_row")
+                .ok_or("missing test")?;
+            let probe = Probe {
+                id: ProbeId("probe:returned-array-exit".to_string()),
+                location: SourceLocation::new("src/lib.rs", 6, 5),
+                owner: Some(owner.id.clone()),
+                family: ProbeFamily::ReturnValue,
+                delta: DeltaKind::Value,
+                before: Some("[Row { total: 0 }, Row { total: a - b }]".to_string()),
+                after: Some(array_tail.to_string()),
+                expression: array_tail.to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            };
+            let context = ProbeContext::new(
+                &probe,
+                Some(owner),
+                vec![(test, RelationReason::DirectOwnerCall)],
+                false,
+                &index,
+                true,
+            );
+            let evidence = ClassifiedProbeEvidence::gather(
+                &context,
+                array_tail,
+                &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+            );
+            Ok(evidence.classify(&probe))
+        };
+        assert_eq!(
+            class_for("[Row { total: { std::process::exit(0) } }, Row { total: a + b }]")?,
+            ExposureClass::WeaklyExposed
+        );
+        assert_eq!(
+            class_for("[Row { total: 0 }, Row { total: a + b }]")?,
+            ExposureClass::Exposed
+        );
+        Ok(())
+    }
+
     /// #8480 exit-position narrowing: a non-plain Drop record built only
     /// as a local guard drops inside the owner, so a return_value finding
     /// for the plain record the owner returns stays exposed. The scalar
@@ -2647,16 +3060,110 @@ mod tests {
         Ok(())
     }
 
+    /// #12412: whole-test contradiction withholding survives composition with
+    /// unrelated file-mates. The mates carry proximity credit only
+    /// (`SameTestFile`), so they keep `activation_credited` non-empty; a
+    /// credited-count gate would read that count as recovery and let the
+    /// infection stage's generic arm grant its default yes through the
+    /// unfiltered rows, promoting the return-value probe to `exposed` on the
+    /// strength of the contradicted test's own oracle rows. Credited reach is
+    /// the gate: no credited test runs the owner, so the withholding
+    /// disclosure fires and the composed shape rejoins the lone shape's
+    /// `infection_unknown`. The zero-argument control below pins the other
+    /// side: a credited test that DOES reach the owner keeps its normal
+    /// reading.
+    #[test]
+    fn file_mate_composition_cannot_restore_infection_credit_beside_a_withheld_test()
+    -> Result<(), String> {
+        use crate::domain::ExposureClass;
+
+        let source = "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n\n\
+             pub fn clamp_to_range(value: i32, low: i32, high: i32) -> i32 {\n    if value < low {\n        low\n    } else if value > high {\n        high\n    } else {\n        value\n    }\n}\n\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n\
+             #[test]\nfn adult_boundary() {\nassert!(is_adult(18));\nassert!(!is_adult(18));\n}\n\
+             #[test]\nfn clamps_above_high() {\nassert_eq!(clamp_to_range(15, 0, 10), 10);\n}\n\
+             #[test]\nfn small_order_pays_full_price() {\nassert_eq!(2 + 2, 4);\n}\n}\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(path, facts)].into_iter().collect(),
+            ..Default::default()
+        });
+        crate::analysis::facts::compose_fixture_source_roles(&mut index, std::path::Path::new(""));
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "is_adult")
+            .ok_or("missing owner")?;
+        let contradict = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "adult_boundary")
+            .ok_or("missing contradictory test")?;
+        let mate_one = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "clamps_above_high")
+            .ok_or("missing first file-mate")?;
+        let mate_two = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "small_order_pays_full_price")
+            .ok_or("missing second file-mate")?;
+        let tests = vec![
+            (contradict, RelationReason::DirectOwnerCall),
+            (mate_one, RelationReason::SameTestFile),
+            (mate_two, RelationReason::SameTestFile),
+        ];
+        assert_eq!(tests.len(), 3, "nonempty subject: all fixture tests parse");
+        let probe = Probe {
+            id: ProbeId("probe:composed-contradiction".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 5),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Control,
+            before: Some("age > 18".to_string()),
+            after: Some("age >= 18".to_string()),
+            expression: "age >= 18".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let context = ProbeContext::new(&probe, Some(owner), tests, false, &index, true);
+        let evidence = ClassifiedProbeEvidence::gather(
+            &context,
+            &probe.expression,
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+        );
+        assert_eq!(
+            evidence.classify(&probe),
+            ExposureClass::InfectionUnknown,
+            "file-mate proximity credit must not restore infection credit the \
+             contradiction withheld: {}",
+            evidence.infect.summary
+        );
+        assert!(
+            evidence
+                .infect
+                .summary
+                .contains("Activation credit withheld from"),
+            "the composed shape must disclose the withholding: {}",
+            evidence.infect.summary
+        );
+        Ok(())
+    }
+
     /// #10980 review control: a credited test keeps its normal infection
     /// reading when a sibling test is withheld, even when the credited test
     /// passes no comparable values (a zero-argument owner whose literal
     /// tail the equality fold reads). The sibling's stale literal
     /// contradicts BOTH the candidate fold (7) and the reconstructed
-    /// baseline fold (6), so it is genuinely withheld, and the withholding
-    /// fires only on an empty credited set, so the clean test's reach keeps
-    /// infection `yes`. The literal `7` occurs exactly once in the owner
-    /// body, so the `after`→`before` reconstruction reaches the withheld
-    /// path.
+    /// baseline fold (6), so it is genuinely withheld, and the credited
+    /// test's own reach keeps infection `yes` (#12412 keyed the disclosure
+    /// on credited reach, not credited count). The literal `7` occurs
+    /// exactly once in the owner body, so the `after`→`before`
+    /// reconstruction reaches the withheld path.
     #[test]
     fn a_credited_zero_argument_test_keeps_infection_beside_a_withheld_sibling()
     -> Result<(), String> {
@@ -3064,6 +3571,31 @@ mod tests {
     }
 
     #[test]
+    fn caller_walk_follows_cross_module_qualified_calls_to_a_free_owner() -> Result<(), String> {
+        // #6296: `crate::m1::f1(x)` and `super::m1::f1(x)` reach the changed
+        // owner exactly like an imported bare `f1(x)`.
+        let source = "mod m1 { pub fn f1(x: i32) -> i32 { x + 1 } }\n\
+            mod m0 {\n\
+                use crate::m1::f1;\n\
+                pub fn imported(x: i32) -> i32 { f1(x) }\n\
+                pub fn via_crate(x: i32) -> i32 { crate::m1::f1(x) }\n\
+                pub fn via_super(x: i32) -> i32 { super::m1::f1(x) }\n\
+                pub fn foreign_root(x: i32) -> i32 { std::m1::f1(x) }\n\
+                pub fn type_qualified(x: i32) -> i32 { Other::f1(x) }\n\
+                pub fn unrelated(x: i32) -> i32 { x }\n\
+            }\n\
+            pub fn api(x: i32) -> i32 { m0::via_crate(x) }\n";
+        assert_eq!(
+            caller_names_for(source, "f1")?,
+            ["api", "imported", "via_crate", "via_super"],
+            "module-qualified calls reach the owner like the imported form, and \
+             chain on to the public API; a std-rooted path, a type-qualified \
+             `Other::f1` and a non-caller do not"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn caller_walk_names_a_free_owner_by_bare_or_module_path_only() -> Result<(), String> {
         let source = "pub fn tax(subtotal: i64) -> i64 { subtotal * 8 / 100 }\n\
             pub fn reference(subtotal: i64) -> i64 { tax(subtotal) }\n\
@@ -3315,6 +3847,67 @@ mod tests {
             !forged.digest_matches(),
             "callee identity must be bound to semantic digest"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn local_initializers_join_only_compared_operands_and_survive_trailing_comments()
+    -> Result<(), String> {
+        use crate::analysis::extract::mask_comments_and_strings;
+        let root = std::env::temp_dir().join(format!("ripr-12056-locals-{}", std::process::id()));
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).map_err(|error| error.to_string())?;
+        let file = src.join("lib.rs");
+        std::fs::write(
+            &file,
+            "pub fn reduce(t: u64) -> u64 { t }\nconst REDUCED: u64 = reduce(3);\npub fn owner(t: u64) -> u64 { t + 1 }\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn probe() {\n\
+             let other = reduce(3);\n        assert_eq!(wrapper(), 4, \"other: {:?}\", other);\n\
+             assert_eq!(other, 3); // note\n    }\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let index = crate::analysis::facts::build_index(&root, &[file])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "owner")
+            .ok_or("owner indexed")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "probe")
+            .ok_or("test indexed")?;
+        let diagnostic = super::assertion_text_with_local_initializers(
+            &index,
+            test,
+            "assert_eq!(wrapper(), 4, \"other: {:?}\", other);",
+            owner,
+        );
+        assert!(
+            !diagnostic.contains("reduce("),
+            "a local read only by the diagnostic is not an observed value: {diagnostic}"
+        );
+        let commented = super::assertion_text_with_local_initializers(
+            &index,
+            test,
+            "assert_eq!(other, 3); // note",
+            owner,
+        );
+        assert!(
+            mask_comments_and_strings(&commented).contains("reduce("),
+            "the initializer survives a trailing comment: {commented}"
+        );
+        let constant = super::assertion_text_with_local_initializers(
+            &index,
+            test,
+            "assert_eq!(REDUCED, 3);",
+            owner,
+        );
+        assert!(
+            constant.contains("reduce("),
+            "a workspace constant is resolved like a local: {constant}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
 

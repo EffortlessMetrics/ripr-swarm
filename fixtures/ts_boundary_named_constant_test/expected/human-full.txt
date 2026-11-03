@@ -55,7 +55,7 @@ Evidence
   - related test tests/pricing.test.ts:3 threshold constant imported from the owner module uses strong exact value oracle: expect(...).toBe(...)
 
 Weakness
-  - Related test reaches `applyDiscount` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  - Related test reaches `applyDiscount` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
@@ -82,6 +82,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:129143e0
   ripr context --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:129143e0
 
@@ -125,7 +126,7 @@ Evidence
   - related test tests/pricing.test.ts:7 threshold constant declared in the test body uses strong exact value oracle: expect(...).toBe(...)
 
 Weakness
-  - Related test reaches `freeShipping` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  - Related test reaches `freeShipping` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
@@ -152,6 +153,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:1c8a3e62
   ripr context --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:1c8a3e62
 

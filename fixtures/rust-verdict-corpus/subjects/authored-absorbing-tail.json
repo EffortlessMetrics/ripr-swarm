@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-absorbing-tail",
+  "origin": "authored",
+  "version_label": "authored 2026-10-31 for a changed condition hidden behind an absorbing std min (#10875)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "f28925673e84bdde86369695a12525681a7b6e791b33b5a741411f131ed5f9fc"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "f89f43577492dbf5d718f79338ebd9d02df91e579fae381d1dac8e702e5824ea"
+    }
+  ]
+}
