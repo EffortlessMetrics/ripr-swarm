@@ -148,45 +148,114 @@ fn should_scan_path(path: &str) -> bool {
 fn exit_literals_in_text(text: &str) -> Vec<(usize, i32)> {
     let masked = mask_comments_and_literals(text);
     let bytes = masked.as_bytes();
-    let needle = "process::exit";
+    let mut calls = exit_call_ends(&masked, "process::exit");
+    if imports_bare_exit(&masked) {
+        calls.extend(bare_exit_call_ends(&masked));
+    }
+    calls.sort_unstable();
+    calls.dedup();
+    let skip_space = |at: &mut usize| {
+        while bytes
+            .get(*at)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            *at += 1;
+        }
+    };
     let mut found = Vec::new();
-    let mut from = 0;
-    while let Some(offset) = masked[from..].find(needle) {
-        let start = from + offset;
-        from = start + needle.len();
-        let mut at = from;
-        let skip_space = |at: &mut usize| {
-            while bytes
-                .get(*at)
-                .is_some_and(|byte| byte.is_ascii_whitespace())
-            {
-                *at += 1;
-            }
-        };
+    for (start, end) in calls {
+        let mut at = end;
         skip_space(&mut at);
         if bytes.get(at) != Some(&b'(') {
             continue;
         }
         at += 1;
         skip_space(&mut at);
-        let digits_start = at;
-        while bytes.get(at).is_some_and(u8::is_ascii_digit) {
+        let negative = bytes.get(at) == Some(&b'-');
+        if negative {
+            at += 1;
+            skip_space(&mut at);
+        }
+        let token_start = at;
+        while bytes
+            .get(at)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
             at += 1;
         }
-        if at == digits_start {
+        // A token that does not start with a digit is a name or expression.
+        if at == token_start || !bytes[token_start].is_ascii_digit() {
             continue;
         }
-        let digits = &masked[digits_start..at];
+        let token = &masked[token_start..at];
         skip_space(&mut at);
         if bytes.get(at) != Some(&b')') {
             continue;
         }
-        if let Ok(literal) = digits.parse() {
+        if let Some(magnitude) = parse_int_literal(token) {
+            let literal = if negative { -magnitude } else { magnitude };
             let line = masked[..start].matches('\n').count() + 1;
             found.push((line, literal));
         }
     }
     found
+}
+
+/// `(start, end)` of every occurrence of `needle`.
+fn exit_call_ends(masked: &str, needle: &str) -> Vec<(usize, usize)> {
+    masked
+        .match_indices(needle)
+        .map(|(start, matched)| (start, start + matched.len()))
+        .collect()
+}
+
+/// A file that imports `std::process::exit` (alone or in a brace group) can
+/// call it as a bare `exit(..)`.
+fn imports_bare_exit(masked: &str) -> bool {
+    masked.contains("process::exit;")
+        || masked
+            .lines()
+            .any(|line| line.contains("process::{") && line.contains("exit"))
+}
+
+/// Word-bounded bare `exit` names that are not part of a path or method.
+fn bare_exit_call_ends(masked: &str) -> Vec<(usize, usize)> {
+    let bytes = masked.as_bytes();
+    let word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    masked
+        .match_indices("exit")
+        .filter(|(start, matched)| {
+            let before = start.checked_sub(1).map(|index| bytes[index]);
+            let after = bytes.get(start + matched.len()).copied();
+            !before.is_some_and(|byte| word(byte) || byte == b':' || byte == b'.')
+                && !after.is_some_and(word)
+        })
+        .map(|(start, matched)| (start, start + matched.len()))
+        .collect()
+}
+
+/// Integer literal with optional `_` separators, radix prefix and type suffix.
+fn parse_int_literal(token: &str) -> Option<i32> {
+    let token = token.replace('_', "");
+    let (radix, body) = match token.get(..2) {
+        Some("0x") => (16, &token[2..]),
+        Some("0o") => (8, &token[2..]),
+        Some("0b") => (2, &token[2..]),
+        _ => (10, token.as_str()),
+    };
+    let digits_end = body
+        .find(|ch: char| !ch.is_digit(radix))
+        .unwrap_or(body.len());
+    let (digits, suffix) = body.split_at(digits_end);
+    let known_suffix = suffix.is_empty()
+        || [
+            "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "isize", "usize",
+        ]
+        .contains(&suffix);
+    if digits.is_empty() || !known_suffix {
+        return None;
+    }
+    i32::from_str_radix(digits, radix).ok()
 }
 
 /// Replace comments and the contents of string, raw-string and char literals
@@ -313,68 +382,51 @@ fn read_allowlist(path: &Path) -> Result<Vec<AllowEntry>, String> {
     parse_allowlist(&read_text_lossy(path)?)
 }
 
-fn parse_allowlist(text: &str) -> Result<Vec<AllowEntry>, String> {
-    let mut entries = Vec::new();
-    let mut current: BTreeMap<String, String> = BTreeMap::new();
-    let mut in_allow = false;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line == "[[allow]]" {
-            if let Some(entry) = flush_allow_entry(&current)? {
-                entries.push(entry);
-            }
-            current.clear();
-            in_allow = true;
-            continue;
-        }
-        if !in_allow {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        current.insert(
-            key.trim().to_string(),
-            value.trim().trim_matches('"').to_string(),
-        );
-    }
-    if let Some(entry) = flush_allow_entry(&current)? {
-        entries.push(entry);
-    }
-    Ok(entries)
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AllowlistFile {
+    schema_version: String,
+    #[serde(default)]
+    allow: Vec<RawAllow>,
 }
 
-fn flush_allow_entry(fields: &BTreeMap<String, String>) -> Result<Option<AllowEntry>, String> {
-    if fields.is_empty() {
-        return Ok(None);
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAllow {
+    path: String,
+    literal: i32,
+    count: usize,
+    reason: String,
+}
+
+/// Strict TOML: unknown keys, a missing `reason`, a wrong `schema_version`
+/// and malformed headers are errors, never silently merged or defaulted.
+fn parse_allowlist(text: &str) -> Result<Vec<AllowEntry>, String> {
+    let file: AllowlistFile =
+        toml::from_str(text).map_err(|err| format!("{ALLOWLIST_PATH}: {err}"))?;
+    if file.schema_version != "1" {
+        return Err(format!(
+            "{ALLOWLIST_PATH}: unsupported schema_version `{}`",
+            file.schema_version
+        ));
     }
-    let path = fields
-        .get("path")
-        .ok_or_else(|| "allowlist entry missing path".to_string())?
-        .clone();
-    let literal = fields
-        .get("literal")
-        .ok_or_else(|| format!("allowlist entry for {path} missing literal"))?
-        .parse::<i32>()
-        .map_err(|err| format!("allowlist entry for {path} has invalid literal: {err}"))?;
-    let count = fields
-        .get("count")
-        .ok_or_else(|| format!("allowlist entry for {path} literal {literal} missing count"))?
-        .parse::<usize>()
-        .map_err(|err| format!("allowlist entry for {path} has invalid count: {err}"))?;
-    let reason = fields
-        .get("reason")
-        .cloned()
-        .unwrap_or_else(|| "unspecified".to_string());
-    Ok(Some(AllowEntry {
-        path,
-        literal,
-        count,
-        reason,
-    }))
+    file.allow
+        .into_iter()
+        .map(|raw| {
+            if raw.reason.trim().is_empty() {
+                return Err(format!(
+                    "{ALLOWLIST_PATH}: entry for {} literal {} needs a non-empty reason",
+                    raw.path, raw.literal
+                ));
+            }
+            Ok(AllowEntry {
+                path: raw.path,
+                literal: raw.literal,
+                count: raw.count,
+                reason: raw.reason,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -477,8 +529,58 @@ mod tests {
             "schema_version = \"1\"\n[[allow]]\npath = \"a.rs\"\nliteral = 2\ncount = 3\nreason = \"r\"\n",
         )?;
         assert_eq!(entries, vec![pin_with_reason("a.rs", 2, 3, "r")]);
-        assert!(parse_allowlist("[[allow]]\npath = \"a.rs\"\nliteral = 2\n").is_err());
         Ok(())
+    }
+
+    #[test]
+    fn parse_allowlist_rejects_malformed_entries() {
+        let head = "schema_version = \"1\"\n[[allow]]\npath = \"a.rs\"\nliteral = 2\ncount = 1\n";
+        // missing reason, empty reason, typo key, missing count, bad schema
+        assert!(parse_allowlist(head).is_err());
+        assert!(parse_allowlist(&format!("{head}reason = \" \"\n")).is_err());
+        assert!(parse_allowlist(&format!("{head}reasn = \"r\"\n")).is_err());
+        assert!(
+            parse_allowlist(
+                "schema_version = \"1\"\n[[allow]]\npath = \"a.rs\"\nliteral = 2\nreason = \"r\"\n"
+            )
+            .is_err()
+        );
+        let wrong_schema = format!(
+            "{}reason = \"r\"\n",
+            head.replace("schema_version = \"1\"", "schema_version = \"2\"")
+        );
+        assert!(parse_allowlist(&wrong_schema).is_err());
+        // a trailing comment on the header is valid TOML and still one entry
+        let commented = format!(
+            "{}reason = \"r\"\n",
+            head.replace("[[allow]]", "[[allow]] # note")
+        );
+        assert!(matches!(parse_allowlist(&commented), Ok(entries) if entries.len() == 1));
+    }
+
+    #[test]
+    fn signed_suffixed_and_radix_literals_are_found() {
+        assert_eq!(lits("std::process::exit(-1);"), vec![-1]);
+        assert_eq!(lits("std::process::exit(1_i32);"), vec![1]);
+        assert_eq!(lits("std::process::exit(1i32);"), vec![1]);
+        assert_eq!(lits("std::process::exit(0x7F);"), vec![127]);
+        assert_eq!(lits("std::process::exit(0b101);"), vec![5]);
+        assert!(lits("std::process::exit(1foo);").is_empty());
+        assert!(lits("std::process::exit(MAX_CODE);").is_empty());
+    }
+
+    #[test]
+    fn bare_exit_is_scanned_only_after_the_import() {
+        assert!(lits("fn f() { exit(9); }").is_empty());
+        assert_eq!(
+            lits("use std::process::exit;\nfn f() { exit(9); }"),
+            vec![9]
+        );
+        assert_eq!(
+            lits("use std::process::{ExitCode, exit};\nfn f() { exit(8); }"),
+            vec![8]
+        );
+        assert!(lits("use std::process::exit;\nfn f() { self.exit(9); my_exit(9); }").is_empty());
     }
 
     fn pin_with_reason(path: &str, literal: i32, count: usize, reason: &str) -> AllowEntry {

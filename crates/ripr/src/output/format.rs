@@ -408,7 +408,7 @@ impl OutputFormat {
                 workspace_root,
                 compact,
             ) {
-                "warm reruns reuse the seam-facts cache and are much faster."
+                "warm reruns can reuse the seam-facts cache when an entry matches this workspace state, and are much faster."
             } else {
                 "no seam-facts cache present yet; the first run on this workspace pays the full walk."
             }
@@ -512,6 +512,14 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&workspace_root);
         std::fs::create_dir_all(&workspace_root).map_err(|err| err.to_string())?;
+        if crate::analysis::seam_cache::RepoSeamFactCache::at(&workspace_root).has_stored_entries()
+        {
+            // An inherited `RIPR_CACHE_DIR` already holds entries; the cold
+            // assertions below need an empty cache scoped to this workspace.
+            eprintln!("skipped: ambient cache directory already holds entries");
+            let _ = std::fs::remove_dir_all(&workspace_root);
+            return Ok(());
+        }
         for spec in FORMAT_SPECS {
             let disclosure = spec.format.repo_audit_path_disclosure(&workspace_root);
             assert_eq!(
@@ -547,7 +555,7 @@ mod tests {
                         "cache-backed format without cache must not promise warm reruns: {disclosure}"
                     );
                     assert!(
-                        !disclosure.contains("warm reruns reuse the seam-facts cache"),
+                        !disclosure.contains("warm reruns can reuse the seam-facts cache"),
                         "cache-backed format without cache must not promise warm reruns: {disclosure}"
                     );
                 } else {
@@ -596,6 +604,14 @@ mod tests {
             "cold disclosure: {cold}"
         );
         let cache = crate::analysis::seam_cache::RepoSeamFactCache::at(&workspace_root);
+        // `RIPR_CACHE_DIR` can point the cache at a shared directory; this
+        // test writes probe entries, so it only runs against a cache that is
+        // empty and scoped to its own workspace.
+        if cache.has_stored_entries() {
+            eprintln!("skipped: ambient cache directory already holds entries");
+            let _ = std::fs::remove_dir_all(&workspace_root);
+            return Ok(());
+        }
         // Leftovers of a skipped or failed store are not entries (#12505
         // review): a publication lock and an empty key directory.
         for (dir, sharded) in cache.entry_dirs() {
@@ -627,9 +643,12 @@ mod tests {
             .repo_audit_path_disclosure(&workspace_root)
             .ok_or("missing warm disclosure")?;
         assert!(
-            warm.contains("warm reruns reuse the seam-facts cache"),
+            warm.contains("warm reruns can reuse the seam-facts cache"),
             "warm disclosure: {warm}"
         );
+        for (dir, _) in cache.entry_dirs() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
         let _ = std::fs::remove_dir_all(&workspace_root);
         Ok(())
     }

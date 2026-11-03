@@ -897,7 +897,7 @@ fn repo_format_disclosure_is_absent_outside_the_audit_path_group() -> Result<(),
     );
     assert!(
         badge_err.contains("no seam-facts cache present yet")
-            || badge_err.contains("warm reruns reuse the seam-facts cache"),
+            || badge_err.contains("warm reruns can reuse the seam-facts cache"),
         "cache-backed badge disclosure must be cache-presence-aware: {badge_err}"
     );
     ignore_remove_dir_all(&root);
