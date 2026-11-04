@@ -111,9 +111,16 @@ fn bound_sarif_results(
         let payload_bytes = serde_json::to_string_pretty(&result)
             .map(|rendered| rendered.len())
             .unwrap_or(usize::MAX);
-        array_bytes = array_bytes
+        let next_bytes = array_bytes
             .saturating_add(payload_bytes)
             .saturating_add(if kept.is_empty() { 0 } else { 2 });
+        // Hard cap: only the first result may cross the budget (a nonempty
+        // analysis never yields an empty subset); later results that would
+        // cross it are omitted and disclosed, not kept.
+        if next_bytes > budget && !kept.is_empty() {
+            break;
+        }
+        array_bytes = next_bytes;
         kept.push(result);
         if array_bytes > budget {
             break;
@@ -1753,6 +1760,30 @@ mod tests {
         assert_eq!(props["limited_results_bound"], true);
         assert_eq!(props["document_complete"], false);
         Ok(())
+    }
+
+    #[test]
+    fn sarif_results_budget_is_a_hard_cap_after_the_first_result() {
+        // Only the first result may cross the budget; a later result that
+        // would cross it is omitted, so rendered bytes stay within budget
+        // whenever more than one result renders.
+        let results: Vec<Value> = (0..4)
+            .map(|index| json!({"id": index, "pad": "x".repeat(64)}))
+            .collect();
+        let first_bytes = serde_json::to_string_pretty(&results[0])
+            .map(|s| s.len())
+            .unwrap_or(0);
+        let (kept, bound) = bound_sarif_results(results, Some(first_bytes));
+        assert_eq!(kept.len(), 1);
+        assert!(bound.is_some(), "bound must disclose the omission");
+        if let Some(bound) = bound {
+            assert_eq!(bound.rendered, 1);
+            assert_eq!(bound.total, 4);
+        }
+        let (all, none) =
+            bound_sarif_results(vec![json!({"id": 0}), json!({"id": 1})], Some(usize::MAX));
+        assert_eq!(all.len(), 2);
+        assert!(none.is_none());
     }
 
     #[test]
