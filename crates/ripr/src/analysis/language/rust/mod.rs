@@ -4133,7 +4133,7 @@ mod tests {
         let verus: Vec<&Finding> = result
             .findings
             .iter()
-            .filter(|finding| finding.evidence.iter().any(|line| names_verus(line)))
+            .filter(|finding| finding.evidence.iter().any(&names_verus))
             .collect();
         assert_eq!(verus.len(), 1, "{:?}", result.findings);
         let finding = verus[0];
@@ -4169,7 +4169,7 @@ mod tests {
                 .findings
                 .iter()
                 .filter(|finding| finding.probe.location.file.ends_with("src/plain.rs"))
-                .all(|finding| !finding.evidence.iter().any(|line| names_verus(line)))
+                .all(|finding| !finding.evidence.iter().any(&names_verus))
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
