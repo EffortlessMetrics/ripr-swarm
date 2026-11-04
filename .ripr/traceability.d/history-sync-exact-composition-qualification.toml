@@ -6,6 +6,9 @@ tests = [
   "xtask/tests/hard_cut_admission_selftest.rs::candidate_admission_self_test_passes",
   "xtask/tests/hard_cut_admission_selftest.rs::history_sync_scope_real_bash_controls_pass",
   "xtask/tests/hard_cut_admission_selftest.rs::history_sync_live_authorization_controls_pass",
+  "xtask/tests/routed_dispatch_result.rs::history_sync_skip_qualifies_only_for_a_history_sync_admission_of_the_same_head",
+  "xtask/tests/routed_dispatch_result.rs::history_sync_skip_cannot_qualify_a_merge_group",
+  "xtask/tests/routed_dispatch_result.rs::rust_gates_skips_pr_evidence_only_for_a_bound_history_sync_admission",
 ]
 code = [
   ".github/actions/pr-candidate-admission/candidate_admission.py",

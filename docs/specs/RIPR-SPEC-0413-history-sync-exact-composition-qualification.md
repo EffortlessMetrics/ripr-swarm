@@ -29,7 +29,9 @@ bypassing PR evidence allows an unqualified, potentially broken composition.
 A Markdown-only net diff can import history and must not take the docs-only
 product-qualification shortcut.
 
-## Subjects and authorization
+## Behavior
+
+### Subjects and authorization
 
 - **S**: exact 40-hex source commit from the other allowlisted repository,
   reachable from its default branch.
@@ -54,7 +56,7 @@ Missing or contradictory evidence falls back to ordinary bounded admission
 and, when oversized, refuses. It cannot turn an invalid sync into a normal
 admitted oversized PR.
 
-## Qualification
+### Qualification
 
 For a validated history sync, ordinary diff-size caps may be bypassed.
 Exactly the diff-scoped PR evidence producers may report the typed
@@ -78,7 +80,14 @@ as a validated pull-request import. No administrative merge follows from
 passing this policy. This route retires only after the protected
 history-preserving imports and verified queue-only cutover.
 
-## Executable acceptance
+## Non-Goals
+
+The exception does not create an administrative merge path, a queue-only
+history-sync profile, a source-promotion authorization, or release/publication
+authority. Readback of a live base, head and actor is not an atomic expected-base
+lock; those remain separate protected integration controls.
+
+## Acceptance Examples
 
 - Valid S/B/H ancestry and privileged latest label → admitted exact subject,
   with a single-parent repair descendant allowed.
@@ -92,7 +101,7 @@ history-preserving imports and verified queue-only cutover.
 - Native runner/permission API and branch-protection checks remain required
   hosted acceptance beyond controlled local fixtures.
 
-## Test mapping
+## Test Mapping
 
 - `candidate_admission.py::history_sync_self_test` tests the canonical
   source/base/head, label and ancestry admission.
@@ -104,8 +113,14 @@ history-preserving imports and verified queue-only cutover.
   `history_sync_scope_real_bash_controls_pass` and
   `history_sync_live_authorization_controls_pass`. These run the controlled
   Bash/Python tests on Unix without network access.
+- `xtask/tests/routed_dispatch_result.rs` executes the Result and PR-evidence
+  workflow blocks against Git fixtures. It covers the exact-head typed skip,
+  merge-group refusal, and bound history-sync admission in
+  `history_sync_skip_qualifies_only_for_a_history_sync_admission_of_the_same_head`,
+  `history_sync_skip_cannot_qualify_a_merge_group`, and
+  `rust_gates_skips_pr_evidence_only_for_a_bound_history_sync_admission`.
 
-## Implementation mapping
+## Implementation Mapping
 
 - `.github/actions/pr-candidate-admission/candidate_admission.py`:
   canonical history-sync admission from the earlier candidate.
@@ -116,7 +131,7 @@ history-preserving imports and verified queue-only cutover.
 - `.github/workflows/rust-gates.yml`: limit the exception to diff-scoped
   PR evidence while preserving the ordinary non-diff-scoped tests.
 
-## Proof and limits
+## Required Evidence
 
 ```bash
 python3 .github/actions/pr-candidate-admission/candidate_admission.py --self-test
@@ -133,4 +148,14 @@ cargo xtask check-workflows
 These fixtures do not establish that the deployed GitHub token can read
 collaborator permissions, that live branch protection will reject movement
 after readback, or that the final integration has been qualified. Those
-remain hosted acceptance obligations; until proved the PR stays Draft.
+remain hosted acceptance obligations; source-review readiness alone does not
+qualify the PR.
+
+## Metrics
+
+- `unit_test_pass_rate` for the focused source/Result negative controls.
+- Accepted history-sync subjects with an exact, live G-bound product lane.
+- Required Result refusals for invalid label authority, source/base/head
+  currentness, composition, typed evidence, or missing implementation proof.
+- Ordinary PR route parity and the absence of diff-scoped evidence exceptions
+  outside an admitted history-sync subject.
