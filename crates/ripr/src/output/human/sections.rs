@@ -121,6 +121,24 @@ fn plain_delta(delta: &crate::domain::DeltaKind) -> &'static str {
     }
 }
 
+/// The digest label for the first missing entry: an observed advisory
+/// check, the analyzer naming what it could not bind, or a missing check.
+fn digest_missing_label(finding: &Finding, missing: &str) -> &'static str {
+    if finding.class == ExposureClass::Exposed {
+        "Check (observed, advisory)"
+    } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX)
+        || ((matches!(
+            finding.class,
+            ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
+        ) || untraced_reach_weak_finding(finding))
+            && finding.activation.missing_discriminators.is_empty())
+    {
+        "Analyzer limit"
+    } else {
+        "Missing check"
+    }
+}
+
 pub(crate) fn render_finding_digest_with_config(
     finding: &Finding,
     config: &RiprConfig,
@@ -154,9 +172,25 @@ pub(crate) fn render_finding_digest_with_config(
     // #2614: add a brief classification hint so the digest reader understands
     // WHY the finding is at this class without reading the full form.
     let refused_macro = refused_assertion_macro(finding);
+    // #11519: an owner reached without a placeable call prints an `Analyzer
+    // limit` line and a Next step that already say why ripr could not
+    // decide; the generic "could not determine a static exposure state"
+    // hint restates them and spends a line of the first-view read budget.
+    // Specific hints (unresolved fixture, guard refusal) are never dropped.
+    let limit_names_the_reason = finding.class == ExposureClass::StaticUnknown
+        && finding.static_limit_kind
+            == Some(crate::domain::StaticLimitKind::RustIndirectOwnerCallUnresolved)
+        && finding
+            .missing
+            .iter()
+            .find(|missing| !restates_no_static_path_evidence(finding, missing))
+            .is_some_and(|missing| digest_missing_label(finding, missing) == "Analyzer limit");
     if let Some(hint) = unresolved_fixture_hint(finding)
         .or_else(|| crate::domain::guard_refusal_digest_classification_hint(finding))
-        .or_else(|| classification_hint(&finding.class, &finding.ripr, refused_macro))
+        .or_else(|| {
+            classification_hint(&finding.class, &finding.ripr, refused_macro)
+                .filter(|_| !limit_names_the_reason)
+        })
     {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
     }
@@ -204,19 +238,7 @@ pub(crate) fn render_finding_digest_with_config(
         // carries the limit's prose here, not a discriminator.
         // A typed static limitation is the analyzer naming what it could not
         // bind, never an assertion a test could add.
-        let label = if finding.class == ExposureClass::Exposed {
-            "Check (observed, advisory)"
-        } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX)
-            || ((matches!(
-                finding.class,
-                ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
-            ) || untraced_reach_weak_finding(finding))
-                && finding.activation.missing_discriminators.is_empty())
-        {
-            "Analyzer limit"
-        } else {
-            "Missing check"
-        };
+        let label = digest_missing_label(finding, missing);
         // `decision.rs` builds these entries as `Missing discriminator value:
         // <value>`, which restates the label the renderer is about to print:
         // `Missing discriminator: Missing discriminator value: X`. Print the
