@@ -614,7 +614,9 @@ impl Snapshot {
         let snapshot_id = snapshot_identity(&outcome, &items, &scope, source, custody.commitment())
             .map_err(|error| {
                 AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
-            })?;
+            })?
+            .as_str()
+            .to_string();
         let profile_identity = format!(
             "mcp:{}:profile:diff:draft",
             root_identity.unwrap_or("root:unavailable")
@@ -692,7 +694,7 @@ fn snapshot_identity(
     scope: &ScopeFacts,
     source: RefreshSource,
     custody_commitment: Option<&str>,
-) -> Result<String, String> {
+) -> Result<crate::domain::CompletedAnalysisSnapshotId, String> {
     let outcome_digest = outcome.semantic_digest()?;
     let item_ids = items
         .iter()
@@ -728,7 +730,8 @@ fn snapshot_identity(
     }
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
-    Ok(format!("snapshot:sha256:{}", sha256_hex(&bytes)))
+    let wire = format!("snapshot:sha256:{}", sha256_hex(&bytes));
+    crate::domain::CompletedAnalysisSnapshotId::parse(&wire).map_err(|error| error.to_string())
 }
 
 fn evidence_identity(items: &[GapItem]) -> Result<String, String> {
@@ -1506,6 +1509,9 @@ fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         return Some(worktree_scope_disclosure(snapshot));
     }
     let mut disclosure = tracked_scope_disclosure(snapshot);
+    if disclosure.is_none() {
+        disclosure = explicit_base_scope_disclosure(snapshot);
+    }
     let scope = &snapshot.scope;
     if scope.ignored.is_empty() {
         return disclosure;
@@ -1636,6 +1642,18 @@ fn analyzed_label(snapshot: &Snapshot) -> String {
         Some(base) => format!("committed diff against base `{base}`"),
         None => "committed default-branch diff".to_string(),
     }
+}
+
+/// #9190: a clean committed snapshot still names the explicit base it analyzed
+/// so refresh `scope` is not null when the client passed `base`.
+fn explicit_base_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
+    let base = snapshot.base.as_ref()?;
+    Some(json!({
+        "analyzed": analyzed_label(snapshot),
+        "analyzed_base": base,
+        "uncommitted_edits": "outside this analysis",
+        "note": "this snapshot analyzed the committed diff against the named base; no tracked edits were outside that analysis",
+    }))
 }
 
 fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
@@ -5147,7 +5165,7 @@ mod tests {
                 RefreshSource::Committed,
                 None,
             )?;
-            assert_eq!(snapshot.snapshot_id, original_id);
+            assert_eq!(snapshot.snapshot_id, original_id.as_str());
 
             let session = WorkspaceSession {
                 in_flight: false,
@@ -5164,9 +5182,9 @@ mod tests {
                 .first()
                 .ok_or_else(|| "the original item oracle must not be empty".to_string())?;
             let document = session
-                .get_gap(&item.canonical_id, Some(&original_id))
+                .get_gap(&item.canonical_id, Some(original_id.as_str()))
                 .map_err(|f| f.detail)?;
-            assert_eq!(document, item.document(&original_id));
+            assert_eq!(document, item.document(original_id.as_str()));
         }
         assert_eq!(lengths.len(), 2);
         assert_eq!(
@@ -5184,6 +5202,26 @@ mod tests {
                 return Err(format!("reserved code is not a wire token: {code}"));
             }
         }
+        Ok(())
+    }
+
+    /// #9190: an explicit-base committed refresh names the analyzed base in
+    /// `scope` even when the worktree is clean.
+    #[test]
+    fn explicit_base_scope_disclosure_on_clean_committed_snapshot() -> Result<(), String> {
+        let mut snapshot = Snapshot::from_output(
+            &output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?,
+            Some("root:sha256:test"),
+        )
+        .map_err(|failure| failure.detail)?;
+        assert!(scope_disclosure(&snapshot).is_none());
+        snapshot.base = Some("trunk".to_string());
+        let disclosure = scope_disclosure(&snapshot).ok_or("explicit base must disclose")?;
+        assert_eq!(disclosure.get("analyzed_base"), Some(&json!("trunk")));
+        assert_eq!(
+            disclosure.get("uncommitted_edits"),
+            Some(&json!("outside this analysis"))
+        );
         Ok(())
     }
 

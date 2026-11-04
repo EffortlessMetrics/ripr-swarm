@@ -642,7 +642,6 @@ pub(crate) fn single_expect_statement(body: &str) -> bool {
     if let Some(inner) = text.strip_prefix('{').and_then(|t| t.strip_suffix('}')) {
         text = inner.trim();
     }
-    let text = text.strip_suffix(';').unwrap_or(text).trim();
     let bytes = text.as_bytes();
     let mut depth = 0usize;
     let mut idx = 0;
@@ -678,6 +677,20 @@ pub(crate) fn single_expect_statement(body: &str) -> bool {
                 },
                 _ => idx += 1,
             },
+            // One closing `;` is allowed when only whitespace and complete
+            // comments follow it (`expect(..).toBe(y); // note`).
+            b';' => {
+                idx += 1;
+                while idx < bytes.len() {
+                    if bytes[idx].is_ascii_whitespace() {
+                        idx += 1;
+                    } else if let Some(next) = skip_comment(bytes, idx) {
+                        idx = next;
+                    } else {
+                        return false;
+                    }
+                }
+            }
             b'.' => {
                 previous_dot = true;
                 idx += 1;
@@ -789,6 +802,8 @@ mod tests {
             "{ // a plain note\n expect(f(x)).toBe(y); }",
             "{ /* a plain note */ expect(f(x)).toBe(y); }",
             "{ expect(f(a)).toBe(y) // note\n }",
+            "{ expect(f(x)).toBe(y); /* note */ }",
+            "{ /* a */ expect(f(x)) /* b */ .toBe(y); // c\n }",
         ] {
             assert!(single_expect_statement(body), "{body}");
         }
@@ -799,6 +814,10 @@ mod tests {
             "{ const z = 1; expect(f(a)).toBe(z); }",
             "{ if (a) expect(f(a)).toBe(y); }",
             "{ \"s\"; expect(f(a)).toBe(y); }",
+            "{ expect(f(a)).toBe(y) /* open }",
+            "{ expect(f(a)).toBe(y); // note\n g(a); }",
+            "{ expect(f(a)).toBe(y) // note\n g(a) }",
+            "{ \"//x\"; expect(f(a)).toBe(y); }",
             "{ }",
             "{ foo(expect(f(a)).toBe(y)); }",
         ] {

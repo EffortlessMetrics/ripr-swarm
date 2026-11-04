@@ -1413,6 +1413,7 @@ fn oracle_policy_rewrites_configurable_oracle_strengths() {
         snapshot_strength: OracleStrength::Strong,
         mock_expectation_strength: OracleStrength::Weak,
         broad_error_strength: OracleStrength::Medium,
+        ..OraclePolicy::default()
     };
     assert_eq!(
         policy.strength_for_kind(&OracleKind::Snapshot, OracleStrength::Medium),
@@ -1453,12 +1454,15 @@ fn check_artifact_identity_fields_classify_every_config_field() -> Result<(), St
         "languages.rust.generated_file_patterns",
         "languages.rust.handwritten_files",
         "languages.python.handwritten_files",
+        "languages.python.excluded_file_patterns",
         "languages.typescript.handwritten_files",
+        "languages.typescript.excluded_file_patterns",
         "analysis.production_like_targets",
         "analysis.test_harnesses",
         "oracles.broad_error_strength",
         "oracles.mock_expectation_strength",
         "oracles.snapshot_strength",
+        "overrides.oracles",
         "perl.cache_dir",
         "perl.executable",
         "perl.producer",
@@ -1502,9 +1506,12 @@ fn check_artifact_identity_fields_classify_every_config_field() -> Result<(), St
         "lsp.diagnostic_profile",
         "reports.max_related_tests",
         "suppressions.path",
+        "overrides.severity",
         "profiles.bun_ub",
         "source_path",
         "source_text",
+        "workspace_crates",
+        "verification_contract_decision",
     ] {
         expected.push((name, ConfigIdentityRole::Excluded));
     }
@@ -1595,6 +1602,22 @@ fn check_artifact_config_identity_hash_tracks_finding_affecting_fields_only() ->
     let severity_changed = tests_only_parse("[severity.findings]\nexposed = \"warning\"\n")?;
     if check_artifact_config_identity_hash(&severity_changed) != base_hash {
         return Err("severity display is render-only and must not change the identity".to_string());
+    }
+
+    // Per-crate severity overlays are render-only; oracle overlays are not.
+    let severity_override = tests_only_parse(
+        "[[overrides]]\npath = \"crates/alpha/**\"\nseverity.findings.exposed = \"warning\"\n",
+    )?;
+    if check_artifact_config_identity_hash(&severity_override) != base_hash {
+        return Err(
+            "overrides.severity is render-only and must not change the identity".to_string(),
+        );
+    }
+    let oracle_override = tests_only_parse(
+        "[[overrides]]\npath = \"crates/alpha/**\"\noracles.snapshot_strength = \"strong\"\n",
+    )?;
+    if check_artifact_config_identity_hash(&oracle_override) == base_hash {
+        return Err("overrides.oracles must change the config identity".to_string());
     }
 
     // A render-only change (reports bound) does NOT change it either.
@@ -1698,6 +1721,7 @@ proptest! {
                 timeout_ms: Some(timeout_ms),
                 cache_dir: Some(cache_dir),
             }),
+            overrides: None,
         };
 
         let serialized = match toml::to_string(&raw) {
@@ -3125,5 +3149,33 @@ fn large_path_lists_parse_in_linear_time_and_still_reject_duplicates() -> Result
     .err()
     .ok_or("duplicate pattern must be rejected")?;
     assert!(error.contains("`gen17/**/*.rs` more than once"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn verification_contract_compiles_parsed_harness_registrations() -> Result<(), String> {
+    let source = r#"
+[[analysis.test_harnesses]]
+registration_id = "mimic-suite"
+target = "tests/mimic.rs"
+kind = "custom_harness"
+adapter = "libtest_mimic_v1"
+marker = "libtest_mimic"
+"#;
+    let config = parse_config(source)?;
+    let decision = verification_contract::compile_repository_verification_contract(
+        verification_contract::VerificationContractCompileInput {
+            repository_root: Path::new("."),
+            ripr_toml_path: Some(Path::new("ripr.toml")),
+            ripr_toml_content_digest: Some("sha256:integration-test".to_string()),
+            config: &config,
+        },
+    );
+    if decision.contract.declarations.len() != 1 {
+        return Err(format!(
+            "expected one harness declaration, got {}",
+            decision.contract.declarations.len()
+        ));
+    }
     Ok(())
 }

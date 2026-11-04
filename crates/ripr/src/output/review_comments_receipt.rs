@@ -15,6 +15,16 @@ pub(crate) const REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION: &str = "0.1";
 /// when distinguishing an instrument-limited pass from a real gap.
 pub(crate) const REVIEW_GUIDANCE_OVERSIZED_LIMITATION_CATEGORY: &str = "review_guidance_oversized";
 
+/// Named limitation when `--check-output` is present but no compatible prepared
+/// workspace handoff was supplied (#4692 compatibility route).
+pub(crate) const REVIEW_GUIDANCE_INDEX_RECOMPUTE_LIMITATION_CATEGORY: &str =
+    "review_guidance_index_recompute";
+
+pub(crate) const REVIEW_GUIDANCE_INDEX_RECOMPUTE_REPAIR_ROUTE: &str =
+    "analysis/review-guidance-index-handoff";
+
+pub(crate) const REVIEW_GUIDANCE_INDEX_RECOMPUTE_NON_CLAIM: &str = "compatible analysis index reuse did not occur; guidance rebuilt the workspace index on the documented compatibility route";
+
 /// Non-claim added when the budget expires inside `canonical_analysis` (#11107).
 /// Whether a partial classification may be stored and reused is an open design
 /// question (what it may claim, and the exact inputs each classification read);

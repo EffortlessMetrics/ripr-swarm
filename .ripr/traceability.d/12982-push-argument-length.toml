@@ -1,0 +1,23 @@
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::length_does_not_pin_the_changed_push_argument",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::escaped_string_values_use_decoded_comparison",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::confidence_does_not_borrow_a_rejected_owner_path",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::indexed_value_still_pins_the_changed_argument",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::mixed_length_and_wrong_index_do_not_restore_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::mixed_length_and_changed_index_keep_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::changed_cardinality_is_not_a_value_only_replacement",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::refuses_ambiguous_push_argument_witnesses",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::array_types_do_not_masquerade_as_index_writes",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::count_only_report_names_the_missing_element",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::unchanged_case_and_wrong_index_do_not_claim_length_is_the_problem",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::typed_array_declaration_preserves_factory_getter_and_index_write_refuses",
+]
+fixtures = [
+  "fixtures/typescript_push_escaped_nondiscriminator",
+  "fixtures/typescript_push_argument_length",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/push_argument_guard.rs",
+]

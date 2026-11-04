@@ -576,3 +576,62 @@ fn counted_removal_refuses_concurrent_receiver_edits() -> Result<(), String> {
     assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+/// #12463: a deleted call has no branch an input could flip, so the
+/// strong-check "flip the changed branch" advice must not reach it even when
+/// the related test carries a strong check.
+#[test]
+fn removed_call_never_gets_strong_untied_advice() -> Result<(), String> {
+    let test = format!(
+        "import {{ mock, test }} from 'node:test';\nimport assert from 'node:assert/strict';\n{PARAM_IMPORT}\ntest('writes once', () => {{\nconst sink = {{ write(event: string) {{ throw new Error('target threw'); }} }}; {SPY} emit(sink, 'a'); {PIN}\n}});\n"
+    );
+    let diff = "diff --git a/src/audit.ts b/src/audit.ts\n--- a/src/audit.ts\n+++ b/src/audit.ts\n@@ -2,1 +2,1 @@\n-  sink.write(event);\n+  void event;\n";
+    let finding = finding_for(
+        "removed-call-strong-untied",
+        NODE_TEST,
+        &[("src/audit.ts", PARAM), ("test/audit.test.ts", &test)],
+        diff,
+        2,
+    )?;
+    assert_ne!(
+        finding.recommended_next_step.as_deref(),
+        Some(crate::domain::STRONG_CHECK_UNTIED_NEXT_STEP),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+/// #12463: an unwitnessed field update that reads no owner parameter has no
+/// input to flip, so it keeps the generic next step. (Positive coverage is
+/// the ts_strong_snapshot_untied and ts_coincident_state_update fixtures.)
+#[test]
+fn input_free_field_update_never_gets_strong_untied_advice() -> Result<(), String> {
+    let run = |label: &str, new_line: &str, old_line: &str, params: &str| {
+        let source = format!(
+            "export class Stats {{\n  hits = 0;\n  recordHit({params}): void {{\n    {new_line}\n  }}\n}}\n"
+        );
+        let test = "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { Stats } from \"../src/stats.ts\";\n\ntest(\"overwritten count\", () => {\n  const stats = new Stats();\n  stats.recordHit(1);\n  Object.assign(stats, { hits: 9 });\n  assert.equal(stats.hits, 9);\n});\n";
+        let diff = format!(
+            "diff --git a/src/stats.ts b/src/stats.ts\n--- a/src/stats.ts\n+++ b/src/stats.ts\n@@ -4,1 +4,1 @@\n-    {old_line}\n+    {new_line}\n"
+        );
+        finding_for(
+            label,
+            NODE_TEST,
+            &[("src/stats.ts", &source), ("test/stats.test.ts", test)],
+            &diff,
+            4,
+        )
+    };
+    let free = run(
+        "field-update-input-free",
+        "this.hits += 1;",
+        "this.hits = this.hits + 1;",
+        "",
+    )?;
+    assert_ne!(
+        free.recommended_next_step.as_deref(),
+        Some(crate::domain::STRONG_CHECK_UNTIED_NEXT_STEP),
+        "{free:?}"
+    );
+    Ok(())
+}
