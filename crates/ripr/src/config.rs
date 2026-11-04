@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
 mod diagnostic;
+pub(crate) mod language_detection;
 mod model;
 #[cfg(test)]
 mod override_tests;

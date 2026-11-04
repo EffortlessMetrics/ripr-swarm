@@ -16,6 +16,8 @@ cargo_manifest|benchmarks/stub_quality/cases/**/Cargo.toml|stub quality corpus c
 cargo_manifest|metrics/rust-judged-behavior-panel/subjects/**/Cargo.toml|governed Rust judged-panel subject manifests for issue #3198
 cargo_manifest|xtask/Cargo.toml|unpublished automation manifest
 workspace_member|crates/ripr|published product package
+cargo_manifest|crates/ripr-contract/Cargo.toml|internal contract crate manifest (ADR 0027, #8382/#12726)
+workspace_member|crates/ripr-contract|internal contract crate published in lockstep with ripr (ADR 0027, #8382/#12726)
 workspace_member|xtask|unpublished Rust automation
 cargo_manifest|tools/repo-policy/Cargo.toml|unpublished workflow and agent policy boundary (#7158)
 workspace_member|tools/repo-policy|product-independent Rust repository policy (#7158)

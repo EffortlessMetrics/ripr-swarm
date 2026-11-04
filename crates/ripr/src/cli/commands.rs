@@ -152,7 +152,7 @@ mod assistant_loop;
 #[path = "commands/first_action.rs"]
 mod first_action;
 #[path = "commands/first_pr.rs"]
-mod first_pr;
+pub(crate) mod first_pr;
 #[path = "commands/reports.rs"]
 mod reports;
 pub(super) use assistant_loop::assistant_loop;
@@ -166,7 +166,6 @@ pub(super) use capabilities::capabilities;
 
 #[path = "commands/doctor.rs"]
 mod doctor;
-pub(crate) use doctor::detect_languages;
 pub(super) use doctor::doctor;
 
 #[path = "commands/gate.rs"]

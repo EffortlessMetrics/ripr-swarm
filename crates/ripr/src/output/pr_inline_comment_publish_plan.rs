@@ -65,7 +65,7 @@ impl CommentMode {
                  `--mode` out, or pass `off`, to publish no comments)"
                     .to_string(),
             ),
-            _ => Err(crate::cli::unknown_value(
+            _ => Err(crate::accepted_value::unknown_value(
                 "pr-comments plan mode",
                 value,
                 &["off", "plan", "inline"],
