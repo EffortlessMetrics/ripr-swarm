@@ -662,6 +662,9 @@ pub(crate) fn repo_exposure_config_identity_hash(config: &RiprConfig) -> String 
         .filter(|field| {
             field.role == ConfigIdentityRole::FindingAffecting
                 && REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS.contains(&field.name)
+                // Same rule as the diff-check hash: no oracle overlay, no pair.
+                && !(field.name == "overrides.oracles"
+                    && field.value.as_deref() == Some("0\u{0}"))
         })
         .map(|field| format!("{}={}", field.name, field.value.clone().unwrap_or_default()))
         .collect::<Vec<_>>();
