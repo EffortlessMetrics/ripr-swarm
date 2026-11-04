@@ -105,6 +105,7 @@ compile_error!(
 
 // Kept public for compatibility; prefer the crate-root re-exports for new
 // integrations.
+pub(crate) mod accepted_value;
 pub(crate) mod agent;
 #[doc(hidden)]
 pub mod analysis;
