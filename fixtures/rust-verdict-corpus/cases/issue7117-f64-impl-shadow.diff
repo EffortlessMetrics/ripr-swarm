@@ -5,7 +5,7 @@ diff --git a/src/lib.rs b/src/lib.rs
  
  impl Render for f64 {
      fn render(&self) -> String {
--        String::from("0")
-+        String::from("")
+-        String::from("")
++        String::new()
      }
  }

@@ -1,6 +1,6 @@
 ripr static RIPR exposure analysis
 mode: fast
-root: /workspace/fixtures/rust_f64_trait_parent_shadow/input
+root: fixtures/rust_f64_trait_parent_shadow/input
 
 Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 1 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
@@ -30,7 +30,7 @@ Static exposure
   reachable_unrevealed (warning, confidence 0.66)
 
 Evidence
-  - reach weak: No test is seen calling render; tests share only its file or a name token: render_is_empty
+  - reach weak: No test is seen calling render; tests share only a name token
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: String::from("")
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
@@ -47,6 +47,6 @@ Weakness
 Next step
   The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap
 Drill in:
-  ripr explain --root /workspace/fixtures/rust_f64_trait_parent_shadow/input --diff /workspace/fixtures/rust_f64_trait_parent_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:baa68fbe
-  ripr context --root /workspace/fixtures/rust_f64_trait_parent_shadow/input --diff /workspace/fixtures/rust_f64_trait_parent_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:baa68fbe
-
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_f64_trait_parent_shadow/input --diff <cwd>/fixtures/rust_f64_trait_parent_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:baa68fbe
+  ripr context --root <cwd>/fixtures/rust_f64_trait_parent_shadow/input --diff <cwd>/fixtures/rust_f64_trait_parent_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:baa68fbe

@@ -1,6 +1,6 @@
 ripr static RIPR exposure analysis
 mode: fast
-root: /workspace/fixtures/rust_f64_trait_impl_import/input
+root: fixtures/rust_f64_trait_impl_import/input
 
 Summary: 1 changed behavior(s) checked: 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
@@ -39,6 +39,6 @@ Evidence
   - related test src/lib.rs:16 render_is_empty uses strong exact value oracle: assert_eq!((-0.0f64).render(), String::from(""));
   - source assertion argument value "" at line 17
 Drill in:
-  ripr explain --root /workspace/fixtures/rust_f64_trait_impl_import/input --diff /workspace/fixtures/rust_f64_trait_impl_import/diff.patch --mode fast probe:src_lib.rs:return_value:baa68fbe
-  ripr context --root /workspace/fixtures/rust_f64_trait_impl_import/input --diff /workspace/fixtures/rust_f64_trait_impl_import/diff.patch --mode fast --at probe:src_lib.rs:return_value:baa68fbe
-
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_f64_trait_impl_import/input --diff <cwd>/fixtures/rust_f64_trait_impl_import/diff.patch --mode fast probe:src_lib.rs:return_value:baa68fbe
+  ripr context --root <cwd>/fixtures/rust_f64_trait_impl_import/input --diff <cwd>/fixtures/rust_f64_trait_impl_import/diff.patch --mode fast --at probe:src_lib.rs:return_value:baa68fbe
