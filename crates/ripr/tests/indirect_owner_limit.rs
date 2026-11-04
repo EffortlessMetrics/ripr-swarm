@@ -1612,3 +1612,76 @@ fn a_typed_let_reads_like_the_untyped_let() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// A trait-impl owner reached through a blanket `impl<T: Render> ToText for T`
+/// entry (#6732). `tests` is the test module body.
+fn blanket(tests: &str) -> String {
+    format!(
+        "pub trait Render {{
+    fn render(&self) -> String;
+}}
+
+pub trait ToText {{
+    fn to_text(&self) -> String;
+}}
+
+impl<T: Render> ToText for T {{
+    fn to_text(&self) -> String {{
+        self.render()
+    }}
+}}
+
+impl Render for f64 {{
+    fn render(&self) -> String {{
+        if *self == 0.0 && self.is_sign_negative() {{
+            return \"-0.0\".to_string();
+        }}
+        format!(\"{{self:?}}\")
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+{tests}}}
+"
+    )
+}
+
+const BLANKET_BEFORE: &str = "            return \"-0.0\".to_string();";
+const BLANKET_AFTER: &str = "            return String::from(\"-0.0\");";
+
+#[test]
+fn a_blanket_impl_hop_the_pin_cannot_read_is_a_limit_not_a_gap() -> Result<(), String> {
+    let lib = blanket(
+        "    #[test]
+    fn negative_zero_keeps_its_sign() {
+        assert_eq!((-0.0f64).to_text(), \"-0.0\");
+    }
+",
+    );
+    withheld(&lib, BLANKET_BEFORE, BLANKET_AFTER, "blanket impl hop")
+}
+
+#[test]
+fn a_related_test_that_names_the_owner_keeps_the_gap_beside_a_blanket_hop() -> Result<(), String> {
+    let lib = blanket(
+        "    #[test]
+    fn negative_zero_keeps_its_sign() {
+        assert_eq!((-0.0f64).to_text(), \"-0.0\");
+    }
+
+    #[test]
+    fn renders_something() {
+        assert!(!f64::render(&1.5).is_empty());
+    }
+",
+    );
+    keeps_gap(
+        &lib,
+        BLANKET_BEFORE,
+        BLANKET_AFTER,
+        "direct weak call beside blanket hop",
+    )
+}

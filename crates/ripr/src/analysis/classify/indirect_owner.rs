@@ -1,7 +1,7 @@
 //! RIPR-SPEC-0240: an owner a test reaches without a call ripr can place is
 //! not a gap.
 //!
-//! Three source forms leave a test whose oracle is real and whose reading is
+//! Four source forms leave a test whose oracle is real and whose reading is
 //! `weakly_exposed`, a certain "assertion too weak" claim, because ripr sees no
 //! `owner(..)` call it can pair with the assertion:
 //!
@@ -15,7 +15,12 @@
 //!   expansion is not source ripr reads;
 //! - **executor-wrapped call**: the owner call is the only argument of
 //!   `block_on(..)`, a local helper polling a `Future` or a known executor,
-//!   and the assertion reads the helper's result.
+//!   and the assertion reads the helper's result;
+//! - **blanket impl hop** (#6732): the owner is a trait-impl method and the test
+//!   calls it only through a blanket `impl<T: Trait> Other for T` entry whose
+//!   body calls the owner on `self`. Reach is established, but the owner pin
+//!   does not read a trait-impl owner behind such an entry, so whether the
+//!   assertion's value comes from the owner's changed behavior is not.
 //!
 //! None of these is credited; the gap is withheld under
 //! `rust_indirect_owner_call_unresolved`. Like every RIPR-SPEC-0240 rule this
@@ -41,6 +46,7 @@ enum Form {
     FunctionValue,
     Generated,
     ExecutorWrapped,
+    BlanketImpl,
 }
 
 impl Form {
@@ -51,6 +57,9 @@ impl Form {
             }
             Form::Generated => {
                 "reaches an owner a macro generates, and ripr does not expand the macro"
+            }
+            Form::BlanketImpl => {
+                "reaches the owner only through a blanket trait impl method that calls it on `self`, and ripr does not pair the assertion on that method's result with the owner's value"
             }
             Form::ExecutorWrapped => {
                 "calls the owner inside an executor helper such as `block_on`, and ripr does not pair the assertion on the helper's result with the owner's call"
@@ -145,6 +154,7 @@ pub(in crate::analysis) fn related_tests_reach_owner_indirectly(
         let code = mask_comments_and_strings(&test.body);
         names_owner_as_value(&code, owner, test, index)
             || (is_async && executor_wraps_owner_call(&code, &owner.name, test, index))
+            || reaches_owner_only_through_blanket_impl(&code, owner, test, index)
     })
 }
 
@@ -184,6 +194,10 @@ fn judged_for_owner(
             Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
         )
     });
+    let any_direct = finding
+        .related_tests
+        .iter()
+        .any(|related| related.relation_reason == Some(RelationReason::DirectOwnerCall));
     for test in index.tests() {
         if is_ignored(test) || test.assertions.is_empty() {
             continue;
@@ -207,9 +221,33 @@ fn judged_for_owner(
             && executor_wraps_owner_call(&code, &owner.name, test, index)
         {
             judged.push((label(test), Form::ExecutorWrapped));
+            continue;
+        }
+        // A related test that calls the owner by name keeps the finding's
+        // reading; the blanket hop is judged only where no related test does.
+        if !any_direct
+            && is_related(test, false)
+            && reaches_owner_only_through_blanket_impl(&code, owner, test, index)
+        {
+            judged.push((label(test), Form::BlanketImpl));
         }
     }
     judged
+}
+
+/// #6732: the test reaches the trait-impl `owner` through a blanket impl entry
+/// and never spells the owner's name, so no `owner(..)` call exists for the
+/// owner pin to pair with the assertion. `code` is the masked test body.
+fn reaches_owner_only_through_blanket_impl(
+    code: &str,
+    owner: &FunctionFact,
+    test: &TestFact,
+    index: &RustIndex,
+) -> bool {
+    identifier_offsets(code, &owner.name).next().is_none()
+        && super::transitive_reach::test_reaches_trait_owner_through_blanket_impl(
+            test, owner, index,
+        )
 }
 
 /// The changed line is an item-position macro invocation: no function in its
