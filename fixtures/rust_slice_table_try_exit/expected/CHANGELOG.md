@@ -363,3 +363,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_slice_table_try_exit (29)
+
+Reason:
+RIPR-SPEC-0236 / #12257: a reachable_unrevealed seam with an unknown activation stage names the activation need in the still-missing list; weakly_gripped keeps the #10622 stub-route wording.
+
+Command:
+`cargo xtask goldens bless rust_slice_table_try_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

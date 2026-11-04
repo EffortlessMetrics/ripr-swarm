@@ -345,6 +345,7 @@ pub(crate) fn repair_route_readiness(entry: &ClassifiedSeam) -> RepairRouteReadi
         SeamKind::SideEffect | SeamKind::CallPresence => effect_route_readiness(seam, evidence),
     };
     apply_grip_class_ceiling(entry.class, &mut readiness);
+    apply_unknown_activation_stage(entry.class, evidence, &mut readiness);
     readiness.seam_id = seam.id().as_str().to_string();
     readiness.canonical_gap_id = canonical_gap_identity(entry).map(|identity| identity.id);
     readiness.authority_boundary = REPAIR_ROUTE_AUTHORITY_BOUNDARY;
@@ -386,6 +387,45 @@ fn apply_grip_class_ceiling(class: SeamGripClass, readiness: &mut RepairRouteRea
         SeamGripClass::WeaklyGripped
         | SeamGripClass::Ungripped
         | SeamGripClass::ReachableUnrevealed => {}
+    }
+}
+
+const ACTIVATION_STAGE_EVIDENCE: &str = "incomplete evidence stage: activation";
+
+/// #12257: a seam can be `reachable_unrevealed` while the activation stage
+/// still reads unknown. The class-based ceiling no longer carries an
+/// activation item for that class, but the missing list must still name the
+/// activation need whenever the stage is unknown.
+fn apply_unknown_activation_stage(
+    class: SeamGripClass,
+    evidence: &TestGripEvidence,
+    readiness: &mut RepairRouteReadiness,
+) {
+    // Only `reachable_unrevealed` lost its activation item to the ceiling. A
+    // `weakly_gripped` seam with an unknown activation stage keeps the
+    // #10622 stub-route wording, so it must not pick this item up.
+    if class != SeamGripClass::ReachableUnrevealed
+        || evidence.activate.state != StageState::Unknown
+    {
+        return;
+    }
+    if !readiness
+        .required_evidence
+        .iter()
+        .any(|item| item == ACTIVATION_STAGE_EVIDENCE)
+    {
+        readiness
+            .required_evidence
+            .push(ACTIVATION_STAGE_EVIDENCE.to_string());
+    }
+    if !readiness
+        .missing_evidence
+        .iter()
+        .any(|item| item == ACTIVATION_STAGE_EVIDENCE)
+    {
+        readiness
+            .missing_evidence
+            .push(ACTIVATION_STAGE_EVIDENCE.to_string());
     }
 }
 
@@ -1379,6 +1419,56 @@ mod tests {
                     "{kind:?} marked={marked} must miss the contents check: {refused:?}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reachable_unrevealed_with_unknown_activation_names_activation_need() -> Result<(), String> {
+        // #12257: class moved to reachable_unrevealed but activation stage
+        // can still be unknown; the missing list must keep the activation item.
+        let mut entry = classified_with(
+            boundary_seam(),
+            SeamGripClass::ReachableUnrevealed,
+            vec![rust_related_test(RelationReason::DirectOwnerCall)],
+        );
+        entry.evidence.activate = stage(StageState::Unknown);
+        let readiness = repair_packet_eligibility(&entry).readiness;
+        const ACTIVATION: &str = "incomplete evidence stage: activation";
+        if !readiness
+            .missing_evidence
+            .iter()
+            .any(|item| item == ACTIVATION)
+        {
+            return Err(format!(
+                "missing list must name unknown activation: {:?}",
+                readiness.missing_evidence
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn weakly_gripped_with_unknown_activation_does_not_gain_the_activation_need()
+    -> Result<(), String> {
+        // Negative control for #12257: the activation item is reachable_unrevealed-only.
+        let mut entry = classified_with(
+            boundary_seam(),
+            SeamGripClass::WeaklyGripped,
+            vec![rust_related_test(RelationReason::DirectOwnerCall)],
+        );
+        entry.evidence.activate = stage(StageState::Unknown);
+        let readiness = repair_packet_eligibility(&entry).readiness;
+        const ACTIVATION: &str = "incomplete evidence stage: activation";
+        if readiness
+            .missing_evidence
+            .iter()
+            .chain(readiness.required_evidence.iter())
+            .any(|item| item == ACTIVATION)
+        {
+            return Err(format!(
+                "weakly_gripped must not gain the activation item from an unknown stage: {readiness:?}"
+            ));
         }
         Ok(())
     }
