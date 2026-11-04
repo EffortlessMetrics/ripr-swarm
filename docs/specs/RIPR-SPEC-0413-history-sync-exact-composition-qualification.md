@@ -14,7 +14,9 @@ Linked issues:
 
 Linked PR: [#12486](https://github.com/EffortlessMetrics/ripr-swarm/pull/12486)
 
-Support-tier impact: none. This governs CI qualification, not static analyzer or verifier claims.
+Support-tier impact: None.
+
+This governs CI qualification, not static analyzer or verifier claims.
 
 Policy impact: register in `docs/spec-index.d/`, `policy/doc-artifacts.d/`, and
 `.ripr/traceability.d/`. The exception is interim, with no settings, queue,
