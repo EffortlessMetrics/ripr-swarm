@@ -711,7 +711,8 @@ fn count_namings_for_owner(source: &str, owner: &FunctionSummary) -> usize {
 /// as a reference to a function rather than prose: it is followed by `(`, `)`,
 /// `,`, `;`, `}`, `]`, `:` or `as` (a doctest call, fn pointer or
 /// `use .. as` alias), or it is the whole path of a quoted string assigned with `=`
-/// (`#[serde(default = "kb")]`, `with = "defaults::kb"`), which names a function by
+/// (`#[serde(default = "kb")]`) or passed to a non-transparent macro
+/// (`twice!("kb")`), which names a function by
 /// string. `"4.1 kb"` is prose: it has a space before the name.
 fn reference_shaped_outside_code(source: &str, at: usize, ident: &str) -> bool {
     let after = &source[at + ident.len()..];
@@ -728,12 +729,27 @@ fn reference_shaped_outside_code(source: &str, at: usize, ident: &str) -> bool {
     let path_start = source[..at]
         .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_' || c == ':')
         .len();
-    // The opening quote must follow `=` (`default = "kb"`, `with = "m::kb"`):
-    // a quoted word in a call argument (`assert_eq!("kb", ..)`) is a label.
-    after.starts_with('"')
-        && source[..path_start]
-            .strip_suffix('"')
-            .is_some_and(|before| before.trim_end().ends_with('='))
+    if !after.starts_with('"') {
+        return false;
+    }
+    let Some(before_quote) = source[..path_start].strip_suffix('"') else {
+        return false;
+    };
+    // `default = "kb"`, `with = "m::kb"`: a path assigned by an attribute.
+    if before_quote.trim_end().ends_with('=') {
+        return true;
+    }
+    // A whole-string path passed to a macro (`twice!("kb")`) may dispatch by
+    // name; only a transparent macro (`assert_eq!("kb", ..)`, `format!`) takes
+    // the quoted word as a label. Without a macro on the line it is a label.
+    let line = before_quote.rsplit('\n').next().unwrap_or(before_quote);
+    let Some(bang) = line.rfind("!(").or_else(|| line.rfind("![")) else {
+        return false;
+    };
+    let macro_name = line[..bang]
+        .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_')
+        .len();
+    !TRANSPARENT_TEST_MACROS.contains(&&line[macro_name..bang])
 }
 
 /// The identifiers of `source` (see [`identifiers_outside_fn_definition`])
@@ -1753,6 +1769,11 @@ mod tests {
         // A quoted unit label in a call argument is not a path reference.
         assert!(!verdict(
             &format!("{free}fn t() {{ assert_eq!(\"kb\", \"kb\"); }}\n"),
+            true
+        ));
+        // A whole-string path handed to a macro may dispatch by name.
+        assert!(verdict(
+            &format!("{free}fn t() {{ twice!(\"kb\"); }}\n"),
             true
         ));
         // The same `Type::kb` mention keeps a non-free (or unestablished) owner
