@@ -1,0 +1,118 @@
+{
+  "schema_version": "ripr.product_route_parity_corpus.v1",
+  "claim_boundary": "Plan-level proposition parity between the ordinary swarm route and the reusable external-tree route projection from #3330; live reusable execution receipts await #3331.",
+  "subjects": [
+    {
+      "id": "full-route-missing-selectors",
+      "title": "Missing selector authority requires the complete product route on both sides",
+      "subject": {
+        "changed_surfaces": ["rust"],
+        "selectors_authoritative": false
+      },
+      "public_fork": false,
+      "ordinary_runner": "routed-rust-self-hosted",
+      "reusable_runner": "github-hosted-external-tree",
+      "terminals": {
+        "product.rust.workspace_tests": "not_proven",
+        "product.repository.dependencies": "not_proven"
+      },
+      "expect_semantic_parity": true
+    },
+    {
+      "id": "rust-analyzer-scoped-ordinary",
+      "title": "Scoped Rust change: ordinary route no-ops policy gates; external tree keeps full route until scoping is demonstrated",
+      "subject": {
+        "changed_surfaces": ["rust"],
+        "selectors_authoritative": true
+      },
+      "public_fork": false,
+      "ordinary_runner": "routed-rust-self-hosted",
+      "reusable_runner": "github-hosted-external-tree",
+      "terminals": {
+        "product.rust.clippy": "not_proven",
+        "product.repository.dependencies": "not_applicable"
+      },
+      "expect_semantic_parity": false,
+      "expect_mismatch_owner": "expected_infrastructure_difference"
+    },
+    {
+      "id": "evidence-surface-change",
+      "title": "Evidence fixture edits select evidence gates on the ordinary route",
+      "subject": {
+        "changed_surfaces": ["evidence"],
+        "selectors_authoritative": true
+      },
+      "public_fork": false,
+      "ordinary_runner": "routed-rust-self-hosted",
+      "reusable_runner": "github-hosted-external-tree",
+      "terminals": {
+        "product.evidence.goldens": "not_proven",
+        "product.rust.formatting": "not_applicable"
+      },
+      "expect_semantic_parity": false,
+      "expect_mismatch_owner": "expected_infrastructure_difference"
+    },
+    {
+      "id": "public-fork-no-trusted-runner",
+      "title": "Public/fork reusable calls must not receive trusted runner or secret injection",
+      "subject": {
+        "changed_surfaces": ["rust"],
+        "selectors_authoritative": false
+      },
+      "public_fork": true,
+      "ordinary_runner": "routed-rust-self-hosted",
+      "reusable_runner": "github-hosted-fork",
+      "terminals": {},
+      "expect_semantic_parity": true,
+      "expect_public_fork_trust": true
+    },
+    {
+      "id": "shared-failing-gate",
+      "title": "Failure terminal states remain in the denominator on both routes",
+      "subject": {
+        "changed_surfaces": ["rust"],
+        "selectors_authoritative": false
+      },
+      "public_fork": false,
+      "ordinary_runner": "routed-rust-self-hosted",
+      "reusable_runner": "github-hosted-external-tree",
+      "terminals": {
+        "product.rust.clippy": "fail",
+        "product.rust.workspace_tests": "not_proven"
+      },
+      "expect_semantic_parity": true
+    },
+    {
+      "id": "unavailable-instrument",
+      "title": "Unavailable instrument rows stay non-green and in the denominator",
+      "subject": {
+        "changed_surfaces": ["rust"],
+        "selectors_authoritative": false
+      },
+      "public_fork": false,
+      "ordinary_runner": "routed-rust-self-hosted",
+      "reusable_runner": "github-hosted-external-tree",
+      "terminals": {
+        "product.rust.workspace_tests": "unavailable"
+      },
+      "expect_semantic_parity": true
+    },
+    {
+      "id": "repository-policy-only",
+      "title": "Workflow/policy-only source selects repository policy gates without Rust product rows",
+      "subject": {
+        "changed_surfaces": ["repository_policy"],
+        "selectors_authoritative": true
+      },
+      "public_fork": false,
+      "ordinary_runner": "routed-rust-self-hosted",
+      "reusable_runner": "github-hosted-external-tree",
+      "terminals": {
+        "product.repository.process_policy": "not_proven",
+        "product.rust.clippy": "not_applicable"
+      },
+      "expect_semantic_parity": false,
+      "expect_mismatch_owner": "expected_infrastructure_difference"
+    }
+  ]
+}

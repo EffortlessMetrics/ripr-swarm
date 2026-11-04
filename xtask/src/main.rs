@@ -67,6 +67,7 @@ mod policy;
 #[cfg(test)]
 mod portable_consumer;
 mod product_gate_plan;
+mod product_route_parity;
 mod provider_review_observations;
 mod public_api_surface;
 mod python_judged_panel;
