@@ -61,6 +61,8 @@ mod native_libtest;
 mod no_panic;
 mod orchestration_attempt;
 mod output_enum_contracts;
+#[cfg(test)]
+mod output_properties;
 mod package_qualification;
 mod packaged_repair_receipt;
 mod policy;
