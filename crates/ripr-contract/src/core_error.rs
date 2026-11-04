@@ -16,25 +16,25 @@ use std::error::Error;
 use std::fmt;
 
 /// Public/LSP projection token for git invocation timeout (#2303 / #2811).
-pub(crate) const GIT_INVOCATION_TIMEOUT_KIND: &str = "git_invocation_timeout";
+pub const GIT_INVOCATION_TIMEOUT_KIND: &str = "git_invocation_timeout";
 
 /// Refusal identity for a `check --json` failure outside every named family
 /// (#6834): the honest fallback, never a claim about what failed.
-pub(crate) const ANALYSIS_FAILED_IDENTITY: &str = "analysis_failed";
+pub const ANALYSIS_FAILED_IDENTITY: &str = "analysis_failed";
 
 /// Repair route for the [`ANALYSIS_FAILED_IDENTITY`] fallback.
-pub(crate) const ANALYSIS_FAILED_REPAIR_ROUTE: &str = "analysis/failure";
+pub const ANALYSIS_FAILED_REPAIR_ROUTE: &str = "analysis/failure";
 
 /// Repair route for a typed git timeout inside a `check --json` refusal.
-pub(crate) const GIT_TIMEOUT_REPAIR_ROUTE: &str = "analysis/git-timeout";
+pub const GIT_TIMEOUT_REPAIR_ROUTE: &str = "analysis/git-timeout";
 
-pub(crate) const GIT_TIMEOUT_REPAIR_GUIDANCE: &str = " Repair route: raise or disable the git deadline (0 disables it) — \
+pub const GIT_TIMEOUT_REPAIR_GUIDANCE: &str = " Repair route: raise or disable the git deadline (0 disables it) — \
      --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, the \
      gitTimeoutMs initialization option for editor sessions — then re-run.";
 
 /// Crate-internal error used for semantic control flow.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CoreError {
+pub enum CoreError {
     /// A git invocation that was given a zero deadline, or that exceeded its
     /// cooperative deadline and was terminated.
     GitInvocationTimeout {
@@ -74,7 +74,7 @@ pub(crate) enum CoreError {
 /// families so every pinned failure mode carries a discriminating identity
 /// instead of the honest fallback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CheckFailureKind {
+pub enum CheckFailureKind {
     /// The requested base revision does not resolve to a commit.
     BaseUnresolvable,
     /// The repository root cannot be worked with: not a directory, not
@@ -124,7 +124,7 @@ pub(crate) enum CheckFailureKind {
 
 impl CheckFailureKind {
     /// Stable wire identity for the refusal envelope.
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::BaseUnresolvable => "base_unresolvable",
             Self::RepositoryRootUnusable => "repository_root_unusable",
@@ -144,7 +144,7 @@ impl CheckFailureKind {
 
     /// Stable repair route for the refusal envelope, in the
     /// existing `analysis/<kebab>` vocabulary.
-    pub(crate) fn repair_route(self) -> &'static str {
+    pub fn repair_route(self) -> &'static str {
         match self {
             Self::BaseUnresolvable => "analysis/base-resolution",
             Self::RepositoryRootUnusable => "analysis/repository-root",
@@ -166,15 +166,15 @@ impl CheckFailureKind {
 /// Envelope projection for a `check --json` refusal (#6834): the identity,
 /// repair route, and redaction duty the renderer needs, decided here so no
 /// renderer matches error text or invents taxonomy.
-pub(crate) struct CheckRefusal {
-    pub(crate) identity: &'static str,
-    pub(crate) repair_route: &'static str,
+pub struct CheckRefusal {
+    pub identity: &'static str,
+    pub repair_route: &'static str,
     /// Whether the envelope message must be the redacted config summary
     /// ([`crate::config::config_error_summary`]) instead of the full
     /// diagnostic: config file contents never enter machine output
     /// (RIPR-SPEC-0007). Every other family echoes the stderr diagnostic
     /// verbatim, exactly what the caller already sees.
-    pub(crate) redact_message: bool,
+    pub redact_message: bool,
 }
 
 /// A fully resolved refusal for machine renderers (#7331/#7332): the typed
@@ -183,17 +183,17 @@ pub(crate) struct CheckRefusal {
 /// JSON envelope, SARIF notifications, GitHub annotations, and the badge /
 /// repo-exposure / agent-seam-packets JSON documents — so each format's
 /// refusal document carries the same branchable identity.
-pub(crate) struct RefusalNotice {
-    pub(crate) identity: &'static str,
-    pub(crate) repair_route: &'static str,
-    pub(crate) message: String,
+pub struct RefusalNotice {
+    pub identity: &'static str,
+    pub repair_route: &'static str,
+    pub message: String,
     /// The structured next step the `message` prose states (#11790), derived
     /// once here from the same redacted message every renderer prints.
-    pub(crate) remedy: crate::domain::RefusalRemedy,
+    pub remedy: crate::domain::RefusalRemedy,
 }
 
 impl CoreError {
-    pub(crate) fn git_invocation_timeout(
+    pub fn git_invocation_timeout(
         operation: impl Into<String>,
         timeout_ms: u128,
         spawned: bool,
@@ -205,13 +205,13 @@ impl CoreError {
         }
     }
 
-    pub(crate) fn message(message: impl Into<String>) -> Self {
+    pub fn message(message: impl Into<String>) -> Self {
         Self::Message(message.into())
     }
 
     /// A base revision that does not resolve to a commit (#6834). `detail`
     /// is the exact human diagnostic, kept verbatim.
-    pub(crate) fn base_unresolvable(detail: impl Into<String>) -> Self {
+    pub fn base_unresolvable(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::BaseUnresolvable,
             detail: detail.into(),
@@ -220,7 +220,7 @@ impl CoreError {
 
     /// A repository root Git cannot work with (#6834). `detail` is the
     /// exact human diagnostic, kept verbatim.
-    pub(crate) fn repository_root_unusable(detail: impl Into<String>) -> Self {
+    pub fn repository_root_unusable(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::RepositoryRootUnusable,
             detail: detail.into(),
@@ -230,7 +230,7 @@ impl CoreError {
     /// A `ripr.toml` (or candidate-tree config) that failed to load (#6834).
     /// `detail` is the exact human diagnostic, kept verbatim; the refusal
     /// renderer redacts it for machine output.
-    pub(crate) fn config_invalid(detail: impl Into<String>) -> Self {
+    pub fn config_invalid(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::ConfigInvalid,
             detail: detail.into(),
@@ -239,7 +239,7 @@ impl CoreError {
 
     /// An explicit suppression policy that is missing or malformed (#6834).
     /// `detail` is the exact human diagnostic, kept verbatim.
-    pub(crate) fn suppression_policy_invalid(detail: impl Into<String>) -> Self {
+    pub fn suppression_policy_invalid(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::SuppressionPolicyInvalid,
             detail: detail.into(),
@@ -248,7 +248,7 @@ impl CoreError {
 
     /// A `ripr context --from` check artifact that cannot be used (#7331).
     /// `detail` is the exact human diagnostic, kept verbatim.
-    pub(crate) fn check_artifact_unusable(detail: impl Into<String>) -> Self {
+    pub fn check_artifact_unusable(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::CheckArtifactUnusable,
             detail: detail.into(),
@@ -257,7 +257,7 @@ impl CoreError {
 
     /// A `ripr rerun --gap-ledger` file that cannot be read (#7331).
     /// `detail` is the exact human diagnostic, kept verbatim.
-    pub(crate) fn gap_ledger_unusable(detail: impl Into<String>) -> Self {
+    pub fn gap_ledger_unusable(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::GapLedgerUnusable,
             detail: detail.into(),
@@ -266,7 +266,7 @@ impl CoreError {
 
     /// A `ripr agent packet --seam-id` that names no current seam (#7331).
     /// `detail` is the exact human diagnostic, kept verbatim.
-    pub(crate) fn seam_id_unknown(detail: impl Into<String>) -> Self {
+    pub fn seam_id_unknown(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::SeamIdUnknown,
             detail: detail.into(),
@@ -275,7 +275,7 @@ impl CoreError {
 
     /// A `ripr agent packet|start --seam-id` for a seam agent policy withholds
     /// (#10712). `detail` is the exact human diagnostic, kept verbatim.
-    pub(crate) fn seam_policy_omitted(detail: impl Into<String>) -> Self {
+    pub fn seam_policy_omitted(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::SeamPolicyOmitted,
             detail: detail.into(),
@@ -284,7 +284,7 @@ impl CoreError {
 
     /// A `ripr agent start --seam-id` the repair-admission gate refuses (#10712).
     /// `detail` is the exact human diagnostic, kept verbatim.
-    pub(crate) fn seam_not_actionable(detail: impl Into<String>) -> Self {
+    pub fn seam_not_actionable(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::SeamNotActionable,
             detail: detail.into(),
@@ -293,7 +293,7 @@ impl CoreError {
 
     /// A `ripr check` run that exhausted its wall-clock budget (#5369).
     /// `detail` is the exact human diagnostic, kept verbatim.
-    pub(crate) fn analysis_timeout(detail: impl Into<String>) -> Self {
+    pub fn analysis_timeout(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::AnalysisTimeout,
             detail: detail.into(),
@@ -302,7 +302,7 @@ impl CoreError {
 
     /// A `ripr check` analysis worker that stopped without a result (#11116).
     /// `detail` is the exact human diagnostic, kept verbatim.
-    pub(crate) fn analysis_worker_stopped(detail: impl Into<String>) -> Self {
+    pub fn analysis_worker_stopped(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::AnalysisWorkerStopped,
             detail: detail.into(),
@@ -310,7 +310,7 @@ impl CoreError {
     }
 
     /// A brief diff contains regions the shared parser could not examine.
-    pub(crate) fn diff_input_unsupported(detail: impl Into<String>) -> Self {
+    pub fn diff_input_unsupported(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::DiffInputUnsupported,
             detail: detail.into(),
@@ -322,7 +322,7 @@ impl CoreError {
     /// prose-only output (empty stdout, exit 2), so the kind is the
     /// routing sentinel — no artifact or analysis defect is claimed.
     /// `detail` is the exact human diagnostic, kept verbatim.
-    pub(crate) fn selector_miss(detail: impl Into<String>) -> Self {
+    pub fn selector_miss(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::SelectorMiss,
             detail: detail.into(),
@@ -332,19 +332,19 @@ impl CoreError {
     /// Whether this error is the usage-class selector miss the CLI keeps
     /// prose-only instead of enveloping (#7331 review: selector misses
     /// predate and stay outside the refusal-envelope contract).
-    pub(crate) fn is_selector_miss(&self) -> bool {
+    pub fn is_selector_miss(&self) -> bool {
         self.check_failure_kind() == Some(CheckFailureKind::SelectorMiss)
     }
 
     /// Attach human context without dropping a typed timeout kind.
-    pub(crate) fn with_context(self, context: impl fmt::Display) -> Self {
+    pub fn with_context(self, context: impl fmt::Display) -> Self {
         Self::Context {
             context: context.to_string(),
             source: Box::new(self),
         }
     }
 
-    pub(crate) fn is_git_invocation_timeout(&self) -> bool {
+    pub fn is_git_invocation_timeout(&self) -> bool {
         match self {
             Self::GitInvocationTimeout { .. } => true,
             Self::Context { source, .. } => source.is_git_invocation_timeout(),
@@ -354,7 +354,7 @@ impl CoreError {
 
     /// True for a typed cancellation, including through `with_context`.
     /// Timeout is a distinct family and never reads as cancellation.
-    pub(crate) fn is_analysis_cancelled(&self) -> bool {
+    pub fn is_analysis_cancelled(&self) -> bool {
         match self {
             Self::AnalysisCancelled(_) => true,
             Self::Context { source, .. } => source.is_analysis_cancelled(),
@@ -365,7 +365,7 @@ impl CoreError {
     }
 
     /// The #2811 / component-outcome kind when this error is a git timeout.
-    pub(crate) fn git_invocation_timeout_kind(&self) -> Option<&'static str> {
+    pub fn git_invocation_timeout_kind(&self) -> Option<&'static str> {
         self.is_git_invocation_timeout()
             .then_some(GIT_INVOCATION_TIMEOUT_KIND)
     }
@@ -374,7 +374,7 @@ impl CoreError {
     /// (#6834). A [`CoreError::Message`] is never a family, even when its
     /// text names one: lookalikes stay on the [`ANALYSIS_FAILED_IDENTITY`]
     /// fallback.
-    pub(crate) fn check_failure_kind(&self) -> Option<CheckFailureKind> {
+    pub fn check_failure_kind(&self) -> Option<CheckFailureKind> {
         match self {
             Self::CheckFailure { kind, .. } => Some(*kind),
             Self::Context { source, .. } => source.check_failure_kind(),
@@ -392,7 +392,7 @@ impl CoreError {
     /// scope-guard message still reads as the fallback here — the CLI routes
     /// those to the frozen scope-guard renderer first, and #4861 owns typing
     /// them.
-    pub(crate) fn check_refusal(&self) -> CheckRefusal {
+    pub fn check_refusal(&self) -> CheckRefusal {
         if let Some(kind) = self.check_failure_kind() {
             return CheckRefusal {
                 identity: kind.as_str(),
@@ -418,10 +418,10 @@ impl CoreError {
     /// repair route from [`CoreError::check_refusal`], plus the message with
     /// the same redaction duty applied — config file contents never enter
     /// any machine output (RIPR-SPEC-0007), whatever the target format.
-    pub(crate) fn refusal_notice(&self) -> RefusalNotice {
+    pub fn refusal_notice(&self, config_error_summary: &dyn Fn(&str) -> String) -> RefusalNotice {
         let refusal = self.check_refusal();
         let message = if refusal.redact_message {
-            crate::config::config_error_summary(&self.to_string())
+            config_error_summary(&self.to_string())
         } else {
             self.to_string()
         };

@@ -1,4 +1,4 @@
-pub(crate) mod cancellation;
+pub(crate) use ripr_contract::analysis::cancellation;
 pub(crate) mod canonical_gap;
 mod classifier;
 mod classify;

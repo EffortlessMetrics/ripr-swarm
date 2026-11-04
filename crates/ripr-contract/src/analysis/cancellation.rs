@@ -24,7 +24,7 @@ const OUTCOME_NONE: u8 = 0;
 const OUTCOME_ABORT_OBSERVED: u8 = 1;
 const OUTCOME_FAILURE_PROPAGATED: u8 = 2;
 
-pub(crate) type AnalysisClock = Arc<dyn Fn() -> Instant + Send + Sync>;
+pub type AnalysisClock = Arc<dyn Fn() -> Instant + Send + Sync>;
 
 struct AnalysisBudget {
     started: Instant,
@@ -50,7 +50,7 @@ struct CancellationState {
 }
 
 #[derive(Clone)]
-pub(crate) struct AnalysisCancellationToken(Arc<CancellationState>);
+pub struct AnalysisCancellationToken(Arc<CancellationState>);
 
 impl fmt::Debug for AnalysisCancellationToken {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -71,15 +71,15 @@ impl PartialEq for AnalysisCancellationToken {
 impl Eq for AnalysisCancellationToken {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AnalysisAbortKind {
+pub enum AnalysisAbortKind {
     Superseded,
     Cancelled,
     DeadlineExceeded,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct AnalysisCancellation {
-    pub(crate) kind: AnalysisAbortKind,
+pub struct AnalysisCancellation {
+    pub kind: AnalysisAbortKind,
 }
 
 impl fmt::Display for AnalysisCancellation {
@@ -88,8 +88,14 @@ impl fmt::Display for AnalysisCancellation {
     }
 }
 
+impl Default for AnalysisCancellationToken {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AnalysisCancellationToken {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self(Arc::new(CancellationState {
             reason: AtomicU8::new(ACTIVE),
             outcome: AtomicU8::new(OUTCOME_NONE),
@@ -103,7 +109,7 @@ impl AnalysisCancellationToken {
 
     /// One owned monotonic clock and origin; no ambient test clock or worker
     /// preemption. A budget is observed only at cooperative checkpoints.
-    pub(crate) fn with_budget(started: Instant, limit: Duration, now: AnalysisClock) -> Self {
+    pub fn with_budget(started: Instant, limit: Duration, now: AnalysisClock) -> Self {
         Self(Arc::new(CancellationState {
             reason: AtomicU8::new(ACTIVE),
             outcome: AtomicU8::new(OUTCOME_NONE),
@@ -120,7 +126,7 @@ impl AnalysisCancellationToken {
     }
 
     #[cfg(unix)]
-    pub(crate) fn with_interrupt_flags(
+    pub fn with_interrupt_flags(
         interrupted: Arc<AtomicBool>,
         native_publication: Arc<AtomicBool>,
     ) -> Self {
@@ -136,7 +142,7 @@ impl AnalysisCancellationToken {
     }
 
     #[cfg(unix)]
-    pub(crate) fn with_server_interrupt(interrupted: Arc<AtomicBool>) -> Self {
+    pub fn with_server_interrupt(interrupted: Arc<AtomicBool>) -> Self {
         Self(Arc::new(CancellationState {
             reason: AtomicU8::new(ACTIVE),
             outcome: AtomicU8::new(OUTCOME_NONE),
@@ -152,7 +158,7 @@ impl AnalysisCancellationToken {
     /// Give a budgeted CLI worker the caller's SIGINT flags without sharing
     /// its abort state. A worker deadline must not turn the caller's later
     /// refusal publication into another cancellation error.
-    pub(crate) fn for_check_budget_worker(&self) -> Self {
+    pub fn for_check_budget_worker(&self) -> Self {
         Self(Arc::new(CancellationState {
             reason: AtomicU8::new(ACTIVE),
             outcome: AtomicU8::new(OUTCOME_NONE),
@@ -164,7 +170,7 @@ impl AnalysisCancellationToken {
         }))
     }
 
-    pub(crate) fn remaining_budget(&self) -> Option<Duration> {
+    pub fn remaining_budget(&self) -> Option<Duration> {
         self.0.budget.as_ref().map(|budget| {
             budget
                 .limit
@@ -174,7 +180,7 @@ impl AnalysisCancellationToken {
 
     /// Pure query: classifying an ordinary source failure must not advance
     /// the clock and replace it with a later deadline failure.
-    pub(crate) fn abort_kind(&self) -> Option<AnalysisAbortKind> {
+    pub fn abort_kind(&self) -> Option<AnalysisAbortKind> {
         match self.0.reason.load(Ordering::Acquire) {
             SUPERSEDED => Some(AnalysisAbortKind::Superseded),
             CANCELLED => Some(AnalysisAbortKind::Cancelled),
@@ -183,7 +189,7 @@ impl AnalysisCancellationToken {
         }
     }
 
-    pub(crate) fn cancel(&self, kind: AnalysisAbortKind) -> bool {
+    pub fn cancel(&self, kind: AnalysisAbortKind) -> bool {
         let value = match kind {
             AnalysisAbortKind::Superseded => SUPERSEDED,
             AnalysisAbortKind::Cancelled => CANCELLED,
@@ -195,7 +201,7 @@ impl AnalysisCancellationToken {
             .is_ok()
     }
 
-    pub(crate) fn checkpoint(&self) -> Result<(), AnalysisCancellation> {
+    pub fn checkpoint(&self) -> Result<(), AnalysisCancellation> {
         if self
             .0
             .interrupted
@@ -231,7 +237,7 @@ impl AnalysisCancellationToken {
     /// ordinary worker failure over a sibling's abort records that it did
     /// (#6721), so the attempt is that failure until a later checkpoint hands
     /// the abort to work again. Pure: it never expires a budget.
-    pub(crate) fn observed_abort(&self) -> Option<AnalysisAbortKind> {
+    pub fn observed_abort(&self) -> Option<AnalysisAbortKind> {
         if self.0.outcome.load(Ordering::Acquire) == OUTCOME_ABORT_OBSERVED {
             self.abort_kind()
         } else {
@@ -251,14 +257,14 @@ impl AnalysisCancellationToken {
 /// One parallel worker's error, typed at the worker so the batch never has to
 /// read a rendered message to tell an abort from an ordinary failure (#6721).
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum WorkerError {
+pub enum WorkerError {
     Aborted(AnalysisCancellation),
     Failed(String),
 }
 
 impl WorkerError {
     /// The error's existing wording, for the String-typed caller.
-    pub(crate) fn into_message(self) -> String {
+    pub fn into_message(self) -> String {
         match self {
             Self::Aborted(cancellation) => cancellation.to_string(),
             Self::Failed(message) => message,
@@ -278,7 +284,7 @@ impl From<AnalysisCancellation> for WorkerError {
 /// reach a checkpoint after the abort; it is recorded on `token` so the
 /// attempt is classified as that failure. With no ordinary failure, the first
 /// abort in input order is returned with its existing wording.
-pub(crate) fn select_batch_error<'a>(
+pub fn select_batch_error<'a>(
     token: Option<&AnalysisCancellationToken>,
     errors: impl IntoIterator<Item = &'a WorkerError>,
 ) -> Option<String> {
@@ -314,19 +320,19 @@ impl Drop for ContextGuard {
     }
 }
 
-pub(crate) fn with_token<T>(token: &AnalysisCancellationToken, work: impl FnOnce() -> T) -> T {
+pub fn with_token<T>(token: &AnalysisCancellationToken, work: impl FnOnce() -> T) -> T {
     with_optional_token(Some(token), work)
 }
 
 /// Capture the owning request before dispatching work to a different thread.
-pub(crate) fn current_token() -> Option<AnalysisCancellationToken> {
+pub fn current_token() -> Option<AnalysisCancellationToken> {
     CURRENT_TOKEN.with(|slot| slot.borrow().clone())
 }
 
 /// Whether the current captured attempt owns Unix child process groups.
 /// Ordinary CLI, library and LSP tokens preserve caller process configuration.
 #[cfg(unix)]
-pub(crate) fn owns_process_groups() -> bool {
+pub fn owns_process_groups() -> bool {
     CURRENT_TOKEN.with(|slot| {
         slot.borrow()
             .as_ref()
@@ -336,7 +342,7 @@ pub(crate) fn owns_process_groups() -> bool {
 
 /// Install exactly the captured context, including no token. Restoring the
 /// previous context prevents cancellation leaking between reused pool jobs.
-pub(crate) fn with_optional_token<T>(
+pub fn with_optional_token<T>(
     token: Option<&AnalysisCancellationToken>,
     work: impl FnOnce() -> T,
 ) -> T {
@@ -345,7 +351,7 @@ pub(crate) fn with_optional_token<T>(
     work()
 }
 
-pub(crate) fn cli_interrupted() -> bool {
+pub fn cli_interrupted() -> bool {
     current_token().is_some_and(|token| {
         token
             .0
@@ -355,9 +361,57 @@ pub(crate) fn cli_interrupted() -> bool {
     })
 }
 
+/// How long a producer's death by SIGINT waits for this process's own
+/// cooperative interrupt flag. A terminal Ctrl-C signals the whole process
+/// group; the producer can be reaped before this process has run its handler.
+const SIGINT_FLAG_GRACE: Duration = Duration::from_secs(1);
+
+/// Whether a producer that just exited was stopped by an interrupt of this
+/// CLI run (#12935). Death by SIGINT (or exit 130) under a token that owns an
+/// interrupt flag is decided from that flag, not from which process observed
+/// the group signal first: the flag is awaited for a bounded grace so an
+/// interrupt reads as cancellation, never as an exporter failure. A SIGINT
+/// death with no interrupt flag, or whose flag never arrives, stays an
+/// ordinary producer failure. MCP/LSP `with_server_interrupt` tokens also
+/// carry the flag and get the same bounded wait.
+pub fn cli_interrupted_after_exit(status: &std::process::ExitStatus) -> bool {
+    cli_interrupted_after_exit_within(status, SIGINT_FLAG_GRACE)
+}
+
+fn cli_interrupted_after_exit_within(status: &std::process::ExitStatus, grace: Duration) -> bool {
+    if cli_interrupted() {
+        return true;
+    }
+    if !exited_by_sigint(status) {
+        return false;
+    }
+    let Some(token) = current_token() else {
+        return false;
+    };
+    let Some(flag) = token.0.interrupted.as_ref() else {
+        return false;
+    };
+    let deadline = Instant::now() + grace;
+    while !flag.load(Ordering::SeqCst) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    flag.load(Ordering::SeqCst)
+}
+
+#[cfg(unix)]
+fn exited_by_sigint(status: &std::process::ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal() == Some(2) || status.code() == Some(130)
+}
+
+#[cfg(not(unix))]
+fn exited_by_sigint(_status: &std::process::ExitStatus) -> bool {
+    false
+}
+
 /// Hand standalone stdout publication to native interruption. Ordinary
 /// library/budget tokens retain their existing checkpoint semantics.
-pub(crate) fn begin_cli_publication() -> Result<(), String> {
+pub fn begin_cli_publication() -> Result<(), String> {
     if let Some(token) = current_token()
         && let Some(native) = &token.0.native_publication
     {
@@ -370,13 +424,13 @@ pub(crate) fn begin_cli_publication() -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn checkpoint() -> Result<(), String> {
+pub fn checkpoint() -> Result<(), String> {
     checkpoint_typed().map_err(|error| error.to_string())
 }
 
 /// [`checkpoint`] for callers that carry [`crate::core_error::CoreError`]:
 /// the abort stays typed instead of becoming rendered text.
-pub(crate) fn checkpoint_typed() -> Result<(), AnalysisCancellation> {
+pub fn checkpoint_typed() -> Result<(), AnalysisCancellation> {
     CURRENT_TOKEN.with(|slot| {
         slot.borrow()
             .as_ref()
@@ -384,7 +438,7 @@ pub(crate) fn checkpoint_typed() -> Result<(), AnalysisCancellation> {
     })
 }
 
-pub(crate) fn remaining_budget() -> Option<Duration> {
+pub fn remaining_budget() -> Option<Duration> {
     CURRENT_TOKEN.with(|slot| {
         slot.borrow()
             .as_ref()
@@ -394,15 +448,15 @@ pub(crate) fn remaining_budget() -> Option<Duration> {
 
 /// Pure query for the active token's recorded abort. Unlike [`checkpoint`],
 /// this never expires a budget or writes a deadline reason.
-pub(crate) fn current_abort_kind() -> Option<AnalysisAbortKind> {
+pub fn current_abort_kind() -> Option<AnalysisAbortKind> {
     CURRENT_TOKEN.with(|slot| slot.borrow().as_ref().and_then(|token| token.abort_kind()))
 }
 
 /// Rendered-wording assertion for tests only (#4860). Production decides
 /// cancellation from [`AnalysisCancellationToken::observed_abort`] or
 /// [`crate::core_error::CoreError::is_analysis_cancelled`], never from text.
-#[cfg(test)]
-pub(crate) fn is_cancellation_error(error: &str) -> bool {
+#[cfg(any(test, feature = "test-fixtures"))]
+pub fn is_cancellation_error(error: &str) -> bool {
     error.starts_with("analysis cancelled:")
 }
 
@@ -410,6 +464,55 @@ pub(crate) fn is_cancellation_error(error: &str) -> bool {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[cfg(unix)]
+    #[test]
+    fn producer_sigint_death_is_cancellation_once_the_cli_flag_arrives() -> Result<(), String> {
+        let status = std::process::Command::new("sh")
+            .args(["-c", "kill -INT $$"])
+            .status()
+            .map_err(|e| e.to_string())?;
+        assert!(
+            exited_by_sigint(&status),
+            "fixture must die by SIGINT: {status:?}"
+        );
+        let flag = Arc::new(AtomicBool::new(false));
+        let token = AnalysisCancellationToken::with_interrupt_flags(
+            flag.clone(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        // The flag lands after the producer's exit is already observed.
+        let late = std::thread::spawn({
+            let flag = flag.clone();
+            move || {
+                std::thread::sleep(Duration::from_millis(50));
+                flag.store(true, Ordering::SeqCst);
+            }
+        });
+        let interrupted = with_token(&token, || cli_interrupted_after_exit(&status));
+        late.join()
+            .map_err(|_panic| "flag thread failed".to_string())?;
+        assert!(
+            interrupted,
+            "SIGINT death with a late CLI flag is an interrupt"
+        );
+
+        // Negative: no flag ever arrives, so it stays a producer failure.
+        let silent = AnalysisCancellationToken::with_interrupt_flags(
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let failed = with_token(&silent, || {
+            cli_interrupted_after_exit_within(&status, Duration::from_millis(20))
+        });
+        assert!(!failed, "an unannounced SIGINT death must stay a failure");
+        // Negative: an ordinary token owns no flag to await.
+        let ordinary = AnalysisCancellationToken::new();
+        assert!(!with_token(&ordinary, || cli_interrupted_after_exit(
+            &status
+        )));
+        Ok(())
+    }
 
     #[cfg(unix)]
     #[test]

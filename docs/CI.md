@@ -1778,7 +1778,7 @@ persisted credentials) builds ripr from the PR's base commit, so the pull reques
 cannot change the analyzer that judges it, and runs
 `ripr check --committed --mode draft --format agent` on the head checkout as data.
 The `comment` job holds the only write token, checks out nothing and posts the
-uploaded report as text. Nothing here is a required check or a gate; fork pull
+uploaded report as text; when ripr refuses (for example an oversized diff) the comment shows the refusal code and, for size refusals, its numbers (never raw diagnostics, which only go to the job log with workflow commands disabled). Nothing here is a required check or a gate; fork pull
 requests are skipped. The generated adopter workflow above remains the product
 route; this one is lean because `ripr review-comments` and the full CI packet
 exceed their workspace-size ceilings on this repository (tracked in #12940).
