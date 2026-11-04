@@ -1767,7 +1767,7 @@ mod tests {
     }
 
     #[test]
-    fn pilot_extension_notice_fires_at_first_phase_boundary() {
+    fn pilot_extension_notice_fires_at_first_phase_boundary() -> Result<(), String> {
         // Negative control for a single long recv through the whole budget:
         // the extension callback must fire at the first-phase boundary, not
         // only after the combined budget elapses (#5322).
@@ -1789,22 +1789,20 @@ mod tests {
             },
         );
         assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
-        match notice_at.get() {
-            Some(notice) => {
-                assert!(
-                    notice <= Duration::from_millis(FIRST_MS + 20),
-                    "extension notice must fire at the first-phase boundary, not after the whole budget; got {notice:?}"
-                );
-                assert!(
-                    notice >= Duration::from_millis(FIRST_MS.saturating_sub(20)),
-                    "extension notice fired too early: {notice:?}"
-                );
-            }
-            None => assert!(
-                false,
-                "default-plus-extension run must emit the extension notice"
-            ),
-        }
+        let notice = notice_at
+            .get()
+            .ok_or_else(|| {
+                "default-plus-extension run must emit the extension notice".to_string()
+            })?;
+        assert!(
+            notice <= Duration::from_millis(FIRST_MS + 20),
+            "extension notice must fire at the first-phase boundary, not after the whole budget; got {notice:?}"
+        );
+        assert!(
+            notice >= Duration::from_millis(FIRST_MS.saturating_sub(20)),
+            "extension notice fired too early: {notice:?}"
+        );
+        Ok(())
     }
 
     #[test]
