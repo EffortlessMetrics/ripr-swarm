@@ -6,10 +6,16 @@ argument-hint: [repository-root]
 Verify the RIPR integration in this session, step by step. Do not write
 any configuration files and do not work around a failed step.
 
-1. Confirm the binary: run `ripr --version`. If `ripr` is not on PATH,
-   stop and tell the user to install RIPR first (for example
-   `cargo install ripr` or their pinned internal build). The plugin
-   declares only the MCP server; it never downloads a binary.
+1. Confirm the binary: run `ripr --version` and report it verbatim. If
+   `ripr` is not on PATH, stop and tell the user to install RIPR first
+   (for example `cargo install ripr` or their pinned internal build).
+   The plugin declares only the MCP server; it never downloads a binary.
+   The binary must expose the MCP server: released `ripr 0.10.0` does
+   not (`ripr mcp --stdio` exits 2 with `unknown command "mcp"` and no
+   `ripr_*` tools ever register). If tool discovery in step 2 finds no
+   `ripr_*` tools and the version is 0.10.x, report exactly that: the
+   installed binary predates the MCP server; a current (0.11+) build is
+   required. Do not work around it with a hand-written MCP entry.
 2. Confirm tool discovery: list the tools the `ripr` MCP server exposes.
    Expect `ripr_workspace_status`, `ripr_refresh`, `ripr_list_gaps`,
    `ripr_get_gap`, `ripr_get_top_limitation`, `ripr_prepare_repair`,

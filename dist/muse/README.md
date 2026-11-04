@@ -16,8 +16,10 @@ interfaces. It adds no analyzer and no repair engine:
 
 ## Prerequisite
 
-The `ripr` binary must be on `PATH` (`cargo install ripr`, or a pinned
-internal build). The plugin never downloads or installs it.
+The `ripr` binary must be on `PATH` and must expose the MCP server
+(current 0.11+ builds; released `0.10.0` has no `mcp` command and cannot
+serve this plugin). The plugin never downloads or installs it;
+`/ripr-setup` diagnoses the version floor explicitly.
 
 ## Evaluation
 

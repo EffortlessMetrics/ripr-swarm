@@ -20,6 +20,12 @@ executes verification. `ripr_prepare_repair` creates only an in-memory
 transaction and authorizes nothing. All edits and test executions are
 yours, in the open, through the normal file and shell tools.
 
+Prerequisite: an MCP-capable `ripr` binary. Released `ripr 0.10.0` has
+no `mcp` command (it exits 2, `unknown command "mcp"`), so its server
+never starts and no `ripr_*` tools register. If discovery shows no
+`ripr_*` tools, check `ripr --version` and report the version floor
+instead of proceeding without evidence.
+
 ## Workflow
 
 1. Orient with `ripr_workspace_status`. Record the repository root, the
