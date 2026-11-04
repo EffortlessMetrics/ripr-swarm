@@ -1,2 +1,3 @@
-scope = "excluded"
+id = "RIPR-SPEC-0421"
+scope = "out"
 reason = "Cross-language edge registry loading/currentness is provider-contract law with no runtime-mutant truth for a verdict corpus case; covered by registry unit tests and fixtures/cross-language-edge-registry-currentness-corpus"
