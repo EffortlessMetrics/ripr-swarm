@@ -4,7 +4,7 @@
 //! allocator RSS or hard elapsed-time guarantees. Cancellation is cooperative.
 use super::super::seam_cache::CacheStoreStatus;
 use super::*;
-use std::io::Write;
+use std::io::{Read, Write};
 
 #[derive(Clone, Copy)]
 struct Limits {
@@ -41,15 +41,20 @@ struct Retention {
     window_bytes: usize,
 }
 
-pub(super) fn publish(
+pub(super) struct Failure {
+    pub(super) message: String,
+    pub(super) inputs_changed: bool,
+}
+
+pub(super) fn publish<'index>(
     state: &OwnedWorkspaceState,
     key: &RepoSeamCacheKey,
     files: &[PathBuf],
-    index: &RustIndex,
-    pass: &test_grip_evidence::EvidencePass<'_>,
+    index: &'index RustIndex,
+    pass: &test_grip_evidence::EvidencePass<'index>,
     total: usize,
     fallback: &[PathBuf],
-) -> Result<CacheStoreStatus, String> {
+) -> Result<CacheStoreStatus, Failure> {
     let mut session = Session {
         state,
         key,
@@ -60,6 +65,7 @@ pub(super) fn publish(
         fallback,
         limits: LIMITS,
         retention: Retention::default(),
+        inputs_changed: std::cell::Cell::new(false),
     };
     let result = session.run();
     pass.clear_window_memos();
@@ -74,7 +80,10 @@ pub(super) fn publish(
         ),
         Duration::ZERO,
     );
-    result
+    result.map_err(|message| Failure {
+        message,
+        inputs_changed: session.inputs_changed.get(),
+    })
 }
 
 struct Session<'a, 'index> {
@@ -87,6 +96,7 @@ struct Session<'a, 'index> {
     fallback: &'a [PathBuf],
     limits: Limits,
     retention: Retention,
+    inputs_changed: std::cell::Cell<bool>,
 }
 
 fn skipped(label: &str) -> CacheStoreStatus {
@@ -132,7 +142,7 @@ impl Session<'_, '_> {
             }
         }
         for file in self.files {
-            if !self.index.files().contains_key(file) {
+            if self.index.files().get(file).is_none() {
                 return Err(format!(
                     "compact prefill index is missing {}",
                     file.display()
@@ -143,11 +153,34 @@ impl Session<'_, '_> {
     }
 
     fn verify_inputs(&self) -> Result<(), String> {
-        self.state.verify_corpus_unchanged()?;
+        self.inputs_changed.set(true);
+        // Inputs may grow after admission. Bound the reread itself, rather
+        // than allocating the moved file and only then noticing the change.
+        let mut hash = FilesContentHashBuilder::new();
+        for path in &self.state.files {
+            cancellation::checkpoint()?;
+            let file =
+                std::fs::File::open(self.state.workspace_root.join(path)).map_err(|error| {
+                    format!("read compact prefill source {}: {error}", path.display())
+                })?;
+            let mut bytes = Vec::new();
+            file.take(self.limits.file_source_bytes.saturating_add(1) as u64)
+                .read_to_end(&mut bytes)
+                .map_err(|error| error.to_string())?;
+            if bytes.len() > self.limits.file_source_bytes {
+                return Err("compact prefill source grew beyond its admitted byte limit".into());
+            }
+            hash.push(path, &bytes);
+        }
+        if hash.finish() != self.state.files_content_hash {
+            return Err("workspace Rust sources changed during compact prefill".into());
+        }
         if self.state.cache_key() != *self.key {
             return Err("workspace cache inputs changed during compact prefill".into());
         }
-        cancellation::checkpoint()
+        cancellation::checkpoint()?;
+        self.inputs_changed.set(false);
+        Ok(())
     }
 
     fn run(&mut self) -> Result<CacheStoreStatus, String> {
@@ -161,6 +194,13 @@ impl Session<'_, '_> {
             return Err("compact prefill fallback provenance does not match the index".into());
         }
         self.verify_inputs()?;
+        let window_limit = self
+            .limits
+            .window
+            .min(compact_classified_seam_cache_store_limit()?);
+        if window_limit == 0 || self.total.div_ceil(window_limit) > 16_384 {
+            return Ok(skipped("skipped_compact_prefill_window_limit"));
+        }
         let mut files: Vec<_> = self.files.iter().collect();
         files.sort_unstable();
         files.dedup();
@@ -172,7 +212,7 @@ impl Session<'_, '_> {
             self.key,
             self.total,
             self.fallback,
-            self.limits.window,
+            window_limit,
             |requested| {
                 self.pass.clear_window_memos();
                 let mut window = Vec::with_capacity(requested);

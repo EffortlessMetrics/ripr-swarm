@@ -603,9 +603,20 @@ fn inventory_classified_seams_report_collect(
                 }));
                 let status = match attempt {
                     Ok(Ok(status)) => status.label,
-                    Ok(Err(reason)) => {
+                    Ok(Err(failure)) => {
                         cancellation::checkpoint()?;
-                        cache_store_status_label(&reason)
+                        if failure.inputs_changed {
+                            return Err(failure.message);
+                        }
+                        let label = cache_store_status_label(&failure.message);
+                        family_store_failures.record_store_failure(
+                            PathBuf::from("repo-compact-classified-seams"),
+                            FileFactStoreError {
+                                stage: FileFactStoreStage::ClassifiedSeamStore,
+                                message: failure.message,
+                            },
+                        );
+                        label
                     }
                     Err(_) => "skipped_compact_prefill_panic".to_string(),
                 };
@@ -1146,12 +1157,12 @@ fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
     production_files: &[PathBuf],
-    publish: impl FnOnce(
+    publish: impl for<'index> FnOnce(
         &[ClassifiedSeam],
         Option<&SeamLimitInfo>,
         &[PathBuf],
-        &RustIndex,
-        &test_grip_evidence::EvidencePass<'_>,
+        &'index RustIndex,
+        &test_grip_evidence::EvidencePass<'index>,
         usize,
     ) -> Result<(), String>,
 ) -> Result<ClassifiedSeamInventory, String> {

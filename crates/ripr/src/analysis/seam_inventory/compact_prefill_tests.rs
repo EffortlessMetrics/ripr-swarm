@@ -99,6 +99,7 @@ fn compact_windows_admission_and_payload_limits_preserve_prior_generation() -> R
         fallback: &fallback,
         limits: LIMITS,
         retention: Retention::default(),
+        inputs_changed: std::cell::Cell::new(false),
     };
     for limits in [
         Limits { files: 0, ..LIMITS },
@@ -198,6 +199,7 @@ fn compact_windows_moved_inputs_and_wrong_total_refuse_without_replacing_cache()
         fallback: &fallback,
         limits: LIMITS,
         retention: Retention::default(),
+        inputs_changed: std::cell::Cell::new(false),
     };
     assert!(
         session.run().is_err(),
