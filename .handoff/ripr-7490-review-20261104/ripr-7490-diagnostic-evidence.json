@@ -1,0 +1,148 @@
+{
+  "observed_at_utc": "2026-11-04T23:53:59.868042+00:00",
+  "diagnostic_tree": "5630551db4dded7ccfb0d65a379fef0a20e9628d",
+  "diagnostic_test_executable_sha256": "2e739b3a0d9384c86eea16e19e95d34c4b122d11d7bdd6446908ded2aba3ca8a",
+  "test_results": {
+    "repair_hover": {
+      "native_exit": 0,
+      "passed_failed_ignored": [
+        1,
+        0,
+        0
+      ],
+      "tree": "5630551db4dded7ccfb0d65a379fef0a20e9628d"
+    },
+    "repair_cache_commands": {
+      "native_exit": 0,
+      "passed_failed_ignored": [
+        30,
+        0,
+        0
+      ],
+      "tree": "5630551db4dded7ccfb0d65a379fef0a20e9628d"
+    },
+    "repair_export_controls": {
+      "native_exit": 0,
+      "passed_failed_ignored": [
+        8,
+        0,
+        0
+      ],
+      "tree": "5630551db4dded7ccfb0d65a379fef0a20e9628d"
+    },
+    "repair_framed_pair": {
+      "native_exit": 101,
+      "passed_failed_ignored": [
+        0,
+        1,
+        0
+      ],
+      "tree": "5630551db4dded7ccfb0d65a379fef0a20e9628d"
+    },
+    "repair_reload_diagnostic": {
+      "native_exit": 101,
+      "passed_failed_ignored": [
+        0,
+        1,
+        0
+      ],
+      "tree": "5630551db4dded7ccfb0d65a379fef0a20e9628d"
+    },
+    "repair_failed_retry_wire": {
+      "native_exit": 0,
+      "passed_failed_ignored": [
+        1,
+        0,
+        0
+      ],
+      "tree": "5630551db4dded7ccfb0d65a379fef0a20e9628d"
+    },
+    "repair_uncovered_retry_wire": {
+      "native_exit": 0,
+      "passed_failed_ignored": [
+        1,
+        0,
+        0
+      ],
+      "tree": "5630551db4dded7ccfb0d65a379fef0a20e9628d"
+    },
+    "repair_cancel_retry_control": {
+      "native_exit": 0,
+      "passed_failed_ignored": [
+        1,
+        0,
+        0
+      ],
+      "tree": "5630551db4dded7ccfb0d65a379fef0a20e9628d"
+    },
+    "original_fixture_prepared": {
+      "native_exit": 0,
+      "passed_failed_ignored": [
+        1,
+        0,
+        0
+      ],
+      "tree": "3ae02947cca2e2e9aaa8fec47936463dcc63dc4a"
+    }
+  },
+  "reload_observations": [
+    {
+      "analyzed_digest": null,
+      "dedup_recorded": false,
+      "label": "reload_after_open",
+      "revision": 1,
+      "saved_digest": "b1c70efc22b57bd9173b13fe5bfbbe5ba2ee00a34f13ab5f0fdf4ecaf9aba339",
+      "attempt_id": 2,
+      "attempt_state": "Failed",
+      "failure_kind": "BaseUnresolvable"
+    },
+    {
+      "analyzed_digest": "b1c70efc22b57bd9173b13fe5bfbbe5ba2ee00a34f13ab5f0fdf4ecaf9aba339",
+      "dedup_recorded": false,
+      "label": "reload_after_baseline",
+      "revision": 1,
+      "saved_digest": "b1c70efc22b57bd9173b13fe5bfbbe5ba2ee00a34f13ab5f0fdf4ecaf9aba339",
+      "attempt_id": 2,
+      "attempt_state": "Failed",
+      "failure_kind": "BaseUnresolvable"
+    },
+    {
+      "analyzed_digest": "b1c70efc22b57bd9173b13fe5bfbbe5ba2ee00a34f13ab5f0fdf4ecaf9aba339",
+      "dedup_recorded": false,
+      "label": "reload_observed_revision",
+      "revision": 2,
+      "saved_digest": "86790623c2c0274d10c54e2457c116d12a28a5d2816e61eb38cb4dac200c9801",
+      "attempt_id": 3,
+      "attempt_state": "Failed",
+      "failure_kind": "BaseUnresolvable"
+    },
+    {
+      "analyzed_digest": "b1c70efc22b57bd9173b13fe5bfbbe5ba2ee00a34f13ab5f0fdf4ecaf9aba339",
+      "dedup_recorded": false,
+      "label": "reload_observed_revision",
+      "revision": 3,
+      "saved_digest": "86790623c2c0274d10c54e2457c116d12a28a5d2816e61eb38cb4dac200c9801",
+      "attempt_id": 4,
+      "attempt_state": "Failed",
+      "failure_kind": "BaseUnresolvable"
+    }
+  ],
+  "hover_opening_outcome": {
+    "all_four_cases": "Failed",
+    "kind": "BaseUnresolvable",
+    "cause": "No default base ref available; explicitly pin each test health state."
+  },
+  "framed_draft_failure": {
+    "rpc": "ripr/listActionableItems",
+    "code": -32601,
+    "message": "Method not found",
+    "cause": "The framed test used LspService::new rather than the production build_service registration. Coherent repair uses the existing production constructor; not yet executed."
+  },
+  "export_files_confirmed": [
+    "full classified entry",
+    "compact manifest",
+    "compact referenced shard",
+    "current file-fact entry"
+  ],
+  "environment_limit": "Seven ancestry controls require a writable marker-free absolute ancestry unavailable in the permitted executor roots. No markers, permissions, or protected settings were altered."
+}

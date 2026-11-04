@@ -1,0 +1,39 @@
+{
+  "purpose": "Review handoff, not release qualification or merge clearance",
+  "created_at_utc": "2026-11-04T23:53:59.868567+00:00",
+  "base_commit": "90cd49ff051aafdb7ac16b4f5eb2087ab80530fd",
+  "base_tree": "3ae02947cca2e2e9aaa8fec47936463dcc63dc4a",
+  "patches": {
+    "ripr-7490-diagnostic-5630551d.patch": {
+      "bytes": 19429,
+      "sha256": "77aef74bac548f3acef774774639c503adbcece4d2d75fd39e40a2734a2c7282",
+      "result_tree": "5630551db4dded7ccfb0d65a379fef0a20e9628d",
+      "base_tree": "3ae02947cca2e2e9aaa8fec47936463dcc63dc4a"
+    },
+    "ripr-7490-coherent-6e202cb1.patch": {
+      "bytes": 31752,
+      "sha256": "3dcd16a50612eb9bec3b9f26a3aeb3ca933636bdaa3575502762172a50b77be2",
+      "result_tree": "6e202cb1b3d984d70de8e41d3fce29462ce4b3f2",
+      "base_tree": "3ae02947cca2e2e9aaa8fec47936463dcc63dc4a"
+    }
+  },
+  "apply": "Reconstruct the existing combined base tree first, then apply either patch separately with git apply --index. Require git write-tree to match its result_tree. Do not apply the two alternate snapshots on top of each other.",
+  "states": {
+    "diagnostic": "Temporary test-only health/digest observers; scoped results retained in evidence JSON.",
+    "coherent": "Removed diagnostic observers, fixed test-service registration through production constructor, made covered reload fixture healthy with explicit HEAD, retained save retry and added reload retry control. Formatted; guarded compilation currently active; not yet executed.",
+    "goldens": "Not updated yet. Use actual LSP producer with explicit RIPR_UPDATE_FIXTURES=1 and inspect semantic drift after paired control passes."
+  },
+  "qualification": {
+    "toolchain": "Rust 1.95.0",
+    "features": "default: lang-rust, lang-python, lang-typescript",
+    "build_jobs": 1,
+    "incremental": 0,
+    "dev_debug": 0,
+    "test_debug": 0,
+    "test_threads": 1,
+    "memory_stop_bytes": 16000000000,
+    "disk_reserve_bytes": 5368709120,
+    "full_original_lib": "17953 passed;15 failed;1 ignored; native101. Prepared anyhow1.0.100 fixture test subsequently passed on original executable."
+  },
+  "evidence_file": "ripr-7490-diagnostic-evidence.json"
+}

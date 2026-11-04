@@ -1,0 +1,694 @@
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index ae7aaea556c62ecd3da84c99ede5411fdec8a960..4a39b4c991de6160a16af60aa011562d4115321c 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -11397,6 +11397,8 @@ id = "RIPR-SPEC-0124"
+ name = "LSP diagnostic delivery stability"
+ spec = "docs/specs/RIPR-SPEC-0124-lsp-diagnostic-delivery-stability.md"
+ tests = [
++  "crates/ripr/src/lsp/tests.rs::external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save",
++  "crates/ripr/src/lsp/tests.rs::did_change_retries_reloaded_content_after_a_failed_refresh_over_the_wire",
+   "crates/ripr/src/lsp/tests.rs::diagnostic_refresh_plan_clears_stale_previous_uris",
+   "crates/ripr/src/lsp/tests.rs::diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri",
+   "crates/ripr/src/lsp/diagnostics.rs::delivery_tests::canonicalization_sorts_by_stable_diagnostic_id",
+@@ -14065,6 +14067,7 @@ id = "RIPR-SPEC-0186"
+ name = "Same-test pairing for boundary-class probes"
+ spec = "docs/specs/RIPR-SPEC-0186-same-test-boundary-oracle-pairing.md"
+ tests = [
++  "crates/ripr/src/lsp/tests.rs::framed_lsp_protocol_smoke_logs_successful_refresh_completion",
+   "crates/ripr/src/analysis/classify/activation.rs::tests::a_constant_row_table_feeds_one_input_row_per_table_row",
+   "crates/ripr/tests/owner_pin_execution.rs::constant_row_table_pairs_each_row_with_its_boundary_input",
+   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::split_tests_do_not_pair",
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index d23e48d4bee85b41d2f9a496c029f25806a6e768..0f319ad4fd1d5f1298dbc2a5b9ce0808c7a3463e 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -1326,6 +1326,8 @@ mod semantic_identity_tests;
+ mod store;
+ pub(crate) use export::export_current;
+ #[cfg(test)]
++pub(crate) use export::verify_current_export_for_test;
++#[cfg(test)]
+ pub(crate) use scoped_inventory::SCOPED_INVENTORY_CACHE_SCHEMA_VERSION;
+ pub(crate) use scoped_inventory::{
+     PersistedScopedInventory, PersistedSeamLimit, RepoScopedInventoryCache,
+diff --git a/crates/ripr/src/analysis/seam_cache/export.rs b/crates/ripr/src/analysis/seam_cache/export.rs
+index 500572190f03858a623590e8e7ab30e024c0ff5a..7307152ac7dac115f45ff2577288caf015760a4c 100644
+--- a/crates/ripr/src/analysis/seam_cache/export.rs
++++ b/crates/ripr/src/analysis/seam_cache/export.rs
+@@ -21,6 +21,113 @@ pub(crate) struct CacheExportReport {
+     pub(crate) logical_file_bytes: u64,
+ }
+ 
++/// Test the exported snapshot against the current logical keys and the exact
++/// files named by their selected representations, including referenced shards.
++#[cfg(test)]
++pub(crate) fn verify_current_export_for_test(root: &Path, output: &Path) -> Result<(), String> {
++    use std::collections::BTreeSet;
++
++    fn walk(root: &Path, dir: &Path, found: &mut BTreeSet<PathBuf>) -> Result<(), String> {
++        for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
++            let entry = entry.map_err(|error| error.to_string())?;
++            let path = entry.path();
++            let kind = entry.file_type().map_err(|error| error.to_string())?;
++            if kind.is_dir() {
++                walk(root, &path, found)?;
++            } else if kind.is_file() {
++                found.insert(
++                    path.strip_prefix(root)
++                        .map_err(|error| error.to_string())?
++                        .to_path_buf(),
++                );
++            } else {
++                return Err(format!(
++                    "unexpected non-file in snapshot: {}",
++                    path.display()
++                ));
++            }
++        }
++        Ok(())
++    }
++
++    let source = cache_base_dir(root);
++    let (key, files) = current_cache_keys_at(root, &load_for_root(root)?)?;
++    let mut expected = BTreeSet::new();
++    for cache in [
++        RepoSeamFactCache::at(root),
++        RepoSeamFactCache::at_compact_classified(root),
++    ] {
++        let copied = RepoSeamFactCache::rooted_at(
++            relocated(&cache.dir, &source, output)?,
++            relocated(&cache.sharded_dir, &source, output)?,
++            output.to_path_buf(),
++        );
++        assert!(
++            matches!(
++                copied.load_classified_seams_with_fallback(&key),
++                CacheLoad::Hit(_)
++            ),
++            "current classified family must load"
++        );
++        let single = copied.entry_path(&key);
++        if single.is_file() {
++            expected.insert(
++                single
++                    .strip_prefix(output)
++                    .map_err(|error| error.to_string())?
++                    .to_path_buf(),
++            );
++        } else {
++            let path = copied.sharded_manifest_path(&key);
++            let manifest = codec::decode_sharded_manifest(
++                &fs::read(&path).map_err(|error| error.to_string())?,
++            )?;
++            assert!(manifest.matches_key(&key));
++            manifest.validate_integrity()?;
++            for shard in &manifest.shards {
++                let path =
++                    resolve_sharded_cache_file(&copied.sharded_entry_dir(&key), &shard.file)?;
++                expected.insert(
++                    path.strip_prefix(output)
++                        .map_err(|error| error.to_string())?
++                        .to_path_buf(),
++                );
++            }
++            expected.insert(
++                path.strip_prefix(output)
++                    .map_err(|error| error.to_string())?
++                    .to_path_buf(),
++            );
++        }
++    }
++    let source_facts = RepoFileFactCache::at(root);
++    let copied_facts = RepoFileFactCache {
++        dir: relocated(&source_facts.dir, &source, output)?,
++        base: output.to_path_buf(),
++        unusable_base_reason: std::sync::OnceLock::new(),
++    };
++    assert_eq!(files.len(), 1, "fixture must contain one current Rust file");
++    for file in &files {
++        assert!(
++            matches!(copied_facts.load_file_facts(file), CacheLoad::Hit(_)),
++            "current file fact must load"
++        );
++        let path = copied_facts.entry_path(file);
++        expected.insert(
++            path.strip_prefix(output)
++                .map_err(|error| error.to_string())?
++                .to_path_buf(),
++        );
++    }
++    let mut found = BTreeSet::new();
++    walk(output, output, &mut found)?;
++    assert_eq!(
++        found, expected,
++        "snapshot must contain exactly current representations and referenced shards"
++    );
++    Ok(())
++}
++
+ /// Refuse aliases before reading or writing. This is a cooperative-filesystem
+ /// guard, not protection against a hostile concurrent directory replacement.
+ fn refuse_links(path: &Path) -> Result<(), String> {
+diff --git a/crates/ripr/src/cli/commands/cache.rs b/crates/ripr/src/cli/commands/cache.rs
+index 0a3323378d6d68bfc2b4507226d017e1492bc0e0..5e4b55d7664f624f49c64d8b39c1f3ff01d648fb 100644
+--- a/crates/ripr/src/cli/commands/cache.rs
++++ b/crates/ripr/src/cli/commands/cache.rs
+@@ -905,11 +905,7 @@ mod tests {
+                 "--out".to_owned(),
+                 output.to_string_lossy().into_owned(),
+             ])?;
+-            let exported = crate::analysis::seam_cache::inspect_cache_root(&output);
+-            assert_eq!(
+-                exported.entry_count, 2,
+-                "one current classified entry and one current file fact, independent of history"
+-            );
++            crate::analysis::seam_cache::verify_current_export_for_test(&root, &output)?;
+             let source_after = crate::analysis::seam_cache::inspect_cache_root(&source_cache);
+             assert_eq!(source_before.entry_count, source_after.entry_count);
+             assert_eq!(
+@@ -957,10 +953,7 @@ mod tests {
+             refused_output.to_string_lossy().into_owned(),
+         ])?;
+         assert_eq!(source_bytes, cache_contents(&source_cache)?);
+-        assert_eq!(
+-            crate::analysis::seam_cache::inspect_cache_root(&refused_output).entry_count,
+-            2
+-        );
++        crate::analysis::seam_cache::verify_current_export_for_test(&root, &refused_output)?;
+         let overlap = source_cache.join("nested-export");
+         assert!(
+             run(&[
+@@ -1006,10 +999,7 @@ mod tests {
+             "--out".to_owned(),
+             output.to_string_lossy().into_owned(),
+         ])?;
+-        assert_eq!(
+-            crate::analysis::seam_cache::inspect_cache_root(&output).entry_count,
+-            2
+-        );
++        crate::analysis::seam_cache::verify_current_export_for_test(&relative, &output)?;
+         fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+         Ok(())
+     }
+diff --git a/crates/ripr/src/lsp/tests.rs b/crates/ripr/src/lsp/tests.rs
+index c84d01fbc9619608c1d679043b83d019ef82db7c..57b39e8d5dcda4a294054eac3f7d1bf8753e8a4d 100644
+--- a/crates/ripr/src/lsp/tests.rs
++++ b/crates/ripr/src/lsp/tests.rs
+@@ -1591,7 +1591,7 @@ fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(),
+         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+         let (client_read, mut client_write) = tokio::io::split(client_io);
+         let (server_read, server_write) = tokio::io::split(server_io);
+-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
++        let (service, socket) = build_service(PathBuf::from("."), super::transport_bounds::CLIENT_REQUEST_TIMEOUT);
+         let mut server_task = tokio::spawn(async move {
+             Server::new(server_read, server_write, socket)
+                 .serve(service)
+@@ -1772,8 +1772,11 @@ fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(),
+         assert_eq!(context_packet["result"]["seam_id"], seam_id);
+         assert_eq!(
+             context_packet["result"]["evidence_path"]["discriminate"],
+-            "present"
++            "weak"
+         );
++        assert!(context_packet["result"]["evidence_summaries"]["discriminate"]
++            .as_str()
++            .is_some_and(|summary| summary.contains("same_test_pairing_missing")));
+         assert_eq!(
+             context_packet["result"]["missing_discriminator"],
+             "discount_threshold (equality boundary)"
+@@ -1820,6 +1823,43 @@ fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(),
+             "Static evidence only; no runtime mutation execution."
+         );
+ 
++
++        // Exercise a real paired boundary through the same framed connection.
++        let pricing_path = repo_root.join("tests/pricing.rs");
++        let pricing = std::fs::read_to_string(&pricing_path)
++            .map_err(|err| format!("read pricing fixture: {err}"))?;
++        std::fs::write(&pricing_path, format!("{pricing}\n#[test]\nfn equality_boundary_is_exact() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"))
++            .map_err(|err| format!("write pricing fixture: {err}"))?;
++        write_lsp_message(&mut client_write, serde_json::json!({
++            "jsonrpc": "2.0", "id": 51, "method": "workspace/executeCommand",
++            "params": {"command": REFRESH_COMMAND, "arguments": []}
++        })).await?;
++        let (refreshed, refresh_notifications) = read_lsp_response_with_notifications(&mut client_read, 51).await?;
++        assert!(refreshed.get("error").is_none(), "refresh failed: {refreshed}");
++        assert!(log_notification_messages(&refresh_notifications)
++            .iter()
++            .any(|message| message.contains("ripr analysis refresh completed in")),
++            "second refresh must complete before collecting evidence");
++        // Strong seams need not publish diagnostics. The listing provides the
++        // current snapshot identity required to retrieve their evidence.
++        write_lsp_message(&mut client_write, serde_json::json!({
++            "jsonrpc": "2.0", "id": 52, "method": "ripr/listActionableItems", "params": {}
++        })).await?;
++        let listing = read_lsp_response(&mut client_read, 52).await?;
++        let identity = listing["result"]["seam_evidence_identity"].clone();
++        assert!(!identity.is_null(), "missing fresh evidence identity: {listing}");
++        assert_ne!(identity, seam_diagnostic["data"]["evidence_identity"],
++            "the changed fixture must have fresh snapshot evidence");
++        write_lsp_message(&mut client_write, serde_json::json!({
++            "jsonrpc": "2.0", "id": 53, "method": "workspace/executeCommand",
++            "params": {"command": COLLECT_EVIDENCE_CONTEXT_COMMAND, "arguments": [{
++                "seam_id": seam_id, "evidence_identity": identity, "uri": text_uri, "line": 2
++            }]}
++        })).await?;
++        let paired = read_lsp_response(&mut client_read, 53).await?;
++        assert_eq!(paired["result"]["seam_id"], seam_id, "{paired}");
++        assert_eq!(paired["result"]["evidence_path"]["discriminate"], "present", "{paired}");
++
+         write_lsp_message(
+             &mut client_write,
+             serde_json::json!({
+@@ -9696,98 +9736,101 @@ async fn did_save_with_unchanged_content_deduplicates_without_refresh() -> Resul
+ #[test]
+ #[serial]
+ fn did_save_retries_unchanged_content_after_a_failed_refresh_over_the_wire() -> Result<(), String> {
+-    // The dedup ledger records a save digest before its refresh runs. When
+-    // that refresh fails nothing analyzed those bytes, so an identical
+-    // re-save (the natural retry once the environment recovers) must
+-    // schedule a refresh instead of being swallowed as "unchanged".
+-    work_done_progress_runtime()?.block_on(async {
+-        let root = unique_lsp_test_root("save-retry-after-failed-refresh")?;
+-        let file = root.path().join("lib.rs");
+-        std::fs::write(&file, "fn same() {}\n")
+-            .map_err(|error| format!("write fixture: {error}"))?;
+-        let uri = file_uri_for_path(&file)?;
+-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+-        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+-        let (server_read, server_write) = tokio::io::split(server_io);
+-        let backend_root = root.path().to_path_buf();
+-        let (service, socket) =
+-            LspService::new(move |client| Backend::new(client, backend_root.clone()));
+-        let server_task = tokio::spawn(async move {
+-            Server::new(server_read, server_write, socket)
+-                .serve(service)
+-                .await;
+-        });
+-        write_lsp_message(
+-            &mut client_write,
+-            serde_json::json!({
+-                "jsonrpc": "2.0",
+-                "id": 1,
+-                "method": "initialize",
+-                "params": {
+-                    "processId": null,
+-                    "rootUri": file_uri_for_path(root.path())?.as_str(),
+-                    // An unresolvable base makes every analysis attempt fail
+-                    // fast, like a transiently unusable repository.
+-                    "initializationOptions": {"baseRef": "ripr-lsp-save-retry-missing-base"},
+-                    "capabilities": {}
+-                }
+-            }),
+-        )
+-        .await?;
+-        read_lsp_response(&mut client_read, 1).await?;
+-        write_lsp_message(
+-            &mut client_write,
+-            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+-        )
+-        .await?;
+-        write_lsp_message(
+-            &mut client_write,
+-            serde_json::json!({
+-                "jsonrpc": "2.0",
+-                "method": "textDocument/didOpen",
+-                "params": {"textDocument": {
+-                    "uri": uri.as_str(), "languageId": "rust", "version": 1,
+-                    "text": "fn same() {}\n"
+-                }}
+-            }),
+-        )
+-        .await?;
+-        // Event-driven waits: block on the observable log, not a wall-clock
+-        // window, so load cannot make the witness miss the event (#10033).
+-        // A fresh session's didOpen schedules its own (failing) refresh;
+-        // settle it first so the first-save wait cannot consume it.
+-        read_logs_until(&mut client_read, |message| {
+-            message.starts_with("ripr analysis refresh failed")
+-        })
+-        .await?;
+-        let save = serde_json::json!({
+-            "jsonrpc": "2.0",
+-            "method": "textDocument/didSave",
+-            "params": {"textDocument": {"uri": uri.as_str()}, "text": "fn same() {}\n"}
+-        });
+-        write_lsp_message(&mut client_write, save.clone()).await?;
+-        read_logs_until(&mut client_read, |message| {
+-            message.starts_with("ripr analysis refresh failed")
+-        })
+-        .await?;
++    work_done_progress_runtime()?.block_on(identical_input_retries_after_failed_refresh(false))
++}
+ 
+-        write_lsp_message(&mut client_write, save).await?;
+-        let second = read_logs_until(&mut client_read, |message| {
+-            message.contains("didSave deduplicated")
+-                || message.starts_with("ripr analysis refresh queued")
+-        })
+-        .await?;
+-        if second
+-            .iter()
+-            .any(|message| message.contains("didSave deduplicated"))
+-        {
+-            return Err(format!(
+-                "re-save after a failed refresh was deduplicated: {second:?}"
+-            ));
++#[test]
++#[serial]
++fn did_change_retries_reloaded_content_after_a_failed_refresh_over_the_wire() -> Result<(), String>
++{
++    work_done_progress_runtime()?.block_on(identical_input_retries_after_failed_refresh(true))
++}
++
++async fn identical_input_retries_after_failed_refresh(reloaded_change: bool) -> Result<(), String> {
++    // Both notifications use the saved-content path. An uncovered failure
++    // must allow identical bytes to retry rather than silently deduplicate.
++    let label = if reloaded_change {
++        "reload-retry-after-failed-refresh"
++    } else {
++        "save-retry-after-failed-refresh"
++    };
++    let root = unique_lsp_test_root(label)?;
++    let file = root.path().join("lib.rs");
++    std::fs::write(&file, "fn same() {}\n").map_err(|err| format!("write fixture: {err}"))?;
++    let uri = file_uri_for_path(&file)?;
++    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
++    let (mut client_read, mut client_write) = tokio::io::split(client_io);
++    let (server_read, server_write) = tokio::io::split(server_io);
++    let backend_root = root.path().to_path_buf();
++    let (service, socket) =
++        LspService::new(move |client| Backend::new(client, backend_root.clone()));
++    let server_task = tokio::spawn(async move {
++        Server::new(server_read, server_write, socket)
++            .serve(service)
++            .await;
++    });
++    write_lsp_message(
++        &mut client_write,
++        serde_json::json!({
++            "jsonrpc": "2.0", "id": 1, "method": "initialize",
++            "params": {
++                "processId": null, "rootUri": file_uri_for_path(root.path())?.as_str(),
++                "initializationOptions": {"baseRef": "ripr-lsp-save-retry-missing-base"},
++                "capabilities": {}
++            }
++        }),
++    )
++    .await?;
++    read_lsp_response(&mut client_read, 1).await?;
++    write_lsp_message(
++        &mut client_write,
++        serde_json::json!({"jsonrpc":"2.0", "method":"initialized", "params":{}}),
++    )
++    .await?;
++    write_lsp_message(&mut client_write, serde_json::json!({
++        "jsonrpc":"2.0", "method":"textDocument/didOpen",
++        "params":{"textDocument":{"uri":uri.as_str(),"languageId":"rust","version":1,"text":"fn same() {}\n"}}
++    })).await?;
++    read_logs_until(&mut client_read, |message| {
++        message.starts_with("ripr analysis refresh failed")
++    })
++    .await?;
++    let changed = "fn same() { let changed = true; }\n";
++    if reloaded_change {
++        std::fs::write(&file, changed).map_err(|err| format!("rewrite fixture: {err}"))?;
++    }
++    let notification = |version| {
++        if reloaded_change {
++            serde_json::json!({"jsonrpc":"2.0", "method":"textDocument/didChange", "params":{
++                "textDocument":{"uri":uri.as_str(),"version":version},"contentChanges":[{"text":changed}]
++            }})
++        } else {
++            serde_json::json!({"jsonrpc":"2.0", "method":"textDocument/didSave", "params":{
++                "textDocument":{"uri":uri.as_str()},"text":"fn same() {}\n"
++            }})
+         }
+-        server_task.abort();
+-        Ok(())
++    };
++    write_lsp_message(&mut client_write, notification(2)).await?;
++    read_logs_until(&mut client_read, |message| {
++        message.starts_with("ripr analysis refresh failed")
++    })
++    .await?;
++    write_lsp_message(&mut client_write, notification(3)).await?;
++    let second = read_logs_until(&mut client_read, |message| {
++        message.contains("didSave deduplicated")
++            || message.starts_with("ripr analysis refresh queued")
+     })
++    .await?;
++    if second
++        .iter()
++        .any(|message| message.contains("didSave deduplicated"))
++    {
++        return Err(format!(
++            "identical input after a failed refresh was deduplicated (reloaded_change={reloaded_change}): {second:?}"
++        ));
++    }
++    server_task.abort();
++    Ok(())
+ }
+ 
+ async fn save_and_collect_logs<R, W>(
+@@ -16268,6 +16311,17 @@ fn assert_named_json_fixture(
+             pretty_json(&actual)
+         )
+     })?;
++    // Use the shared explicit opt-in; normal runs only compare the production output.
++    if crate::testing::rebless::fixture_rebless_enabled() {
++        std::fs::write(&path, format!("{}\n", pretty_json(&actual))).map_err(|err| {
++            format!(
++                "write producer-rendered LSP fixture {}: {err}",
++                path.display()
++            )
++        })?;
++        eprintln!("producer-rendered LSP fixture: {}", path.display());
++        return Ok(());
++    }
+     let expected: serde_json::Value = serde_json::from_str(&text)
+         .map_err(|err| format!("failed to parse {}: {err}", path.display()))?;
+     if expected != actual {
+@@ -23634,35 +23688,61 @@ async fn code_lens_is_withdrawn_for_an_unsaved_buffer_and_restored_when_buffer_m
+     Ok(())
+ }
+ 
++async fn settled_quarantine_refresh(backend: &Backend) -> Result<AnalysisAttemptState, String> {
++    tokio::time::timeout(Duration::from_secs(10), async {
++        loop {
++            let state = backend.analysis_attempt_state_for_test();
++            if !matches!(
++                state,
++                AnalysisAttemptState::Queued | AnalysisAttemptState::Running
++            ) {
++                break state;
++            }
++            tokio::time::sleep(Duration::from_millis(10)).await;
++        }
++    })
++    .await
++    .map_err(|err| format!("quarantine fixture refresh did not settle: {err}"))
++}
++
+ #[tokio::test]
+ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() -> Result<(), String>
+ {
+-    // A formatter, `git checkout` or coding agent rewrites an open file and the
+-    // client reloads the buffer with a change, never a save. The buffer then
+-    // equals the file on disk, so "save the file" cannot help; ripr must treat
+-    // it as saved content and schedule analysis. A buffer that is merely ahead
+-    // of disk (typing) must still wait for a real save.
++    // Deduplication applies after the saved bytes are actually covered. A
++    // failed uncovered refresh must retry; the wire control pins that.
+     let fixture = quarantine_fixture("external-rewrite")?;
++    init_lsp_test_scope_repo(&fixture.root)?;
++    let manifest = fixture.root.join("Cargo.toml");
++    let manifest_text = std::fs::read_to_string(&manifest).map_err(|err| err.to_string())?;
++    std::fs::write(&manifest, format!("{manifest_text}\n[workspace]\n"))
++        .map_err(|err| err.to_string())?;
++    let library = fixture.root.join("src/lib.rs");
++    let library_text = std::fs::read_to_string(&library).map_err(|err| err.to_string())?;
++    std::fs::write(&library, format!("{library_text}\nmod a;\nmod b;\n"))
++        .map_err(|err| err.to_string())?;
++    commit_lsp_test_scope_change(&fixture.root, "bind reload fixture modules")?;
+     let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+     drop(socket);
+     let backend = service.inner();
++    let mut params = initialize_params(None, Some(file_uri_for_path(&fixture.root)?));
++    params.initialization_options = Some(serde_json::json!({"baseRef": "HEAD"}));
+     backend
+-        .initialize(initialize_params(
+-            None,
+-            Some(
+-                file_uri_for_path(&fixture.root)
+-                    .map_err(|err| format!("root URI failed: {err}"))?,
+-            ),
+-        ))
++        .initialize(params)
+         .await
+         .map_err(|err| format!("initialize failed: {err}"))?;
+     backend
+         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+         .await;
+-    commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
++    assert_eq!(
++        settled_quarantine_refresh(backend).await?,
++        AnalysisAttemptState::Succeeded,
++        "the deduplication fixture must begin with a completed real refresh"
++    );
+     let before = backend.workspace_revision();
+-
+-    // Typing: the buffer is ahead of disk, so no analysis input changed.
++    let original_saved = backend
++        .document_state_for_test(&fixture.uri_a)
++        .ok_or("opened document missing")?
++        .saved_digest;
+     backend
+         .did_change(quarantine_change_params(
+             &fixture.uri_a,
+@@ -23670,11 +23750,11 @@ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() ->
+             QUARANTINE_TEXT_A_DIRTY,
+         ))
+         .await;
+-    if backend.workspace_revision() != before {
+-        return Err("a buffer ahead of disk must not schedule analysis".to_string());
+-    }
+-
+-    // External rewrite: disk now holds the same bytes as the reloaded buffer.
++    assert_eq!(
++        backend.workspace_revision(),
++        before,
++        "typing ahead of disk must not analyze"
++    );
+     std::fs::write(&fixture.path_a, QUARANTINE_TEXT_A_DIRTY)
+         .map_err(|err| format!("rewrite a.rs failed: {err}"))?;
+     backend
+@@ -23684,13 +23764,25 @@ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() ->
+             QUARANTINE_TEXT_A_DIRTY,
+         ))
+         .await;
+-    if backend.workspace_revision() != before + 1 {
+-        return Err(format!(
+-            "a buffer equal to disk must be recorded as saved content: {before} -> {}",
+-            backend.workspace_revision()
+-        ));
+-    }
+-    // The same bytes again are the same input: no second analysis.
++    assert_eq!(
++        settled_quarantine_refresh(backend).await?,
++        AnalysisAttemptState::Succeeded,
++        "the reloaded bytes must be covered before testing deduplication"
++    );
++    assert_eq!(backend.workspace_revision(), before + 1);
++    let covered = backend
++        .document_state_for_test(&fixture.uri_a)
++        .ok_or("reloaded document missing")?;
++    assert!(
++        covered.saved_digest.is_some(),
++        "the changed bytes need a saved identity"
++    );
++    assert_ne!(covered.saved_digest, original_saved);
++    assert_eq!(covered.saved_digest, covered.analyzed_saved_digest);
++    let identity = backend
++        .latest_analysis_snapshot()
++        .ok_or("completed refresh has no snapshot")?
++        .evidence_identity();
+     backend
+         .did_change(quarantine_change_params(
+             &fixture.uri_a,
+@@ -23698,9 +23790,19 @@ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() ->
+             QUARANTINE_TEXT_A_DIRTY,
+         ))
+         .await;
+-    if backend.workspace_revision() != before + 1 {
+-        return Err("an unchanged reload must deduplicate".to_string());
+-    }
++    assert_eq!(
++        backend.workspace_revision(),
++        before + 1,
++        "a covered unchanged reload must deduplicate"
++    );
++    assert_eq!(
++        backend
++            .latest_analysis_snapshot()
++            .ok_or("retained snapshot missing")?
++            .evidence_identity(),
++        identity,
++        "an unchanged covered reload must not publish another analysis"
++    );
+     Ok(())
+ }
+ 
+@@ -23758,11 +23860,11 @@ async fn hover_without_evidence_routes_an_unanalyzed_file_to_refresh() -> Result
+ }
+ 
+ /// Hover text for `c.rs` (on disk, never analyzed) opened under a fresh server whose
+-/// analysis health is `state` (or untouched when `None`) and, when
++/// analysis health is explicitly set to `state` and, when
+ /// `commit_snapshot`, a committed snapshot that records only `a.rs`.
+ async fn unanalyzed_hover_text(
+     name: &str,
+-    state: Option<AnalysisAttemptState>,
++    state: AnalysisAttemptState,
+     commit_snapshot: bool,
+ ) -> Result<String, String> {
+     let fixture = quarantine_fixture(name)?;
+@@ -23811,9 +23913,9 @@ async fn unanalyzed_hover_text(
+     } else {
+         backend.clear_latest_analysis_for_test();
+     }
+-    if let Some(state) = state {
+-        backend.set_analysis_attempt_state_for_test(state);
+-    }
++    // The real opening refresh may have failed. Pin every case after it
++    // settles so this test exercises the requested observed cause.
++    backend.set_analysis_attempt_state_for_test(state);
+     match backend.document_quarantine(&uri_c) {
+         Some((_, DocumentStalenessReason::NoAnalyzedSavedContent)) => {}
+         other => {
+@@ -23837,22 +23939,19 @@ async fn unanalyzed_file_hover_names_only_the_observed_cause() -> Result<(), Str
+     // #11452: one fixed text used to cover several different causes. Each
+     // observed cause gets its own wording; none may assert an unobserved
+     // cause, and none may use the false "in this session" claim.
+-    let none = unanalyzed_hover_text("unanalyzed-none", None, false).await?;
+-    let running = unanalyzed_hover_text(
+-        "unanalyzed-running",
+-        Some(AnalysisAttemptState::Running),
+-        false,
+-    )
+-    .await?;
+-    let failed = unanalyzed_hover_text(
+-        "unanalyzed-failed",
+-        Some(AnalysisAttemptState::Failed),
+-        false,
+-    )
+-    .await?;
+-    let unrecorded = unanalyzed_hover_text("unanalyzed-unrecorded", None, true).await?;
+-
+-    if !none.contains("no analysis has committed") || none.contains("already queued") {
++    let none =
++        unanalyzed_hover_text("unanalyzed-none", AnalysisAttemptState::Stopped, false).await?;
++    let running =
++        unanalyzed_hover_text("unanalyzed-running", AnalysisAttemptState::Running, false).await?;
++    let failed =
++        unanalyzed_hover_text("unanalyzed-failed", AnalysisAttemptState::Failed, false).await?;
++    let unrecorded =
++        unanalyzed_hover_text("unanalyzed-unrecorded", AnalysisAttemptState::Stopped, true).await?;
++
++    if !none.contains("no analysis has committed")
++        || none.contains("already queued")
++        || none.contains("latest analysis attempt failed")
++    {
+         return Err(format!("no-analysis cause misworded: {none}"));
+     }
+     if !running.contains("already queued or running") || running.contains("failed") {
+@@ -23875,7 +23974,7 @@ async fn unanalyzed_file_hover_names_only_the_observed_cause() -> Result<(), Str
+         }
+         for other in &all[index + 1..] {
+             if text == other {
+-                return Err("distinct causes must not share one text".to_string());
++                return Err(format!("distinct causes must not share one text: {text}"));
+             }
+         }
+     }

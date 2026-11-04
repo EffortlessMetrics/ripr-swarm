@@ -1,0 +1,420 @@
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index ae7aaea556c62ecd3da84c99ede5411fdec8a960..c7cc1c6931ec4b440fefae9c8c75cc348a98b6cd 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -14065,6 +14065,7 @@ id = "RIPR-SPEC-0186"
+ name = "Same-test pairing for boundary-class probes"
+ spec = "docs/specs/RIPR-SPEC-0186-same-test-boundary-oracle-pairing.md"
+ tests = [
++  "crates/ripr/src/lsp/tests.rs::framed_lsp_protocol_smoke_logs_successful_refresh_completion",
+   "crates/ripr/src/analysis/classify/activation.rs::tests::a_constant_row_table_feeds_one_input_row_per_table_row",
+   "crates/ripr/tests/owner_pin_execution.rs::constant_row_table_pairs_each_row_with_its_boundary_input",
+   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::split_tests_do_not_pair",
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index d23e48d4bee85b41d2f9a496c029f25806a6e768..0f319ad4fd1d5f1298dbc2a5b9ce0808c7a3463e 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -1326,6 +1326,8 @@ mod semantic_identity_tests;
+ mod store;
+ pub(crate) use export::export_current;
+ #[cfg(test)]
++pub(crate) use export::verify_current_export_for_test;
++#[cfg(test)]
+ pub(crate) use scoped_inventory::SCOPED_INVENTORY_CACHE_SCHEMA_VERSION;
+ pub(crate) use scoped_inventory::{
+     PersistedScopedInventory, PersistedSeamLimit, RepoScopedInventoryCache,
+diff --git a/crates/ripr/src/analysis/seam_cache/export.rs b/crates/ripr/src/analysis/seam_cache/export.rs
+index 500572190f03858a623590e8e7ab30e024c0ff5a..7307152ac7dac115f45ff2577288caf015760a4c 100644
+--- a/crates/ripr/src/analysis/seam_cache/export.rs
++++ b/crates/ripr/src/analysis/seam_cache/export.rs
+@@ -21,6 +21,113 @@ pub(crate) struct CacheExportReport {
+     pub(crate) logical_file_bytes: u64,
+ }
+ 
++/// Test the exported snapshot against the current logical keys and the exact
++/// files named by their selected representations, including referenced shards.
++#[cfg(test)]
++pub(crate) fn verify_current_export_for_test(root: &Path, output: &Path) -> Result<(), String> {
++    use std::collections::BTreeSet;
++
++    fn walk(root: &Path, dir: &Path, found: &mut BTreeSet<PathBuf>) -> Result<(), String> {
++        for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
++            let entry = entry.map_err(|error| error.to_string())?;
++            let path = entry.path();
++            let kind = entry.file_type().map_err(|error| error.to_string())?;
++            if kind.is_dir() {
++                walk(root, &path, found)?;
++            } else if kind.is_file() {
++                found.insert(
++                    path.strip_prefix(root)
++                        .map_err(|error| error.to_string())?
++                        .to_path_buf(),
++                );
++            } else {
++                return Err(format!(
++                    "unexpected non-file in snapshot: {}",
++                    path.display()
++                ));
++            }
++        }
++        Ok(())
++    }
++
++    let source = cache_base_dir(root);
++    let (key, files) = current_cache_keys_at(root, &load_for_root(root)?)?;
++    let mut expected = BTreeSet::new();
++    for cache in [
++        RepoSeamFactCache::at(root),
++        RepoSeamFactCache::at_compact_classified(root),
++    ] {
++        let copied = RepoSeamFactCache::rooted_at(
++            relocated(&cache.dir, &source, output)?,
++            relocated(&cache.sharded_dir, &source, output)?,
++            output.to_path_buf(),
++        );
++        assert!(
++            matches!(
++                copied.load_classified_seams_with_fallback(&key),
++                CacheLoad::Hit(_)
++            ),
++            "current classified family must load"
++        );
++        let single = copied.entry_path(&key);
++        if single.is_file() {
++            expected.insert(
++                single
++                    .strip_prefix(output)
++                    .map_err(|error| error.to_string())?
++                    .to_path_buf(),
++            );
++        } else {
++            let path = copied.sharded_manifest_path(&key);
++            let manifest = codec::decode_sharded_manifest(
++                &fs::read(&path).map_err(|error| error.to_string())?,
++            )?;
++            assert!(manifest.matches_key(&key));
++            manifest.validate_integrity()?;
++            for shard in &manifest.shards {
++                let path =
++                    resolve_sharded_cache_file(&copied.sharded_entry_dir(&key), &shard.file)?;
++                expected.insert(
++                    path.strip_prefix(output)
++                        .map_err(|error| error.to_string())?
++                        .to_path_buf(),
++                );
++            }
++            expected.insert(
++                path.strip_prefix(output)
++                    .map_err(|error| error.to_string())?
++                    .to_path_buf(),
++            );
++        }
++    }
++    let source_facts = RepoFileFactCache::at(root);
++    let copied_facts = RepoFileFactCache {
++        dir: relocated(&source_facts.dir, &source, output)?,
++        base: output.to_path_buf(),
++        unusable_base_reason: std::sync::OnceLock::new(),
++    };
++    assert_eq!(files.len(), 1, "fixture must contain one current Rust file");
++    for file in &files {
++        assert!(
++            matches!(copied_facts.load_file_facts(file), CacheLoad::Hit(_)),
++            "current file fact must load"
++        );
++        let path = copied_facts.entry_path(file);
++        expected.insert(
++            path.strip_prefix(output)
++                .map_err(|error| error.to_string())?
++                .to_path_buf(),
++        );
++    }
++    let mut found = BTreeSet::new();
++    walk(output, output, &mut found)?;
++    assert_eq!(
++        found, expected,
++        "snapshot must contain exactly current representations and referenced shards"
++    );
++    Ok(())
++}
++
+ /// Refuse aliases before reading or writing. This is a cooperative-filesystem
+ /// guard, not protection against a hostile concurrent directory replacement.
+ fn refuse_links(path: &Path) -> Result<(), String> {
+diff --git a/crates/ripr/src/cli/commands/cache.rs b/crates/ripr/src/cli/commands/cache.rs
+index 0a3323378d6d68bfc2b4507226d017e1492bc0e0..5e4b55d7664f624f49c64d8b39c1f3ff01d648fb 100644
+--- a/crates/ripr/src/cli/commands/cache.rs
++++ b/crates/ripr/src/cli/commands/cache.rs
+@@ -905,11 +905,7 @@ mod tests {
+                 "--out".to_owned(),
+                 output.to_string_lossy().into_owned(),
+             ])?;
+-            let exported = crate::analysis::seam_cache::inspect_cache_root(&output);
+-            assert_eq!(
+-                exported.entry_count, 2,
+-                "one current classified entry and one current file fact, independent of history"
+-            );
++            crate::analysis::seam_cache::verify_current_export_for_test(&root, &output)?;
+             let source_after = crate::analysis::seam_cache::inspect_cache_root(&source_cache);
+             assert_eq!(source_before.entry_count, source_after.entry_count);
+             assert_eq!(
+@@ -957,10 +953,7 @@ mod tests {
+             refused_output.to_string_lossy().into_owned(),
+         ])?;
+         assert_eq!(source_bytes, cache_contents(&source_cache)?);
+-        assert_eq!(
+-            crate::analysis::seam_cache::inspect_cache_root(&refused_output).entry_count,
+-            2
+-        );
++        crate::analysis::seam_cache::verify_current_export_for_test(&root, &refused_output)?;
+         let overlap = source_cache.join("nested-export");
+         assert!(
+             run(&[
+@@ -1006,10 +999,7 @@ mod tests {
+             "--out".to_owned(),
+             output.to_string_lossy().into_owned(),
+         ])?;
+-        assert_eq!(
+-            crate::analysis::seam_cache::inspect_cache_root(&output).entry_count,
+-            2
+-        );
++        crate::analysis::seam_cache::verify_current_export_for_test(&relative, &output)?;
+         fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+         Ok(())
+     }
+diff --git a/crates/ripr/src/lsp/backend.rs b/crates/ripr/src/lsp/backend.rs
+index 437b6084679ec57ac8866ea7f1fa711bf47f322b..b1c4a31510a0473967f125ed8eef8812d739d2ba 100644
+--- a/crates/ripr/src/lsp/backend.rs
++++ b/crates/ripr/src/lsp/backend.rs
+@@ -2001,6 +2001,16 @@ impl Backend {
+         self.analysis_health_snapshot().state
+     }
+ 
++    #[cfg(test)]
++    pub(super) fn analysis_health_for_test(&self) -> AnalysisHealth {
++        self.analysis_health_snapshot()
++    }
++
++    #[cfg(test)]
++    pub(super) fn saved_digest_is_recorded_for_test(&self, uri: &Uri, digest: &str) -> bool {
++        self.saved_content_digest_matches(uri, digest)
++    }
++
+     #[cfg(test)]
+     pub(super) fn clear_latest_analysis_for_test(&self) {
+         if let Ok(mut latest) = self.latest_analysis.lock() {
+diff --git a/crates/ripr/src/lsp/tests.rs b/crates/ripr/src/lsp/tests.rs
+index c84d01fbc9619608c1d679043b83d019ef82db7c..4db454d9e675e9981eb7246e0de29121afd8d2dc 100644
+--- a/crates/ripr/src/lsp/tests.rs
++++ b/crates/ripr/src/lsp/tests.rs
+@@ -1772,8 +1772,11 @@ fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(),
+         assert_eq!(context_packet["result"]["seam_id"], seam_id);
+         assert_eq!(
+             context_packet["result"]["evidence_path"]["discriminate"],
+-            "present"
++            "weak"
+         );
++        assert!(context_packet["result"]["evidence_summaries"]["discriminate"]
++            .as_str()
++            .is_some_and(|summary| summary.contains("same_test_pairing_missing")));
+         assert_eq!(
+             context_packet["result"]["missing_discriminator"],
+             "discount_threshold (equality boundary)"
+@@ -1820,6 +1823,43 @@ fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(),
+             "Static evidence only; no runtime mutation execution."
+         );
+ 
++
++        // Exercise a real paired boundary through the same framed connection.
++        let pricing_path = repo_root.join("tests/pricing.rs");
++        let pricing = std::fs::read_to_string(&pricing_path)
++            .map_err(|err| format!("read pricing fixture: {err}"))?;
++        std::fs::write(&pricing_path, format!("{pricing}\n#[test]\nfn equality_boundary_is_exact() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"))
++            .map_err(|err| format!("write pricing fixture: {err}"))?;
++        write_lsp_message(&mut client_write, serde_json::json!({
++            "jsonrpc": "2.0", "id": 51, "method": "workspace/executeCommand",
++            "params": {"command": REFRESH_COMMAND, "arguments": []}
++        })).await?;
++        let (refreshed, refresh_notifications) = read_lsp_response_with_notifications(&mut client_read, 51).await?;
++        assert!(refreshed.get("error").is_none(), "refresh failed: {refreshed}");
++        assert!(log_notification_messages(&refresh_notifications)
++            .iter()
++            .any(|message| message.contains("ripr analysis refresh completed in")),
++            "second refresh must complete before collecting evidence");
++        // Strong seams need not publish diagnostics. The listing provides the
++        // current snapshot identity required to retrieve their evidence.
++        write_lsp_message(&mut client_write, serde_json::json!({
++            "jsonrpc": "2.0", "id": 52, "method": "ripr/listActionableItems", "params": {}
++        })).await?;
++        let listing = read_lsp_response(&mut client_read, 52).await?;
++        let identity = listing["result"]["seam_evidence_identity"].clone();
++        assert!(!identity.is_null(), "missing fresh evidence identity: {listing}");
++        assert_ne!(identity, seam_diagnostic["data"]["evidence_identity"],
++            "the changed fixture must have fresh snapshot evidence");
++        write_lsp_message(&mut client_write, serde_json::json!({
++            "jsonrpc": "2.0", "id": 53, "method": "workspace/executeCommand",
++            "params": {"command": COLLECT_EVIDENCE_CONTEXT_COMMAND, "arguments": [{
++                "seam_id": seam_id, "evidence_identity": identity, "uri": text_uri, "line": 2
++            }]}
++        })).await?;
++        let paired = read_lsp_response(&mut client_read, 53).await?;
++        assert_eq!(paired["result"]["seam_id"], seam_id, "{paired}");
++        assert_eq!(paired["result"]["evidence_path"]["discriminate"], "present", "{paired}");
++
+         write_lsp_message(
+             &mut client_write,
+             serde_json::json!({
+@@ -16268,6 +16308,16 @@ fn assert_named_json_fixture(
+             pretty_json(&actual)
+         )
+     })?;
++    if crate::testing::rebless::fixture_rebless_enabled() {
++        std::fs::write(&path, format!("{}\n", pretty_json(&actual))).map_err(|err| {
++            format!(
++                "write producer-rendered LSP fixture {}: {err}",
++                path.display()
++            )
++        })?;
++        eprintln!("producer-rendered LSP fixture: {}", path.display());
++        return Ok(());
++    }
+     let expected: serde_json::Value = serde_json::from_str(&text)
+         .map_err(|err| format!("failed to parse {}: {err}", path.display()))?;
+     if expected != actual {
+@@ -23180,6 +23230,30 @@ fn quarantine_workspace_diagnostics(
+     }
+ }
+ 
++fn trace_quarantine_refresh(backend: &Backend, fixture: &QuarantineFixture, label: &str) {
++    let document = backend.document_state_for_test(&fixture.uri_a);
++    let saved_digest = document
++        .as_ref()
++        .and_then(|state| state.saved_digest.clone());
++    let analyzed_digest = document
++        .as_ref()
++        .and_then(|state| state.analyzed_saved_digest.clone());
++    let dedup_recorded = saved_digest
++        .as_ref()
++        .map(|digest| backend.saved_digest_is_recorded_for_test(&fixture.uri_a, digest));
++    eprintln!(
++        "RIPR_TEST_REFRESH_DIAGNOSTIC {}",
++        serde_json::json!({
++            "label": label,
++            "revision": backend.workspace_revision(),
++            "health": format!("{:?}", backend.analysis_health_for_test()),
++            "saved_digest": saved_digest,
++            "analyzed_digest": analyzed_digest,
++            "dedup_recorded": dedup_recorded,
++        })
++    );
++}
++
+ fn commit_quarantine_snapshot(
+     backend: &Backend,
+     fixture: &QuarantineFixture,
+@@ -23659,7 +23733,9 @@ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() ->
+     backend
+         .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+         .await;
++    trace_quarantine_refresh(backend, &fixture, "reload_after_open");
+     commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
++    trace_quarantine_refresh(backend, &fixture, "reload_after_baseline");
+     let before = backend.workspace_revision();
+ 
+     // Typing: the buffer is ahead of disk, so no analysis input changed.
+@@ -23684,6 +23760,7 @@ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() ->
+             QUARANTINE_TEXT_A_DIRTY,
+         ))
+         .await;
++    trace_quarantine_refresh(backend, &fixture, "reload_observed_revision");
+     if backend.workspace_revision() != before + 1 {
+         return Err(format!(
+             "a buffer equal to disk must be recorded as saved content: {before} -> {}",
+@@ -23698,6 +23775,7 @@ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() ->
+             QUARANTINE_TEXT_A_DIRTY,
+         ))
+         .await;
++    trace_quarantine_refresh(backend, &fixture, "reload_observed_revision");
+     if backend.workspace_revision() != before + 1 {
+         return Err("an unchanged reload must deduplicate".to_string());
+     }
+@@ -23758,11 +23836,11 @@ async fn hover_without_evidence_routes_an_unanalyzed_file_to_refresh() -> Result
+ }
+ 
+ /// Hover text for `c.rs` (on disk, never analyzed) opened under a fresh server whose
+-/// analysis health is `state` (or untouched when `None`) and, when
++/// analysis health is explicitly set to `state` and, when
+ /// `commit_snapshot`, a committed snapshot that records only `a.rs`.
+ async fn unanalyzed_hover_text(
+     name: &str,
+-    state: Option<AnalysisAttemptState>,
++    state: AnalysisAttemptState,
+     commit_snapshot: bool,
+ ) -> Result<String, String> {
+     let fixture = quarantine_fixture(name)?;
+@@ -23798,6 +23876,7 @@ async fn unanalyzed_hover_text(
+     if !settled {
+         return Err("the opening refresh did not settle".to_string());
+     }
++    trace_quarantine_refresh(backend, &fixture, &format!("{name}:opening_settled"));
+     // `c.rs` is on disk but no analysis read it.
+     let path_c = fixture.root.join("src").join("c.rs");
+     std::fs::write(&path_c, QUARANTINE_TEXT_B)
+@@ -23811,9 +23890,9 @@ async fn unanalyzed_hover_text(
+     } else {
+         backend.clear_latest_analysis_for_test();
+     }
+-    if let Some(state) = state {
+-        backend.set_analysis_attempt_state_for_test(state);
+-    }
++    // The real opening refresh may have failed. Pin every case after it
++    // settles so this test exercises the requested observed cause.
++    backend.set_analysis_attempt_state_for_test(state);
+     match backend.document_quarantine(&uri_c) {
+         Some((_, DocumentStalenessReason::NoAnalyzedSavedContent)) => {}
+         other => {
+@@ -23837,22 +23916,19 @@ async fn unanalyzed_file_hover_names_only_the_observed_cause() -> Result<(), Str
+     // #11452: one fixed text used to cover several different causes. Each
+     // observed cause gets its own wording; none may assert an unobserved
+     // cause, and none may use the false "in this session" claim.
+-    let none = unanalyzed_hover_text("unanalyzed-none", None, false).await?;
+-    let running = unanalyzed_hover_text(
+-        "unanalyzed-running",
+-        Some(AnalysisAttemptState::Running),
+-        false,
+-    )
+-    .await?;
+-    let failed = unanalyzed_hover_text(
+-        "unanalyzed-failed",
+-        Some(AnalysisAttemptState::Failed),
+-        false,
+-    )
+-    .await?;
+-    let unrecorded = unanalyzed_hover_text("unanalyzed-unrecorded", None, true).await?;
+-
+-    if !none.contains("no analysis has committed") || none.contains("already queued") {
++    let none =
++        unanalyzed_hover_text("unanalyzed-none", AnalysisAttemptState::Stopped, false).await?;
++    let running =
++        unanalyzed_hover_text("unanalyzed-running", AnalysisAttemptState::Running, false).await?;
++    let failed =
++        unanalyzed_hover_text("unanalyzed-failed", AnalysisAttemptState::Failed, false).await?;
++    let unrecorded =
++        unanalyzed_hover_text("unanalyzed-unrecorded", AnalysisAttemptState::Stopped, true).await?;
++
++    if !none.contains("no analysis has committed")
++        || none.contains("already queued")
++        || none.contains("latest analysis attempt failed")
++    {
+         return Err(format!("no-analysis cause misworded: {none}"));
+     }
+     if !running.contains("already queued or running") || running.contains("failed") {
+@@ -23875,7 +23951,7 @@ async fn unanalyzed_file_hover_names_only_the_observed_cause() -> Result<(), Str
+         }
+         for other in &all[index + 1..] {
+             if text == other {
+-                return Err("distinct causes must not share one text".to_string());
++                return Err(format!("distinct causes must not share one text: {text}"));
+             }
+         }
+     }
