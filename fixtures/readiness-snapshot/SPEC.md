@@ -61,7 +61,9 @@ run in an exclusively owned checkout. No generated timestamp enters the receipt.
 
 Identity inputs come from immutable commit blobs even for current HEAD. All Git
 probes disable replacement objects, fsmonitor, lazy fetching, transports, prompts
-and paging; missing objects fail closed. Before status, source inspection rejects
+and paging; missing objects fail closed. Inherited Git trace and stdio redirection
+controls and Git test instrumentation are removed before the first probe. Explicit zero trace2 targets also
+prevent configuration-based trace output. Before status, source inspection rejects
 configured clean/process filters, index flags that can mask changes, and gitlinks
 whose recursive status might invoke an unchecked nested helper. This deliberately
 refuses filter-enabled workspaces (including global Git LFS configuration), sparse
@@ -71,6 +73,20 @@ The index inventory runs explicitly at the repository root without pathspecs,
 so member-directory calls and inherited literal/glob pathspec modes cannot hide
 masking flags or gitlinks outside the current subdirectory. Root path parsing
 preserves whitespace and refuses non-UTF-8 paths.
+
+Git status is insufficient to establish clean bytes: a same-size edit with
+preserved mtime can evade its stat cache. The producer separately enumerates the
+captured commit's full tree and compares raw tracked-file blob hashes using
+`git hash-object --no-filters` without object writes. Hash batches are bounded to
+64 files and 8 KiB of arguments, with exact result-count checks. Tracked paths
+must be relative UTF-8 paths with regular files and directory parents, without
+symlinks or gitlinks. Unix owner execute bits must match the committed mode.
+Raw-byte verification can refuse CRLF, working-tree encoding and ident/filter
+conversions that Git status would otherwise consider clean. It does not lock
+the checkout against concurrent writers. Shared split indexes are refused before
+index reads because Git can freshen their timestamps despite optional-lock
+suppression; index revision expressions are unsupported. Preserved-mtime, trace, batch-coverage,
+mode and parent-symlink regressions cover these refusals.
 
 Consuming schema 1.1 leaves rehearsal-derived toolchain, package/install and
 supply-chain dimensions `not_proven`. Existing independent evidence adapters

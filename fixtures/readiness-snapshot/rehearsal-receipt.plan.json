@@ -38,6 +38,8 @@
       "git HEAD/tree/status (including untracked files)",
       "git configuration key names (clean/process filter refusal)",
       "git repository-wide index flags and modes",
+      "committed tree and raw tracked file hashes without filters",
+      "tracked file and directory metadata without following symlinks",
       "Cargo.toml",
       "crates/ripr/Cargo.toml",
       "Cargo.lock",

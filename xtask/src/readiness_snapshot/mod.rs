@@ -5,6 +5,7 @@ mod model;
 mod rehearsal;
 mod rehearsal_plan;
 mod render;
+mod source_tree;
 
 pub(crate) use command::run;
 pub(crate) use rehearsal_plan::run as run_rehearsal;

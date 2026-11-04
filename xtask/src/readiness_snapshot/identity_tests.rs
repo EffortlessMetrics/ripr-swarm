@@ -240,3 +240,225 @@ fn rehearsal_identity_missing_blob_cannot_invoke_promisor_transport() -> Result<
     );
     Ok(())
 }
+
+#[test]
+fn rehearsal_identity_rejects_same_size_preserved_mtime_changes() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let path = fixture.root.join("Cargo.lock");
+    let original = fs::read(&path).map_err(|e| e.to_string())?;
+    let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_200_000_000);
+    let set_time = || -> Result<(), String> {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .map_err(|e| e.to_string())?
+            .set_times(fs::FileTimes::new().set_modified(old))
+            .map_err(|e| e.to_string())
+    };
+    set_time()?;
+    fixture.git(&["update-index", "--refresh"])?;
+    fixture.git(&["config", "core.trustctime", "false"])?;
+    let mut changed = original.clone();
+    let first = changed.first_mut().ok_or("empty fixture lockfile")?;
+    *first = if *first == b'!' { b'#' } else { b'!' };
+    fs::write(&path, changed).map_err(|e| e.to_string())?;
+    set_time()?;
+    assert!(
+        fixture
+            .git(&[
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "--ignore-submodules=none"
+            ])?
+            .is_empty()
+    );
+    assert!(
+        !git_worktree_clean()?,
+        "accepted changed bytes hidden by restored mtime"
+    );
+    assert!(
+        super::rehearsal_plan::run(&["--sha", "HEAD", "--plan", "--json"].map(str::to_string))
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn rehearsal_identity_trace_environment_does_not_write() -> Result<(), String> {
+    if std::env::var_os("RIPR_REHEARSAL_TRACE_CHILD").is_some() {
+        let _guard = crate::acquire_test_cwd_read_guard();
+        assert!(git_worktree_clean()?);
+        return Ok(());
+    }
+    let fixture = Fixture::new()?;
+    let config = fixture.root.join(".git/trace-config");
+    let config_text = config.to_str().ok_or("trace config path is not UTF-8")?;
+    let mut markers = Vec::new();
+    for key in ["normalTarget", "eventTarget", "perfTarget"] {
+        let path = fixture.root.join(format!(".git/trace-config-{key}"));
+        fixture.git(&[
+            "config",
+            "--file",
+            config_text,
+            &format!("trace2.{key}"),
+            path.to_str().ok_or("trace path is not UTF-8")?,
+        ])?;
+        markers.push(path);
+    }
+    let base = vec![
+        ("RIPR_REHEARSAL_TRACE_CHILD".to_string(), "1".to_string()),
+        ("GIT_CONFIG_GLOBAL".to_string(), config_text.to_string()),
+        ("GIT_CONFIG_NOSYSTEM".to_string(), "1".to_string()),
+    ];
+    let mut traced = base.clone();
+    for key in [
+        "GIT_TRACE",
+        "GIT_TRACE_SETUP",
+        "GIT_TRACE_PERFORMANCE",
+        "GIT_TRACE2",
+        "GIT_TRACE2_EVENT",
+        "GIT_TRACE2_PERF",
+        "GIT_TRACE_PACK_ACCESS",
+        "GIT_TRACE_PACKET",
+        "GIT_TRACE_CURL",
+        "GIT_REDIRECT_STDOUT",
+        "GIT_REDIRECT_STDERR",
+        "GIT_REDIRECT_STDIN",
+    ] {
+        let path = fixture.root.join(format!(".git/trace-env-{key}"));
+        traced.push((
+            key.to_string(),
+            path.to_str().ok_or("trace path is not UTF-8")?.to_string(),
+        ));
+        markers.push(path);
+    }
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    let args = [
+        "--exact",
+        "readiness_snapshot::identity_tests::rehearsal_identity_trace_environment_does_not_write",
+        "--nocapture",
+    ]
+    .map(str::to_string);
+    // Exercise both inherited environment targets and configuration-only fallback.
+    for environment in [&traced, &base] {
+        let envs = environment
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect::<Vec<_>>();
+        let output = crate::run::capture_output_in_dir_with_envs(
+            executable.to_str().ok_or("test executable is not UTF-8")?,
+            &args,
+            &fixture.root,
+            "trace guard child",
+            &envs,
+            &[],
+        )?;
+        assert!(
+            output.status.success(),
+            "{} {}",
+            output.stdout,
+            output.stderr
+        );
+        assert!(
+            output.stdout.contains("1 passed"),
+            "trace child selected no test"
+        );
+        assert!(
+            markers.iter().all(|path| !path.exists()),
+            "Git probe wrote a trace/redirection target"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn rehearsal_identity_checks_owner_execute_mode_without_stat_trust() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new()?;
+    fixture.git(&["config", "core.filemode", "false"])?;
+    fs::set_permissions(
+        fixture.root.join("Cargo.lock"),
+        fs::Permissions::from_mode(0o744),
+    )
+    .map_err(|e| e.to_string())?;
+    assert!(fixture.git(&["status", "--porcelain"])?.is_empty());
+    assert!(!git_worktree_clean()?);
+    Ok(())
+}
+
+#[test]
+fn rehearsal_identity_hashes_every_batch() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    for index in 0..130 {
+        fs::write(
+            fixture.root.join(format!("batch-{index:03}")),
+            format!("source-{index}\n"),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    fixture.git(&["add", "."])?;
+    fixture.git(&[
+        "-c",
+        "user.name=Rehearsal Test",
+        "-c",
+        "user.email=rehearsal@example.invalid",
+        "commit",
+        "-qm",
+        "batch fixture",
+    ])?;
+    let head = git_rev_parse("HEAD")?;
+    assert!(super::source_tree::tracked_bytes_match(
+        &fixture.root,
+        &head
+    )?);
+    fs::write(fixture.root.join("batch-129"), "changed\n").map_err(|e| e.to_string())?;
+    assert!(!super::source_tree::tracked_bytes_match(
+        &fixture.root,
+        &head
+    )?);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn rehearsal_identity_rejects_symlink_parents() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let original = fixture.root.join("crates/ripr");
+    let moved = fixture.root.join(".git/source-dir");
+    fs::rename(&original, &moved).map_err(|e| e.to_string())?;
+    std::os::unix::fs::symlink(&moved, &original).map_err(|e| e.to_string())?;
+    let error = git_worktree_clean()
+        .err()
+        .ok_or("accepted a symlink parent")?;
+    assert!(error.contains("symlink"));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn rehearsal_identity_refuses_split_index_without_freshening_it() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    fixture.git(&["update-index", "--split-index"])?;
+    let shared = PathBuf::from(fixture.git(&["rev-parse", "--shared-index-path"])?);
+    let shared = if shared.is_absolute() {
+        shared
+    } else {
+        fixture.root.join(shared)
+    };
+    let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_200_000_000);
+    fs::File::open(&shared)
+        .map_err(|e| e.to_string())?
+        .set_times(fs::FileTimes::new().set_modified(old))
+        .map_err(|e| e.to_string())?;
+    assert!(git_worktree_clean().is_err());
+    assert_eq!(
+        fs::metadata(&shared)
+            .map_err(|e| e.to_string())?
+            .modified()
+            .map_err(|e| e.to_string())?,
+        old
+    );
+    Ok(())
+}

@@ -5,9 +5,31 @@ use std::process::Command;
 use super::model::IdentityInputs;
 
 // No probe may execute an inherited fsmonitor, fetch objects or use replace refs.
-fn git_output(args: &[&str]) -> Result<std::process::Output, String> {
-    Command::new("git")
-        .args(["-c", "core.fsmonitor=false", "-c", "protocol.allow=never"])
+pub(super) fn git_output(args: &[&str]) -> Result<std::process::Output, String> {
+    let mut command = Command::new("git");
+    for (name, _) in std::env::vars_os() {
+        let key = name.to_string_lossy().to_ascii_uppercase();
+        if key.starts_with("GIT_TRACE")
+            || key.starts_with("GIT_REDIRECT_")
+            || key.starts_with("GIT_TEST_")
+        {
+            command.env_remove(name);
+        }
+    }
+    command
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.splitIndex=false",
+            "-c",
+            "protocol.allow=never",
+        ])
+        // Explicit zero targets also override trace2 targets from Git configuration.
+        .env("GIT_TRACE", "0")
+        .env("GIT_TRACE2", "0")
+        .env("GIT_TRACE2_EVENT", "0")
+        .env("GIT_TRACE2_PERF", "0")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_NO_LAZY_FETCH", "1")
         .env("GIT_NO_REPLACE_OBJECTS", "1")
@@ -28,6 +50,9 @@ pub(crate) fn git_source_tree(rev: &str) -> Result<String, String> {
 }
 
 fn git_object(rev: &str, object_kind: &str) -> Result<String, String> {
+    if rev.starts_with(':') {
+        return Err("source revision cannot use index expressions".to_string());
+    }
     let output = git_output(&[
         "rev-parse",
         "--verify",
@@ -43,7 +68,13 @@ fn git_object(rev: &str, object_kind: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+#[cfg(test)]
 pub(crate) fn git_worktree_clean() -> Result<bool, String> {
+    let commit = git_rev_parse("HEAD")?;
+    git_worktree_clean_for_commit(&commit)
+}
+
+fn git_worktree_clean_for_commit(commit: &str) -> Result<bool, String> {
     // Status can invoke clean/process filters. Reject their configuration before
     // asking it to inspect files, including globally configured but unused filters.
     let filters = git_output(&[
@@ -61,20 +92,24 @@ pub(crate) fn git_worktree_clean() -> Result<bool, String> {
         return Err("could not establish absence of clean/process filter helpers".to_string());
     }
     let root = git_toplevel()?;
-    let root = root.to_str().ok_or("source root is not UTF-8")?;
+    let root_text = root.to_str().ok_or("source root is not UTF-8")?;
+    reject_shared_indexes()?;
     // No pathspec: inherited literal/glob modes cannot narrow this inventory.
-    let index = git_output(&["-C", root, "ls-files", "--stage", "-v", "-z"])?;
+    let index = git_output(&["-C", root_text, "ls-files", "--stage", "-v", "-z"])?;
     if !index.status.success() {
         return Err("could not inspect source index flags and modes".to_string());
     }
     if index.stdout.split(|byte| *byte == 0).any(|entry| {
         !entry.is_empty()
             && (entry.first() != Some(&b'H')
-                || !matches!(entry.get(2..8), Some(b"100644" | b"100755" | b"120000")))
+                || !matches!(entry.get(2..8), Some(b"100644" | b"100755")))
     }) {
         return Err(
             "source index masks changes or contains an unsupported gitlink/mode".to_string(),
         );
+    }
+    if !super::source_tree::tracked_bytes_match(&root, commit)? {
+        return Ok(false);
     }
     let output = git_output(&[
         "status",
@@ -88,14 +123,19 @@ pub(crate) fn git_worktree_clean() -> Result<bool, String> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().is_empty())
+    Ok(String::from_utf8_lossy(&output.stdout).trim().is_empty()
+        && git_rev_parse("HEAD")? == commit)
 }
 
 pub(crate) fn git_toplevel() -> Result<PathBuf, String> {
-    let output = git_output(&["rev-parse", "--show-toplevel"])?;
+    git_path(&["rev-parse", "--show-toplevel"])
+}
+
+fn git_path(args: &[&str]) -> Result<PathBuf, String> {
+    let output = git_output(args)?;
     if !output.status.success() {
         return Err(format!(
-            "git rev-parse --show-toplevel failed: {}",
+            "read-only Git path query failed: {}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
@@ -112,12 +152,46 @@ pub(crate) fn git_toplevel() -> Result<PathBuf, String> {
     Ok(PathBuf::from(root))
 }
 
+fn reject_shared_indexes() -> Result<(), String> {
+    // Reading a split index can freshen its shared file even with optional
+    // locks disabled. Inspect directory names before any index-reading command.
+    let git_dir = git_path(&["rev-parse", "--absolute-git-dir"])?;
+    let common = git_path(&["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    let index = git_path(&["rev-parse", "--path-format=absolute", "--git-path", "index"])?;
+    let index_parent = index
+        .parent()
+        .ok_or("source index has no parent")?
+        .to_path_buf();
+    let directories = [git_dir, common, index_parent]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    for directory in directories {
+        for entry in fs::read_dir(directory)
+            .map_err(|e| format!("cannot inspect Git index directory: {e}"))?
+        {
+            let entry = entry.map_err(|e| format!("cannot inspect Git index entry: {e}"))?;
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .starts_with("sharedindex.")
+            {
+                return Err(
+                    "source inspection refuses shared split indexes that can change on read"
+                        .to_string(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn tree_clean_for_subject(source_sha: &str) -> Result<bool, String> {
     let head = git_rev_parse("HEAD")?;
     if head != source_sha {
         return Ok(false);
     }
-    git_worktree_clean()
+    git_worktree_clean_for_commit(source_sha)
 }
 
 pub(crate) fn collect_identity_inputs_for_commit(
