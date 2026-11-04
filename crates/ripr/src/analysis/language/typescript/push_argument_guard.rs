@@ -2,9 +2,17 @@
 use super::*;
 use std::collections::HashMap;
 
+struct PushTestWitness {
+    binding: String,
+    input: String,
+    // Keyed by the extractor's original literal spelling, values are decoded
+    // by the same parser used for the input string.
+    expected_values: HashMap<String, String>,
+}
+
 #[derive(Default)]
 pub(crate) struct PushArgumentFacts {
-    tests: HashMap<*const TypeScriptTest, (String, String)>,
+    tests: HashMap<*const TypeScriptTest, PushTestWitness>,
 }
 
 impl PushArgumentFacts {
@@ -127,8 +135,8 @@ impl PushArgumentFacts {
                 }) {
                     return None;
                 }
-                let (name, input) = test_binding(test, &owner.name, receiver, value)?;
-                Some((test as *const TypeScriptTest, (name, input)))
+                let witness = test_binding(test, &owner.name, receiver, value)?;
+                Some((test as *const TypeScriptTest, witness))
             })
             .collect();
         Self { tests }
@@ -137,7 +145,7 @@ impl PushArgumentFacts {
     /// Return true when this bounded witness cannot attribute the assertion to
     /// the appended value. Both rank and sink observation use this decision.
     pub(crate) fn withhold(&self, test: &TypeScriptTest, assertion: &TypeScriptAssertion) -> bool {
-        let Some((binding, input)) = self.tests.get(&(test as *const TypeScriptTest)) else {
+        let Some(witness) = self.tests.get(&(test as *const TypeScriptTest)) else {
             return false;
         };
         let observed = assertion
@@ -148,15 +156,11 @@ impl PushArgumentFacts {
         let expected = assertion
             .expected_value_or_variant
             .as_deref()
-            .and_then(|s| {
-                s.strip_prefix('\'')
-                    .and_then(|s| s.strip_suffix('\''))
-                    .or_else(|| s.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
-            });
-        let upper = input.to_ascii_uppercase();
-        observed != format!("{binding}[0]")
-            || upper == *input
-            || !expected.is_some_and(|value| value == input || value == upper)
+            .and_then(|spelling| witness.expected_values.get(spelling));
+        let upper = witness.input.to_ascii_uppercase();
+        observed != format!("{}[0]", witness.binding)
+            || upper == witness.input
+            || !expected.is_some_and(|value| value == &witness.input || value == &upper)
     }
 }
 
@@ -200,7 +204,7 @@ fn test_binding(
     owner: &str,
     receiver: usize,
     value: usize,
-) -> Option<(String, String)> {
+) -> Option<PushTestWitness> {
     let owner = owner.to_owned();
     super::parse::parse_on_worker(&test.file, &test.body_text, move |_, source, allocator| {
         let parsed = Parser::new(allocator, source, SourceType::ts()).parse();
@@ -218,10 +222,18 @@ fn test_binding(
         let call = statement_call(&statements[1])?;
         if call.arguments.len() != 2 || identifier(&call.callee) != Some(owner.as_str()) || !matches!(call.arguments.get(receiver), Some(Argument::Identifier(id)) if id.name == binding) || !matches!(call.arguments.get(value), Some(Argument::StringLiteral(_))) { return None }
         // All remaining statements must be plain expect(...).toBe(literal).
+        // Preserve OXC-decoded strings with their original source spellings,
+        // which are how extracted assertions identify matcher arguments.
+        let mut expected_values = HashMap::new();
         for statement in &statements[2..] {
             let outer = statement_call(statement)?;
             let Expression::StaticMemberExpression(member) = &outer.callee else { return None };
             if member.optional || member.property.name != "toBe" || outer.arguments.len() != 1 || !matches!(outer.arguments.first(), Some(Argument::StringLiteral(_) | Argument::NumericLiteral(_))) { return None }
+            if let Some(Argument::StringLiteral(literal)) = outer.arguments.first() {
+                let span = literal.span();
+                let spelling = source.get(span.start as usize..span.end as usize)?.trim();
+                expected_values.insert(spelling.to_owned(), literal.value.to_string());
+            }
             let Expression::CallExpression(expect) = &member.object else { return None };
             if expect.optional || identifier(&expect.callee) != Some("expect") || expect.arguments.len() != 1 { return None }
             // No assertion may evaluate a call or mutate state before another assertion.
@@ -235,6 +247,6 @@ fn test_binding(
         }
         let Some(Argument::StringLiteral(input)) = call.arguments.get(value) else { return None };
         if !input.value.is_ascii() { return None }
-        Some((binding.to_owned(), input.value.to_string()))
+        Some(PushTestWitness { binding: binding.to_owned(), input: input.value.to_string(), expected_values })
     }).ok().flatten()
 }

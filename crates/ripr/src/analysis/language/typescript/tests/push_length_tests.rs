@@ -376,3 +376,46 @@ fn confidence_does_not_borrow_a_rejected_owner_path() -> Result<(), String> {
     ));
     Ok(())
 }
+
+#[test]
+fn escaped_string_values_use_decoded_comparison() -> Result<(), String> {
+    for (label, body, expected) in [
+        (
+            "escaped-differentiates",
+            r"const b: string[] = []; logLine(b, 'a\n'); expect(b[0]).toBe('A\n');",
+            ExposureClass::Exposed,
+        ),
+        (
+            "escaped-does-not-differentiate",
+            r"const b: string[] = []; logLine(b, '\\nhi'); expect(b[0]).toBe('\nhi');",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "hex-differentiates",
+            r"const b: string[] = []; logLine(b, '\x61'); expect(b[0]).toBe('\x41');",
+            ExposureClass::Exposed,
+        ),
+        (
+            "unicode-mixed-quotes",
+            r#"const b: string[] = []; logLine(b, '\u0061'); expect(b[0]).toBe("A");"#,
+            ExposureClass::Exposed,
+        ),
+        (
+            "escaped-mixed-assertions",
+            r"const b: string[] = []; logLine(b, 'a\n'); expect(b.length).toBe(1); expect(b[0]).toBe('A\n');",
+            ExposureClass::Exposed,
+        ),
+    ] {
+        assert_eq!(
+            push_class(
+                label,
+                "buf.push(msg);",
+                "buf.push(msg.toUpperCase());",
+                body
+            )?,
+            expected,
+            "{label}"
+        );
+    }
+    Ok(())
+}

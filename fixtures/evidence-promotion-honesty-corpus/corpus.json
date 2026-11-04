@@ -140,6 +140,21 @@
   ],
   "cases": [
     {
+      "id": "typescript_push_escaped_nondiscriminator",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_push_escaped_nondiscriminator",
+      "vector": "escaped_expected_value_does_not_match_changed_argument",
+      "probe_family": "side_effect",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"},
+        {"type": "expected_class", "class": "weakly_exposed"},
+        {"type": "expected_oracle", "kind": "exact_value", "strength": "strong"}
+      ]
+    },
+    {
       "id": "typescript_push_argument_length",
       "language": "typescript",
       "tier": "pure",

@@ -1743,6 +1743,9 @@ the masker.
     arguments, aliases, mutation, shadowing and unrecognized forms retain
     their prior readings. This syntax-first preview assumes ordinary native
     Array and String behavior; it cannot inspect every external setup module.
+    Input and expected string literals are compared as parser-decoded values;
+    different escape spellings cannot supply or suppress value credit merely
+    because their source text happens to match.
     Empty `[]` array-type brackets do not count as computed member writes;
     nonempty computed writes remain replacement refusals. The factory-getter
     consumer has a separate reach and replacement control for that distinction.
