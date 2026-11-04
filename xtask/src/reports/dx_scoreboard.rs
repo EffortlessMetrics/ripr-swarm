@@ -2203,7 +2203,7 @@ pub(crate) fn build_report(
     // printing a no-evidence board beside a passing gate; per-board failure
     // would also fail the nightly, which selects every board without the
     // ingest receipts several boards need.
-    let zero_evidence_boards = if no_comparable_evidence {
+    let zero_evidence_boards = if gate && no_comparable_evidence {
         zero_evidence_boards
     } else {
         Vec::new()

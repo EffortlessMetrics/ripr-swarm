@@ -580,6 +580,11 @@ fn gate_fails_when_no_selected_metric_is_comparable() -> Result<(), String> {
     );
     assert_eq!(mixed["gate"]["status"].as_str(), Some("pass"));
     assert_eq!(mixed["gate"]["zero_evidence_boards"], json!([]));
+    // An ungated run never names zero-evidence boards either: the field is
+    // the gate's failure record, so `not_run` keeps it empty.
+    let ungated = build_report(&config, &boards, &[], &context("r"), Some(&baseline), false);
+    assert_eq!(ungated["gate"]["status"].as_str(), Some("not_run"));
+    assert_eq!(ungated["gate"]["zero_evidence_boards"], json!([]));
     Ok(())
 }
 
