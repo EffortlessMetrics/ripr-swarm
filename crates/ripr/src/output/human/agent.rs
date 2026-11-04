@@ -32,11 +32,14 @@ use std::path::Path;
 
 /// Gap lines printed when there are few gaps, before the explicit `+N more` line.
 pub(super) const MIN_GAP_LINES: usize = 5;
-/// Hard ceiling on printed gap lines, however large the diff (#13081).
-pub(super) const MAX_GAP_LINES: usize = 15;
+/// Hard ceiling on printed gap lines, however large the diff (#13081). Sized so
+/// a realistic report (long paths and ids, about 500 bytes per gap with its test
+/// row) still fits the 6000-byte PR comment with `limits=` and `next=` intact.
+pub(super) const MAX_GAP_LINES: usize = 10;
 
 /// How many gap lines to print for `total` gaps: the floor, plus one line per
-/// eight gaps, never above the ceiling. The order is still the triage
+/// eight gaps, never above the ceiling. The `open=` path (unconfirmed findings)
+/// deliberately stays at the floor. The order is still the triage
 /// selector's; this only decides how far down that order the report reads.
 pub(super) fn gap_line_budget(total: usize) -> usize {
     (MIN_GAP_LINES + total / 8).min(MAX_GAP_LINES)

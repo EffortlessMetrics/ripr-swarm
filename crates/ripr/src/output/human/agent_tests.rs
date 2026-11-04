@@ -623,7 +623,8 @@ fn the_gap_budget_grows_with_the_gap_count_and_stops_at_the_ceiling() {
     assert_eq!(gap_line_budget(0), MIN_GAP_LINES);
     assert_eq!(gap_line_budget(7), MIN_GAP_LINES);
     assert_eq!(gap_line_budget(8), MIN_GAP_LINES + 1);
-    assert_eq!(gap_line_budget(46), 10);
+    assert_eq!(gap_line_budget(39), 9);
+    assert_eq!(gap_line_budget(40), MAX_GAP_LINES);
     assert_eq!(gap_line_budget(116), MAX_GAP_LINES);
     assert_eq!(gap_line_budget(100_000), MAX_GAP_LINES);
 }
@@ -635,16 +636,19 @@ fn a_larger_diff_prints_more_gap_lines_and_counts_the_rest() {
         .collect();
     let text = rendered(&output(findings));
     let budget = gap_line_budget(40);
-    assert_eq!(budget, 10);
+    assert_eq!(budget, MAX_GAP_LINES);
     assert_eq!(text.matches("\nweakly_exposed|").count(), budget, "{text}");
     assert!(text.contains(" gaps=40 "), "{text}");
     assert!(text.contains("\n+30 more gaps not shown;"), "{text}");
 }
 
 #[test]
-fn the_maximum_report_fits_the_pr_comment_ceiling() {
+fn the_maximum_report_with_long_ids_fits_the_pr_comment_ceiling() {
     let findings: Vec<Finding> = (0..200)
-        .map(|index| weak_gap(&format!("probe:g{index}"), index + 1))
+        .map(|index| {
+            // Long ids stand in for real `probe:<path>:<line>:<kind>` ids.
+            weak_gap(&format!("probe:{}:g{index}", "p".repeat(110)), index + 1)
+        })
         .collect();
     let text = rendered(&output(findings));
     assert_eq!(
@@ -653,4 +657,22 @@ fn the_maximum_report_fits_the_pr_comment_ceiling() {
         "{text}"
     );
     assert!(text.len() < 6000, "{} bytes", text.len());
+}
+
+#[test]
+fn the_open_path_stays_at_the_floor_however_many_findings() {
+    let findings: Vec<Finding> = (0..12)
+        .map(|index| reach_limited_weak(&format!("probe:open{index}"), 10 + index))
+        .collect();
+    let text = rendered(&output(findings));
+    assert!(text.contains("\nopen="), "{text}");
+    assert_eq!(
+        text.matches("|id=probe:open").count(),
+        MIN_GAP_LINES,
+        "{text}"
+    );
+    assert!(
+        text.contains("\n+7 more open findings not shown;"),
+        "{text}"
+    );
 }
