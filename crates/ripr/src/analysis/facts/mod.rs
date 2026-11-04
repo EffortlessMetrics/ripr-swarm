@@ -42,6 +42,7 @@ mod index;
 mod local_test_alias;
 mod macro_generated_tests;
 pub(crate) mod macro_visibility;
+pub(crate) mod resource_dependencies;
 
 /// The index builder's macro-generated test registration, for fixtures that
 /// assemble an index by hand.
@@ -333,6 +334,9 @@ fn reuse_cached_index(
         // absent/present export or the assertion sites derived from it.
         cached.index.member_crates = member_crates::MemberCrates::new(root);
         cached.index.call_identity_memos.clear();
+        // #5171: embedded resource bytes are not part of the Rust-file reuse
+        // comparison; refresh producer-owned edges from the current workspace.
+        resource_dependencies::attach_resource_dependencies(root, &mut cached.index);
         return Ok(cached);
     }
     // Post-processing is only incrementally exact when the file set grows by

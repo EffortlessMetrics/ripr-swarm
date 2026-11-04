@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nextest-run" tests="7" skipped="1" failures="0" errors="0" time="400.000">
+    <testsuite name="ripr::cli_smoke" tests="3" skipped="1" errors="0" failures="0">
+        <testcase name="fast_check" classname="ripr::cli_smoke" time="0.250"/>
+        <testcase name="check_json_timeout" classname="ripr::cli_smoke" time="45.500"/>
+        <testcase name="ignored_by_filter" classname="ripr::cli_smoke" time="999.000">
+            <skipped/>
+        </testcase>
+    </testsuite>
+    <testsuite name="xtask::bin/xtask" tests="4" skipped="0" errors="0" failures="0">
+        <testcase name="tests::long_baselined" classname="xtask::bin/xtask" time="120.000"/>
+        <testcase name="tests::newly_slow" classname="xtask::bin/xtask" time="31.000"/>
+        <testcase name="tests::improved_since_baseline" classname="xtask::bin/xtask" time="2.000"/>
+        <testcase name="tests::exactly_at_budget" classname="xtask::bin/xtask" time="30.000"/>
+    </testsuite>
+</testsuites>

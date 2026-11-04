@@ -643,7 +643,10 @@ pub(super) fn refuse_check(
 /// consumers get the requested echo, the published facts, and the bounded
 /// retry; every other failure keeps its unchanged prose.
 fn human_refusal_prose(error: &CoreError) -> String {
-    if error.refusal_notice().identity == "analysis_timeout"
+    if error
+        .refusal_notice(&crate::config::config_error_summary)
+        .identity
+        == "analysis_timeout"
         && let Some(projection) = app::timeout_refusal::take_stashed()
     {
         return format!("{error}\n{}", projection.human_recovery_text());
@@ -665,7 +668,7 @@ pub(super) fn machine_refusal_document(
     format: OutputFormat,
     error: &CoreError,
 ) -> Option<Result<String, String>> {
-    let notice = error.refusal_notice();
+    let notice = error.refusal_notice(&crate::config::config_error_summary);
     match format {
         OutputFormat::Json => {
             let display = error.to_string();

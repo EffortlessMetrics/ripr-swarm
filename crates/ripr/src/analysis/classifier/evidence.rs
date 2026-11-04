@@ -58,6 +58,11 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// change. An owner with an unresolved caller chain keeps its
     /// shape-based class even when no related test was found.
     pub(in crate::analysis) reach_ruled_out: bool,
+    /// #11870: a related test reads the field this probe's assignment writes
+    /// with a weak relational check, under the one start policy the seam side
+    /// asks too (`assigned_field_weak_read_start`). Only then does a weakly
+    /// exposed field assignment keep its class instead of abstaining.
+    pub(in crate::analysis) assigned_field_weakly_read: bool,
     /// When the reveal is not fully established: where a refused related
     /// assertion is, why it was refused, and whether its text calls the
     /// changed owner. Only an owner-calling refusal could have observed
@@ -1646,6 +1651,29 @@ impl ClassifiedProbeEvidence {
                 stage
             }
         };
+        let assigned_field_weakly_read =
+            matches!(context.probe.family, ProbeFamily::FieldConstruction)
+                && context.owner_fn.is_some_and(|owner| {
+                    crate::analysis::classify::assigned_field_of(
+                        owner,
+                        context.probe,
+                        context.index,
+                    )
+                    .is_some_and(|path| {
+                        let tests: Vec<&TestSummary> = context
+                            .related_tests
+                            .iter()
+                            .map(|(test, _)| *test)
+                            .collect();
+                        crate::analysis::classify::assigned_field_weak_read_start(
+                            owner,
+                            &context.probe.expression,
+                            &path,
+                            &tests,
+                            context.index,
+                        )
+                    })
+                });
         let infect = unreached(infect, "activate");
         let observe = unreached(observe, "observe");
         let discriminate = unreached(discriminate, "discriminate");
@@ -1916,6 +1944,7 @@ impl ClassifiedProbeEvidence {
             observe,
             discriminate,
             reach_ruled_out,
+            assigned_field_weakly_read,
             assertion_refusal,
             refusals_are_analyzer_limits,
             mixed_refusal_is_analyzer_limit,
@@ -2148,6 +2177,7 @@ impl ClassifiedProbeEvidence {
         if class == ExposureClass::WeaklyExposed
             && matches!(probe.family, ProbeFamily::FieldConstruction)
             && crate::analysis::classify::field_assignment_target(&probe.expression).is_some()
+            && !self.assigned_field_weakly_read
         {
             return ExposureClass::StaticUnknown;
         }

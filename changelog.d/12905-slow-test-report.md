@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `cargo xtask slow-test-report` reads the nextest `ci` JUnit XML and writes the 50 slowest tests with per-test seconds to `target/ripr/reports/slow-tests.{md,json}`, judged against the per-test budget in `policy/test-time-budget.toml`. The budget is advisory by decision; the policy records the ratchet and a baseline allowlist of the 20 tests over 30s in test-analytics run 41867428230 so it can be enforced later without a flood of failures (#12905, slice 1).
