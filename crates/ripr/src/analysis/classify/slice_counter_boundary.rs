@@ -224,6 +224,12 @@ pub(in crate::analysis) fn refine_slice_counter_boundary(
     let Some(boundary) = boundary(context, syntax) else {
         return;
     };
+    // Only a pair of adjacent lengths that straddles the boundary replaces the
+    // unresolved-boundary abstention; any other rows leave the gathered state
+    // as it was.
+    if boundary.straddling_pairs().next().is_none() {
+        return;
+    }
     gathered.unresolved_boundary = None;
     gathered.activation.missing_discriminators.retain(|fact| {
         !fact.value.contains(&boundary.counter) && !fact.reason.contains("boundary operand")
@@ -300,12 +306,12 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
         let facts = context.index.files().get(path)?;
         count.checked_add(owner_reference_count(&facts.source, &owner.name)?)
     });
-    if let (Some(references), Some(expected)) = (references, admitted_calls.checked_add(1))
-        && references != expected
-    {
+    // Fail closed: an unreadable file or an unestablished count is not a match.
+    if references.is_none() || references != admitted_calls.checked_add(1) {
         return None;
     }
     rows.sort_by_key(|row| row.count);
+    // One row per length: a duplicate length can drop a pairing, never create one.
     rows.dedup_by_key(|row| row.count);
     Some(SliceCounterBoundary {
         owner: owner.id.clone(),
@@ -441,6 +447,27 @@ fn per_byte_counter_shape(
         return None;
     };
     let slice_param = path.path()?.syntax().text().to_string();
+    // The iterated name must be the parameter itself: one binding, so a
+    // `let hex = &hex[..4];` rebinding cannot shorten the loop.
+    let slice_bindings = body
+        .syntax()
+        .ancestors()
+        .find_map(ast::Fn::cast)
+        .map_or(0, |function| {
+            function
+                .syntax()
+                .descendants()
+                .filter_map(ast::IdentPat::cast)
+                .filter(|pattern| {
+                    pattern
+                        .name()
+                        .is_some_and(|name| name.text() == slice_param)
+                })
+                .count()
+        });
+    if slice_bindings != 1 {
+        return None;
+    }
     let loop_statements = for_loop
         .loop_body()?
         .stmt_list()?
@@ -681,6 +708,11 @@ mod tests {
             GRID_BITS.replace("    let mut count = 0;\n", "    let mut count = 0;\n    let _first = hex.first().ok_or(ChunkError::BadDigit)?;\n"),
             // shadowed counter
             GRID_BITS.replace("        let digit", "        let count = 0;\n        let digit"),
+            // the iterated slice is rebound before the loop
+            GRID_BITS.replace(
+                "    let mut count = 0;\n",
+                "    let mut count = 0;\n    let hex = &hex[..4];\n",
+            ),
             // counter starts at one
             GRID_BITS.replace("let mut count = 0;", "let mut count = 1;"),
             // increment by two
