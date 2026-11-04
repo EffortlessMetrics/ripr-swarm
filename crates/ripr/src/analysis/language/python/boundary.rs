@@ -2452,8 +2452,11 @@ pub(super) fn unresolved_loop_list_boundary(
                     assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
                         && rows.iter().any(|row| {
                             row.file == candidate.test.file
-                                && row.line == assertion.line
-                                && is_direct_integer_sequence_assertion(row, owner, candidate)
+                                && ((row.line == assertion.line
+                                    && is_direct_integer_sequence_assertion(row, owner, candidate))
+                                    || is_indirect_integer_sequence_assertion(
+                                        row, owner, candidate, assertion,
+                                    ))
                         })
                 })
         })
@@ -2544,4 +2547,73 @@ fn is_direct_integer_sequence_assertion(
     !module.body.is_empty() && module.body.iter().all(|statement| {
         matches!(statement, Stmt::Assert(assertion) if assertion.msg.is_none() && value_pin(&assertion.test, owner, candidate))
     })
+}
+
+/// A closed result alias: one direct numeric owner call assigned to a local,
+/// followed immediately by one integer equality assertion on that same local.
+/// Other statements and assertions, decorators, fixtures, and aliases through
+/// wrappers are deliberately outside the rule.
+fn is_indirect_integer_sequence_assertion(
+    row: &CallRow,
+    owner: &PythonOwner,
+    candidate: &PythonRelatedCandidate<'_>,
+    assertion: &super::PythonAssertion,
+) -> bool {
+    use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+    if row.line >= assertion.line
+        || candidate.test.assertions.len() != 1
+        || !candidate.test.decorators.is_empty()
+        || !candidate.test.fixtures.is_empty()
+    {
+        return false;
+    }
+    let Ok(Mod::Module(module)) = super::source_facts::parse_module_result(
+        std::path::Path::new("<loop-boundary-result>"),
+        &candidate.test.body_text,
+    ) else {
+        return false;
+    };
+    let [Stmt::FunctionDef(function)] = module.body.as_slice() else {
+        return false;
+    };
+    let [Stmt::Assign(assignment), Stmt::Assert(check)] = function.body.as_slice() else {
+        return false;
+    };
+    let [Expr::Name(target)] = assignment.targets.as_slice() else {
+        return false;
+    };
+    if !matches!(assignment.value.as_ref(), Expr::Call(_)) || check.msg.is_some() {
+        return false;
+    }
+    let Expr::Compare(compare) = check.test.as_ref() else {
+        return false;
+    };
+    let ([ast::CmpOp::Eq], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice())
+    else {
+        return false;
+    };
+    fn integer(value: &Expr) -> bool {
+        match value {
+            Expr::Constant(value) => matches!(value.value, ast::Constant::Int(_)),
+            Expr::UnaryOp(value) if matches!(value.op, ast::UnaryOp::UAdd | ast::UnaryOp::USub) => {
+                matches!(value.operand.as_ref(), Expr::Constant(value) if matches!(value.value, ast::Constant::Int(_)))
+            }
+            _ => false,
+        }
+    }
+    let same_local = |value: &Expr| matches!(value, Expr::Name(name) if name.id == target.id);
+    if !((same_local(&compare.left) && integer(right))
+        || (integer(&compare.left) && same_local(right)))
+    {
+        return false;
+    }
+    let Some((row_target, call)) = row.text.split_once('=') else {
+        return false;
+    };
+    if row_target.trim() != target.id.as_str() {
+        return false;
+    }
+    let mut direct = row.clone();
+    direct.text = format!("assert {} == 0", call.trim());
+    is_direct_integer_sequence_assertion(&direct, owner, candidate)
 }

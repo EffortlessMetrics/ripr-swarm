@@ -1720,6 +1720,8 @@ or `best = xs[0]` followed by `for x in xs[1:]`, both with conditional
 and each has a strong direct comparison of the owner call on an integer list
 or tuple with an integer. A single line with multiple assertions or `and`
 conjuncts qualifies only when every statement and conjunct is such a direct
-pin. Qualified calls must resolve to the owner through test imports. The finding carries an infection stop
+pin. A test with exactly one direct owner-call assignment followed by one
+integer equality assertion on that local also qualifies. Qualified calls must
+resolve to the owner through test imports. The finding carries an infection stop
 reason and no repair suggestion. Other source and test shapes retain their
 existing behavior.

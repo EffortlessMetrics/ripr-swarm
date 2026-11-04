@@ -4392,3 +4392,68 @@ fn indexed_loop_refuses_changed_loop_body_and_equality_witness() -> Result<(), S
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn indirect_loop_boundary_direct_result_alias_is_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for assertion in ["assert result == 5", "assert 5 == result"] {
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    result = largest([1, 5, 3])\n    {assertion}\n"
+        );
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+        assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn indirect_loop_boundary_rebinding_and_discarded_call_are_not_witnesses() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for body in [
+        "result = largest([1, 5, 3])\n    result = 5\n    assert result == 5",
+        "largest([1, 5, 3])\n    result = 5\n    assert result == 5",
+        "result = list(largest([1, 5, 3]))\n    assert result == 5",
+    ] {
+        let tests = format!("from src.subject import largest\n\ndef test_largest():\n    {body}\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn indirect_loop_boundary_mixed_identity_preserves_prior_class() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key): self.key = key\n    def __gt__(self, other): return self.key > other.key\n    def __ge__(self, other): return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    result = largest([1, 5, 3])\n    assert result == 5\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
