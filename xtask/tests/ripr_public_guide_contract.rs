@@ -11,6 +11,8 @@ use ripr_help::{rendered_help, run_ripr};
 const COMMAND_HIERARCHY_DOC: &str = include_str!("../../docs/COMMAND_HIERARCHY.md");
 const ROOT_README: &str = include_str!("../../README.md");
 const QUICKSTART_DOC: &str = include_str!("../../docs/QUICKSTART.md");
+const WHY_RIPR_DOC: &str = include_str!("../../docs/WHY_RIPR.md");
+const BOUNDARY_GAP_HUMAN: &str = include_str!("../../fixtures/boundary_gap/expected/human.txt");
 const EXIT_CODES_DOC: &str = include_str!("../../docs/EXIT_CODES.md");
 const FIRST_RUN_REPORT_TEMPLATE: &str =
     include_str!("../../.github/ISSUE_TEMPLATE/first_run_report.yml");
@@ -40,6 +42,7 @@ const PUBLIC_COMMAND_DOCS: &[(&str, &str)] = &[
         include_str!("../../editors/vscode/README.md"),
     ),
     ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ("docs/WHY_RIPR.md", WHY_RIPR_DOC),
     ("docs/COMMAND_HIERARCHY.md", COMMAND_HIERARCHY_DOC),
     ("docs/EXIT_CODES.md", EXIT_CODES_DOC),
     (
@@ -813,5 +816,36 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
             output.status
         ));
     }
+    Ok(())
+}
+
+/// The "why ripr" page quotes real output and states the static-only limits.
+/// Every quoted output line must exist in the checked fixture output, and the
+/// page must keep its non-claims, so the pitch cannot drift from the product.
+#[test]
+fn why_ripr_quotes_checked_output_and_keeps_its_limits() -> Result<(), String> {
+    let fence = WHY_RIPR_DOC
+        .split("```text\n")
+        .nth(1)
+        .and_then(|rest| rest.split("```").next())
+        .ok_or("docs/WHY_RIPR.md must quote ripr output in a text block")?;
+    let mut quoted = 0;
+    for line in fence.lines().filter(|l| !l.trim().is_empty()) {
+        quoted += 1;
+        if !BOUNDARY_GAP_HUMAN.contains(line) {
+            return Err(format!("quoted line is not in the checked fixture: {line}"));
+        }
+    }
+    if quoted < 4 {
+        return Err("expected the four-line boundary example".to_string());
+    }
+    for needle in [
+        "does not run your tests or",
+        "not a clean bill of health",
+        "not a runtime mutation result",
+    ] {
+        assert_contains("docs/WHY_RIPR.md", WHY_RIPR_DOC, needle)?;
+    }
+    assert_contains("README.md", ROOT_README, "docs/WHY_RIPR.md")?;
     Ok(())
 }
