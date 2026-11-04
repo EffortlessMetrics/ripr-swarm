@@ -200,10 +200,10 @@ fn classify_historical_campaign(reference: &str) -> bool {
         .any(|marker| reference.contains(marker))
 }
 
-fn candidate_for_issue<'a>(
-    snapshot: &'a WorkPortfolioSnapshotV1,
+fn candidate_for_issue(
+    snapshot: &WorkPortfolioSnapshotV1,
     issue: u64,
-) -> Result<&'a WorkCandidateV1, String> {
+) -> Result<&WorkCandidateV1, String> {
     snapshot
         .candidates
         .iter()
@@ -489,10 +489,10 @@ fn validate_receipt_against_expect(
             return Err(format!("missing conflict resource `{resource}`"));
         }
     }
-    if let Some(stale) = &expected.stale_item_refused {
-        if !receipt.limitations.iter().any(|item| item.contains(stale)) {
-            return Err(format!("expected stale refusal `{stale}`"));
-        }
+    if let Some(stale) = &expected.stale_item_refused
+        && !receipt.limitations.iter().any(|item| item.contains(stale))
+    {
+        return Err(format!("expected stale refusal `{stale}`"));
     }
     Ok(())
 }
@@ -730,10 +730,13 @@ mod tests {
         validate_receipt_against_expect(&receipt, &scenario.expected)
     }
 
+    /// Relative path and bytes (`None` when absent) for each input the run reads.
+    type InputSnapshot = Vec<(String, Option<Vec<u8>>)>;
+
     /// The orientation run reads exactly these repository inputs. Comparing
     /// their contents, rather than whole-workspace `git status`, keeps the proof
     /// independent of unrelated files that parallel test shards write.
-    fn orientation_input_snapshot(root: &Path) -> Result<Vec<(String, Option<Vec<u8>>)>, String> {
+    fn orientation_input_snapshot(root: &Path) -> Result<InputSnapshot, String> {
         [
             "docs/ROADMAP.md",
             "Cargo.toml",
