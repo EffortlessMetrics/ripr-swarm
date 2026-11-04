@@ -317,9 +317,14 @@ pub(super) fn loop_context_limit(
     old_line: Option<&str>,
     sole_line_replacement: bool,
 ) -> Option<PythonStaticLimit> {
-    let applies = loop_header(new_line).is_some()
-        || old_line.and_then(loop_header).is_some()
-        || owner_header_at_line(owner, source, line);
+    let old_header = sole_line_replacement
+        && old_line
+            .and_then(|old| replaced_line(source, line, new_line, old))
+            .is_some_and(|old_source| owner_header_at_line(owner, &old_source, line));
+    let applies = starts_loop_header(new_line)
+        || old_line.is_some_and(starts_loop_header)
+        || owner_header_at_line(owner, source, line)
+        || old_header;
     if !applies
         || (sole_line_replacement
             && range_header(new_line).is_some()
@@ -332,6 +337,31 @@ pub(super) fn loop_context_limit(
         evidence: "static_limit unsupported_syntax: changed loop header lacks a supported isolated range replacement".to_string(),
         missing: "Static limit `unsupported_syntax`: multiline or wrapped iterators and changes without an unchanged old-body witness remain unresolved. The bounded range model requires a single-line header replacement with no other changes in the production file.".to_string(),
     })
+}
+
+fn starts_loop_header(line: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let mut tokens = lex(line.trim_start(), Mode::Module)
+        .filter_map(Result::ok)
+        .map(|(token, _)| token);
+    match tokens.next() {
+        Some(Tok::For) => true,
+        Some(Tok::Async) => matches!(tokens.next(), Some(Tok::For)),
+        _ => false,
+    }
+}
+
+fn replaced_line(source: &str, line: usize, new: &str, old: &str) -> Option<String> {
+    if old.contains('\n') {
+        return None;
+    }
+    let mut lines: Vec<_> = source.lines().collect();
+    let current = lines.get_mut(line.checked_sub(1)?)?;
+    if *current != new.trim_end_matches('\r') {
+        return None;
+    }
+    *current = old;
+    Some(lines.join("\n"))
 }
 
 fn owner_header_at_line(owner: &PythonOwner, source: &str, line: usize) -> bool {

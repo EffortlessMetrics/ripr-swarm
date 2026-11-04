@@ -4365,5 +4365,16 @@ fn changed_range_requires_an_unchanged_old_body_and_catches_old_wrappers() -> Re
     let tests = "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to(0) == 0\n";
     let finding = classify_range_case(&source, tests, 3, wrapped_before, conditional_after)?;
     assert_ne!(finding.class, ExposureClass::Exposed);
+    let old_opening = "    for i in iter(range(";
+    let new_opening = "    if any(range(";
+    let source = format!(
+        "def sum_to(n):\n    acc = 0\n{new_opening}\n        n)):\n        acc += n\n    return acc\n"
+    );
+    let finding = classify_range_case(&source, tests, 3, old_opening, new_opening)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "old multiline header: {finding:?}"
+    );
     Ok(())
 }
