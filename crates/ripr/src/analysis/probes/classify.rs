@@ -11,20 +11,22 @@ use std::path::Path;
 
 mod declarations;
 
-/// Changed lines handed to `declarations::type_bound_lines` between two
-/// cancellation checkpoints. A whole-file change (an unsaved buffer) puts
-/// thousands of lines in one call, and the verdict work grows faster than
-/// the line count, so one call could outlast a `shutdown` by many seconds
-/// (#11439). Each verdict depends only on its own line, so the chunking does
-/// not change any result.
+/// Changed lines examined between cancellation checkpoints. Preparation is
+/// shared only within this source invocation; each verdict still depends on
+/// its own exact source line (#11439).
 const TYPE_BOUND_CHUNK_LINES: usize = 256;
 
 fn cancellable_type_bound_lines(
     source: &str,
     lines: &[crate::analysis::diff::ChangedLine],
 ) -> Vec<bool> {
+    // Initialize after the first checkpoint, including a failed parse. Empty
+    // or already-cancelled requests must not pay any preparation cost.
+    let mut prepared = None;
     verdicts_in_cancellable_chunks(lines, TYPE_BOUND_CHUNK_LINES, |chunk| {
-        declarations::type_bound_lines(source, chunk)
+        prepared
+            .get_or_insert_with(|| declarations::TypeBoundLines::new(source))
+            .verdicts(chunk)
     })
 }
 
@@ -2024,5 +2026,113 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    fn bound_lines(source: &str) -> Vec<crate::analysis::diff::ChangedLine> {
+        source
+            .lines()
+            .enumerate()
+            .map(|(index, text)| crate::analysis::diff::ChangedLine {
+                line: index + 1,
+                // The old-side coordinate is authoritative even when the new side differs.
+                new_side_line: usize::MAX,
+                text: text.to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn type_bound_preparation_is_reused_across_chunks() {
+        let source = "struct S<T: Clone>;\nfn f() {}\n".repeat(600);
+        let lines = bound_lines(&source);
+        let before = declarations::TYPE_BOUND_PREPARATIONS.with(std::cell::Cell::get);
+        let verdicts = cancellable_type_bound_lines(&source, &lines);
+        assert_eq!(
+            verdicts,
+            (0..lines.len()).map(|i| i % 2 == 0).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            declarations::TYPE_BOUND_PREPARATIONS.with(std::cell::Cell::get) - before,
+            1
+        );
+
+        let before = declarations::TYPE_BOUND_PREPARATIONS.with(std::cell::Cell::get);
+        assert_eq!(
+            cancellable_type_bound_lines("fn {", &lines),
+            vec![false; lines.len()]
+        );
+        assert_eq!(
+            declarations::TYPE_BOUND_PREPARATIONS.with(std::cell::Cell::get) - before,
+            1
+        );
+
+        // A fresh invocation must see the edited source and exact line text.
+        let edited = source.replace("struct S<T: Clone>;", "struct S;");
+        assert_eq!(
+            cancellable_type_bound_lines(&edited, &bound_lines(&edited)),
+            vec![false; lines.len()]
+        );
+        assert_eq!(
+            cancellable_type_bound_lines(&edited, &lines),
+            vec![false; lines.len()]
+        );
+    }
+
+    #[test]
+    fn type_bound_preparation_stays_lazy_and_cancellable() {
+        use crate::analysis::cancellation::{
+            AnalysisAbortKind, AnalysisCancellationToken, with_token,
+        };
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        use std::time::{Duration, Instant};
+        let source = "struct S<T: Clone>;\n".repeat(1200);
+        let lines = bound_lines(&source);
+        let before = declarations::TYPE_BOUND_PREPARATIONS.with(std::cell::Cell::get);
+        assert!(cancellable_type_bound_lines(&source, &[]).is_empty());
+        let cancelled = AnalysisCancellationToken::new();
+        cancelled.cancel(AnalysisAbortKind::Cancelled);
+        assert_eq!(
+            with_token(&cancelled, || cancellable_type_bound_lines(&source, &lines)),
+            vec![false; lines.len()]
+        );
+        assert_eq!(
+            declarations::TYPE_BOUND_PREPARATIONS.with(std::cell::Cell::get),
+            before
+        );
+
+        let ticks = Arc::new(AtomicUsize::new(0));
+        let clock_ticks = Arc::clone(&ticks);
+        let started = Instant::now();
+        let token = AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_millis(3),
+            Arc::new(move || {
+                started + Duration::from_millis(clock_ticks.fetch_add(1, Ordering::SeqCst) as u64)
+            }),
+        );
+        let verdicts = with_token(&token, || cancellable_type_bound_lines(&source, &lines));
+        assert!(
+            verdicts[..3 * TYPE_BOUND_CHUNK_LINES]
+                .iter()
+                .all(|flag| *flag)
+        );
+        assert!(
+            verdicts[3 * TYPE_BOUND_CHUNK_LINES..]
+                .iter()
+                .all(|flag| !*flag)
+        );
+        assert_eq!(verdicts.len(), lines.len());
+        assert_eq!(
+            token.abort_kind(),
+            Some(AnalysisAbortKind::DeadlineExceeded)
+        );
+        assert_eq!(ticks.load(Ordering::SeqCst), 4);
+        assert_eq!(
+            declarations::TYPE_BOUND_PREPARATIONS.with(std::cell::Cell::get) - before,
+            1
+        );
     }
 }

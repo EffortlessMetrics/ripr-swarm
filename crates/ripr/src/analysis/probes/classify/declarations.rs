@@ -8,44 +8,96 @@ use crate::domain::ProbeFamily;
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
 use std::ops::Range;
 
+/// One source-local preparation shared by the cancellation chunks. A failed
+/// parse is retained as a refusal too, so it is not retried per chunk.
+pub(super) struct TypeBoundLines<'a> {
+    source: &'a str,
+    syntax: Option<TypeBoundSyntax>,
+}
+
+struct TypeBoundSyntax {
+    tokens: LineTokens,
+    declarations: Vec<Range<usize>>,
+    line_starts: Vec<usize>,
+}
+
+impl<'a> TypeBoundLines<'a> {
+    pub(super) fn new(source: &'a str) -> Self {
+        #[cfg(test)]
+        TYPE_BOUND_PREPARATIONS.with(|count| count.set(count.get() + 1));
+        let syntax = parse_clean_source_file(source).map(|parse| {
+            let root = parse.tree();
+            let tokens = LineTokens::new(root.syntax());
+            let declarations = root
+                .syntax()
+                .descendants()
+                .filter(supported_bound_declaration)
+                .map(|node| {
+                    let range = node.text_range();
+                    u32::from(range.start()) as usize..u32::from(range.end()) as usize
+                })
+                .collect();
+            let line_starts = std::iter::once(0)
+                .chain(source.match_indices('\n').map(|(at, _)| at + 1))
+                .collect();
+            TypeBoundSyntax {
+                tokens,
+                declarations,
+                line_starts,
+            }
+        });
+        Self { source, syntax }
+    }
+
+    pub(super) fn verdicts(&self, lines: &[crate::analysis::diff::ChangedLine]) -> Vec<bool> {
+        let Some(syntax) = &self.syntax else {
+            return vec![false; lines.len()];
+        };
+        lines
+            .iter()
+            .map(|line| {
+                let Some(range) = syntax.line_range(self.source.len(), line.line) else {
+                    return false;
+                };
+                if self.source.get(range.clone()).map(str::trim) != Some(line.text.trim()) {
+                    return false;
+                }
+                let Some(span) = syntax.tokens.declaration_span(range) else {
+                    return false;
+                };
+                syntax
+                    .declarations
+                    .iter()
+                    .any(|node| node.start <= span.start && span.end <= node.end)
+            })
+            .collect()
+    }
+}
+
+impl TypeBoundSyntax {
+    fn line_range(&self, source_len: usize, line: usize) -> Option<Range<usize>> {
+        let start = *self.line_starts.get(line.checked_sub(1)?)?;
+        // Exclude LF, retain CR, and keep the empty line after a final LF,
+        // exactly as source_line_byte_range does for old-side coordinates.
+        let end = self
+            .line_starts
+            .get(line)
+            .map_or(source_len, |next| next - 1);
+        Some(start..end)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static TYPE_BOUND_PREPARATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
 pub(super) fn type_bound_lines(
     source: &str,
     lines: &[crate::analysis::diff::ChangedLine],
 ) -> Vec<bool> {
-    let Some(parse) = parse_clean_source_file(source) else {
-        return vec![false; lines.len()];
-    };
-    let root = parse.tree();
-    // Walk the tree once: each qualifying node re-walks its own subtree, so
-    // doing it per changed line made a whole-file change (an unsaved buffer)
-    // quadratic.
-    let tokens = LineTokens::new(root.syntax());
-    let declarations = root
-        .syntax()
-        .descendants()
-        .filter(supported_bound_declaration)
-        .map(|node| {
-            let range = node.text_range();
-            u32::from(range.start()) as usize..u32::from(range.end()) as usize
-        })
-        .collect::<Vec<_>>();
-    lines
-        .iter()
-        .map(|line| {
-            let Some(range) = source_line_byte_range(source, line.line) else {
-                return false;
-            };
-            if source.get(range.clone()).map(str::trim) != Some(line.text.trim()) {
-                return false;
-            }
-            let Some(span) = tokens.declaration_span(range) else {
-                return false;
-            };
-            declarations
-                .iter()
-                .any(|node| node.start <= span.start && span.end <= node.end)
-        })
-        .collect()
+    TypeBoundLines::new(source).verdicts(lines)
 }
 
 /// Whether each line touches a type-bound construct, even when the line also
@@ -1189,6 +1241,104 @@ mod tests {
         for (line, expected) in lines.iter().zip(&batch) {
             let alone = type_bound_lines(&source, std::slice::from_ref(line));
             assert_eq!(alone, [*expected], "line {}: {}", line.line, line.text);
+        }
+    }
+
+    // Retain the previous simple implementation as an independent equivalence oracle.
+    pub(super) fn legacy_type_bound_lines(
+        source: &str,
+        lines: &[crate::analysis::diff::ChangedLine],
+    ) -> Vec<bool> {
+        let Some(parse) = parse_clean_source_file(source) else {
+            return vec![false; lines.len()];
+        };
+        let root = parse.tree();
+        // Walk the tree once: each qualifying node re-walks its own subtree, so
+        // doing it per changed line made a whole-file change (an unsaved buffer)
+        // quadratic.
+        let tokens = LineTokens::new(root.syntax());
+        let declarations = root
+            .syntax()
+            .descendants()
+            .filter(supported_bound_declaration)
+            .map(|node| {
+                let range = node.text_range();
+                u32::from(range.start()) as usize..u32::from(range.end()) as usize
+            })
+            .collect::<Vec<_>>();
+        lines
+            .iter()
+            .map(|line| {
+                let Some(range) = source_line_byte_range(source, line.line) else {
+                    return false;
+                };
+                if source.get(range.clone()).map(str::trim) != Some(line.text.trim()) {
+                    return false;
+                }
+                let Some(span) = tokens.declaration_span(range) else {
+                    return false;
+                };
+                declarations
+                    .iter()
+                    .any(|node| node.start <= span.start && span.end <= node.end)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn prepared_type_bound_line_ranges_match_original() -> Result<(), String> {
+        for source in ["", "\n", "// α\r\n// β\n", "// no final LF", "\r\n\r\n"] {
+            let prepared = TypeBoundLines::new(source);
+            let syntax = prepared.syntax.ok_or("comment-only source must parse")?;
+            for line in (0..=source.lines().count() + 3).chain([usize::MAX]) {
+                assert_eq!(
+                    syntax.line_range(source.len(), line),
+                    source_line_byte_range(source, line),
+                    "source {source:?}, line {line}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn prepared_type_bound_verdicts_match_original_coordinates_and_refusals() {
+        let unit = "struct S<T: Clone>;\nfn f<T: Clone>(v: T) -> T { v }\nstruct P<T> where T: Clone {\n    value: T,\n}\ntype Runtime = [u8; { 2 }];\ntype Macro = m!();\nconst TEXT: &str = \"one\ntwo\";\n// λ\n";
+        let source = unit.repeat(70);
+        for source in [
+            source.clone(),
+            source.replace('\n', "\r\n"),
+            "fn broken {".to_string(),
+            String::new(),
+        ] {
+            let mut lines: Vec<_> = source
+                .lines()
+                .enumerate()
+                .map(|(i, text)| crate::analysis::diff::ChangedLine {
+                    line: i + 1,
+                    new_side_line: usize::MAX,
+                    text: text.to_string(),
+                })
+                .collect();
+            // Out-of-order requests and duplicates must be independent, and an
+            // exact-text mismatch must not borrow a declaration from the source.
+            lines.reverse();
+            lines.extend(lines.clone());
+            for line in [0, 1, usize::MAX] {
+                lines.push(crate::analysis::diff::ChangedLine {
+                    line,
+                    new_side_line: 1,
+                    text: "different text".to_string(),
+                });
+            }
+            let expected = legacy_type_bound_lines(&source, &lines);
+            let prepared = TypeBoundLines::new(&source);
+            assert_eq!(prepared.verdicts(&lines), expected);
+            let chunks: Vec<_> = lines
+                .chunks(256)
+                .flat_map(|chunk| prepared.verdicts(chunk))
+                .collect();
+            assert_eq!(chunks, expected);
         }
     }
 }
