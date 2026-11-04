@@ -1000,6 +1000,11 @@ pub enum FunctionSourceRole {
     /// Ordinary production function: no test-defining attribute and not a
     /// member of a test-required module. The historical `is_test == false`.
     Production,
+    /// A manifest- and namespace-verified QuickCheck input generator. It is
+    /// stimulus support, not an executable test or production seam. Diff
+    /// analysis retains its changes as explicit uncertainty rather than
+    /// silently skipping them with ordinary test helpers (#11545).
+    TestInputGenerator,
     /// Carries an exact supported test-defining attribute (`#[test]`,
     /// `#[tokio::test]`, `#[async_std::test]`, `#[rstest]`, ...). Registers
     /// an executable `TestFact`. When the facts came from the lexical
