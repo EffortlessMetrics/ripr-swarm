@@ -5005,7 +5005,11 @@ mod seam_diagnostic_tests {
             return Err("overflow catalog metadata drifted".to_string());
         }
 
-        let unsupported = language_not_analyzed_diagnostic(LanguageId::Python, "src/lib.py");
+        let unsupported = language_not_analyzed_diagnostic(
+            LanguageId::Python,
+            "src/lib.py",
+            &LspAnalysisConfig::default(),
+        );
         let Some(NumberOrString::String(unsupported_code)) = unsupported.code.as_ref() else {
             return Err(format!(
                 "unsupported diagnostic must emit a string code, got {:?}",
