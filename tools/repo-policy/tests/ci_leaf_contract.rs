@@ -642,8 +642,7 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
     }
     assert!(WORKFLOW.contains("permissions:\n  contents: read\n"));
     assert!(!WORKFLOW.contains("continue-on-error:") && !WORKFLOW.contains("secrets:"));
-    assert!(WORKFLOW.contains("types: [opened, synchronize, reopened, labeled]"));
-    assert!(WORKFLOW.contains("branches: [main, master]"));
+    assert!(!WORKFLOW.contains("  pull_request:") && !WORKFLOW.contains("  push:"));
     assert!(WORKFLOW.contains("  workflow_dispatch:"));
     assert!(!WORKFLOW.contains("  schedule:") && !WORKFLOW.contains("merge_group:"));
     assert!(
@@ -996,10 +995,7 @@ fn release_steps_preserve_manual_semantics_and_ignore_labels_on_calls() -> TestR
 }
 
 #[test]
-fn staged_and_explicit_activation_event_matrix() -> TestResult {
-    const LEGACY: &str = "  pull_request:\n    types: [opened, synchronize, reopened, labeled]\n  push:\n    branches: [main, master]\n";
-    assert!(WORKFLOW.contains(LEGACY));
-    let active = WORKFLOW.replace(LEGACY, "");
+fn callable_and_manual_leaf_rejects_development_event_reactivation() -> TestResult {
     let subscribed = |source: &str, event: &str| {
         source
             .split_once("on:\n")
@@ -1019,17 +1015,21 @@ fn staged_and_explicit_activation_event_matrix() -> TestResult {
         ("unrelated label", "pull_request"),
     ] {
         assert!(
-            !subscribed(&active, event),
-            "activation must remove automatic allocations"
+            !subscribed(WORKFLOW, event),
+            "development must not allocate auxiliary workflows"
+        );
+        let restored = WORKFLOW.replacen("on:\n", &format!("on:\n  {event}:\n"), 1);
+        assert!(subscribed(&restored, event));
+        assert!(
+            !repo_policy::workflow_lifecycle::violations(".github/workflows/ci.yml", &restored)
+                .is_empty()
         );
     }
-    for source in [WORKFLOW, active.as_str()] {
-        assert!(subscribed(source, "workflow_call"));
-        assert!(subscribed(source, "workflow_dispatch"));
-        assert!(!subscribed(source, "schedule"));
-        assert!(!subscribed(source, "merge_group"));
-        assert!(!subscribed(source, "pull_request_target"));
-    }
+    assert!(subscribed(WORKFLOW, "workflow_call"));
+    assert!(subscribed(WORKFLOW, "workflow_dispatch"));
+    assert!(!subscribed(WORKFLOW, "schedule"));
+    assert!(!subscribed(WORKFLOW, "merge_group"));
+    assert!(!subscribed(WORKFLOW, "pull_request_target"));
     assert!(
         !WORKFLOW.contains("ready_for_review"),
         "Ready was not an original trigger"

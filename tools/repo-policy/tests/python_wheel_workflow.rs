@@ -664,16 +664,17 @@ fn actual_job_conditions_cover_skip_failures_and_both_dispatch_routes() -> TestR
         "",
         false
     )?);
-    assert!(WORKFLOW.contains("      - \"tools/repo-policy/**\""));
-    for path in [
-        "policy/workflow_allowlist.txt",
-        "policy/distribution.toml",
-        "xtask/**",
-        "packaging/python/**",
-        WHEEL,
-    ] {
-        assert!(WORKFLOW.contains(&format!("      - \"{path}\"")));
-    }
+    let events = repo_policy::workflow_lifecycle::event_declarations(WORKFLOW)?;
+    assert_eq!(
+        events.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["workflow_call", "workflow_dispatch"]
+    );
+    let restored = WORKFLOW.replacen(
+        "on:\n",
+        "on:\n  pull_request:\n    paths: ['tools/repo-policy/**']\n",
+        1,
+    );
+    assert!(!repo_policy::workflow_lifecycle::violations(WHEEL, &restored).is_empty());
     // Demonstrate that each failure-sensitive assertion rejects a wrong graph.
     assert!(!runnable(
         &fixture,
@@ -1448,8 +1449,8 @@ fn manual_release_candidate_input_survives_and_ranks_after_callable_subject() ->
     let precedence = "CANDIDATE_SHA: ${{ inputs.subject_sha || inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}";
     assert_eq!(WORKFLOW.matches(precedence).count(), 1);
     let (dispatch, _) = WORKFLOW
-        .split_once("  pull_request:\n")
-        .ok_or("pull_request trigger follows dispatch inputs")?;
+        .split_once("permissions:\n")
+        .ok_or("permissions follow the event inputs")?;
     let (_, dispatch) = dispatch
         .split_once("  workflow_dispatch:\n")
         .ok_or("workflow_dispatch trigger")?;

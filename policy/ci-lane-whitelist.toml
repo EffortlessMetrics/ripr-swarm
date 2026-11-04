@@ -330,16 +330,6 @@ artifact_families = ["ripr-evidence"]
 description = "Advisory SARIF rendering and optional code-scanning upload."
 
 [[lane]]
-id = "droid-tag-response"
-posture = "advisory"
-workflow = ".github/workflows/droid.yml"
-jobs = ["droid"]
-commands = []
-estimated_lem = 4
-artifact_families = []
-description = "Issue or PR mention-triggered Droid response workflow."
-
-[[lane]]
 id = "droid-security-scan"
 posture = "advisory"
 workflow = ".github/workflows/droid-security-scan.yml"
@@ -357,7 +347,7 @@ jobs = ["windows-advisory", "windows-advisory-subset"]
 commands = ["cargo test --workspace", "cargo test -p ripr --lib lsp::gap_artifacts", "cargo test -p ripr --lib analysis::workspace::cargo_input_identity::tests", "cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build", "cargo clippy -p ripr --all-targets -- -D warnings", "npx mocha --ui tdd out/test/suite/managed_server_install.test.js"]
 estimated_lem = 30
 artifact_families = []
-description = "Advisory Windows lane (#2393): runs the suite twice on windows-latest and summarizes per-test verdicts. Since #4938 a merge-ready subset job (windows-advisory-subset) also runs a fast gap_artifacts/Cargo-home-identity/cache-warning/VS Code install-lock (#9498)/Windows-clippy filter when `merge-ready` is applied to a PR (the explicit labeled event), advisory under the same contract. Test outcomes are advisory; missing or zero-subject evidence fails the job. Promotion to required is gated on #2430 and on stability across repeated runs."
+description = "Advisory Windows lane (#2393): runs the suite twice on windows-latest and summarizes per-test verdicts. The ordinary PR/label subscriber is retired under #4842. Queue qualification uses the existing staged callable subset rather than starting this advisory workflow from development events. Test outcomes are advisory; missing or zero-subject evidence fails the job. Promotion to required is gated on #2430 and on stability across repeated runs."
 
 [[lane]]
 id = "windows-gate"
@@ -367,7 +357,7 @@ jobs = ["Ripr Windows Gate Result"]
 commands = ["cargo test -p ripr --lib lsp::gap_artifacts", "cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build", "cargo clippy -p ripr --all-targets -- -D warnings"]
 estimated_lem = 12
 artifact_families = []
-description = "Diff-scoped always-reporting Windows gate (#5088): ubuntu detection plus optional windows-latest subset for cfg(windows)-touching diffs. Posts Ripr Windows Gate Result on every PR push/sync; pass-as-skips when irrelevant. Command verdicts fail the Result when the subset runs; missing evidence fails the run job. Not yet a branch-protection required check."
+description = "Diff-scoped always-reporting Windows gate (#5088): ubuntu detection plus optional windows-latest subset for cfg(windows)-touching diffs. The PR/main-push triggers are retired under #4842; explicit dispatch runs the retained bounded probe. Command verdicts fail the Result when the subset runs; missing evidence fails the run job. Not yet a branch-protection required check."
 
 [[lane]]
 id = "macos-advisory"
@@ -377,7 +367,7 @@ jobs = ["macos-advisory"]
 commands = ["cargo clippy -p ripr -p xtask --all-targets -- -D warnings", "cargo test -p ripr --lib --no-fail-fast"]
 estimated_lem = 20
 artifact_families = []
-description = "Advisory native macOS lane (#8391): clippy for ripr and xtask plus the ripr library tests on macos-15. Nightly, on dispatch, and on pull requests labeled macos-ci or full-ci when the merge-ready label is applied. Clippy and test outcomes are advisory; a missing log, missing exit status or zero-test run fails the job."
+description = "Advisory native macOS lane (#8391): clippy for ripr and xtask plus the ripr library tests on macos-15. Nightly and on explicit dispatch; the ordinary PR/label subscriber is retired under #4842. Clippy and test outcomes are advisory; a missing log, missing exit status or zero-test run fails the job."
 
 [[lane]]
 id = "printed-command-paste"
@@ -397,7 +387,7 @@ jobs = ["kani"]
 commands = ["cargo xtask kani"]
 estimated_lem = 25
 artifact_families = []
-description = "Advisory Kani bounded-model-checking lane (RIPR-SPEC-0371): runs cargo kani -p ripr over every #[kani::proof] harness and reports VERIFIED, FAILED or NOT-ESTABLISHED per harness. Nightly, on dispatch, and on merge-ready for pull requests touching ripr source. A missing tool, missing verdict, unreachable cover! or zero harnesses fails the job; a proof is bounded to its documented assumptions and is not a full-program or runtime-mutation claim."
+description = "Advisory Kani bounded-model-checking lane (RIPR-SPEC-0371): runs cargo kani -p ripr over every #[kani::proof] harness and reports VERIFIED, FAILED or NOT-ESTABLISHED per harness. Nightly and on explicit dispatch; the ordinary PR/label subscriber is retired under #4842. A missing tool, missing verdict, unreachable cover! or zero harnesses fails the job; a proof is bounded to its documented assumptions and is not a full-program or runtime-mutation claim."
 
 [[lane]]
 id = "future-clippy"

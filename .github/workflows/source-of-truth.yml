@@ -1,26 +1,6 @@
 name: Source of Truth
 
 on:
-  pull_request:
-    branches: [main, master]
-    paths:
-      - '.github/workflows/source-of-truth.yml'
-      - '.ripr/traceability.toml'
-      - '.ripr/traceability.d/**'
-      - '.allow/spec-system/**'
-      - 'docs/specs/**'
-      - 'docs/status/SUPPORT_TIERS.md'
-      - 'docs/templates/**'
-  push:
-    branches: [main, master]
-    paths:
-      - '.github/workflows/source-of-truth.yml'
-      - '.ripr/traceability.toml'
-      - '.ripr/traceability.d/**'
-      - '.allow/spec-system/**'
-      - 'docs/specs/**'
-      - 'docs/status/SUPPORT_TIERS.md'
-      - 'docs/templates/**'
   schedule:
     # Bounded weekly review cadence (#3467): no more frequent than weekly.
     - cron: '37 6 * * 1'

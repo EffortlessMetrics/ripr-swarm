@@ -3,8 +3,6 @@ name: Windows Advisory
 on:
   schedule:
     - cron: "17 5 * * *"
-  pull_request:
-    types: [labeled, opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       repeat_nested_alias:

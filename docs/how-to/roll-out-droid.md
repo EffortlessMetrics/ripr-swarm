@@ -1,5 +1,12 @@
 # Roll Out Factory Droid Review
 
+**Historical mention-workflow rollout reference.** Under #4984/#4842, RIPR-SWARM
+no longer supplies or runs `droid.yml`; development review belongs in the owning
+session. Do not copy or recreate its PR/comment event subscriptions. Only the
+separately purposed security scan remains an Actions lane. The historical setup
+and permission findings below retain their original scope; they do not authorize
+restoring development Actions.
+
 Use this guide when copying `ripr`'s Factory Droid setup to another repository.
 The goal is rollout discipline, not new bot behavior: keep the working MiniMax
 BYOK bridge, preserve the trust boundaries, add repo-specific review context,
@@ -83,7 +90,6 @@ MiniMax key should be the Token Plan key used by the working `ripr` BYOK setup.
 Most repositories should receive these workflow lanes:
 
 ```text
-.github/workflows/droid.yml
 .github/workflows/droid-security-scan.yml
 ```
 

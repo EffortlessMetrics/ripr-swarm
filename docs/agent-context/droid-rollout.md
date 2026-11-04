@@ -1,5 +1,12 @@
 # Droid Rollout Checklist
 
+**Historical mention-workflow rollout reference.** Under #4984/#4842, RIPR-SWARM
+no longer supplies or runs `droid.yml`; development review belongs in the owning
+session. Do not copy or recreate its PR/comment event subscriptions. Only the
+separately purposed security scan remains an Actions lane. The historical setup
+and permission findings below retain their original scope; they do not authorize
+restoring development Actions.
+
 Use this agent checklist when preparing or reviewing a PR that copies the
 `ripr` Factory Droid setup to another repository. The canonical human guide is
 [Roll out Factory Droid review](../how-to/roll-out-droid.md); keep this file
@@ -36,7 +43,6 @@ not ready.
 Most target repositories should receive or adapt:
 
 ```text
-.github/workflows/droid.yml
 .github/workflows/droid-security-scan.yml
 .factory/skills/review-guidelines/SKILL.md
 .factory/rules/droid-review.md

@@ -29,12 +29,9 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
             "coverage.yml",
             "cargo test -p repo-policy --lib coverage_diagnostics",
         ),
-        ("ub-review.yml", "uses: EffortlessMetrics/ub-review@"),
     ];
     for (route, command) in routes {
-        let action = if route == "ub-review.yml" {
-            "e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1"
-        } else if matches!(route, "coverage.yml" | "test-analytics.yml") {
+        let action = if matches!(route, "coverage.yml" | "test-analytics.yml") {
             "683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master"
         } else {
             "683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1"
@@ -76,9 +73,6 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
         ));
         let test_first = format!("{command}\n{text}");
         assert!(!prepared(&test_first, command));
-        if route == "ub-review.yml" {
-            assert!(!prepared(&text.replace(action, "v1"), command));
-        }
         assert!(!prepared(
             &text.replace(
                 "components: llvm-tools-preview",
@@ -1530,78 +1524,6 @@ jobs:
     );
 }
 
-#[test]
-fn advisory_review_prepares_locked_fixture_before_sensors() -> Result<(), String> {
-    let root = crate::test_support::workspace_root()?;
-    let text = fs::read_to_string(root.join(".github/workflows/ub-review.yml"))
-        .map_err(|error| error.to_string())?;
-    let header = "name: Prepare locked owner-return fixture dependencies";
-    let fetch = "        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml";
-    let preparation = format!("      - {header}\n{fetch}\n");
-    let prepared = |source: &str| {
-        let steps = source.split("\n      - ").collect::<Vec<_>>();
-        let preparations = steps
-            .iter()
-            .enumerate()
-            .filter(|(_, step)| step.lines().next() == Some(header))
-            .collect::<Vec<_>>();
-        let [(index, step)] = preparations.as_slice() else {
-            return false;
-        };
-        // The action sanitizes sensor environments. Both commands must use
-        // the runner default Cargo home, with no workflow override.
-        let lines = step
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .collect::<Vec<_>>();
-        !source.lines().any(|line| {
-            let line = line.trim();
-            line.starts_with("CARGO_HOME:") || line.starts_with("HOME:")
-        }) && lines == [header, fetch]
-            && steps[..*index]
-                .iter()
-                .any(|step| step.starts_with("uses: dtolnay/rust-toolchain@"))
-            && steps[*index + 1..].iter().any(|step| {
-                step.lines().any(|line| {
-                    line.trim()
-                        .starts_with("uses: EffortlessMetrics/ub-review@")
-                })
-            })
-    };
-    assert!(
-        prepared(&text),
-        "advisory sensors require locked fixture preparation"
-    );
-    for wrong in [
-        text.replace(&preparation, ""),
-        text.replace(
-            "cargo fetch --locked --manifest-path",
-            "cargo fetch --manifest-path",
-        ),
-        text.replace(fetch, &format!("        if: false\n{fetch}")),
-        text.replace(fetch, &format!("        continue-on-error: true\n{fetch}")),
-        text.replace(fetch, &format!("{fetch} || true")),
-        text.replace(
-            "--manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml",
-            "--manifest-path Cargo.toml",
-        ),
-        format!("env:\n  CARGO_HOME: other\n{text}"),
-        format!("env:\n  HOME: other\n{text}"),
-        text.replace(
-            fetch,
-            &format!("{fetch}\n        env:\n          CARGO_HOME: other"),
-        ),
-        format!("{}\n{preparation}", text.replace(&preparation, "")),
-        text.replace(&preparation, &format!("{preparation}\n{preparation}")),
-    ] {
-        assert!(
-            !prepared(&wrong),
-            "invalid fixture preparation must be rejected"
-        );
-    }
-    Ok(())
-}
-
 const PINNED_CODECOV: &str =
     "codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1";
 
@@ -1715,7 +1637,6 @@ fn secret_and_write_token_workflows_have_no_unpinned_third_party_actions() -> Re
         "badge-endpoints.yml",
         "coverage.yml",
         "test-analytics.yml",
-        "ub-review.yml",
     ] {
         let path = format!(".github/workflows/{name}");
         assert!(

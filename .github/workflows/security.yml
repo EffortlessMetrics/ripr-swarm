@@ -1,16 +1,8 @@
 name: Security
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
-  push:
-    branches: [main, master]
-  # New RUSTSEC advisories and yanked crates appear without any repository
-  # change; a weekly run on main surfaces them instead of waiting for the next
-  # merge. A scheduled run that goes red opens one `deny-red` tracking issue
-  # (below), so a new advisory is a single findable record instead of a red
-  # run nobody opens, before it turns every PR red (RUSTSEC-2026-0433).
-  # Daily, since the check is a few minutes of one cheap runner (#11529).
+  # Dependency advisories change without a repository commit. This scan has
+  # its own security purpose; it does not replay product qualification.
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:

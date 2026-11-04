@@ -35,25 +35,19 @@ on:
       run_vscode:
         type: boolean
         required: true
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
-  push:
-    branches: [main, master]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Only a `merge-ready` labeled request shares this group, so a re-applied label
-# supersedes the older run for the same PR. Every other pull_request event
-# (opened, synchronize, reopened, other labels) gets a unique group: its jobs
-# are skipped and it can neither cancel nor replace a pending merge-ready run.
+# Callable requests are isolated by admitted request and subject. Legacy PR
+# expressions below are dormant: this leaf has no development-event subscriber.
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha || ((github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run') }}
   cancel-in-progress: ${{ !contains(toJSON(inputs), '"subject_sha"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
 
 # Staged #4987 leaf: the trusted caller owns fresh review/admission and selection.
-# Production triggers remain until caller/result integration is qualified.
+# Callable and explicit manual proof remain; development subscriptions are retired.
 # full-ci/release-check are legacy guards only; callable runs consume frozen intent.
 jobs:
   source-identity:

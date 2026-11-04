@@ -3,12 +3,6 @@ name: Kani (bounded model checking)
 on:
   schedule:
     - cron: "41 4 * * *"
-  pull_request:
-    types: [labeled]
-    paths:
-      - "crates/ripr/src/**"
-      - "xtask/src/kani_lane.rs"
-      - ".github/workflows/kani.yml"
   workflow_dispatch:
 
 permissions:

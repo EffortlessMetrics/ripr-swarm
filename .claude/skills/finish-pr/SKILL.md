@@ -142,6 +142,11 @@ For a pinned release, treat the reviewed immutable pin receipt as the sole membe
 
 # Review law
 
+Review and focused checks run in the owning session. Do not start an Actions
+review by publishing, toggling Ready, adding labels or posting a tool mention.
+The retained legacy qualification request is a staged protected-route dependency,
+not routine development feedback; #4838 owns its final queue-only replacement.
+
 The owning session performs directed inline review in its main context through `review-pr`, changing perspective with explicit criteria, targeted checks and counterexamples. Subagents and advisory bot input (for example `ub-review`; see `docs/CI.md`) are optional extra evidence, not mandatory reviewer identities. Preserve actual required reviews and protections and valid historical review; refresh affected or newly requested dimensions only. The accountable root verifies and integrates the result.
 
 Quota, unavailable, skipped, failed, or stale review-provider output is missing review, not a clean result. A self-review on the author's PR uses a `COMMENT` event with an explicit disposition because GitHub cannot request changes from the author; that platform constraint is not approval.

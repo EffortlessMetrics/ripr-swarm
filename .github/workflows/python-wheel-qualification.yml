@@ -1,7 +1,7 @@
 name: Qualify ripr-rs Python Wheel (read-only)
 
 on:
-  # Staged callable path. Legacy production events remain until caller cutover.
+  # Staged callable path and explicit package proof; no development subscriber.
   workflow_call:
     inputs:
       proof_profile:
@@ -36,24 +36,6 @@ on:
         required: false
         default: ""
         type: string
-  pull_request:
-    paths:
-      - ".github/workflows/python-wheel-qualification.yml"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "crates/ripr/**"
-      - "fixtures/python/**"
-      - "packaging/python/**"
-      - "policy/dependency_allowlist.txt"
-      - "policy/distribution.toml"
-      - "policy/non-rust-allowlist.toml"
-      - "policy/workflow_allowlist.txt"
-      - "rust-toolchain.toml"
-      - "xtask/**"
-      - "tools/repo-policy/**"
-
-# This workflow builds and consumes local artifacts only. It cannot publish,
-# mint an OIDC token, create a release, mutate a tag, or write repository data.
 permissions:
   contents: read
 

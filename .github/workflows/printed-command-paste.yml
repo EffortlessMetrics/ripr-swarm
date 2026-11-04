@@ -26,24 +26,13 @@ on:
         required: true
   schedule:
     - cron: "43 5 * * *"
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
-    paths:
-      - "crates/ripr/src/**"
-      - "crates/ripr/tests/printed_command_paste.rs"
-      - "crates/ripr/tests/common/paste_shell.rs"
-      - "crates/ripr/tests/common/fixture_git.rs"
-      - ".github/workflows/printed-command-paste.yml"
-      - "Cargo.lock"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Only a `merge-ready` labeled request shares this group, so a re-applied label
-# supersedes the older run for the same PR. Every other pull_request event
-# (opened, synchronize, reopened, other labels) gets a unique group: its jobs
-# are skipped and it can neither cancel nor replace a pending merge-ready run.
+# Callable requests are isolated by admitted request and subject. Legacy PR
+# expressions below are dormant: this leaf has no development-event subscriber.
 concurrency:
   group: printed-command-paste-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha || ((github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run') }}
   cancel-in-progress: ${{ !contains(toJSON(inputs), '"subject_sha"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
@@ -71,12 +60,10 @@ concurrency:
 # KNOWN_GAPS in the test; a listed gap that stops reproducing fails the job
 # until its row is deleted.
 #
-# Triggers: a nightly standing signal, pull requests that touch the code that
-# prints commands or the harness itself, and manual dispatch. The cost is one
-# test target per platform, built from the shared dependency cache.
-# The callable route is staged for #4987: keep the PR trigger until the parent
-# integrates an admitted caller and fail-closed result aggregation. Inputs bind
-# the source; the trusted caller alone owns review/admission authorization.
+# Triggers: the dedicated nightly shell-compatibility probe, explicit manual
+# proof, and the staged #4987 callable route. The cost is one test target per
+# platform. Inputs bind the source; the trusted caller alone owns review and
+# admission authorization. Ordinary development has no subscriber.
 
 jobs:
   paste:

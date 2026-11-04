@@ -2,11 +2,6 @@ name: Test Analytics
 
 on:
   workflow_dispatch:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
-  push:
-    branches: [main, master]
-
 permissions:
   contents: read
 

@@ -375,21 +375,13 @@ pub(crate) fn check_droid_review_config() -> Result<(), String> {
     let droid_path = ".github/workflows/droid.yml";
     let droid_security_scan_path = ".github/workflows/droid-security-scan.yml";
 
-    if let Ok(text) = crate::read_text_lossy(Path::new(droid_path)) {
-        let lines = active_yaml_lines(&text);
-
-        if !has_active_line(&lines, "OWNER")
-            || !has_active_line(&lines, "MEMBER")
-            || !has_active_line(&lines, "COLLABORATOR")
-        {
-            violations.push(format!(
-                "{droid_path}: trusted actor guard (OWNER, MEMBER, COLLABORATOR) is required"
-            ));
-        }
-
-        check_droid_common(&mut violations, droid_path, &text, true, true);
-    } else {
-        violations.push(format!("{droid_path}: file not found or unreadable"));
+    if Path::new(droid_path)
+        .try_exists()
+        .map_err(|error| error.to_string())?
+    {
+        violations.push(format!(
+            "{droid_path}: mention-triggered development Actions are retired under #4984/#4842; invoke review in the owning session"
+        ));
     }
 
     if let Ok(text) = crate::read_text_lossy(Path::new(droid_security_scan_path)) {
@@ -434,15 +426,27 @@ mod tests {
     };
 
     #[test]
-    fn retained_manual_workflow_keeps_its_safeguards() {
-        let source = include_str!("../../../.github/workflows/droid.yml");
+    fn retained_security_workflow_keeps_its_safeguards() {
+        let source = include_str!("../../../.github/workflows/droid-security-scan.yml");
         let mut violations = Vec::new();
-        super::check_droid_common(&mut violations, "droid.yml", source, true, true);
+        super::check_droid_common(
+            &mut violations,
+            "droid-security-scan.yml",
+            source,
+            false,
+            false,
+        );
         assert!(violations.is_empty(), "{violations:?}");
 
         let changed = source.replace("contents: read", "contents: write");
         assert_ne!(changed, source, "permission mutation must engage");
-        super::check_droid_common(&mut violations, "droid.yml", &changed, true, true);
+        super::check_droid_common(
+            &mut violations,
+            "droid-security-scan.yml",
+            &changed,
+            false,
+            false,
+        );
         assert!(
             violations
                 .iter()

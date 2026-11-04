@@ -9,8 +9,10 @@ New to RIPR in CI? Start with the short ordered path in
 
 ## Python wheel applicability (#4987)
 
-The Python wheel workflow retains its broad PR paths and ordinary manual
-qualification. Its lightweight `applicability` job independently runs the
+The Python wheel workflow retains its callable and explicit manual
+qualification routes. Its ordinary PR trigger is retired under #4842; the
+former PR applicability controls below remain conservative producer logic,
+not permission to restore development CI. Its lightweight `applicability` job independently runs the
 product-free `cargo policy check-workflows` before selecting expensive work.
 Only a diff confined to `policy/workflow_allowlist.txt`, with a unique unchanged
 wheel-owned record and unambiguous parsed records at both endpoints, can skip
@@ -120,78 +122,62 @@ read and protected merge atomic. Preserve the installed gates until the
 source, producer and live-enforcement migration in [MERGE_FLOW](MERGE_FLOW.md)
 is qualified.
 
-## Merge-ready label flow
+## Development events and retained bootstrap route
 
-The non-required lanes gated by `merge-ready` do not run on a Draft or plain Ready
-PR without the label.
-Routed Rust Small is also requested by the `merge-ready` label (#4986; the
-required `Ripr Rust Small Result` exists only for that request). ub-review, the
-Python wheel workflow and source-of-truth still follow their own triggers until
-#4984/#8082 integrate them. Agents and authors prove
-the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
-publish a Draft, mark it Ready once review is complete, and add the `merge-ready`
-label last (admission refuses a Draft PR). Adding `merge-ready`
-starts the required Result and the non-required lanes once for the head it was applied to. A later push
-to a labeled PR does not rerun them: re-apply the label (remove it, then add it
-again) once the new head is ready to qualify. Removing the label does not cancel
-runs already in flight. Only a `merge-ready` labeled request shares a concurrency
-group, so re-applying the label supersedes the older run for that PR; a push or any
-other label event runs in its own group, skips its jobs, and neither cancels nor
-replaces a pending request. A push therefore does not cancel the older head's
-run: re-apply the label for the new head and let the older run finish or be
-superseded.
+Focused checks, useful tool feedback, substantive review and repair run in the
+owning session before admission. Draft publication, Ready transitions and PR
+updates start no repository Actions workflow. The automated UB Review and Droid
+mention subscribers are retired; their review configuration and guidance remain
+available to the session. A skipped job would still allocate a workflow, so a
+job guard is not an exception to this rule.
 
-- Auxiliary labels (`full-ci`, `windows-ci`, `vscode`, `coverage`,
-  `clippy-future`, `release-check`) still select extra lanes, but only together
-  with `merge-ready`. Add them first; one added after `merge-ready` takes effect
-  only when `merge-ready` is re-applied.
-- Gated: `ci.yml` jobs, `coverage`, `test-analytics`, `future-clippy`,
-  `windows-advisory` (both jobs), `macos-advisory`, `security`, `printed-command-paste`,
-  `npm-launcher`, `zed-extension`, `pilot-ranking` and `public-proof`. Push,
-  schedule and manual runs are unchanged.
-- Not changed here: `ub-review` (its triggers are pinned by
-  `pr_readiness_workflow_contract`), the Python wheel workflow, and
-  `source-of-truth`. Their cutover is tracked under #4984.
+The source retirement under #4842 removes 33 automatic event edges from 20
+workflow files. Auxiliary PR subscriptions and duplicate auxiliary main-push
+builds are gone. Callable qualification leaves remain available to the existing
+#8082 owner; explicit manual proof and separately purposed security, corpus and
+maintenance schedules retain their declared scope. The main-health timer is
+retired; a main-health incident probe requires an incident and a concrete
+question.
 
-### What starts what
+This is a source migration stage, not completed native activation. These
+remaining event edges are explicit bootstrap debt:
 
-| Action on a PR | Required `Ripr Rust Small Result` | Gated optional lanes |
+| Retained source | Event and purpose | Retirement condition |
 | --- | --- | --- |
-| Push to a Draft or Ready PR | no | no |
-| Draft -> Ready (`ready_for_review`) | no | no |
-| Add `merge-ready` (`labeled`) | yes, once for that head | yes, once for that head |
-| Push after the request | no: re-apply `merge-ready` | no: re-apply `merge-ready` |
-| Any other label | no (posts `Merge-ready Nonrequest`) | no |
+| `routed-rust.yml` | `pull_request: labeled` requests the current protected qualification; other labels still start its nonrequest wrapper | Truthful H admission and enforced queue-only landing, with actual G proof |
+| `merge-ready-conflict-notice.yml` | `pull_request_target: labeled` reports the legacy request's conflict | Native queue request/refusal replaces the label interface |
+| `routed-rust.yml` | Main/master push retains the current required caller and cache-writer opportunity | Accepted selected-route cache continuity and coherent protected cutover |
+| `hard-cut-watch.yml` | Main push observes the existing release-cut packet; it starts no product qualification | Separate release-control ownership; not ordinary product CI |
 
-The required check is requested by the `merge-ready` label (#4986). Draft -> Ready
-is review state only and starts no required work. Gating the required job by
-label with a skipped job would report success, so `routed-rust.yml` instead
-subscribes to `labeled` and names the result job by an expression: it is
-`Ripr Rust Small Result` only for push, manual main/master runs and a
-`merge-ready` label event, and `Merge-ready Nonrequest` for every other label.
-Route, docs detection and admission carry the same request guard, so an
-ordinary label allocates no qualification work, and the result job keeps
-`if: always()` so a skipped prerequisite fails the required context instead of
-skipping it.
+Do not convert the protected PR result into a cheap success while a direct merge
+could consume it. #4834/#4838 own the reviewed source/settings delta, readback and
+rollback. Preserve #8082's caller implementation; do not create a parallel
+controller. The existing label route remains the bounded bootstrap interface
+until its replacement is qualified. After verified activation, admission is
+conditional authorization to land, actual G is qualified once, and the owning
+session reconciles M without routine main replay.
 
-### Which state is my PR in, and what is next?
+Run `cargo policy check-workflows` in the owning session before publication.
+The existing policy command checks the source event perimeter. It rejects new PR, review, comment and
+push subscribers even when all jobs would be skipped, and rejects unauditable
+flow/alias/duplicate event declarations. The retained label/main exceptions are
+bound to exact files and declarations; the policy cannot establish live settings,
+execution, queue admission or economic acceptance.
 
-The state names describe where a head is; only the `merge-ready` request (or a
-merge-queue entry) spends the required qualification. `merge-ready` is today's
-spelling of that request, so apply it only when the exact head is the selected,
-reviewed candidate, never as a general "please run CI" signal.
+### What starts what in this source stage
 
-| State | How to read it on the PR | Next action |
-| --- | --- | --- |
-| Candidate | Draft or Ready, no `merge-ready` for this head; `ub-review` and light checks run on push, gated jobs show `skipped` or are absent | Finish review, repair findings, run focused local proof; skipped or absent gated jobs are expected here |
-| Qualification requested | The PR is Ready (not Draft) and `merge-ready` was just added for this head | Wait; do not push, re-label or re-toggle Draft/Ready |
-| Qualifying | A `routed-rust.yml` run for this head is queued or in progress; `Ripr Rust Small Result` is absent or pending | Wait for the run; the watchdog reports it as in flight |
-| Qualified | `Ripr Rust Small Result` succeeded on the current head SHA | Confirm the head SHA is unchanged, inspect the results and review, then merge |
-| Not qualified | A push landed after the request, or the result failed or was refused at admission (a Draft PR is refused: `candidate_not_open_ready`) | Repair; admission refusals name the cause (for example a missing PR-body claim field, or Draft). Mark the PR Ready, then remove and re-apply `merge-ready` for the new head |
+| Action | Repository Actions behavior |
+| --- | --- |
+| Open, push, synchronize, reopen, edit, Draft or Ready transition | No development workflow |
+| Review or ordinary Conversation comment | No development workflow |
+| Apply a label | The two retained legacy subscribers may start; this is an unresolved cutover edge, not the final zero-label design |
+| Native queue `checks_requested` | Existing composed-candidate qualification route |
+| Explicit selected proof | Its named callable/manual authority; no automatic admission or landing |
 
-A green `ub-review` wrapper is advisory: read its review and sensor output, not
-only the conclusion (see the `ub-review` notes under Current Workflows). A
-cancelled `ub-review` run was superseded by a newer push or a reopen and is not a result.
+The required check's source and live enforcement remain separate from this
+inventory. Inspect current source, exact head, review findings and native state
+before any consequential request. Do not infer readiness from a missing or
+skipped check, a quiet PR, or an earlier green result.
 
 ## Verification Economics Policy
 
@@ -461,7 +447,7 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
-| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
+| `merge-ready` | Retained legacy protected-request label only, pending #4838. Auxiliary workflows no longer subscribe to label events. This is not the final native-queue request interface. |
 | `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, it must be present when `merge-ready` is applied; adding it afterward does not rerun the lanes. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
@@ -474,9 +460,9 @@ implement and validate the lane-selection logic.
 New labels that affect CI must update this table, the PR template, and the
 budget/risk-pack policy files in the same PR.
 
-These labels are the documented target vocabulary. Today, `release-check` and
-`full-ci` activate the Rust workflow's package list, publish dry-run, unlocked
-install resolution, and release-readiness steps on pull requests. Other label effects remain target vocabulary until a later PR
+These labels are the documented target vocabulary. Callable qualification consumes explicit selection. A label alone starts no
+auxiliary workflow; legacy label-consumer branches are retained only until the
+existing caller migration is reconciled. Other label effects remain target vocabulary until a later PR
 wires them into a PR plan or workflow condition. The GitHub Settings App
 contract in `.github/settings.yml` codifies these label names, descriptions,
 and colors so the reviewable vocabulary does not drift in the GitHub UI.
@@ -928,29 +914,14 @@ the Result shell; it is not a job-level skip or a renamed required check.
 
 What this means for authors and agents:
 
-UB retains early review on `opened`, `synchronize`, and `reopened`, including
-Drafts. It does not subscribe to `ready_for_review` (#4987), so Ready neither
-cancels active UB review nor repeats completed advisory work. Its existing
-same-repository guard and concurrency remain unchanged. Automatic Droid PR
-review is retired under #5086; manual `@droid` commands and scheduled security
-scans retain their separate triggers and safeguards. UB explicitly lists all
-three early passes in
-`.ub-review.toml`'s `gate.post_review_on`: action pin
-`55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8` otherwise permits publication only on
-opened and Ready. Removing Ready admission alone would leave repaired-head
-reviews unable to publish. This does not suppress repeated Draft synchronize
-review or complete the broader #4987 acceptance.
-
-Retain advisory run IDs, candidate head, observed base and synthetic merge SHA,
-action/config identity, and review receipts. The same PR head with a changed
-base or merge tree is a different review identity; this event change supplies
-no cache hit or integration re-review. Before merge, inspect material integration
-changes and obtain applicable fresh review through the existing review route.
-Material findings return the candidate to Draft for repair. An unavailable,
-failed, or skipped provider remains missing review evidence after Ready; no
-synthetic success replaces it. Runner-minute savings remain unmeasured until a
-natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
-checks parsed event/config contracts, not hosted provider execution.
+Development review now runs in the owning session. `.ub-review.toml` and
+Factory review guidance retain useful configuration; no repository Actions
+subscriber runs these reviews on publication, synchronization, Ready, labels or
+comments. Historical provider receipts keep their original source and scope.
+Unavailable, failed or skipped provider output remains missing evidence. The
+owner still performs substantive exact-head review and resolves current findings
+before conditional admission. The separately purposed scheduled Droid security
+scan retains its existing safeguards.
 
 The reusable required Rust gates prepare both locked owner-return fixtures,
 `owner_return_pin_fallible_literal/input` and
@@ -962,27 +933,10 @@ repair, verify the executed reusable-workflow revision and preparation-step
 result; a checked-out workflow blob in the test context alone does not prove
 which controller executed.
 
-UB Review prepares the locked `owner_return_pin_fallible_literal/input` fixture
-before invoking the action, matching required Rust CI. Its offline identity
-probe needs `anyhow = 1.0.100` in the runner's default Cargo home. The pinned
-action sanitizes sensor environments and drops `HOME` and `CARGO_HOME`; this
-workflow therefore must not redirect those homes. A custom sensor-home route
-needs separate preparation and verification. Fetch failures remain failures;
-a green advisory wrapper does not make failed or missing sensor evidence pass.
-Historical run `38859874238` retains its `cargo-test` exit 101 and separate
-invalid command/timeout evidence. Adding preparation does not reclassify that
-run or establish recovery of every sensor; the repaired hosted producer still
-needs its own evidence.
-
-- Open PRs as Draft (`gh pr create --draft`), then follow the
-  [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before
-  requesting qualification with the `merge-ready` label. Ready alone never
-  creates the required check.
-- A push after the request leaves the new head without the required check.
-  Refresh affected proof and review, then remove and re-apply `merge-ready`
-  for the exact new head. Reassess exact-head merge prerequisites first.
-- Labels such as `full-ci` take effect at the next `merge-ready` request, not
-  when they are added; add them before the request.
+When a session invokes a proof tool whose offline fixture requires locked
+preparation, prepare that fixture in the same effective Cargo home and preserve
+the native result. Retiring an Actions consumer does not make its historical
+failed sensor evidence pass or establish that another consumer ran.
 
 The router uses the repository or organization `EM_RUNNER_READ_TOKEN` secret
 when available. It selects a self-hosted runner only when the runner is idle and
@@ -1003,7 +957,7 @@ The copyable self-hosted proof runbook is in
 Use it to record CX43 primary proof, CPX42/CX53 fallback proof, or the bounded
 runner availability blocker without exposing runner tokens or secrets.
 
-The protected `Ripr Rust Small Result` job also requires the VS Code extension e2e for the exact admitted head on `merge-ready` requests (#12122, #12252). The e2e is a job of `routed-rust.yml`'s own run: `vscode surface` classifies the admitted diff, and `vscode extension e2e` calls the reusable `vscode-e2e.yml` when it selects. The Result lists both in `needs`, so it reads this run's results by construction and no other request's run can be mistaken for it (GitHub exposes no per-event identifier shared by two workflows, which is why the earlier cross-workflow correlation was retired). `vscode surface` selects on the `full-ci` or `vscode` label, on any change under `editors/vscode/` or to `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml`, and on every doubt (missing or malformed identities, unavailable history, several merge bases, a failed or empty diff). The Result fails closed unless the selection succeeded and either it selected and the e2e succeeded, or it did not select and the e2e was skipped; a selected e2e that failed, was cancelled or skipped, an unselected e2e that ran, or an unreadable selection all fail. Main, manual-dispatch and merge-group results do not require it. The `CI` workflow still runs the same reusable workflow on pushes to `main` and manual dispatch, and for a frozen `subject_sha` selection on its staged callable path; it no longer runs for pull requests.
+The protected `Ripr Rust Small Result` job also requires the VS Code extension e2e for the exact admitted head on `merge-ready` requests (#12122, #12252). The e2e is a job of `routed-rust.yml`'s own run: `vscode surface` classifies the admitted diff, and `vscode extension e2e` calls the reusable `vscode-e2e.yml` when it selects. The Result lists both in `needs`, so it reads this run's results by construction and no other request's run can be mistaken for it (GitHub exposes no per-event identifier shared by two workflows, which is why the earlier cross-workflow correlation was retired). `vscode surface` selects on the `full-ci` or `vscode` label, on any change under `editors/vscode/` or to `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml`, and on every doubt (missing or malformed identities, unavailable history, several merge bases, a failed or empty diff). The Result fails closed unless the selection succeeded and either it selected and the e2e succeeded, or it did not select and the e2e was skipped; a selected e2e that failed, was cancelled or skipped, an unselected e2e that ran, or an unreadable selection all fail. Main, manual-dispatch and merge-group results do not require it. That is a remaining integration obligation for #8082, not completed queue acceptance. The `CI` workflow retains manual dispatch and its frozen `subject_sha` callable path; its ordinary PR and main-push triggers are retired.
 
 The routed lane runs the existing Rust/product command surface without release
 package or publish dry-run steps. Each required lane invokes the shared
@@ -1392,35 +1346,24 @@ already carry the label and updates the owned comment only.
 `xtask/tests/issue_staleness_watchdog.rs` replays the sweep script against a
 fake `gh`.
 
-### Main Health Sentinel
+### Explicit Main Health Incident Probe
 
-Main's push gate is frequently cancelled before completing (on busy days most
-`Routed Rust Small` main-push runs cancel before any job starts), and the
-Hard-cut watch stays green on broken main by design: it judges the cut packet,
-not the build. A broken main whose push run cancels can therefore sit with no
-completed red signal anywhere for hours (#10991; incidents #8990, #8989, with
-live repeats through 2026-10-29).
-`.github/workflows/main-health-sentinel.yml` runs twice an hour (`9,39 * * * *`)
-and probes main directly: `cargo check --locked -p ripr` plus one focused
-binary smoke selector (`cli_smoke
-version_is_exact_and_precedes_help_or_output_flags`), cached, on a
-GitHub-hosted runner, with its own serialization group and a 30-minute job
-timeout. It is a probe, not a second build lane and not a required check: it
-holds no branch-protection or ruleset authority and dispatches nothing.
-Detection is bounded and honest: probe logs are teed with native `PIPESTATUS`
-statuses, a judge step fails the job on missing or empty evidence (a probe
-terminated at its step timeout reads as the timeout status 124 and classifies red
-with a tracker record; a probe that executed zero tests reports red, never
-success), the summary table is the
-per-fire audit trail, and the `main-red` tracking issue
-(`main-red: scheduled main-health sentinel found a broken main`) is the
-durable findable record — opened once, appended per confirming probe, and
-closed by the first green probe with the recovering run link. Worst-case
-detection latency is roughly forty minutes (interval plus probe). The
-`xtask/tests/main_health_sentinel_contract.rs` contract pins the advisory-only
-shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
-guard, `issues: write` as the only write authority, the exact probe selector,
-zero-executed-test refusal, and the tracker lifecycle.
+The twice-hourly replay is retired under #4984/#4842. A concrete incident can
+request `.github/workflows/main-health-sentinel.yml` manually with an `incident`
+and `question`; neither elapsed time nor a merge count starts it. A dispatch
+outside main does not judge another branch as main health.
+
+The retained probe runs `cargo check --locked -p ripr` and the exact
+`cli_smoke version_is_exact_and_precedes_help_or_output_flags` test with the
+existing 20-minute probe and 30-minute job bounds. Native exit statuses, missing
+logs and zero executed tests remain observable failures. The existing main-red
+tracker identity is retained so explicit recovery can reconcile an incident
+originally discovered by the former timer. This probe neither qualifies G nor
+authorizes landing, and cannot dispatch another workflow.
+
+`xtask/tests/main_health_sentinel_contract.rs` checks explicit event admission,
+request scope, bounded execution and tracker/evidence behavior. Source tests do
+not establish a completed incident probe or current main health.
 
 ### Golden Re-bless
 
