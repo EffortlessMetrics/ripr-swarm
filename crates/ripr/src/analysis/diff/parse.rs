@@ -924,13 +924,18 @@ mod parser_state {
                 // variant drops even that first line, because usize::MAX is
                 // not an honest coordinate for any line. See the post-merge
                 // review of #2050.
-                if header.old_start == usize::MAX || header.new_start == usize::MAX {
+                if header.old_start == usize::MAX
+                    || header.new_start == usize::MAX
+                    || (header.new_count == 0 && header.new_start == usize::MAX - 1)
+                {
                     self.record_malformed_hunk();
                     self.in_hunk = false;
                     return true;
                 }
                 self.old_line = header.old_start;
-                self.new_line = header.new_start;
+                // A zero-length Git range names the line before the gap;
+                // all other ranges name the next new-side line.
+                self.new_line = header.new_start + usize::from(header.new_count == 0);
                 self.remaining_hunk_lines = Some((header.old_count, header.new_count));
                 self.in_hunk = true;
             } else {
@@ -1113,6 +1118,54 @@ mod parser_state {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    // Headers and bodies produced by Git -U0 for deletions from a/b/c.
+    #[test]
+    fn deletion_gap_coordinates_match_context_and_boundaries_13098() {
+        let cases = [
+            ("@@ -1 +0,0 @@\n-a\n", vec![(1, 1)]),
+            ("@@ -2 +1,0 @@\n-b\n", vec![(2, 2)]),
+            ("@@ -3 +2,0 @@\n-c\n", vec![(3, 3)]),
+            (
+                "@@ -1,3 +0,0 @@\n-a\n-b\n-c\n",
+                vec![(1, 1), (2, 1), (3, 1)],
+            ),
+            ("@@ -1,3 +1,2 @@\n a\n-b\n c\n", vec![(2, 2)]),
+            ("@@ -2 +2 @@\n-b\n+x\n", vec![(2, 2)]),
+        ];
+        for (hunk, expected) in cases {
+            let diff = format!("--- a/src/lib.rs\n+++ b/src/lib.rs\n{hunk}");
+            let files = parse_unified_diff(&diff);
+            assert_eq!(files.len(), 1, "{hunk}");
+            let actual: Vec<_> = files[0]
+                .removed_lines
+                .iter()
+                .map(|line| (line.line, line.new_side_line))
+                .collect();
+            assert_eq!(actual, expected, "{hunk}");
+            let bounded = parse_unified_diff_with_metadata_and_limit(&diff, 10).unwrap();
+            assert_eq!(
+                bounded.changed_files[0].removed_lines,
+                files[0].removed_lines
+            );
+        }
+    }
+
+    #[test]
+    fn zero_count_gap_that_reaches_reserved_max_is_rejected_13098() {
+        let diff = format!(
+            "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +{},0 @@\n-a\n",
+            usize::MAX - 1
+        );
+        let parsed = parse_unified_diff_with_metadata(&diff);
+        assert!(
+            parsed
+                .changed_files
+                .iter()
+                .all(|f| f.removed_lines.is_empty())
+        );
+        assert!(!parsed.limitations.is_empty());
+    }
 
     #[test]
     fn parses_added_lines() {

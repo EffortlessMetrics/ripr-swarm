@@ -4266,6 +4266,22 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    #[test]
+    fn task_first_deletion_gap_uses_next_line_13098() {
+        let diff = "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -88 +87,0 @@\n-old\n";
+        let files = crate::analysis::parse_unified_diff(diff);
+        let entry = gate_entry(crate::analysis::seams::SeamGripClass::Ungripped, Vec::new());
+        assert!(seam_touches_change(&entry, &files));
+        assert_eq!(
+            changed_rust_production_lines(&files).as_deref(),
+            Some("src/pricing.rs:88")
+        );
+        let previous = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -87 +86,0 @@\n-old\n",
+        );
+        assert!(!seam_touches_change(&entry, &previous));
+    }
+
     pub(crate) fn gate_entry(
         class: crate::analysis::seams::SeamGripClass,
         related: Vec<crate::analysis::test_grip_evidence::RelatedTestGrip>,

@@ -4632,6 +4632,14 @@ fn pilot_match_source_lines_preserve_identity_and_refuse_invalid_ranges() -> Res
 }
 
 #[test]
+fn pilot_deletion_gap_uses_next_line_13098() {
+    let diff = "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -20 +19,0 @@\n-old\n";
+    let change = PilotCurrentChange::from_diff_text(Path::new("."), None, diff);
+    assert!(change.touches_seam(&seam("src/b.rs", 20, "x")));
+    assert!(!change.touches_seam(&seam("src/b.rs", 19, "x")));
+}
+
+#[test]
 fn pilot_current_change_matches_the_seam_span_and_new_side_lines() {
     let multi_line = ClassifiedSeam {
         seam: seam("src/b.rs", 20, "amount\n        >= discount_threshold"),
