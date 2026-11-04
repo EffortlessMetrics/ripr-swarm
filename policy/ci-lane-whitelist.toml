@@ -247,7 +247,7 @@ jobs = ["archive"]
 commands = ["cargo xtask first-run --install-archive <version>"]
 estimated_lem = 10
 artifact_families = ["first-run-archive"]
-description = "First-run archive install: on demand only; verifies the documented prebuilt-archive snippets on Linux, macOS and Windows hosted runners and walks the first-run path with the released archive. Read-only; publishes nothing."
+description = "First-run archive install: weekly and on demand (scheduled runs install the version the QUICKSTART snippets pin); verifies the documented prebuilt-archive snippets on Linux, macOS and Windows hosted runners and walks the first-run path with the released archive. Read-only; publishes nothing."
 
 [[lane]]
 id = "published-install-matrix"
