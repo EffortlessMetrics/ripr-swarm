@@ -1068,6 +1068,12 @@ fn local_initializer_boundary_literals(
 // different branch. The condition's literals and computed tails are not values
 // returned by the conditional. Unreadable or statement-bearing branches abstain.
 fn conditional_literal_results(initializer: &str) -> Vec<String> {
+    let Some(after_if) = initializer.trim_start().strip_prefix("if") else {
+        return Vec::new();
+    };
+    if after_if.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+        return Vec::new();
+    }
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&format!(
         "fn __ripr_boundary() {{ let _ = {initializer}; }}"
     )) else {
@@ -1733,6 +1739,13 @@ mod tests {
             let evidence = local_predicate_evidence(signed, "val < unit", 3, literal);
             assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
         }
+        let values = super::conditional_literal_results(
+            "if qty + 1 > 3 { -(5) } else if flag { { 7 } } else { 9 }",
+        );
+        assert_eq!(values, vec!["-5", "7", "9"]);
+        let values =
+            super::conditional_literal_results("if qty + 1 > 3 { let x = 7; x } else { 9 + 1 }");
+        assert!(values.is_empty(), "{values:?}");
     }
 
     #[test]
