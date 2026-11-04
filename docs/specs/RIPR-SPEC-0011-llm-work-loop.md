@@ -785,8 +785,12 @@ A start publishes an attempt and then renders the handoff card, which names the
 workspace only through an admitted test target. A seam whose repair would begin
 in a proposed new test file has none, so the shared repair-admission gate
 refuses it up front ("found no existing test to extend ... write the test by
-hand") for bare repair, an explicit id and the check screen alike, and no
-attempt is created.
+hand") for bare repair (`no_eligible_seam`) and an explicit id
+(`seam_not_repair_eligible`), and no attempt is created. `ripr agent start` and
+the MCP admission use the same gate and refuse these seams too. The check
+screen reads the same gate as a not-ready route and keeps its own wording
+("not complete enough to name a safe test target"); it does not print this
+reason.
 
 ## Test Mapping
 

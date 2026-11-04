@@ -315,9 +315,36 @@ fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), Stri
     {
         return Err(format!("bare repair must refuse up front:\n{err}"));
     }
-    let by_id = ripr(root, &["repair", "ff4b3df9455ac6ce"])?;
+    // Precondition: the exposure fixture produced the boundary seam and no
+    // test reaches it, so its repair target can only be a proposed new file.
+    let exposure = ripr(
+        root,
+        &["check", "--mode", "draft", "--format", "repo-exposure-json"],
+    )?;
+    let json: serde_json::Value = serde_json::from_slice(&exposure.stdout)
+        .map_err(|error| format!("exposure JSON: {error}"))?;
+    let seam = json["seams"]
+        .as_array()
+        .and_then(|seams| {
+            seams.iter().find(|seam| {
+                seam["kind"] == "predicate_boundary" && seam["expression"] == "age >= 18"
+            })
+        })
+        .ok_or_else(|| "precondition: the boundary seam must exist".to_string())?;
+    if seam["related_tests_total"] != 0 {
+        return Err(format!("precondition: no test may reach the seam: {seam}"));
+    }
+    let seam_id = seam["seam_id"]
+        .as_str()
+        .ok_or_else(|| "precondition: the seam has an id".to_string())?
+        .to_string();
+    let by_id = ripr(root, &["repair", &seam_id])?;
     let err = text(&by_id.stderr);
-    if by_id.status.code() == Some(0) || err.contains("handoff card is unavailable") {
+    if by_id.status.code() != Some(3)
+        || !err.contains("code=seam_not_repair_eligible")
+        || !err.contains("found no existing test to extend")
+        || err.contains("handoff card is unavailable")
+    {
         return Err(format!("start by id must refuse up front:\n{err}"));
     }
     if attempts(root) != 0 {
