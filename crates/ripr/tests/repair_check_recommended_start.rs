@@ -371,3 +371,56 @@ fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), Stri
     let with_test = repo_with("hascard", BOUNDARY_BASE, BOUNDARY_NEW, BOUNDARY_TEST)?;
     assert_starts_check_recommendation(&with_test, "existing test target")
 }
+
+const BUILDER_BASE: &str = "pub struct Req {\n    pub url: String,\n    pub timeout: u32,\n}\n\nimpl Req {\n    pub fn new(url: &str) -> Self {\n        Req {\n            url: url.to_string(),\n            timeout: 30,\n        }\n    }\n\n    pub fn timeout(mut self, t: u32) -> Self {\n        self.timeout = t;\n        self\n    }\n}\n";
+const BUILDER_TEST: &str = "use fx::Req;\n\n#[test]\nfn builder_sets_url() {\n    let r = Req::new(\"http://x\").timeout(10);\n    assert_eq!(r.url, \"http://x\");\n}\n";
+
+/// #12959: a refused changed-field seam names its next step: the working stub
+/// command, or the stub's own reason when it cannot write one. Nothing new
+/// starts, and a refusal with other missing facts keeps the bare label.
+#[test]
+fn a_refused_field_seam_names_the_stub_or_why_there_is_none() -> Result<(), String> {
+    let field = repo("fieldhint", FIELD_BASE, FIELD_NEW, FIELD_TEST, true)?;
+    let repair = ripr(&field.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    let stub_line = err
+        .lines()
+        .find(|line| line.contains("`retries: 5`") && line.contains("--kind field_construction"))
+        .ok_or_else(|| format!("field seam must name the stub route:\n{err}"))?;
+    if repair.status.code() != Some(3) || !err.contains("code=no_eligible_seam") {
+        return Err(format!("still a refusal, no start:\n{err}"));
+    }
+    // The named command works.
+    let command = stub_line
+        .split('`')
+        .find(|part| part.starts_with("ripr agent stub"))
+        .ok_or_else(|| format!("no stub command in: {stub_line}"))?;
+    let args: Vec<&str> = command.split_whitespace().skip(1).collect();
+    let stub = ripr(&field.root, &args)?;
+    if stub.status.code() != Some(0) || !text(&stub.stdout).contains("default_config") {
+        return Err(format!(
+            "the named stub command must work:\n{}",
+            text(&stub.stderr)
+        ));
+    }
+    // By-value setter: the stub refuses, and the refusal says why.
+    let changed = BUILDER_BASE.replace("self.timeout = t;", "self.timeout = t * 2;");
+    let builder = repo("builderhint", BUILDER_BASE, &changed, BUILDER_TEST, true)?;
+    let repair = ripr(&builder.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3)
+        || !err.contains("ripr cannot write a fill-in skeleton here because the change sets a field of a by-value `self`")
+        || err.contains("--kind field_construction")
+    {
+        return Err(format!("builder must say why there is no stub:\n{err}"));
+    }
+    // Negative: a refusal about something else keeps its own label.
+    let notest = repo("fieldneg", BOUNDARY_BASE, BOUNDARY_NEW, "", true)?;
+    let err = text(&ripr(&notest.root, &["repair"])?.stderr);
+    if err.contains("field_construction") {
+        return Err(format!(
+            "unrelated refusal must not name the field stub:\n{err}"
+        ));
+    }
+    Ok(())
+}
