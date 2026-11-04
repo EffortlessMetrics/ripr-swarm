@@ -815,7 +815,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                 StageEvidence::new(
                     StageState::Weak,
                     Confidence::Medium,
-                    "Related tests contain input values, but the equality-boundary discriminator is missing",
+                    "Related tests contain input values, but the equality-boundary check is missing",
                 )
             } else if !owner_has_other_callers
                 && owner.is_some_and(|owner| {
