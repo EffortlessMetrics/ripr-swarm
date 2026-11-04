@@ -4797,6 +4797,95 @@ mod tests {
         Ok(())
     }
 
+    /// Same-run reuse of the admission core (`reuse_cached_index_in_run`): a
+    /// core that carries an unresolved property macro is rebuilt by ordinary
+    /// reuse, so when the main files equal the core files the diff pipeline
+    /// must serve the core as built (one index build), while an admitted
+    /// dependent takes the ordinary path (more builds). Removing the same-run
+    /// reuse makes the equal-files case build more than once.
+    #[test]
+    fn diff_pipeline_serves_the_admission_core_when_main_files_equal_core_files()
+    -> Result<(), String> {
+        use crate::analysis::facts::index_build_probe;
+        use dependent_scope::DependentScopeMode;
+        let builds_for = |name: &str, relay_mentions_changed: bool| -> Result<usize, String> {
+            let root = temp_root(name)?;
+            write(
+                &root.join("Cargo.toml"),
+                "[workspace]\nmembers = [\"a\", \"b\", \"d\"]\nresolver = \"2\"\n",
+            )?;
+            write(
+                &root.join("a/Cargo.toml"),
+                "[package]\nname = \"scope_a\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write(
+                &root.join("b/Cargo.toml"),
+                "[package]\nname = \"scope_b\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+                 [dependencies]\nscope_a = { path = \"../a\" }\n",
+            )?;
+            write(
+                &root.join("d/Cargo.toml"),
+                "[package]\nname = \"scope_d\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write(
+                &root.join("d/src/lib.rs"),
+                "pub fn island() -> u8 {\n    2\n}\n",
+            )?;
+            write(
+                &root.join("a/src/lib.rs"),
+                "pub fn gauge_one(flag: bool) -> bool {\n    if flag { false } else { true }\n}\n",
+            )?;
+            // The unresolved property macro forces ordinary reuse to rebuild.
+            write(
+                &root.join("a/tests/props.rs"),
+                "proptest::proptest! {\n    #[test]\n    fn gauge_holds(flag in proptest::bool::ANY) {\n        assert_eq!(scope_a::gauge_one(flag), !flag);\n    }\n}\n",
+            )?;
+            let relay = if relay_mentions_changed {
+                "pub fn relay(flag: bool) -> bool {\n    scope_a::gauge_one(flag)\n}\n"
+            } else {
+                "pub fn relay(flag: bool) -> bool {\n    flag\n}\n"
+            };
+            write(&root.join("b/src/lib.rs"), relay)?;
+            write(
+                &root.join("b/tests/relay_tests.rs"),
+                "#[test]\nfn relay_holds() {\n    assert!(scope_b::relay(true));\n}\n",
+            )?;
+            let changed = diff::parse_unified_diff(
+                "diff --git a/a/src/lib.rs b/a/src/lib.rs\n\
+                 --- a/a/src/lib.rs\n\
+                 +++ b/a/src/lib.rs\n\
+                 @@ -1,3 +1,3 @@\n\
+                  pub fn gauge_one(flag: bool) -> bool {\n\
+                 -    if flag { true } else { false }\n\
+                 +    if flag { false } else { true }\n\
+                  }\n",
+            );
+            let (result, builds) = index_build_probe::observe(|| {
+                dependent_scope::with_forced_mode(DependentScopeMode::NameAdmitted, || {
+                    RustAdapter.analyze_diff(
+                        &diff_options(root.clone(), AnalysisMode::Draft),
+                        &OraclePolicy::default(),
+                        &changed,
+                    )
+                })
+            });
+            result?;
+            fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
+            Ok(builds)
+        };
+        let equal = builds_for("same-run-core-equal", false)?;
+        let widened = builds_for("same-run-core-widened", true)?;
+        assert_eq!(
+            equal, 1,
+            "main files equal to the core files must serve the core as built"
+        );
+        assert!(
+            widened > equal,
+            "an admitted dependent must take the ordinary rebuild path, got {widened} builds"
+        );
+        Ok(())
+    }
+
     /// #5464: two `no_static_path` findings that share one widened file set
     /// must build the reach graph once, not once per finding.
     #[test]

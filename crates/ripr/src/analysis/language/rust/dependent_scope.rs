@@ -310,7 +310,10 @@ impl AdmissionQuery {
         query.empty_macro_names.extend(
             macro_sources
                 .par_iter()
-                .map(|source| crate::analysis::syntax::local_empty_macro_names(source))
+                .fold(BTreeSet::new, |mut acc, source| {
+                    acc.extend(crate::analysis::syntax::local_empty_macro_names(source));
+                    acc
+                })
                 .reduce(BTreeSet::new, |mut left, right| {
                     left.extend(right);
                     left

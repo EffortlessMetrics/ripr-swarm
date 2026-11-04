@@ -310,17 +310,17 @@ impl MacroVisibility {
             .collect();
         let generators: BTreeSet<String> = candidates
             .par_iter()
-            .map(|source| {
-                shared_scope(source)
-                    .map(|scope| {
+            .fold(BTreeSet::new, |mut acc, source| {
+                if let Some(scope) = shared_scope(source) {
+                    acc.extend(
                         scope
                             .macros
                             .iter()
                             .filter(|scoped| scoped.text.contains("test"))
-                            .map(|scoped| scoped.name.clone())
-                            .collect::<BTreeSet<_>>()
-                    })
-                    .unwrap_or_default()
+                            .map(|scoped| scoped.name.clone()),
+                    );
+                }
+                acc
             })
             .reduce(BTreeSet::new, |mut left, right| {
                 left.extend(right);

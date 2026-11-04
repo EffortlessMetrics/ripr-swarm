@@ -64,13 +64,10 @@ pub(super) fn register_proptest_tests(
         .collect::<Vec<_>>();
     let files = candidates
         .into_par_iter()
-        .map(|(path, source)| {
+        .filter_map(|(path, source)| {
             let expansions = proptest_expansions(&source);
-            (path, expansions)
+            (!expansions.is_empty()).then_some((path, expansions))
         })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .filter(|(_, expansions)| !expansions.is_empty())
         .collect::<Vec<_>>();
     if files.is_empty() {
         return Ok(());

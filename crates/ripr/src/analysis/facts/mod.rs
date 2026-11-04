@@ -259,6 +259,10 @@ fn reuse_cached_index(
     same_run: bool,
 ) -> Result<build::CachedRustIndex, String> {
     if same_run && files_match_index(&cached, files) {
+        // Invariant: `registrations` is ignored here because the core was
+        // built in this run with the same `options.test_harnesses` the
+        // caller passes now; a caller with different registrations must not
+        // use the same-run form.
         // #11810: a local macro exporter or its selected manifest can change
         // without changing the indexed Rust files. Do not retain a cached
         // absent/present export or the assertion sites derived from it.
