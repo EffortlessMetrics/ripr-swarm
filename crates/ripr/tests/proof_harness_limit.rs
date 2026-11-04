@@ -97,12 +97,17 @@ impl Repo {
     }
 
     fn report(&self) -> Result<serde_json::Value, String> {
+        self.report_with(&[])
+    }
+
+    fn report_with(&self, extra: &[&std::ffi::OsStr]) -> Result<serde_json::Value, String> {
         let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
             .args(["check", "--mode", "draft", "--root"])
             .arg(&self.root)
             .arg("--diff")
             .arg(self.base.join("change.diff"))
             .args(["--format", "json"])
+            .args(extra)
             .env("RIPR_CACHE_DIR", self.base.join("cache"))
             .output()
             .map_err(|e| format!("run ripr check: {e}"))?;
@@ -327,8 +332,9 @@ fn summary_has_no_proof_only_count_when_a_test_reaches_the_owner() -> Result<(),
 fn human_summary_distinguishes_proof_only_from_no_guard() -> Result<(), String> {
     let text = Repo::new(&lib("kani::proof", ">", "100", ""), &owner_change())?.human()?;
     assert!(
-        text.contains("only have a proof harness that ripr does not evaluate")
-            || text.contains("proof_harness_only"),
+        text.contains(
+            "(1 of the no test path only have a proof harness that ripr does not evaluate, which is not test coverage)"
+        ),
         "{text}"
     );
     let bare_source = lib("kani::proof", ">", "100", "")
@@ -340,5 +346,60 @@ fn human_summary_distinguishes_proof_only_from_no_guard() -> Result<(), String> 
         "{bare}"
     );
     assert!(!bare.contains("proof_harness_only"), "{bare}");
+    Ok(())
+}
+
+/// #12921: the emitted `summary` must be declared by the published check
+/// schema's closed `summary` definition (`additionalProperties: false`).
+#[test]
+fn proof_only_summary_member_is_declared_by_the_check_schema() -> Result<(), String> {
+    let report = Repo::new(&lib("kani::proof", ">", "100", ""), &owner_change())?.report()?;
+    let schema_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/ripr/check.schema.json");
+    let schema: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(&schema_path).map_err(|e| format!("{}: {e}", schema_path.display()))?,
+    )
+    .map_err(|e| e.to_string())?;
+    let def = &schema["$defs"]["summary"];
+    assert_eq!(
+        def["additionalProperties"], false,
+        "premise: closed summary"
+    );
+    let declared = def["properties"].as_object().ok_or("summary properties")?;
+    let emitted = report["summary"].as_object().ok_or("report summary")?;
+    assert!(
+        emitted.contains_key("proof_harness_only"),
+        "premise: {report}"
+    );
+    for key in emitted.keys() {
+        assert!(
+            declared.contains_key(key),
+            "summary.{key} not in check schema"
+        );
+    }
+    assert_eq!(declared["proof_harness_only"]["minimum"], 1);
+    Ok(())
+}
+
+/// #12921: a suppressed proof-only finding is not counted as proof-only.
+#[test]
+fn suppressed_proof_only_finding_is_not_counted() -> Result<(), String> {
+    let repo = Repo::new(&lib("kani::proof", ">", "100", ""), &owner_change())?;
+    let policy = repo.base.join("suppressions.toml");
+    write(
+        &policy,
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"src/**\"\nreason = \"accepted\"\nowner = \"fixture\"\n",
+    )?;
+    let unsuppressed = repo.report()?;
+    assert_eq!(unsuppressed["summary"]["proof_harness_only"], 1, "premise");
+    let report = repo.report_with(&[
+        std::ffi::OsStr::new("--suppression-policy"),
+        policy.as_os_str(),
+    ])?;
+    assert_eq!(report["summary"]["suppressed_by_policy"], 1, "{report}");
+    assert!(
+        report["summary"].get("proof_harness_only").is_none(),
+        "{report}"
+    );
     Ok(())
 }

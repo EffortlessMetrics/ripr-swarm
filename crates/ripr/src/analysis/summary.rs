@@ -184,6 +184,20 @@ mod tests {
         assert_eq!(summary.exposed, 0);
     }
 
+    // #12921: a finding the proc-macro withhold rewrote to `static_unknown`
+    // keeps the proof limit but is not `no_static_path`, so it is not counted
+    // (the member is a subset of `no_static_path`).
+    #[test]
+    fn proof_limit_on_a_non_no_static_path_class_is_not_proof_only() {
+        let mut rewritten = finding(ExposureClass::StaticUnknown);
+        rewritten.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::ProofHarnessNotEvaluated);
+        assert!(!rewritten.is_proof_harness_only());
+        let summary = summarize_findings(1, &[rewritten]);
+        assert_eq!(summary.proof_harness_only, 0);
+        assert_eq!(summary.static_unknown, 1);
+    }
+
     // #11554: raw counts stay per probe; the conflicting-expression count says
     // how many expressions got more than one class from different probes.
     #[test]

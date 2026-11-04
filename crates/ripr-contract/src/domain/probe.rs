@@ -993,7 +993,8 @@ impl Finding {
     /// disclosure only: the class stays `no_static_path`, the harness earns no
     /// test credit, and nothing here claims the change is guarded.
     pub fn is_proof_harness_only(&self) -> bool {
-        self.static_limit_kind == Some(super::StaticLimitKind::ProofHarnessNotEvaluated)
+        self.class == ExposureClass::NoStaticPath
+            && self.static_limit_kind == Some(super::StaticLimitKind::ProofHarnessNotEvaluated)
     }
 
     /// The one sentence every surface uses to say a finding is not a
