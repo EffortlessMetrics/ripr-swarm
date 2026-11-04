@@ -1,0 +1,2 @@
+xtask/tests/ripr_pr_refusal.rs|Command::new|1|ripr-pr-refusal|Executes the extracted workflow shell with a stub analyzer and gh in an isolated temporary directory, without network.
+xtask/tests/ripr_pr_refusal.rs|use std::process::Command|1|ripr-pr-refusal|Import for the isolated workflow-shell test above.
