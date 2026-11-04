@@ -22,6 +22,78 @@ fn fixture(label: &str) -> Result<PathBuf, String> {
 
 #[test]
 fn compact_windows_full_cold_run_populates_complete_summary_cache() -> Result<(), String> {
+    const CHILD: &str = "RIPR_COMPACT_PREFILL_CHILD_ACK";
+    let Some(acknowledgement) = std::env::var_os(CHILD) else {
+        let child_root = make_tempdir("compact-windows-child")?;
+        let acknowledgement = child_root.join("complete.txt");
+        let log_path = child_root.join("child.log");
+        let log = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&log_path)
+            .map_err(|error| error.to_string())?;
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let module = module_path!();
+        let module = module.split_once("::").map_or(module, |(_, rest)| rest);
+        let mut command = std::process::Command::new(executable);
+        command
+            .args([
+                "--exact",
+                &format!(
+                    "{module}::compact_windows_full_cold_run_populates_complete_summary_cache"
+                ),
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, &acknowledgement)
+            .env(REPO_EXPOSURE_SEAM_LIMIT_ENV, "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(log.try_clone().map_err(|error| error.to_string())?)
+            .stderr(log);
+        let mut child = crate::process_owner::OwnedProcess::spawn_isolated(command)
+            .map_err(|error| error.to_string())?;
+        let started = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {}
+                Err(error) => {
+                    let cleanup = child.terminate_tree();
+                    return Err(format!(
+                        "compact child poll failed: {error}; cleanup {cleanup:?}; log {}",
+                        log_path.display()
+                    ));
+                }
+            }
+            if started.elapsed() >= Duration::from_secs(120)
+                || std::fs::metadata(&log_path)
+                    .map_err(|error| error.to_string())?
+                    .len()
+                    > 262_144
+            {
+                child.terminate_tree()?;
+                return Err(format!(
+                    "compact child exceeded its time/output limit; log {}",
+                    log_path.display()
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let output = crate::bounded_input::read_to_string_with_limit(&log_path, 262_144)
+            .map_err(|error| error.to_string())?;
+        if !status.success() {
+            return Err(format!("compact child failed: {status}\n{output}"));
+        }
+        assert_eq!(
+            crate::bounded_input::read_to_string_with_limit(&acknowledgement, 1024)
+                .map_err(|error| error.to_string())?,
+            "complete compact prefill assertions executed"
+        );
+        eprintln!("{output}");
+        std::fs::remove_dir_all(child_root).map_err(|error| error.to_string())?;
+        return Ok(());
+    };
+    let acknowledgement = PathBuf::from(acknowledgement);
     let root = fixture("compact-windows-full")?;
     let config = RiprConfig::default();
     let state = collect_workspace_state(&root, &config)?;
@@ -31,10 +103,9 @@ fn compact_windows_full_cold_run_populates_complete_summary_cache() -> Result<()
         baseline.len() > LIMITS.window * 2,
         "fixture must exercise several windows"
     );
-    let cap = PilotInventoryDefault::widen_to(1);
     assert_eq!(
         repo_exposure_seam_limit()?,
-        Some((1, SeamLimitSource::Default))
+        Some((1, SeamLimitSource::Configured))
     );
     let full = inventory_classified_seams_report_inner(&root, &config, None)?;
     assert_eq!(full.classified.len(), 1);
@@ -70,8 +141,12 @@ fn compact_windows_full_cold_run_populates_complete_summary_cache() -> Result<()
         inventory_compact_classified_seams_at_with_config(&root, &config)?.is_empty(),
         "valid alternate entry must distinguish reuse from recomputation"
     );
-    drop(cap);
     std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    std::fs::write(
+        acknowledgement,
+        "complete compact prefill assertions executed",
+    )
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -216,6 +291,7 @@ fn compact_windows_moved_inputs_and_wrong_total_refuse_without_replacing_cache()
         session.run().is_err(),
         "moved source must not publish under the old key"
     );
+    assert!(session.inputs_changed.get());
     match cache.load_classified_seams_with_fallback(&key) {
         CacheLoad::Hit((old, _, _)) => assert!(old.is_empty()),
         other => {
@@ -223,6 +299,74 @@ fn compact_windows_moved_inputs_and_wrong_total_refuse_without_replacing_cache()
                 "custody failure replaced prior generation: {other:?}"
             ));
         }
+    }
+    std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn compact_windows_verification_bounds_cumulative_moved_source() -> Result<(), String> {
+    let root = fixture("compact-windows-reread-budget")?;
+    let config = RiprConfig::default();
+    let state = collect_workspace_state(&root, &config)?;
+    let cached = state.build_index(&config)?;
+    let files = production_files_from_state_with_role(&state, &config);
+    let total = inventory_seams_from_index(&files, &cached.index).len();
+    let fallback = rust_index::lexical_fallback_files(&cached.index);
+    let pass = test_grip_evidence::EvidencePass::new(&cached.index);
+    let key = state.cache_key();
+    let cache = RepoSeamFactCache::at_compact_classified(&root);
+    cache.store_compact_classified_seams_with_limit(&key, &[], 1)?;
+    let source_bytes = cached
+        .index
+        .files()
+        .values()
+        .map(|facts| facts.source.len())
+        .sum();
+    let mut session = Session {
+        state: &state,
+        key: &key,
+        files: &files,
+        index: &cached.index,
+        pass: &pass,
+        total,
+        fallback: &fallback,
+        limits: Limits {
+            source_bytes,
+            ..LIMITS
+        },
+        retention: Retention::default(),
+        inputs_changed: std::cell::Cell::new(false),
+    };
+    assert!(session.admitted()?);
+    write_file(
+        &root.join("src/empty.rs"),
+        &format!("// No seams in this file.\n{}", " ".repeat(64)),
+    )?;
+    let error = session
+        .run()
+        .expect_err("aggregate source growth must refuse");
+    assert!(
+        error.contains("grew beyond its admitted byte limit"),
+        "wrong refusal: {error}"
+    );
+    assert!(session.inputs_changed.get());
+    session.limits = LIMITS;
+    write_file(
+        &root.join("src/empty.rs"),
+        &" ".repeat(LIMITS.file_source_bytes + 1),
+    )?;
+    let error = session
+        .run()
+        .expect_err("one oversized moved file must refuse");
+    assert!(
+        error.contains("grew beyond its admitted byte limit"),
+        "wrong refusal: {error}"
+    );
+    assert!(session.inputs_changed.get());
+    match cache.load_classified_seams_with_fallback(&key) {
+        CacheLoad::Hit((old, _, _)) => assert!(old.is_empty()),
+        other => return Err(format!("bounded reread refusal replaced cache: {other:?}")),
     }
     std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
     Ok(())

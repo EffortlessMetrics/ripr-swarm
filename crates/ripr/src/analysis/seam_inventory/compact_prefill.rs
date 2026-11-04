@@ -157,19 +157,37 @@ impl Session<'_, '_> {
         // Inputs may grow after admission. Bound the reread itself, rather
         // than allocating the moved file and only then noticing the change.
         let mut hash = FilesContentHashBuilder::new();
+        let mut remaining = self.limits.source_bytes;
         for path in &self.state.files {
             cancellation::checkpoint()?;
+            if !std::fs::metadata(self.state.workspace_root.join(path))
+                .map_err(|error| error.to_string())?
+                .is_file()
+            {
+                return Err(
+                    "compact prefill source is no longer a regular file; retry the run".into(),
+                );
+            }
             let file =
                 std::fs::File::open(self.state.workspace_root.join(path)).map_err(|error| {
                     format!("read compact prefill source {}: {error}", path.display())
                 })?;
             let mut bytes = Vec::new();
-            file.take(self.limits.file_source_bytes.saturating_add(1) as u64)
-                .read_to_end(&mut bytes)
-                .map_err(|error| error.to_string())?;
-            if bytes.len() > self.limits.file_source_bytes {
-                return Err("compact prefill source grew beyond its admitted byte limit".into());
+            file.take(
+                self.limits
+                    .file_source_bytes
+                    .min(remaining)
+                    .saturating_add(1) as u64,
+            )
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+            if bytes.len() > self.limits.file_source_bytes || bytes.len() > remaining {
+                return Err(
+                    "compact prefill source grew beyond its admitted byte limit; retry the run"
+                        .into(),
+                );
             }
+            remaining -= bytes.len();
             hash.push(path, &bytes);
         }
         if hash.finish() != self.state.files_content_hash {

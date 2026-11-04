@@ -16,10 +16,6 @@
 //!
 //! Both contracts are pinned by tests in this file.
 
-#[cfg(test)]
-#[path = "seam_inventory/compact_prefill_probe.rs"]
-mod compact_prefill_probe;
-
 #[path = "seam_inventory/compact_prefill.rs"]
 mod compact_prefill;
 

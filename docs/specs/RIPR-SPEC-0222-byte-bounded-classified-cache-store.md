@@ -245,3 +245,49 @@ proving a universal RSS threshold.
   per worker (at most four) + bounded metadata
 - Host-scoped 10k/self-dogfood store-phase RSS remains
   `not_established` in this change; #3794 retains that observation
+
+## Complete compact prefill from classified runs (#12506)
+
+A successful cold classified run may also fill the separate compact family
+while its post-policy index and evidence context are still available. Full
+classified evidence is not a projection source: its retained seam prefix can be
+capped, and its stage derivation differs from compact evidence. Prefill derives
+the complete canonical seam inventory with the compact producer, including
+seams beyond the full run's cap. The compact envelope has no truncation marker.
+
+The evidence pass keeps its context private. An absent context, a shared-table
+warm failure, or an optional compact-evidence panic declines the entire
+prefill. A failed pass is never reused. Recomputable window memos are cleared
+after consumption; immutable index facts, policy, overlay, key and lexical
+fallback custody stay with the original run. Cancellation checkpoints surround
+each seam and publication. They provide cooperative cancellation, not a hard
+elapsed-time guarantee for an individual analysis operation.
+
+Prefill admits at most 20,000 indexed files, 128 MiB of indexed source,
+8 MiB of source and 65,536 probe shapes/functions per file, 1,000,000 probe
+shapes in total, 50,000 tests, 500,000 functions and 8 MiB of function names.
+It retains at most 16 MiB of serialized seam payload for one sorted,
+deduplicated file and 16 MiB of classified payload for one output window.
+The window holds at most 64 records, or the configured compact record cap
+when smaller; more than 16,384 windows declines prefill. These bounds cover
+admitted inputs and retained payload, not allocator overhead, the original
+index/full result, one in-flight record, or a measured process RSS ceiling.
+The current cache-key owner retains its own discovery and input-admission
+rules. Rust source verification rereads at most the admitted per-file bound
+plus one byte, and at most the aggregate source budget plus one byte, so
+growing source files cannot evade either bound.
+
+The publisher knows the complete count and window count before staging shards.
+Each producer result must contain the exact requested number of records. Each
+encoded shard must fit the existing configured byte ceiling. A budget decline,
+wrong count, error, cancellation or oversized window removes its unpublished
+generation and leaves the previous valid single entry or manifest unchanged.
+Only the final checksummed manifest commits the complete new generation;
+existing publication locking, single-entry parking, rollback and cleanup apply.
+The source hash, current key and fallback custody are checked before publication.
+Changed analysis inputs refuse the run. Other optional prefill failures leave
+the full analysis result available and enter the bounded cache-family failure
+receipt/trace rather than claiming a populated compact cache.
+
+This adds no output-schema or classification change. It establishes no
+large-repository latency/RSS improvement without a measured receipt.
