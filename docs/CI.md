@@ -2684,7 +2684,7 @@ declaration is read from the PR's base commit, so a PR cannot label its own
 files; a `.gitattributes` edit is itself counted in full. Three guards keep the
 label from hiding hand-written code: only declarable shapes count (lockfiles,
 `fixtures/**/expected/**`, `fixtures/<language>-verdict-corpus/packets/**`,
-`metrics/public-proof/**`, and the `rust-inherent-*.json` and `rust-repo-exposure-*.json` captures in `fixtures/evidence-promotion-honesty-corpus/reports/`, which `check-evidence-promotion-honesty` regenerates from their Cargo subject and binds by `content_sha256`; a new family is added to
+`metrics/public-proof/**`, and the `rust-inherent-*.json` and `rust-repo-exposure-*.json` captures in `fixtures/evidence-promotion-honesty-corpus/reports/`, which `check-evidence-promotion-honesty` binds by name: each must be the `source_report` of a case that regenerates it from a Cargo subject, or a full capture pinned in `report_cache_schema_pins`, so a hand-written file cannot borrow the name; a new family is added to
 `GENERATED_DECLARATION_ALLOWED` in reviewed code, and any other declaration is
 ignored and fails admission with `generated_declaration_invalid`); only data
 file types (`.json`, `.jsonl`, `.lock`, `.md`, `.txt`, `.stdout`) are ever
