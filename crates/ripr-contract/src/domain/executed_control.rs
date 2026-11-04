@@ -1077,7 +1077,7 @@ fn validate_sha256(field: &'static str, value: &str) -> Result<(), ExecutedContr
 mod kani_proofs;
 
 // Shared test fixtures: facade tests import them across the crate boundary
-// (ADR 0025), so they compile under `test` or the `test-fixtures` feature
+// (ADR 0026), so they compile under `test` or the `test-fixtures` feature
 // rather than in production builds.
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod tests {

@@ -1,4 +1,4 @@
-//! Facade for the domain compartment (ADR 0025, #8382/#12726).
+//! Facade for the domain compartment (ADR 0026, #8382/#12726).
 //!
 //! The domain DTOs live in `ripr-contract` and are re-exported here at their
 //! established `ripr::domain` paths, item by item, so every existing

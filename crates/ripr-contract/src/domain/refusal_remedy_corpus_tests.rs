@@ -152,7 +152,7 @@ fn string_literals(source: &str) -> Vec<String> {
 }
 
 fn corpus() -> Result<Vec<String>, String> {
-    // The shipped source spans both crates after ADR 0025: this crate holds
+    // The shipped source spans both crates after ADR 0026: this crate holds
     // the domain compartment, the facade crate holds the rest. The corpus is
     // still every literal in the shipped source, so read both trees.
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
