@@ -4,6 +4,7 @@ id = "RIPR-SPEC-0229"
 tests = [
   "crates/ripr/tests/tuple_owner_equal_inputs.rs::zero_projection",
   "crates/ripr/tests/tuple_owner_equal_inputs.rs::zero_whole",
+  "crates/ripr/tests/tuple_owner_equal_inputs.rs::unrelated_exact_assertion_does_not_get_tuple_guidance",
   "crates/ripr/tests/tuple_owner_equal_inputs.rs::separating_projection",
   "crates/ripr/tests/tuple_owner_equal_inputs.rs::mixed_inputs_keep_the_separating_test",
   "crates/ripr/tests/tuple_owner_equal_inputs.rs::separate_related_test_can_discriminate",

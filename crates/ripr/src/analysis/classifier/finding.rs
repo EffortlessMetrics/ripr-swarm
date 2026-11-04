@@ -180,6 +180,8 @@ pub(in crate::analysis) fn build_finding_with_origins(
         .contains(super::evidence::PROPAGATION_BOUNDARY_UNVERIFIED)
     {
         Some("Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished.".to_string())
+    } else if class == ExposureClass::WeaklyExposed && evidence.tuple_invisible {
+        Some("The existing assertions observe the returned value, but their inputs produce the same result in both versions. Add a separating input and assert the returned value.".to_string())
     } else if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
         None
     } else if matches!(
@@ -292,7 +294,10 @@ pub(in crate::analysis) fn build_finding_with_origins(
         diagnostic.is_invalid() || !diagnostic.witness().digest_matches()
     });
     let mut evidence_lines = evidence.evidence;
-    if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
+    if class == ExposureClass::WeaklyExposed
+        && exact_oracle_covers_direct_sink
+        && !evidence.tuple_invisible
+    {
         evidence_lines.push(
             "static limitation: exact oracle established; no assertion repair is indicated"
                 .to_string(),
@@ -1253,6 +1258,7 @@ mod tests {
             related_tests,
             reach: yes.clone(),
             infect: yes.clone(),
+            tuple_invisible: false,
             propagate: StageEvidence::new(StageState::Weak, Confidence::Low, "propagation weak"),
             literal_fixture_receiver_pinned: false,
             observe: yes.clone(),

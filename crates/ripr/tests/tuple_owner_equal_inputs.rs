@@ -52,20 +52,51 @@ fn class(body: &str) -> Result<ExposureClass, Box<dyn std::error::Error>> {
     Ok(finding(body)?.class)
 }
 
+fn assert_separating_guidance(finding: &ripr::Finding) {
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    let step = finding.recommended_next_step.as_deref().unwrap_or("");
+    assert!(step.contains("separating input"), "{step}");
+    assert!(step.contains("assert"), "{step}");
+    assert!(!step.contains("does not establish observation"), "{step}");
+    assert!(
+        !step.contains("Check whether the change can affect"),
+        "{step}"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("no assertion repair is indicated")),
+        "{:?}",
+        finding.evidence
+    );
+}
+
 #[test]
 fn zero_projection() -> Result<(), Box<dyn std::error::Error>> {
-    assert_eq!(
-        class("let r = Money(0).add(Money(0));\nassert_eq!(r.0, 0);")?,
-        ExposureClass::WeaklyExposed
-    );
+    assert_separating_guidance(&finding(
+        "let r = Money(0).add(Money(0));\nassert_eq!(r.0, 0);",
+    )?);
     Ok(())
 }
 #[test]
 fn zero_whole() -> Result<(), Box<dyn std::error::Error>> {
-    assert_eq!(
-        class("let r = Money(0).add(Money(0));\nassert_eq!(r, Money(0));")?,
-        ExposureClass::WeaklyExposed
+    assert_separating_guidance(&finding(
+        "let r = Money(0).add(Money(0));\nassert_eq!(r, Money(0));",
+    )?);
+    Ok(())
+}
+#[test]
+fn unrelated_exact_assertion_does_not_get_tuple_guidance() -> Result<(), Box<dyn std::error::Error>>
+{
+    let result = finding("let r = Money(0).add(Money(0));\nassert_eq!(1, 1);")?;
+    assert_eq!(result.class, ExposureClass::WeaklyExposed);
+    let step = result.recommended_next_step.as_deref().unwrap_or("");
+    assert!(
+        !step.contains("existing assertions observe the returned value"),
+        "{step}"
     );
+    assert!(step.contains("Replace broad assertions"), "{step}");
     Ok(())
 }
 #[test]

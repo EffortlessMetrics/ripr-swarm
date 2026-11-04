@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — tuple_equal_inputs (3)
+
+Reason:
+RIPR-SPEC-0229: name the established equal-input witness in the separating-input guidance
+
+Command:
+`cargo xtask goldens bless tuple_equal_inputs --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

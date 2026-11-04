@@ -16,10 +16,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:impl Add for Money::add:return_value:return_value:self_other.0+self.0
   Changed behavior: Self(other.0 + self.0)
   Related test: tests/zero.rs:4 zero_does_not_distinguish
-  Next step: The related test `zero_does_not_distinguish` already has an exact assertion; this does
-    not establish observation of the returned value. Check whether the change can affect the
-    returned value. If it can, add a separating input and assert the exact returned value. If it
-    cannot, test the changed effect separately; another input cannot distinguish unchanged returns
+  Next step: The existing assertions observe the returned value, but their inputs produce the same result in both versions. Add a separating input and assert the returned value
   Evidence: reach yes · infection weak · propagation yes · observation yes · assertion not established
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
