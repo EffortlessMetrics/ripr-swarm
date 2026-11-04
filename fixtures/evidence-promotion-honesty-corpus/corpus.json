@@ -11896,8 +11896,8 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::helpers::read_as_object",
           "expression": "value.as_object()",
-          "grip_class": "strongly_gripped",
-          "reach": "yes"
+          "grip_class": "activation_unknown",
+          "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
