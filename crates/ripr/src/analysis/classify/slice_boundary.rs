@@ -391,7 +391,37 @@ pub(super) fn slice_argument_byte_length(text: &str) -> Option<usize> {
     }
 }
 
+/// The compact repeated element of a `&[element; count]` slice argument, so
+/// two calls can be shown to differ only in length. `None` for any other
+/// shape.
+pub(super) fn slice_argument_repeat_element(text: &str) -> Option<String> {
+    if text.len() > 4096 {
+        return None;
+    }
+    let parse = parse_clean_source_file(&format!("fn input() {{ let value = {text}; }}"))?;
+    let binding = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)?;
+    let ast::Expr::RefExpr(reference) = binding.initializer()? else {
+        return None;
+    };
+    if reference.mut_token().is_some() || reference.raw_token().is_some() {
+        return None;
+    }
+    let ast::Expr::ArrayExpr(array) = reference.expr()? else {
+        return None;
+    };
+    repeat_array_parts(&array).map(|(element, _)| element)
+}
+
 fn repeat_array_length(array: &ast::ArrayExpr) -> Option<usize> {
+    repeat_array_parts(array).map(|(_, count)| count)
+}
+
+/// The compact repeated element and the repeat count of `[element; count]`.
+fn repeat_array_parts(array: &ast::ArrayExpr) -> Option<(String, usize)> {
     array.semicolon_token()?;
     if array
         .syntax()
@@ -422,7 +452,16 @@ fn repeat_array_length(array: &ast::ArrayExpr) -> Option<usize> {
         }
         _ => false,
     };
-    element_is_literal.then_some(repeat_count)
+    element_is_literal.then(|| {
+        let element = element
+            .syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        (element, repeat_count)
+    })
 }
 
 #[cfg(test)]
@@ -543,6 +582,25 @@ mod tests {
             ("buffer", None),
         ] {
             assert_eq!(slice_argument_byte_length(text), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn slice_argument_repeat_element_reads_only_repeat_arrays() {
+        for (text, expected) in [
+            ("&[b'f'; 16]", Some("b'f'")),
+            ("&[ b'f' ; 17 ]", Some("b'f'")),
+            ("&[-1; 3]", Some("-1")),
+            ("&[1, 2]", None),
+            ("b\"ff\"", None),
+            ("&mut [0; 4]", None),
+            ("&[x; 4]", None),
+        ] {
+            assert_eq!(
+                slice_argument_repeat_element(text).as_deref(),
+                expected,
+                "{text}"
+            );
         }
     }
 }

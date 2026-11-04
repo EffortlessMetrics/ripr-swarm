@@ -150,6 +150,12 @@ fn one_asserted_side_or_equal_outcomes_are_not_a_pin() -> Result<(), String> {
                 .to_string(),
         ),
         (
+            "different input content at 16 and 17 (count >= 16 passes both)",
+            "        assert_eq!(chunk_size(&[b'z'; 16]), Err(ChunkError::BadDigit));
+        assert_eq!(chunk_size(&[b'f'; 17]), Err(ChunkError::TooLong));"
+                .to_string(),
+        ),
+        (
             "off-boundary lengths 15 and 17",
             "        assert_eq!(chunk_size(&[b'f'; 15]), Ok(u64::MAX >> 4));
         assert_eq!(chunk_size(&[b'f'; 17]), Err(ChunkError::TooLong));"

@@ -7,7 +7,7 @@ use super::activation::{ActivationWithBoundaryInput, sort_value_facts};
 use super::context::ProbeContext;
 use super::owner_pin::{OwnerPinSyntax, targeted_free_call_reaches_owner};
 use super::reach::relation_establishes_reach;
-use super::slice_boundary::slice_argument_byte_length;
+use super::slice_boundary::{slice_argument_byte_length, slice_argument_repeat_element};
 use crate::analysis::facts::{
     FunctionImplContext, FunctionSummary, OracleFact, RustIndex, TestSummary,
 };
@@ -80,12 +80,30 @@ impl CounterPredicate {
 
 struct SliceCounterRow {
     count: usize,
+    /// Compact repeated element when the argument is `&[element; count]`.
+    element: Option<String>,
     test_file: PathBuf,
     call_line: usize,
     call_text: String,
 }
 
 impl SliceCounterBoundary {
+    /// Calls whose lengths differ by one and straddle the boundary: the
+    /// shorter does not fire the predicate, the longer does, and both repeat
+    /// the same element so they differ only in length. With different
+    /// content the outcomes can differ for reasons other than the counter (a
+    /// bad digit, say), which a different threshold also passes.
+    fn straddling_pairs(&self) -> impl Iterator<Item = (&SliceCounterRow, &SliceCounterRow)> {
+        self.rows.iter().filter_map(|short| {
+            let long = self.rows.iter().find(|row| row.count == short.count + 1)?;
+            (!self.predicate.fires_for_length(short.count)
+                && self.predicate.fires_for_length(long.count)
+                && short.element.is_some()
+                && short.element == long.element)
+                .then_some((short, long))
+        })
+    }
+
     fn valid_for(&self, probe: &Probe, owner: &FunctionSummary) -> bool {
         probe.family == ProbeFamily::Predicate
             && probe.owner.as_ref() == Some(&self.owner)
@@ -106,12 +124,7 @@ impl SliceCounterBoundary {
         // exactly one element and the predicate fires for the longer one but
         // not the shorter one; any other lengths leave an adjacent boundary
         // edit (`>` vs `>=`) undiscriminated.
-        let lengths: Vec<usize> = self.rows.iter().map(|row| row.count).collect();
-        let pinned = lengths.iter().any(|length| {
-            lengths.contains(&(length + 1))
-                && !self.predicate.fires_for_length(*length)
-                && self.predicate.fires_for_length(length + 1)
-        });
+        let pinned = self.straddling_pairs().next().is_some();
         pinned.then(|| {
             StageEvidence::new(
                 StageState::Yes,
@@ -158,15 +171,7 @@ impl SliceCounterBoundary {
             }
             outcomes
         };
-        self.rows.iter().any(|short| {
-            let Some(long) = self.rows.iter().find(|row| row.count == short.count + 1) else {
-                return false;
-            };
-            if self.predicate.fires_for_length(short.count)
-                || !self.predicate.fires_for_length(long.count)
-            {
-                return false;
-            }
+        self.straddling_pairs().any(|(short, long)| {
             outcomes_straddle(&asserted(short), &asserted(long), &self.fire_value)
         })
     }
@@ -272,6 +277,7 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
             }
             rows.push(SliceCounterRow {
                 count: length,
+                element: slice_argument_repeat_element(argument),
                 test_file: test.file.clone(),
                 call_line: call.line,
                 call_text: call.text.to_string(),
@@ -620,6 +626,7 @@ mod tests {
                 .iter()
                 .map(|count| SliceCounterRow {
                     count: *count,
+                    element: Some("b'f'".to_string()),
                     test_file: PathBuf::from("tests/t.rs"),
                     call_line: 1,
                     call_text: String::new(),
@@ -842,5 +849,19 @@ mod tests {
                 "{body}"
             );
         }
+    }
+
+    #[test]
+    fn straddling_pairs_need_the_same_repeated_element() -> Result<(), ()> {
+        let mut boundary = boundary_with_lengths("16 < count", &[16, 17]).ok_or(())?;
+        assert_eq!(boundary.straddling_pairs().count(), 1);
+        // `[b'z'; 16]` with `[b'f'; 17]` differ in content, not only length.
+        boundary.rows[0].element = Some("b'z'".to_string());
+        assert_eq!(boundary.straddling_pairs().count(), 0);
+        // Non-repeat arguments carry no element and never pair.
+        boundary.rows[0].element = None;
+        boundary.rows[1].element = None;
+        assert_eq!(boundary.straddling_pairs().count(), 0);
+        Ok(())
     }
 }
