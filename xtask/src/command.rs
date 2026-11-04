@@ -639,7 +639,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "mutation-spot-check --repo <name>=<checkout> [--mutants-out <name>=<dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]",
         "pilot-ranking check|fetch|label|score [--manifest <path>] [--root <dir>] [--repo <id>]... [--allow-network] [--mutants-out <id>=<dir>] [--ripr <binary>]",
         "real-crate-dogfood check|fetch|run [--manifest <path>] [--root <dir>] [--case <id>]... [--allow-network] [--ripr <binary>]",
-        "dx-scoreboard [--boards <list>] [--repo <id>] [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>] [--baseline <report.json>] [--gate] [--timeout-ms <n>]",
+        "dx-scoreboard [--boards <list>] [--repo <id>] [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>] [--baseline <report.json>] [--gate] [--timeout-ms <n>] [--samples <n>]",
         "scale-cliff-benchmark [--sizes <n,n,n>] [--repo <path> --base <rev>] [--mode <draft|deep|instant>] [--commands <check,pilot>] [--index-cap <n|product>] [--timeout-ms <n>] [--keep-workspaces]",
         "rust-corpus check|list|fetch|smoke [--manifest <path>] [--tier fast|full|targets] [--repo <id>] [--root <dir>] [--allow-network] [--ripr <bin>] [--timeout-secs <n>]",
         "bench-agent-surfaces [--corpus <tiny|mid|repo>] [--timeout-ms <n>] [--self-deep] [--compare <path>]",
@@ -1485,7 +1485,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Writes depending on the subcommand: validates the pinned real-crate commit list offline (check), shallow-fetches each pinned commit and its parent with --allow-network (fetch), or runs ripr check on each checkout and reports counts and timings for related-test naming, duplicate test rows, base-side findings and wall time; counts are not verdicts (run).",
         ),
         command_entry(
-            "dx-scoreboard [--boards <list>] [--repo <id>] [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>] [--baseline <report.json>] [--gate] [--timeout-ms <n>]",
+            "dx-scoreboard [--boards <list>] [--repo <id>] [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>] [--baseline <report.json>] [--gate] [--timeout-ms <n>] [--samples <n>]",
             "report_only",
             "target/ripr/reports/dx-scoreboard.{json,md}",
             false,
