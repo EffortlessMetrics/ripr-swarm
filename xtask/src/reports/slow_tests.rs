@@ -584,7 +584,7 @@ recorded_seconds = 99.0
                 "ripr::cli_smoke fast_check",
             ]
         );
-        assert_eq!(report.slowest[0].seconds, 120.0);
+        assert!((report.slowest[0].seconds - 120.0).abs() < 1e-9);
         assert_eq!(report.tests_measured, 6);
         assert_eq!(report.tests_skipped, 1);
         Ok(())
@@ -684,30 +684,30 @@ recorded_seconds = 99.0
 
     #[test]
     fn instrument_failures_are_errors_not_empty_passes() {
-        assert!(build_report("<testsuites/>", POLICY, 50).is_err());
-        assert!(build_report("not xml", POLICY, 50).is_err());
+        assert!(build_report("<testsuites/>", POLICY, 50).err().is_some());
+        assert!(build_report("not xml", POLICY, 50).err().is_some());
         let no_time = r#"<testsuites><testsuite name="a"><testcase name="t" classname="a"/></testsuite></testsuites>"#;
-        assert!(build_report(no_time, POLICY, 50).is_err());
+        assert!(build_report(no_time, POLICY, 50).err().is_some());
     }
 
     #[test]
     fn invalid_policies_are_rejected() {
         let bad_mode = POLICY.replace("mode = \"advisory\"", "mode = \"warn\"");
-        assert!(build_report(SAMPLE, &bad_mode, 50).is_err());
+        assert!(build_report(SAMPLE, &bad_mode, 50).err().is_some());
         let no_ratchet = POLICY.replace(
             "ratchet = \"advisory until the baseline shrinks\"",
             "ratchet = \" \"",
         );
-        assert!(build_report(SAMPLE, &no_ratchet, 50).is_err());
+        assert!(build_report(SAMPLE, &no_ratchet, 50).err().is_some());
         let zero_budget = POLICY.replace("30.0", "0.0");
-        assert!(build_report(SAMPLE, &zero_budget, 50).is_err());
+        assert!(build_report(SAMPLE, &zero_budget, 50).err().is_some());
         // A baseline entry that is not over budget is dead weight.
         let under = POLICY.replace("recorded_seconds = 40.0", "recorded_seconds = 5.0");
-        assert!(build_report(SAMPLE, &under, 50).is_err());
+        assert!(build_report(SAMPLE, &under, 50).err().is_some());
         let duplicate = format!(
             "{POLICY}[[baseline]]\ntest = \"xtask::bin/xtask tests::long_baselined\"\nrecorded_seconds = 150.0\n"
         );
-        assert!(build_report(SAMPLE, &duplicate, 50).is_err());
+        assert!(build_report(SAMPLE, &duplicate, 50).err().is_some());
     }
 
     #[test]
@@ -723,7 +723,7 @@ recorded_seconds = 99.0
         assert_eq!((parsed.limit, parsed.junit.as_str()), (5, "x.xml"));
         for bad in [vec!["--limit", "0"], vec!["--limit"], vec!["--nope"]] {
             let bad: Vec<String> = bad.iter().map(|arg| arg.to_string()).collect();
-            assert!(parse_options(&bad).is_err());
+            assert!(parse_options(&bad).err().is_some());
         }
         Ok(())
     }
@@ -784,7 +784,7 @@ recorded_seconds = 99.0
             Some(Standing::OverBudgetBaselined)
         );
         let invalid = POLICY.replace("30.0\n", "30.0\nregression_factor = 1.0\n");
-        assert!(build_report(SAMPLE, &invalid, 50).is_err());
+        assert!(build_report(SAMPLE, &invalid, 50).err().is_some());
         Ok(())
     }
 
