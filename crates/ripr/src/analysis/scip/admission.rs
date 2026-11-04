@@ -437,16 +437,35 @@ fn portable_fact_identity(
     manifest: &ScipAdmissionManifest,
     symbols: &BTreeSet<String>,
     document_count: usize,
-    unique_symbol_count: usize,
+    occurrence_count: usize,
 ) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(manifest.index_sha256.as_bytes());
-    hasher.update(manifest.toolchain_fingerprint.as_bytes());
-    hasher.update(document_count.to_string().as_bytes());
-    hasher.update(unique_symbol_count.to_string().as_bytes());
+    // Every field is length-prefixed so adjacent fields cannot shift bytes
+    // between each other and collide.
+    let mut field = |bytes: &[u8]| {
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    };
+    field(manifest.index_sha256.as_bytes());
+    field(manifest.toolchain_fingerprint.as_bytes());
+    field(manifest.producer.name.as_bytes());
+    field(manifest.producer.version.as_bytes());
+    field(document_count.to_string().as_bytes());
+    field(occurrence_count.to_string().as_bytes());
+    // Bind the admitted source content, not only the index: equal counts over
+    // different sources must not share an identity.
+    let mut sources: Vec<(&str, &str)> = manifest
+        .source_files
+        .iter()
+        .map(|entry| (entry.relative_path.as_str(), entry.source_sha256.as_str()))
+        .collect();
+    sources.sort_unstable();
+    for (path, digest) in sources {
+        field(path.as_bytes());
+        field(digest.as_bytes());
+    }
     for symbol in symbols {
-        hasher.update(symbol.as_bytes());
-        hasher.update([0]);
+        field(symbol.as_bytes());
     }
     hex_sha256(&hasher.finalize())
 }
@@ -704,6 +723,37 @@ mod tests {
             .ok_or_else(|| "expected project root escape via symlink".to_string())?;
         if !matches!(error, ScipAdmissionError::ProjectRootEscape) {
             return Err(format!("unexpected error: {}", error.reason()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn portable_identity_binds_source_digests_and_producer() -> Result<(), String> {
+        let manifest = |digest: &str, producer: &str| ScipAdmissionManifest {
+            schema_version: "ripr-scip-admission-manifest-v1".to_string(),
+            index_sha256: "i".to_string(),
+            toolchain_fingerprint: "t".to_string(),
+            project_root_relative: ".".to_string(),
+            producer: ScipProducerManifest {
+                name: producer.to_string(),
+                version: "1".to_string(),
+            },
+            source_files: vec![ScipSourceFileManifest {
+                relative_path: "src/lib.rs".to_string(),
+                source_sha256: digest.to_string(),
+            }],
+        };
+        let symbols = BTreeSet::from(["s".to_string()]);
+        let id = |m: &ScipAdmissionManifest| portable_fact_identity(m, &symbols, 1, 1);
+        let base = id(&manifest("a", "p"));
+        if base != id(&manifest("a", "p")) {
+            return Err("identity must be deterministic".to_string());
+        }
+        if base == id(&manifest("b", "p")) {
+            return Err("different source digests shared an identity".to_string());
+        }
+        if base == id(&manifest("a", "q")) {
+            return Err("different producers shared an identity".to_string());
         }
         Ok(())
     }
