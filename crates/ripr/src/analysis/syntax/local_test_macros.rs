@@ -520,22 +520,27 @@ fn closure_callback_tail(text: &str) -> Option<(String, Argument)> {
     Some((param.to_string(), body))
 }
 
+/// Binds the closure-callback matcher to the invocation's arguments. The
+/// outer `None` means a fragment cannot be decided (the expander refuses);
+/// `Some(None)` means rustc would reject this arm and try the next one. The
+/// closure parameter is any identifier: it is substituted with the actual
+/// name the invocation wrote.
 fn closure_callback_bindings(
     matcher: &ClosureCallbackMatcher,
     arguments: &[Argument],
-) -> Option<BTreeMap<String, (String, Argument)>> {
+) -> Option<Option<BTreeMap<String, (String, Argument)>>> {
     let expected = matcher.variables.len() + 1;
     if arguments.len() != expected {
-        return None;
+        return Some(None);
     }
-    let (param, body) = closure_callback_tail(&arguments[matcher.variables.len()].text)?;
-    if param != matcher.param {
-        return None;
-    }
+    let Some((param, body)) = closure_callback_tail(&arguments[matcher.variables.len()].text)
+    else {
+        return Some(None);
+    };
     let mut bindings = BTreeMap::new();
     for ((name, fragment), argument) in matcher.variables.iter().zip(arguments) {
         if !argument_fits(fragment, argument)? {
-            return None;
+            return Some(None);
         }
         bindings.insert(name.clone(), (fragment.clone(), argument.clone()));
     }
@@ -550,7 +555,7 @@ fn closure_callback_bindings(
         ),
     );
     bindings.insert(matcher.body.clone(), ("block".to_string(), body));
-    Some(bindings)
+    Some(Some(bindings))
 }
 
 /// A matcher of comma-separated `$name:fragment` metavariables, as
@@ -676,7 +681,11 @@ fn expand(
             if invocation_ends_with_comma(invocation) {
                 return None;
             }
-            let bindings = closure_callback_bindings(&callback, arguments)?;
+            // A shape mismatch is rustc moving to the next arm, not a
+            // reason to abandon the whole expansion.
+            let Some(bindings) = closure_callback_bindings(&callback, arguments)? else {
+                continue;
+            };
             let tree = ast::TokenTree::cast(transcriber.clone())?;
             if !has_test_attribute(&tree) || invokes_local_macro(&tree, local_macros) {
                 return None;
@@ -1466,6 +1475,24 @@ mod tests {
         let expanded = expand_local_test_macros(source);
         assert_eq!(expanded.len(), 1, "{expanded:?}");
         assert!(expanded[0].text.contains("check(1);"));
+    }
+
+    #[test]
+    fn a_closure_callback_arm_accepts_any_parameter_name() {
+        let source = "macro_rules! case {\n    ($name:ident, |$v:ident| $body:block) => {\n        #[test]\n        fn $name() { let check = |$v: u32| $body; check(1); }\n    };\n}\ncase!(one, |actual| { assert_eq!(actual, 1); });\n";
+        let expanded = expand_local_test_macros(source);
+        assert_eq!(expanded.len(), 1, "{expanded:?}");
+        assert!(expanded[0].text.contains("actual: u32"), "{expanded:?}");
+        assert!(expanded[0].text.contains("assert_eq!(actual, 1);"));
+    }
+
+    #[test]
+    fn a_failed_closure_callback_arm_tries_the_later_arms() {
+        let source = "macro_rules! case {\n    ($name:ident, |$v:ident| $body:block) => {\n        #[test]\n        fn $name() { let check = |$v: u32| $body; check(1); }\n    };\n    ($name:ident, $value:expr) => {\n        #[test]\n        fn $name() { assert_eq!(f($value), 1); }\n    };\n}\ncase!(second, 7);\n";
+        let expanded = expand_local_test_macros(source);
+        assert_eq!(expanded.len(), 1, "{expanded:?}");
+        assert!(expanded[0].text.contains("fn second()"), "{expanded:?}");
+        assert!(expanded[0].text.contains("f(7)"), "{expanded:?}");
     }
 
     #[test]

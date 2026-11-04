@@ -204,6 +204,9 @@ reason = "Discriminated at runtime by `cargo test --features v4`, abstained on p
 case = "mined-hex-table-tested-row"
 reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
 
+[[entry]]
+case = "mined-macro-closure-header-length"
+reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
 
 [[entry]]
 case = "mined-snapshot-helper-document-separator"

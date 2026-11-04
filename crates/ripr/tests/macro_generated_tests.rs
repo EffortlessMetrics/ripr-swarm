@@ -339,7 +339,8 @@ fn an_uninvoked_generator_adds_no_test() -> Result<(), String> {
 }
 
 #[test]
-fn a_macro_generated_closure_callback_test_is_credited() -> Result<(), String> {
+fn a_macro_generated_closure_callback_test_is_indexed_and_keeps_the_macro_limit()
+-> Result<(), String> {
     let hand_written = TempRepo::create(
         "    #[test]\n    fn ten_is_open() {\n        let check = |open: bool| assert_eq!(open, true);\n        check(gate(10));\n    }\n",
     )?
@@ -367,7 +368,9 @@ fn a_macro_generated_closure_callback_test_is_credited() -> Result<(), String> {
             .any(|test| test.name == "ten_is_open"),
         "{generated:?}"
     );
-    assert_eq!(generated.static_limit_kind, None, "{generated:?}");
+    // The macro-reach limit stays until return-value oracle pairing lands
+    // (#6649): indexing alone must not turn the abstention into a gap.
+    assert!(generated.static_limit_kind.is_some(), "{generated:?}");
     Ok(())
 }
 

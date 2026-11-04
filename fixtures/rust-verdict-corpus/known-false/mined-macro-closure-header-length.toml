@@ -1,4 +1,0 @@
-case = "mined-macro-closure-header-length"
-issue = 6649
-accepted_growth = 6649
-reason = "mined-macro-closure-header-length: macro expansion indexes closure-callback generated tests and clears macro-reach false gaps; return-value oracle pairing for asserts on the invoked closure parameter remains weakly_exposed (#6649 residual)."
