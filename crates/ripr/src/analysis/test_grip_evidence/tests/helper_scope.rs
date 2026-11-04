@@ -476,3 +476,29 @@ mod helpers {{
     assert_eq!(evidence.activate.state, StageState::Yes);
     Ok(())
 }
+
+#[test]
+fn helper_credit_keeps_exact_static_associated_terminal_owner() -> Result<(), String> {
+    for (generics, call, arguments, credited) in [
+        ("", "Real::leaf_value()", "", true),
+        ("<Real: Foreign>", "Real::leaf_value()", "::<Fake>", false),
+        ("<Real: Foreign>", "crate::Real::leaf_value()", "::<Fake>", true),
+    ] {
+        let source = format!(
+            "struct Real;\nimpl Real {{ fn leaf_value() -> Option<u32> {{ Some(7) }} }}\n\
+             struct Decoy;\nimpl Decoy {{ fn leaf_value() -> Option<u32> {{ Some(7) }} }}\n\
+             trait Foreign {{ fn leaf_value() -> Option<u32> {{ Some(7) }} }}\n\
+             struct Fake; impl Foreign for Fake {{}}\n\
+             fn read_leaf_value{generics}() -> Option<u32> {{ {call} }}\n\
+             #[test] fn observes_real() {{ assert_eq!(read_leaf_value{arguments}(), Some(7)); }}\n"
+        );
+        assert_exact_helper_owner_credit(
+            &source,
+            &[
+                ("src/lib.rs::impl Real::leaf_value", credited),
+                ("src/lib.rs::impl Decoy::leaf_value", false),
+            ],
+        )?;
+    }
+    Ok(())
+}
