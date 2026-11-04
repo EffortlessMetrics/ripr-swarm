@@ -120,6 +120,29 @@ fn attempts(root: &Path) -> usize {
         .unwrap_or(0)
 }
 
+/// Precondition for the narrowing claim: the same change, read without a diff
+/// scope, leaves more than one eligible start, so bare repair can only ask.
+fn assert_several_eligible_without_scope(
+    label: &str,
+    base: &str,
+    changed: &str,
+    test: &str,
+) -> Result<(), String> {
+    let repo = repo(&format!("{label}-pre"), base, changed, test, false)?;
+    let repair = ripr(&repo.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    let listed = err
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ripr repair "))
+        .count();
+    if repair.status.code() != Some(3) || listed < 2 {
+        return Err(format!(
+            "{label}: precondition needs more than one eligible start:\n{err}"
+        ));
+    }
+    Ok(())
+}
+
 fn assert_starts_check_recommendation(repo: &Repo, label: &str) -> Result<(), String> {
     let root = &repo.root;
     let id = check_start_id(root)?.ok_or_else(|| format!("{label}: check printed no start"))?;
@@ -156,24 +179,31 @@ fn assert_starts_check_recommendation(repo: &Repo, label: &str) -> Result<(), St
 
 #[test]
 fn boundary_change_starts_the_seam_check_recommends() -> Result<(), String> {
+    assert_several_eligible_without_scope("boundary", BOUNDARY_BASE, BOUNDARY_NEW, BOUNDARY_TEST)?;
     let repo = repo("boundary", BOUNDARY_BASE, BOUNDARY_NEW, BOUNDARY_TEST, true)?;
     assert_starts_check_recommendation(&repo, "boundary-weak")
 }
 
+/// Guard: in scoped mode the unchanged `Err(Empty)` seam is already left off
+/// the list, so this passes without the narrowing too.
 #[test]
 fn error_variant_change_starts_the_changed_branch_check_recommends() -> Result<(), String> {
     let changed = ERR_BASE.replace(
         "if s.len() > 10 {\n        return Err(ParseError::Empty);",
         "if s.len() > 10 {\n        return Err(ParseError::TooLong);",
     );
+    assert_several_eligible_without_scope("errvariant", ERR_BASE, &changed, ERR_TEST)?;
     let repo = repo("errvariant", ERR_BASE, &changed, ERR_TEST, true)?;
     assert_starts_check_recommendation(&repo, "error-variant-weak")
 }
 
-/// Negative: check names no start for the change (it reads `unknown`), so
-/// repair keeps asking; nothing is picked by position.
+/// #12849: check reads one finding as noticed (the returned value is pinned)
+/// and the other as unknown, and offers no start. Bare repair agrees: it lists
+/// no start, says why for both spots, and starts no attempt. Without a diff
+/// scope the same change still lists two starts (the discriminating contrast).
 #[test]
-fn a_change_check_offers_no_start_for_keeps_the_selection() -> Result<(), String> {
+fn a_change_check_reads_as_noticed_and_unknown_lists_no_start() -> Result<(), String> {
+    assert_several_eligible_without_scope("flip", FLIP_BASE, FLIP_NEW, FLIP_TEST)?;
     let repo = repo("flip", FLIP_BASE, FLIP_NEW, FLIP_TEST, true)?;
     let root = &repo.root;
     if let Some(id) = check_start_id(root)? {
@@ -183,16 +213,23 @@ fn a_change_check_offers_no_start_for_keeps_the_selection() -> Result<(), String
     }
     let repair = ripr(root, &["repair"])?;
     let err = text(&repair.stderr);
-    if repair.status.code() != Some(3) || !err.contains("code=several_eligible_seams") {
-        return Err(format!("must keep the selection prompt:\n{err}"));
+    if repair.status.code() != Some(3)
+        || !err.contains("code=no_eligible_seam")
+        || err.contains("several_eligible_seams")
+        || err.contains("Pick one")
+    {
+        return Err(format!("must refuse without listing starts:\n{err}"));
+    }
+    if !err.contains("already noticed by a test") || !err.contains("cannot tell from reading") {
+        return Err(format!("must say why for both spots:\n{err}"));
     }
     if attempts(root) != 0 {
-        return Err("no attempt may start without a selection".to_string());
+        return Err("no attempt may start".to_string());
     }
     Ok(())
 }
 
-/// Negative: with the change committed on the default branch there is no
+/// Guard (passes with or without the narrowing): with the change committed on the default branch there is no
 /// diff to scope to, so check's recommendation does not apply to bare repair
 /// and the prompt stays.
 #[test]

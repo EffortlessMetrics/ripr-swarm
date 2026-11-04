@@ -98,6 +98,17 @@ unresolved review threads, naming each thread, so the author learns in seconds
 instead of after the roughly hour-long run. It is an early courtesy only: a read
 failure is a warning, and the late recheck above remains the authority.
 
+Source review disposition (#8157): a `merge-ready` request also needs a current-head
+source review attestation, read by `review_disposition.py` from the immutable trusted
+admission bundle (the PR base for pull requests, the group base for queue entries; the
+script is covered by the bundle hash check). The admission job refuses at request
+time; the Result job repeats the read before the eligibility recheck. A trusted
+(OWNER/MEMBER/COLLABORATOR) reviewer must post a native APPROVED, or a COMMENT whose
+first line is the readiness marker with an allowed tail; a trusted reviewer's later
+negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
+free-prose retraction on later lines is best-effort (#12835). The PR author can still
+self-attest (unchanged), and retractions posted as issue comments are not read.
+
 This is a late eligibility check, not queue-cutover acceptance. The tree match
 binds the queued commit to the head GitHub reports live at admission; it does not
 establish that this is the head a reviewer judged ready, and its premise (GitHub's
