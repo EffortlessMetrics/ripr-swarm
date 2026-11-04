@@ -484,7 +484,8 @@ mod tests {
             }
         });
         let interrupted = with_token(&token, || cli_interrupted_after_exit(&status));
-        late.join().map_err(|_panic| "flag thread failed".to_string())?;
+        late.join()
+            .map_err(|_panic| "flag thread failed".to_string())?;
         assert!(
             interrupted,
             "SIGINT death with a late CLI flag is an interrupt"
