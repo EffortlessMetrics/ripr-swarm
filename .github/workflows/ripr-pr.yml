@@ -1,0 +1,103 @@
+name: ripr-pr
+
+# Dogfood (#12910): run ripr on every pull request and keep one advisory comment
+# up to date. Advisory only: no job here is a required check and none can block a
+# merge.
+#
+# Trust boundary: plain `pull_request` (never `pull_request_target`), no secrets.
+# The analyzer is built from the BASE commit, so the pull request cannot change the
+# code that judges it; the PR head is only data. The analysis job has a read-only
+# token and no checkout credentials. The comment job holds the only write token,
+# checks out nothing and treats the uploaded report as untrusted text.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: ripr-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    # Same-repository, non-draft pull requests only: fork PRs get a read-only token
+    # and cannot be commented on from this workflow.
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
+        with:
+          toolchain: 1.95.0
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: "base -> target"
+          key: ripr-pr-base
+
+      - name: Build ripr from the base commit
+        working-directory: base
+        run: cargo build --release --locked -p ripr
+
+      - name: Run ripr on the pull request diff
+        id: ripr
+        working-directory: head
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RIPR_BIN: ${{ github.workspace }}/base/target/release/ripr
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          start=$SECONDS
+          status=0
+          "$RIPR_BIN" check --root . --base "$BASE_SHA" --committed --mode draft --format agent > "$RUNNER_TEMP/out/report.txt" 2> /dev/null || status=$?
+          printf '%s\n%s\n%s\n' "$status" "$((SECONDS - start))" "$HEAD_SHA" > "$RUNNER_TEMP/out/meta.txt"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ripr-pr-report
+          path: ${{ runner.temp }}/out
+          retention-days: 14
+
+  comment:
+    needs: analyze
+    if: ${{ !cancelled() && needs.analyze.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        continue-on-error: true
+        with:
+          name: ripr-pr-report
+          path: out
+
+      - name: Upsert the ripr comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          marker='<!-- ripr-pr-comment -->'
+          { echo "$marker"; echo "### ripr static exposure check"; echo "Commit \`${HEAD_SHA:0:12}\` · [run]($RUN_URL) · advisory, static evidence only (not a mutation run)."; echo; if [ -s out/report.txt ] && [ "$(sed -n 1p out/meta.txt)" = 0 ]; then echo "\`\`\`text"; head -c 6000 out/report.txt | tr -d '\r' | sed 's/```/ʼʼʼ/g'; echo; echo "\`\`\`"; [ "$(wc -c < out/report.txt)" -le 6000 ] || echo "_Report truncated; the run artifact has the full text._"; echo "Took $(sed -n 2p out/meta.txt)s."; else echo "ripr did not produce a report for this commit (see the run log). Nothing here is a finding."; fi; } > body.md
+          id=$(gh api --paginate "repos/$REPO/issues/$PR/comments" --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | sed -n 1p)
+          if [ -n "$id" ]; then gh api --method PATCH "repos/$REPO/issues/comments/$id" -F body=@body.md > /dev/null; else gh api --method POST "repos/$REPO/issues/$PR/comments" -F body=@body.md > /dev/null; fi

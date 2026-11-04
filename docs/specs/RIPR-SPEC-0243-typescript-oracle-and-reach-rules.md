@@ -1184,7 +1184,9 @@ bound whose changed side no input reaches). The evaluator is exact and
 small: number, string and boolean literals, the owner's parameters,
 `+ - * / %`, comparisons, `&&` `||` `!`, unary `-`, conditionals (only the
 selected arm is evaluated), template literals with literal substitutions
-`typeof` of a literal-bound value (its kind string) and
+`typeof` of a literal-bound value (its kind string),
+`String(x)` and `JSON.stringify(x)` of a literal-bound integer, boolean or
+string (#12296) and
 `Math.min` / `max` / `abs` / `floor` / `ceil` / `trunc`. Anything else
 (a free identifier, another call, a non-literal argument, mixed-type
 coercion, a parameter reassigned in the owner, a class pin credit, a lookup
@@ -1211,6 +1213,16 @@ wrapper; any parse failure keeps the existing verdict.
 When either version contains `typeof`, the probe also tries other value
 kinds (a string, `true`, `false`, `0`) for every argument, and flips boolean
 arguments, because a shifted number cannot separate a kind test.
+
+The `String` / `JSON.stringify` fold holds only for the built-in globals. It
+is refused, and the existing verdict kept, when an owner parameter is named
+`String` or `JSON`, or when the owner's file mentions either name in any
+form other than a plain `String(...)` or `JSON.stringify(...)` call: a
+module-scope `const` / `let` / `var`, function, class, import, export,
+assignment or member write, and any reference to `globalThis`, `global`,
+`window`, `self`, `eval`, `with` or `Function` (which can rebind a global).
+The check is an allowlist over the comment- and string-masked source, and an
+unreadable file refuses.
 
 The two versions must also differ on some probe input, so an equivalent
 rewrite is never reported as unexercised. Each numeric argument is probed at

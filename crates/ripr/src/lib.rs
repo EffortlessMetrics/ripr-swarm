@@ -58,7 +58,9 @@ mod stderr_guard;
 // deliberately carry the contract.
 mod analysis_outcome;
 mod atomic_file;
-mod value_origins;
+// Value-origin shells live in `ripr-contract` (ADR 0027); the crate-private
+// path `crate::value_origins` is preserved for existing consumers.
+pub(crate) use ripr_contract::value_origins;
 // Crate-internal typed error authority (#4859). Git invocation timeout is
 // the first migrated family; later slices extend this enum.
 mod core_error;

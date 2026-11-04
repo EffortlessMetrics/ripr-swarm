@@ -168,13 +168,13 @@ probe observes.
 - `crates/ripr/src/config/tests.rs::candidate_config_error_timeout_renders_the_timeout_diagnostic`
 - `crates/ripr/src/analysis/diff/load.rs::core_error_for_git_root_probe_matches_the_legacy_messages`
   (extended with the `TimedOut` arm)
-- `crates/ripr/src/domain/git_candidate.rs::error_display_names_each_failure_class`
+- `crates/ripr-contract/src/domain/git_candidate.rs::error_display_names_each_failure_class`
   (extended with the `ExecutionTimedOut` case)
 
 ## Implementation Mapping (Amendment #6956)
 
 - `crates/ripr/src/analysis/diff/load.rs::GitRootProbe::TimedOut`
-- `crates/ripr/src/domain/git_candidate.rs::GitCandidateSubjectError::ExecutionTimedOut`
+- `crates/ripr-contract/src/domain/git_candidate.rs::GitCandidateSubjectError::ExecutionTimedOut`
 - `crates/ripr/src/config.rs::CandidateConfigError`
 
 ## Amendment (#7331, #7332): sibling JSON commands and machine check formats

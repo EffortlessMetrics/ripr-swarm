@@ -3,6 +3,57 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-11-03: Backlog-campaign merge operations: funnel order, label discipline, dual runs, one writer, exact-head review
+
+Nov 1-3 backlog-campaign triage across a crowded PR funnel distilled five
+operational rules for merge work on `ripr-swarm`:
+
+- Triage in funnel order: `mergeable_state` first (BLOCKED/BEHIND/DIRTY stop
+  before any CI read), then required-on-exact-head status, then review
+  threads. Read mergeability via REST; the GraphQL `mergeStateStatus` field
+  lags reality by 5-35 min after pushes and label changes, so a stale
+  BLOCKED/UNSTABLE read must be re-checked before acting on it.
+- Cycle `merge-ready` deliberately, never rapidly. Fast remove/re-add
+  manufactures superseded FAILURE+SUCCESS check pairs on the same head that
+  poison the rollup into UNSTABLE and burn a full qualification each lap.
+  Remove the label, confirm the removal landed, let in-flight runs settle,
+  re-add, then confirm a single fresh run started.
+- Expect dual runs on one head. A label cycle or push-while-queued routinely
+  leaves a SUCCESS and a FAILURE side by side on the same SHA. Compare
+  latest-per-check-name before diagnosing: a superseded FAILURE beside a
+  newer SUCCESS for the same workflow is funnel noise, not a product signal.
+- One writer per owner-active branch. When a lane owner is mid-repair, do
+  recon read-only (status, checks, threads) and hand findings back;
+  concurrent pushes, label flips or thread resolves from a second writer
+  invalidate the owner's exact-head evidence and force re-qualification.
+- Exact-head review checklist before any merge judgment: (1) diffstat scope
+  matches the claimed objective, no drive-by files; (2) no gate, policy,
+  public-API or workflow-trigger changes hiding in the diff; (3) required
+  checks green on the published head itself, not a sibling SHA or an older
+  base; (4) all threads read back, including outdated unresolved inlines.
+  Never dispatch workflows manually to help a funnel along; the label route
+  owns CI requests.
+
+## 2026-11-03: A gate that builds the merge base fails every PR when main is broken; re-runs cannot fix it (#12466)
+
+The rust-gates base-matcher step checks out the merge-base worktree and compiles it, so an uncompilable base fails EVERY PR, including the repair: the E0061 arity break (combined #12322 + #12357 merge without a combined build) kept the verified-green head of #12466 red on pre-fix base code, and main healed only via #12496. Distinguish candidate failure from harness-on-broken-base by comparing the merge-ref content against the failing compile unit; a re-run tests the same broken base. Resolution needs an owner decision (admin merge or harness fail-open, cf. #12759), not another retry.
+
+## 2026-11-03: Label-cycle re-queues can reuse a stale merge ref; verify the tested SHA (#12471)
+
+Removing and re-adding `merge-ready` does not recompute GitHub's merge ref; the run tests the SHA computed at creation (seen on #12271 and #12471). Before attributing any re-queued failure, compare the run's tested merge SHA against the current head. A push recomputes the ref; a label toggle alone never does (same family as the #11875 entry below and the draft-to-ready re-route note under the #7150 entry).
+
+## 2026-11-03: A `CANCELLED` run with no failed steps is a supersede-cancel, not an infra kill (docs/CI.md)
+
+Cancellations showing no failed steps and no logs are supersede-cancels from concurrency cancel-in-progress (documented in `docs/CI.md`), not runner deaths; true preemption shows exit 143 mid-step with partial logs. Open a product repair lane for neither without that distinguishing evidence: a supersede-cancel means "a newer run replaced this one," and a logless cancel carries no failure signal at all.
+
+## 2026-11-03: Adjudicate each bot-thread claim against current source before replying (#12492)
+
+Bot claims must be verified one by one against current source: all 3 of 3 checked on #12492 were real, including a fail-open; other threads came back mixed. Unverified agree-replies and a premature REVIEW_READY on an unreviewed head (#12736) must be superseded in writing with exact resume conditions. Agreement without source evidence is endorsement of an unread diff.
+
+## 2026-11-03: Re-derive schema version numbers from current main at rebase time (#12460)
+
+Main moves fast (cache schema 1.136 to 1.148 in days), so a rebased schema bump must re-derive the next free number from current main, never assume the pre-rebase one; the collision recurred 3x across #12376/#12460. At rebase time, re-check `CACHE_SCHEMA_VERSION` plus its sharded and compact twins together; bumping one twin against a stale number re-collides on the next gate.
+
 ## 2026-11-02: A step timeout below the job cap is not leftover time (#12338)
 
 Shard 3 of `windows-advisory-shards.yml` was cancelled at the 80-minute job

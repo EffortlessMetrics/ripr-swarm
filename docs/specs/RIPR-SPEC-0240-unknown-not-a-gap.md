@@ -1270,8 +1270,8 @@ Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 file in scope and leaves the outcome partial).
 
 Wire strings are pinned by
-`crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
-and `crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
+`crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
+and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
 
 ## Implementation Mapping
 
@@ -1292,7 +1292,7 @@ and `crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose
   indirect-owner decision.
 - `crates/ripr/src/analysis/language/rust/mod.rs` calls it last in
   `apply_probe_and_oracle_limits`.
-- `crates/ripr/src/domain/language.rs` and `crates/ripr/src/domain/probe.rs`
+- `crates/ripr-contract/src/domain/language.rs` and `crates/ripr-contract/src/domain/probe.rs`
   own the new wire values.
 
 ## Metrics
