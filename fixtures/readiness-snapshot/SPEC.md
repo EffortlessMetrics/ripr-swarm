@@ -8,7 +8,7 @@ snapshot command; they do not run package builds or network actions.
 
 ## Given
 
-- a workspace root whose lockfile and toolchain digests match each receipt
+- a source commit whose lockfile and toolchain blob digests match each receipt
   `identity` block (fixture JSON may pin an illustrative `source_sha`; xtask
   tests rebind receipts to `HEAD` so shallow CI checkouts need not fetch old
   commits);
@@ -18,7 +18,8 @@ snapshot command; they do not run package builds or network actions.
 
 - `build_snapshot` loads a fixture path via `--rehearsal-receipt` or tests call
   `build_snapshot` directly;
-- identity inputs are collected from the live workspace for compatibility checks.
+- identity inputs are collected from immutable Git blobs at the resolved source
+  commit, including when the requested revision is `HEAD`, for compatibility checks.
 
 ## Then
 
