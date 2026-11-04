@@ -155,6 +155,41 @@ Rollback restores and verifies full PR qualification before queue-only protectio
 can be removed. Pause new admissions and reconcile in-flight work first. Never
 leave cheap admission as the only protection for a direct landing.
 
+For #4834, retain the actual pre-change repository settings, classic branch
+protection and each applicable repository and organization ruleset, including
+their required checks, app identities, enforcement, bypass actors and queue
+parameters, with their source, observation time and digest. Capture the complete
+applicable ruleset inventory and the workflow revisions that produce those
+checks. A digest establishes identity; it cannot restore a payload. In
+particular, `rollback_capture.complete` in the #4832 capture packet is not, by
+itself, a restorable settings backup. Missing permissions, incomplete inventory,
+or a changed source invalidate the packet and block a settings transition.
+
+The non-required rehearsal needs a distinct check identity that cannot satisfy
+any installed required context, an explicitly reviewed immutable workflow
+revision, and an actual `merge_group` event. Record B, G, G's tree, each admitted
+H, queue entry, run and attempt, selected proofs and child outcomes; compare
+them to independently read queue and PR state. Exercise a valid group and
+negative cases for a changed head, altered tree, missing selected proof and
+stale review or eligibility. A local Git simulation can test these rejection
+paths but cannot prove GitHub event delivery, app ownership, or branch
+enforcement. Do not fabricate `merge_group` through manual dispatch or publish
+the rehearsal under a required identity. A hosted rehearsal requires a safe
+installed producer and separately authorized queue configuration; neither is
+established by this document.
+
+Before an authorized cutover, freeze the exact settings diff and rollback
+payloads, verify the acting app's authority and read the effective protections
+again. Pause admission, reconcile or remove in-flight entries through their
+normal owners, and apply only the reviewed change. Read back the full effective
+union and producer identities before admitting the separately authorized
+one-entry canary. On failure, pause admission again, restore the captured legacy
+producer and full PR qualification, read back and exercise those requirements,
+then restore the captured queue and protection settings in their reviewed order.
+Verify the effective union and reconcile every in-flight entry before resuming;
+stop if any restore or readback differs. Do not infer success from an API write
+acknowledgment or a green rehearsal.
+
 The #9015/#9034 interaction is the semantic-composition falsifier. The #8861
 fixture failure is also a dependency-preparation problem: a warm cache containing
 an old fixture pin can hide it even on current G. Preserve the existing repair
