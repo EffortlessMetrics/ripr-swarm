@@ -1052,7 +1052,9 @@ fn local_initializer_boundary_literals(
         if let Some(initializer) =
             super::activation::live_local_initializer(owner, operand.trim(), probe.location.line)
         {
-            if is_computed_value_expression(&initializer) {
+            if is_conditional_initializer(&initializer)
+                || is_computed_value_expression(&initializer)
+            {
                 literals.extend(conditional_literal_results(&initializer));
             } else {
                 literals.extend(boundary_literals(&initializer));
@@ -1067,11 +1069,15 @@ fn local_initializer_boundary_literals(
 // Retain literal result branches when arithmetic appears in a condition or a
 // different branch. The condition's literals and computed tails are not values
 // returned by the conditional. Unreadable or statement-bearing branches abstain.
-fn conditional_literal_results(initializer: &str) -> Vec<String> {
+fn is_conditional_initializer(initializer: &str) -> bool {
     let Some(after_if) = initializer.trim_start().strip_prefix("if") else {
-        return Vec::new();
+        return false;
     };
-    if after_if.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+    !after_if.starts_with(|c: char| c.is_alphanumeric() || c == '_')
+}
+
+fn conditional_literal_results(initializer: &str) -> Vec<String> {
+    if !is_conditional_initializer(initializer) {
         return Vec::new();
     }
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&format!(
@@ -1746,6 +1752,16 @@ mod tests {
         let values =
             super::conditional_literal_results("if qty + 1 > 3 { let x = 7; x } else { 9 + 1 }");
         assert!(values.is_empty(), "{values:?}");
+        let guard = "fn pick(val: u32, qty: u32) -> bool {\n    let unit = if qty > 3 { 1 } else { 2 };\n    val < unit\n}\n";
+        let not_boundary = local_predicate_evidence(guard, "val < unit", 3, "3");
+        assert_ne!(
+            not_boundary.state,
+            StageState::Yes,
+            "{}",
+            not_boundary.summary
+        );
+        let boundary = local_predicate_evidence(guard, "val < unit", 3, "2");
+        assert_eq!(boundary.state, StageState::Yes, "{}", boundary.summary);
     }
 
     #[test]
