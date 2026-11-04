@@ -732,6 +732,12 @@ pub(super) fn find_related_tests_ranked<'a>(
     context: &'a CompactGripContext<'_>,
 ) -> Vec<(&'a CompactTest<'a>, RelationReason)> {
     let mut related = find_related_tests_with_context(seam, context);
+    // Ranking has no result to compute without candidates. In particular,
+    // avoid resolving owner activation and boundary pins for every seam in a
+    // test-free workspace just to sort an empty slice.
+    if related.is_empty() {
+        return related;
+    }
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
     let _best_oracles = sort_related_tests_for_seam(seam, context, owner_fn, &mut related);
     related
