@@ -507,7 +507,8 @@ pub(crate) fn candidate_cargo_toml_manifests(
     let treeish = subject.candidate_tree.as_str();
     let listing = crate::git::run_git_output_with_optional_deadline_and_limit(
         &subject.repository_root,
-        &["ls-tree", "-r", "--name-only", treeish],
+        // `-z` keeps non-ASCII paths unquoted; without it git C-quotes them.
+        &["ls-tree", "-r", "-z", "--name-only", treeish],
         deadline,
         MAX_CANDIDATE_TREE_LISTING_BYTES,
     )
@@ -521,7 +522,7 @@ pub(crate) fn candidate_cargo_toml_manifests(
         });
     }
     let paths: Vec<String> = String::from_utf8_lossy(&listing.stdout)
-        .lines()
+        .split('\0')
         .map(str::trim)
         .filter(|line| *line == "Cargo.toml" || line.ends_with("/Cargo.toml"))
         .take(MAX_CANDIDATE_MANIFESTS)
