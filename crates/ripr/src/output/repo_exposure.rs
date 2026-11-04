@@ -2454,7 +2454,7 @@ pub(crate) mod tests {
             .parts()
             .into_iter()
             .flatten()
-            .map(|part| order(part))
+            .map(order)
             .collect();
         assert_eq!(
             both_change,

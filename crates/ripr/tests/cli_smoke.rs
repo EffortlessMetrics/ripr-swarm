@@ -19244,14 +19244,36 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
                 "{label}: {}\n{}",
                 default.1, full.1
             );
-            assert_eq!(
-                default.1["seam_limit"], full.1["seam_limit"],
-                "{label}: the summary must disclose the same cut"
-            );
+            // The same cut, disclosed with the same counts and source. Only the
+            // selection order differs, by design: the default cap is the
+            // canonical sort prefix, a real budget keeps the current change first.
+            for field in ["analyzed", "total", "source"] {
+                assert_eq!(
+                    default.1["seam_limit"][field], full.1["seam_limit"][field],
+                    "{label}: the summary must disclose the same cut ({field})"
+                );
+            }
             // The cut is the pilot budget in both runs: same category, control and
             // repair route, never the inventory control.
             let limitation = |doc: &serde_json::Value| doc["limitations"][0].clone();
-            assert_eq!(limitation(&default.0), limitation(&full.0), "{label}");
+            let without_order = |doc: &serde_json::Value| {
+                let mut limit = limitation(doc);
+                if let Some(object) = limit.as_object_mut() {
+                    object.remove("selection_order");
+                }
+                limit
+            };
+            assert_eq!(without_order(&default.0), without_order(&full.0), "{label}");
+            // Each run names the same order in its limitation as in its summary.
+            for run in [default, full] {
+                assert_eq!(
+                    limitation(&run.0)["selection_order"],
+                    run.1["seam_limit"]["selection_order"],
+                    "{label}: {}\n{}",
+                    run.0,
+                    run.1
+                );
+            }
             assert_eq!(
                 limitation(&default.0)["category"],
                 "pilot_seam_budget_applied",
@@ -19280,6 +19302,16 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
     assert!(total > 1, "{}", full.1);
     assert_eq!(seam_ids(&full.0).len(), 1, "{}", full.0);
     assert_same_result("clean tree", &default, &full);
+    assert_eq!(
+        default.1["seam_limit"]["selection_order"], "canonical_seam_sort_prefix",
+        "{}",
+        default.1
+    );
+    assert_eq!(
+        full.1["seam_limit"]["selection_order"], "current_change_then_inventory_order_prefix",
+        "{}",
+        full.1
+    );
 
     // A changed seam past the cap (the last function of the file, well past
     // a one-seam cap) is still classified and kept.
@@ -19303,6 +19335,14 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
         default.0
     );
     assert_same_result("changed seam past the cap", &default, &full);
+    // With a changed seam the default cap keeps the current change first too.
+    for run in [&default, &full] {
+        assert_eq!(
+            run.1["seam_limit"]["selection_order"], "current_change_then_inventory_order_prefix",
+            "{}",
+            run.1
+        );
+    }
     // An explicit nonzero inventory limit still applies as set (cap 2 here,
     // not the pilot-scoped default of 1), so the run still discloses the
     // whole inventory as its total.
@@ -22378,7 +22418,7 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                 summary["current_change"]["top_recommendation_in_change"], true,
                 "{summary}"
             );
-            assert!(md.contains("ranked 1 of 5 seams"), "{md}");
+            assert!(md.contains("analyzed 1 of 5 seams"), "{md}");
         }
         ignore_remove_dir_all(&root);
         ignore_remove_dir_all(&out);
