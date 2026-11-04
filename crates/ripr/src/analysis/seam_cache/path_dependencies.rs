@@ -854,16 +854,19 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     fn ignore_remove_dir_all(path: &Path) {
-        if std::fs::remove_dir_all(path).is_ok() {}
+        if let Ok(()) = std::fs::remove_dir_all(path) {}
     }
 
+    /// Tiny non-crypto unique-ish suffix for tempdir naming. Avoids
+    /// depending on `tempfile` and avoids tests racing each other when
+    /// run with `--test-threads`.
     fn uuid_like() -> String {
         use std::time::{SystemTime, UNIX_EPOCH};
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        format!("{nanos:x}")
+        format!("{}-{:x}", std::process::id(), nanos)
     }
 
     fn isolated_dir(label: &str) -> PathBuf {
