@@ -16,6 +16,10 @@
 //!
 //! Both contracts are pinned by tests in this file.
 
+#[cfg(test)]
+#[path = "seam_inventory/compact_prefill_probe.rs"]
+mod compact_prefill_probe;
+
 use super::classify::changed_error_variant;
 use super::generated_rust_corpus::{
     AnalyzableRustCorpus, absent_changed_rust_file_limitations, discover_analyzable_rust_corpus,
@@ -6117,14 +6121,14 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         format!("{}-{:x}", std::process::id(), nanos)
     }
 
-    fn make_tempdir(label: &str) -> Result<PathBuf, String> {
+    pub(super) fn make_tempdir(label: &str) -> Result<PathBuf, String> {
         let dir = std::env::temp_dir().join(format!("ripr-inv-{label}-{}", unique_suffix()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
         Ok(dir)
     }
 
-    fn write_file(path: &Path, content: &str) -> Result<(), String> {
+    pub(super) fn write_file(path: &Path, content: &str) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|err| format!("mkdir {}: {err}", parent.display()))?;
