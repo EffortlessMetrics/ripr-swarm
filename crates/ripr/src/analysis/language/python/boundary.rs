@@ -2560,10 +2560,16 @@ fn is_indirect_integer_sequence_assertion(
     assertion: &super::PythonAssertion,
 ) -> bool {
     use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+    let rebinding = &candidate.test.constant_rebinding;
     if row.line >= assertion.line
         || candidate.test.assertions.len() != 1
         || !candidate.test.decorators.is_empty()
         || !candidate.test.fixtures.is_empty()
+        || rebinding.implicit_reach
+        || rebinding.header_reach
+        || rebinding.fixture_substitution
+        || rebinding.module_opaque
+        || rebinding.edited_in_diff
     {
         return false;
     }

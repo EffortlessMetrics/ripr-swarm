@@ -4457,3 +4457,62 @@ fn indirect_loop_boundary_mixed_identity_preserves_prior_class() -> Result<(), S
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn indirect_loop_boundary_refuses_implicit_test_setup() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for prefix in [
+        "import pytest\nfrom src.subject import largest\n\n@pytest.fixture(autouse=True)\ndef replace(monkeypatch):\n    monkeypatch.setattr('src.subject.largest', lambda xs: 5)\n",
+        "from src.subject import largest\n\ndef setup_function():\n    patch_owner()\n",
+    ] {
+        let tests = format!(
+            "{prefix}\ndef test_largest():\n    result = largest([1, 5, 3])\n    assert result == 5\n"
+        );
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn indirect_loop_boundary_refuses_workspace_substitution_fact() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let test = "from src.subject import largest\n\ndef test_largest():\n    result = largest([1, 5, 3])\n    assert result == 5\n";
+    let file = Path::new("src/subject.py");
+    for is_fixture_substitution in [true, false] {
+        let owners = extract_owners(file, source);
+        let mut tests = extract_tests(Path::new("tests/test_subject.py"), test);
+        let row = tests.first_mut().ok_or("test extraction failed")?;
+        if is_fixture_substitution {
+            row.constant_rebinding.fixture_substitution = true;
+        } else {
+            row.constant_rebinding.implicit_reach = true;
+        }
+        let finding = classify_change_with_source(
+            file,
+            8,
+            "        if x >= best:",
+            Some("        if x > best:"),
+            &owners,
+            &tests,
+            Some(source),
+        )
+        .ok_or("missing finding")?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}

@@ -1721,7 +1721,8 @@ and each has a strong direct comparison of the owner call on an integer list
 or tuple with an integer. A single line with multiple assertions or `and`
 conjuncts qualifies only when every statement and conjunct is such a direct
 pin. A test with exactly one direct owner-call assignment followed by one
-integer equality assertion on that local also qualifies. Qualified calls must
-resolve to the owner through test imports. The finding carries an infection stop
+integer equality assertion on that local also qualifies when test facts show
+no implicit setup, substitution, opaque module or edited-test uncertainty.
+Qualified calls must resolve to the owner through test imports. The finding carries an infection stop
 reason and no repair suggestion. Other source and test shapes retain their
 existing behavior.
