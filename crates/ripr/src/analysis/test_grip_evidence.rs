@@ -11,6 +11,7 @@
 //! confidence, relation reason, oracle strength, activation overlap,
 //! then stable file/name/line tie-breakers.
 
+mod adapter_fed_assertion;
 mod boolean_boundary_pin;
 mod call_budget;
 mod owner_result_binding;
@@ -4574,6 +4575,12 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
             &oracle.text,
             oracle.ok_value_observed,
         );
+    }
+    if seam.kind() == SeamKind::PredicateBoundary
+        && matches!(oracle.kind, OracleKind::ExactValue)
+        && adapter_fed_assertion::asserted_outcome_independent_of_owner(&oracle.text)
+    {
+        return false;
     }
     if seam.kind() != SeamKind::ErrorVariant {
         return true;

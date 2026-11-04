@@ -11267,6 +11267,13 @@
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::parse_masked",
+          "expression": "n % 2 == 1",
+          "grip_class": "activation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_masked",
           "expression": "Err(Fault::Odd)",
           "grip_class": "weakly_gripped",
           "reach": "yes"
