@@ -22,6 +22,10 @@ schema = "ripr_slow_test_budget.v1"
 [decision]
 mode = "advisory"
 per_test_budget_seconds = 30.0
+# A baselined test slower than regression_factor x its recorded_seconds is reported as
+# `over_budget_regressed` and fails in enforced mode, so a baselined test cannot silently
+# get much slower. Raise its recorded_seconds only with review, never to hide a regression.
+regression_factor = 2.0
 ratchet = "advisory; baseline allowlist shrinks by deletion; enforce (fail only on tests absent from the baseline) once the baseline holds fewer than 10 tests"
 
 [[baseline]]

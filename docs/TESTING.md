@@ -434,7 +434,8 @@ The JUnit output path is configured in `.config/nextest.toml` at
 After a `ci`-profile run, `cargo xtask slow-test-report` lists the 50 slowest
 tests from that file and judges each against the per-test budget in
 `policy/test-time-budget.toml` (advisory; the baseline allowlist names tests
-already over budget so the budget can be enforced later). The JUnit file is also
+already over budget so the budget can be enforced later; a baselined test that
+slows past `regression_factor` times its recorded time is reported as regressed). The JUnit file is also
 the `rust-junit` artifact of the Test Analytics workflow.
 
 ## Unused suppression-policy disclosure

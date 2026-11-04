@@ -17,11 +17,12 @@
 //! reported as an error, never as an empty pass.
 
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
 const DEFAULT_JUNIT: &str = "target/nextest/ci/junit.xml";
 const DEFAULT_POLICY: &str = "policy/test-time-budget.toml";
 const DEFAULT_LIMIT: usize = 50;
+const DEFAULT_REGRESSION_FACTOR: f64 = 2.0;
 const POLICY_SCHEMA: &str = "ripr_slow_test_budget.v1";
 const REPORT_SCHEMA: &str = "ripr_slow_test_report.v1";
 const REPORT_JSON: &str = "slow-tests.json";
@@ -48,7 +49,7 @@ pub(crate) fn slow_test_report(args: &[String]) -> Result<(), String> {
     println!("Wrote target/ripr/reports/{REPORT_MD}");
     if report.fails_enforcement() {
         return Err(format!(
-            "slow-test budget is enforced and {} test(s) exceed {}s without a baseline entry: {}",
+            "slow-test budget is enforced and {} test(s) exceed {}s without a baseline entry or regressed past the baseline cap: {}",
             report.new_over_budget().len(),
             report.budget_seconds,
             report
@@ -130,6 +131,7 @@ struct BaselineEntry {
 struct Policy {
     mode: Mode,
     budget_seconds: f64,
+    regression_factor: f64,
     ratchet: String,
     baseline: Vec<BaselineEntry>,
 }
@@ -167,6 +169,14 @@ fn parse_policy(text: &str) -> Result<Policy, String> {
         })
         .filter(|budget| budget.is_finite() && *budget > 0.0)
         .ok_or("slow-test policy decision.per_test_budget_seconds must be a positive number")?;
+    let regression_factor = match decision.get("regression_factor") {
+        None => DEFAULT_REGRESSION_FACTOR,
+        Some(factor) => factor
+            .as_float()
+            .or_else(|| factor.as_integer().map(|n| n as f64))
+            .filter(|factor| factor.is_finite() && *factor > 1.0)
+            .ok_or("slow-test policy decision.regression_factor must be a number above 1")?,
+    };
     let ratchet = decision
         .get("ratchet")
         .and_then(toml::Value::as_str)
@@ -213,6 +223,7 @@ fn parse_policy(text: &str) -> Result<Policy, String> {
     Ok(Policy {
         mode,
         budget_seconds,
+        regression_factor,
         ratchet,
         baseline,
     })
@@ -222,6 +233,8 @@ fn parse_policy(text: &str) -> Result<Policy, String> {
 pub(crate) enum Standing {
     WithinBudget,
     OverBudgetBaselined,
+    /// Baselined, but slower than `regression_factor` times its recorded time.
+    OverBudgetRegressed,
     OverBudgetNew,
 }
 
@@ -230,6 +243,7 @@ impl Standing {
         match self {
             Self::WithinBudget => "within_budget",
             Self::OverBudgetBaselined => "over_budget_baselined",
+            Self::OverBudgetRegressed => "over_budget_regressed",
             Self::OverBudgetNew => "over_budget_new",
         }
     }
@@ -246,12 +260,16 @@ pub(crate) struct TestTime {
 pub(crate) struct SlowTestReport {
     mode: Mode,
     budget_seconds: f64,
+    regression_factor: f64,
     ratchet: String,
     tests_measured: usize,
     tests_skipped: usize,
+    duplicate_testcases: usize,
     over_budget_total: usize,
     limit: usize,
     slowest: Vec<TestTime>,
+    /// Tests that need attention: over budget and not baselined, or baselined
+    /// and regressed past the cap.
     new_over_budget_all: Vec<TestTime>,
     /// Baselined tests that are now within budget: delete the entry.
     ratchet_candidates: Vec<(String, f64, f64)>,
@@ -277,7 +295,9 @@ pub(crate) fn build_report(
     let policy = parse_policy(policy)?;
     let document = roxmltree::Document::parse(junit)
         .map_err(|err| format!("JUnit XML is not well formed: {err}"))?;
-    let mut measured: Vec<(String, f64)> = Vec::new();
+    // The same test id can appear in several shards' JUnit; keep its slowest run.
+    let mut measured: BTreeMap<String, f64> = BTreeMap::new();
+    let mut duplicates = 0usize;
     let mut skipped = 0usize;
     for case in document
         .descendants()
@@ -299,25 +319,39 @@ pub(crate) fn build_report(
             .and_then(|time| time.parse::<f64>().ok())
             .filter(|time| time.is_finite() && *time >= 0.0)
             .ok_or_else(|| format!("JUnit testcase `{id}` has no valid time attribute"))?;
-        measured.push((id, seconds));
+        match measured.entry(id) {
+            Entry::Occupied(mut slot) => {
+                duplicates += 1;
+                if seconds > *slot.get() {
+                    slot.insert(seconds);
+                }
+            }
+            Entry::Vacant(slot) => {
+                slot.insert(seconds);
+            }
+        }
     }
     if measured.is_empty() {
         return Err(
             "JUnit XML contains no measured testcase; slowness was not established".to_string(),
         );
     }
-    let baselined: BTreeSet<&str> = policy
+    let baselined: BTreeMap<&str, f64> = policy
         .baseline
         .iter()
-        .map(|entry| entry.test.as_str())
+        .map(|entry| (entry.test.as_str(), entry.recorded_seconds))
         .collect();
     let mut tests: Vec<TestTime> = measured
         .into_iter()
         .map(|(id, seconds)| {
             let standing = if seconds <= policy.budget_seconds {
                 Standing::WithinBudget
-            } else if baselined.contains(id.as_str()) {
-                Standing::OverBudgetBaselined
+            } else if let Some(recorded) = baselined.get(id.as_str()) {
+                if seconds > recorded * policy.regression_factor {
+                    Standing::OverBudgetRegressed
+                } else {
+                    Standing::OverBudgetBaselined
+                }
             } else {
                 Standing::OverBudgetNew
             };
@@ -357,7 +391,12 @@ pub(crate) fn build_report(
         .collect();
     let new_over_budget_all = tests
         .iter()
-        .filter(|test| test.standing == Standing::OverBudgetNew)
+        .filter(|test| {
+            matches!(
+                test.standing,
+                Standing::OverBudgetNew | Standing::OverBudgetRegressed
+            )
+        })
         .map(|test| TestTime {
             id: test.id.clone(),
             seconds: test.seconds,
@@ -368,9 +407,11 @@ pub(crate) fn build_report(
     Ok(SlowTestReport {
         mode: policy.mode,
         budget_seconds: policy.budget_seconds,
+        regression_factor: policy.regression_factor,
         ratchet: policy.ratchet,
         tests_measured,
         tests_skipped: skipped,
+        duplicate_testcases: duplicates,
         over_budget_total,
         limit,
         slowest: tests,
@@ -407,6 +448,8 @@ fn report_json(report: &SlowTestReport) -> Value {
         "per_test_budget_seconds": report.budget_seconds,
         "tests_measured": report.tests_measured,
         "tests_skipped": report.tests_skipped,
+        "duplicate_testcases": report.duplicate_testcases,
+        "regression_factor": report.regression_factor,
         "over_budget_total": report.over_budget_total,
         "new_over_budget": report.new_over_budget_all.len(),
         "limit": report.limit,
@@ -437,14 +480,16 @@ fn report_json(report: &SlowTestReport) -> Value {
 
 fn report_markdown(report: &SlowTestReport) -> String {
     let mut body = format!(
-        "# ripr slow-test report\n\nStatus: {}\n\nMode: {}\n\nPer-test budget: {}s\n\nRatchet decision: {}\n\n## Summary\n\n- Tests measured: {}\n- Tests skipped (excluded): {}\n- Over budget: {}\n- Over budget and not in baseline: {}\n\n",
+        "# ripr slow-test report\n\nStatus: {}\n\nMode: {}\n\nPer-test budget: {}s\n\nRatchet decision: {}\n\n## Summary\n\n- Tests measured: {}\n- Tests skipped (excluded): {}\n- Duplicate testcase rows merged (slowest kept): {}\n- Over budget: {}\n- Needs attention (not in baseline, or slower than {}x its recorded time): {}\n\n",
         status(report),
         report.mode.as_str(),
         report.budget_seconds,
         markdown_cell(&report.ratchet),
         report.tests_measured,
         report.tests_skipped,
+        report.duplicate_testcases,
         report.over_budget_total,
+        report.regression_factor,
         report.new_over_budget_all.len(),
     );
     body.push_str(&format!(
@@ -461,12 +506,13 @@ fn report_markdown(report: &SlowTestReport) -> String {
         ));
     }
     if !report.new_over_budget_all.is_empty() {
-        body.push_str("\n## Over budget and not in baseline\n\n");
+        body.push_str("\n## Needs attention: over budget and not in baseline, or regressed\n\n");
         for test in &report.new_over_budget_all {
             body.push_str(&format!(
-                "- `{}` took {:.3}s\n",
+                "- `{}` took {:.3}s ({})\n",
                 markdown_cell(&test.id),
-                test.seconds
+                test.seconds,
+                test.standing.as_str()
             ));
         }
     }
@@ -680,6 +726,132 @@ recorded_seconds = 99.0
             assert!(parse_options(&bad).is_err());
         }
         Ok(())
+    }
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn duplicate_ids_across_shards_are_merged_keeping_the_slowest() -> Result<(), String> {
+        let duplicated = SAMPLE.replace(
+            "</testsuites>",
+            r#"<testsuite name="x"><testcase name="tests::newly_slow" classname="xtask::bin/xtask" time="50.000"/><testcase name="tests::newly_slow" classname="xtask::bin/xtask" time="3.000"/></testsuite></testsuites>"#,
+        );
+        let report = build_report(&duplicated, POLICY, 50)?;
+        assert_eq!(report.tests_measured, 6);
+        assert_eq!(report.duplicate_testcases, 2);
+        let slow = report
+            .slowest
+            .iter()
+            .filter(|test| test.id == "xtask::bin/xtask tests::newly_slow")
+            .map(|test| test.seconds)
+            .collect::<Vec<_>>();
+        assert_eq!(slow, vec![50.0]);
+        let clean = build_report(SAMPLE, POLICY, 50)?;
+        assert_eq!(clean.duplicate_testcases, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn a_baselined_test_that_regresses_past_the_cap_needs_attention_and_fails_enforcement()
+    -> Result<(), String> {
+        // Baseline recorded 150s; the default cap is 2x, so 301s regresses and 299s does not.
+        let slower =
+            |seconds: &str| SAMPLE.replace("time=\"120.000\"", &format!("time=\"{seconds}\""));
+        let regressed = build_report(&slower("301.000"), POLICY, 50)?;
+        assert_eq!(
+            standing_of(&regressed, "xtask::bin/xtask tests::long_baselined"),
+            Some(Standing::OverBudgetRegressed)
+        );
+        assert_eq!(regressed.new_over_budget().len(), 3);
+        let within_cap = build_report(&slower("299.000"), POLICY, 50)?;
+        assert_eq!(
+            standing_of(&within_cap, "xtask::bin/xtask tests::long_baselined"),
+            Some(Standing::OverBudgetBaselined)
+        );
+        // Enforced mode with everything else baselined fails only because of the regression.
+        let policy = POLICY.replace("mode = \"advisory\"", "mode = \"enforced\"")
+            + "[[baseline]]\ntest = \"xtask::bin/xtask tests::newly_slow\"\nrecorded_seconds = 31.0\n\
+               [[baseline]]\ntest = \"ripr::cli_smoke check_json_timeout\"\nrecorded_seconds = 45.5\n";
+        assert!(build_report(&slower("301.000"), &policy, 50)?.fails_enforcement());
+        assert!(!build_report(&slower("299.000"), &policy, 50)?.fails_enforcement());
+        // A tighter factor is honored; a factor at or below 1 is rejected.
+        let tight = POLICY.replace("30.0\n", "30.0\nregression_factor = 1.1\n");
+        let tight = build_report(SAMPLE, &tight, 50)?;
+        assert_eq!(
+            standing_of(&tight, "xtask::bin/xtask tests::long_baselined"),
+            Some(Standing::OverBudgetBaselined)
+        );
+        let invalid = POLICY.replace("30.0\n", "30.0\nregression_factor = 1.0\n");
+        assert!(build_report(SAMPLE, &invalid, 50).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn equal_times_tie_break_by_id() -> Result<(), String> {
+        let tied = r#"<testsuites><testsuite name="a">
+            <testcase name="zeta" classname="a" time="5.000"/>
+            <testcase name="alpha" classname="a" time="5.000"/>
+            <testcase name="mid" classname="a" time="9.000"/>
+        </testsuite></testsuites>"#;
+        let report = build_report(tied, POLICY, 50)?;
+        let ids: Vec<&str> = report.slowest.iter().map(|test| test.id.as_str()).collect();
+        assert_eq!(ids, vec!["a mid", "a alpha", "a zeta"]);
+        Ok(())
+    }
+
+    #[test]
+    fn limit_keeps_the_slowest_prefix_in_order() -> Result<(), String> {
+        let report = build_report(SAMPLE, POLICY, 3)?;
+        let ids: Vec<&str> = report.slowest.iter().map(|test| test.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "xtask::bin/xtask tests::long_baselined",
+                "ripr::cli_smoke check_json_timeout",
+                "xtask::bin/xtask tests::newly_slow",
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn command_reads_files_writes_reports_and_reports_missing_input() -> Result<(), String> {
+        crate::tests::with_temp_cwd("slow-test-report-e2e", |root| {
+            let junit = root.join("junit.xml");
+            let policy = root.join("policy.toml");
+            std::fs::write(&junit, SAMPLE).map_err(|err| err.to_string())?;
+            std::fs::write(&policy, POLICY).map_err(|err| err.to_string())?;
+            let junit_arg = junit.display().to_string();
+            let policy_arg = policy.display().to_string();
+            slow_test_report(&args(&[
+                "--junit",
+                &junit_arg,
+                "--policy",
+                &policy_arg,
+                "--limit",
+                "2",
+            ]))?;
+            let json_text =
+                std::fs::read_to_string(root.join("target/ripr/reports/slow-tests.json"))
+                    .map_err(|err| err.to_string())?;
+            let json: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+            assert_eq!(json["slowest"].as_array().map(Vec::len), Some(2));
+            assert_eq!(json["status"], "warn");
+            assert!(root.join("target/ripr/reports/slow-tests.md").is_file());
+
+            let enforced = POLICY.replace("mode = \"advisory\"", "mode = \"enforced\"");
+            std::fs::write(&policy, enforced).map_err(|err| err.to_string())?;
+            let failure =
+                slow_test_report(&args(&["--junit", &junit_arg, "--policy", &policy_arg]));
+            assert!(failure.is_err_and(|err| err.contains("newly_slow")));
+
+            let missing = root.join("absent.xml").display().to_string();
+            let error = slow_test_report(&args(&["--junit", &missing, "--policy", &policy_arg]));
+            assert!(error.is_err_and(|err| err.contains("failed to read JUnit XML")));
+            Ok(())
+        })
     }
 
     #[test]
