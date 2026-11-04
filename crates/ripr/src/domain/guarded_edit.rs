@@ -764,6 +764,8 @@ fn normalize_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    type Mutation = (&'static str, Box<dyn Fn(&mut serde_json::Value)>);
+
     use super::*;
     use crate::domain::CanonicalItemId;
 
@@ -1135,7 +1137,7 @@ mod tests {
         decode(&|_| {})?
             .validate()
             .map_err(|unavailable| format!("unmutated decode must validate: {unavailable:?}"))?;
-        let mutations: Vec<(&str, Box<dyn Fn(&mut serde_json::Value)>)> = vec![
+        let mutations: Vec<Mutation> = vec![
             (
                 "production test_file and surface",
                 Box::new(|v| {
