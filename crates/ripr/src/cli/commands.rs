@@ -6905,12 +6905,13 @@ language = "rust"
             ),
             "`--path`/`--exclude` must parse and reach the root-dependent failure: {missing_root:?}"
         );
-        let err = explain(&args(&[
+        let refusal = explain(&args(&[
             "--path",
             "../escape",
             "probe:src_lib.rs:error_path:abcd",
-        ]))
-        .expect_err("dot-dot --path must fail");
+        ]));
+        assert!(refusal.is_err(), "dot-dot --path must fail: {refusal:?}");
+        let err = refusal.err().unwrap_or_default();
         assert!(
             err.contains("--path pattern \"../escape\"") && err.contains("`..` segment"),
             "explain must reuse check's pattern refusal, not an unknown-flag error: {err}"
