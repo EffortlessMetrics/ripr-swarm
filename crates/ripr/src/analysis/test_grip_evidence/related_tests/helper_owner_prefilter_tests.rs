@@ -77,13 +77,34 @@ fn foreign_is_empty() -> bool { let foreign = Foreign; foreign.is_empty() }
             PathBuf::from("crates/helper_prefilter_owner_extra/tests/call.rs"),
             excluded,
         ),
+        (
+            PathBuf::from("crates/unrelated/src/lib.rs"),
+            "pub fn marker() {}",
+        ),
+        (
+            PathBuf::from("crates/helper_prefilter_owner_extra/src/lib.rs"),
+            "pub fn marker() {}",
+        ),
     ];
     let root = super::super::tests::claim_index_fixture_root(12_506_002)?;
     std::fs::write(
         root.join("Cargo.toml"),
-        "[package]\nname = \"helper-prefilter-fixture\"\nversion = \"0.1.0\"\n",
+        "[workspace]\nmembers = [\"crates/helper_prefilter_owner\", \"crates/unrelated\", \"crates/helper_prefilter_owner_extra\"]\nresolver = \"2\"\n",
     )
     .map_err(|error| error.to_string())?;
+    for package in [
+        "helper_prefilter_owner",
+        "unrelated",
+        "helper_prefilter_owner_extra",
+    ] {
+        let package_root = root.join("crates").join(package);
+        std::fs::create_dir_all(&package_root).map_err(|error| error.to_string())?;
+        std::fs::write(
+            package_root.join("Cargo.toml"),
+            format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        )
+        .map_err(|error| error.to_string())?;
+    }
     let mut index = RustIndex::default();
     for (path, source) in &files {
         let facts = RaRustSyntaxAdapter.summarize_file(path, source)?;
