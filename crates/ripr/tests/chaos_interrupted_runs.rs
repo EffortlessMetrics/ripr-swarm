@@ -551,7 +551,7 @@ case $RIPR_LIFECYCLE_MODE in
         printf '%s\n' "$RIPR_LIFECYCLE_PACKET" > "$out"
         printf '%s' "$RIPR_LIFECYCLE_SIDECAR" > "${out%/*}/exporter-sidecar"
         ;;
-    partial|nonzero|ignore)
+    partial|nonzero|exit130|selfsigint|ignore)
         printf '%s' '{"interrupted_export":' > "$out"
         printf '%s' '{"interrupted_export":' > "${RIPR_LIFECYCLE_MARKER}.partial"
         ;;
@@ -564,6 +564,8 @@ printf 'ready\n' > "${RIPR_LIFECYCLE_MARKER}.ready"
 case $RIPR_LIFECYCLE_MODE in
     healthy|sidecar) exit 0 ;;
     nonzero) exit 17 ;;
+    exit130) exit 130 ;;
+    selfsigint) kill -s INT "$BASHPID"; exit 99 ;;
 esac
 # Builtins only: there is no descendant process to outlive this producer.
 # The independent safety exit bounds a broken termination control.
@@ -1065,6 +1067,39 @@ exit 66
         }
         staging_removed(&fixture, &failed.tmp)?;
         fixture.preserve_on_drop = false;
+        Ok(())
+    }
+
+    #[test]
+    fn managed_exporter_independent_interrupt_statuses_remain_failures() -> Result<(), String> {
+        for (mode, cause) in [("exit130", "exit status: 130"), ("selfsigint", "signal: 2")] {
+            let mut fixture = setup(&format!("managed-{mode}"))?;
+            let cold = attempt(&fixture, "cold", "healthy")?;
+            healthy(&cold)?;
+            let packet = published_path(&fixture, &cold.tmp)?;
+            let published = fs::read(&packet).map_err(|error| error.to_string())?;
+            let failed = attempt(&fixture, mode, mode)?;
+            degraded(&failed, cause)?;
+            let stderr = String::from_utf8_lossy(&failed.output.stderr);
+            if stderr.contains("check interrupted") || stderr.contains("analysis cancelled") {
+                return Err(format!(
+                    "{mode} was misreported as CLI interruption: {stderr}"
+                ));
+            }
+            if published_path(&fixture, &failed.tmp)? != packet
+                || fs::read(failed.marker.with_extension("partial"))
+                    .map_err(|error| error.to_string())?
+                    != PARTIAL.as_bytes()
+                || failed.tmp.exists()
+                || fs::read(&packet).map_err(|error| error.to_string())? != published
+            {
+                return Err(format!(
+                    "{mode} changed the published packet or retained its partial"
+                ));
+            }
+            staging_removed(&fixture, &failed.tmp)?;
+            fixture.preserve_on_drop = false;
+        }
         Ok(())
     }
 
