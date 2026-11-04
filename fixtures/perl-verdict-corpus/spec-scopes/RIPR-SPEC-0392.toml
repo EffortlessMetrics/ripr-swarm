@@ -1,3 +1,0 @@
-id = "RIPR-SPEC-0392"
-scope = "out"
-reason = "PHP preview contract is normative docs-only until lang-php adapter and php-preview-contract-corpus fixtures land"
