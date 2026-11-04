@@ -402,3 +402,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_oracle_execution_shadowed (32)
+
+Reason:
+RIPR-SPEC-0221: inert miss wording says shape that can keep the assertion from running
+
+Command:
+`cargo xtask goldens bless predicate_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

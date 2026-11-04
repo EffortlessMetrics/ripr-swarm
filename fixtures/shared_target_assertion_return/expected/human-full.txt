@@ -36,7 +36,7 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches returned value: 3 * x (line 2)
-  - related test src/shared.rs:8 pin uses no oracle; misses: assertion inert: this test's assertion does not run as a standard check here
+  - related test src/shared.rs:8 pin uses no oracle; misses: assertion inert: this test's assertion has a shape that can keep it from running as a standard check here
   - source assertion argument value 6 at line 9
   - source function argument value x = 2 at line 9
 

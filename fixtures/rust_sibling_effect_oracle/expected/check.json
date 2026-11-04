@@ -470,7 +470,7 @@
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
           "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion does not run as a standard check here"
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
         },
         {
           "name": "unresolved_target_location_is_required_and_positive",
@@ -954,7 +954,7 @@
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
           "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion does not run as a standard check here"
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
         },
         {
           "name": "unresolved_target_location_is_required_and_positive",

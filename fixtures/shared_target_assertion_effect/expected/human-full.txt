@@ -19,7 +19,7 @@ Shared evidence and guidance
   E4 [findings 1, 2]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E5 [findings 1, 2]: discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E6 [findings 1, 2]: local flow reaches state write: out.push(3) (line 2)
-  E7 [findings 1, 2]: related test src/shared.rs:8 pin uses no oracle; misses: assertion inert: this test's assertion does not run as a standard check here
+  E7 [findings 1, 2]: related test src/shared.rs:8 pin uses no oracle; misses: assertion inert: this test's assertion has a shape that can keep it from running as a standard check here
   E8 [findings 1, 2]: source assertion argument value 3 at line 11
   N1 [findings 1, 2]: Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed effect
 

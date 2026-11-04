@@ -71,7 +71,7 @@ pub(crate) fn related_test_miss_reason(test: &RelatedTest, family: &ProbeFamily)
                 .to_string()
         }
         RelatedTestMiss::AssertionInert => {
-            "assertion inert: this test's assertion does not run as a standard check here"
+            "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
                 .to_string()
         }
         RelatedTestMiss::AssertionAdmissionUnproven => {

@@ -167,3 +167,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — shared_target_assertion_return (13)
+
+Reason:
+RIPR-SPEC-0221: inert miss wording says shape that can keep the assertion from running
+
+Command:
+`cargo xtask goldens bless shared_target_assertion_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

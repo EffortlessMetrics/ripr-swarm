@@ -91,7 +91,7 @@ probe_family|predicate|Probe family value.
 probe_family|return_value|Probe family value.
 probe_family|side_effect|Probe family value.
 probe_family|static_unknown|Probe family value.
-related_test_miss|assertion_inert|Related test's assertion does not run as a standard check here (#5446).
+related_test_miss|assertion_inert|Related test's assertion has a shape that can keep it from running as a standard check here (#5446).
 related_test_miss|assertion_admission_unproven|Related test has an assertion whose admission ripr could not establish; an analyzer limit, not a confirmed gap (#5446).
 related_test_miss|assertion_not_credited|Legacy related-test miss; split into assertion_inert and assertion_admission_unproven (#5446).
 related_test_miss|assertion_not_observing|Related test asserts, but no assertion observes the changed value.

@@ -36,7 +36,7 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches error variant: let n = rdr.read(&mut buf)? (line 5)
-  - related test src/lib.rs:21 reports_read_failure uses no oracle; misses: assertion inert: this test's assertion does not run as a standard check here
+  - related test src/lib.rs:21 reports_read_failure uses no oracle; misses: assertion inert: this test's assertion has a shape that can keep it from running as a standard check here
   - source enum variant value io::ErrorKind::Other at line 24
 
 Weakness

@@ -650,8 +650,10 @@ pub enum RelatedTestMiss {
     /// Legacy token; producers split this into [`Self::AssertionInert`] and
     /// [`Self::AssertionAdmissionUnproven`] (#5446). Retained for older artifacts.
     AssertionNotCredited,
-    /// The test's assertion is established not to run as a standard check here
-    /// (for example a shadowed macro or a provably inactive path).
+    /// The test's assertion has a shape that can keep it from running as a
+    /// standard check here (for example a shadowed macro, an opaque macro
+    /// that may exit early, or a provably inactive path). A real-gap class
+    /// under RIPR-SPEC-0240, not proof that the assertion never runs.
     AssertionInert,
     /// ripr could not establish whether the assertion runs as a standard check;
     /// an analyzer limit, not a confirmed gap (RIPR-SPEC-0221).

@@ -48,6 +48,45 @@ pub(in crate::analysis) fn related_test_miss_for_assertion_refusal(
     }
 }
 
+/// Order-independent: agreeing refusals keep their miss, any disagreement is
+/// admission-unproven (commutative and associative over the two values).
+fn combine_refusal_misses(
+    prior: Option<RelatedTestMiss>,
+    next: RelatedTestMiss,
+) -> RelatedTestMiss {
+    match prior {
+        Some(prior) if prior != next => RelatedTestMiss::AssertionAdmissionUnproven,
+        _ => next,
+    }
+}
+
+#[cfg(test)]
+mod combine_tests {
+    use super::combine_refusal_misses;
+    use crate::domain::RelatedTestMiss::{AssertionAdmissionUnproven, AssertionInert};
+
+    #[test]
+    fn mixed_refusals_are_unproven_in_either_order() {
+        let fold = |misses: &[_]| {
+            misses
+                .iter()
+                .fold(None, |acc, miss| Some(combine_refusal_misses(acc, *miss)))
+        };
+        assert_eq!(
+            fold(&[AssertionInert, AssertionAdmissionUnproven]),
+            Some(AssertionAdmissionUnproven)
+        );
+        assert_eq!(
+            fold(&[AssertionAdmissionUnproven, AssertionInert]),
+            Some(AssertionAdmissionUnproven)
+        );
+        assert_eq!(
+            fold(&[AssertionInert, AssertionInert]),
+            Some(AssertionInert)
+        );
+    }
+}
+
 pub(in crate::analysis) fn split_assertion_not_credited_misses(
     context: &ProbeContext<'_>,
     pin_syntax: &OwnerPinSyntax,
@@ -64,17 +103,19 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
             continue;
         };
         let probe = context.probe;
-        let mut split = None;
+        // Reveal keeps no pairing between a row and the refused assertion, so
+        // the row cannot name the responsible one. Read every refusal and keep
+        // `AssertionInert` only when all of them agree; any disagreement or
+        // unproven refusal is admission-unproven, independent of source order.
+        let mut split: Option<RelatedTestMiss> = None;
         for assertion in &test.assertions {
             let Some(refusal) =
                 pin_syntax.equality_assertion_refusal(probe, test, assertion, context.index)
             else {
                 continue;
             };
-            split = Some(related_test_miss_for_assertion_refusal(
-                context, test, &refusal,
-            ));
-            break;
+            let miss = related_test_miss_for_assertion_refusal(context, test, &refusal);
+            split = Some(combine_refusal_misses(split, miss));
         }
         row.miss = Some(split.unwrap_or(RelatedTestMiss::AssertionAdmissionUnproven));
     }

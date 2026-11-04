@@ -36,7 +36,7 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches returned value: input * 3 (line 2)
-  - related test tests/support/dormant.rs:3 dormant uses no oracle; misses: assertion inert: this test's assertion does not run as a standard check here
+  - related test tests/support/dormant.rs:3 dormant uses no oracle; misses: assertion inert: this test's assertion has a shape that can keep it from running as a standard check here
   - related test tests/weight_tests.rs:3 smoke uses no oracle; misses: has no assertion
   - source assertion argument value 12 at tests/support/dormant.rs:3
   - source function argument value input = 4 at tests/support/dormant.rs:3
