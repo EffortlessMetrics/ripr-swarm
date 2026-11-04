@@ -1,7 +1,7 @@
 //! Development publishes source and evidence without allocating Actions jobs.
 //!
-//! The two legacy label subscribers and the required caller's main cache writer
-//! are an explicit bootstrap remainder under #4838, not an assertion that queue
+//! The two legacy label subscribers, required caller's main cache writer and
+//! every-main cut observer are bootstrap remainders under #4838, not a claim that queue
 //! cutover has happened. Keep their admission narrow until their replacement is
 //! verified. A job-level `if` cannot make a subscribed event workflow-free.
 
@@ -9,8 +9,31 @@ use std::collections::BTreeMap;
 
 const CALLER: &str = ".github/workflows/routed-rust.yml";
 const CONFLICT_NOTICE: &str = ".github/workflows/merge-ready-conflict-notice.yml";
-const RELEASE_WATCH: &str = ".github/workflows/hard-cut-watch.yml";
+const LEGACY_CUT_WATCH: &str = ".github/workflows/hard-cut-watch.yml";
 const MAIN_HEALTH: &str = ".github/workflows/main-health-sentinel.yml";
+
+// Inspected existing deep-proof and maintenance authorities. This preparation
+// preserves their named purposes and exact cadences; it grants no generic timer
+// exception or permission to rename periodic main qualification.
+const SCHEDULED_AUTHORITIES: &[(&str, &str)] = &[
+    ("droid-security-scan.yml", "0 8 * * 1"),
+    ("dx-scoreboard.yml", "17 7 * * *"),
+    ("first-run-install.yml", "41 7 * * *"),
+    ("fuzz.yml", "17 5 * * 0"),
+    ("issue-staleness-watchdog.yml", "17 6 * * 1"),
+    ("kani.yml", "41 4 * * *"),
+    ("macos-advisory.yml", "53 5 * * *"),
+    ("pilot-ranking.yml", "29 6 * * *"),
+    ("pr-staleness-watchdog.yml", "*/30 * * * *"),
+    ("printed-command-paste.yml", "43 5 * * *"),
+    ("public-proof.yml", "41 7 * * *"),
+    ("rust-corpus.yml", "43 6 * * *"),
+    ("scratch-gc.yml", "17,47 * * * *"),
+    ("security.yml", "17 6 * * *"),
+    ("size-scaling.yml", "41 7 * * *"),
+    ("source-of-truth.yml", "37 6 * * 1"),
+    ("windows-advisory.yml", "17 5 * * *"),
+];
 
 /// Read the repository's explicit block-style event mapping. Unsupported YAML
 /// forms fail closed rather than making aliases, quoted keys or flow mappings
@@ -94,8 +117,8 @@ pub fn event_declarations(source: &str) -> Result<BTreeMap<String, Vec<String>>,
 }
 
 /// Enforce the source migration perimeter without weakening the still-installed
-/// required qualification route. #4838 removes the three bootstrap edges only
-/// after truthful admission, queue-only enforcement and cache continuity work.
+/// required qualification route. #4838 removes all four bootstrap edges only
+/// after admission, queue/cut enforcement and cache continuity work.
 pub fn violations(path: &str, source: &str) -> Vec<String> {
     let events = match event_declarations(source) {
         Ok(events) => events,
@@ -106,10 +129,11 @@ pub fn violations(path: &str, source: &str) -> Vec<String> {
         .filter_map(|(event, configuration)| {
             let allowed = match event.as_str() {
                 "workflow_call" | "workflow_dispatch" => true,
-                // Existing deep-proof and maintenance purposes are distinct
-                // from periodic main qualification. The ordinary health timer
-                // is specifically retired; incident proof remains explicit.
-                "schedule" => path != MAIN_HEALTH,
+                "schedule" => path != MAIN_HEALTH && SCHEDULED_AUTHORITIES.iter().any(|(file, cron)| {
+                    path == format!(".github/workflows/{file}")
+                        && (configuration == [format!("- cron: '{cron}'")]
+                            || configuration == [format!("- cron: \"{cron}\"")])
+                }),
                 "merge_group" => {
                     path == CALLER && configuration == ["types: [checks_requested]"]
                 }
@@ -119,8 +143,10 @@ pub fn violations(path: &str, source: &str) -> Vec<String> {
                 }
                 "push" => {
                     (path == CALLER && configuration == ["branches: [main, master]"])
-                        // Release-cut observation has no product qualification.
-                        || (path == RELEASE_WATCH && configuration == ["branches: [main]"])
+                        // This observer still allocates on every main commit.
+                        // Retain cut protection during bootstrap, then retire
+                        // its trigger after the protected G/cut join replaces it.
+                        || (path == LEGACY_CUT_WATCH && configuration == ["branches: [main]"])
                 }
                 _ => false,
             };
@@ -168,6 +194,7 @@ mod tests {
         for (path, event, fields) in [
             (CALLER, "pull_request", "    types: [labeled]\n"),
             (CALLER, "push", "    branches: [main, master]\n"),
+            (LEGACY_CUT_WATCH, "push", "    branches: [main]\n"),
             (
                 CONFLICT_NOTICE,
                 "pull_request_target",
@@ -226,6 +253,28 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    #[test]
+    fn scheduled_exceptions_are_named_and_cannot_expand_or_hide_a_main_timer() {
+        for path in [
+            ".github/workflows/renamed-main-health.yml",
+            ".github/workflows/unclassified.yml",
+        ] {
+            assert!(
+                !violations(path, &workflow("schedule", "    - cron: '9,39 * * * *'\n")).is_empty()
+            );
+        }
+        for (file, cron) in SCHEDULED_AUTHORITIES {
+            let path = format!(".github/workflows/{file}");
+            let fields = format!("    - cron: '{cron}'\n");
+            assert!(violations(&path, &workflow("schedule", &fields)).is_empty());
+            assert!(
+                !violations(&path, &workflow("schedule", "    - cron: '* * * * *'\n")).is_empty()
+            );
+            let expanded = format!("{fields}    - cron: '9,39 * * * *'\n");
+            assert!(!violations(&path, &workflow("schedule", &expanded)).is_empty());
+        }
     }
 
     #[test]

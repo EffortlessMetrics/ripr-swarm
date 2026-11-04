@@ -147,7 +147,7 @@ remaining event edges are explicit bootstrap debt:
 | `routed-rust.yml` | `pull_request: labeled` requests the current protected qualification; other labels still start its nonrequest wrapper | Truthful H admission and enforced queue-only landing, with actual G proof |
 | `merge-ready-conflict-notice.yml` | `pull_request_target: labeled` reports the legacy request's conflict | Native queue request/refusal replaces the label interface |
 | `routed-rust.yml` | Main/master push retains the current required caller and cache-writer opportunity | Accepted selected-route cache continuity and coherent protected cutover |
-| `hard-cut-watch.yml` | Main push observes the existing release-cut packet; it starts no product qualification | Separate release-control ownership; not ordinary product CI |
+| `hard-cut-watch.yml` | Every main push allocates its release-cut observer, even when it only reports an inactive cut | Transitional debt: retire the automatic trigger after protected G/cut enforcement replaces it, or move its selected release purpose to an explicit operation |
 
 Do not convert the protected PR result into a cheap success while a direct merge
 could consume it. #4834/#4838 own the reviewed source/settings delta, readback and
@@ -164,14 +164,37 @@ flow/alias/duplicate event declarations. The retained label/main exceptions are
 bound to exact files and declarations; the policy cannot establish live settings,
 execution, queue admission or economic acceptance.
 
+Schedules have no blanket exception. The policy preserves only the following
+inspected roots and their current exact cron declarations; an unknown name,
+renamed main-health timer or expanded cadence fails. This inventory preserves
+current separate purposes during preparation, not a claim that every cadence
+is economical or that the final lifecycle is activated.
+
+| Retained scheduled root | Current purpose |
+| --- | --- |
+| `droid-security-scan.yml`, `security.yml` | Security/advisory drift observation |
+| `dx-scoreboard.yml` | DX scoreboard measurement |
+| `first-run-install.yml` | Published/default install-surface observation |
+| `fuzz.yml`, `kani.yml` | Fuzzing and bounded model-checking proof |
+| `issue-staleness-watchdog.yml` | Stale issue path citations |
+| `pr-staleness-watchdog.yml` | Legacy label/request staleness; retire with that interface |
+| `macos-advisory.yml`, `windows-advisory.yml` | Named platform-advisory portfolios |
+| `pilot-ranking.yml`, `rust-corpus.yml` | Corpus/ranking measurement |
+| `printed-command-paste.yml` | Cross-platform shell compatibility |
+| `public-proof.yml` | Public proof drift |
+| `size-scaling.yml` | Scaling measurement |
+| `scratch-gc.yml` | Lease-governed terminal scratch reclamation |
+| `source-of-truth.yml` | Source/spec maintenance digest |
+
 ### What starts what in this source stage
 
 | Action | Repository Actions behavior |
 | --- | --- |
-| Open, push, synchronize, reopen, edit, Draft or Ready transition | No development workflow |
+| Open, development-branch push, synchronize, reopen, edit, Draft or Ready transition | No development workflow |
 | Review or ordinary Conversation comment | No development workflow |
 | Apply a label | The two retained legacy subscribers may start; this is an unresolved cutover edge, not the final zero-label design |
 | Native queue `checks_requested` | Existing composed-candidate qualification route |
+| Ordinary main push | Required-caller cache opportunity and every-main cut observer remain transitional debt |
 | Explicit selected proof | Its named callable/manual authority; no automatic admission or landing |
 
 The required check's source and live enforcement remain separate from this
