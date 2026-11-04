@@ -27,7 +27,7 @@ use crate::analysis::facts::cfg_predicates::{
     attribute_introduces_only_test, attribute_test_build_availability,
 };
 use ra_ap_syntax::{
-    AstNode, SyntaxNode, TextSize,
+    AstNode, SyntaxNode, SyntaxToken, TextSize,
     ast::{
         self, HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasLoopBody, HasName,
         HasVisibility,
@@ -582,6 +582,31 @@ impl MacroBindingCandidates {
     }
 }
 
+/// In an untrusted macro's token tree, `.name(` is a method call on its
+/// receiver, not evidence that the trusted macro `name!` may bind there
+/// (#7901). A fragment capture such as `define!(x.expect)` has no `(` after
+/// the identifier and stays ambiguous.
+fn untrusted_macro_argument_token_may_bind_name(token: &SyntaxToken) -> bool {
+    !looks_like_dot_paren_method_token(token)
+}
+
+fn prev_non_trivia_token(token: &SyntaxToken) -> Option<SyntaxToken> {
+    std::iter::successors(token.prev_token(), |previous| previous.prev_token())
+        .find(|previous| !previous.kind().is_trivia())
+}
+
+fn next_non_trivia_token(token: &SyntaxToken) -> Option<SyntaxToken> {
+    std::iter::successors(token.next_token(), |next| next.next_token())
+        .find(|next| !next.kind().is_trivia())
+}
+
+fn looks_like_dot_paren_method_token(token: &SyntaxToken) -> bool {
+    prev_non_trivia_token(token)
+        .is_some_and(|previous| previous.kind() == ra_ap_syntax::SyntaxKind::DOT)
+        && next_non_trivia_token(token)
+            .is_some_and(|next| next.kind() == ra_ap_syntax::SyntaxKind::L_PAREN)
+}
+
 /// [`MacroBindingCandidates`] of a parser-clean file. It mirrors every site
 /// [`macro_binding_ambiguities`] can record and widens each context check:
 /// every macro call's arguments count (a trusted call is skipped only when
@@ -642,7 +667,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
                 if binds_any(token.text()) {
                     return MacroBindingCandidates::Any;
                 }
-                names.extend(trusted(token.text()));
+                if untrusted_macro_argument_token_may_bind_name(&token) {
+                    names.extend(trusted(token.text()));
+                }
             }
         }
         if let Some(import) = ast::Use::cast(node) {
@@ -1220,7 +1247,7 @@ fn macro_binding_sites_in_tree(
             }
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
-                if trusted.contains(&name) {
+                if trusted.contains(&name) && untrusted_macro_argument_token_may_bind_name(token) {
                     let line = line_of(node);
                     ambiguous.push((
                         name.to_string(),
