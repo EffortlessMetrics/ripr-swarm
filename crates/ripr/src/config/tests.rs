@@ -1505,6 +1505,7 @@ fn check_artifact_identity_fields_classify_every_config_field() -> Result<(), St
         "profiles.bun_ub",
         "source_path",
         "source_text",
+        "verification_contract_decision",
     ] {
         expected.push((name, ConfigIdentityRole::Excluded));
     }
