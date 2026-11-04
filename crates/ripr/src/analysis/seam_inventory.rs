@@ -46,6 +46,7 @@ use super::workspace;
 use crate::analysis::cancellation;
 use crate::analysis_outcome::AnalysisLimitation;
 use crate::config::RiprConfig;
+use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -538,6 +539,7 @@ fn inventory_classified_seams_report_collect(
             &state,
             config,
             &analyzed_production_files,
+            changed_paths.is_none().then_some(&key),
         ) {
             Ok(pair) => {
                 trace_latency_phase("cold_compute", "ok", compute_started.elapsed());
@@ -1115,6 +1117,7 @@ fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
     production_files: &[PathBuf],
+    compact_key: Option<&RepoSeamCacheKey>,
 ) -> Result<ClassifiedSeamInventory, String> {
     let build_started = Instant::now();
     trace_latency_phase(
@@ -1155,7 +1158,7 @@ fn inventory_classified_seams_from_state_with_config(
         &format!("ok peak_retained_seams={}", bounded.peak_retained),
         seams_started.elapsed(),
     );
-    let seams = bounded.seams;
+    let mut seams = bounded.seams;
     let limit_info = limit_and_source.and_then(|(limit, source)| {
         if bounded.total_unique <= limit {
             None
@@ -1172,6 +1175,19 @@ fn inventory_classified_seams_from_state_with_config(
             })
         }
     });
+    // A compact summary covers the entire workspace, even when the full
+    // inventory is capped. Never populate that cache from a partial walk.
+    if limit_info.is_none()
+        && let Some(key) = compact_key.filter(|key| key.is_reusable())
+    {
+        publish_compact_from_full_walk(
+            &state.workspace_root,
+            key,
+            &mut seams,
+            &cached.index,
+            &lexical_fallback_files,
+        )?;
+    }
     let evidence_started = Instant::now();
     trace_latency_phase(
         "evidence_for_seams",
@@ -1190,6 +1206,74 @@ fn inventory_classified_seams_from_state_with_config(
     cancellation::checkpoint()?;
     trace_latency_phase("classify_seams", "ok", classify_started.elapsed());
     Ok((classified, limit_info, lexical_fallback_files))
+}
+
+/// Publish the compact producer's own evidence while the shared index is
+/// live, before allocating the full evidence. Move seams through the compact
+/// vector and back, so the potentially large seam payload is never cloned.
+fn publish_compact_from_full_walk(
+    root: &Path,
+    key: &RepoSeamCacheKey,
+    seams: &mut Vec<RepoSeam>,
+    index: &RustIndex,
+    lexical_fallback_files: &[PathBuf],
+) -> Result<(), String> {
+    let cache = RepoSeamFactCache::at_compact_classified(root);
+    if matches!(
+        cache.load_classified_seams_with_fallback(key),
+        CacheLoad::Hit(_)
+    ) {
+        return Ok(());
+    }
+    let store_limit = match compact_classified_seam_cache_store_limit() {
+        Ok(limit) => limit,
+        Err(reason) => {
+            eprintln!("ripr: compact repo seam cache store ignored ({reason})");
+            return Ok(());
+        }
+    };
+    let context = test_grip_evidence::CompactGripContext::try_new(index)?;
+    let token = cancellation::current_token();
+    let overlay = super::committed_source::current_overlay();
+    let compact: Vec<ClassifiedSeam> = std::mem::take(seams)
+        .into_par_iter()
+        .map(|seam| {
+            cancellation::with_optional_token(token.as_ref(), || {
+                super::committed_source::with_overlay(overlay.clone(), || {
+                    cancellation::checkpoint()?;
+                    let evidence = test_grip_evidence::compact_evidence_for_seam(&seam, &context);
+                    let class = seam_classification::classify_seam(&seam, &evidence);
+                    Ok(ClassifiedSeam {
+                        seam,
+                        evidence,
+                        class,
+                    })
+                })
+            })
+        })
+        .collect::<Result<_, String>>()?;
+    cancellation::checkpoint()?;
+    let started = Instant::now();
+    let label = match cache.store_compact_classified_seams_with_limit_and_fallback(
+        key,
+        &compact,
+        lexical_fallback_files,
+        store_limit,
+    ) {
+        Ok(status) => {
+            if let Some(advisory) = status.advisory {
+                eprintln!("ripr: {advisory}");
+            }
+            status.label
+        }
+        Err(reason) => {
+            eprintln!("ripr: compact repo seam cache store ignored ({reason})");
+            cache_store_status_label(&reason)
+        }
+    };
+    trace_latency_phase("compact_cache_store", &label, started.elapsed());
+    *seams = compact.into_iter().map(|entry| entry.seam).collect();
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -8042,6 +8126,72 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         }
 
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn classified_walk_populates_compact_summary_cache_without_changing_summary()
+    -> Result<(), String> {
+        let root = make_tempdir("classified-populates-compact")?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(amount: i32) -> bool { amount >= 5 }\n#[cfg(test)] mod tests { #[test] fn boundary() { assert!(super::discount(5)); } }\n",
+        )?;
+        let config = RiprConfig::default();
+        let baseline = inventory_compact_classified_seams_at_with_config(&root, &config)?;
+        assert!(!baseline.is_empty(), "fixture must contain seams");
+        let expected = crate::output::repo_exposure::render_repo_exposure_summary_json(
+            &baseline, &root, None, "diff",
+        );
+        std::fs::remove_dir_all(compact_cache_dir_under(&root)).map_err(|e| e.to_string())?;
+        let full = inventory_classified_seams_report_at_with_config(&root, &config)?;
+        assert!(!full.classified.is_empty());
+        assert!(full.limit_info.is_none());
+        let key = collect_workspace_state(&root, &config)?.cache_key();
+        assert!(
+            matches!(
+                RepoSeamFactCache::at_compact_classified(&root)
+                    .load_classified_seams_with_fallback(&key),
+                CacheLoad::Hit(_)
+            ),
+            "classified walk must publish a compact cache hit"
+        );
+        let warm = inventory_compact_classified_seams_at_with_config(&root, &config)?;
+        let actual = crate::output::repo_exposure::render_repo_exposure_summary_json(
+            &warm, &root, None, "diff",
+        );
+        assert_eq!(actual, expected);
+        std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn classified_walk_survives_compact_cache_store_failure() -> Result<(), String> {
+        let root = make_tempdir("classified-compact-store-failure")?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(amount: i32) -> bool { amount >= 5 }\n",
+        )?;
+        let config = RiprConfig::default();
+        let state = collect_workspace_state(&root, &config)?;
+        let key = state.cache_key();
+        let conflict = compact_cache_dir_under(&root).join(key.filename());
+        std::fs::create_dir_all(&conflict).map_err(|e| e.to_string())?;
+        let full = inventory_classified_seams_report_at_with_config(&root, &config)?;
+        assert!(!full.classified.is_empty());
+        assert!(full.limit_info.is_none());
+        std::fs::remove_dir_all(&conflict).map_err(|e| e.to_string())?;
+        assert!(matches!(
+            RepoSeamFactCache::at_compact_classified(&root)
+                .load_classified_seams_with_fallback(&key),
+            CacheLoad::Miss
+        ));
+        let fallback = inventory_compact_classified_seams_at_with_config(&root, &config)?;
+        assert!(
+            !fallback.is_empty(),
+            "summary must fall back to the compact cold walk"
+        );
+        std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
         Ok(())
     }
 

@@ -25280,6 +25280,45 @@ fn make_two_seam_workspace() -> Result<PathBuf, String> {
 }
 
 #[test]
+fn capped_full_walk_does_not_seed_incomplete_compact_summary_cache() -> Result<(), String> {
+    let workspace = make_two_seam_workspace()?;
+    let root = workspace.to_str().ok_or("non-UTF-8 workspace")?;
+    let env = [
+        ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1"),
+        ("RIPR_REPO_EXPOSURE_LATENCY_TRACE", "1"),
+    ];
+    let full = run_ripr_with_env(
+        &["check", "--root", root, "--format", "repo-exposure-json"],
+        &env,
+    );
+    assert!(full.status.success());
+    let full_json: serde_json::Value =
+        serde_json::from_slice(&full.stdout).map_err(|e| e.to_string())?;
+    assert_eq!(full_json["run_status"], "seam_limit_applied");
+    let summary = run_ripr_with_env(
+        &[
+            "check",
+            "--root",
+            root,
+            "--format",
+            "repo-exposure-summary-json",
+        ],
+        &env,
+    );
+    assert!(summary.status.success());
+    let stderr = String::from_utf8_lossy(&summary.stderr);
+    assert!(
+        stderr.contains("phase=compact_cache_load status=miss"),
+        "{stderr}"
+    );
+    let summary_json: serde_json::Value =
+        serde_json::from_slice(&summary.stdout).map_err(|e| e.to_string())?;
+    assert!(summary_json["metrics"]["raw_seams"].as_u64().unwrap_or(0) > 1);
+    std::fs::remove_dir_all(workspace).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
 fn check_repo_exposure_json_run_status_seam_limit_applied_and_complete() -> Result<(), String> {
     let workspace = make_two_seam_workspace()?;
     let root = workspace
