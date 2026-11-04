@@ -952,3 +952,93 @@ fn a_dependency_macro_in_the_test_packages_import_scope_keeps_the_gap() -> Resul
     }
     Ok(())
 }
+
+/// `assert_matches!` is no prelude macro, so a bare spelling is whatever an
+/// import or crate binds. Where placement is unavailable, the first operand it
+/// evaluates is the same unverifiable-macro doubt as a bare `assert_eq!` and
+/// reads the named limit, while an exact pattern keeps the oracle strong
+/// (#10666).
+#[test]
+fn an_unplaced_assert_matches_over_the_owner_call_is_a_named_limitation() -> Result<(), String> {
+    reads_limit(
+        "unplaced assert_matches",
+        Shape::default(),
+        "assert_matches!(Widget::new().read(), Ok(Ready));",
+    )?;
+    let finding = Workspace::create(
+        Placement::Generated,
+        "assert_matches!(Widget::new().read(), Ok(Ready));",
+    )?
+    .finding()?;
+    assert_eq!(text(&finding, "/classification")?, "static_unknown");
+    // Nothing is credited: the relation stays the token match.
+    assert_eq!(relations(&finding), ["weak_token_substring"], "{finding}");
+    Ok(())
+}
+
+/// The widening only names a limit. With placement available the macro is as
+/// unverified as ever, so the call is not credited and the gap stays.
+#[test]
+fn a_placed_assert_matches_is_never_credited() -> Result<(), String> {
+    let finding = Workspace::create(
+        Placement::PlainStd,
+        "assert_matches!(Widget::new().read(), Ok(Ready));",
+    )?
+    .finding()?;
+    assert_keeps_gap("placed assert_matches", &finding)?;
+    assert_eq!(relations(&finding), ["weak_token_substring"], "{finding}");
+    Ok(())
+}
+
+/// Every other boundary of the withhold still holds for the new macro: the
+/// wrong receiver, a broad pattern, a call outside the operand and a local
+/// `assert_matches!` all keep their gap.
+#[test]
+fn assert_matches_keeps_every_boundary_of_the_withhold() -> Result<(), String> {
+    let local = "macro_rules! assert_matches { ($($t:tt)*) => {}; }\n";
+    let spaced = "macro_rules ! assert_matches { ($($t:tt)*) => {}; }\n";
+    let rows: [(&str, Shape<'_>, &str); 7] = [
+        (
+            "wrong receiver type",
+            Shape::default(),
+            "assert_matches!(Other::new().read(), Ok(Ready));",
+        ),
+        (
+            "broad pattern is a weak oracle",
+            Shape::default(),
+            "assert_matches!(Widget::new().read(), Err(_));",
+        ),
+        (
+            "call only in the pattern position",
+            Shape::default(),
+            "assert_matches!(Other::new().read(), Ok(Widget::new().read()));",
+        ),
+        (
+            "local macro of the same name",
+            Shape::prelude(local),
+            "assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+        (
+            "local macro spelled with whitespace around the bang",
+            Shape::prelude(spaced),
+            "assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+        (
+            "qualified spelling is not a bare binding",
+            Shape::default(),
+            "std::assert_matches::assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+        // Both qualified rows keep the gap through the caller's macro-binding
+        // gate; the arm's `qualified.is_none()` is defense in depth that no
+        // black-box row can kill on its own.
+        (
+            "crate-qualified spelling is not a bare binding",
+            Shape::default(),
+            "assert_matches::assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+    ];
+    for (label, shape, statement) in rows {
+        keeps_gap(label, shape, statement)?;
+    }
+    Ok(())
+}

@@ -24,12 +24,15 @@ pub mod language_capability;
 pub mod language_capability_drift;
 pub mod limit_guidance;
 pub mod probe;
+pub mod project_facts;
 pub mod refusal_remedy;
 pub mod summary;
 pub mod support;
 pub mod test_candidate_set;
 pub mod test_evidence_identity;
 pub mod test_evidence_summary;
+pub mod typescript_oracle_seam;
+pub mod typescript_preview_related_test;
 
 pub use analysis_execution_identity::{
     AnalysisAttemptId, CompletedAnalysisSnapshotId, ContinuationId, DiagnosticResultId,
@@ -124,8 +127,14 @@ pub use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
 pub use probe::boundary_input_observed_with_weak_oracle;
 pub use probe::declared_const_name;
+pub use project_facts::{
+    CanonicalSourceRole, FactCurrentnessV1, PROJECT_FACTS_SCHEMA_VERSION, ProjectFactsV1,
+    SourceUnitFactV1, TestEnvironmentFactV1,
+};
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};
 pub use test_candidate_set::{TestCandidateNextRoute, TestCandidateRow, TestCandidateSet};
 pub use test_evidence_identity::normalize_transport_path;
 pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};
+pub use typescript_oracle_seam::ts_oracle_kind_matches_seam;
+pub use typescript_preview_related_test::typescript_script_preview_related_test;

@@ -1343,6 +1343,10 @@ fn serve_stdio_call_presence_observer() -> Result<(), String> {
         serve_streams.contains("order.exit_without_shutdown()"),
         "serve_streams should exit nonzero when `exit` arrives without a prior `shutdown` (LSP section exit, #5249)"
     );
+    assert!(
+        serve_streams.contains("parent_death_watchdog::spawn_parent_death_watchdog"),
+        "serve_streams should watch launcher parent death when stdio stays open (#12575)"
+    );
 
     Ok(())
 }
@@ -13966,7 +13970,11 @@ fn not_analyzed_marker_names_typescript_and_javascript_labels() -> Result<(), St
         (crate::domain::LanguageId::TypeScript, "src/pricing.ts"),
         (crate::domain::LanguageId::JavaScript, "src/pricing.js"),
     ] {
-        let marker = super::diagnostics::language_not_analyzed_diagnostic(language, path);
+        let marker = super::diagnostics::language_not_analyzed_diagnostic(
+            language,
+            path,
+            &super::config::LspAnalysisConfig::default(),
+        );
         let name = language.as_str();
         if !marker
             .message
@@ -24547,6 +24555,76 @@ async fn workspace_status_reports_disabled_language_document_not_analyzed() -> R
     {
         return Err(format!(
             "an opened unchanged python document must stay clean/served: {unchanged}"
+        ));
+    }
+    Ok(())
+}
+
+/// #2962: `ripr/analysisStatus` unavailable-language rows carry the shared
+/// availability state and remediation from `LanguageAvailabilityReport`, not
+/// only the LSP recovery sentence.
+#[tokio::test]
+async fn analysis_status_unavailable_languages_carry_availability_report() -> Result<(), String> {
+    let fixture = disabled_language_fixture("disabled-language-availability-row")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .refresh_plan(disabled_language_workspace_diagnostics(
+            &fixture,
+            None,
+            python_disabled_adapter_coverage(&["zpy/pricing.py"], 1),
+        )?)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+
+    let status = backend.analysis_status_payload();
+    let rows = status["unavailable_languages"]
+        .as_array()
+        .ok_or("expected unavailable_languages array")?;
+    if rows.len() != 1 {
+        return Err(format!("expected one unavailable language row: {rows:?}"));
+    }
+    let row = &rows[0];
+    if row["language"].as_str() != Some("python") || row["file_count"].as_u64() != Some(1) {
+        return Err(format!("unexpected row identity: {row}"));
+    }
+    let state = row["availability_state"].as_str().ok_or_else(|| {
+        format!("availability_state must be a string when config is loaded: {row}")
+    })?;
+    // The default loaded configuration lists only rust, so python reads as an
+    // explicit disable: `detected_compiled_disabled` when the adapter is
+    // compiled in, and `not_enabled` (no enable route) when it is not. A
+    // mislabeled enabled state must fail here.
+    let expected_state = if LanguageId::Python.is_available() {
+        "detected_compiled_disabled"
+    } else {
+        "not_enabled"
+    };
+    if state != expected_state {
+        return Err(format!(
+            "availability_state must be {expected_state:?}, got {state:?}: {row}"
+        ));
+    }
+    let remediation = row["remediation"]
+        .as_array()
+        .ok_or_else(|| format!("remediation must be an array: {row}"))?;
+    if remediation.is_empty() && LanguageId::Python.is_available() {
+        return Err(format!(
+            "compiled-in disabled python must carry enable remediation: {row}"
+        ));
+    }
+    let recovery = row["recovery"]
+        .as_str()
+        .ok_or_else(|| format!("recovery must remain for editor setup: {row}"))?;
+    if LanguageId::Python.is_available() {
+        for needle in ["[languages] enabled", "restart", "python"] {
+            if !recovery.contains(needle) {
+                return Err(format!("recovery must name {needle:?}: {recovery}"));
+            }
+        }
+    } else if recovery != LanguageId::Python.unavailable_adapter_recovery() {
+        return Err(format!(
+            "uncompiled python must reuse build recovery: {recovery}"
         ));
     }
     Ok(())

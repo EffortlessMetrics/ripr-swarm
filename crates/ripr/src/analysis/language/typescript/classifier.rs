@@ -537,23 +537,48 @@ pub(crate) fn ts_candidate_changed_sink_observation(
             // owner's value. Resolve both named and default locals even
             // when another call wins relation ranking. Method relations
             // must not borrow a same-named free export's identity.
-            let observes_owner_alias = matches!(
+            let mut effect_owner_names: Vec<&str> = vec![owner_name];
+            if matches!(
                 candidate.relation,
                 TypeScriptRelationKind::DirectOwnerCall
                     | TypeScriptRelationKind::ImportAliasOwnerCall
                     | TypeScriptRelationKind::ImportedOwnerCall
-            ) && (import_alias_owner_locals(
-                candidate.test,
-                owner,
-                alias_map,
-                workspace_root,
-            )
-            .into_iter()
-            .any(|name| observed.contains(name))
-                || default_import_owner_locals(candidate.test, owner, alias_map, workspace_root)
-                    .into_iter()
-                    .any(|name| observed.contains(name)));
+            ) {
+                effect_owner_names.extend(import_alias_owner_locals(
+                    candidate.test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                ));
+                effect_owner_names.extend(default_import_owner_locals(
+                    candidate.test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                ));
+            }
+            let observes_owner_alias = effect_owner_names[1..]
+                .iter()
+                .any(|name| observed.contains(name));
             if !observes_owner_alias {
+                // #11244 staged-(b): the side-channel theory above over-claims
+                // when the expression affirmatively observes a DIFFERENT sink:
+                // a call to a non-owner/non-alias callee the test never binds
+                // (`expect(formatDate(now)).toBe(...)`), or a bare local whose
+                // single-declaration initializer is such a call. Downgrade
+                // those fail-closed via `AffirmativelyOtherSink`. Bare locals
+                // (and any other shape) with no resolvable foreign linkage —
+                // the `sideEffectLog` channel-candidate shape — keep
+                // confirming; absence of linkage is never foreign evidence.
+                if ts_effect_observed_is_affirmatively_foreign(
+                    observed,
+                    &effect_owner_names,
+                    &changed_tokens,
+                    candidate.test,
+                ) {
+                    merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
+                    continue;
+                }
                 return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
             }
         }
@@ -656,6 +681,210 @@ fn ts_value_assertion_affirmatively_other_sink(
     !owner_names
         .iter()
         .any(|name| ts_references_identifier(&observed_code, name))
+}
+
+/// Affirmative foreignness for the effect-branch side-channel check (#11244,
+/// staged-(b) first slice).
+///
+/// The effect branch confirms when a strong assertion's observed expression
+/// names neither the owner, a changed token, nor an admitted alias — on the
+/// theory that it observes the effect through a side channel (a closure-local
+/// variable, a captured mock result). That theory over-claims when the
+/// expression affirmatively observes a DIFFERENT sink: a call to a
+/// non-owner/non-alias callee the test never binds (`formatDate(now)`), or a
+/// bare local whose single-declaration initializer is such a call
+/// (`const other = formatDate(now); expect(other)...`).
+///
+/// Negative-evidence gating: only POSITIVE foreign evidence downgrades. A bare
+/// local with no resolvable declaration (the `sideEffectLog` channel-candidate
+/// shape), a call to a test-bound callee, an ambiguous (multi-declaration or
+/// mutated) local, and any non-call member access keep confirming. In
+/// particular, mere absence of linkage is never foreign evidence
+/// (`scope_bindings` is empty in unit tests, so absence must not downgrade).
+fn ts_effect_observed_is_affirmatively_foreign(
+    observed: &str,
+    owner_names: &[&str],
+    changed_tokens: &[String],
+    test: &TypeScriptTest,
+) -> bool {
+    // A bare local observes through its single-declaration initializer: only
+    // a foreign-call initializer is affirmative evidence. An owner-call (or
+    // unresolvable) initializer keeps the channel-candidate confirmation.
+    if ts_effect_is_bare_identifier(observed)
+        && let Some(initializer) = ts_effect_single_declaration_initializer(test, observed.trim())
+        && ts_effect_call_callee_is_foreign(&initializer, owner_names, changed_tokens, test)
+    {
+        return true;
+    }
+    ts_effect_call_callee_is_foreign(observed, owner_names, changed_tokens, test)
+}
+
+/// `true` when `text` is a bare identifier reference (no member access, call,
+/// or other expression shape), mirroring the bare-identifier gate in
+/// [`ts_observed_local_aliases_owner_with_mutation`].
+fn ts_effect_is_bare_identifier(text: &str) -> bool {
+    fn is_ident_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    }
+    let ident = text.trim();
+    let ident_bytes = ident.as_bytes();
+    !ident_bytes.is_empty()
+        && (ident_bytes[0].is_ascii_alphabetic()
+            || ident_bytes[0] == b'_'
+            || ident_bytes[0] == b'$')
+        && ident_bytes.iter().all(|&b| is_ident_byte(b))
+}
+
+/// The initializer of `ident`'s declaration when the test body declares it
+/// EXACTLY once (via [`single_local_initializer`]), or `None` when the name
+/// is undeclared, declared repeatedly, or rewritten/escaped
+/// ([`ts_test_local_is_mutated`]). None of those is affirmative evidence the
+/// local holds a foreign call's result.
+fn ts_effect_single_declaration_initializer(test: &TypeScriptTest, ident: &str) -> Option<String> {
+    let declaration = single_local_initializer(&test.body_text, ident)?;
+    if ts_test_local_is_mutated(test, ident) {
+        return None;
+    }
+    Some(declaration.initializer)
+}
+
+/// `true` when `expr` is shaped as a call to a BARE callee (`callee(...)`)
+/// that is affirmatively foreign: the callee names neither the owner, an
+/// admitted alias, nor a changed token (whole-identifier,
+/// [`ts_references_identifier`]), and the test never binds it — no body-local
+/// declaration ([`local_identifier_declared_in_test_body`]), no
+/// enclosing-scope binding (`scope_bindings`), and no import of that name
+/// (`imports_in_file`).
+///
+/// An import binds the callee in the test file, so it is never affirmative
+/// foreign evidence: a renamed same-named import from another module is the
+/// classic effect-channel shape (`support.emitReceipt as discount` reading
+/// the captured log), and static reading cannot see through it
+/// (`unrelated_or_shadowed_imports_remain_real_effect_observers`).
+///
+/// Narrow by construction: member calls (`logger.format(...)`), bare
+/// identifiers, and calls whose callee the test binds keep confirming.
+fn ts_effect_call_callee_is_foreign(
+    expr: &str,
+    owner_names: &[&str],
+    changed_tokens: &[String],
+    test: &TypeScriptTest,
+) -> bool {
+    let Some(callee) = ts_effect_bare_call_callee(expr) else {
+        return false;
+    };
+    if owner_names
+        .iter()
+        .any(|name| ts_references_identifier(callee, name))
+        || changed_tokens
+            .iter()
+            .any(|tok| ts_references_identifier(callee, tok))
+    {
+        return false;
+    }
+    if test
+        .imports_in_file
+        .iter()
+        .any(|import| import.local == callee)
+    {
+        return false;
+    }
+    !local_identifier_declared_in_test_body(&test.body_text, callee)
+        && !test
+            .scope_bindings
+            .iter()
+            .any(|binding| binding.name == callee)
+}
+
+/// The callee of `expr` when it is a single bare-callee call spanning the
+/// whole expression (`name(...)`, with optional whitespace before the paren
+/// and after the call). Member calls (`recv.name(`), bare identifiers, and
+/// any call with trailing expression text (`formatDate(now) &&
+/// sideEffectLog`, which also reads the channel) resolve to `None` — those
+/// keep the side-channel confirmation.
+fn ts_effect_bare_call_callee(expr: &str) -> Option<&str> {
+    let trimmed = expr.trim();
+    let open = trimmed.find('(')?;
+    // The call must span the whole expression: trailing operators or
+    // operands mean the assertion reads past the call, so the expression
+    // is not a foreign-call observation.
+    if !ts_effect_call_spans_expression(open, trimmed) {
+        return None;
+    }
+    let callee = trimmed[..open].trim_end();
+    // A member segment (`recv.name`) is not a bare identifier, so member
+    // calls (including `?.` / `!.` chains, whose punctuation survives the
+    // trim) are excluded here, not by the caller.
+    ts_effect_is_bare_identifier(callee).then_some(callee)
+}
+
+/// `true` when the `(` at byte offset `open` in `text` closes (depth returns
+/// to zero) with only whitespace after the match. String literals, template
+/// spans, and comments are skipped so a paren inside one cannot close (or
+/// unbalance) the scan; an unterminated construct fails closed by returning
+/// `false`, keeping the side-channel confirmation.
+fn ts_effect_call_spans_expression(open: usize, text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' | b'`' => {
+                let quote = bytes[i];
+                i += 1;
+                let mut closed = false;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                    } else if bytes[i] == quote {
+                        closed = true;
+                        i += 1;
+                        break;
+                    } else {
+                        i += 1;
+                    }
+                }
+                if !closed {
+                    return false;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                let mut closed = false;
+                while i + 1 < bytes.len() {
+                    if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        closed = true;
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+                if !closed {
+                    return false;
+                }
+            }
+            b'(' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' => {
+                depth = depth.saturating_sub(1);
+                i += 1;
+                if depth == 0 {
+                    return text[i..].trim().is_empty();
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    false
 }
 
 /// One-hop local aliasing credit for the value-family observation guard.
@@ -6221,87 +6450,9 @@ fn mask_comments_and_strings(body: &str) -> String {
 }
 
 /// Returns `true` when `oracle_kind` can observe the seam identified by
-/// `probe_family`.
-///
-/// This is the single source of truth for the TS-adapter assertion-level
-/// family↔kind filter. It mirrors `oracle_kind_matches_seam_kind` from
-/// `test_grip_evidence.rs` (which operates on Rust `SeamKind`), adapted for
-/// the TypeScript `ProbeFamily` vocabulary.
-///
-/// ### Mapping table (RIPR-SPEC-0104 §3)
-///
-/// | ProbeFamily | Excluded OracleKinds (Strong-rank only — the honesty fix) |
-/// |---|---|
-/// | `ErrorPath` | `ExactValue`, `RelationalCheck`, `MockExpectation` |
-/// | `ReturnValue`, `Predicate`, `FieldConstruction`, `MatchArm` | `ExactErrorVariant`, `BroadError`, `MockExpectation` |
-/// | `SideEffect`, `CallDeletion` | *(handled by RIPR-SPEC-0098 observation guard — no additional exclusion here)* |
-/// | `StaticUnknown` | *(fail-open — all oracles admitted)* |
-///
-/// ### Design: fail-closed only at the cross-domain seam boundary
-///
-/// The HONESTY BUG addressed by this function is specifically the case where a
-/// **Strong wrong-domain** oracle is credited to a seam whose family it cannot
-/// observe:
-///
-/// - An `ExactErrorVariant` oracle (`.toThrow(DiscountError)`) is an error-path
-///   discriminator. It MUST NOT count as a strong match for a `ReturnValue` or
-///   `Predicate` seam — these seams emit a value, not an error.
-/// - An `ExactValue` oracle (`.toBe(90)`) is a value discriminator. It MUST NOT
-///   count as a strong match for an `ErrorPath` seam — the seam throws, not returns.
-///
-/// ### Composing with RIPR-SPEC-0098 (SideEffect observation guard)
-///
-/// For `SideEffect` and `CallDeletion` families, RIPR-SPEC-0098 already provides
-/// a dedicated observation guard (`ts_changed_value_is_observed`) that correctly
-/// handles the case where a value-shaped `ExactValue` assertion observes the owner
-/// RETURN value (not the call effect). That guard fires in the
-/// `else if strongest_strength >= Strong.rank()` arm of the classifier.
-/// To preserve that path, `ExactValue` is NOT excluded from `SideEffect` /
-/// `CallDeletion` by this function — SPEC-0098 handles those seams independently.
-/// The two specs compose: SPEC-0104 handles cross-domain value↔error exclusion;
-/// SPEC-0098 handles the same-domain but wrong-target SideEffect case.
-///
-/// ### Weak oracle kinds are always admitted
-///
-/// `SmokeOnly`, `Unknown`, `BroadError` (for non-error families),
-/// `RelationalCheck` (for non-error families) are admitted for all concrete
-/// families because they are weak/absent and do NOT contradict any family.
-/// Their rank (Smoke / Unknown / Weak) prevents them from triggering
-/// `Exposed` promotion regardless. Admitting them preserves accurate
-/// per-kind messaging in `weak_oracle_missing_summary`.
-pub(crate) fn ts_oracle_kind_matches_seam(
-    oracle_kind: &OracleKind,
-    probe_family: &ProbeFamily,
-) -> bool {
-    match probe_family {
-        // ErrorPath seams: exclude STRONG VALUE oracles (ExactValue, RelationalCheck)
-        // and MockExpectation.  BroadError, ExactErrorVariant, Snapshot all observe
-        // an error-path change.  SmokeOnly/Unknown are weak and admitted.
-        ProbeFamily::ErrorPath => !matches!(
-            oracle_kind,
-            OracleKind::ExactValue | OracleKind::RelationalCheck | OracleKind::MockExpectation
-        ),
-        // Value-family seams: exclude STRONG ERROR oracle (ExactErrorVariant)
-        // and BroadError, MockExpectation.  ExactValue, WholeObjectEquality,
-        // Snapshot, RelationalCheck, SmokeOnly, Unknown all admitted.
-        // THIS IS THE PRIMARY FIX: ExactErrorVariant must not credit a ReturnValue seam.
-        ProbeFamily::ReturnValue
-        | ProbeFamily::Predicate
-        | ProbeFamily::FieldConstruction
-        | ProbeFamily::MatchArm => !matches!(
-            oracle_kind,
-            OracleKind::ExactErrorVariant | OracleKind::BroadError | OracleKind::MockExpectation
-        ),
-        // SideEffect / CallDeletion: defer to RIPR-SPEC-0098 observation guard.
-        // All oracle kinds admitted here so that `strongest_strength` reflects
-        // the actual oracle rank, letting the observation guard run in the
-        // `else if strongest_strength >= Strong.rank()` arm.
-        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => true,
-        // Fail-open for genuinely-unknown family: we cannot determine the
-        // match — do not over-correct by blocking a potentially valid oracle.
-        ProbeFamily::StaticUnknown => true,
-    }
-}
+/// `probe_family` (RIPR-SPEC-0104). The mapping table lives in
+/// [`crate::domain::ts_oracle_kind_matches_seam`].
+pub(crate) use crate::domain::ts_oracle_kind_matches_seam;
 
 /// Compute the strongest oracle kind and strength that MATCHES the changed
 /// seam's probe family, by iterating assertions at the assertion level across

@@ -434,6 +434,7 @@ cargo xtask check-workflows
 cargo xtask check-droid-review-config
 cargo xtask check-spec-format
 cargo xtask check-spec-numbering
+cargo xtask check-generation-pins
 cargo xtask check-fixture-contracts
 cargo xtask check-evidence-promotion-honesty
 cargo xtask check-traceability
@@ -602,6 +603,9 @@ Use the existing closed status-label set, not new orchestration labels:
 - `status/blocked-upstream` or `status/blocked-repo`: named external/repository
   dependency;
 - `status/needs-work`: actionable and not started, not partially landed;
+- `status/needs-reverify`: one or more repo-rooted paths cited in the issue changed on
+  `main` after filing; re-anchor `path:line` evidence before acting (see
+  `.github/workflows/issue-staleness-watchdog.yml`);
 - `status/partial`: a bounded portion actually merged, with residual acceptance
   and next owner recorded; an open branch/PR alone does not qualify;
 - `status/mis-scoped`: needs scope repair.

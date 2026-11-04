@@ -173,6 +173,11 @@ pub(crate) use ripr_contract::domain::row_exact_discriminator_fact;
 pub(crate) use ripr_contract::domain::rust_markers_at;
 pub use ripr_contract::domain::verify_command_is_unbounded_repo_exposure_snapshot_compare;
 pub(crate) use ripr_contract::domain::why_capped_line;
+pub(crate) use ripr_contract::domain::{
+    CanonicalSourceRole, FactCurrentnessV1, PROJECT_FACTS_SCHEMA_VERSION, ProjectFactsV1,
+    SourceUnitFactV1, TestEnvironmentFactV1, ts_oracle_kind_matches_seam,
+    typescript_script_preview_related_test,
+};
 
 #[doc(hidden)]
 pub mod context_packet;

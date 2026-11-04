@@ -36,7 +36,7 @@ use std::path::{Path, PathBuf};
 
 use super::agent_dispatch;
 use super::agent_gap_packet::render_agent_packet_from_gap_ledger;
-use super::check::{bind_member_selector_file, resolve_implicit_command_root};
+use super::check::{bind_member_selector_file, resolve_implicit_command_root_refusing};
 use super::write_text_file;
 
 /// Schema version of the `ripr agent repair --phase after` success envelope
@@ -71,8 +71,10 @@ const REPAIR_AFTER_FAILURE_SCHEMA_VERSION: &str = "0.4";
 pub(in crate::cli) fn resolve_agent_repair_root(
     options: &mut AgentRepairOptions,
 ) -> Result<(), String> {
-    let prefix =
-        super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    let prefix = super::check::resolve_implicit_command_root_refusing(
+        &mut options.root,
+        options.root_explicit,
+    )?;
     // A member-relative `file:line` selector binds to the invocation directory
     // before subject translation, locking or publication, so it can never
     // suffix-match a sibling member. Structured ids pass through unchanged.
@@ -90,16 +92,27 @@ pub(in crate::cli) fn resolve_agent_repair_root(
 /// subcommands that default `--root` to `.`; `--root .` opts out. Relative
 /// `verify` snapshot paths typed from a member directory stay bound to that
 /// directory. Runs after the help short-circuit so `--help` stays inert.
-fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> {
+///
+/// #12417: the gate refusal of the `status` spelling is the same typed
+/// decision the façade's `ripr status` emits (code `unanchored_root`, exit 3,
+/// empty stdout); the other spellings keep their root-resolution error
+/// convention (exit 2, the plain cause on stderr, no code line).
+fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), CommandError> {
     match command {
         AgentCommand::Start(options) => {
-            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)?;
         }
         AgentCommand::Card(options) => {
-            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)?;
         }
         AgentCommand::Status(options) => {
-            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)
+                .map_err(|message| {
+                    CommandError::Decision(
+                        crate::app::task_first::RepairRefusalCode::UnanchoredRoot
+                            .message_with_stderr_line(&message),
+                    )
+                })?;
         }
         AgentCommand::Repair(options) => resolve_agent_repair_root(options)?,
         // #8902: the artifact-consuming siblings. A `--json` run that fails to
@@ -145,31 +158,35 @@ fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> 
             // the same file the operator named, so it needs no rebinding.
         }
         AgentCommand::VerifyExecute(options) => {
-            let prefix =
-                match resolve_implicit_command_root(&mut options.root, options.root_explicit) {
-                    Ok(prefix) => prefix,
-                    Err(error) => {
-                        // The typed disposition is the contract on every
-                        // terminal state, so an unresolvable root answers in
-                        // that shape.
-                        print!(
-                            "{}",
-                            app::verification_execution::render_unusable_root(&error)
-                        );
-                        return Err(error);
-                    }
-                };
+            let prefix = match resolve_implicit_command_root_refusing(
+                &mut options.root,
+                options.root_explicit,
+            ) {
+                Ok(prefix) => prefix,
+                Err(error) => {
+                    // The typed disposition is the contract on every
+                    // terminal state, so an unresolvable root answers in
+                    // that shape.
+                    print!(
+                        "{}",
+                        app::verification_execution::render_unusable_root(&error)
+                    );
+                    return Err(CommandError::Failure(error));
+                }
+            };
             bind_existing_member_file(prefix.as_deref(), &options.root, &mut options.packet);
         }
         AgentCommand::Receipt(options) => {
-            let prefix = resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            let prefix =
+                resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)?;
             bind_existing_member_file(prefix.as_deref(), &options.root, &mut options.verify_json);
         }
         AgentCommand::ReviewSummary(options) => {
-            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)?;
         }
         AgentCommand::Verify(options) => {
-            let prefix = resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            let prefix =
+                resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)?;
             for path in [&mut options.before, &mut options.after] {
                 let bound = bind_member_selector_file(
                     prefix.as_deref(),
@@ -204,7 +221,7 @@ fn resolve_json_command_root(
     json: bool,
 ) -> Result<Option<String>, String> {
     let typed_root = root.clone();
-    resolve_implicit_command_root(root, root_explicit).map_err(|error| {
+    resolve_implicit_command_root_refusing(root, root_explicit).map_err(|error| {
         if !json {
             return error;
         }
