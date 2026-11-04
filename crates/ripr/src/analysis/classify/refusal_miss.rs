@@ -60,33 +60,6 @@ fn combine_refusal_misses(
     }
 }
 
-#[cfg(test)]
-mod combine_tests {
-    use super::combine_refusal_misses;
-    use crate::domain::RelatedTestMiss::{AssertionAdmissionUnproven, AssertionInert};
-
-    #[test]
-    fn mixed_refusals_are_unproven_in_either_order() {
-        let fold = |misses: &[_]| {
-            misses
-                .iter()
-                .fold(None, |acc, miss| Some(combine_refusal_misses(acc, *miss)))
-        };
-        assert_eq!(
-            fold(&[AssertionInert, AssertionAdmissionUnproven]),
-            Some(AssertionAdmissionUnproven)
-        );
-        assert_eq!(
-            fold(&[AssertionAdmissionUnproven, AssertionInert]),
-            Some(AssertionAdmissionUnproven)
-        );
-        assert_eq!(
-            fold(&[AssertionInert, AssertionInert]),
-            Some(AssertionInert)
-        );
-    }
-}
-
 pub(in crate::analysis) fn split_assertion_not_credited_misses(
     context: &ProbeContext<'_>,
     pin_syntax: &OwnerPinSyntax,
@@ -118,5 +91,32 @@ pub(in crate::analysis) fn split_assertion_not_credited_misses(
             split = Some(combine_refusal_misses(split, miss));
         }
         row.miss = Some(split.unwrap_or(RelatedTestMiss::AssertionAdmissionUnproven));
+    }
+}
+
+#[cfg(test)]
+mod combine_tests {
+    use super::combine_refusal_misses;
+    use crate::domain::RelatedTestMiss::{AssertionAdmissionUnproven, AssertionInert};
+
+    #[test]
+    fn mixed_refusals_are_unproven_in_either_order() {
+        let fold = |misses: &[_]| {
+            misses
+                .iter()
+                .fold(None, |acc, miss| Some(combine_refusal_misses(acc, *miss)))
+        };
+        assert_eq!(
+            fold(&[AssertionInert, AssertionAdmissionUnproven]),
+            Some(AssertionAdmissionUnproven)
+        );
+        assert_eq!(
+            fold(&[AssertionAdmissionUnproven, AssertionInert]),
+            Some(AssertionAdmissionUnproven)
+        );
+        assert_eq!(
+            fold(&[AssertionInert, AssertionInert]),
+            Some(AssertionInert)
+        );
     }
 }
