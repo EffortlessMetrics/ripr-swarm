@@ -18,6 +18,7 @@ Linked issues:
 - #2970 (expand diff scope via reverse-dependency graph)
 - #2968/#3037 (slice A: captured path-dependency edges)
 - #2969 (slice B: forward/reverse adjacency)
+- #10353 (Ready does not scan workspace Rust for a docs-only diff)
 
 Linked PRs:
 
@@ -58,9 +59,13 @@ through the reverse path-dependency adjacency:
   reached from another seed stays included;
 - cycles are cut by the walk and disclosed on the graph surfaces; the
   reachable set itself stays exact for the walked edges;
-- selections without package narrowing are unchanged: Instant stays
-  changed-files-only, Deep/Ready stay whole-workspace, and
+- selections without package narrowing are unchanged by expansion: Instant stays
+  changed-files-only, Deep stays whole-workspace, Ready stays whole-workspace
+  when the diff names at least one Rust file, and
   `include_unchanged_tests = false` stays changed-files-only in every mode;
+- Ready with no changed Rust file indexes nothing, matching Instant/Draft/Fast,
+  so a docs-only diff does not scan workspace Rust sources (#10353). Deep still
+  indexes the whole workspace on an empty changed set;
 - a `limited` graph (partial edge inventory) still walks its connected edges
   and discloses that dependents may be missing; an `unavailable` graph (no
   manifest scan) discloses that the expansion did not run and the scope
@@ -181,12 +186,12 @@ schema shape (the typed limitation below reuses the existing
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::package_root_and_manifest_identities_round_trip`
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::scope_limitation_is_typed_for_limited_and_unavailable_only`
 - `crates/ripr/tests/broken_manifest_limitation.rs::broken_manifest_is_a_limitation_not_a_complete_analysis`
-- `crates/ripr/src/analysis/seam_cache.rs::tests::unparsed_manifest_outside_every_member_pattern_is_not_a_limitation`
-- `crates/ripr/src/analysis/seam_cache.rs::tests::unparsed_manifest_that_may_be_in_the_graph_stays_a_limitation`
-- `crates/ripr/src/analysis/seam_cache.rs::tests::unparsed_manifest_stays_a_limitation_when_any_boundary_is_unproven`
-- `crates/ripr/src/analysis/seam_cache.rs::tests::unparsed_manifest_reached_through_a_symlink_or_backslash_spelling_stays_a_limitation`
-- `crates/ripr/src/analysis/seam_cache.rs::tests::unparsed_manifest_without_any_ancestor_workspace_stays_a_limitation`
-- `crates/ripr/src/analysis/seam_cache.rs::tests::unparsed_manifest_is_kept_when_member_syntax_is_not_modeled`
+- `crates/ripr/src/analysis/seam_cache/path_dependencies.rs::tests::unparsed_manifest_outside_every_member_pattern_is_not_a_limitation`
+- `crates/ripr/src/analysis/seam_cache/path_dependencies.rs::tests::unparsed_manifest_that_may_be_in_the_graph_stays_a_limitation`
+- `crates/ripr/src/analysis/seam_cache/path_dependencies.rs::tests::unparsed_manifest_stays_a_limitation_when_any_boundary_is_unproven`
+- `crates/ripr/src/analysis/seam_cache/path_dependencies.rs::tests::unparsed_manifest_reached_through_a_symlink_or_backslash_spelling_stays_a_limitation`
+- `crates/ripr/src/analysis/seam_cache/path_dependencies.rs::tests::unparsed_manifest_without_any_ancestor_workspace_stays_a_limitation`
+- `crates/ripr/src/analysis/seam_cache/path_dependencies.rs::tests::unparsed_manifest_is_kept_when_member_syntax_is_not_modeled`
 - `crates/ripr/tests/broken_manifest_limitation.rs::missing_manifest_is_a_limitation_with_unavailable_reason`
 - `crates/ripr/tests/broken_manifest_limitation.rs::parsed_single_package_manifest_adds_no_limitation`
 - `crates/ripr/tests/broken_manifest_limitation.rs::hostile_manifest_bytes_still_yield_a_bounded_limitation`
@@ -196,7 +201,11 @@ schema shape (the typed limitation below reuses the existing
 - `crates/ripr/tests/broken_manifest_limitation.rs::inlining_the_inherited_dependency_clears_the_redirect_limitation`
 - `crates/ripr/tests/broken_manifest_limitation.rs::non_utf8_manifest_path_is_limited_with_a_utf8_path_next_step`
 - `crates/ripr/tests/no_rust_diff_reads_no_rust.rs::docs_only_diff_does_not_scan_workspace_rust_in_interactive_modes`
+- `crates/ripr/tests/no_rust_diff_reads_no_rust.rs::docs_only_diff_does_not_scan_workspace_rust_in_ready_mode`
 - `crates/ripr/tests/no_rust_diff_reads_no_rust.rs::rust_diff_does_reach_the_sentinel_in_draft_mode`
+- `crates/ripr/tests/no_rust_diff_reads_no_rust.rs::rust_diff_does_reach_the_sentinel_in_ready_mode`
+- `crates/ripr/src/analysis/workspace/select.rs::tests::ready_without_changed_rust_indexes_nothing`
+- `crates/ripr/src/analysis/workspace/select.rs::tests::deep_without_changed_rust_still_indexes_workspace`
 - `crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_narrow_selection_without_heuristic_changed_roots`
 - `crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_enter_draft_and_fast_selection`
 - `crates/ripr/src/analysis/workspace/select.rs::tests::empty_dependent_roots_reproduce_the_unchanged_selection`

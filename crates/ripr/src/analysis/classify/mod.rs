@@ -38,6 +38,7 @@ mod operand_pin;
 mod out_parameter;
 mod owner_pin;
 mod owner_shape;
+mod owner_value;
 mod pinned_shape;
 mod poll_helper;
 mod propagation_witness;
@@ -47,6 +48,8 @@ mod related_tests;
 mod reveal;
 mod scanner_transfer;
 mod slice_boundary;
+#[cfg(test)]
+mod stop_reason_contract;
 mod targeted_calls;
 mod text;
 mod transitive_reach;
@@ -95,6 +98,7 @@ pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::{
     drop_is_plain_in_closed_sources, observes_returned_element_field,
+    returned_array_construction_plain,
 };
 pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
@@ -106,10 +110,10 @@ pub(in crate::analysis) use flow::{
 pub(in crate::analysis) use framework_oracle::withhold_framework_oracle_gap;
 pub(in crate::analysis) use gap_admission::{
     CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, MIXED_REFUSAL_IS_ANALYZER_LIMIT,
-    REFUSALS_ARE_ANALYZER_LIMITS, is_ignored, should_panic_tests_deciding_changed_panic,
-    withhold_call_budget_gap, withhold_debug_assertion_gap, withhold_log_capture_gap,
-    withhold_mixed_refusal_gap, withhold_should_panic_gap, withhold_truncated_discovery_gap,
-    withhold_unsupported_gap,
+    REFUSALS_ARE_ANALYZER_LIMITS, assertion_confirms_captured_log_exact_membership, is_ignored,
+    should_panic_tests_deciding_changed_panic, withhold_call_budget_gap,
+    withhold_debug_assertion_gap, withhold_log_capture_gap, withhold_mixed_refusal_gap,
+    withhold_should_panic_gap, withhold_truncated_discovery_gap, withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
@@ -134,13 +138,16 @@ pub(in crate::analysis) use infection::{
 pub(in crate::analysis) use literal_length_boundary::refine_literal_length_boundary;
 pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
 pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names};
-pub(in crate::analysis) use out_parameter::{assertion_out_parameter, expression_writes_parameter};
+pub(in crate::analysis) use out_parameter::{
+    assertion_out_parameter, expression_writes_parameter, file_shadows_buffer_types,
+};
 pub(in crate::analysis) use owner_pin::{
-    AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
-    equality_condition_operands, expected_operand_value, function_declaration_is_async,
-    helper_pins_owner_call, owner_builds_declared_error_variant, pin_scope_needs,
-    returned_closure_pin_required, targeted_free_call_reaches_owner, targeted_name_is_alias,
-    targeted_type_name_is_unresolved, trait_impl_self_type_names,
+    AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings,
+    claims_payload_eq_candidates, direct_call_name, equality_condition_operands,
+    expected_operand_value, function_declaration_is_async, helper_pins_owner_call,
+    owner_builds_declared_error_variant, pin_scope_needs, returned_closure_pin_required,
+    targeted_free_call_reaches_owner, targeted_name_is_alias, targeted_type_name_is_unresolved,
+    trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 #[cfg(test)]
@@ -152,9 +159,11 @@ pub(in crate::analysis) use pinned_shape::{
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_compares_hand_built_field,
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
-    assigned_field_path, concat_literal_tail, concat_tail_witness, current_path_witness_with,
-    direct_collection_mutation_receiver, field_assignment_target, owner_may_exit_before_line,
-    retain_returned_ledger, returned_ledger_witness,
+    assertion_pins_pushed_collection_count, assigned_field_path, concat_literal_tail,
+    concat_tail_witness, current_path_witness_with, direct_collection_mutation_receiver,
+    field_assignment_target, owner_may_exit_before_line, retain_returned_ledger,
+    returned_ledger_witness, sole_pushed_buffer_at, test_count_pins_pushed_collection,
+    test_counts_pushed_collection_argument,
 };
 pub(in crate::analysis) use propagation_witness::{
     constant_tail_witness, fallible_literal_witness, format_tail_witness, result_map_witness,

@@ -6,6 +6,7 @@
 //! and the warm check reuses that same cache.
 
 mod check_admission;
+pub(crate) use check_admission::typed_cause_of_static_limit;
 mod editor_refresh;
 
 use super::{Config, CorpusEntry, Options, RunContext, Sample, SampleOutcome};
@@ -326,7 +327,8 @@ fn measure_corpus_entry(
         .filter(|value| !value.is_empty());
     let check_args = warm_check_args(&root, &base);
     let editor_base = base.clone();
-    let subject = warm_check_subject(root, base, head);
+    let mut subject = warm_check_subject(root, base, head);
+    subject.expected_partial = entry.expected_partial.clone();
     // The contradiction scan reads every finding, so the measured check
     // renders the full set instead of the byte-bounded prefix that a large
     // diff (131 findings on `ripr-swarm-2026-10`) is otherwise cut to.
@@ -518,6 +520,7 @@ pub(crate) fn warm_check_subject(root: String, base: String, head: Option<String
         mode: WARM_CHECK_MODE.to_string(),
         base,
         head,
+        expected_partial: None,
     }
 }
 
@@ -556,7 +559,7 @@ pub(crate) fn record_warm_check(
             reason: "warm-up capture failed".to_string(),
         },
     };
-    let warmup_ok = warmup_admission.is_complete();
+    let warmup_ok = warmup_admission.is_admitted();
     match (warmup, measured) {
         (Err(err), _) => {
             missing_sources.push("warm check JSON");
@@ -608,7 +611,7 @@ pub(crate) fn record_warm_check(
         }
         (Ok(_warmup), Ok(Some(measured))) => {
             let admission = admit_measured(&measured, subject);
-            let complete = warmup_ok && admission.is_complete();
+            let complete = warmup_ok && admission.is_admitted();
             let ms = duration_ms(&measured);
             let findings = admission
                 .findings()
@@ -626,6 +629,8 @@ pub(crate) fn record_warm_check(
                 ));
             }
             if !admission.is_complete() {
+                // An expected partial outcome is admitted but stays visibly
+                // partial: its reason names the limit it stopped at.
                 detail.push_str(&format!("; {}", admission.reason()));
             }
             if admission.rendering_truncated() {
@@ -647,7 +652,8 @@ pub(crate) fn record_warm_check(
                 complete,
             ));
             // Trust may scan only an admitted complete document. A rejected
-            // subject or incomplete analysis cannot contribute a clean zero.
+            // subject, an incomplete analysis or an expected partial outcome
+            // cannot contribute a clean zero.
             if admission.is_complete() {
                 match serde_json::from_str::<Value>(&measured.output.stdout) {
                     Ok(json) => match check_contradictions(&json) {

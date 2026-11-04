@@ -19,6 +19,9 @@
 # That byte is patch syntax, not source trailing whitespace.
 fixtures/*/diff.patch whitespace=-blank-at-eol
 
+# Incomplete-diff corpus retains one CRLF-byte control (#4514); -text keeps checkout bytes exact.
+fixtures/incomplete_diff_corpus/diffs/old_side_unfinished_crlf.patch -text whitespace=-blank-at-eol
+
 # Judged-panel diffs are byte-exact frozen captures bound by recorded digests.
 # Trailing whitespace in them is source content and must not be rewritten.
 metrics/rust-judged-behavior-panel/diffs/*.diff -whitespace
@@ -86,6 +89,11 @@ Cargo.lock linguist-generated
 fixtures/**/expected/** linguist-generated
 metrics/public-proof/** linguist-generated
 fixtures/perl-verdict-corpus/packets/** linguist-generated
+# Repo-exposure captures written by `ripr check --format repo-exposure-json` and
+# bound by the honesty gate (content_sha256 plus regeneration from the Cargo
+# subject). The case file that carries their provenance stays counted.
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*.json linguist-generated
+fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-*.json linguist-generated
 
 # The CRLF hostile-input case stores carriage returns on purpose; the subject
 # file and the diff that edits it must reach the working tree byte for byte.

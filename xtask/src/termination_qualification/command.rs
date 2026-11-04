@@ -13,8 +13,6 @@ use super::model::{
     Aggregate, BinaryIdentity, CORPUS_SCHEMA, Control, Family, FamilyCount, HostIdentity, Packet,
     Row, RowResult, SCHEMA, render_json, render_markdown,
 };
-use crate::blind_journey::sha256_hex;
-use crate::run as shared_run;
 
 const DEFAULT_OUT: &str = "target/ripr/reports";
 const DEFAULT_WORK: &str = "target/ripr/termination-qualification";
@@ -201,67 +199,20 @@ pub(crate) fn build_packet(options: &Options) -> Result<Packet, String> {
 }
 
 fn admit_binary(options: &Options) -> Result<BinaryIdentity, String> {
-    let path = fs::canonicalize(&options.binary).map_err(|error| {
-        format!(
-            "--binary {} is not readable: {error}",
-            options.binary.display()
-        )
-    })?;
-    if !path.is_file() {
-        return Err(format!("--binary {} is not a file", path.display()));
-    }
-    let bytes =
-        fs::read(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    let sha256 = sha256_hex(&bytes);
-    if let Some(expected) = &options.expected_sha256
-        && !expected.eq_ignore_ascii_case(&sha256)
-    {
-        return Err(format!(
-            "binary sha256 {sha256} does not match --expected-sha256 {expected}"
-        ));
-    }
-    let version_args = vec!["--version".to_string()];
-    let version = shared_run::capture_bytes_in_dir_with_timeout(
-        &path,
-        &version_args,
-        path.parent().unwrap_or_else(|| Path::new(".")),
-        &[("PATH", exec::CHILD_PATH)],
-        &[],
-        Duration::from_secs(30),
-        "termination binary --version",
+    let admitted = crate::exact_candidate_harness::admit_installed_binary(
+        &options.binary,
+        &crate::exact_candidate_harness::AdmitOptions {
+            expected_sha256: options.expected_sha256.clone(),
+            expected_version: options.expected_version.clone(),
+            expected_commit: options.expected_commit.clone(),
+        },
     )?;
-    if version.timed_out || !version.status.is_some_and(|status| status.success()) {
-        return Err(format!(
-            "`{} --version` did not exit cleanly; this is not a runnable ripr binary",
-            path.display()
-        ));
-    }
-    let reported_version = String::from_utf8_lossy(&version.stdout).trim().to_string();
-    if let Some(expected) = &options.expected_commit {
-        let reported = super::removal_builds::version_commit(&reported_version);
-        if !reported.is_some_and(|commit| commit.eq_ignore_ascii_case(expected)) {
-            return Err(format!(
-                "binary reports commit {} but --expected-commit is {expected}",
-                reported.unwrap_or("none")
-            ));
-        }
-    }
-    if let Some(expected) = &options.expected_version
-        && !reported_version.contains(expected.as_str())
-    {
-        return Err(format!(
-            "binary reports `{reported_version}`, expected a version containing `{expected}`"
-        ));
-    }
     Ok(BinaryIdentity {
-        path: path.to_string_lossy().to_string(),
-        bytes: bytes.len() as u64,
-        sha256,
-        reported_version,
-        path_resolution: format!(
-            "launched by absolute path; child PATH is `{}`, so no ambient `ripr` can resolve",
-            exec::CHILD_PATH
-        ),
+        path: admitted.path,
+        bytes: admitted.bytes,
+        sha256: admitted.sha256,
+        reported_version: admitted.reported_version,
+        path_resolution: admitted.path_resolution,
     })
 }
 
@@ -579,9 +530,7 @@ fn usage() -> &'static str {
 }
 
 fn hash_file(path: &Path) -> Result<String, String> {
-    let bytes =
-        fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    Ok(crate::blind_journey::sha256_hex(&bytes))
+    crate::exact_candidate_harness::hash_file(path)
 }
 
 /// Copy the admitted executable into the owned run root and verify the copy.
@@ -590,22 +539,5 @@ pub(super) fn snapshot_binary(
     run_root: &Path,
     expected_sha256: &str,
 ) -> Result<PathBuf, String> {
-    let dir = run_root.join("binary");
-    fs::create_dir_all(&dir)
-        .map_err(|error| format!("failed to create {}: {error}", dir.display()))?;
-    let target = dir.join("ripr-under-test");
-    fs::copy(source, &target).map_err(|error| {
-        format!(
-            "failed to snapshot {} to {}: {error}",
-            source.display(),
-            target.display()
-        )
-    })?;
-    let sha = hash_file(&target)?;
-    if sha != expected_sha256 {
-        return Err(format!(
-            "binary changed between admission and snapshot (admitted {expected_sha256}, copied {sha})"
-        ));
-    }
-    Ok(target)
+    crate::exact_candidate_harness::snapshot_admitted_binary(source, run_root, expected_sha256)
 }

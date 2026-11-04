@@ -19,6 +19,20 @@ The selected PR has an exact current head, a current `review-pr` disposition, al
 - `finish_contract:duplicate_recheck`
 - `finish_contract:behind_only_no_restack`
 
+# Incident route markers
+
+When a current `admission_incident.v1` packet is available, route before opening a PR-local repair loop.
+
+- `incident_route:currentness_before_class`
+- `incident_route:candidate_escape_revoke_repair_ready`
+- `incident_route:candidate_escape_requires_proof_feedback`
+- `incident_route:integration_not_behind_main_only`
+- `incident_route:instrument_repair_before_retry`
+- `incident_route:infrastructure_same_subject_no_mutation`
+- `incident_route:superseded_no_h2_contamination`
+- `incident_route:not_proven_no_convenient_retry`
+- `incident_route:retain_incident_lineage`
+
 # Entry condition
 
 `finish-pr` owns publication, remote review/CI repair, merge, and reconciliation. It does not silently manufacture the substantive review pass.
@@ -35,9 +49,29 @@ Do not read protection or ruleset settings or credential values for routine
 PR progression. Inspect exact-head PR-visible checks, review and merge state;
 unknown checks are not passed. A settings-read 403 is not a blanket blocker or
 a reason to request broader access. An ordinary PR/check read failure is a
-separate evidence gap. After required proof and review, submit the normal
-expected-head squash merge and let GitHub enforce applicable requirements. Report
-a rejection without guessing its cause; never bypass enforcement or change settings.
+separate evidence gap. After required proof and review, use an ordinary protected
+squash with the exact current PR head supplied as the expected SHA. Verify the current required
+Result and all other applicable checks; do not arm auto-merge or retry without
+reconciling an uncertain outcome. Check observations and mutation are not
+atomic, so retain native enforcement. Report a rejection without guessing its
+cause; never bypass enforcement or change settings.
+
+For the audited heavy Rust qualification route, use `scripts/guarded_merge.py`
+for the expected-head squash after completing that final judgment. It does not
+establish substantive review or every other gate. A guard refusal, including
+failed or ambiguous evidence, remains blocked until the evidence is reconciled;
+do not treat it as permission to use another merge path. Before invoking, compare the
+`routed-rust.yml`, `rust-gates.yml` and `rust-test-shards.yml` blob ids on the
+candidate's workflow source with `AUDITED_WORKFLOW_TUPLES` in the script; a tuple
+that is not listed has not been audited, so the route is unsupported and no guard
+refusal occurred. Report the unaudited tuple on the audit-refresh issue (#12817) rather
+than adding it unreviewed. If the qualification
+route was independently established as unsupported before guard invocation,
+follow its existing ordinary protected exact-head procedure with current required
+Result, review and other gates; do not claim the guard passed. An unknown or
+rejected mutation requires PR and merge-state readback before any retry. Check
+observations and the server mutation are not atomic, so native required checks
+and protections remain authoritative.
 
 1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists.
 2. Write a complete body:

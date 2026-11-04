@@ -36,7 +36,7 @@ use std::path::{Path, PathBuf};
 
 use super::agent_dispatch;
 use super::agent_gap_packet::render_agent_packet_from_gap_ledger;
-use super::check::{bind_member_selector_file, resolve_implicit_command_root};
+use super::check::{bind_member_selector_file, resolve_implicit_command_root_refusing};
 use super::write_text_file;
 
 /// Schema version of the `ripr agent repair --phase after` success envelope
@@ -71,8 +71,10 @@ const REPAIR_AFTER_FAILURE_SCHEMA_VERSION: &str = "0.4";
 pub(in crate::cli) fn resolve_agent_repair_root(
     options: &mut AgentRepairOptions,
 ) -> Result<(), String> {
-    let prefix =
-        super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    let prefix = super::check::resolve_implicit_command_root_refusing(
+        &mut options.root,
+        options.root_explicit,
+    )?;
     // A member-relative `file:line` selector binds to the invocation directory
     // before subject translation, locking or publication, so it can never
     // suffix-match a sibling member. Structured ids pass through unchanged.
@@ -90,16 +92,27 @@ pub(in crate::cli) fn resolve_agent_repair_root(
 /// subcommands that default `--root` to `.`; `--root .` opts out. Relative
 /// `verify` snapshot paths typed from a member directory stay bound to that
 /// directory. Runs after the help short-circuit so `--help` stays inert.
-fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> {
+///
+/// #12417: the gate refusal of the `status` spelling is the same typed
+/// decision the façade's `ripr status` emits (code `unanchored_root`, exit 3,
+/// empty stdout); the other spellings keep their root-resolution error
+/// convention (exit 2, the plain cause on stderr, no code line).
+fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), CommandError> {
     match command {
         AgentCommand::Start(options) => {
-            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)?;
         }
         AgentCommand::Card(options) => {
-            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)?;
         }
         AgentCommand::Status(options) => {
-            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)
+                .map_err(|message| {
+                    CommandError::Decision(
+                        crate::app::task_first::RepairRefusalCode::UnanchoredRoot
+                            .message_with_stderr_line(&message),
+                    )
+                })?;
         }
         AgentCommand::Repair(options) => resolve_agent_repair_root(options)?,
         // #8902: the artifact-consuming siblings. A `--json` run that fails to
@@ -145,31 +158,35 @@ fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> 
             // the same file the operator named, so it needs no rebinding.
         }
         AgentCommand::VerifyExecute(options) => {
-            let prefix =
-                match resolve_implicit_command_root(&mut options.root, options.root_explicit) {
-                    Ok(prefix) => prefix,
-                    Err(error) => {
-                        // The typed disposition is the contract on every
-                        // terminal state, so an unresolvable root answers in
-                        // that shape.
-                        print!(
-                            "{}",
-                            app::verification_execution::render_unusable_root(&error)
-                        );
-                        return Err(error);
-                    }
-                };
+            let prefix = match resolve_implicit_command_root_refusing(
+                &mut options.root,
+                options.root_explicit,
+            ) {
+                Ok(prefix) => prefix,
+                Err(error) => {
+                    // The typed disposition is the contract on every
+                    // terminal state, so an unresolvable root answers in
+                    // that shape.
+                    print!(
+                        "{}",
+                        app::verification_execution::render_unusable_root(&error)
+                    );
+                    return Err(CommandError::Failure(error));
+                }
+            };
             bind_existing_member_file(prefix.as_deref(), &options.root, &mut options.packet);
         }
         AgentCommand::Receipt(options) => {
-            let prefix = resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            let prefix =
+                resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)?;
             bind_existing_member_file(prefix.as_deref(), &options.root, &mut options.verify_json);
         }
         AgentCommand::ReviewSummary(options) => {
-            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)?;
         }
         AgentCommand::Verify(options) => {
-            let prefix = resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            let prefix =
+                resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)?;
             for path in [&mut options.before, &mut options.after] {
                 let bound = bind_member_selector_file(
                     prefix.as_deref(),
@@ -204,7 +221,7 @@ fn resolve_json_command_root(
     json: bool,
 ) -> Result<Option<String>, String> {
     let typed_root = root.clone();
-    resolve_implicit_command_root(root, root_explicit).map_err(|error| {
+    resolve_implicit_command_root_refusing(root, root_explicit).map_err(|error| {
         if !json {
             return error;
         }
@@ -290,8 +307,9 @@ fn known_seam_start_refusal(
     seam_id: &str,
     class: crate::analysis::seams::SeamGripClass,
     policy: AgentBriefPolicy<'_>,
+    file: Option<&Path>,
 ) -> CoreError {
-    match policy.omission_reason_for_class(class) {
+    match policy.omission_reason_for_class(class, file) {
         Some(reason) => CoreError::seam_policy_omitted(format!(
             "agent start seam_id {seam_id} {reason}. {}",
             policy_omitted_seam_hint(root, seam_id)
@@ -443,6 +461,7 @@ fn write_agent_start_with_report(
             &options.seam_id,
             entry.class,
             AgentBriefPolicy::from_config(config),
+            Some(entry.seam.file()),
         ));
     }
     // The shared repair-admission gate decides every other start: a seam
@@ -694,11 +713,107 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
     root: &Path,
     seam_id: &str,
 ) -> Result<String, crate::cli::CommandError> {
-    let cross_namespace = seam_id.starts_with("probe:")
+    translate_seam_id_for(SeamIdSurface::Repair, root, seam_id).map_err(|error| match error {
+        SeamIdTranslateError::Refused(message) => crate::cli::CommandError::Decision(message),
+        SeamIdTranslateError::Stale(message) | SeamIdTranslateError::Operational(message) => {
+            crate::cli::CommandError::Failure(message)
+        }
+    })
+}
+
+/// Why [`translate_seam_id_for`] did not produce a seam id. Only the first two
+/// are statements about the id; an operational failure (a broken `ripr.toml`,
+/// a truncated inventory, an analysis error) says nothing about the id, so a
+/// surface keeps handling it the way it did before translating.
+#[derive(Debug)]
+pub(in crate::cli) enum SeamIdTranslateError {
+    /// The id names several gaps, or a gap that is not repair-eligible.
+    Refused(String),
+    /// No current seam carries the id.
+    Stale(String),
+    /// The resolver could not run.
+    Operational(String),
+}
+
+impl SeamIdTranslateError {
+    pub(in crate::cli) fn message(&self) -> &str {
+        match self {
+            Self::Refused(message) | Self::Stale(message) | Self::Operational(message) => message,
+        }
+    }
+}
+
+/// The command that is asking the shared repair resolver to translate a
+/// `--seam-id`. Only the refusal wording differs by surface (its own name and
+/// its own equivalent retry); the resolver and its outcomes are shared, so
+/// `agent card` and `agent packet` accept exactly the ids `agent repair` does.
+#[derive(Clone, Copy)]
+pub(in crate::cli) enum SeamIdSurface {
+    Repair,
+    Card,
+    Packet,
+}
+
+impl SeamIdSurface {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Repair => "agent repair",
+            Self::Card => "agent card",
+            Self::Packet => "agent packet",
+        }
+    }
+
+    /// The retry that names one explicit seam on this surface.
+    fn retry(self, root_arg: &str) -> String {
+        match self {
+            Self::Repair => {
+                format!("ripr agent repair --seam-id <seam-id> --root {root_arg} --phase before")
+            }
+            Self::Card => format!("ripr agent card --seam-id <seam-id> --root {root_arg}"),
+            // `agent packet` refuses to parse without `--json`.
+            Self::Packet => {
+                format!("ripr agent packet --seam-id <seam-id> --root {root_arg} --json")
+            }
+        }
+    }
+
+    /// Only a repair starts an attempt, so only it can say none was started.
+    fn no_attempt_note(self) -> &'static str {
+        match self {
+            Self::Repair => "; no repair attempt was started",
+            Self::Card | Self::Packet => "",
+        }
+    }
+}
+
+/// Whether `--seam-id` has a shape the shared repair resolver translates: a
+/// `probe:`/`repo-probe:` finding ID, a `gap:` ID, or a `file:line` location
+/// (a non-empty file, then `:`, then a positive decimal line, as the resolver's
+/// `selector_matches_file_line` reads it). Any other id, even one containing a
+/// colon, goes to normal seam lookup untouched.
+fn names_cross_namespace_id(seam_id: &str) -> bool {
+    if seam_id.starts_with("probe:")
         || seam_id.starts_with("repo-probe:")
         || seam_id.starts_with("gap:")
-        || seam_id.contains(':');
-    if !cross_namespace {
+    {
+        return true;
+    }
+    seam_id.rsplit_once(':').is_some_and(|(file, line)| {
+        !file.is_empty()
+            && line.bytes().all(|byte| byte.is_ascii_digit())
+            && line.bytes().any(|byte| byte != b'0')
+    })
+}
+
+/// [`translate_agent_repair_seam_id`] for any surface that accepts the same id
+/// shapes. An exact seam id (and any other shape) passes through untouched.
+pub(in crate::cli) fn translate_seam_id_for(
+    surface: SeamIdSurface,
+    root: &Path,
+    seam_id: &str,
+) -> Result<String, SeamIdTranslateError> {
+    let label = surface.label();
+    if !names_cross_namespace_id(seam_id) {
         return Ok(seam_id.to_string());
     }
     use crate::app::task_first::RepairSubjectOutcome;
@@ -712,8 +827,9 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
             let root_arg = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
-            Err(crate::cli::CommandError::Decision(format!(
-                "agent repair: repair ID `{seam_id}` resolves to gap `{resolved}`, which is not repair-eligible: {reason}; no repair attempt was started. Run `ripr pilot --root {root_arg}` to list current repair IDs"
+            let note = surface.no_attempt_note();
+            Err(SeamIdTranslateError::Refused(format!(
+                "{label}: repair ID `{seam_id}` resolves to gap `{resolved}`, which is not repair-eligible: {reason}{note}. Run `ripr pilot --root {root_arg}` to list current repair IDs"
             )))
         }
         Ok(RepairSubjectOutcome::Ambiguous {
@@ -728,7 +844,7 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                 .collect();
             listed.sort_unstable();
             let mut message = format!(
-                "agent repair seam_id `{seam_id}` names {} gaps; select one explicitly: {}",
+                "{label} seam_id `{seam_id}` names {} gaps; select one explicitly: {}",
                 seam_ids.len(),
                 listed.join(", ")
             );
@@ -738,10 +854,8 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
             let root_arg = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
-            message.push_str(&format!(
-                ". Retry: `ripr agent repair --seam-id <seam-id> --root {root_arg} --phase before`"
-            ));
-            Err(crate::cli::CommandError::Decision(message))
+            message.push_str(&format!(". Retry: `{}`", surface.retry(&root_arg)));
+            Err(SeamIdTranslateError::Refused(message))
         }
         Ok(RepairSubjectOutcome::Unknown) => {
             let root_arg = crate::agent::loop_commands::shell_arg(
@@ -756,22 +870,22 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                 crate::app::task_first::non_rust_item_language(seam_id)
             {
                 format!(
-                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root: {}{}",
+                    "{label} --seam-id `{seam_id}` names no current seam in the selected root: {}{}",
                     crate::app::task_first::no_seam_inventory_reason(language, ""),
                     crate::app::task_first::gap_bound_start_pointer(language)
                 )
             } else if seam_id.starts_with("probe:") || seam_id.starts_with("repo-probe:") {
                 format!(
-                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root; the `ripr check` finding ID is stale or maps to no current seam; run {list}"
+                    "{label} --seam-id `{seam_id}` names no current seam in the selected root; the `ripr check` finding ID is stale or maps to no current seam; run {list}"
                 )
             } else {
                 format!(
-                    "agent repair --seam-id `{seam_id}` names no current seam in the selected root; run {list}"
+                    "{label} --seam-id `{seam_id}` names no current seam in the selected root; run {list}"
                 )
             };
-            Err(crate::cli::CommandError::Failure(message))
+            Err(SeamIdTranslateError::Stale(message))
         }
-        Err(error) => Err(crate::cli::CommandError::Failure(error)),
+        Err(error) => Err(SeamIdTranslateError::Operational(error)),
     }
 }
 
@@ -814,6 +928,20 @@ fn render_agent_packet_with_context(
     let seam_id = options.seam_id.as_deref().ok_or_else(|| {
         CoreError::from(format!("agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. {SEAM_ID_SOURCE_HINT}"))
     })?;
+    // Any id `ripr check` or `ripr pilot` prints works: the shared repair
+    // resolver maps a finding id, gap id or `file:line` to its seam, and an
+    // exact seam id passes through. A refused mapping is a typed refusal.
+    // A broken config is the config refusal it always was, not a statement
+    // about the id, so it is read before the resolver runs.
+    load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
+    let seam_id =
+        translate_seam_id_for(SeamIdSurface::Packet, &options.root, seam_id).map_err(|error| {
+            match error {
+                SeamIdTranslateError::Operational(message) => CoreError::from(message),
+                other => CoreError::seam_id_unknown(other.message().to_string()),
+            }
+        })?;
+    let seam_id = seam_id.as_str();
     let config =
         load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
     let report = analysis::inventory_classified_seams_report_at_with_config(&options.root, &config)
@@ -838,6 +966,17 @@ fn render_agent_packet_for_seam_with_report(
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
         .ok_or_else(|| {
+            // A capped inventory can lack a seam the repair resolver found after
+            // widening its own cap, so "not found" would send the reader to a
+            // listing that cannot show it: say the inventory was cut.
+            if let Some(info) = report.limit_info.as_ref().filter(|info| info.is_truncated()) {
+                return CoreError::seam_id_unknown(format!(
+                    "agent packet seam_id {seam_id} was not found in the truncated seam inventory ({} of {} seams analyzed); {}",
+                    info.analyzed,
+                    info.total,
+                    crate::app::task_first::WIDEN_SEAM_BUDGET
+                ));
+            }
             CoreError::seam_id_unknown(format!(
                 "agent packet seam_id {seam_id} was not found. {}",
                 unknown_seam_id_hint(root, seam_id)
@@ -845,7 +984,7 @@ fn render_agent_packet_for_seam_with_report(
         })?;
 
     let policy = AgentBriefPolicy::from_config(config);
-    if let Some(reason) = policy.omission_reason_for_class(entry.class) {
+    if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         return Err(CoreError::seam_policy_omitted(format!(
             "agent packet seam_id {seam_id} {reason}. {}",
             policy_omitted_seam_hint(root, seam_id)
@@ -2234,22 +2373,35 @@ fn run_agent_repair_phase(
                 let base = base
                     .as_deref()
                     .ok_or_else(|| "agent repair --gap-id lost its parsed --base".to_string())?;
-                return run_gap_bound_before_phase(&root, gap_id, base, store_ref, quiet, refusal);
+                let identity = identity.ok_or_else(|| {
+                    "repair before requires its identity from the locked CLI publication driver"
+                        .to_string()
+                })?;
+                return run_gap_bound_before_phase(
+                    &root, gap_id, base, store_ref, quiet, refusal, identity,
+                );
             }
             let seam_id = seam_id.ok_or_else(|| {
                 "agent repair --phase before lost its parsed seam identity".to_string()
             })?;
             ensure_command_root(&root, "agent repair --phase before")?;
+            let identity = identity.ok_or_else(|| {
+                "repair before requires its identity from the locked CLI publication driver"
+                    .to_string()
+            })?;
             // #11458: policy-free dirty-premise preflight. An obviously
             // production dirty file refuses here in git time, before the
             // seam inventory below; any doubt falls through to the exact
             // policy check, which refuses late with the same text.
             if let Ok(preflight_head) = crate::agent::artifact::current_git_head(&root)
+                && let Ok(preflight_attempt) =
+                    crate::app::repair_attempt::RepairAttemptId::parse(identity.attempt_id())
                 && let Ok(preflight_violations) =
                     crate::app::repair_attempt::conservative_dirty_premise_violations(
                         &root,
                         &preflight_head,
                         store_ref,
+                        Some(&preflight_attempt),
                     )
                 && !preflight_violations.is_empty()
             {
@@ -2260,10 +2412,6 @@ fn run_agent_repair_phase(
                     &preflight_violations,
                 ));
             }
-            let identity = identity.ok_or_else(|| {
-                "repair before requires its identity from the locked CLI publication driver"
-                    .to_string()
-            })?;
             if !quiet {
                 eprintln!(
                     "{}",
@@ -2360,10 +2508,14 @@ fn run_agent_repair_phase(
                         );
                         format!("{plain} (Detail: {error})")
                     })?;
-            crate::app::repair_attempt::include_explicit_store_operational_write(
+            crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
                 &mut policy,
                 &root,
                 store_ref,
+                Some(&crate::app::repair_attempt::RepairAttemptId::parse(
+                    identity.attempt_id(),
+                )?),
+                crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
             )?;
             crate::edit_cage::validate_build_output_precondition(&root, &policy)
                 .map_err(|error| format!("{error} Nothing was started."))?;
@@ -2604,10 +2756,12 @@ fn run_agent_repair_phase(
                 &packet_text,
                 &attempt.seam_id,
             )?;
-            crate::app::repair_attempt::include_explicit_store_operational_write(
+            crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
                 &mut cage_policy,
                 &root,
                 store_ref,
+                Some(&attempt.attempt_id),
+                crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
             )?;
 
             // The trust binding, when the attempt carries one, is re-verified
@@ -3883,6 +4037,7 @@ fn run_gap_bound_before_phase(
     store_ref: Option<&Path>,
     quiet: bool,
     refusal: &mut AfterPhaseRefusalContext,
+    identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
 ) -> Result<(), String> {
     use crate::agent::loop_commands::{bound_root, shell_arg};
     use crate::app::gap_bound_repair::{
@@ -3906,11 +4061,14 @@ fn run_gap_bound_before_phase(
     // refuse an obviously production dirty file before the gap snapshot;
     // any doubt falls through to the exact policy check below.
     if let Ok(preflight_head) = crate::agent::artifact::current_git_head(root)
+        && let Ok(preflight_attempt) =
+            crate::app::repair_attempt::RepairAttemptId::parse(identity.attempt_id())
         && let Ok(preflight_violations) =
             crate::app::repair_attempt::conservative_dirty_premise_violations(
                 root,
                 &preflight_head,
                 store_ref,
+                Some(&preflight_attempt),
             )
         && !preflight_violations.is_empty()
     {
@@ -3990,10 +4148,14 @@ fn run_gap_bound_before_phase(
                 "gap `{gap_id}` has no test file ripr can route a repair to, so no repair attempt was started. Cause: {error}"
             )
         })?;
-    crate::app::repair_attempt::include_explicit_store_operational_write(
+    crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
         &mut policy,
         root,
         store_ref,
+        Some(&crate::app::repair_attempt::RepairAttemptId::parse(
+            identity.attempt_id(),
+        )?),
+        crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
     )?;
     crate::edit_cage::validate_build_output_precondition(root, &policy)
         .map_err(|error| format!("{error} Nothing was started."))?;
@@ -4201,6 +4363,11 @@ fn before_phase_summary(packet: &str, packet_path: &str, edit_directive: bool) -
     ));
     if let Some(assertion) = text("/suggested_assertions/0") {
         lines.push(format!("  assertion shape: {assertion}"));
+        if let Some(note) =
+            crate::output::placeholder_assertion::fill_in_note_line("    ", assertion)
+        {
+            lines.push(note);
+        }
     }
     lines.push(format!(
         "  full repair packet (JSON): {packet_path}; add --json to print it here"
@@ -4342,7 +4509,7 @@ mod tests {
         let policy = AgentBriefPolicy::from_config(&config);
         let root = Path::new(".");
 
-        let limit = known_seam_start_refusal(root, "abc", SeamGripClass::Opaque, policy);
+        let limit = known_seam_start_refusal(root, "abc", SeamGripClass::Opaque, policy, None);
         assert_eq!(
             limit.check_failure_kind(),
             Some(crate::core_error::CheckFailureKind::SeamNotActionable)
@@ -4360,6 +4527,7 @@ mod tests {
             "abc",
             SeamGripClass::WeaklyGripped,
             AgentBriefPolicy::from_config(&off),
+            None,
         );
         assert_eq!(
             omitted.check_failure_kind(),
@@ -6222,6 +6390,40 @@ mod before_phase_stdout_tests {
                 "missing `{expected}` in:\n{summary}"
             );
         }
+        Ok(())
+    }
+
+    /// #9244 item 3: a remaining handoff line that still carries `/* ... */`
+    /// placeholders names them a shape and says to fill them in, instead of
+    /// reading as unfilled template text.
+    #[test]
+    fn placeholder_assertion_in_summary_gets_a_fill_in_note() -> Result<(), String> {
+        let packet = PACKET.replace(
+            "assert_eq!(discounted_total(10_000), 9_000)",
+            "assert_eq!(discounted_total(/* boundary */), /* expected */)",
+        );
+        let summary = before_phase_stdout(
+            &packet,
+            "target/ripr/workflow/agent-packet.json",
+            false,
+            &continuation(),
+        )?;
+        assert!(
+            summary.contains(
+                "  assertion shape: assert_eq!(discounted_total(/* boundary */), /* expected */)"
+            ),
+            "{summary}"
+        );
+        assert!(
+            summary.contains(
+                "    (replace each /* ... */ comment with a real value from your test before using it)"
+            ),
+            "{summary}"
+        );
+        assert!(
+            !summary.contains("assertion template"),
+            "placeholder assertion must not be labelled a template:\n{summary}"
+        );
         Ok(())
     }
 

@@ -244,7 +244,7 @@ Updated:
 ## Pending — owner_return_pin_json_uncalled_closure (20)
 
 Reason:
-RIPR-SPEC-0240: insta framework withhold applies only to whole-object file snapshots without a redaction map (#6642/#12517)
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
 
 Command:
 `cargo xtask goldens bless owner_return_pin_json_uncalled_closure --reason "..."`

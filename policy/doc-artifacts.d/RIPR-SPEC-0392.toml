@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0392"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0392-php-preview-evidence-and-support-contract.md"
+status = "proposed"
+owner = "language-adapter"
+standalone_reason = "Issue #5620 defines the PHP preview admissible-claims contract before parser or adapter code lands."
