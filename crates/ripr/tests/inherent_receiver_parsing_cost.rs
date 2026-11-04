@@ -500,6 +500,11 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
         "mod other { pub fn read_as_object() -> Option<u32> { Some(7) } }\ntrait Foreign",
     );
     let local_shadowed_import = unrelated.replace("trait Foreign", "use crate::helpers::read_as_object as unrelated;\ntrait Foreign").replace("    let _ = other::read_as_object(); helpers::read_as_object()", "    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()");
+    let if_let_shadow = local_shadowed_import.replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    let _ = other::read_as_object(); if let Some(unrelated) = Some(|| Some(7)) { let _ = unrelated(); } helpers::read_as_object()");
+    let match_shadow = local_shadowed_import.replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    let _ = other::read_as_object(); match Some(|| Some(7)) { Some(unrelated) => { let _ = unrelated(); }, None => {} } helpers::read_as_object()");
+    let for_shadow = local_shadowed_import.replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    let _ = other::read_as_object(); for unrelated in [|| Some(7)] { let _ = unrelated(); } helpers::read_as_object()");
+    let while_shadow = local_shadowed_import.replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    let _ = other::read_as_object(); while let Some(unrelated) = Some(|| Some(7)) { let _ = unrelated(); break; } helpers::read_as_object()");
+    let nested_fn_shadow = local_shadowed_import.replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    fn unrelated() -> Option<u32> { Some(7) } let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()");
     let expired_shadow_import = local_shadowed_import.replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    { let unrelated = || Some(7); let _ = unrelated(); }\n    let _ = unrelated(); helpers::read_as_object()");
     let alias_shadow = alias
         .replace(
@@ -621,6 +626,11 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
         ("mixed", &mixed, true, None),
         ("unrelated", &unrelated, false, None),
         ("local_shadowed_import", &local_shadowed_import, false, None),
+        ("if_let_shadow", &if_let_shadow, false, None),
+        ("match_shadow", &match_shadow, false, None),
+        ("for_shadow", &for_shadow, false, None),
+        ("while_shadow", &while_shadow, false, None),
+        ("nested_fn_shadow", &nested_fn_shadow, false, None),
         ("expired_shadow_import", &expired_shadow_import, true, None),
         ("sibling_rival", &sibling_rival, false, None),
         ("imported_unrelated", &imported_unrelated, false, None),

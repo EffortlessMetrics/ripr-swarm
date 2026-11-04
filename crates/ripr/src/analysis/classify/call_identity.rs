@@ -502,6 +502,19 @@ fn renamed_call_local_shadow(caller: &TestSummary, alias: &str, line: usize) -> 
                 supported = true;
                 break;
             }
+            if let Some(binding) = ast::LetExpr::cast(ancestor.clone()) {
+                supported = binding.pat().is_some_and(|pat| {
+                    pat.syntax()
+                        .text_range()
+                        .contains_range(pattern.syntax().text_range())
+                }) && binding
+                    .syntax()
+                    .parent()
+                    .and_then(ast::IfExpr::cast)
+                    .and_then(|guard| guard.condition())
+                    .is_some_and(|condition| condition.syntax() == binding.syntax());
+                break;
+            }
         }
         if !supported {
             return None;
@@ -543,7 +556,30 @@ fn renamed_call_local_shadow(caller: &TestSummary, alias: &str, line: usize) -> 
             if ast::ClosureExpr::can_cast(ancestor.kind()) || ast::Fn::can_cast(ancestor.kind()) {
                 return None;
             }
+            if let Some(guard) = ast::IfExpr::cast(ancestor.clone()) {
+                if let (Some(ast::Expr::LetExpr(binding)), Some(then_branch)) =
+                    (guard.condition(), guard.then_branch())
+                {
+                    if then_branch
+                        .syntax()
+                        .text_range()
+                        .contains_range(call.syntax().text_range())
+                        && binding.pat().is_some_and(|pat| binds(pat.syntax()))
+                    {
+                        shadowed = true;
+                    }
+                }
+            }
             if let Some(list) = ast::StmtList::cast(ancestor) {
+                if list
+                    .syntax()
+                    .children()
+                    .filter_map(ast::Fn::cast)
+                    .filter_map(|item| item.name())
+                    .any(|name| name.text().trim_start_matches("r#") == alias)
+                {
+                    shadowed = true;
+                }
                 if list
                     .syntax()
                     .children()
