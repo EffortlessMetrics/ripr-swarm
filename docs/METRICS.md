@@ -42,13 +42,13 @@ owner under [the release transaction](RELEASE_TRANSACTION.md) and
 
 | Level | Meaning | Criterion (working default) | Instrument |
 | --- | --- | --- | --- |
-| R0 installable and honest | A new user installs it, gets a first result, and is not misled. | False verdict rate at most 1%. | Verdict corpus (`cargo xtask verdict-corpus check`). |
+| R0 installable and honest | A new user installs it, gets a first result, and is not misled. | False verdict rate at most 1% (stricter than the 5% public-proof ceiling in [PUBLIC_PROOF](PUBLIC_PROOF.md)). | Verdict corpus (`cargo xtask verdict-corpus check`). |
 | | | Install to first useful result at most 300 s on Linux, macOS and Windows, every shipped channel, verified against the published version. | `first_run` board; weekly published-install matrix ([#12938](https://github.com/EffortlessMetrics/ripr-swarm/pull/12938)). |
 | | | No crash, hang or silent clean result on messy repositories. | Robustness corpus ([#11524](https://github.com/EffortlessMetrics/ripr-swarm/issues/11524), [#12924](https://github.com/EffortlessMetrics/ripr-swarm/issues/12924)). |
 | R1 reliable | Same answer on every surface, fast and small enough to leave on. | Warm `ripr check` p50 under 1 s and p95 under 3 s up to about 1,000 Rust files. | `cargo xtask dx-scoreboard`. |
 | | | Peak memory under 150 MB for 100 to 800 Rust files, under 512 MB for 3,000-file Python/TypeScript repositories, hard cap 1 GiB. | `dx-scoreboard` speed rows. |
 | | | Zero contradictory refusals for one item across CLI, LSP, MCP and agent output. | The manual consistency matrix, until an automated check exists ([#10712](https://github.com/EffortlessMetrics/ripr-swarm/issues/10712)). |
-| | | The classification and fail-closed core is proved on every pull request. | Kani lane (`cargo xtask kani`), required ([#12904](https://github.com/EffortlessMetrics/ripr-swarm/issues/12904)). |
+| | | The classification and fail-closed core is proved on every pull request (target; the lane is advisory today). | Kani lane (`cargo xtask kani`), required ([#12904](https://github.com/EffortlessMetrics/ripr-swarm/issues/12904)). |
 | | | Flake rate under 1% on required lanes. | Test-analytics flake ledger. |
 | R2 useful | People and agents finish the loop: gap, repair, verified. | Repair starts on at least 80% of gaps `check` reports. | Not-ready harness and the nightly outcome page ([#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903)). |
 | | | Precision of "discriminator" claims at least 97% against real mutants, published by language and operator. | `mutation-spot-check` ([#12900](https://github.com/EffortlessMetrics/ripr-swarm/issues/12900)). |
@@ -78,8 +78,11 @@ met.
 
 ### Position on 2026-11-04
 
-Measured by the owning threads against main `b80ce950`; refresh with each new
-baseline.
+Reported by the owning threads against main `b80ce950`. Recall, repair-start
+and latency figures come from their issues ([#12901](https://github.com/EffortlessMetrics/ripr-swarm/issues/12901),
+[#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903),
+[#12947](https://github.com/EffortlessMetrics/ripr-swarm/issues/12947)) and are not yet
+reproduced by a checked-in instrument. Refresh with each new baseline.
 
 | Row | Now | Bar | Met |
 | --- | --- | --- | --- |

@@ -27,7 +27,8 @@ the buyer-readable map over those artifacts.
 
 Promotion between tiers is judged per language against the numeric
 [release ladder](../METRICS.md#release-ladder): `preview` holds R0, `usable alpha`
-holds R0 and R1, and `usable` holds R0 through R2.
+holds R0 and R1, and `usable` holds R0 through R2. Other tiers: see the
+ladder's tier table.
 
 All tiers are static evidence tiers. None of them means runtime mutation
 adequacy, coverage adequacy, or general correctness.
