@@ -59,7 +59,7 @@ impl SliceCounterBoundary {
         let mut saw_true = false;
         let mut saw_false = false;
         for row in &self.rows {
-            match evaluates_predicate(&self.expression, &self.counter, row.count) {
+            match predicate_ever_true(&self.expression, &self.counter, row.count) {
                 Some(true) => saw_true = true,
                 Some(false) => saw_false = true,
                 None => return None,
@@ -215,12 +215,8 @@ fn per_byte_counter_shape(owner: &FunctionSummary, expression: &str) -> Option<(
     } else {
         return None;
     };
-    let statements = function
-        .body()?
-        .stmt_list()?
-        .statements()
-        .collect::<Vec<_>>();
-    let mut slice_param = None;
+    let body = function.body()?;
+    let statements = body.stmt_list()?.statements().collect::<Vec<_>>();
     let mut counter_binding = None;
     for statement in &statements {
         let ast::Stmt::LetStmt(binding) = statement else {
@@ -243,35 +239,145 @@ fn per_byte_counter_shape(owner: &FunctionSummary, expression: &str) -> Option<(
     if counter_binding.as_deref() != Some(counter.as_str()) {
         return None;
     }
-    for statement in &statements {
-        let ast::Stmt::ExprStmt(expr_stmt) = statement else {
-            continue;
-        };
-        let ast::Expr::ForExpr(for_loop) = expr_stmt.expr()? else {
-            continue;
-        };
-        let pat = for_loop.pat()?.syntax().text().to_string();
-        let pat = compact(&pat);
-        if pat != "_" && pat != "b" && pat != "&b" {
-            return None;
-        }
-        let iterable = for_loop.iterable()?;
-        let ast::Expr::PathExpr(path) = iterable else {
-            return None;
-        };
-        slice_param = Some(path.path()?.syntax().text().to_string());
-        let body = for_loop.loop_body()?;
-        let body_text = compact(&body.syntax().text().to_string());
-        if !body_text.contains(&format!("{counter}+=1"))
-            && !body_text.contains(&format!("{counter}+= 1"))
-            && !body_text.contains(&format!("{counter} +=1"))
-            && !body_text.contains(&format!("{counter} += 1"))
-        {
-            return None;
-        }
+    let function_node = function.syntax();
+    // The counter is bound once: a shadowing `let`, a closure or loop pattern
+    // naming it would make the increment count something else.
+    let bindings = function_node
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .filter(|pattern| {
+            pattern
+                .name()
+                .is_some_and(|name| name.text() == counter.as_str())
+        })
+        .count();
+    if bindings != 1 {
+        return None;
     }
-    let slice = slice_param?;
+    // Exactly one loop in the function: the per-byte `for` over the slice.
+    let loops = function_node
+        .descendants()
+        .filter(|node| {
+            ast::ForExpr::can_cast(node.kind())
+                || ast::WhileExpr::can_cast(node.kind())
+                || ast::LoopExpr::can_cast(node.kind())
+        })
+        .count();
+    if loops != 1 {
+        return None;
+    }
+    let mut loop_statements = statements.iter().filter_map(|statement| match statement {
+        ast::Stmt::ExprStmt(expr_stmt) => match expr_stmt.expr()? {
+            ast::Expr::ForExpr(for_loop) => Some(for_loop),
+            _ => None,
+        },
+        _ => None,
+    });
+    let for_loop = loop_statements.next()?;
+    if loop_statements.next().is_some() {
+        return None;
+    }
+    let pat = compact(&for_loop.pat()?.syntax().text().to_string());
+    if pat != "_" && pat != "b" && pat != "&b" {
+        return None;
+    }
+    let ast::Expr::PathExpr(path) = for_loop.iterable()? else {
+        return None;
+    };
+    let slice = path.path()?.syntax().text().to_string();
+    let loop_body = for_loop.loop_body()?;
+    let loop_node = loop_body.syntax();
+    // A `break` or `continue` can skip the increment or the predicate, so the
+    // loop body's length no longer follows the slice's.
+    if loop_node.descendants().any(|node| {
+        ast::BreakExpr::can_cast(node.kind()) || ast::ContinueExpr::can_cast(node.kind())
+    }) {
+        return None;
+    }
+    // The counter is never borrowed mutably (it could change out of sight).
+    if function_node
+        .descendants()
+        .filter_map(ast::RefExpr::cast)
+        .any(|reference| {
+            reference.mut_token().is_some()
+                && reference
+                    .expr()
+                    .is_some_and(|inner| compact(&inner.syntax().text().to_string()) == counter)
+        })
+    {
+        return None;
+    }
+    // Exactly one assignment to the counter in the whole function, and it is
+    // the body's top-level `counter += 1;`, which runs once per element:
+    // no conditional increment, reset or second update.
+    let assignments = function_node
+        .descendants()
+        .filter_map(ast::BinExpr::cast)
+        .filter(|expr| {
+            matches!(expr.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
+                && expr
+                    .lhs()
+                    .is_some_and(|lhs| compact(&lhs.syntax().text().to_string()) == counter)
+        })
+        .collect::<Vec<_>>();
+    let [assignment] = assignments.as_slice() else {
+        return None;
+    };
+    let items = loop_items(&loop_body);
+    let increment_text = format!("{counter}+=1");
+    let increment_at = items.iter().position(|item| {
+        top_level_expr(item).is_some_and(|expr| {
+            expr.syntax() == assignment.syntax()
+                && compact(&expr.syntax().text().to_string()) == increment_text
+        })
+    })?;
+    // The predicate is a top-level `if` after the increment, so it sees the
+    // counter at 1..=n, and nothing before it can leave the loop early.
+    let predicate = compact(expression);
+    let predicate_at =
+        items
+            .iter()
+            .enumerate()
+            .skip(increment_at + 1)
+            .find_map(|(position, item)| match top_level_expr(item)? {
+                ast::Expr::IfExpr(if_expr) => {
+                    (compact(&if_expr.condition()?.syntax().text().to_string()) == predicate)
+                        .then_some(position)
+                }
+                _ => None,
+            })?;
+    let exits_early = items.iter().take(predicate_at).any(|item| {
+        item.descendants().any(|node| {
+            ast::ReturnExpr::can_cast(node.kind()) || ast::TryExpr::can_cast(node.kind())
+        })
+    });
+    if exits_early {
+        return None;
+    }
     Some((slice, counter))
+}
+
+/// The loop body's top-level statements and tail expression, in order.
+fn loop_items(body: &ast::BlockExpr) -> Vec<ra_ap_syntax::SyntaxNode> {
+    let Some(list) = body.stmt_list() else {
+        return Vec::new();
+    };
+    let mut items = list
+        .statements()
+        .map(|statement| statement.syntax().clone())
+        .collect::<Vec<_>>();
+    if let Some(tail) = list.tail_expr() {
+        items.push(tail.syntax().clone());
+    }
+    items
+}
+
+/// The expression a top-level item is, as a statement or the tail.
+fn top_level_expr(item: &ra_ap_syntax::SyntaxNode) -> Option<ast::Expr> {
+    match ast::ExprStmt::cast(item.clone()) {
+        Some(statement) => statement.expr(),
+        None => ast::Expr::cast(item.clone()),
+    }
 }
 
 fn immutable_slice_parameter(owner: &FunctionSummary, name: &str) -> Option<usize> {
@@ -345,6 +451,17 @@ fn evaluates_predicate(expression: &str, counter: &str, value: usize) -> Option<
     None
 }
 
+/// Whether the predicate is true for any counter value the loop reaches on a
+/// slice of `length` elements: the increment precedes the predicate, so the
+/// counter takes `1..=length`, not only its final value.
+fn predicate_ever_true(expression: &str, counter: &str, length: usize) -> Option<bool> {
+    let mut seen_true = false;
+    for value in 1..=length {
+        seen_true |= evaluates_predicate(expression, counter, value)?;
+    }
+    Some(seen_true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,5 +498,125 @@ mod tests {
         assert_eq!(counter, "count");
         assert_eq!(immutable_slice_parameter(&owner, "hex"), Some(0));
         Ok(())
+    }
+
+    fn counter_body(loop_body: &str, after_loop: &str) -> String {
+        format!(
+            "pub fn chunk_size(hex: &[u8]) -> Result<u64, ChunkError> {{\n    let mut count = 0;\n    for &b in hex {{\n{loop_body}    }}\n{after_loop}    Ok(0)\n}}"
+        )
+    }
+
+    fn shape(body: &str, expression: &str) -> Option<(String, String)> {
+        per_byte_counter_shape(&owner_body(body), expression)
+    }
+
+    const GUARD: &str =
+        "        if 16 < count {\n            return Err(ChunkError::TooLong);\n        }\n";
+
+    #[test]
+    fn an_unconditional_increment_before_the_predicate_is_the_accepted_shape() {
+        let body = counter_body(&format!("        count += 1;\n{GUARD}"), "");
+        assert_eq!(
+            shape(&body, "16 < count"),
+            Some(("hex".to_string(), "count".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_conditional_increment_is_refused() {
+        let body = counter_body(
+            &format!("        if b != 0 {{\n            count += 1;\n        }}\n{GUARD}"),
+            "",
+        );
+        assert_eq!(shape(&body, "16 < count"), None);
+    }
+
+    #[test]
+    fn a_counter_reset_in_the_loop_is_refused() {
+        let body = counter_body(
+            &format!(
+                "        count += 1;\n        if b == 0 {{\n            count = 0;\n        }}\n{GUARD}"
+            ),
+            "",
+        );
+        assert_eq!(shape(&body, "16 < count"), None);
+    }
+
+    #[test]
+    fn a_second_increment_is_refused() {
+        let body = counter_body(
+            &format!("        count += 1;\n        count += 1;\n{GUARD}"),
+            "",
+        );
+        assert_eq!(shape(&body, "16 < count"), None);
+    }
+
+    #[test]
+    fn a_break_or_continue_in_the_loop_is_refused() {
+        let skip = counter_body(
+            &format!(
+                "        if b == 0 {{\n            continue;\n        }}\n        count += 1;\n{GUARD}"
+            ),
+            "",
+        );
+        assert_eq!(shape(&skip, "16 < count"), None);
+        let stop = counter_body(
+            &format!(
+                "        count += 1;\n        if b == 0 {{\n            break;\n        }}\n{GUARD}"
+            ),
+            "",
+        );
+        assert_eq!(shape(&stop, "16 < count"), None);
+    }
+
+    #[test]
+    fn a_predicate_after_the_loop_is_refused() {
+        let body = counter_body(
+            "        count += 1;\n",
+            "    if 16 < count {\n        return Err(ChunkError::TooLong);\n    }\n",
+        );
+        assert_eq!(shape(&body, "16 < count"), None);
+    }
+
+    #[test]
+    fn a_predicate_before_the_increment_is_refused() {
+        let body = counter_body(&format!("{GUARD}        count += 1;\n"), "");
+        assert_eq!(shape(&body, "16 < count"), None);
+    }
+
+    #[test]
+    fn an_early_exit_before_the_predicate_is_refused() {
+        let body = counter_body(
+            &format!(
+                "        count += 1;\n        let digit = (b as char).to_digit(16).ok_or(ChunkError::BadDigit)?;\n{GUARD}"
+            ),
+            "",
+        );
+        assert_eq!(shape(&body, "16 < count"), None);
+    }
+
+    #[test]
+    fn a_shadowed_counter_is_refused() {
+        let body = counter_body(
+            &format!("        count += 1;\n        let count = 0;\n{GUARD}"),
+            "",
+        );
+        assert_eq!(shape(&body, "16 < count"), None);
+    }
+
+    #[test]
+    fn the_predicate_is_judged_over_every_counter_value_not_the_last() {
+        // Equality is true only while the counter passes through 16: the
+        // final value of a 17-element slice is 17.
+        assert_eq!(predicate_ever_true("count == 16", "count", 17), Some(true));
+        assert_eq!(predicate_ever_true("count == 16", "count", 15), Some(false));
+        assert_eq!(predicate_ever_true("count != 16", "count", 1), Some(true));
+        // A counter-on-left strict bound ends false at the final value only
+        // when the loop never reached it.
+        assert_eq!(predicate_ever_true("count < 3", "count", 10), Some(true));
+        assert_eq!(predicate_ever_true("16 < count", "count", 16), Some(false));
+        assert_eq!(predicate_ever_true("16 < count", "count", 17), Some(true));
+        assert_eq!(predicate_ever_true("count <= 1", "count", 4), Some(true));
+        assert_eq!(predicate_ever_true("count == other", "count", 4), None);
     }
 }

@@ -356,7 +356,9 @@ pub(super) fn literal_slice_length(text: &str) -> Option<usize> {
         return match element {
             ast::Expr::Literal(lit) => matches!(
                 lit.kind(),
-                ast::LiteralKind::Byte(_) | ast::LiteralKind::Char(_)
+                ast::LiteralKind::Byte(_)
+                    | ast::LiteralKind::Char(_)
+                    | ast::LiteralKind::IntNumber(_)
             )
             .then_some(repeat_count),
             ast::Expr::PrefixExpr(prefix) => (prefix.op_kind() == Some(ast::UnaryOp::Neg)
@@ -446,6 +448,9 @@ mod tests {
             ("[1, 2]", None),
             ("&[0; 4]", Some(4)),
             ("&[b'f'; 16]", Some(16)),
+            ("&[0; 257]", None),
+            ("&[0; n]", None),
+            ("&[x; 4]", None),
             ("&[1 + 1]", None),
             ("&[x]", None),
             ("&[-x]", None),
