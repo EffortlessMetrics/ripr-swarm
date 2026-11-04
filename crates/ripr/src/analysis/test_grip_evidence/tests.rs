@@ -22,7 +22,7 @@ use std::os::windows::fs::symlink_file;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
 fn suffixed_decimal_arguments_preserve_whole_literal_boundaries() {
@@ -4649,6 +4649,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         attrs: Vec::new(),
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     };
     let mut index = RustIndex::default();
     index.insert_file_only(
@@ -13069,6 +13070,7 @@ fn assertion_targets_seam_returns_false_for_empty_token_list() {
         attrs: Vec::new(),
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     };
     assert!(!assertion_targets_seam(&test, &[]));
 }
@@ -14081,6 +14083,205 @@ fn success_payload_assertion_rules_read_the_failure_arm_by_text() {
             "{failure_or_mixed}"
         );
     }
+}
+
+/// #12733 / #12734: the skipped error-variant pin must read the same in every
+/// view of the `Ok(n)` seam. The classify stage's discriminate evidence agrees
+/// with the related-test record (no oracle credited), and the record says the
+/// assertion pins a different arm instead of claiming the test has no oracle.
+#[test]
+fn skipped_error_pin_reads_the_same_in_the_stage_and_the_related_test_record() -> Result<(), String>
+{
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Even,\n}\n\
+         pub fn parse_pinned(n: u8) -> Result<u8, Fault> {\n    if n % 2 == 0 { Err(Fault::Even) } else { Ok(n) }\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn pinned_even() { assert_eq!(parse_pinned(2).unwrap_err(), Fault::Even); }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let evidence = |expression: &str| -> Result<TestGripEvidence, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.expression() == expression)
+            .ok_or_else(|| format!("{expression} seam present"))?;
+        Ok(evidence_for_seam(seam, &index))
+    };
+
+    let ok_seam = evidence("Ok(n)")?;
+    let [grip] = ok_seam.related_tests.as_slice() else {
+        return Err(format!(
+            "one related test expected: {:?}",
+            ok_seam.related_tests
+        ));
+    };
+    assert_eq!(grip.oracle_strength, OracleStrength::None);
+    assert_eq!(grip.oracle_kind, OracleKind::ExactErrorVariant);
+    assert_eq!(
+        grip.evidence_summary,
+        "exact error-variant assertion on a different arm than this seam's returned value"
+    );
+    assert!(
+        super::pins_other_arm(&grip.oracle_kind, &grip.oracle_strength),
+        "the record is the typed marker for a pin on a different arm"
+    );
+    assert_eq!(
+        ok_seam.discriminate.state,
+        StageState::No,
+        "stage must agree with the record: {}",
+        ok_seam.discriminate.summary
+    );
+    assert!(
+        ok_seam
+            .discriminate
+            .summary
+            .contains("is `none` (kind-match false)"),
+        "stage summary must not read strong: {}",
+        ok_seam.discriminate.summary
+    );
+
+    // The same pin still credits the `Err(..)` seam it names, in every view.
+    let err_seam = evidence("Err(Fault::Even)")?;
+    assert_eq!(
+        err_seam.related_tests[0].oracle_strength,
+        OracleStrength::Strong
+    );
+    assert!(
+        !super::pins_other_arm(
+            &err_seam.related_tests[0].oracle_kind,
+            &err_seam.related_tests[0].oracle_strength
+        ),
+        "a pin that names the seam's own Err is not a different-arm pin"
+    );
+    assert_eq!(err_seam.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
+/// #12478: ranking a match-arm seam with many related tests builds owner
+/// reach once, not once per test, and still publishes the #12060 credited
+/// view (other-function `None`, owner+other `Strong`).
+#[test]
+fn match_arm_owner_reach_is_computed_once_for_many_related_tests() -> Result<(), String> {
+    const EXTRA_TESTS: usize = 48;
+    const SORT_REPEATS: usize = 200;
+    let mut extras = String::new();
+    let mut tests = String::from(
+        "#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }\n\
+         #[test] fn consume_and_reduce() { let _ = consume(3); assert_eq!(reduce(3), Reduction::Over(3)); }\n",
+    );
+    for i in 0..EXTRA_TESTS {
+        extras.push_str(&format!("pub fn extra_{i}() -> u64 {{ {i} }}\n"));
+        tests.push_str(&format!(
+            "#[test] fn extra_{i}_pin() {{ assert_eq!(extra_{i}(), {i}); }}\n"
+        ));
+    }
+    let prod = format!(
+        "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
+         pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
+         pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
+         {extras}\
+         #[cfg(test)]\nmod tests {{\n    use super::*;\n    {tests}\n}}\n"
+    );
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let arm = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::MatchArm && s.expression().contains("Over"))
+        .ok_or_else(|| "Over arm seam present".to_string())?;
+    let context = CompactGripContext::new(&index);
+    let owner_fn = context.owner_function(arm.file(), arm.display_line());
+    let related = find_related_tests_with_context(arm, &context);
+    if related.len() < EXTRA_TESTS + 2 {
+        return Err(format!(
+            "expected at least {} related tests, found {}",
+            EXTRA_TESTS + 2,
+            related.len()
+        ));
+    }
+
+    let mut warmup = related.clone();
+    let _ = sort_related_tests_for_seam(arm, &context, owner_fn, &mut warmup);
+
+    CREDITED_OWNER_REACH_BUILDS.with(|count| count.set(0));
+    let started = Instant::now();
+    for _ in 0..SORT_REPEATS {
+        let mut ranked = related.clone();
+        let _ = sort_related_tests_for_seam(arm, &context, owner_fn, &mut ranked);
+    }
+    let elapsed = started.elapsed();
+    let builds = CREDITED_OWNER_REACH_BUILDS.with(|count| count.get());
+    eprintln!(
+        "sort_related_tests_for_seam: related={} repeats={} owner_reach_builds={} elapsed={elapsed:?}",
+        related.len(),
+        SORT_REPEATS,
+        builds
+    );
+    if builds != SORT_REPEATS {
+        return Err(format!(
+            "expected one owner_reach per sort ({SORT_REPEATS} sorts, {} related tests), saw {builds}; elapsed {elapsed:?}",
+            related.len()
+        ));
+    }
+
+    let mut ranked = related.clone();
+    let ranked_oracles = sort_related_tests_for_seam(arm, &context, owner_fn, &mut ranked);
+    let published: Vec<(String, OracleStrength)> = ranked
+        .iter()
+        .zip(ranked_oracles)
+        .map(|((indexed, _reason), oracle)| (indexed.test.name.clone(), oracle.1))
+        .collect();
+    let strength = |name: &str| {
+        published
+            .iter()
+            .find(|(test, _)| test == name)
+            .map(|(_, strength)| strength.clone())
+            .ok_or_else(|| format!("{name} related"))
+    };
+    assert_eq!(
+        strength("reduce_over")?,
+        OracleStrength::None,
+        "other-function"
+    );
+    assert_eq!(
+        strength("consume_and_reduce")?,
+        OracleStrength::Strong,
+        "owner+other"
+    );
+    for i in 0..EXTRA_TESTS {
+        let name = format!("extra_{i}_pin");
+        if let Ok(found) = strength(&name) {
+            assert_eq!(found, OracleStrength::None, "{name}");
+        }
+    }
+
+    let full = evidence_for_seam(arm, &index);
+    let compact = compact_evidence_for_seam(arm, &context);
+    assert_eq!(
+        full.propagate.state, compact.propagate.state,
+        "full and compact propagate"
+    );
+    let full_by_name: Vec<(String, OracleStrength)> = full
+        .related_tests
+        .iter()
+        .map(|grip| (grip.test_name.clone(), grip.oracle_strength.clone()))
+        .collect();
+    assert_eq!(
+        full_by_name
+            .iter()
+            .find(|(name, _)| name == "reduce_over")
+            .map(|(_, strength)| strength),
+        Some(&OracleStrength::None),
+        "published other-function"
+    );
+    assert_eq!(
+        full_by_name
+            .iter()
+            .find(|(name, _)| name == "consume_and_reduce")
+            .map(|(_, strength)| strength),
+        Some(&OracleStrength::Strong),
+        "published owner+other"
+    );
+    Ok(())
 }
 
 /// #12053: a repo seam whose one-line arms all hold the same statement
@@ -15268,6 +15469,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 attrs: Vec::new(),
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });

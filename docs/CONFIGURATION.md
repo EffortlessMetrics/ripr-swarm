@@ -366,7 +366,10 @@ leaves no changed file fails with `scope_filter_matched_nothing` (exit 2). Rust
 files with a generator header (`@generated`, `Code generated ... DO NOT EDIT`,
 rust-bindgen), `cargo vendor` crates and a root `target/` directory are already
 skipped with a named limitation before the limits apply, without any flag.
-`--path` and `--exclude` do not apply to repo-scoped formats.
+`--path` and `--exclude` do not apply to repo-scoped formats. `ripr explain`
+and `ripr context` accept the same flags, and a scoped `ripr check` prints
+them on its explain, context, and `check --json` drill-in commands so a paste
+re-analyzes the same files instead of the full oversized diff.
 
 To reduce full-cache shard counts for a repo on a machine with enough headroom:
 
@@ -391,6 +394,7 @@ Renders a single finding in human format.
 
 ```text
 ripr explain [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
+             [--path GLOB] [--exclude GLOB]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH] [--quiet] <finding-id | file:line>
 ```
@@ -415,6 +419,7 @@ Emits a compact JSON context packet for one finding.
 
 ```text
 ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
+             [--path GLOB] [--exclude GLOB]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH]
              (--at | --finding) <finding-id | file:line>
@@ -1041,6 +1046,54 @@ smoke-only assertions remain smoke.
 | `mock_expectation_strength` | same enum | `medium` | Strength assigned to mock/side-effect expectation oracles. |
 | `broad_error_strength` | same enum | `weak` | Strength assigned to broad error checks such as `is_err()`. |
 
+### `[[overrides]]`
+
+Optional. Absent or empty means every crate uses the repo-wide `[severity]`
+and `[oracles]` values — existing configs stay byte-identical. Each row
+selects **exactly one** of `crate` or `path` and overrides **only** nested
+`severity` and/or `oracles` fields; unspecified nested keys keep the
+repo-wide value. Other `ripr.toml` sections cannot be overridden here.
+
+| Field | Type | Effect |
+| --- | --- | --- |
+| `crate` | Cargo package name | Matches one workspace package (`letters`, digits, `_`, `-`). Unknown names fail closed at load with a diagnostic that lists known packages. |
+| `path` | repository-relative glob | Matches `/`-separated paths with `*`, `?`, and `**` (the same dialect as generated-file patterns). |
+| `severity` | table | Partial `[severity.findings]` / `[severity.seams]` overlay. Render-only, like repo-wide severity. |
+| `oracles` | table | Partial `[oracles]` overlay. Finding-affecting: it joins the check-artifact config identity. |
+
+Resolution: the most specific matching row wins, otherwise the repo-wide
+default. A `crate` selector outranks a `path` glob. Among path globs, more
+literal path segments win. Equal specificity keeps the later matching row;
+that later-row order is part of the oracle overlay identity, so swapping two
+equally specific oracle rows is a finding-affecting change.
+
+Crate names resolve from the `Cargo.toml` workspace that owns the discovered
+`ripr.toml` (including nested `members` globs such as `crates/*/plugins/*`,
+and `workspace.exclude`). A crate selector applies to that package's files
+only; nested workspace packages keep their own match. Unknown names fail
+closed at load, including `--candidate-tree` runs, which bind names against
+manifests in that immutable tree rather than the worktree.
+
+Oracle overlays apply on the Rust adapter, which is the only language adapter
+that currently consumes `[oracles]` / `OraclePolicy`. Python, TypeScript, and
+Perl adapters ignore `OraclePolicy` today (repo-wide and overlay alike).
+Severity overlays still apply at render time for every language.
+
+```toml
+[severity.findings]
+weakly_exposed = "warning"
+
+[[overrides]]
+crate = "xtask"
+severity.findings.weakly_exposed = "note"
+
+[[overrides]]
+path = "crates/preview/**"
+oracles.snapshot_strength = "weak"
+```
+
+`ripr init` still writes defaults only; it does not add `[[overrides]]`.
+
 ### `[severity.findings]`
 
 Finding severities affect human output, JSON `severity`, GitHub annotations,
@@ -1127,11 +1180,12 @@ finding-affecting config for artifact/receipt comparison. Rerun analysis after
 changing it; do not reuse an old excluded-source receipt as complete evidence.
 
 `[languages.python]` and `[languages.typescript]` configure the preview
-adapters. Each admits one override:
+adapters:
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `handwritten_files` | array of exact paths | `[]` | Repository-relative files to analyze even though a path component matches the adapter's built-in excluded-directory conventions (`.git`, `target`, `node_modules`, virtualenvs, `site-packages`, caches, and build-output names such as `build/`, `dist/` and, for TypeScript, `out/`). Python declarations must name `.py` files; TypeScript declarations must name one of the routed TypeScript/JavaScript extensions (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs`). Exact paths only — globs are rejected. Generated-name conventions still exclude a declared path. The override applies to diff checks; repo-scope exposure remains convention-scoped. |
+| `excluded_file_patterns` | array of strings | `[]` | Additional repository-relative globs omitted from preview-language indexing during diff checks (#5380). Uses the same `/`-separated glob dialect as `[languages.rust] generated_file_patterns`. Parse-budget refusals on paths that look like fixture or data files point here instead of advising a source rewrite. |
 
 For example, a project that keeps hand-written Python source under a `build/`
 package can admit it:
@@ -1139,6 +1193,13 @@ package can admit it:
 ```toml
 [languages.python]
 handwritten_files = ["build/lib/pipeline.py"]
+```
+
+To keep syntax-highlighted or other fixture trees out of Python preview indexing:
+
+```toml
+[languages.python]
+excluded_file_patterns = ["tests/syntax-tests/**"]
 ```
 
 When a changed file is still skipped by these conventions, the run's
@@ -1291,6 +1352,10 @@ static_unknown = "note"
 [severity.seams]
 weakly_gripped = "warning"
 opaque = "info"
+
+[[overrides]]
+crate = "xtask"
+severity.findings.weakly_exposed = "note"
 
 [lsp]
 seam_diagnostics = true

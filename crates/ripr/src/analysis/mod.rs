@@ -161,9 +161,10 @@ pub(crate) use seam_inventory::{
     DiffScopedCacheStatsAttribution, FileSeamIndex, PilotInventoryDefault,
     PreparedDiffScopedClassifiedWorkspace, PreparedDiffScopedEvaluationInput,
     REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer,
-    SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
-    classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
-    diff_only_rust_files, evaluate_diff_scoped_classified_seams_from_prepared,
+    SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError, announce_seam_facts_cache_misses,
+    apply_pilot_seam_budget, classify_seams_in_file_with_shared_index,
+    classify_seams_in_files_at_with_config, diff_only_rust_files,
+    evaluate_diff_scoped_classified_seams_from_prepared,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
@@ -604,6 +605,26 @@ pub(crate) fn field_write_read(seam: &seams::RepoSeam) -> Option<FieldWriteRead>
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
 /// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8.
 pub(crate) fn stable_path_text(path: &Path) -> String {
+    stable_native_path_text(path).replace('\\', "/")
+}
+
+/// Retain native source identity before display normalization. On Unix a
+/// backslash is a literal filename byte, so reserve `%5C` for it; a literal
+/// percent spelling has already been escaped by the shared native encoder.
+/// On Windows backslashes remain native separators and render as slashes.
+pub(crate) fn stable_source_path_text(path: &Path) -> String {
+    let encoded = stable_native_path_text(path);
+    #[cfg(unix)]
+    {
+        encoded.replace('\\', "%5C")
+    }
+    #[cfg(not(unix))]
+    {
+        encoded.replace('\\', "/")
+    }
+}
+
+fn stable_native_path_text(path: &Path) -> String {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
@@ -630,14 +651,14 @@ pub(crate) fn stable_path_text(path: &Path) -> String {
                 }
             }
         }
-        output.replace('\\', "/")
+        output
     }
 
     #[cfg(not(unix))]
     {
         let mut output = String::new();
         push_stable_path_text(&mut output, &path.to_string_lossy());
-        output.replace('\\', "/")
+        output
     }
 }
 
@@ -1392,6 +1413,37 @@ mod tests {
         assert_ne!(
             stable_path_text(Path::new("pricing_%FF.rs")),
             "pricing_%FF.rs"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stable_source_path_text_preserves_literal_backslashes_before_display() {
+        for (native, encoded) in [
+            ("src/odd\\receipt.rs", "src/odd%5Creceipt.rs"),
+            ("src/odd/receipt.rs", "src/odd/receipt.rs"),
+            ("src/odd%5Creceipt.rs", "src/odd%255Creceipt.rs"),
+        ] {
+            assert_eq!(stable_source_path_text(Path::new(native)), encoded);
+            assert_eq!(decode_stable_path_text(encoded), PathBuf::from(native));
+        }
+        assert_ne!(
+            stable_source_path_text(Path::new(r"src/odd\receipt.rs")),
+            stable_source_path_text(Path::new("src/odd/receipt.rs"))
+        );
+        assert_eq!(
+            stable_path_text(Path::new(r"src/odd\receipt.rs")),
+            stable_path_text(Path::new("src/odd/receipt.rs")),
+            "display normalization still collapses backslashes for stable_path_text"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stable_source_path_text_normalizes_native_separators_on_windows() {
+        assert_eq!(
+            stable_source_path_text(Path::new(r"tests\receipt.rs")),
+            "tests/receipt.rs"
         );
     }
 

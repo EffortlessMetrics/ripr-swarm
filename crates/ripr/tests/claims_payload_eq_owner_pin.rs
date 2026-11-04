@@ -309,6 +309,313 @@ fn claims_payload_equality_credits_only_on_a_verified_claims_import() -> Result<
     Ok(())
 }
 
+/// #12716: a literal that neither the owner before the diff nor after it
+/// returns for the call's literal arguments fails on both versions, so it is
+/// not a discriminator of the change. The owner-return pin withholds the credit
+/// for the claims macros and plain `assert_eq!` alike. A literal pinned to the
+/// old value or the new one tells the versions apart and stays credited, and
+/// anything the closed evaluator cannot judge keeps today's reading.
+#[test]
+fn a_pinned_literal_neither_owner_version_returns_does_not_credit() -> Result<(), String> {
+    let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("claims_payload_eq_mismatch");
+    let ok = "use claims::assert_ok_eq;";
+    let some = "use claims::assert_some_eq;";
+    let cases = [
+        // Positive controls: the literal is what the owner returns after the diff.
+        result_case(
+            "c_claims_right",
+            ok,
+            "assert_ok_eq!(checked_div(17, 5), 3);",
+            true,
+        ),
+        result_case(
+            "c_eq_unwrap_right",
+            "",
+            "assert_eq!(checked_div(17, 5).unwrap(), 3);",
+            true,
+        ),
+        result_case(
+            "c_eq_ok_right",
+            "",
+            "assert_eq!(checked_div(17, 5), Ok(3));",
+            true,
+        ),
+        result_case(
+            "c_claims_multi_line_right",
+            ok,
+            "assert_ok_eq!(\n    checked_div(17, 5),\n    3\n);",
+            true,
+        ),
+        option_case("c_some_right", some, "assert_some_eq!(half(8), 4);", true),
+        option_case("c_eq_some_right", "", "assert_eq!(half(8), Some(4));", true),
+        // The value the owner returned before the diff: the test passes before
+        // and fails after, which is a discriminator.
+        result_case(
+            "o_claims_old",
+            ok,
+            "assert_ok_eq!(checked_div(17, 5), 4);",
+            true,
+        ),
+        result_case(
+            "o_eq_old",
+            "",
+            "assert_eq!(checked_div(17, 5), Ok(4));",
+            true,
+        ),
+        option_case("o_some_old", some, "assert_some_eq!(half(8), 5);", true),
+        // Neither version returns the literal.
+        result_case(
+            "w_claims",
+            ok,
+            "assert_ok_eq!(checked_div(17, 5), 9);",
+            false,
+        ),
+        result_case(
+            "w_eq_unwrap",
+            "",
+            "assert_eq!(checked_div(17, 5).unwrap(), 9);",
+            false,
+        ),
+        result_case(
+            "w_eq_ok",
+            "",
+            "assert_eq!(checked_div(17, 5), Ok(9));",
+            false,
+        ),
+        result_case(
+            "w_claims_multi_line",
+            ok,
+            "assert_ok_eq!(\n    checked_div(17, 5),\n    9\n);",
+            false,
+        ),
+        option_case("w_some", some, "assert_some_eq!(half(8), 7);", false),
+        option_case("w_eq_some", "", "assert_eq!(half(8), Some(7));", false),
+        // The owner takes its guard exit for these arguments.
+        result_case(
+            "g_claims_div_zero",
+            ok,
+            "assert_ok_eq!(checked_div(17, 0), 0);",
+            false,
+        ),
+        option_case("g_some_odd", some, "assert_some_eq!(half(7), 3);", false),
+        // Outside the closed subset: an expression argument is not read, so the
+        // reading is today's. 9 is neither version's value, so the row credits
+        // only while the expression stays unevaluated.
+        result_case(
+            "u_expression_argument",
+            ok,
+            "assert_ok_eq!(checked_div(16 + 1, 5), 9);",
+            true,
+        ),
+    ];
+    for case in cases {
+        let outcome = run(&root_dir, &case, "return_value")?;
+        assert_eq!(
+            outcome.class == "exposed",
+            case.credited,
+            "{}: {}",
+            case.name,
+            outcome.class
+        );
+        // A claims macro grades only through the pin, so a withheld one reads
+        // `unknown` / none. A plain `assert_eq!` is an exact-value assertion
+        // whatever the pin says; its withheld credit shows in the verdict.
+        let claims = case.body.contains("assert_ok_eq!") || case.body.contains("assert_some_eq!");
+        if case.credited || claims {
+            let expected = if case.credited {
+                ("exact_value".to_string(), "strong".to_string())
+            } else {
+                ("unknown".to_string(), "none".to_string())
+            };
+            assert_eq!(outcome.oracle, expected, "{}: oracle", case.name);
+        }
+    }
+    Ok(())
+}
+
+/// #12705: the `assert_ok_eq` / `assert_some_eq` import is read through the
+/// same scope rule as the payload macros (#12564), so an import that is not in
+/// scope of the test, or is compiled out, grants no credit.
+#[test]
+fn the_eq_macro_import_must_be_in_scope_of_the_test() -> Result<(), String> {
+    let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("claims_payload_eq_scope");
+    let ok = "assert_ok_eq!(checked_div(17, 5), 3);";
+    let some = "assert_some_eq!(half(8), 4);";
+    let mut cases = vec![
+        // Control: the import at the file root, outside the test module.
+        Case {
+            owner_extra: "use claims::assert_ok_eq;\n",
+            ..result_case("eq_ok_file_root_import", "", ok, true)
+        },
+        Case {
+            owner_extra: "use claims::assert_some_eq;\n",
+            ..option_case("eq_some_file_root_import", "", some, true)
+        },
+        // The same import inside another function is not in scope of the test.
+        Case {
+            owner_extra: "fn unrelated() {\n    use claims::assert_ok_eq;\n}\n",
+            ..result_case("eq_ok_import_in_another_function", "", ok, false)
+        },
+        Case {
+            owner_extra: "fn unrelated() {\n    use claims::assert_some_eq;\n}\n",
+            ..option_case("eq_some_import_in_another_function", "", some, false)
+        },
+        // Compiled out.
+        result_case(
+            "eq_ok_import_under_cfg_any_empty",
+            "#[cfg(any())]\nuse claims::assert_ok_eq;",
+            ok,
+            false,
+        ),
+        option_case(
+            "eq_some_import_under_cfg_any_empty",
+            "#[cfg(any())]\nuse claims::assert_some_eq;",
+            some,
+            false,
+        ),
+    ];
+    // An import inside a sibling module is not in scope of the test.
+    cases.push(Case {
+        owner_extra: "mod other {\n    use claims::assert_ok_eq;\n}\n",
+        ..result_case("eq_ok_import_in_a_sibling_module", "", ok, false)
+    });
+    // An import in a nested block of the test, used outside that block.
+    cases.push(result_case(
+        "eq_ok_import_in_a_nested_block_used_outside",
+        "",
+        "{\n    use claims::assert_ok_eq;\n}\nassert_ok_eq!(checked_div(17, 5), 3);",
+        false,
+    ));
+    // A cfg that holds keeps the import; one that does not drops it. A rule
+    // that refused every cfg-attributed import would fail the first row.
+    cases.push(result_case(
+        "eq_ok_import_under_cfg_test",
+        "#[cfg(test)]\nuse claims::assert_ok_eq;",
+        ok,
+        true,
+    ));
+    cases.push(result_case(
+        "eq_ok_import_under_cfg_not_test",
+        "#[cfg(not(test))]\nuse claims::assert_ok_eq;",
+        ok,
+        false,
+    ));
+    // The `assert_some_eq` twin of the in-test row.
+    cases.push(option_case(
+        "eq_some_import_inside_the_test",
+        "",
+        "use claims::assert_some_eq;\nassert_some_eq!(half(8), 4);",
+        true,
+    ));
+    // An import inside the test's own body is in scope.
+    cases.push(result_case(
+        "eq_ok_import_inside_the_test",
+        "",
+        "use claims::assert_ok_eq;\nassert_ok_eq!(checked_div(17, 5), 3);",
+        true,
+    ));
+    for case in cases {
+        let outcome = run(&root_dir, &case, "return_value")?;
+        assert_eq!(
+            outcome.class == "exposed",
+            case.credited,
+            "{}: {}",
+            case.name,
+            outcome.class
+        );
+        let expected = if case.credited {
+            ("exact_value".to_string(), "strong".to_string())
+        } else {
+            ("unknown".to_string(), "none".to_string())
+        };
+        assert_eq!(outcome.oracle, expected, "{}: oracle", case.name);
+    }
+    Ok(())
+}
+
+/// RIPR-SPEC-0197 literal `matches!` pins read the same two owner versions as
+/// `assert_eq!`: a pattern that neither returns fails on both and is withheld,
+/// while the old or new value keeps its credit (#12716).
+#[test]
+fn a_literal_matches_pin_neither_owner_version_returns_does_not_credit() -> Result<(), String> {
+    let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("matches_pin_mismatch");
+    let cases = [
+        result_case(
+            "m_right",
+            "",
+            "assert!(matches!(checked_div(17, 5), Ok(3)));",
+            true,
+        ),
+        result_case(
+            "m_old",
+            "",
+            "assert!(matches!(checked_div(17, 5), Ok(4)));",
+            true,
+        ),
+        option_case(
+            "m_some_right",
+            "",
+            "assert!(matches!(half(8), Some(4)));",
+            true,
+        ),
+        option_case(
+            "m_some_old",
+            "",
+            "assert!(matches!(half(8), Some(5)));",
+            true,
+        ),
+        result_case(
+            "m_neither",
+            "",
+            "assert!(matches!(checked_div(17, 5), Ok(9)));",
+            false,
+        ),
+        result_case(
+            "m_neither_multi_line",
+            "",
+            "assert!(matches!(\n    checked_div(17, 5),\n    Ok(9)\n));",
+            false,
+        ),
+        option_case(
+            "m_some_neither",
+            "",
+            "assert!(matches!(half(8), Some(7)));",
+            false,
+        ),
+        result_case(
+            "m_guard_exit",
+            "",
+            "assert!(matches!(checked_div(17, 0), Ok(0)));",
+            false,
+        ),
+        option_case(
+            "m_some_guard_exit",
+            "",
+            "assert!(matches!(half(7), Some(3)));",
+            false,
+        ),
+        // An expression argument is outside the closed subset, so today's
+        // reading holds.
+        result_case(
+            "m_expression_argument",
+            "",
+            "assert!(matches!(checked_div(16 + 1, 5), Ok(9)));",
+            true,
+        ),
+    ];
+    for case in cases {
+        let outcome = run(&root_dir, &case, "return_value")?;
+        assert_eq!(
+            outcome.class == "exposed",
+            case.credited,
+            "{}: {}",
+            case.name,
+            outcome.class
+        );
+    }
+    Ok(())
+}
+
 /// The same verified-import twin under probes that are not `return_value`
 /// (RIPR-SPEC-0197 rule 5): the macro is graded for the return-value family
 /// only, so every other family keeps `unknown` / none and no credit.
@@ -484,6 +791,11 @@ fn run(root_dir: &std::path::Path, case: &Case, family: &str) -> Result<Outcome,
         .iter()
         .find(|f| f.probe.family.as_str() == family)
         .ok_or_else(|| format!("{}: no {family} finding", case.name))?;
+    if family == "return_value"
+        && (case.body.contains("assert_ok_eq!") || case.body.contains("assert_some_eq!"))
+    {
+        assert_audit_agrees(&root, case, finding.class.as_str())?;
+    }
     let test = finding
         .related_tests
         .first()
@@ -499,4 +811,63 @@ fn run(root_dir: &std::path::Path, case: &Case, family: &str) -> Result<Outcome,
             .as_ref()
             .map(|kind| kind.as_str().to_string()),
     })
+}
+
+/// #12394 item 3: the repo-wide audit reads the same test through the same
+/// owner-pin decision as `ripr check`. For the owner's `Ok(..)` / `Some(..)`
+/// return-value seam the audit reads `strongly_gripped` exactly when the diff
+/// path reads `exposed`: a credited shape is not under-credited by the audit,
+/// and a refused shape is not credited by it either. Plain `assert_eq!` bodies
+/// are extracted oracles on both paths and are not part of this control.
+fn assert_audit_agrees(
+    root: &std::path::Path,
+    case: &Case,
+    diff_class: &str,
+) -> Result<(), String> {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["check", "--root"])
+        .arg(root)
+        .args(["--mode", "draft", "--format", "repo-exposure-json"])
+        .output()
+        .map_err(|e| format!("{}: ripr audit failed to start: {e}", case.name))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{}: ripr audit exited {:?}: {}",
+            case.name,
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let audit: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("{}: audit JSON failed to parse: {e}", case.name))?;
+    let seam = audit
+        .get("seams")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|seams| {
+            seams.iter().find(|seam| {
+                seam.get("kind").and_then(serde_json::Value::as_str) == Some("return_value")
+                    && seam
+                        .get("expression")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|expression| {
+                            matches!(expression.trim(), "Ok(a / b)" | "Some(n / 2)")
+                        })
+            })
+        })
+        .ok_or_else(|| format!("{}: audit has no owner return-value seam", case.name))?;
+    let grip = seam
+        .get("grip_class")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{}: audit seam has no grip_class", case.name))?;
+    // A literal that is only the owner's value before the diff (`o_*`) is a
+    // discriminator for the diff and a failing test for the audit, which
+    // reads the current owner: the audit withholds it.
+    let expect_credit = diff_class == "exposed" && !case.name.starts_with("o_");
+    if (grip == "strongly_gripped") != expect_credit {
+        return Err(format!(
+            "{}: audit reads {grip} but the diff path reads {diff_class}",
+            case.name
+        ));
+    }
+    Ok(())
 }

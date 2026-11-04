@@ -1,0 +1,17 @@
+# Catalog-backed recovery, actionability, and profile metadata (#4675 first slice).
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::aliases_remain_empty_unless_current_output_requires_them",
+  "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::every_entry_has_closed_recovery_and_actionability",
+  "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::named_fixture_families_earn_catalog_metadata",
+  "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::stale_is_instance_join_not_a_catalog_default",
+  "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::missing_recovery_stays_typed_unavailable",
+  "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::client_capability_cannot_change_catalog_state",
+  "crates/ripr/src/lsp/diagnostic_catalog.rs::tests::recovery_kind_names_are_stable",
+  "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::emitted_named_family_codes_keep_catalog_metadata",
+]
+code = [
+  "crates/ripr/src/lsp/diagnostic_catalog.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+]

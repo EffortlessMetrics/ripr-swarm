@@ -1,0 +1,462 @@
+name: Golden re-bless
+
+# Hosted formatting-only golden re-bless route (#11736, Proposal A): a
+# workflow_dispatch pipeline that judges a PR's golden drift and, only when
+# every drifted fixture is provably formatting-only, pushes one bot-authored
+# commit of re-blessed expected-files to the PR branch.
+#
+# Three privilege tiers, one job each, so PR-authored code never shares a job
+# with a write token:
+#
+#   prepare  pull-requests: write  gh api only: preflight, mergeability, claim.
+#                                  Checks out and executes nothing.
+#   bless    contents: read        Checks out the merge ref (the two-parent
+#                                  integration tree the required merge-ready
+#                                  qualification already compiles and
+#                                  executes), runs goldens check / judge /
+#                                  bless / confirm, and uploads only a patch
+#                                  and the drift report as artifacts.
+#   publish  contents: write       Executes no PR-authored code. Validates the
+#                                  patch (fixture-name regex; only regular
+#                                  files under fixtures/<name>/expected/),
+#                                  applies it on top of the preflight head SHA
+#                                  so the pushed commit has the PR head as its
+#                                  only parent, and pushes one bot commit.
+#   refuse   pull-requests: write  Posts the classified drift on a judged
+#                                  refusal. Pushes nothing.
+#
+# The judge (a jq gate over golden-drift.json plus an independent
+# `git diff --no-index` byte compare of every drifted fixture's check.json) is
+# stricter than the merge-ref classifier's normalized `formatting_only` label:
+# a renderer PR that only moves finding locations inside check.json changes
+# the machine contract and is refused. It runs in the bless job, beside
+# PR-authored xtask, so it is a consistency check on that tier's output; the
+# authority boundary is the publish job's artifact validation, which accepts
+# nothing but expected-file content for judged fixtures.
+#
+# Trust boundary: a workflow_dispatch runs the workflow file from whichever
+# ref the dispatcher selects, so the `github.ref` guard below cannot defend
+# itself against a modified copy of this file. The boundary this route relies
+# on is repository write access: a dispatcher can already push to any
+# unprotected same-repository PR branch. Pinning the writer to the default
+# branch in settings (a deployment-branch-restricted environment) is tracked
+# in #12855 and is not claimed here.
+#
+# Re-arm: a GITHUB_TOKEN push and GITHUB_TOKEN label edits create no workflow
+# runs, so this route cannot re-arm merge-ready qualification itself. It
+# leaves labels untouched and comments the exact re-arm command on the PR.
+#
+# This workflow dispatches nothing, resolves no review threads, and holds no
+# branch-protection, ruleset, or release authority. Refusals are visible red
+# runs plus one PR comment; a refused dispatch never pushes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number whose merge ref supplies the source"
+        required: true
+        type: string
+      note:
+        description: "Optional context appended to each bless reason"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# A re-dispatch supersedes the previous attempt: nothing durable exists until
+# the one push, and a mid-flight cancel before the push loses nothing.
+concurrency:
+  group: goldens-rebless-${{ inputs.pr || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  REPOSITORY: EffortlessMetrics/ripr-swarm
+  PR_INPUT: ${{ inputs.pr }}
+  NOTE_INPUT: ${{ inputs.note }}
+
+jobs:
+  prepare:
+    name: Preflight and claim
+    if: github.repository == 'EffortlessMetrics/ripr-swarm' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # pull-requests: write covers the claim and refusal comments only.
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      pr_number: ${{ steps.preflight.outputs.pr_number }}
+      head_sha: ${{ steps.preflight.outputs.head_sha }}
+      head_branch: ${{ steps.preflight.outputs.head_branch }}
+      was_merge_ready: ${{ steps.claim.outputs.was_merge_ready }}
+    steps:
+      - name: Preflight the dispatch target (gh api only, no checkout)
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          refuse() {
+            gh api "repos/$REPOSITORY/issues/$pr_num/comments" -f body="$1" > /dev/null
+            echo "::error::goldens-rebless refused PR #$pr_num"
+            exit 1
+          }
+          if ! [[ "$PR_INPUT" =~ ^[0-9]+$ ]]; then
+            echo "::error::pr input must be a PR number, got: $PR_INPUT"
+            exit 1
+          fi
+          pr_num="$PR_INPUT"
+          pr_json="$(gh api "repos/$REPOSITORY/pulls/$pr_num" --jq '[(.state | ascii_downcase), (.merged | tostring), (.head.repo.full_name // "fork-or-gone"), .head.sha, .head.ref] | join(" ")')"
+          read -r pr_state pr_merged head_repo head_sha head_branch <<<"$pr_json"
+          if [ "$pr_state" != "open" ] || [ "$pr_merged" = "true" ]; then
+            refuse "goldens-rebless refused PR #$pr_num: it is \`$pr_state\` (merged=$pr_merged); only an open, unmerged PR can receive a bless."
+          fi
+          if [ "$head_repo" != "$REPOSITORY" ]; then
+            refuse "goldens-rebless refused PR #$pr_num: the head lives on \`$head_repo\` (fork), where this token holds no write; bless the same-repo branch instead."
+          fi
+          default_branch="$(gh api "repos/$REPOSITORY" --jq .default_branch)"
+          head_protected="$(gh api "repos/$REPOSITORY/branches/$head_branch" --jq .protected 2>/dev/null || echo unknown)"
+          if [ "$head_branch" = "$default_branch" ] || [ "$head_protected" != "false" ]; then
+            refuse "goldens-rebless refused PR #$pr_num: its head branch \`$head_branch\` is the default branch, protected, or its protection could not be read (protected=$head_protected); the route only pushes to unprotected PR branches."
+          fi
+          echo "pr_number=$pr_num" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "head_branch=$head_branch" >> "$GITHUB_OUTPUT"
+
+      - name: Require a mergeable PR (the merge ref must exist)
+        id: mergeable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.preflight.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          refuse() {
+            gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -f body="$1" > /dev/null
+            echo "::error::goldens-rebless refused PR #$PR_NUMBER"
+            exit 1
+          }
+          mergeable=unknown
+          merge_state=unknown
+          for _ in 1 2 3 4 5 6; do
+            read -r mergeable merge_state <<<"$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq '[(.mergeable | tostring), .mergeable_state] | join(" ")')"
+            [ "$mergeable" != "null" ] || mergeable=unknown
+            if [ "$mergeable" != "unknown" ]; then break; fi
+            sleep 10
+          done
+          if [ "$mergeable" != "true" ] || [ "$merge_state" = "dirty" ]; then
+            refuse "goldens-rebless refused PR #$PR_NUMBER: mergeable=\`$mergeable\`, mergeable_state=\`$merge_state\`. \`refs/pull/$PR_NUMBER/merge\` only exists while the PR merges cleanly; resolve conflicts and re-dispatch."
+          fi
+
+      - name: Claim convergence (4h live-claim scan) and read the merge-ready label
+        id: claim
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.preflight.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          newest_foreign="$(gh api --paginate "repos/$REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" --jq '[.[] | select((.body | contains("Converging this PR:")) and (.body | contains("goldens-rebless-claim") | not))] | sort_by(.created_at) | last.created_at // empty' | tail -1)"
+          if [ -n "$newest_foreign" ]; then
+            age=$(( $(date -u +%s) - $(date -u -d "$newest_foreign" +%s) ))
+            if [ "$age" -lt 14400 ]; then
+              gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -f body="goldens-rebless refused PR #$PR_NUMBER: another actor's convergence claim (posted $newest_foreign) is younger than 4h. Claim liveness is judged by the owning actor; re-dispatch once the claim goes stale or the owner re-arms." > /dev/null
+              echo "::error::live convergence claim ($newest_foreign, ${age}s old); refusing per PR_AUTOMATION.md"
+              exit 1
+            fi
+          fi
+          run_url="$GITHUB_SERVER_URL/$REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -f body="<!-- goldens-rebless-claim:$GITHUB_RUN_ID -->
+          Converging this PR: hosted goldens-rebless (run <$run_url>). Formatting-only re-bless only: the judge blesses nothing unless every drifted fixture has empty semantic arrays and a byte-identical \`check.json\`." > /dev/null
+          was_merge_ready="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq '[.labels[].name] | any(. == "merge-ready")')"
+          echo "was_merge_ready=$was_merge_ready" >> "$GITHUB_OUTPUT"
+
+  bless:
+    name: Judge and re-bless formatting-only goldens
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Executes PR-authored build scripts: no write scope, no token in git.
+    permissions:
+      contents: read
+    outputs:
+      refusal: ${{ steps.mark.outputs.refusal }}
+    env:
+      PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+      HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+    steps:
+      - name: Check out the merge ref (two-parent integration tree)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: refs/pull/${{ needs.prepare.outputs.pr_number }}/merge
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: Require the merge ref to be built from the preflight head
+        run: |
+          set -euo pipefail
+          merge_parent="$(git rev-parse --verify --quiet 'HEAD^2' || true)"
+          if [ "$merge_parent" != "$HEAD_SHA" ]; then
+            echo "::error::merge ref second parent (${merge_parent:-none}) is not the preflight head $HEAD_SHA; the PR moved or the merge ref is stale, re-dispatch"
+            exit 1
+          fi
+
+      - name: Install the pinned toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+
+      - name: Fetch the locked fixture manifests
+        run: |
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+          cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
+
+      - name: Pre-bless goldens check (failure is the expected witness)
+        run: |
+          set -euo pipefail
+          status=0
+          cargo xtask goldens check > /tmp/goldens-pre-bless.log 2>&1 || status=$?
+          echo "$status" > /tmp/goldens-pre-bless.status
+          tail -40 /tmp/goldens-pre-bless.log || true
+          echo "pre-bless goldens check exited $status; the judge, not the exit code, decides what is blessable"
+
+      - name: Judge golden drift classes (trusted jq gates)
+        id: judge_gates
+        run: |
+          set -euo pipefail
+          drift_json="target/ripr/reports/golden-drift.json"
+          if [ ! -s "$drift_json" ]; then
+            echo "::error::golden-drift.json is missing or empty; the goldens check must write its report set even when it fails"
+            exit 1
+          fi
+          status="$(jq -r '.status' "$drift_json")"
+          if [ "$status" != "warn" ]; then
+            echo "::error::golden-drift status is '$status'; only 'warn' (drift-only, zero contract/run violations) is blessable"
+            exit 1
+          fi
+          if [ "$(jq '.entries | length' "$drift_json")" -eq 0 ]; then
+            echo "::error::no drift entries; a pass dispatch is a no-op, not a bless"
+            exit 1
+          fi
+          check_json_drift="$(jq '[.entries[] | select(.surface == "check.json")] | length' "$drift_json")"
+          if [ "$check_json_drift" -ne 0 ]; then
+            echo "::error::$check_json_drift check.json drift entry/entries; the machine contract is never auto-blessed"
+            exit 1
+          fi
+          semantic_drift="$(jq '[.entries[] | select([.added_finding_ids, .removed_finding_ids, .changed_exposure_classes, .changed_probe_families, .changed_oracle_kinds, .changed_oracle_strengths, .changed_stop_reasons, .changed_recommendations, .static_language_terms] | any(length > 0))] | length' "$drift_json")"
+          if [ "$semantic_drift" -ne 0 ]; then
+            echo "::error::$semantic_drift entry/entries carry semantic drift; never auto-blessed by this route"
+            exit 1
+          fi
+
+      - name: Judge byte-identical check.json per drifted fixture
+        id: judge
+        run: |
+          set -euo pipefail
+          drift_json="target/ripr/reports/golden-drift.json"
+          fixtures="$(jq -r '[.entries[] | .fixture] | unique | join(" ")' "$drift_json")"
+          # Names come from a PR-produced report: allow only plain directory
+          # names so nothing can escape fixtures/ downstream.
+          for f in $fixtures; do
+            if ! [[ "$f" =~ ^[A-Za-z0-9_][A-Za-z0-9_-]*$ ]] || [ ! -d "fixtures/$f/expected" ]; then
+              echo "::error::golden-drift.json names an invalid fixture: $f"
+              exit 1
+            fi
+          done
+          # Independent of the merge-ref classifier: the check.json machine
+          # contract must be byte-identical, not merely semantically equal.
+          for f in $fixtures; do
+            if ! git diff --no-index --quiet "fixtures/$f/expected/check.json" "target/ripr/fixtures/$f/check.json"; then
+              echo "::error::check.json for '$f' differs byte-wise; the byte judge refuses what the classifier's formatting-only label would wave through"
+              exit 1
+            fi
+          done
+          echo "fixtures=$fixtures" >> "$GITHUB_OUTPUT"
+          echo "Judged blessable fixtures: $fixtures"
+
+      - name: Bless every judged fixture (all-or-nothing)
+        id: bless
+        env:
+          FIXTURES: ${{ steps.judge.outputs.fixtures }}
+        run: |
+          set -euo pipefail
+          run_url="$GITHUB_SERVER_URL/$REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          note_part=""
+          if [ -n "$NOTE_INPUT" ]; then
+            note_part="; note: $(printf '%s' "$NOTE_INPUT" | tr -d '\r\n`' | cut -c1-200)"
+          fi
+          for f in $FIXTURES; do
+            spec_id="$(sed -n 's/^Spec: RIPR-SPEC-\([0-9][0-9]*\).*/\1/p' "fixtures/$f/SPEC.md" | head -1)"
+            if [ -z "$spec_id" ]; then
+              echo "::error::fixtures/$f/SPEC.md has no 'Spec: RIPR-SPEC-NNNN' line; cannot derive a valid bless reason"
+              exit 1
+            fi
+            reason="RIPR-SPEC-$spec_id: hosted formatting-only re-bless (renderer prose drift; PR #$PR_NUMBER merge $HEAD_SHA; run $run_url)$note_part"
+            cargo xtask goldens bless "$f" --reason "$reason"
+          done
+
+      - name: Confirm re-blessed goldens are clean
+        id: confirm
+        run: |
+          set -euo pipefail
+          cargo xtask goldens check
+
+      - name: Package the bless patch (expected-files of judged fixtures only)
+        id: package
+        env:
+          FIXTURES: ${{ steps.judge.outputs.fixtures }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/rebless
+          : > /tmp/rebless/bless.patch
+          for f in $FIXTURES; do
+            git add -N -- "fixtures/$f/expected"
+            git diff --binary -- "fixtures/$f/expected" >> /tmp/rebless/bless.patch
+          done
+          if [ ! -s /tmp/rebless/bless.patch ]; then
+            echo "::error::the judge approved drift but bless produced no expected-file diff"
+            exit 1
+          fi
+          printf '%s\n' $FIXTURES > /tmp/rebless/fixtures.txt
+
+      - name: Upload the bless patch
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rebless-patch
+          path: /tmp/rebless/
+          if-no-files-found: error
+
+      - name: Upload the drift report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rebless-drift-report
+          path: target/ripr/reports/golden-drift.json
+          if-no-files-found: ignore
+
+      - name: Mark a judged refusal
+        id: mark
+        if: always()
+        run: |
+          if [ "${{ steps.judge_gates.outcome }}" = "failure" ] || [ "${{ steps.judge.outcome }}" = "failure" ] || [ "${{ steps.bless.outcome }}" = "failure" ] || [ "${{ steps.confirm.outcome }}" = "failure" ]; then
+            echo "refusal=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "refusal=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    name: Push the bless commit (no PR-authored code runs here)
+    needs: [prepare, bless]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+      HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+      HEAD_BRANCH: ${{ needs.prepare.outputs.head_branch }}
+    steps:
+      - name: Check out the preflight head (content only; nothing here executes it)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+          persist-credentials: false
+
+      - name: Download the bless patch
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: rebless-patch
+          path: /tmp/rebless
+
+      - name: Validate the patch (fixture expected-files only)
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          while read -r f; do
+            [[ "$f" =~ ^[A-Za-z0-9_][A-Za-z0-9_-]*$ ]] || { echo "::error::invalid fixture name in artifact: $f"; exit 1; }
+          done < /tmp/rebless/fixtures.txt
+          git apply --check /tmp/rebless/bless.patch
+          if git apply --summary /tmp/rebless/bless.patch | grep -E 'rename|copy|mode 120000|mode 100755|mode change'; then
+            echo "::error::patch contains renames, copies, symlinks or mode changes"
+            exit 1
+          fi
+          while read -r added removed path; do
+            [[ "$path" =~ ^fixtures/[A-Za-z0-9_][A-Za-z0-9_-]*/expected/[A-Za-z0-9_.-]+$ ]] || { echo "::error::patch touches a path outside fixtures/<name>/expected/: $path"; exit 1; }
+            fixture="${path#fixtures/}"; fixture="${fixture%%/*}"
+            grep -qx "$fixture" /tmp/rebless/fixtures.txt || { echo "::error::patch touches unjudged fixture $fixture"; exit 1; }
+          done < <(git apply --numstat /tmp/rebless/bless.patch)
+
+      - name: Push one bot-authored commit (token injected here only)
+        id: push
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_url="$GITHUB_SERVER_URL/$REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          remote="https://x-access-token:${GITHUB_TOKEN}@github.com/$REPOSITORY.git"
+          remote_head="$(git ls-remote "$remote" "refs/heads/$HEAD_BRANCH" | cut -f1)"
+          if [ "$remote_head" != "$HEAD_SHA" ]; then
+            echo "::error::head moved under the run: $HEAD_BRANCH is at ${remote_head:-gone}, preflight saw $HEAD_SHA; reconcile instead of pushing over it"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git apply --index /tmp/rebless/bless.patch
+          git commit -m "goldens: hosted formatting-only re-bless for PR #$PR_NUMBER
+
+          Blessing reasons cite each fixture's own SPEC.md id and the qualifying
+          run; the judge required empty semantic arrays and a byte-identical
+          check.json for every fixture before blessing any. Run: $run_url"
+          git push "$remote" "HEAD:refs/heads/$HEAD_BRANCH"
+          echo "new_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Comment the re-arm command (labels are left untouched)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WAS_MERGE_READY: ${{ needs.prepare.outputs.was_merge_ready }}
+          NEW_SHA: ${{ steps.push.outputs.new_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$WAS_MERGE_READY" = "true" ]; then
+            state="The PR carries \`merge-ready\`, but that label was applied to the previous head."
+          else
+            state="The PR does not carry \`merge-ready\`."
+          fi
+          gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -f body="<!-- goldens-rebless-rearm:$NEW_SHA -->
+          Hosted formatting-only re-bless landed on the PR head (\`${NEW_SHA:0:8}\`). $state A \`GITHUB_TOKEN\` push and label edit start no workflow runs, so nothing was re-armed: remove and re-apply \`merge-ready\` to request admission and qualification on the new head." > /dev/null
+
+  refuse:
+    name: Comment the classified drift on a judged refusal
+    needs: [prepare, bless]
+    if: always() && needs.bless.outputs.refusal == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    env:
+      PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+      HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+    steps:
+      - name: Download the drift report
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: rebless-drift-report
+          path: /tmp/drift
+
+      - name: Refuse with the classified drift (zero pushes)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          marker="<!-- goldens-rebless-refusal:$HEAD_SHA -->"
+          # The report is PR-produced data: print only plain names and numbers.
+          digest="$(jq -r '.entries[] | select((.fixture | test("^[A-Za-z0-9_-]+$")) and (.surface | test("^[A-Za-z0-9_.-]+$"))) | "- `\(.fixture)` [`\(.surface)`] changed_line_count=\(.changed_line_count | tonumber)"' /tmp/drift/golden-drift.json 2>/dev/null || echo "- golden-drift.json unreadable; see the run log for the classified drift")"
+          gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -f body="$marker
+          goldens-rebless refused PR #$PR_NUMBER (head \`${HEAD_SHA:0:8}\`); **nothing was pushed**. The judge blesses only formatting-only drift, and this dispatch failed that judgment:
+
+          $digest
+
+          Read the classified drift in the run log; semantic drift or a non-byte-identical \`check.json\` keeps a human in the loop." > /dev/null
+          echo "::error::goldens-rebless refused PR #$PR_NUMBER; refusal comment posted"
+          exit 1

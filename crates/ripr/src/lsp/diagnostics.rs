@@ -881,6 +881,7 @@ fn push_unlisted_language_not_analyzed(
         diagnostics.push(language_not_analyzed_diagnostic(
             language,
             &relative.to_string_lossy().replace('\\', "/"),
+            &super::config::LspAnalysisConfig::default(),
         ));
     }
 }
@@ -1640,7 +1641,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             // are operational noise, not analysis errors.
             if diagnostic_severity_for_grip_class_with_config(
                 entry.class,
-                config.repo_config().severity(),
+                &config.repo_config().severity_for_file(entry.seam.file()),
             )
             .is_none()
             {
@@ -1653,7 +1654,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             if let Some(mut diagnostic) = diagnostic_for_classified_seam_with_causal(
                 &root,
                 entry,
-                config.repo_config().severity(),
+                &config.repo_config().severity_for_file(entry.seam.file()),
                 causal_projection.as_ref(),
             ) {
                 // Policy: limited/stale run downgrades seam WARNINGs to INFORMATION.
@@ -1697,6 +1698,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     );
     append_unavailable_language_diagnostics(
         &root,
+        config,
         &unavailable_adapter,
         language_view.as_ref(),
         &mut grouped,
@@ -1948,6 +1950,7 @@ pub(super) fn withheld_preview_diagnostic(
 /// `language_adapter_unavailable` limitation `check` and MCP report.
 fn append_unavailable_language_diagnostics(
     root: &Path,
+    config: &super::config::LspAnalysisConfig,
     coverage: &super::state::UnavailableAdapterCoverage,
     view: Option<&LanguageCompletenessView>,
     grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
@@ -1962,13 +1965,17 @@ fn append_unavailable_language_diagnostics(
         grouped
             .entry(uri)
             .or_default()
-            .push(language_not_analyzed_diagnostic(language, path));
+            .push(language_not_analyzed_diagnostic(language, path, config));
     }
 }
 
 /// The marker for one changed file of a language whose adapter is not enabled.
-pub(super) fn language_not_analyzed_diagnostic(language: LanguageId, path: &str) -> Diagnostic {
-    let recovery = super::backend::language_adapter_not_enabled_recovery(language);
+pub(super) fn language_not_analyzed_diagnostic(
+    language: LanguageId,
+    path: &str,
+    config: &super::config::LspAnalysisConfig,
+) -> Diagnostic {
+    let recovery = super::backend::language_adapter_not_enabled_recovery(language, Some(config), 1);
     let name = language.as_str();
     Diagnostic {
         range: Range::default(),
@@ -3548,7 +3555,10 @@ fn diagnostic_for_classified_seam_with_causal(
     config: &SeverityConfig,
     causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Option<Diagnostic> {
-    let severity = diagnostic_severity_for_grip_class_with_config(entry.class, config)?;
+    let severity = diagnostic_severity_for_grip_class_with_config(
+        entry.class,
+        &config.resolved_for_path(entry.seam.file()),
+    )?;
     let seam = &entry.seam;
     let evidence = &entry.evidence;
     let line = seam.display_line().saturating_sub(1) as u32;
@@ -3816,7 +3826,9 @@ fn diagnostic_for_finding_with_causal(
     }
     Diagnostic {
         range: diagnostic_range_for_finding(root, finding, position_encoding, origins),
-        severity: lsp_severity(config.for_exposure(&finding.class)),
+        severity: lsp_severity(
+            config.for_exposure_in(&finding.class, &finding.probe.location.file),
+        ),
         code: Some(NumberOrString::String(
             super::diagnostic_catalog::finding_code(&finding.class),
         )),
@@ -4930,6 +4942,96 @@ mod seam_diagnostic_tests {
                 .is_none(),
             "an unregistered gap kind must not emit a diagnostic"
         );
+    }
+
+    #[test]
+    fn emitted_named_family_codes_keep_catalog_metadata() -> Result<(), String> {
+        use crate::domain::FixInstructionState;
+        use crate::lsp::diagnostic_budget::DocumentDeliveryOmission;
+        use crate::lsp::diagnostic_catalog::{
+            CatalogRecoveryKind, DIAGNOSTIC_ANALYSIS_PENDING_CODE, DIAGNOSTIC_BUDGET_OMITTED_CODE,
+            DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE, allow_recovery, metadata_for, resolve,
+        };
+
+        let pending = analysis_pending_diagnostic(AnalysisPendingRecovery::SaveOrRefresh);
+        let Some(NumberOrString::String(pending_code)) = pending.code.as_ref() else {
+            return Err(format!(
+                "pending diagnostic must emit a string code, got {:?}",
+                pending.code
+            ));
+        };
+        if pending_code != DIAGNOSTIC_ANALYSIS_PENDING_CODE {
+            return Err(format!("pending code drifted: {pending_code}"));
+        }
+        let pending_meta = metadata_for(pending_code)
+            .ok_or_else(|| "pending code must resolve to catalog metadata".to_string())?;
+        if pending_meta.actionability != FixInstructionState::InspectOnly
+            || !pending_meta
+                .recovery_kinds
+                .contains(&CatalogRecoveryKind::SelectWorkspaceRoot)
+        {
+            return Err("pending catalog metadata drifted".to_string());
+        }
+        if pending.data.as_ref().and_then(|data| data.get("recovery"))
+            != Some(&serde_json::json!("save_or_refresh"))
+        {
+            return Err(
+                "instance recovery id on the wire stays the honored route, not a catalog rewrite"
+                    .to_string(),
+            );
+        }
+
+        let overflow = delivery_omission_diagnostic(&DocumentDeliveryOmission {
+            scope: "document",
+            selected_count: 1,
+            omitted_count: 2,
+            total_count: 3,
+            count_budget: 1,
+            byte_budget: 1024,
+            snapshot_profile_budget_identity: "s:p:b".to_string(),
+            complete_evidence_identity: "complete".to_string(),
+            retrieval_route: "ripr.retrieveOverflow".to_string(),
+        });
+        let Some(NumberOrString::String(overflow_code)) = overflow.code.as_ref() else {
+            return Err(format!(
+                "overflow diagnostic must emit a string code, got {:?}",
+                overflow.code
+            ));
+        };
+        if overflow_code != DIAGNOSTIC_BUDGET_OMITTED_CODE {
+            return Err(format!("overflow code drifted: {overflow_code}"));
+        }
+        let overflow_meta = metadata_for(overflow_code)
+            .ok_or_else(|| "overflow code must resolve to catalog metadata".to_string())?;
+        if !overflow_meta
+            .recovery_kinds
+            .contains(&CatalogRecoveryKind::RetrieveOverflow)
+        {
+            return Err("overflow catalog metadata drifted".to_string());
+        }
+
+        let unsupported = language_not_analyzed_diagnostic(
+            LanguageId::Python,
+            "src/lib.py",
+            &LspAnalysisConfig::default(),
+        );
+        let Some(NumberOrString::String(unsupported_code)) = unsupported.code.as_ref() else {
+            return Err(format!(
+                "unsupported diagnostic must emit a string code, got {:?}",
+                unsupported.code
+            ));
+        };
+        if unsupported_code != DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE {
+            return Err(format!("unsupported code drifted: {unsupported_code}"));
+        }
+        let unsupported_entry = resolve(unsupported_code)
+            .ok_or_else(|| "unsupported code is catalogued".to_string())?;
+        if !unsupported_entry.recovery_kinds.is_empty()
+            || allow_recovery(unsupported_entry, CatalogRecoveryKind::RefreshAnalysis).is_some()
+        {
+            return Err("unsupported recovery must stay typed unavailable".to_string());
+        }
+        Ok(())
     }
 
     #[test]

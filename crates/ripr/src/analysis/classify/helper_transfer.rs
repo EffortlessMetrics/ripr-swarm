@@ -29,6 +29,7 @@
 //! still has to observe the sink through the ordinary evidence stages.
 
 mod cross_crate_hop;
+mod cross_crate_path;
 mod macro_argument;
 mod qualified_hop;
 mod returned_ledger;
@@ -175,9 +176,11 @@ pub(crate) struct HelperHop {
     /// entry needs the stricter identity rules, and the hop establishes only
     /// reach, never result forwarding. Preserve this provenance through chains.
     pub(crate) module_qualified: bool,
-    /// Bound by the cross-crate route (#11401): the one crate name, read from
-    /// the caller package's `[dependencies]`, the call is spelled through
-    /// (`wscore::discount(..)` holds `wscore`). Such a hop is also
+    /// Bound by the cross-crate route (#11401): the path the call is spelled
+    /// through, led by the one crate name read from the caller package's
+    /// `[dependencies]` and followed by any public modules down to the callee
+    /// (`wscore::discount(..)` holds `wscore`, `wscore::pricing::discount(..)`
+    /// holds `wscore::pricing`). Such a hop is also
     /// `module_qualified`, so every consumer that has no cross-crate proof
     /// keeps refusing it; only the tail-forwarding rule reads this name.
     pub(crate) crate_qualifier: Option<String>,
@@ -4437,6 +4440,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

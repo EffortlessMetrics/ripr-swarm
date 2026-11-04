@@ -38,6 +38,7 @@ use crate::analysis::committed_source::{self, CommittedSourceRead};
 use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
+use crate::analysis::resource_cost::trace_latency_phase;
 use crate::analysis::workspace::limitations_for_absent_changed_files;
 use crate::config::OraclePolicy;
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
@@ -2361,6 +2362,7 @@ impl RustAdapter {
                     return Err(diff_scope_oversized_error(core_files.len(), scope_limit));
                 }
                 if core_files.len() < index_files.len() {
+                    let admission_started = std::time::Instant::now();
                     let (query, core_index) = dependent_scope::admission_query(
                         &options.root,
                         &core_files,
@@ -2368,7 +2370,13 @@ impl RustAdapter {
                         &options.test_harnesses,
                         &mut rust_consumed_sources,
                     )?;
+                    trace_latency_phase(
+                        "diff_admission_query",
+                        &format!("core_files_{}", core_files.len()),
+                        admission_started.elapsed(),
+                    );
                     admission_core = Some(core_index);
+                    let admit_started = std::time::Instant::now();
                     let admission = dependent_scope::admit_dependents(
                         &options.root,
                         &analyzable_rust_files,
@@ -2378,6 +2386,11 @@ impl RustAdapter {
                         &options.test_harnesses,
                         &mut rust_consumed_sources,
                     )?;
+                    trace_latency_phase(
+                        "diff_admit_dependents",
+                        &format!("main_files_{}", admission.main_files.len()),
+                        admit_started.elapsed(),
+                    );
                     index_files = admission.main_files;
                     dependent_scope = admission.narrowed;
                     withheld_macro_bindings = admission.withheld_macro_bindings;
@@ -2426,6 +2439,7 @@ impl RustAdapter {
         // #6965: a file holding tests that no Cargo target's module tree
         // reaches is never compiled, so its tests are not evidence. Only a complete walk proves a file unreached (#4435);
         // anything less keeps the file.
+        let unreached_started = std::time::Instant::now();
         let loaded_files = drop_unreached_test_files(
             &options.root,
             &source_role_context,
@@ -2433,14 +2447,21 @@ impl RustAdapter {
             &options.test_harnesses,
             loaded_files,
         );
+        trace_latency_phase(
+            "diff_drop_unreached_test_files",
+            &format!("loaded_files_{}", loaded_files.len()),
+            unreached_started.elapsed(),
+        );
         // #8547: when the dependent-scope admission probe already built
         // the changed packages' index, reuse it as the main index: only
         // the admitted extras (and any file whose bytes moved since the
         // probe read them) are parsed, through the same fact cache, and
         // post-processing re-runs once over the merged index. Without an
         // admission probe the main build is the only build, as before.
+        let main_index_started = std::time::Instant::now();
+        let admission_reused = admission_core.is_some();
         let cached = match admission_core {
-            Some(core) => rust_index::reuse_cached_index_with_loaded_files(
+            Some(core) => rust_index::reuse_cached_index_in_run(
                 core,
                 &options.root,
                 &loaded_files,
@@ -2452,6 +2473,15 @@ impl RustAdapter {
                 &options.test_harnesses,
             )?,
         };
+        trace_latency_phase(
+            "diff_main_index",
+            if admission_reused {
+                "reused_admission_core"
+            } else {
+                "built"
+            },
+            main_index_started.elapsed(),
+        );
         #[cfg(test)]
         {
             rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
@@ -2561,7 +2591,9 @@ impl RustAdapter {
             let manifest_dir_prefixes =
                 crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&options.root);
             let dependency_adjacency = workspace::PathDependencyAdjacency::build(
-                &crate::analysis::seam_cache::workspace_graph_provenance(&options.root),
+                &crate::analysis::seam_cache::path_dependencies::workspace_graph_provenance(
+                    &options.root,
+                ),
             );
             (manifest_dir_prefixes, Some(dependency_adjacency))
         } else {
@@ -3052,7 +3084,17 @@ impl RustAdapter {
                 // MCP readiness refusal stays `static_limitation`; a finding
                 // without a derivable discriminator keeps the typed refusal
                 // too — no evidence is manufactured here.
-                if finding.static_limit_kind.is_none() {
+                // #11545: verified generator stimulus is visible uncertainty,
+                // not a canonical product-test gap. Preserve the classifier's
+                // refusal through the public pipeline using producer identity.
+                if finding.static_limit_kind.is_none()
+                    && !(probe.after.is_some()
+                        && crate::analysis::facts::is_generator_subject(
+                            &index,
+                            &changed.path,
+                            probe.location.line,
+                        ))
+                {
                     finding.canonical_gap = probe_shape::canonical_rust_gap_for(
                         &changed.path,
                         probe.owner.as_ref(),
@@ -3994,6 +4036,56 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn repo_omits_generator_stimulus_but_keeps_product_gap() -> Result<(), String> {
+        let root = temp_root("generator-repo-gap")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck='1'\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "use quickcheck::Arbitrary;\nstruct Pair(u8);\nimpl quickcheck::Arbitrary for Pair {\n    fn arbitrary(g: &mut quickcheck::Gen) -> Self {\n        Pair(u8::arbitrary(g).wrapping_add(2))\n    }\n}\npub fn product(a: u8) -> u8 {\n    a.wrapping_add(2)\n}\n",
+        )?;
+        let result = RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+        assert!(
+            result.findings.iter().all(|f| f.probe.location.line != 5),
+            "generator evidence is not a repo-wide production subject: {:?}",
+            result.findings
+        );
+        let product: Vec<_> = result
+            .findings
+            .iter()
+            .filter(|f| f.probe.location.line == 9)
+            .collect();
+        assert!(
+            !product.is_empty(),
+            "product subject must be seeded: {:?}",
+            result.findings
+        );
+        assert!(
+            product.iter().any(|f| f.canonical_gap.is_some()),
+            "ordinary product retains a canonical gap: {product:?}"
+        );
+        // The same source must be probeable when provider identity is not verified.
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck={version='1',optional=true}\n",
+        )?;
+        let unverified =
+            RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+        assert!(
+            unverified
+                .findings
+                .iter()
+                .any(|f| f.probe.location.line == 5),
+            "unverified generator expression must be probeable: {:?}",
+            unverified.findings
+        );
+        fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     fn repo_options(root: &Path) -> AnalysisOptions {
         AnalysisOptions {
             root: root.to_path_buf(),
@@ -4764,6 +4856,95 @@ mod tests {
             "two cached closure indexes plus one shared full index, not one build per owner"
         );
         fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    /// Same-run reuse of the admission core (`reuse_cached_index_in_run`): a
+    /// core that carries an unresolved property macro is rebuilt by ordinary
+    /// reuse, so when the main files equal the core files the diff pipeline
+    /// must serve the core as built (one index build), while an admitted
+    /// dependent takes the ordinary path (more builds). Removing the same-run
+    /// reuse makes the equal-files case build more than once.
+    #[test]
+    fn diff_pipeline_serves_the_admission_core_when_main_files_equal_core_files()
+    -> Result<(), String> {
+        use crate::analysis::facts::index_build_probe;
+        use dependent_scope::DependentScopeMode;
+        let builds_for = |name: &str, relay_mentions_changed: bool| -> Result<usize, String> {
+            let root = temp_root(name)?;
+            write(
+                &root.join("Cargo.toml"),
+                "[workspace]\nmembers = [\"a\", \"b\", \"d\"]\nresolver = \"2\"\n",
+            )?;
+            write(
+                &root.join("a/Cargo.toml"),
+                "[package]\nname = \"scope_a\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write(
+                &root.join("b/Cargo.toml"),
+                "[package]\nname = \"scope_b\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+                 [dependencies]\nscope_a = { path = \"../a\" }\n",
+            )?;
+            write(
+                &root.join("d/Cargo.toml"),
+                "[package]\nname = \"scope_d\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write(
+                &root.join("d/src/lib.rs"),
+                "pub fn island() -> u8 {\n    2\n}\n",
+            )?;
+            write(
+                &root.join("a/src/lib.rs"),
+                "pub fn gauge_one(flag: bool) -> bool {\n    if flag { false } else { true }\n}\n",
+            )?;
+            // The unresolved property macro forces ordinary reuse to rebuild.
+            write(
+                &root.join("a/tests/props.rs"),
+                "proptest::proptest! {\n    #[test]\n    fn gauge_holds(flag in proptest::bool::ANY) {\n        assert_eq!(scope_a::gauge_one(flag), !flag);\n    }\n}\n",
+            )?;
+            let relay = if relay_mentions_changed {
+                "pub fn relay(flag: bool) -> bool {\n    scope_a::gauge_one(flag)\n}\n"
+            } else {
+                "pub fn relay(flag: bool) -> bool {\n    flag\n}\n"
+            };
+            write(&root.join("b/src/lib.rs"), relay)?;
+            write(
+                &root.join("b/tests/relay_tests.rs"),
+                "#[test]\nfn relay_holds() {\n    assert!(scope_b::relay(true));\n}\n",
+            )?;
+            let changed = diff::parse_unified_diff(
+                "diff --git a/a/src/lib.rs b/a/src/lib.rs\n\
+                 --- a/a/src/lib.rs\n\
+                 +++ b/a/src/lib.rs\n\
+                 @@ -1,3 +1,3 @@\n\
+                  pub fn gauge_one(flag: bool) -> bool {\n\
+                 -    if flag { true } else { false }\n\
+                 +    if flag { false } else { true }\n\
+                  }\n",
+            );
+            let (result, builds) = index_build_probe::observe(|| {
+                dependent_scope::with_forced_mode(DependentScopeMode::NameAdmitted, || {
+                    RustAdapter.analyze_diff(
+                        &diff_options(root.clone(), AnalysisMode::Draft),
+                        &OraclePolicy::default(),
+                        &changed,
+                    )
+                })
+            });
+            result?;
+            fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
+            Ok(builds)
+        };
+        let equal = builds_for("same-run-core-equal", false)?;
+        let widened = builds_for("same-run-core-widened", true)?;
+        assert_eq!(
+            equal, 1,
+            "main files equal to the core files must serve the core as built"
+        );
+        assert!(
+            widened > equal,
+            "an admitted dependent must take the ordinary rebuild path, got {widened} builds"
+        );
         Ok(())
     }
 
@@ -7827,6 +8008,7 @@ fn absent_delimiter_boundary_returns_head() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         });
         assert!(is_binary_source_path(Path::new("src/main.rs")));
         assert!(super::find_subprocess_binary_test(&index, Path::new("src/main.rs")).is_some());

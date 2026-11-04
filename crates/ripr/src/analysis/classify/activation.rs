@@ -8653,6 +8653,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let probe = Probe {
             id: ProbeId("probe:src_lib.rs:predicate:eval".to_string()),
@@ -9030,6 +9031,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -9651,6 +9653,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
 
         let facts = value_facts_for_test(
@@ -9699,6 +9702,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
 
         let facts = value_facts_for_test(
@@ -9736,6 +9740,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
 
         let facts = value_facts_for_test(
@@ -9788,6 +9793,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
 
         let facts = value_facts_for_test(
@@ -9831,6 +9837,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let index = crate::analysis::rust_index::RustIndex::from_owned(
             crate::analysis::facts::OwnedRustIndex {
@@ -10250,6 +10257,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
 
         assert!(
@@ -10831,6 +10839,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -10847,6 +10856,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -10908,6 +10918,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
