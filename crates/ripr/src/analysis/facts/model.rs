@@ -1239,7 +1239,8 @@ pub struct TestFact {
     serde::Deserialize,
 )]
 pub struct MacroGeneratedOrigin {
-    /// The expanded test body declares its own `use` or item, which can
+    /// The expanded test body declares its own `use` or item, or carries an
+    /// unrecognised attribute macro that could rewrite it (#12857), which can
     /// rebind a callee the invocation-site scopes would resolve differently.
     /// Such a test borrows no invocation-site scopes: wrong credit is worse
     /// than abstaining.

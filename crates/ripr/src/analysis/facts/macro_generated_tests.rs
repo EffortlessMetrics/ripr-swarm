@@ -36,9 +36,7 @@ pub(super) fn register_macro_generated_tests(index: &mut RustIndex) -> Result<()
             let Ok(facts) = summarize_file_with_parser(path, &expansion.text) else {
                 continue;
             };
-            let origin = MacroGeneratedOrigin {
-                body_declares_items: expansion_declares_items(&expansion.text),
-            };
+            let declares_items = expansion_declares_items(&expansion.text);
             // The same exact attribute-path rule the style normalizer
             // applies to hand-written tests; the parser's own check is a
             // prefix match.
@@ -46,7 +44,14 @@ pub(super) fn register_macro_generated_tests(index: &mut RustIndex) -> Result<()
                 super::test_styles::attributes_define_test(test.attrs.iter().map(String::as_str))
             }) {
                 pin_to_invocation(&mut test, path, expansion.start_line, expansion.end_line);
-                test.generated = Some(origin);
+                // An unrecognised attribute macro can rewrite the body as
+                // freely as a `use` written into it (#12857).
+                test.generated = Some(MacroGeneratedOrigin {
+                    body_declares_items: declares_items
+                        || !super::test_styles::attributes_preserve_body(
+                            test.attrs.iter().map(String::as_str),
+                        ),
+                });
                 generated.push(test);
             }
         }

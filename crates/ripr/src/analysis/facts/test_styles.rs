@@ -214,6 +214,44 @@ pub(crate) fn attributes_define_test<'attribute>(
     })
 }
 
+/// Attributes that cannot rewrite a function body: they gate, document,
+/// lint, or carry harness arguments. An attribute outside this set and the
+/// built-in test harnesses may be an attribute macro, which can add a `use`
+/// or replace the body (#12857).
+const BODY_PRESERVING_ATTRIBUTE_PATHS: &[&str] = &[
+    "ignore",
+    "should_panic",
+    "cfg",
+    "allow",
+    "warn",
+    "deny",
+    "forbid",
+    "expect",
+    "doc",
+    "inline",
+    "track_caller",
+    "must_use",
+    "case",
+    "serial",
+    "serial_test::serial",
+];
+
+/// Whether every attribute is a known test harness or a body-preserving
+/// built-in. `false` means an unrecognised attribute macro could rewrite the
+/// body, so a macro-generated test must not borrow invocation-site scopes.
+pub(crate) fn attributes_preserve_body<'attribute>(
+    attributes: impl IntoIterator<Item = &'attribute str>,
+) -> bool {
+    attributes.into_iter().all(|attribute| {
+        normalized_test_attribute_path(attribute)
+            .as_deref()
+            .is_some_and(|path| {
+                is_test_attribute_path(path) || BODY_PRESERVING_ATTRIBUTE_PATHS.contains(&path)
+            })
+            || cfg_predicates::attribute_introduces_only_test(attribute)
+    })
+}
+
 /// Whether any attribute is `#[crate::test]` / `#[self::test]` and the file's
 /// crate establishes a local test-wrapper alias for it (#9001).
 fn attributes_use_local_alias<'attribute>(
