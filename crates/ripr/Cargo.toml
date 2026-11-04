@@ -170,7 +170,9 @@ lang-perl = ["ripr-contract/lang-perl"]
 
 [dev-dependencies]
 # ADR 0025: facade tests import shared fixtures from the contract crate.
-ripr-contract = { path = "../ripr-contract", features = ["test-fixtures"] }
+# `default-features = false` is load-bearing: language enablement is forwarded
+# from this crate's own features, and the contract's defaults would unify on.
+ripr-contract = { path = "../ripr-contract", default-features = false, features = ["test-fixtures"] }
 proptest = "1"
 rmcp = { version = "=3.7.0", default-features = false, features = ["client", "transport-async-rw"] }
 serial_test = "4"
