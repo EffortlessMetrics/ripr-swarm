@@ -351,6 +351,9 @@ fn repair_refusal(
         })
 }
 
+/// Compared by equality in `check_repair_route` (shared on purpose, so a
+/// static-limited finding can stay silent about it): change the text in one
+/// place only.
 /// Why a seam that is otherwise ready does not start: no existing test names
 /// where the repair would go, and a proposed new test file cannot be handed
 /// off as a card (#12867).

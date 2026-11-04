@@ -304,8 +304,8 @@ fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String
 /// publishing an attempt and then saying the card is unavailable.
 #[test]
 fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), String> {
-    let repo = repo("nocard", BOUNDARY_BASE, BOUNDARY_NEW, "", false)?;
-    let root = &repo.root;
+    let unit = repo("nocard", BOUNDARY_BASE, BOUNDARY_NEW, "", false)?;
+    let root = &unit.root;
     let repair = ripr(root, &["repair"])?;
     let err = text(&repair.stderr);
     if repair.status.code() != Some(3)
@@ -349,6 +349,23 @@ fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), Stri
     }
     if attempts(root) != 0 {
         return Err("no attempt may exist when the card cannot be produced".to_string());
+    }
+    // The check screen agrees from the other side: with no test reaching the
+    // change the finding is static-limited (`no path`), so it offers no start
+    // and stays silent about the no-card refusal (the Silent branch of
+    // `check_repair_route`). A finding that is not static-limited cannot have
+    // a proposed target here, since it needs a related test.
+    let scoped = repo("nocard-check", BOUNDARY_BASE, BOUNDARY_NEW, "", true)?;
+    let check = ripr(&scoped.root, &["check", "--base", "main"])?;
+    let screen = text(&check.stdout);
+    if check_start_id(&scoped.root)?.is_some()
+        || screen.contains("ripr repair ")
+        || screen.contains("not complete enough to name a safe test target")
+        || !screen.contains("Why no path")
+    {
+        return Err(format!(
+            "check must offer no start and stay silent:\n{screen}"
+        ));
     }
     // Contrast: with an existing test to extend, the same change starts.
     let with_test = repo_with("hascard", BOUNDARY_BASE, BOUNDARY_NEW, BOUNDARY_TEST)?;
