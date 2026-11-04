@@ -1,1 +1,2 @@
-- Credit same-file named-constant predicate boundaries when the compared input is a parameter field assigned at the owner call (`CURRENT > manifest.version`), instead of leaving them `infection_unknown` (#6671).
+<!-- section: Fixed -->
+- Rust boundary credit now follows a parameter field assigned at the owner call (`CURRENT > manifest.version`) to a same-file named constant instead of leaving it `infection_unknown` (#6671).
