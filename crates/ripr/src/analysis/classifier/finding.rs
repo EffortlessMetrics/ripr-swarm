@@ -34,7 +34,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
     mut evidence: ClassifiedProbeEvidence,
     origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
 ) -> Finding {
-    let missing = missing_evidence(
+    let mut missing = missing_evidence(
         context.probe,
         &class,
         &evidence.infect,
@@ -144,6 +144,16 @@ pub(in crate::analysis) fn build_finding_with_origins(
             &evidence.implicit_dispatch_tests,
         );
     }
+    // #13037: the missing-check line must tell the same story as the
+    // annotated rows and the #7393 next step. A strong exact assertion whose
+    // observation is unconfirmed means the gap is the observation link, not
+    // the assertion; swap the generic sentence for the precise one.
+    crate::analysis::classify::refine_missing_for_unconfirmed_exact(
+        context.probe,
+        &mut missing,
+        &related_tests,
+        context.owner_fn.is_some(),
+    );
     let fallback_pin_syntax = OwnerPinSyntax::default();
     let collection_contents_check_side_effect =
         crate::analysis::repair_route::probe_needs_collection_contents_guidance(

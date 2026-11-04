@@ -885,10 +885,17 @@ pub(in crate::analysis) const CALL_BUDGET_SATURATED: &str =
     "gap_admission: a related test line is at the call-fact budget";
 
 /// Absence lines `missing_evidence` derives from a test's calls and inputs.
-const BUDGET_ABSENCE_LINES: [&str; 4] = [
+/// The #13037 precise sentence replaces the generic discriminator sentence
+/// for the same reason (an unconfirmed observation link, not a missing
+/// assertion), so the budget post-pass drops it with the lines it replaces:
+/// a dropped call could be the token the observation link reads.
+const BUDGET_ABSENCE_LINES: [&str; 7] = [
     "No relevant oracle was detected",
     "No strong discriminator was detected",
     "No exact error variant discriminator was detected",
+    "An exact assertion exists, but observation of the changed returned value is unconfirmed: no assertion text names the changed expression",
+    "An exact assertion exists, but observation of the changed error variant is unconfirmed: no assertion text names the changed expression",
+    "An exact assertion exists, but observation of the changed behavior is unconfirmed: no assertion text names the changed expression",
     "No detected boundary input for the changed predicate",
 ];
 

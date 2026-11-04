@@ -322,13 +322,21 @@ fn miss_reading_closures(source: &str) -> Vec<String> {
 
 /// Documented explanation-only readers and producers allowed to name the miss
 /// inside such a closure: `(path suffix, snippet fragment)`.
-const MISS_CLOSURE_ALLOWLIST: [(&str, &str); 4] = [
+const MISS_CLOSURE_ALLOWLIST: [(&str, &str); 5] = [
     // Tracked RIPR-SPEC-0224 gap: the exact-oracle next step still excludes
     // `missing_exact_assertion` rows after the role check; eligibility itself
     // is the role.
     (
         "analysis/classify/decision.rs",
         "test.miss != Some(RelatedTestMiss::MissingExactAssertion)",
+    ),
+    // #13037: the precise missing-check sentence and the exact-oracle next
+    // step phrase the already-decided gap for the row whose annotated miss is
+    // `observation_unconfirmed`; the read selects wording after the verdict
+    // and never row eligibility, the class, or the rendered evidence states.
+    (
+        "analysis/classify/decision.rs",
+        "test.miss == Some(RelatedTestMiss::ObservationUnconfirmed)",
     ),
     // Producer: the annotation pass selects not-yet-annotated rows to write
     // their miss; it never decides decision eligibility.

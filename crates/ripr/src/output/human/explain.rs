@@ -261,7 +261,18 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
                 "use a plain, always-run `assert_eq!`/`assert!` ripr can resolve".to_string()
             }
             RelatedTestMiss::ObservationUnconfirmed => {
-                "assert on the changed value itself, by name".to_string()
+                if finding.probe.family == ProbeFamily::ReturnValue {
+                    // #13037: for a returned value the exact assertion is
+                    // usually already there; what is unconfirmed is the
+                    // observation link, and a test cannot reference an
+                    // expression inside the function by name, so "assert on
+                    // the changed value itself, by name" is not an actionable
+                    // recipe for this family. State what is known and stop.
+                    "the exact returned value is already asserted; observation of the changed expression is unconfirmed because no assertion text names it"
+                        .to_string()
+                } else {
+                    "assert on the changed value itself, by name".to_string()
+                }
             }
             RelatedTestMiss::WeakAssertion => {
                 "assert the exact value, not only success or presence".to_string()

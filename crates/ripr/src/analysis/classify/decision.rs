@@ -102,6 +102,92 @@ pub(in crate::analysis) fn confidence_score(
     (score.min(cap) * 100.0).round() / 100.0
 }
 
+/// The generic missing-discriminator sentence `missing_evidence` emits when
+/// the discriminate stage is not `Yes`. It is honest only while no strong
+/// exact assertion exists: with an observation-unconfirmed exact row the
+/// assertion is present and the missing link is observation (#13037), so
+/// `refine_missing_for_unconfirmed_exact` swaps this sentence for the
+/// precise one before the finding renders.
+pub(in crate::analysis) const GENERIC_STRONG_DISCRIMINATOR_MISSING: &str =
+    "No strong discriminator was detected";
+
+/// #13037: the precise missing-check sentence for a finding whose strongest
+/// reach-establishing related row is a strong exact assertion whose
+/// observation of the changed expression is unconfirmed (no assertion text
+/// names the changed expression). Plain words on purpose: the human
+/// surfaces render `missing` verbatim apart from the fixed producer-phrase
+/// substitutions, and the user-text policy bans the internal noun.
+fn unconfirmed_exact_missing_sentence(family: &ProbeFamily) -> &'static str {
+    match family {
+        ProbeFamily::ReturnValue => {
+            "An exact assertion exists, but observation of the changed returned value is unconfirmed: no assertion text names the changed expression"
+        }
+        ProbeFamily::ErrorPath => {
+            "An exact assertion exists, but observation of the changed error variant is unconfirmed: no assertion text names the changed expression"
+        }
+        _ => {
+            "An exact assertion exists, but observation of the changed behavior is unconfirmed: no assertion text names the changed expression"
+        }
+    }
+}
+
+/// The strongest contributing, reach-establishing related row whose oracle
+/// is an exact kind admitted as strong but whose observation of the changed
+/// expression is unconfirmed. `exact_oracle_gap_next_step` stays eligible
+/// for such rows (#7393); this helper is the same row read for the
+/// missing-check line, so the two sentences cannot drift apart (#13037).
+pub(in crate::analysis) fn strong_exact_observation_unconfirmed(
+    related: &[RelatedTest],
+    owner_is_function: bool,
+) -> Option<&RelatedTest> {
+    related
+        .iter()
+        .filter(|test| {
+            test.is_contributing()
+                && test.miss == Some(RelatedTestMiss::ObservationUnconfirmed)
+                && matches!(test.oracle_strength, OracleStrength::Strong)
+                && matches!(
+                    test.oracle_kind,
+                    OracleKind::ExactValue
+                        | OracleKind::ExactErrorVariant
+                        | OracleKind::WholeObjectEquality
+                        | OracleKind::Snapshot
+                )
+                && test
+                    .relation_reason
+                    .is_none_or(|reason| reason.establishes_reach(owner_is_function))
+        })
+        .max_by_key(|test| test.oracle_strength.rank())
+}
+
+/// #13037: when the generic missing-discriminator sentence is present but a
+/// strong exact assertion row is only observation-unconfirmed, replace the
+/// generic sentence with the precise gap. The generic claim ("no strong
+/// assertion") would contradict the row-level evidence ("uses strong exact
+/// value oracle") and the #7393 next step ("already has an exact
+/// assertion"). Callers pass the post-annotation rows; verdicts are
+/// untouched — this renames the gap, never promotes it.
+pub(in crate::analysis) fn refine_missing_for_unconfirmed_exact(
+    probe: &Probe,
+    missing: &mut Vec<String>,
+    related: &[RelatedTest],
+    owner_is_function: bool,
+) {
+    if !missing
+        .iter()
+        .any(|line| line == GENERIC_STRONG_DISCRIMINATOR_MISSING)
+    {
+        return;
+    }
+    if strong_exact_observation_unconfirmed(related, owner_is_function).is_none() {
+        return;
+    }
+    missing.retain(|line| line != GENERIC_STRONG_DISCRIMINATOR_MISSING);
+    missing.push(unconfirmed_exact_missing_sentence(&probe.family).to_string());
+    missing.sort();
+    missing.dedup();
+}
+
 pub(in crate::analysis) fn missing_evidence(
     probe: &Probe,
     class: &ExposureClass,
@@ -171,7 +257,7 @@ pub(in crate::analysis) fn missing_evidence(
         {
             missing.push(discriminate.summary.clone());
         } else {
-            missing.push("No strong discriminator was detected".to_string());
+            missing.push(GENERIC_STRONG_DISCRIMINATOR_MISSING.to_string());
         }
     }
     missing.extend(
@@ -426,6 +512,17 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
     let family_gap = match probe.family {
         ProbeFamily::ErrorPath => {
             "Add a test input that executes the changed error arm and assert the exact variant or payload it produces"
+        }
+        ProbeFamily::ReturnValue
+            if strongest.miss == Some(RelatedTestMiss::ObservationUnconfirmed) =>
+        {
+            // #13037: the strongest exact assertion is already present and
+            // its observation of the changed expression is unconfirmed, so
+            // demanding "a separating input and the exact returned value"
+            // would prescribe a test the related test already is. Name the
+            // unconfirmed observation link instead; the verdict is unchanged
+            // and the residual stays a static-analysis limit.
+            "Check whether the change can affect the returned value. If it can, the exact assertion the related test already has is the right shape; what remains unconfirmed is the observation link to the changed expression, which no assertion text names. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns"
         }
         ProbeFamily::ReturnValue => {
             "Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns"
@@ -1434,6 +1531,164 @@ mod tests {
         );
         let step = step.as_deref().unwrap_or("");
         assert!(step.contains("already has an exact assertion"), "{step}");
+    }
+
+    // #13037: when the strongest exact row is observation-unconfirmed, the
+    // next step must not prescribe "add a separating input and assert the
+    // exact returned value" — that is the test the related test already is.
+    // It names the unconfirmed observation link instead; the verdict logic
+    // (the step still fires, #7393) is unchanged.
+    #[test]
+    fn unconfirmed_observation_step_names_the_link_not_a_new_assertion() {
+        let step = exact_oracle_gap_next_step(
+            &probe(ProbeFamily::ReturnValue, "discounted + tax"),
+            &ExposureClass::WeaklyExposed,
+            &[related_test_with_miss(
+                "ctl",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+                Some(RelatedTestMiss::ObservationUnconfirmed),
+            )],
+            &[],
+            true,
+        );
+        let step = step.as_deref().unwrap_or("");
+        assert!(step.contains("already has an exact assertion"), "{step}");
+        assert!(
+            step.contains("what remains unconfirmed is the observation link"),
+            "{step}"
+        );
+        assert!(
+            !step.contains("add a separating input and assert the exact returned value"),
+            "{step}"
+        );
+        assert!(step.contains("If it can"), "{step}");
+        assert!(step.contains("If it cannot"), "{step}");
+    }
+
+    // A row whose gap is the input (not the observation link) keeps the
+    // established separating-input advice.
+    #[test]
+    fn missing_input_row_keeps_the_separating_input_advice() {
+        let step = exact_oracle_gap_next_step(
+            &probe(ProbeFamily::ReturnValue, "discounted + tax"),
+            &ExposureClass::WeaklyExposed,
+            &[related_test_with_miss(
+                "ctl",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+                Some(RelatedTestMiss::MissingInput),
+            )],
+            &[],
+            true,
+        );
+        let step = step.as_deref().unwrap_or("");
+        assert!(
+            step.contains("add a separating input and assert the exact returned value"),
+            "{step}"
+        );
+    }
+
+    // #13037: the missing-check line replaces the generic "no strong
+    // assertion" sentence only when a strong exact row is
+    // observation-unconfirmed; every other shape keeps the generic sentence.
+    #[test]
+    fn refine_missing_swaps_the_generic_only_for_unconfirmed_exact_rows() {
+        let probe = probe(ProbeFamily::ReturnValue, "return 0");
+        let mut missing = vec![GENERIC_STRONG_DISCRIMINATOR_MISSING.to_string()];
+        refine_missing_for_unconfirmed_exact(
+            &probe,
+            &mut missing,
+            &[related_test_with_miss(
+                "ctl",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+                Some(RelatedTestMiss::ObservationUnconfirmed),
+            )],
+            true,
+        );
+        assert!(
+            missing.iter().all(|line| {
+                line != GENERIC_STRONG_DISCRIMINATOR_MISSING
+                    && !line.contains("No strong discriminator")
+            }),
+            "{missing:?}"
+        );
+        assert!(
+            missing
+                .iter()
+                .any(|line| line
+                    .contains("observation of the changed returned value is unconfirmed")),
+            "{missing:?}"
+        );
+
+        // No related rows: the generic sentence stands.
+        let mut missing = vec![GENERIC_STRONG_DISCRIMINATOR_MISSING.to_string()];
+        refine_missing_for_unconfirmed_exact(&probe, &mut missing, &[], true);
+        assert_eq!(
+            missing,
+            vec![GENERIC_STRONG_DISCRIMINATOR_MISSING.to_string()]
+        );
+
+        // A weak row is not an exact assertion: the generic sentence stands.
+        let mut missing = vec![GENERIC_STRONG_DISCRIMINATOR_MISSING.to_string()];
+        refine_missing_for_unconfirmed_exact(
+            &probe,
+            &mut missing,
+            &[related_test_with_miss(
+                "smoke",
+                OracleKind::RelationalCheck,
+                OracleStrength::Weak,
+                Some(RelatedTestMiss::WeakAssertion),
+            )],
+            true,
+        );
+        assert_eq!(
+            missing,
+            vec![GENERIC_STRONG_DISCRIMINATOR_MISSING.to_string()]
+        );
+
+        // A confirmed exact row (no miss) is not an unconfirmed row either.
+        let mut missing = vec![GENERIC_STRONG_DISCRIMINATOR_MISSING.to_string()];
+        refine_missing_for_unconfirmed_exact(
+            &probe,
+            &mut missing,
+            &[related_test(
+                "ctl",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+            true,
+        );
+        assert_eq!(
+            missing,
+            vec![GENERIC_STRONG_DISCRIMINATOR_MISSING.to_string()]
+        );
+    }
+
+    // #13037: the precise sentence names the family; an error-path probe
+    // names the changed error variant, not the returned value.
+    #[test]
+    fn refine_missing_sentence_follows_the_probe_family() {
+        let probe = probe(ProbeFamily::ErrorPath, "Err(BadPort)");
+        let mut missing = vec![GENERIC_STRONG_DISCRIMINATOR_MISSING.to_string()];
+        refine_missing_for_unconfirmed_exact(
+            &probe,
+            &mut missing,
+            &[related_test_with_miss(
+                "t",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+                Some(RelatedTestMiss::ObservationUnconfirmed),
+            )],
+            true,
+        );
+        assert!(
+            missing.iter().any(
+                |line| line.contains("observation of the changed error variant is unconfirmed")
+            ),
+            "{missing:?}"
+        );
     }
 
     // A syntactic assert_eq! the classifier downgraded (a self-computed
