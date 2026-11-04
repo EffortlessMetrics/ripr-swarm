@@ -1,6 +1,6 @@
 # Fixture: cross-language-edge-registry-currentness-corpus
 
-Spec: RIPR-SPEC-0379
+Spec: RIPR-SPEC-0421
 
 Deterministic loading, currentness evaluation, and base/head movement fixtures for
 #6484 on top of the schema corpus in `cross-language-edge-registry-corpus`.

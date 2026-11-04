@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1",
   "kind": "cross_language_edge_registry_currentness_corpus",
-  "spec": "RIPR-SPEC-0379-cross-language-edge-registry-currentness-v1.md",
+  "spec": "RIPR-SPEC-0421-cross-language-edge-registry-currentness-v1.md",
   "description": "Loading/currentness/base-head fixtures for #6484.",
   "cases": [
     {

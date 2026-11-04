@@ -1,4 +1,4 @@
-# RIPR-SPEC-0379: Cross-Language Edge Registry Loading and Currentness V1
+# RIPR-SPEC-0421: Cross-Language Edge Registry Loading and Currentness V1
 
 Status: accepted
 
@@ -95,7 +95,7 @@ Reordering producers or edges does not change registry semantic identity.
 
 ## Test Mapping
 
-See `.ripr/traceability.toml` behavior `RIPR-SPEC-0379`.
+See `.ripr/traceability.toml` behavior `RIPR-SPEC-0421`.
 
 ## Implementation Mapping
 

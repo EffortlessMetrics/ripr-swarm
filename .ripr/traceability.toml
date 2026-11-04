@@ -21317,9 +21317,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0379"
+id = "RIPR-SPEC-0421"
 name = "Cross-language edge registry loading and currentness"
-spec = "docs/specs/RIPR-SPEC-0379-cross-language-edge-registry-currentness-v1.md"
+spec = "docs/specs/RIPR-SPEC-0421-cross-language-edge-registry-currentness-v1.md"
 tests = [
   "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::currentness_corpus_cases",
   "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::missing_producer_registration_removes_positive_relation",
@@ -21336,7 +21336,7 @@ code = [
   "crates/ripr/src/provider_contract/cross_language_edge/digest.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0379-cross-language-edge-registry-currentness-v1.md",
+  "docs/specs/RIPR-SPEC-0421-cross-language-edge-registry-currentness-v1.md",
 ]
 metrics = [
   "unit_test_pass_rate",
