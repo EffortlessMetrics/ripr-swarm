@@ -11,16 +11,20 @@ fn complete_compact_with_budget(
     max_shapes: usize,
     max_payload_bytes: usize,
 ) -> Result<Option<Vec<ClassifiedSeam>>, String> {
-    let shapes = files.iter().try_fold(0usize, |count, file| {
-        count.checked_add(
-            index
-                .files()
-                .get(file)
-                .map_or(0, |facts| facts.probe_shapes.len()),
-        )
-    });
-    if shapes.is_none_or(|count| count > max_shapes) {
-        return Ok(None);
+    let mut shapes = 0usize;
+    for file in files {
+        cancellation::checkpoint()?;
+        let facts = index
+            .files()
+            .get(file)
+            .ok_or_else(|| format!("compact prefill index is missing {}", file.display()))?;
+        let Some(count) = shapes.checked_add(facts.probe_shapes.len()) else {
+            return Ok(None);
+        };
+        if count > max_shapes {
+            return Ok(None);
+        }
+        shapes = count;
     }
     let inventory = inventory_seams_from_index_bounded(files, index, Some(max_shapes))?;
     if inventory.seams.len() != inventory.total_unique {
@@ -83,11 +87,26 @@ fn same_index_prefill_is_complete_or_absent_and_matches_compact_cold() -> Result
         &root.join("src/lib.rs"),
         "pub fn score(x:i32)->i32 { x+1 }\npub fn other(x:i32)->bool { x>=3 }\n#[cfg(test)] mod tests { #[test] fn score_positive() { assert!(super::score(2)>0); } }\n",
     )?;
+    std::fs::write(root.join("src/declined.rs"), [0xff]).map_err(|e| e.to_string())?;
     let config = RiprConfig::default();
     let state = collect_workspace_state(&root, &config)?;
     let mut cached = state.build_index(&config)?;
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let files = production_files_from_state_with_role(&state, &config);
+    let fallback = rust_index::lexical_fallback_files(&cached.index);
+    assert!(
+        fallback.contains(&PathBuf::from("src/declined.rs")),
+        "fixture must carry parser fallback provenance"
+    );
+    assert!(
+        complete_compact_with_budget(
+            &[PathBuf::from("missing.rs")],
+            &cached.index,
+            100,
+            1024 * 1024
+        )
+        .is_err()
+    );
     let bounded_full = inventory_seams_from_index_bounded(&files, &cached.index, Some(1))?;
     assert_eq!(bounded_full.seams.len(), 1);
     assert!(
@@ -119,8 +138,9 @@ fn same_index_prefill_is_complete_or_absent_and_matches_compact_cold() -> Result
     let prefilling = complete_compact_with_budget(&files, &cached.index, 100, 1024 * 1024)?
         .ok_or("small fixture unexpectedly exceeded budget")?;
     assert_eq!(prefilling.len(), bounded_full.total_unique);
-    let (baseline, fallback) =
+    let (baseline, baseline_fallback) =
         inventory_compact_classified_seams_from_state_with_config(&state, &config)?;
+    assert_eq!(baseline_fallback, fallback);
     assert!(!baseline.is_empty());
     let payload_bytes = baseline.iter().try_fold(0usize, |total, record| {
         let bytes = serde_json::to_vec(record).map_err(|error| error.to_string())?;
