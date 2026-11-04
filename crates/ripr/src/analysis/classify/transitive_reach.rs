@@ -885,6 +885,7 @@ impl<'a> ReachGraph<'a> {
                 && let Some(param) = blanket_impl_type_param(&header)
                 && blanket_impl_body_calls_self_method(function, owner_name)
             {
+                let pushed_before = self_types.len();
                 for bound in blanket_impl_bound_traits(&header, &param) {
                     for owner_fn in self.by_name.get(owner_name).into_iter().flatten() {
                         let owner_trait = super::related_tests::impl_trait_name(&owner_fn.id.0);
@@ -899,7 +900,12 @@ impl<'a> ReachGraph<'a> {
                         }
                     }
                 }
-                continue;
+                // A blanket entry with no mapped owner impl contributes no
+                // receiver; fall through to the generic path instead of
+                // dropping it, so the witness is not read as corroborated.
+                if self_types.len() > pushed_before {
+                    continue;
+                }
             }
             self_types.push(super::related_tests::impl_self_type_name(&function.id.0)?);
         }
@@ -6445,20 +6451,42 @@ fn real() {}
             receivers.is_some_and(|types| types.by_identifier.contains("Num")),
             "concrete self type must be kept"
         );
-        // Discriminating: a real blanket impl naming the same type parameter
-        // contributes no receiver of its own.
+    }
+
+    #[test]
+    fn a_blanket_entry_without_a_mapped_owner_impl_does_not_read_as_corroborated() {
+        // `impl<T: Scale> Wrap for T` calls `self.scale()`, but no impl of
+        // `Scale` is indexed, so no concrete receiver maps. The entry must not
+        // vanish (which reads as corroborated); it falls through to its
+        // generic self type `T`, which no test calls on.
         let blanket = make_impl_fn(
-            "add",
-            "impl <Num: Scale> Add<Num> for Num",
+            "wrap",
+            "impl <T: Scale> Wrap for T",
             vec![("scale", "self.scale()")],
         );
         let index = index_with(vec![blanket], Vec::new());
         let graph = ReachGraph::build(&index);
-        assert!(
-            graph
-                .entry_receiver_types("add", &HashSet::new(), "scale")
-                .is_none()
+        let receivers = graph
+            .entry_receiver_types("wrap", &HashSet::new(), "scale")
+            .map(|types| types.by_identifier);
+        assert_eq!(
+            receivers,
+            Some(HashSet::from(["T".to_string()])),
+            "uncorroborated blanket entry must keep a receiver set"
         );
+        // Discriminating: with a mapped owner impl the blanket expands to it.
+        let scale_f64 = make_impl_fn("scale", "impl Scale for f64", Vec::new());
+        let blanket = make_impl_fn(
+            "wrap",
+            "impl <T: Scale> Wrap for T",
+            vec![("scale", "self.scale()")],
+        );
+        let index = index_with(vec![scale_f64, blanket], Vec::new());
+        let graph = ReachGraph::build(&index);
+        let expanded = graph.entry_receiver_types("wrap", &HashSet::new(), "scale");
+        assert!(expanded.is_some_and(|types| {
+            types.by_identifier.is_empty() && types.unindexed == vec!["f64".to_string()]
+        }));
     }
 
     #[test]
