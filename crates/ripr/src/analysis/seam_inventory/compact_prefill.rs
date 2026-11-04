@@ -313,11 +313,11 @@ fn file_seams(
     let mut payload = Budget::new(limits.retained_bytes);
     visit_inventory_seams(&[file.to_path_buf()], index, |seam| {
         let key = SeamSortKey::of(&seam);
-        if !ordered.contains_key(&key) {
+        if let std::collections::btree_map::Entry::Vacant(entry) = ordered.entry(key) {
             if !payload.measure(&seam)? {
                 return Err("compact prefill file payload limit exceeded".into());
             }
-            ordered.insert(key, seam);
+            entry.insert(seam);
             retention.file_records = retention.file_records.max(ordered.len());
             retention.file_bytes = retention.file_bytes.max(payload.used());
         }

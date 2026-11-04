@@ -559,9 +559,9 @@ fn inventory_classified_seams_report_collect(
                 );
                 let store_status = match cache.store_classified_seams_with_limit_and_fallback(
                     &key,
-                    &classified,
+                    classified,
                     cached_limit_info.as_ref(),
-                    &lexical_fallback_files,
+                    lexical_fallback_files,
                     store_limit,
                 ) {
                     Ok(status) => {
