@@ -1,0 +1,31 @@
+# Adapter-substrate qualification receipt contract (#6382).
+[[behavior]]
+id = "RIPR-SPEC-0422"
+name = "Adapter substrate qualification receipt v1"
+spec = "docs/specs/RIPR-SPEC-0422-adapter-substrate-qualification-v1.md"
+tests = [
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::corpus_cases_cover_substrate_acceptance_matrix",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::every_substrate_class_has_a_constructible_shape",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::typescript_and_javascript_share_family_but_keep_language_cells",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::same_dependency_version_different_grammar_generations_validate",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::receipt_compiler_ceiling_requires_compiler_capable_layer",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::shared_family_requires_matching_implementation",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::native_syntax_layer_may_declare_platform_limited_ceiling",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::generated_parser_allows_checked_in_tables_without_build_script",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::unknown_fields_are_rejected_at_deserialize",
+  "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::semantic_digest_is_order_and_relocation_invariant",
+]
+fixtures = [
+  "fixtures/adapter-substrate-qualification-corpus/corpus.json",
+]
+code = [
+  "crates/ripr/src/provider_contract/adapter_substrate/model.rs",
+  "crates/ripr/src/provider_contract/adapter_substrate/validate.rs",
+  "crates/ripr/src/provider_contract/adapter_substrate/digest.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0422-adapter-substrate-qualification-v1.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
