@@ -25,11 +25,10 @@
 //! relation can never pass over an empty or misparsed workspace. These are
 //! static classes: nothing here claims a runtime mutation outcome.
 //!
-//! A relation that is known not to hold for a seed is listed in
-//! [`EXCEPTIONS`] with its reason; the case then asserts the relation still
-//! fails (a stale exception fails the test) instead of being skipped. The
-//! table is empty because every relation held on every seed when the suite
-//! was written. The `python_sink_token` seed is exempt only from the strict
+//! Every relation held on every seed when the suite was written, so there is
+//! no exception mechanism: a relation later found not to hold for a seed
+//! should be recorded with an issue and an explicit, asserted divergence
+//! rather than skipped. The `python_sink_token` seed is exempt only from the strict
 //! smoke-below-exact check (`strict_oracle: false`): its exact oracle is
 //! itself `weakly_exposed`, so monotonicity (smoke never above exact) is all
 //! it can show.
@@ -76,9 +75,6 @@ enum Relation {
     TestOrder,
     OracleStrength,
 }
-
-/// Known non-holding relations: `(seed name, relation, reason)`.
-const EXCEPTIONS: &[(&str, Relation, &str)] = &[];
 
 /// One generated test-file shape. Every field is a free axis of a relation.
 #[derive(Clone)]
@@ -209,7 +205,7 @@ fn run(seed: &Seed, shape: &Shape) -> Result<Finding, String> {
         std::fs::write(&full, text).map_err(|e| format!("write {path}: {e}"))?;
     }
     let mut config = RiprConfig::default();
-    config.languages.enabled = vec![seed.language.clone()];
+    config.languages.enabled = vec![seed.language];
     let output = check_workspace_with_config(
         CheckInput {
             root: root.clone(),
@@ -278,13 +274,6 @@ fn baseline(seed: &Seed) -> Result<Finding, String> {
     Ok(finding)
 }
 
-fn excepted(seed: &Seed, relation: Relation) -> Option<&'static str> {
-    EXCEPTIONS
-        .iter()
-        .find(|(name, rel, _)| *name == seed.name && *rel == relation)
-        .map(|(_, _, reason)| *reason)
-}
-
 fn check_comment_whitespace(seed: &Seed) -> Result<(), String> {
     let plain = baseline(seed)?;
     let decorated = run(
@@ -294,8 +283,9 @@ fn check_comment_whitespace(seed: &Seed) -> Result<(), String> {
             ..baseline_shape(seed, Oracle::Exact)
         },
     )?;
-    // Both directions: adding comments to a plain workspace and removing them
-    // from a decorated one compare the same two analyses.
+    // One undirected comparison of the plain and the decorated analysis: the
+    // equality holds for adding comments to the plain workspace and for
+    // removing them from the decorated one.
     assert_eq!(plain.class, decorated.class, "{}: class", seed.name);
     assert_eq!(plain.id, decorated.id, "{}: finding id", seed.name);
     Ok(())
@@ -390,27 +380,12 @@ fn check_oracle_strength(seed: &Seed) -> Result<(), String> {
 }
 
 fn run_relation(seed: &Seed, relation: Relation) -> Result<(), String> {
-    let outcome = match relation {
+    match relation {
         Relation::CommentWhitespace => check_comment_whitespace(seed),
         Relation::LocalRename => check_local_rename(seed),
         Relation::UnrelatedTest => check_unrelated_test(seed),
         Relation::TestOrder => check_test_order(seed),
         Relation::OracleStrength => check_oracle_strength(seed),
-    };
-    match excepted(seed, relation) {
-        // An excepted relation must still diverge: if it starts holding, the
-        // exception is stale and the entry has to be removed.
-        Some(reason) => {
-            assert!(!reason.is_empty());
-            match outcome {
-                Err(_) => Ok(()),
-                Ok(()) => Err(format!(
-                    "{}: {relation:?} is listed as an exception ({reason}) but now holds",
-                    seed.name
-                )),
-            }
-        }
-        None => outcome,
     }
 }
 
