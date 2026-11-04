@@ -283,3 +283,73 @@ while (process.env.CI) {
     }
     Ok(())
 }
+
+#[test]
+fn no_base_url_config_identity_retains_only_relevant_extraction_gaps() -> Result<(), String> {
+    let unrelated_gap = "const m = require('../src/');\nwhile (process.env.CI) { it(`boundary ${1}`, () => { expect(m.unrelated).toBe(1); }); }\n";
+    for (label, alternate, gap, expected_partial) in [
+        ("named", Some("tsconfig.spec.json"), ALIAS_GAP, true),
+        ("unselected-js", Some("jsconfig.json"), ALIAS_GAP, true),
+        ("unrelated", None, unrelated_gap, false),
+        (
+            "unrelated-forced",
+            Some("tsconfig.spec.json"),
+            unrelated_gap,
+            true,
+        ),
+    ] {
+        let root = ts_unique_tempdir(label)?;
+        for (path, source) in [
+            ("package.json", PACKAGE_JSON),
+            ("src/pricing.ts", PRICING),
+            ("src/index.ts", "export const unrelated = 1;\n"),
+            ("tests/globals.d.ts", GLOBALS),
+            ("tests/pricing.test.ts", RETAINED_TEST),
+            ("tests/gap.test.ts", gap),
+            (
+                "tsconfig.json",
+                r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+            ),
+        ] {
+            ts_write_file(&root.join(path), source)?;
+        }
+        if let Some(name) = alternate {
+            ts_write_file(
+                &root.join(name),
+                r#"{"compilerOptions":{"paths":{"subject":["./src/pricing.ts"]}}}"#,
+            )?;
+        }
+        let mut options = ts_analysis_options(root.clone());
+        options.resolve_tsconfig_paths = true;
+        let result = TypeScriptAdapter.analyze_diff(
+            &options,
+            &OraclePolicy::default(),
+            &[changed_with_lines(
+                "src/pricing.ts",
+                &[(2, "  if (amount >= 150) {")],
+            )],
+        )?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(result.findings.len(), 1, "{label}: nonempty changed owner");
+        let partial = result.limitations.iter().find(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        });
+        assert_eq!(
+            partial.is_some(),
+            expected_partial,
+            "{label}: {:?}",
+            result.limitations
+        );
+        if let Some(partial) = partial {
+            assert_eq!(
+                partial.path.as_deref(),
+                Some("tests/gap.test.ts"),
+                "{label}"
+            );
+        }
+    }
+    Ok(())
+}

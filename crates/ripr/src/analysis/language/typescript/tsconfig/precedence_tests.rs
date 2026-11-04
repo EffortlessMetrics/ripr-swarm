@@ -202,66 +202,76 @@ fn direct_and_barrel_relations_do_not_borrow_a_same_named_fallback_owner() -> Re
     let decoy = decoys.first().ok_or("decoy extraction failed")?;
     assert_eq!(owner.name, decoy.name);
 
-    for blocked in [false, true] {
-        let target = if blocked {
-            json!(["src/*", "other/*"])
-        } else {
-            json!(["src/*"])
-        };
-        let mut map = workspace.map(json!({
-            "@/*": ["fallback/*"],
-            "@/feature/*": target
-        }))?;
-        // Force the old implementation's wrong winning order.
-        map.glob_entries.sort_by_key(|entry| entry.prefix.len());
-        let barrel_source = fs::read_to_string(workspace.0.join("src/barrel.ts"))
-            .map_err(|err| format!("read barrel fixture: {err}"))?;
-        let mut sources = std::collections::HashMap::new();
-        sources.insert(PathBuf::from("src/barrel.ts"), barrel_source);
-        // The production index includes the owner and decoy sources. An
-        // omitted source now correctly means unavailable export facts, not
-        // a successfully indexed module with no additional export bindings.
-        sources.insert(owner_file.to_path_buf(), source.to_string());
-        sources.insert(decoy_file.to_path_buf(), source.to_string());
-        let index = ReExportIndex::build(
-            &[
-                PathBuf::from("src/barrel.ts"),
-                owner_file.to_path_buf(),
-                decoy_file.to_path_buf(),
-            ],
-            &sources,
-            &workspace.0,
-            Some(&map),
-            |_| false,
-        );
-        for (import_source, reason) in [
-            ("@/feature/cart", RelationReason::DirectOwnerCall),
-            ("../src/barrel", RelationReason::ReExportChainFollowed),
-        ] {
-            let test_file = Path::new("tests/cart.test.ts");
-            let test_source = format!(
-                "import {{ shippingFee }} from '{import_source}';\n\
-                 test('shipping fee', () => {{ expect(shippingFee(51)).toBe(0); }});\n"
-            );
-            let tests = extract_tests(test_file, &test_source);
-            assert_eq!(tests.len(), 1, "nonempty parsed-test control");
-            let related = find_related_tests(owner, &tests, Some(&workspace.0), &index, Some(&map));
-            let unrelated =
-                find_related_tests(decoy, &tests, Some(&workspace.0), &index, Some(&map));
-            assert!(
-                unrelated.is_empty(),
-                "{import_source} credited the decoy: {unrelated:?}"
-            );
-            if blocked {
-                assert!(
-                    related.is_empty(),
-                    "unsupported winning mapping was credited"
-                );
+    for no_base in [false, true] {
+        for blocked in [false, true] {
+            let prefix = if no_base { "./" } else { "" };
+            let target = if blocked {
+                json!([format!("{prefix}src/*"), format!("{prefix}other/*")])
             } else {
-                assert_eq!(related.len(), 1, "{import_source} lost its real owner");
-                let relation = related.first().ok_or("related test disappeared")?;
-                assert_eq!(relation.file, test_file);
-                assert_eq!(relation.relation_reason, Some(reason));
+                json!([format!("{prefix}src/*")])
+            };
+            let paths = json!({"@/*": [format!("{prefix}fallback/*")], "@/feature/*": target});
+            let mut map = if no_base {
+                workspace.write(
+                    "tsconfig.json",
+                    &json!({"compilerOptions":{"paths":paths}}).to_string(),
+                )?;
+                load_alias_map(&workspace.0).ok_or("no-base config did not load")?
+            } else {
+                workspace.map(paths)?
+            };
+            // Force the old implementation's wrong winning order.
+            map.glob_entries.sort_by_key(|entry| entry.prefix.len());
+            let barrel_source = fs::read_to_string(workspace.0.join("src/barrel.ts"))
+                .map_err(|err| format!("read barrel fixture: {err}"))?;
+            let mut sources = std::collections::HashMap::new();
+            sources.insert(PathBuf::from("src/barrel.ts"), barrel_source);
+            // The production index includes the owner and decoy sources. An
+            // omitted source now correctly means unavailable export facts, not
+            // a successfully indexed module with no additional export bindings.
+            sources.insert(owner_file.to_path_buf(), source.to_string());
+            sources.insert(decoy_file.to_path_buf(), source.to_string());
+            let index = ReExportIndex::build(
+                &[
+                    PathBuf::from("src/barrel.ts"),
+                    owner_file.to_path_buf(),
+                    decoy_file.to_path_buf(),
+                ],
+                &sources,
+                &workspace.0,
+                Some(&map),
+                |_| false,
+            );
+            for (import_source, reason) in [
+                ("@/feature/cart", RelationReason::DirectOwnerCall),
+                ("../src/barrel", RelationReason::ReExportChainFollowed),
+            ] {
+                let test_file = Path::new("tests/cart.test.ts");
+                let test_source = format!(
+                    "import {{ shippingFee }} from '{import_source}';\n\
+                 test('shipping fee', () => {{ expect(shippingFee(51)).toBe(0); }});\n"
+                );
+                let tests = extract_tests(test_file, &test_source);
+                assert_eq!(tests.len(), 1, "nonempty parsed-test control");
+                let related =
+                    find_related_tests(owner, &tests, Some(&workspace.0), &index, Some(&map));
+                let unrelated =
+                    find_related_tests(decoy, &tests, Some(&workspace.0), &index, Some(&map));
+                assert!(
+                    unrelated.is_empty(),
+                    "{import_source} credited the decoy: {unrelated:?}"
+                );
+                if blocked {
+                    assert!(
+                        related.is_empty(),
+                        "unsupported winning mapping was credited"
+                    );
+                } else {
+                    assert_eq!(related.len(), 1, "{import_source} lost its real owner");
+                    let relation = related.first().ok_or("related test disappeared")?;
+                    assert_eq!(relation.file, test_file);
+                    assert_eq!(relation.relation_reason, Some(reason));
+                }
             }
         }
     }
