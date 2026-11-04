@@ -2499,8 +2499,10 @@ fn analyze_related_assertions(
         // standard-method dispatch is not an observation witness. Indexed
         // implicit trait dispatch in this test retains its authority (#7820). Keep
         // token/collection confirmation and opaque macro allowances.
-        let claims_candidates: Vec<OracleFact> = if matches!(probe.family, ProbeFamily::ReturnValue)
-        {
+        let claims_candidates: Vec<OracleFact> = if matches!(
+            probe.family,
+            ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+        ) {
             super::owner_pin::claims_payload_eq_candidates(test)
                 .into_iter()
                 .filter(|candidate| (return_admission.owner_return_pin)(test, candidate))
@@ -2625,8 +2627,10 @@ fn analyze_related_assertions(
             // direction, a non-literal expected operand or an unestablished
             // owner call leaves the oracle `unknown`.
             let claims_graded;
-            let assertion = if matches!(probe.family, ProbeFamily::ReturnValue)
-                && assertion.kind == OracleKind::Unknown
+            let assertion = if matches!(
+                probe.family,
+                ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+            ) && assertion.kind == OracleKind::Unknown
                 && assertion.strength == OracleStrength::None
                 && super::owner_pin::is_claims_payload_eq_text(&assertion.text)
                 && (return_admission.owner_return_pin)(test, assertion)
