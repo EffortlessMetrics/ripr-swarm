@@ -66,7 +66,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/out"
           start=$SECONDS
           status=0
-          "$RIPR_BIN" check --root . --base "$BASE_SHA" --committed --mode draft --format agent > "$RUNNER_TEMP/out/report.txt" 2> "$RUNNER_TEMP/out/stderr.txt" || status=$?
+          "$RIPR_BIN" check --root . --base "$BASE_SHA" --committed --mode draft --format agent > "$RUNNER_TEMP/out/report.txt" 2> "$RUNNER_TEMP/stderr.txt" || status=$?
+          tok=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n'); echo "::stop-commands::$tok"; cat "$RUNNER_TEMP/stderr.txt"; echo "::$tok::"
+          line=$(sed -n 1p "$RUNNER_TEMP/stderr.txt"); code=$(printf '%s' "$line" | sed -nE 's/^ripr: (diff_scope_oversized|review_guidance_oversized|analysis_timeout): .*$/\1/p'); detail=$(printf '%s' "$line" | sed -nE 's/^ripr: [a-z_]+: ([^;.]{0,200}).*$/\1/p' | grep -E '^[0-9]+ (changed Rust lines|indexed Rust files)( across [0-9]+ Rust files)? exceed the RIPR_[A-Z_]+ limit \([0-9]+\)$' || true); [ -z "$code" ] || printf '%s: %s\n' "$code" "$detail" > "$RUNNER_TEMP/out/reason.txt"
           printf '%s\n%s\n%s\n' "$status" "$((SECONDS - start))" "$HEAD_SHA" > "$RUNNER_TEMP/out/meta.txt"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -98,6 +100,6 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           marker='<!-- ripr-pr-comment -->'
-          { echo "$marker"; echo "### ripr static exposure check"; echo "Commit \`${HEAD_SHA:0:12}\` · [run]($RUN_URL) · advisory, static evidence only (not a mutation run)."; echo; if [ -s out/report.txt ] && [ "$(sed -n 1p out/meta.txt)" = 0 ]; then echo "\`\`\`text"; head -c 6000 out/report.txt | tr -d '\r' | sed 's/```/ʼʼʼ/g'; echo; echo "\`\`\`"; [ "$(wc -c < out/report.txt)" -le 6000 ] || echo "_Report truncated; the run artifact has the full text._"; echo "Took $(sed -n 2p out/meta.txt)s."; else echo "ripr did not produce a report for this commit. Nothing here is a finding."; [ ! -s out/stderr.txt ] || { echo "\`\`\`text"; sed -n 1p out/stderr.txt | head -c 700 | tr -d '\r' | sed 's/```/ʼʼʼ/g'; echo; echo "\`\`\`"; }; fi; } > body.md
+          { echo "$marker"; echo "### ripr static exposure check"; echo "Commit \`${HEAD_SHA:0:12}\` · [run]($RUN_URL) · advisory, static evidence only (not a mutation run)."; echo; if [ -s out/report.txt ] && [ "$(sed -n 1p out/meta.txt)" = 0 ]; then echo "\`\`\`text"; head -c 6000 out/report.txt | tr -d '\r' | sed 's/```/ʼʼʼ/g'; echo; echo "\`\`\`"; [ "$(wc -c < out/report.txt)" -le 6000 ] || echo "_Report truncated; the run artifact has the full text._"; echo "Took $(sed -n 2p out/meta.txt)s."; else echo "ripr did not produce a report for this commit. Nothing here is a finding."; [ ! -s out/reason.txt ] || { echo "\`\`\`text"; grep -E '^[a-z_]+: [A-Za-z0-9 _,()=/<>-]*$' out/reason.txt | head -n 1; echo "\`\`\`"; }; fi; } > body.md
           id=$(gh api --paginate "repos/$REPO/issues/$PR/comments" --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | sed -n 1p)
           if [ -n "$id" ]; then gh api --method PATCH "repos/$REPO/issues/comments/$id" -F body=@body.md > /dev/null; else gh api --method POST "repos/$REPO/issues/$PR/comments" -F body=@body.md > /dev/null; fi
