@@ -56,20 +56,16 @@ impl SliceCounterBoundary {
         if !self.valid_for(probe, owner) {
             return None;
         }
-        let mut saw_true = false;
-        let mut saw_false = false;
+        let mut outcomes = Vec::with_capacity(self.rows.len());
         for row in &self.rows {
-            match predicate_ever_true(&self.expression, &self.counter, row.count) {
-                Some(true) => saw_true = true,
-                Some(false) => saw_false = true,
-                None => return None,
-            }
+            let ever_true = predicate_ever_true(&self.expression, &self.counter, row.count)?;
+            outcomes.push((row.count, ever_true));
         }
-        (saw_true && saw_false).then(|| {
+        adjacent_flip(&outcomes).then(|| {
             StageEvidence::new(
                 StageState::Yes,
                 Confidence::Medium,
-                "Literal slice inputs establish both sides of the per-byte counter boundary",
+                "Literal slice inputs at adjacent lengths flip the per-byte counter predicate",
             )
         })
     }
@@ -217,7 +213,11 @@ fn per_byte_counter_shape(owner: &FunctionSummary, expression: &str) -> Option<(
     };
     let body = function.body()?;
     let statements = body.stmt_list()?.statements().collect::<Vec<_>>();
-    let mut counter_binding = None;
+    // Exactly one binding of the counter name among the top-level lets, and it
+    // is `let mut <counter> = 0;`. An uninitialised or otherwise-initialised
+    // counter, or a second binding of the name, fails closed. Other locals do
+    // not matter here.
+    let mut counter_bindings = 0usize;
     for statement in &statements {
         let ast::Stmt::LetStmt(binding) = statement else {
             continue;
@@ -228,15 +228,18 @@ fn per_byte_counter_shape(owner: &FunctionSummary, expression: &str) -> Option<(
         let ast::Pat::IdentPat(local) = binding.pat()? else {
             continue;
         };
-        if local.mut_token().is_none() {
+        if local.name()?.text() != counter.as_str() {
             continue;
         }
-        let init = compact(&binding.initializer()?.syntax().text().to_string());
-        if init == "0" {
-            counter_binding = Some(local.name()?.text().to_string());
+        let zero_init = binding
+            .initializer()
+            .is_some_and(|init| compact(&init.syntax().text().to_string()) == "0");
+        if local.mut_token().is_none() || !zero_init {
+            return None;
         }
+        counter_bindings += 1;
     }
-    if counter_binding.as_deref() != Some(counter.as_str()) {
+    if counter_bindings != 1 {
         return None;
     }
     let function_node = function.syntax();
@@ -451,6 +454,18 @@ fn evaluates_predicate(expression: &str, counter: &str, value: usize) -> Option<
     None
 }
 
+/// Whether two rows with adjacent lengths `k` and `k + 1` flip the predicate
+/// from never-true to true. Non-adjacent lengths straddling the predicate do not
+/// pin the boundary: neither could tell `64 < count` from `64 <= count`.
+/// Rows are sorted by length and deduplicated.
+fn adjacent_flip(outcomes: &[(usize, bool)]) -> bool {
+    outcomes.windows(2).any(|pair| {
+        let (low, low_true) = pair[0];
+        let (high, high_true) = pair[1];
+        high == low.saturating_add(1) && !low_true && high_true
+    })
+}
+
 /// Whether the predicate is true for any counter value the loop reaches on a
 /// slice of `length` elements: the increment precedes the predicate, so the
 /// counter takes `1..=length`, not only its final value.
@@ -618,5 +633,63 @@ mod tests {
         assert_eq!(predicate_ever_true("16 < count", "count", 17), Some(true));
         assert_eq!(predicate_ever_true("count <= 1", "count", 4), Some(true));
         assert_eq!(predicate_ever_true("count == other", "count", 4), None);
+    }
+
+    #[test]
+    fn only_adjacent_lengths_flipping_the_predicate_pin_the_boundary() {
+        let outcome = |lengths: &[usize]| {
+            lengths
+                .iter()
+                .map(|length| {
+                    (
+                        *length,
+                        predicate_ever_true("64 < count", "count", *length) == Some(true),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        // 4 and 100 straddle the predicate but neither kills `64 <= count`.
+        assert!(!adjacent_flip(&outcome(&[4, 100])));
+        assert!(!adjacent_flip(&outcome(&[63, 66])));
+        assert!(!adjacent_flip(&outcome(&[4, 63])));
+        assert!(adjacent_flip(&outcome(&[64, 65])));
+        assert!(adjacent_flip(&outcome(&[4, 64, 65, 100])));
+    }
+
+    #[test]
+    fn a_later_zero_initialised_local_does_not_hide_the_counter() {
+        let body = "pub fn chunk_size(hex: &[u8]) -> Result<u64, ChunkError> {\n    let mut count = 0;\n    let mut size = 0;\n    let mut pending;\n    for &b in hex {\n        count += 1;\n        if 16 < count {\n            return Err(ChunkError::TooLong);\n        }\n    }\n    Ok(0)\n}";
+        assert_eq!(
+            shape(body, "16 < count"),
+            Some(("hex".to_string(), "count".to_string()))
+        );
+    }
+
+    #[test]
+    fn an_uninitialised_or_nonzero_counter_binding_is_refused() {
+        let loop_part =
+            format!("    for &b in hex {{\n        count += 1;\n{GUARD}    }}\n    Ok(0)\n}}");
+        let head = "pub fn chunk_size(hex: &[u8]) -> Result<u64, ChunkError> {\n";
+        assert_eq!(
+            shape(
+                &format!("{head}    let mut count;\n    count = 0;\n{loop_part}"),
+                "16 < count"
+            ),
+            None
+        );
+        assert_eq!(
+            shape(
+                &format!("{head}    let mut count = 1;\n{loop_part}"),
+                "16 < count"
+            ),
+            None
+        );
+        assert_eq!(
+            shape(
+                &format!("{head}    let count = 0;\n{loop_part}"),
+                "16 < count"
+            ),
+            None
+        );
     }
 }
