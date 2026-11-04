@@ -3422,8 +3422,7 @@ fn constant_row_table_pairs_each_row_with_its_boundary_input() -> Result<(), Str
 /// and graduate compiled shapes into the independent honesty gate.
 fn load_honesty_corpus_cases(fixtures: &Path) -> Result<Vec<serde_json::Value>, String> {
     let corpus_path = fixtures.join("evidence-promotion-honesty-corpus/corpus.json");
-    let corpus_text =
-        std::fs::read_to_string(&corpus_path).map_err(|error| error.to_string())?;
+    let corpus_text = std::fs::read_to_string(&corpus_path).map_err(|error| error.to_string())?;
     let mut corpus: serde_json::Value =
         serde_json::from_str(&corpus_text).map_err(|error| error.to_string())?;
     let cases = corpus
@@ -3463,8 +3462,22 @@ fn trait_shadow_corpus_matches_compiled_owner_dispatch() -> Result<(), String> {
     let cases = load_honesty_corpus_cases(&fixtures)?;
 
     for (prefix, shape, shadow, test_file, line, name) in [
-        ("rust_trait", "impl", true, "src/lib.rs", 28, "render_is_empty"),
-        ("rust_trait", "impl", false, "src/lib.rs", 18, "render_is_empty"),
+        (
+            "rust_trait",
+            "impl",
+            true,
+            "src/lib.rs",
+            28,
+            "render_is_empty",
+        ),
+        (
+            "rust_trait",
+            "impl",
+            false,
+            "src/lib.rs",
+            18,
+            "render_is_empty",
+        ),
         (
             "rust_trait",
             "parent",
@@ -3483,8 +3496,22 @@ fn trait_shadow_corpus_matches_compiled_owner_dispatch() -> Result<(), String> {
         ),
         ("rust_trait", "default", true, "src/lib.rs", 35, "advances"),
         ("rust_trait", "default", false, "src/lib.rs", 22, "advances"),
-        ("rust_f64_trait", "impl", true, "src/lib.rs", 24, "render_is_empty"),
-        ("rust_f64_trait", "impl", false, "src/lib.rs", 16, "render_is_empty"),
+        (
+            "rust_f64_trait",
+            "impl",
+            true,
+            "src/lib.rs",
+            24,
+            "render_is_empty",
+        ),
+        (
+            "rust_f64_trait",
+            "impl",
+            false,
+            "src/lib.rs",
+            16,
+            "render_is_empty",
+        ),
         (
             "rust_f64_trait",
             "parent",
