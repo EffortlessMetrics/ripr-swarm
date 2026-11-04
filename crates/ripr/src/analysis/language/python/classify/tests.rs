@@ -4053,3 +4053,47 @@ fn assertion_helper_field_exposed_row_carries_preview_adapter_basis_only() -> Re
     assert!(why.contains("not on the same scale as Rust"), "{why}");
     Ok(())
 }
+
+#[test]
+fn loop_boundary_integer_list_is_infection_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for input in ["[1, 5, 3]", "[5, 5]"] {
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert largest({input}) == 5\n"
+        );
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+        assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_identity_oracle_remains_unchanged() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}

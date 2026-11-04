@@ -1709,3 +1709,12 @@ adapter contributes:
 - `language_adapter_python_static_limit_unresolved_pytest_fixture`
 - `language_adapter_python_static_limit_unsupported_syntax`
 - `language_adapter_python_static_limit_transitive_reach`
+
+### Unresolved loop-comparison boundary (#12954)
+
+For a changed adjacent relational comparison in the first statement of a
+`for` loop, an unresolved boundary observed by a single direct integer-list
+value assertion is `infection_unknown`, with an infection stop reason and no
+repair suggestion. The list alone does not establish the loop element and
+accumulator are equal during execution. This limited rule does not evaluate
+arbitrary loops or change identity-assertion classification.

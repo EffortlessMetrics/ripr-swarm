@@ -800,6 +800,18 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             )
         })
         .flatten();
+    let loop_boundary_unknown = boundary
+        .as_ref()
+        .is_some_and(|e| e.activation == BoundaryActivation::Unresolved)
+        && super::boundary::unresolved_loop_list_boundary(
+            line,
+            line_text,
+            old_line_text,
+            owner_source,
+            owner,
+            &related_candidates,
+            &focus,
+        );
     let boundary_gap = boundary
         .as_ref()
         .filter(|evidence| evidence.activation == BoundaryActivation::Missing);
@@ -1115,6 +1127,17 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
+        && loop_boundary_unknown
+    {
+        (
+            ExposureClass::InfectionUnknown,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Unknown,
+            Vec::new(),
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
         && changed_default_exercised_ok
         && boundary_gap.is_none()
         && inactive_term.is_none()
@@ -1401,7 +1424,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     };
     let reach = StageEvidence::new(reach_state, Confidence::Low, &reach_summary);
     let infect = StageEvidence::new(
-        if static_limit.is_some() {
+        if static_limit.is_some() || matches!(class, ExposureClass::InfectionUnknown) {
             StageState::Unknown
         } else if boundary_downgraded
             || term_downgraded
@@ -1420,6 +1443,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 "Static limit `{}` prevents a safe Python infection claim.",
                 limit.kind.as_str()
             )
+        } else if matches!(class, ExposureClass::InfectionUnknown) {
+            "Static evidence cannot determine whether the loop comparison reached its changed equality boundary.".to_string()
         } else if boundary_downgraded {
             if boundary_gap.is_some_and(|gap| gap.discriminator.is_none()) {
                 "Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary.".to_string()
@@ -1883,6 +1908,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         missing_discriminators,
     }
     .into_public();
+    let infection_unknown = matches!(class, ExposureClass::InfectionUnknown);
     let mut finding = Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
         confidence_basis,
@@ -1904,11 +1930,15 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         missing,
         flow_sinks: flow_sink.into_iter().collect(),
         activation,
-        stop_reasons: static_limit
-            .as_ref()
-            .map(stop_reason_for_python_static_limit)
-            .into_iter()
-            .collect(),
+        stop_reasons: if infection_unknown {
+            vec![crate::domain::StopReason::InfectionEvidenceUnknown]
+        } else {
+            static_limit
+                .as_ref()
+                .map(stop_reason_for_python_static_limit)
+                .into_iter()
+                .collect()
+        },
         related_tests_matched_total: None,
         related_tests: related,
         recommended_next_step: recommended,

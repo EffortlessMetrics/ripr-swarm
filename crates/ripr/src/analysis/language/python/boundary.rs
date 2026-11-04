@@ -2308,3 +2308,124 @@ mod call_line_text_tests {
         assert!(text.contains(&format!("({argument})")), "{text}");
     }
 }
+
+/// A deliberately narrow unresolved case: an adjacent comparison change in
+/// the first statement of a loop, observed by one direct integer-list value
+/// assertion. The loop element and accumulator are not owner arguments, so a
+/// literal list alone does not place either operand at the changed boundary.
+/// Identity assertions and other test shapes retain their existing treatment.
+pub(super) fn unresolved_loop_list_boundary(
+    line: usize,
+    line_text: &str,
+    old_line: Option<&str>,
+    source: Option<&str>,
+    owner: &PythonOwner,
+    candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> bool {
+    use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+    let Some(old_line) = old_line else {
+        return false;
+    };
+    if !line_text.trim_start().starts_with("if ") || !old_line.trim_start().starts_with("if ") {
+        return false;
+    }
+    let new = predicate_condition(line_text);
+    let old = predicate_condition(old_line);
+    let new_ops = relational_operators(&new);
+    let old_ops = relational_operators(&old);
+    let ([(ns, nl)], [(os, ol)]) = (new_ops.as_slice(), old_ops.as_slice()) else {
+        return false;
+    };
+    let (Some((left, right)), Some((old_left, old_right))) = (
+        simple_comparison_operands(&new, *ns, *nl),
+        simple_comparison_operands(&old, *os, *ol),
+    ) else {
+        return false;
+    };
+    if left != old_left
+        || right != old_right
+        || !matches!(
+            (old.get(*os..os + ol), new.get(*ns..ns + nl)),
+            (Some(">"), Some(">="))
+                | (Some(">="), Some(">"))
+                | (Some("<"), Some("<="))
+                | (Some("<="), Some("<"))
+        )
+    {
+        return false;
+    }
+    let Some(previous) = source.and_then(|s| line.checked_sub(2).and_then(|i| s.lines().nth(i)))
+    else {
+        return false;
+    };
+    let Some(iteration) = previous
+        .trim()
+        .strip_prefix("for ")
+        .and_then(|s| s.strip_prefix(&left))
+    else {
+        return false;
+    };
+    if !iteration.starts_with(" in ")
+        || !iteration.ends_with(':')
+        || super::guard_activation::leading_whitespace(previous)
+            >= super::guard_activation::leading_whitespace(line_text)
+    {
+        return false;
+    }
+    let constants = unrebound_constants(owner, candidates);
+    let (rows, gaps) = strong_owner_call_rows_with_gaps(owner, &constants, candidates, focus);
+    let [row] = rows.as_slice() else { return false };
+    if gaps
+        || !candidates.iter().any(|candidate| {
+            candidate.relation.uses_oracle()
+                && candidate.test.file == row.file
+                && select_relevant_assertion(&candidate.test.assertions, Some(focus))
+                    .assertion()
+                    .is_some_and(|assertion| {
+                        assertion.line == row.line
+                            && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                    })
+        })
+    {
+        return false;
+    }
+    let Ok(Mod::Module(module)) = super::source_facts::parse_module_result(
+        std::path::Path::new("<loop-boundary-oracle>"),
+        &row.text,
+    ) else {
+        return false;
+    };
+    let [Stmt::Assert(assertion)] = module.body.as_slice() else {
+        return false;
+    };
+    if assertion.msg.is_some() {
+        return false;
+    }
+    let Expr::Compare(compare) = assertion.test.as_ref() else {
+        return false;
+    };
+    let ([ast::CmpOp::Eq], [expected]) = (compare.ops.as_slice(), compare.comparators.as_slice())
+    else {
+        return false;
+    };
+    let Expr::Constant(expected) = expected else {
+        return false;
+    };
+    if !matches!(expected.value, ast::Constant::Int(_)) {
+        return false;
+    }
+    let Expr::Call(call) = compare.left.as_ref() else {
+        return false;
+    };
+    let Expr::Name(callee) = call.func.as_ref() else {
+        return false;
+    };
+    if callee.id.as_str() != owner.name || !call.keywords.is_empty() {
+        return false;
+    }
+    let [Expr::List(list)] = call.args.as_slice() else {
+        return false;
+    };
+    !list.elts.is_empty() && list.elts.iter().all(|element| matches!(element, Expr::Constant(value) if matches!(value.value, ast::Constant::Int(_))))
+}
