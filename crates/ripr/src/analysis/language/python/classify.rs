@@ -800,18 +800,18 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             )
         })
         .flatten();
-    let loop_boundary_unknown = boundary
-        .as_ref()
-        .is_some_and(|e| e.activation == BoundaryActivation::Unresolved)
-        && super::boundary::unresolved_loop_list_boundary(
-            line,
-            line_text,
-            old_line_text,
-            owner_source,
-            owner,
-            &related_candidates,
-            &focus,
-        );
+    let loop_boundary_unknown = boundary.as_ref().is_some_and(|e| {
+        e.activation == BoundaryActivation::Unresolved
+            || (e.activation == BoundaryActivation::Missing && e.discriminator.is_none())
+    }) && super::boundary::unresolved_loop_list_boundary(
+        line,
+        line_text,
+        old_line_text,
+        owner_source,
+        owner,
+        &related_candidates,
+        &focus,
+    );
     let boundary_gap = boundary
         .as_ref()
         .filter(|evidence| evidence.activation == BoundaryActivation::Missing);

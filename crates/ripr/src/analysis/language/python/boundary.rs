@@ -2357,10 +2357,25 @@ pub(super) fn unresolved_loop_list_boundary(
     // Only the complete accumulator-selection owner is understood here. An
     // arbitrary loop can visibly return or mutate on the equality branch.
     let Some(source) = source else { return false };
-    let [parameter] = owner.parameters.as_slice() else {
+    let Some(parameter) = owner.parameters.first() else {
         return false;
     };
+    if !(1..=2).contains(&owner.parameters.len())
+        || owner
+            .parameters
+            .iter()
+            .any(|parameter| parameter.keyword_only)
+    {
+        return false;
+    }
     if owner.owner_kind != Some(OwnerKind::Function) || left == right {
+        return false;
+    }
+    if owner.parameters.get(1).is_some_and(|extra| {
+        extra.name == left
+            || extra.name == right
+            || matches!(extra.name.as_str(), "iter" | "next" | "StopIteration")
+    }) {
         return false;
     }
     let Some(start) = owner.start_line.checked_sub(1) else {
@@ -2396,6 +2411,10 @@ pub(super) fn unresolved_loop_list_boundary(
             };
             let indent = indentation(definition);
             !iterator_name.is_empty()
+                && owner
+                    .parameters
+                    .get(1)
+                    .is_none_or(|extra| extra.name != iterator_name)
                 && iterator_name
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -2534,9 +2553,12 @@ fn is_direct_integer_sequence_assertion(
         {
             return false;
         }
-        let [argument] = call.args.as_slice() else {
+        let Some((argument, extra)) = call.args.split_first() else {
             return false;
         };
+        if call.args.len() != owner.parameters.len() || !extra.iter().all(integer) {
+            return false;
+        }
         let elements = match argument {
             Expr::List(list) => &list.elts,
             Expr::Tuple(tuple) => &tuple.elts,

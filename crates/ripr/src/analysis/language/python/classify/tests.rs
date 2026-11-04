@@ -4055,6 +4055,94 @@ fn assertion_helper_field_exposed_row_carries_preview_adapter_basis_only() -> Re
 }
 
 #[test]
+fn loop_boundary_unrelated_scalar_argument_does_not_make_infection_known() -> Result<(), String> {
+    let source = "def largest(xs, unused):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for body in [
+        "assert largest([1, 5, 3], 0) == 5",
+        "assert largest([5, 5], -1) == 5",
+        "result = largest([1, 5, 3], 0)\n    assert result == 5",
+    ] {
+        let test = format!("from src.subject import largest\n\ndef test_largest():\n    {body}\n");
+        let finding = classify_edit_case(
+            source,
+            &test,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{body}: {finding:?}"
+        );
+        assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        assert!(
+            finding.activation.missing_discriminators.is_empty(),
+            "{finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_extra_argument_does_not_hide_identity_or_other_bodies() -> Result<(), String> {
+    let source = "def largest(xs, unused):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key): self.key = key\n    def __gt__(self, other): return self.key > other.key\n    def __ge__(self, other): return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([1, 5, 3], 0) == 5\n    assert largest([first, second], 0) is first\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let different_body =
+        source.replace("            best = x\n", "            best = x + unused\n");
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3], 2) == 7\n";
+    let finding = classify_edit_case(
+        &different_body,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    let string_input = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3], 'ignored') == 5\n";
+    let finding = classify_edit_case(
+        source,
+        string_input,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    let keyword_source = source.replace("def largest(xs, unused):", "def largest(xs, *, unused):");
+    let keyword_input = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3], unused=0) == 5\n";
+    let finding = classify_edit_case(
+        &keyword_source,
+        keyword_input,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn loop_boundary_integer_list_is_infection_unknown() -> Result<(), String> {
     let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
     for input in ["[1, 5, 3]", "[5, 5]"] {
