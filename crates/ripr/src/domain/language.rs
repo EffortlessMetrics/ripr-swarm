@@ -149,6 +149,11 @@ impl LanguageId {
             LanguageId::Perl => format!(
                 "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`{PERL_FACT_EXPORTER}`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it"
             ),
+            // The `lang-php` feature is a placeholder: no PHP adapter ships yet
+            // (RIPR-SPEC-0392), so a rebuild cannot make PHP analyzable.
+            LanguageId::Php => String::from(
+                "PHP analysis is not available from this ripr binary: the PHP adapter has not shipped yet (RIPR-SPEC-0392 is a contract only), so rebuilding with Cargo feature `lang-php` does not enable it",
+            ),
             // The TypeScript adapter analyzes the whole TS/JS family, and a
             // JavaScript-only diff is disclosed under it (#4555).
             LanguageId::TypeScript => format!(
@@ -874,6 +879,16 @@ mod tests {
         }
         let perl = LanguageId::Perl.unavailable_adapter_recovery();
         assert!(perl.contains("lang-perl") && perl.contains(PERL_FACT_EXPORTER));
+    }
+
+    #[test]
+    fn php_recovery_says_the_adapter_has_not_shipped() {
+        let php = LanguageId::Php.unavailable_adapter_recovery();
+        assert!(
+            php.contains("has not shipped yet") && php.contains("does not enable it"),
+            "a rebuild must not be offered as a fix: {php}"
+        );
+        assert!(!php.starts_with("rebuild ripr"), "{php}");
     }
 
     #[test]

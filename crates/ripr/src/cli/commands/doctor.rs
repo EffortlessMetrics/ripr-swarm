@@ -1974,7 +1974,7 @@ fn detect_test_surfaces(
                 }
             }
             LanguageId::Php => {
-                let php_count = count_files(root, "php");
+                let php_count = count_files_skipping(root, "php", &["vendor"]);
                 if root.join("composer.json").exists() || php_count > 0 {
                     surfaces.push(surface(
                         "php",
@@ -2065,7 +2065,13 @@ fn perl_project_detected(root: &Path) -> bool {
 }
 
 fn count_files(root: &Path, ext: &str) -> usize {
-    fn count_recursive(dir: &Path, ext: &str) -> usize {
+    count_files_skipping(root, ext, &[])
+}
+
+/// [`count_files`] that also skips directories with the given names (for
+/// example Composer's third-party `vendor/` tree for PHP).
+fn count_files_skipping(root: &Path, ext: &str, skip_names: &[&str]) -> usize {
+    fn count_recursive(dir: &Path, ext: &str, skip_names: &[&str]) -> usize {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return 0;
         };
@@ -2073,17 +2079,21 @@ fn count_files(root: &Path, ext: &str) -> usize {
         for entry in entries.flatten() {
             let path = entry.path();
             if is_walkable_dir(&entry) {
-                if is_skipped_walk_dir(&path) {
+                let skipped_name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| skip_names.contains(&name));
+                if is_skipped_walk_dir(&path) || skipped_name {
                     continue;
                 }
-                n += count_recursive(&path, ext);
+                n += count_recursive(&path, ext, skip_names);
             } else if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some(ext) {
                 n += 1;
             }
         }
         n
     }
-    count_recursive(root, ext)
+    count_recursive(root, ext, skip_names)
 }
 
 /// Detect the Perl test framework from .t files (shallow scan).
@@ -6843,6 +6853,21 @@ mod tests {
         assert!(perl_project_detected(&root));
         assert_eq!(count_files(&root, "pm"), 1);
         assert_eq!(dir_size_bytes(&root), size_before + 3);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn php_file_count_skips_composer_vendor() -> Result<(), String> {
+        let root = unique_command_test_dir("php-vendor-skip");
+        let src = root.join("src");
+        let vendor = root.join("vendor").join("pkg");
+        std::fs::create_dir_all(&src).map_err(|err| format!("mkdir: {err}"))?;
+        std::fs::create_dir_all(&vendor).map_err(|err| format!("mkdir: {err}"))?;
+        std::fs::write(src.join("A.php"), "<?php\n").map_err(|err| format!("write: {err}"))?;
+        std::fs::write(vendor.join("B.php"), "<?php\n").map_err(|err| format!("write: {err}"))?;
+        assert_eq!(count_files(&root, "php"), 2);
+        assert_eq!(count_files_skipping(&root, "php", &["vendor"]), 1);
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }

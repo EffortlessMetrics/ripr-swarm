@@ -20379,7 +20379,7 @@ targeted-rerun receipt shape:
     "invalidation_status": "not_available",
     "input_fingerprint": {
       "schema_version": "1.139",
-      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
+      "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0,php=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
       "cfg_features_hash": "…",
@@ -20469,7 +20469,7 @@ language features, not only the package version. Its source prefix is
 commit-less build has no source digest, `process:<pid>:<nanos>` replaces
 `src:<digest>` so persisted entries are not reused across processes.
 Every form ends with
-`+languages:rust=<bit>,typescript=<bit>,python=<bit>,perl=<bit>`, in that order,
+`+languages:rust=<bit>,typescript=<bit>,python=<bit>,perl=<bit>,php=<bit>`, in that order,
 where each bit is exactly `0` or `1`. These are the analyzer's compiled Cargo
 features; `cfg_features_hash` separately identifies the analyzed workspace's
 feature configuration. Different source or language-feature identities report

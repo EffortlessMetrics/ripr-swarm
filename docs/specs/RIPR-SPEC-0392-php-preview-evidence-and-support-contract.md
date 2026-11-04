@@ -194,7 +194,7 @@ Oracle kinds map into the shared oracle strength model (RIPR-SPEC-0062 /
 
 | Strength | Examples |
 | --- | --- |
-| Strong exact | `assertSame`, `assertEquals` with exact expected, `expectException` with class, Pest `expect($x)->toBe($y)` |
+| Strong exact | `assertSame` (strict `===` identity), `expectException` with class, Pest `expect($x)->toBe($y)` |
 | Strong observer | `expectOutputString`, snapshot hooks with explicit expected bytes (still preview; no runtime snapshot execution) |
 | Weak | `assertTrue`, `assertNotNull`, `assertIsArray`, Pest `toBeTrue()` |
 | Interaction | PHPUnit `expects($this->once())`, Mockery `shouldReceive` — mocking the observed target inverts the observation boundary |
@@ -202,6 +202,14 @@ Oracle kinds map into the shared oracle strength model (RIPR-SPEC-0062 /
 
 Mocking the method under test prevents positive reach even when expectations
 look strong.
+
+`assertEquals` and Pest `toEqual()` compare with loose (`==`) equality, so an
+expected `1` also passes for an actual `"1"` or `true`. They therefore do not
+discriminate a type-changing mutation and are classified as weak unless the
+test also pins the type (for example an `assertSame` or `assertIsInt` on the
+same value). Negative example: a changed return from `(int) $x` to `(string) $x`
+is not noticed by `assertEquals(1, $result)`, so that row stays weak; the same
+assertion written as `assertSame(1, $result)` is strong exact.
 
 ### Relations
 
