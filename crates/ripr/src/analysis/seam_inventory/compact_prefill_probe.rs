@@ -47,6 +47,7 @@ fn complete_compact_with_budget(
         }
         result.push(record);
     }
+    cancellation::checkpoint()?;
     Ok(Some(result))
 }
 
@@ -138,18 +139,52 @@ fn same_index_prefill_is_complete_or_absent_and_matches_compact_cold() -> Result
         render_repo_exposure_summary_json(&prefilling, &root, None, "draft"),
         baseline_summary
     );
-    compact_cache.store_compact_classified_seams_with_limit_and_fallback(
+    let stored = compact_cache.store_compact_classified_seams_with_limit_and_fallback(
         &key,
         &prefilling,
         &fallback,
         1,
     )?;
+    assert_eq!(
+        stored.label,
+        format!(
+            "sharded_ok_seams_{}_shards_{}_limit_1",
+            prefilling.len(),
+            prefilling.len()
+        )
+    );
+    assert!(stored.advisory.is_none());
+    match compact_cache.load_classified_seams_with_fallback(&key) {
+        CacheLoad::Hit((loaded, limit, loaded_fallback)) => {
+            assert!(limit.is_none(), "compact entry must be complete");
+            assert_eq!(loaded_fallback, fallback);
+            assert_eq!(
+                serde_json::to_value(loaded).map_err(|e| e.to_string())?,
+                serde_json::to_value(&prefilling).map_err(|e| e.to_string())?
+            );
+        }
+        other => {
+            return Err(format!(
+                "prefill must publish an actual compact hit: {other:?}"
+            ));
+        }
+    }
     let warm = inventory_compact_classified_seams_at_with_config(&root, &config)?;
     assert_eq!(warm.len(), bounded_full.total_unique);
     assert_eq!(
         render_repo_exposure_summary_json(&warm, &root, None, "draft"),
         baseline_summary
     );
+    // A valid alternate empty payload distinguishes the actual reader's hit
+    // from a cold recomputation, which must return the nonempty fixture.
+    let alternate = compact_cache.store_compact_classified_seams_with_limit_and_fallback(
+        &key,
+        &[],
+        &fallback,
+        1,
+    )?;
+    assert_eq!(alternate.label, "ok");
+    assert!(inventory_compact_classified_seams_at_with_config(&root, &config)?.is_empty());
     eprintln!(
         "12506 probe: full prefix=1, complete compact={}, same-index/cold/warm summary parity; shape and payload exhaustion publish nothing",
         warm.len()
