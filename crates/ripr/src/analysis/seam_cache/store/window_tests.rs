@@ -184,7 +184,7 @@ fn compact_windows_empty_result_uses_no_producer_or_shards() -> Result<(), Strin
     .err()
     .ok_or("zero compact window size must refuse")?;
     assert!(
-        error.contains("store limit must be positive"),
+        error.contains("compact cache window limit must be positive"),
         "wrong refusal: {error}"
     );
     assert_eq!(calls.get(), 0);
