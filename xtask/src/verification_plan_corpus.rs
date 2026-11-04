@@ -1,4 +1,4 @@
-//! Change-to-verification plan corpus contract (#5173, RIPR-SPEC-0379 PR A).
+//! Change-to-verification plan corpus contract (#5173, RIPR-SPEC-0420 PR A).
 //!
 //! Typed, versioned DTOs for one governed verification-plan corpus row and the
 //! fail-closed validator that decides whether a committed row may enter the

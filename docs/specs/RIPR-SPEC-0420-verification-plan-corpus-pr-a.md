@@ -1,4 +1,4 @@
-# RIPR-SPEC-0379: Verification plan corpus (PR A mechanics)
+# RIPR-SPEC-0420: Verification plan corpus (PR A mechanics)
 
 Status: proposed
 

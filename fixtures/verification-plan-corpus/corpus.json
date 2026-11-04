@@ -1,6 +1,6 @@
 {
   "schema_version": "verification_plan_fixture_corpus.v1",
-  "spec": "RIPR-SPEC-0379",
+  "spec": "RIPR-SPEC-0420",
   "scenarios": [
     {
       "id": "mechanics_plan_committed_before_outcomes",

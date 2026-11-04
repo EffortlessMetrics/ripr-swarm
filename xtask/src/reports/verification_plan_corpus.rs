@@ -1,4 +1,4 @@
-//! `cargo xtask verification-plan-corpus check|report` (#5173, RIPR-SPEC-0379 PR A).
+//! `cargo xtask verification-plan-corpus check|report` (#5173, RIPR-SPEC-0420 PR A).
 
 use std::fs;
 use std::path::{Path, PathBuf};

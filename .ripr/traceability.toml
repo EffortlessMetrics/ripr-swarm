@@ -21317,9 +21317,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0379"
+id = "RIPR-SPEC-0420"
 name = "Verification plan corpus PR A mechanics"
-spec = "docs/specs/RIPR-SPEC-0379-verification-plan-corpus-pr-a.md"
+spec = "docs/specs/RIPR-SPEC-0420-verification-plan-corpus-pr-a.md"
 tests = [
   "xtask/src/verification_plan_corpus.rs::tests::verification_plan_row_digest_is_stable",
   "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_wrong_plan_digest",
@@ -21341,7 +21341,7 @@ code = [
   "xtask/src/reports/verification_plan_corpus.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0379-verification-plan-corpus-pr-a.md",
+  "docs/specs/RIPR-SPEC-0420-verification-plan-corpus-pr-a.md",
 ]
 metrics = [
   "unit_test_pass_rate",
