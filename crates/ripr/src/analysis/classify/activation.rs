@@ -7035,10 +7035,38 @@ fn first_visible_flow_sink(flow_sinks: &[FlowSinkFact]) -> Option<&FlowSinkFact>
 
 fn list_or_unknown(values: &[String]) -> String {
     if values.is_empty() {
-        "unknown".to_string()
-    } else {
-        values.join(", ")
+        return "unknown".to_string();
     }
+
+    // This list is explanation only: the decision above has already read all
+    // values. Bound both the number and the bytes copied into each finding.
+    const MAX_VALUES: usize = 16;
+    const MAX_VALUE_BYTES: usize = 1024;
+    let mut result = String::new();
+    let mut retained = 0;
+    for value in values.iter().take(MAX_VALUES) {
+        let separator = if retained == 0 { "" } else { ", " };
+        if result
+            .len()
+            .saturating_add(separator.len())
+            .saturating_add(value.len())
+            > MAX_VALUE_BYTES
+        {
+            break;
+        }
+        result.push_str(separator);
+        result.push_str(value);
+        retained += 1;
+    }
+    let elided = values.len() - retained;
+    if elided > 0 {
+        if retained > 0 {
+            result.push_str(", ");
+        }
+        let noun = if elided == 1 { "value" } else { "values" };
+        result.push_str(&format!("({elided} {noun} elided)"));
+    }
+    result
 }
 
 /// The values a related test feeds into the changed owner's inputs:
@@ -8000,6 +8028,30 @@ mod method_hop_rows;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn observed_value_listing_bounds_count_and_bytes_with_explicit_elision() {
+        let values: Vec<String> = (0..100).map(|i| format!("value_{i:03}")).collect();
+        let result = super::list_or_unknown(&values);
+        assert!(result.len() <= 1100, "{} bytes", result.len());
+        assert!(result.contains("84 values elided"), "{result}");
+        let huge = vec!["é".repeat(5000)];
+        let result = super::list_or_unknown(&huge);
+        assert!(result.len() <= 1100, "{} bytes", result.len());
+        assert!(result.contains("1 value elided"), "{result}");
+        let exactly = "é".repeat(512);
+        assert_eq!(
+            super::list_or_unknown(std::slice::from_ref(&exactly)),
+            exactly
+        );
+        let over_then_short = vec!["é".repeat(513), "short".to_string()];
+        assert_eq!(
+            super::list_or_unknown(&over_then_short),
+            "(2 values elided)"
+        );
+        assert_eq!(super::list_or_unknown(&["3".into(), "7".into()]), "3, 7");
+        assert_eq!(super::list_or_unknown(&[]), "unknown");
+    }
+
     #[test]
     fn receiver_mode_is_established_only_when_the_signature_says_so() {
         // #12061: guidance names a value to assert on from `Some` only.
