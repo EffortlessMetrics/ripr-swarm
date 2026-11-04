@@ -350,7 +350,9 @@ pub(crate) fn load_for_root_failure(root: &Path) -> Result<RiprConfig, ConfigLoa
         .unwrap_or(root);
     config
         .bind_workspace_crates(discover_workspace_crates(crate_root))
-        .map_err(|err| config_load_parse_error_for_host(&path, &err, cfg!(windows)))?;
+        .map_err(|err| {
+            ConfigLoadFailure::Read(config_load_parse_error_for_host(&path, &err, cfg!(windows)))
+        })?;
     Ok(config)
 }
 
