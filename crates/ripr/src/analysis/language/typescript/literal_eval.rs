@@ -11,6 +11,15 @@
 //! argument, mixed-type coercion) is unsupported and evaluates to `None`, so
 //! the caller keeps the existing verdict: this evaluator can only withdraw
 //! credit by showing two expressions agree, never grant any.
+//!
+//! `String(x)` and `JSON.stringify(x)` of a literal-bound integer, boolean or
+//! string are also folded (#12296), but only for the built-in globals: a
+//! parameter of the owner named `String` or `JSON` refuses the fold, and so
+//! does any other occurrence of either name in the owner's file that is not
+//! a plain `String(` call or `JSON.stringify(` call (a module-scope
+//! binding, import, export, class, function declaration, assignment, or a
+//! `globalThis` / `window` / `eval` / `with` reference); see
+//! [`conversion_globals_unshadowed`].
 
 use super::*;
 use oxc_ast::ast::{BinaryOperator, LogicalOperator, UnaryOperator};
@@ -345,7 +354,9 @@ fn evaluate(expression: &Expression<'_>, env: &Env, depth: usize) -> Option<Val>
                 evaluate(&conditional.alternate, env, next)
             }
         }
-        Expression::CallExpression(call) => math_call(call, env, next),
+        Expression::CallExpression(call) => {
+            math_call(call, env, next).or_else(|| conversion_call(call, env, next))
+        }
         _ => None,
     }
 }
@@ -388,6 +399,135 @@ fn binary_value(operator: BinaryOperator, left: Val, right: Val) -> Option<Val> 
 
 fn same_type(a: &Val, b: &Val) -> bool {
     std::mem::discriminant(a) == std::mem::discriminant(b)
+}
+
+/// `true` only when every use of `String` and `JSON` in the owner's file is
+/// a plain `String(...)` call or `JSON.stringify(...)` call, so both names can
+/// only be the built-in globals. This is an allowlist over the comment- and
+/// string-masked source: a declaration, import, export, class, assignment,
+/// member write, or any other mention of either name, and any reference to
+/// `globalThis`, `global`, `window`, `self`, `eval`, `with` or `Function`
+/// (which can rebind a global), refuses.
+pub(crate) fn conversion_globals_unshadowed(source: &str) -> bool {
+    let masked = ts_mask_literals_and_comments(source);
+    let bytes = masked.as_bytes();
+    let word = |ch: u8| ch.is_ascii_alphanumeric() || matches!(ch, b'_' | b'$');
+    let mut index = 0;
+    while index < bytes.len() {
+        if !word(bytes[index]) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && word(bytes[index]) {
+            index += 1;
+        }
+        let token = &masked[start..index];
+        if matches!(
+            token,
+            "globalThis" | "global" | "window" | "self" | "eval" | "with" | "Function"
+        ) {
+            return false;
+        }
+        if token != "String" && token != "JSON" {
+            continue;
+        }
+        let before = masked[..start].trim_end();
+        let after = masked[index..].trim_start();
+        // A property read (`x.String`) is no binding of the global.
+        let preceded_by_dot = before.ends_with('.');
+        if preceded_by_dot {
+            continue;
+        }
+        let previous_word = before
+            .rsplit(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '$')))
+            .next()
+            .unwrap_or("");
+        if matches!(
+            previous_word,
+            "function"
+                | "class"
+                | "const"
+                | "let"
+                | "var"
+                | "import"
+                | "as"
+                | "type"
+                | "interface"
+                | "enum"
+                | "namespace"
+                | "declare"
+                | "export"
+                | "typeof"
+        ) {
+            return false;
+        }
+        let plain_use = if token == "String" {
+            after.starts_with('(')
+        } else {
+            after
+                .strip_prefix('.')
+                .map(str::trim_start)
+                .and_then(|rest| rest.strip_prefix("stringify"))
+                .is_some_and(|rest| rest.trim_start().starts_with('('))
+        };
+        if !plain_use {
+            return false;
+        }
+    }
+    true
+}
+
+/// `String(<primitive>)` and `JSON.stringify(<primitive>)` of a literal-bound
+/// number, boolean or string (#12296): the two conversions agree on every
+/// number and boolean and differ on a string (`JSON.stringify` quotes it), so
+/// a `typeof` branch whose arms are these calls can be shown to converge for
+/// the asserted input. A shadowing parameter named `String` or `JSON`, any
+/// other argument count, or a value the conversion cannot print exactly is
+/// unsupported.
+fn conversion_call(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    env: &Env,
+    depth: usize,
+) -> Option<Val> {
+    let shadowed = |name: &str| env.iter().any(|(bound, _)| bound == name);
+    let [argument] = call.arguments.as_slice() else {
+        return None;
+    };
+    let value = evaluate(argument.as_expression()?, env, depth)?;
+    match &call.callee {
+        Expression::Identifier(callee) if callee.name == "String" && !shadowed("String") => {
+            to_text(&value).map(Val::Str)
+        }
+        Expression::StaticMemberExpression(member)
+            if member.property.name == "stringify"
+                && matches!(&member.object, Expression::Identifier(object)
+                    if object.name == "JSON")
+                && !shadowed("JSON") =>
+        {
+            match value {
+                Val::Str(text) => json_quote(&text).map(Val::Str),
+                other => to_text(&other).map(Val::Str),
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The JSON text of a string with no character that needs more than the two
+/// plain escapes; anything else is unsupported rather than guessed.
+fn json_quote(text: &str) -> Option<String> {
+    let mut out = String::from("\"");
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            ch if ch.is_control() || !ch.is_ascii() => return None,
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    Some(out)
 }
 
 fn math_call(call: &oxc_ast::ast::CallExpression<'_>, env: &Env, depth: usize) -> Option<Val> {
@@ -537,6 +677,81 @@ mod tests {
         let old = "typeof n === \"number\"";
         let new = "\"number\" === typeof n";
         assert_eq!(agree(old, new, &["n"], &["1"]), None);
+    }
+
+    /// #12296: converging `typeof` arms. `String(42)` and
+    /// `JSON.stringify(42)` both print `42`, so the asserted number cannot
+    /// tell the branches apart, while a string input can.
+    #[test]
+    fn typeof_arms_that_print_alike_agree_on_a_number_and_differ_on_a_string() {
+        let old = "typeof input === \"object\" ? JSON.stringify(input) : String(input)";
+        let new = "typeof input !== \"object\" ? JSON.stringify(input) : String(input)";
+        assert_eq!(agree(old, new, &["input"], &["42"]), Some(true));
+        assert_eq!(agree(old, new, &["input"], &["\"a\""]), Some(false));
+    }
+
+    #[test]
+    fn a_file_that_rebinds_string_or_json_refuses_the_conversion_fold() {
+        let plain = "export function fmt(input: unknown): string {\n  return typeof input !== \"object\" ? JSON.stringify(input) : String(input);\n}\n";
+        assert!(conversion_globals_unshadowed(plain));
+        // A mention in a comment or string is not a binding.
+        assert!(conversion_globals_unshadowed(
+            "// const String = 1;\nconst s = \"const JSON = 2\";\nexport const n = String(1);\n"
+        ));
+        for shadow in [
+            "const String = (x: unknown) => \"S\" + x;",
+            "let JSON = { stringify: (x: unknown) => \"J\" + x };",
+            "var String = (x: unknown) => \"S\" + x;",
+            "function String(x: unknown) { return \"S\" + x; }",
+            "function JSON() {}",
+            "class String {}",
+            "class JSON {}",
+            "import { JSON } from \"./json\";",
+            "import String from \"./s\";",
+            "import { Other as String } from \"./s\";",
+            "export { JSON };",
+            "export { x as String };",
+            "String = (x: unknown) => \"S\" + x;",
+            "JSON.stringify = (x: unknown) => \"J\" + x;",
+            "Object.assign(globalThis, { String: () => \"S\" });",
+            "(globalThis as any).JSON = { stringify: () => \"J\" };",
+            "(window as any).String = () => \"S\";",
+            "eval(\"String = 1\");",
+            "const { String } = helpers;",
+            "const x = JSON;",
+            "const f = String;",
+            "type String = number;",
+            "enum JSON { A }",
+            "namespace JSON {}",
+        ] {
+            let source = format!(
+                "{shadow}\n{}",
+                "export const k = String(1) + JSON.stringify(2);"
+            );
+            assert!(!conversion_globals_unshadowed(&source), "{shadow}");
+        }
+    }
+
+    #[test]
+    fn conversion_calls_stay_unsupported_when_shadowed_or_inexact() {
+        let old = "String(String)";
+        assert_eq!(
+            agree(old, "String(String) + \"\"", &["String"], &["1"]),
+            None
+        );
+        assert_eq!(
+            agree("String(n)", "String(n) + \"\"", &["n"], &["0.5"]),
+            None
+        );
+        assert_eq!(
+            agree(
+                "JSON.stringify(s)",
+                "JSON.stringify(s) + \"\"",
+                &["s"],
+                &["\"\\u00e9\""]
+            ),
+            None
+        );
     }
 
     #[test]

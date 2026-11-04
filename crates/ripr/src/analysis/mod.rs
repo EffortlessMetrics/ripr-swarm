@@ -64,6 +64,7 @@ mod sync_memo;
 mod syntax;
 mod test_changes;
 mod trybuild_fixtures;
+pub(crate) mod verus;
 pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;

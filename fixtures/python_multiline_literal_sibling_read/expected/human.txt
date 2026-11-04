@@ -24,7 +24,7 @@ Start here:
   Missing check: A strong Python oracle reaches `labels`, but its assertion does not observe the
     changed owner's output; static evidence cannot confirm the changed behavior is discriminated.
     Add an assertion on the changed owner's output
-  Related test: tests/test_labels.py:3 test_name_is_x (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_labels.py:3 test_name_is_x
   Suggested test file: tests/test_labels.py
   Suggested test: test_name_is_x
   Test node: tests/test_labels.py::test_name_is_x

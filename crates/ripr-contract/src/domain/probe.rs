@@ -1,0 +1,1273 @@
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+use super::{
+    ExposureClass, OracleKind, OracleStrength, ProbeId, RiprEvidence, SourceLocation, SymbolId,
+};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProbeFamily {
+    Predicate,
+    ReturnValue,
+    ErrorPath,
+    CallDeletion,
+    FieldConstruction,
+    SideEffect,
+    MatchArm,
+    StaticUnknown,
+}
+
+impl ProbeFamily {
+    /// Families `ripr check` resolves a stub route for: the stub producer
+    /// either writes a test or names why it cannot. `static_unknown` has no
+    /// seam to resolve.
+    pub fn offers_stub_route(&self) -> bool {
+        !matches!(self, ProbeFamily::StaticUnknown)
+    }
+
+    /// Inverse of [`ProbeFamily::as_str`] for projections that hold only the
+    /// wire token (`ContextPacketProbe::family`). `None` for an unknown token.
+    pub fn from_wire(token: &str) -> Option<Self> {
+        Some(match token {
+            "predicate" => ProbeFamily::Predicate,
+            "return_value" => ProbeFamily::ReturnValue,
+            "error_path" => ProbeFamily::ErrorPath,
+            "call_deletion" => ProbeFamily::CallDeletion,
+            "field_construction" => ProbeFamily::FieldConstruction,
+            "side_effect" => ProbeFamily::SideEffect,
+            "match_arm" => ProbeFamily::MatchArm,
+            "static_unknown" => ProbeFamily::StaticUnknown,
+            _ => return None,
+        })
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ProbeFamily::Predicate => "predicate",
+            ProbeFamily::ReturnValue => "return_value",
+            ProbeFamily::ErrorPath => "error_path",
+            ProbeFamily::CallDeletion => "call_deletion",
+            ProbeFamily::FieldConstruction => "field_construction",
+            ProbeFamily::SideEffect => "side_effect",
+            ProbeFamily::MatchArm => "match_arm",
+            ProbeFamily::StaticUnknown => "static_unknown",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeltaKind {
+    Value,
+    Control,
+    Effect,
+    Unknown,
+}
+
+impl DeltaKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DeltaKind::Value => "value",
+            DeltaKind::Control => "control",
+            DeltaKind::Effect => "effect",
+            DeltaKind::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    MaxDepthReached,
+    ExternalCrateBoundary,
+    DynamicDispatchUnresolved,
+    ProcMacroOpaque,
+    FixtureOpaque,
+    FeatureUnknown,
+    AsyncBoundaryOpaque,
+    NoChangedRustLine,
+    InfectionEvidenceUnknown,
+    PropagationEvidenceUnknown,
+    StaticProbeUnknown,
+    /// Reach through internal calls is unresolved. A bounded walk may retain
+    /// a candidate path (RIPR-SPEC-0114), but an unmodeled private-member
+    /// boundary establishes no path either way (RIPR-SPEC-0243).
+    TransitiveReachUnresolved,
+    /// A Rust reach walk found a candidate test entry path that stops at a
+    /// same-repo macro invocation whose definition lexically names the changed
+    /// owner. ripr does not expand the macro; classification stays
+    /// `no_static_path`. See RIPR-SPEC-0117.
+    MacroReachUnresolved,
+    /// ripr could not establish the evidence a gap claim needs (today, that
+    /// the refused related assertions do not run), so the finding is an
+    /// unknown rather than a gap. A `static_limit_kind` names the missing
+    /// link. See RIPR-SPEC-0240.
+    GapEvidenceUnresolved,
+    /// A helper-chain uniqueness stop that tests enter: ripr saw a call of
+    /// the ambiguous name but cannot bind it to one workspace function.
+    /// Classification is `static_unknown`. See RIPR-SPEC-0159 / #7272.
+    HelperIdentityUnresolved,
+    /// The changed line is a compile-time assertion (`const _: () = assert!(..)`,
+    /// `static_assertions::const_assert!`). A violating edit fails to build; it
+    /// is not a test-kill question, so ripr states that instead of placing the
+    /// line in a function. Classification stays `static_unknown`, never
+    /// `exposed` (#11547).
+    CompileTimeInvariant,
+    /// The changed code states an unsafe contract the compiler does not
+    /// check: an `unsafe fn` (callers now carry a safety obligation) or an
+    /// unchecked assumption (`unreachable_unchecked`, `assert_unchecked`).
+    /// A safe-code test cannot discharge it. Classification stays
+    /// `static_unknown`, never `exposed` (#11549).
+    UnsafeObligation,
+}
+
+impl StopReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StopReason::MaxDepthReached => "max_depth_reached",
+            StopReason::ExternalCrateBoundary => "external_crate_boundary",
+            StopReason::DynamicDispatchUnresolved => "dynamic_dispatch_unresolved",
+            StopReason::ProcMacroOpaque => "proc_macro_opaque",
+            StopReason::FixtureOpaque => "fixture_opaque",
+            StopReason::FeatureUnknown => "feature_unknown",
+            StopReason::AsyncBoundaryOpaque => "async_boundary_opaque",
+            StopReason::NoChangedRustLine => "no_changed_rust_line",
+            StopReason::InfectionEvidenceUnknown => "infection_evidence_unknown",
+            StopReason::PropagationEvidenceUnknown => "propagation_evidence_unknown",
+            StopReason::StaticProbeUnknown => "static_probe_unknown",
+            StopReason::TransitiveReachUnresolved => "transitive_reach_unresolved",
+            StopReason::MacroReachUnresolved => "macro_reach_unresolved",
+            StopReason::GapEvidenceUnresolved => "gap_evidence_unresolved",
+            StopReason::HelperIdentityUnresolved => "helper_identity_unresolved",
+            StopReason::CompileTimeInvariant => "compile_time_invariant",
+            StopReason::UnsafeObligation => "unsafe_obligation",
+        }
+    }
+
+    /// Plain-English gloss for human output (#4323). The snake_case token
+    /// stays the machine identity; this says why the static path stopped. Each
+    /// gloss names a limit of ripr's model, never a coverage or runtime claim.
+    /// Reasons produced by a lexical heuristic (`FixtureOpaque`,
+    /// `AsyncBoundaryOpaque`) say "mentions ... may", not a confirmed fact.
+    pub fn describe(&self) -> &'static str {
+        match self {
+            StopReason::MaxDepthReached => {
+                "the bounded call walk reached its depth limit before finding a test"
+            }
+            StopReason::ExternalCrateBoundary => {
+                "the path crosses into another crate, which ripr does not analyze"
+            }
+            StopReason::DynamicDispatchUnresolved => {
+                "the path goes through a dynamic call ripr cannot resolve statically"
+            }
+            StopReason::ProcMacroOpaque => {
+                "the changed expression contains a macro call whose expansion ripr does not see"
+            }
+            StopReason::FixtureOpaque => {
+                "a related test mentions a fixture, builder, or generator, so its inputs may \
+                 come from values ripr does not evaluate"
+            }
+            StopReason::FeatureUnknown => {
+                "the code depends on a Cargo feature or cfg ripr could not resolve"
+            }
+            StopReason::AsyncBoundaryOpaque => {
+                "the changed expression mentions async, spawn, or await, so the path may cross \
+                 a task boundary ripr does not follow"
+            }
+            StopReason::NoChangedRustLine => {
+                "ripr could not place the changed line inside a Rust function it analyzes"
+            }
+            StopReason::InfectionEvidenceUnknown => {
+                "ripr could not tell whether a test input reaches a value that makes the \
+                 change matter"
+            }
+            StopReason::PropagationEvidenceUnknown => {
+                "ripr could not tell whether the changed value flows to something a test \
+                 observes"
+            }
+            StopReason::StaticProbeUnknown => {
+                "ripr could not model this change well enough to classify it"
+            }
+            StopReason::TransitiveReachUnresolved => {
+                "ripr could not establish whether a test reaches this change through internal calls"
+            }
+            StopReason::MacroReachUnresolved => {
+                "a candidate test path stops at a same-repo macro ripr does not expand"
+            }
+            StopReason::GapEvidenceUnresolved => {
+                "ripr could not establish the evidence a gap needs for this change, so it does \
+                 not claim one"
+            }
+            StopReason::HelperIdentityUnresolved => {
+                "ripr cannot tell which workspace function a test call names because that name \
+                 is not unique"
+            }
+            StopReason::CompileTimeInvariant => {
+                "the changed line is a compile-time assertion, so a violating edit fails to \
+                 build instead of failing a test"
+            }
+            StopReason::UnsafeObligation => {
+                "the change adds or alters an unsafe contract (an unsafe function or an \
+                 unchecked assumption) that safe test code cannot discharge"
+            }
+        }
+    }
+
+    pub fn for_unknown_class(class: &ExposureClass) -> Option<Self> {
+        match class {
+            ExposureClass::InfectionUnknown => Some(StopReason::InfectionEvidenceUnknown),
+            ExposureClass::PropagationUnknown => Some(StopReason::PropagationEvidenceUnknown),
+            ExposureClass::StaticUnknown => Some(StopReason::StaticProbeUnknown),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Probe {
+    pub id: ProbeId,
+    pub location: SourceLocation,
+    pub owner: Option<SymbolId>,
+    pub family: ProbeFamily,
+    pub delta: DeltaKind,
+    pub before: Option<String>,
+    pub after: Option<String>,
+    pub expression: String,
+    pub expected_sinks: Vec<String>,
+    pub required_oracles: Vec<String>,
+}
+
+impl Probe {
+    /// The name of the `const` or `static` item this probe's changed line
+    /// declares, for a `static_unknown` probe. A changed constant has no seam
+    /// of its own, so `ripr check` routes it to the functions that consume it.
+    pub fn changed_const_name(&self) -> Option<&str> {
+        if self.family != ProbeFamily::StaticUnknown {
+            return None;
+        }
+        declared_const_name(&self.expression)
+    }
+
+    /// Whether `ripr check` resolves a stub route for this probe.
+    pub fn offers_stub_route(&self) -> bool {
+        self.family.offers_stub_route() || self.changed_const_name().is_some()
+    }
+}
+
+/// The name of the `const` or `static` item a changed line declares
+/// (`pub const GREETING: &str = "hi";` names `GREETING`), when the line holds
+/// its initializer. Shared by the static-unknown const probe and the #11400
+/// reader retarget, so both read one declaration rule.
+pub fn declared_const_name(expression: &str) -> Option<&str> {
+    let mut rest = expression.trim_start();
+    if let Some(after_pub) = rest.strip_prefix("pub") {
+        rest = after_pub.trim_start();
+        if rest.starts_with('(') {
+            rest = rest[rest.find(')')? + 1..].trim_start();
+        }
+    }
+    rest = rest
+        .strip_prefix("const ")
+        .or_else(|| rest.strip_prefix("static "))?
+        .trim_start();
+    rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+    let end = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let name = &rest[..end];
+    let declaration = rest[end..].trim_start();
+    // An initializer on the line separates an item from a generics or
+    // parameter continuation line such as `const N: usize,`.
+    let named_item = !name.is_empty()
+        && name != "_"
+        && declaration.starts_with(':')
+        && declaration.contains('=');
+    named_item.then_some(name)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowSinkKind {
+    ReturnValue,
+    ErrorVariant,
+    StructField,
+    EventCall,
+    StateWrite,
+    Persistence,
+    LogMessage,
+    ConfigChange,
+    CallEffect,
+    MatchArm,
+    Unknown,
+}
+
+impl FlowSinkKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FlowSinkKind::ReturnValue => "return_value",
+            FlowSinkKind::ErrorVariant => "error_variant",
+            FlowSinkKind::StructField => "struct_field",
+            FlowSinkKind::EventCall => "event_call",
+            FlowSinkKind::StateWrite => "state_write",
+            FlowSinkKind::Persistence => "persistence",
+            FlowSinkKind::LogMessage => "log_message",
+            FlowSinkKind::ConfigChange => "config_change",
+            FlowSinkKind::CallEffect => "call_effect",
+            FlowSinkKind::MatchArm => "match_arm",
+            FlowSinkKind::Unknown => "unknown",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            FlowSinkKind::ReturnValue => "returned value",
+            FlowSinkKind::ErrorVariant => "error variant",
+            FlowSinkKind::StructField => "constructed field",
+            FlowSinkKind::EventCall => "event or outbound call",
+            FlowSinkKind::StateWrite => "state write",
+            FlowSinkKind::Persistence => "persistence write",
+            FlowSinkKind::LogMessage => "log message",
+            FlowSinkKind::ConfigChange => "configuration change",
+            FlowSinkKind::CallEffect => "call effect",
+            FlowSinkKind::MatchArm => "match arm result",
+            FlowSinkKind::Unknown => "unknown sink",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlowSinkFact {
+    pub kind: FlowSinkKind,
+    pub text: String,
+    pub line: usize,
+    pub owner: Option<SymbolId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValueContext {
+    FunctionArgument,
+    AssertionArgument,
+    BuilderMethod,
+    TableRow,
+    EnumVariant,
+    /// A qualified path whose spelling establishes a constant (`u64::MAX`,
+    /// `crate::KIB`), not an enum variant (#5357).
+    Constant,
+    ReturnValue,
+    Unknown,
+}
+
+impl ValueContext {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ValueContext::FunctionArgument => "function_argument",
+            ValueContext::AssertionArgument => "assertion_argument",
+            ValueContext::BuilderMethod => "builder_method",
+            ValueContext::TableRow => "table_row",
+            ValueContext::EnumVariant => "enum_variant",
+            ValueContext::Constant => "constant",
+            ValueContext::ReturnValue => "return_value",
+            ValueContext::Unknown => "unknown",
+        }
+    }
+}
+
+/// A value found or statically derived from test source.
+///
+/// This fact does not establish assertion execution, oracle admission or
+/// observation of the changed behavior. It can retain values from refused
+/// assertions and bounded static value-transfer expressions. `context` records
+/// the source/value origin, not an execution state.
+///
+/// The `text` field holds retained source or value-transfer provenance. The
+/// JSON renderer deduplicates shared text into the finding-level
+/// `assertion_texts` map keyed by line number. Per-value objects retain optional
+/// `provenance` when their text differs from that shared entry; otherwise
+/// consumers recover it via `finding.assertion_texts[line.to_string()]`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValueFact {
+    pub line: usize,
+    pub text: String,
+    pub value: String,
+    pub context: ValueContext,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissingDiscriminatorFact {
+    pub value: String,
+    pub reason: String,
+    pub flow_sink: Option<FlowSinkFact>,
+}
+
+/// Opens the reason of a match-arm missing discriminator that names an arm
+/// no related test's input selects (RIPR-SPEC-0229). Shared so the analyzer
+/// that writes it and the miss renderer that reads it agree.
+pub const ARM_UNSELECTED_REASON_PREFIX: &str = "No related test call selects arm";
+
+/// Opens the reason of a side-effect, call-deletion, error-path or
+/// error-variant return-value missing discriminator that names an enclosing `if` no related test's input enters
+/// (RIPR-SPEC-0263). Shared like [`ARM_UNSELECTED_REASON_PREFIX`].
+pub const GUARD_UNENTERED_REASON_PREFIX: &str = "No related test call enters guard";
+
+/// Whether a missing-discriminator reason names an input no related test
+/// supplies at all: an arm no input selects (RIPR-SPEC-0229) or a guard no
+/// input enters (RIPR-SPEC-0263). Such a probe never runs under the tests.
+pub fn is_unselected_input_reason(reason: &str) -> bool {
+    reason.starts_with(ARM_UNSELECTED_REASON_PREFIX)
+        || reason.starts_with(GUARD_UNENTERED_REASON_PREFIX)
+}
+
+/// The missing discriminator that names an input no test supplies: for a
+/// predicate probe the boundary `left == right` it never reaches
+/// (`classify::activation::missing_boundary_discriminator`), for a match-arm
+/// probe the arm no test input selects, and for a side-effect,
+/// call-deletion, error-path or error-variant return-value probe the
+/// enclosing `if` no test input enters. Error-variant and field facts name
+/// an assertion that is missing instead.
+pub fn input_boundary_fact<'a>(
+    facts: &'a [MissingDiscriminatorFact],
+    family: &ProbeFamily,
+) -> Option<&'a MissingDiscriminatorFact> {
+    match family {
+        // A returned bare comparison reads the same boundary (#9094); no
+        // other return-value fact is spelled `left == right`.
+        ProbeFamily::Predicate => facts.iter().find(|fact| fact.value.contains(" == ")),
+        // A returned error variant under an unentered `if` reads the guard
+        // (#11147), after the bare-comparison reading above.
+        ProbeFamily::ReturnValue => facts
+            .iter()
+            .find(|fact| fact.value.contains(" == "))
+            .or_else(|| {
+                facts
+                    .iter()
+                    .find(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX))
+            }),
+        ProbeFamily::MatchArm => facts
+            .iter()
+            .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX)),
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion | ProbeFamily::ErrorPath => facts
+            .iter()
+            .find(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX)),
+        _ => None,
+    }
+}
+
+/// Row-local exact-discriminator support for #5575: typed value/field/error/effect
+/// facts only, never input-activation gaps (guard unentered, unselected arm).
+pub fn row_exact_discriminator_fact<'a>(
+    facts: &'a [MissingDiscriminatorFact],
+    family: &ProbeFamily,
+) -> Option<&'a MissingDiscriminatorFact> {
+    let boundary = input_boundary_fact(facts, family);
+    facts.iter().find(|fact| {
+        !is_unselected_input_reason(&fact.reason)
+            && boundary.is_none_or(|boundary| !std::ptr::eq(*fact, boundary))
+    })
+}
+
+/// The missing discriminator that names an exact assertion no test makes
+/// (an error variant or a constructed field): the first fact that is not the
+/// predicate input boundary.
+pub fn exact_assertion_fact<'a>(
+    facts: &'a [MissingDiscriminatorFact],
+    family: &ProbeFamily,
+) -> Option<&'a MissingDiscriminatorFact> {
+    let boundary = input_boundary_fact(facts, family);
+    facts
+        .iter()
+        .find(|fact| boundary.is_none_or(|boundary| !std::ptr::eq(*fact, boundary)))
+}
+
+/// Prefix the classifier puts on the value-shaped entries of `Finding.missing`.
+///
+/// The field mixes value-shaped entries (`Missing check value: X`,
+/// built from a [`MissingDiscriminatorFact`]) with prose entries ("No strong
+/// discriminator was detected"), so consumers that already print a
+/// "Missing discriminator" label must strip this prefix to avoid restating it.
+/// Shared here because the classifier writes it and the renderers read it.
+///
+/// Crate-private: this is an internal formatting convention, not a contract
+/// embedders may bind to. `lib.rs` re-exports `pub mod domain`, so a `pub`
+/// constant here would publish the exact wording as library API.
+pub const MISSING_DISCRIMINATOR_VALUE_PREFIX: &str = "Missing check value: ";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FindingCanonicalGap {
+    pub id: String,
+    pub language: String,
+    pub file: String,
+    pub owner: String,
+    pub behavior_kind: String,
+    pub probe_kind: String,
+    pub normalized_discriminator: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivationEvidence {
+    /// Historical field name for source values; see ValueFact's non-execution
+    /// contract. Oracle observation remains a separate admitted stage.
+    pub observed_values: Vec<ValueFact>,
+    pub missing_discriminators: Vec<MissingDiscriminatorFact>,
+}
+
+/// Next-step text for a finding whose related test has a strong check that
+/// ripr cannot tie to the changed line. The TypeScript classifier writes it
+/// and the preview card reads it, so both stay in step (#12463).
+pub const STRONG_CHECK_UNTIED_NEXT_STEP: &str = "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelatedTest {
+    pub name: String,
+    pub file: PathBuf,
+    pub line: usize,
+    pub oracle: Option<String>,
+    pub oracle_kind: OracleKind,
+    pub oracle_strength: OracleStrength,
+    /// Why this test was related to the probe. `None` when the match origin
+    /// is unknown (legacy callers). `Some` for all diff-check findings that
+    /// go through `classify/related_tests.rs`.
+    pub relation_reason: Option<crate::domain::RelationReason>,
+    /// Confidence that this test grips the changed behavior. `None` when
+    /// `relation_reason` is `None`. Derived from `relation_reason` when set.
+    pub relation_confidence: Option<crate::domain::RelationConfidence>,
+    /// Why this test does not catch the changed behavior, when ripr can say.
+    /// `None` for a test whose oracle supports the finding's class, and for
+    /// findings from producers that do not record it. Explanation only: no
+    /// decision helper reads this field except the refused-assertion exception
+    /// of the opaque assertion-macro limit (`AssertionNotCredited`, RIPR-SPEC-0120,
+    /// #9644); row eligibility is [`Self::role`] (#5563).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub miss: Option<RelatedTestMiss>,
+    /// Whether this row belonged to the legacy decision set or was retained
+    /// only so an examined test can be listed (#5563). Independent of `miss`:
+    /// any miss value may be attached to a row of either role without
+    /// changing which decision paths consume it. Absent in older artifacts,
+    /// which read as `contributing` (every row they carry was part of that
+    /// artifact's decision set).
+    #[serde(default, skip_serializing_if = "RelatedTestRole::is_contributing")]
+    pub role: RelatedTestRole,
+    /// The one typed fact the producer established for **this row** that
+    /// backs a `missing_input` or `missing_exact_assertion` miss (#5564).
+    /// `None` when the producer could not establish row ownership; renderers
+    /// then use generic wording and never borrow a finding-wide
+    /// `missing_discriminators` entry. Evidence only: no decision reads it
+    /// and it is not part of finding identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub miss_support: Option<RelatedTestMissSupport>,
+}
+
+/// Row-owned supporting fact for a discriminator-backed [`RelatedTestMiss`]
+/// (#5564). Semantic data, not prose: the shared renderer chooses the wording
+/// from the miss, the finding's probe family and this record.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelatedTestMissSupport {
+    /// The value or boundary the row misses (`amount == threshold`).
+    pub value: String,
+    /// The sink the fact was established against, when the producer knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow_sink: Option<FlowSinkFact>,
+}
+
+impl RelatedTestMissSupport {
+    /// Support carrying the value and sink of a discriminator fact the
+    /// producer has established applies to the row it attaches this to.
+    pub fn from_fact(fact: &MissingDiscriminatorFact) -> Self {
+        Self {
+            value: fact.value.clone(),
+            flow_sink: fact.flow_sink.clone(),
+        }
+    }
+}
+
+/// The decision role of one related-test row, separate from why it is listed
+/// (`relation_reason`) and why it misses the changed behavior (`miss`).
+///
+/// Registered in `policy/output_contracts.txt` and documented in
+/// `docs/OUTPUT_SCHEMA.md`. Not runtime execution evidence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelatedTestRole {
+    /// The row is part of the decision set gates, fix-site selection and
+    /// repair routing read. The compatibility default.
+    #[default]
+    Contributing,
+    /// The row was retained only to show an examined test whose assertions
+    /// matched nothing; decision paths skip it.
+    ExaminedOnly,
+}
+
+impl RelatedTestRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Contributing => "contributing",
+            Self::ExaminedOnly => "examined_only",
+        }
+    }
+
+    /// `serde` skip predicate: the default role is not serialized.
+    pub fn is_contributing(&self) -> bool {
+        matches!(self, Self::Contributing)
+    }
+}
+
+impl RelatedTest {
+    /// True for a row in the decision set. Reads the explicit [`RelatedTestRole`],
+    /// never `miss`.
+    pub fn is_contributing(&self) -> bool {
+        self.role.is_contributing()
+    }
+
+    /// True for a test ripr examined whose assertions it matched against the
+    /// changed behavior and found none that apply. Such a test is listed as
+    /// evidence, but it supplied no oracle row, so gates that ask "did any
+    /// related test survive oracle matching" must skip it. Reads the explicit
+    /// role, never `miss`.
+    pub fn is_examined_only(&self) -> bool {
+        !self.is_contributing()
+    }
+}
+
+/// Why one examined test would not notice the changed behavior being wrong.
+///
+/// Each value names a concrete, checkable fact about the test so a reader can
+/// open it and agree or disagree. Registered in `policy/output_contracts.txt`
+/// and documented in `docs/OUTPUT_SCHEMA.md`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelatedTestMiss {
+    /// Linked by name or file location only; no call from the test to the
+    /// changed code was found.
+    NoCallPath,
+    /// The test contains no assertion ripr recognizes.
+    NoAssertion,
+    /// The test asserts, but none of its assertions observe the changed value,
+    /// error, field, or effect.
+    AssertionNotObserving,
+    /// The test has an assertion ripr declined to credit because it could not
+    /// establish that the assertion runs or what the macro binds to.
+    AssertionNotCredited,
+    /// The assertion observes the behavior only weakly (for example
+    /// `is_ok()` or a smoke check), so it cannot tell the old value from the
+    /// new one.
+    WeakAssertion,
+    /// The assertion observes the behavior, but no test input reaches the
+    /// value that separates the old behavior from the new one.
+    MissingInput,
+    /// The assertion observes the behavior, but none pins the exact value the
+    /// change alters (an error variant or a constructed field), so a wrong
+    /// value of the same shape still passes.
+    MissingExactAssertion,
+    /// The assertion has the right shape, but ripr could not confirm that it
+    /// observes this change rather than a sibling value (Rust: its text never
+    /// names the changed expression; Perl: the packet establishes no sink
+    /// alignment). An unknown, not an established miss.
+    ObservationUnconfirmed,
+}
+
+impl RelatedTestMiss {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NoCallPath => "no_call_path",
+            Self::NoAssertion => "no_assertion",
+            Self::AssertionNotObserving => "assertion_not_observing",
+            Self::AssertionNotCredited => "assertion_not_credited",
+            Self::WeakAssertion => "weak_assertion",
+            Self::MissingInput => "missing_input",
+            Self::MissingExactAssertion => "missing_exact_assertion",
+            Self::ObservationUnconfirmed => "observation_unconfirmed",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Finding {
+    pub id: String,
+    pub canonical_gap: Option<FindingCanonicalGap>,
+    pub probe: Probe,
+    pub class: ExposureClass,
+    pub ripr: RiprEvidence,
+    pub confidence: f32,
+    /// Why `confidence` is held at its value, for preview-adapter findings
+    /// (#10700). Empty for Rust, whose score is not a per-class constant.
+    /// Explains the number only; no decision helper reads it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub confidence_basis: Vec<crate::domain::ConfidenceCap>,
+    pub evidence: Vec<String>,
+    pub missing: Vec<String>,
+    pub flow_sinks: Vec<FlowSinkFact>,
+    pub activation: ActivationEvidence,
+    pub stop_reasons: Vec<StopReason>,
+    /// Number of matched related-test/oracle rows after the existing dedup,
+    /// before bounded unique-first packing. Metadata only: the retained
+    /// related_tests vector remains the semantic/selection input.
+    /// Older producers and artifacts omit this field and retain their known
+    /// vector count; absence cannot establish how many rows were discarded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub related_tests_matched_total: Option<usize>,
+    pub related_tests: Vec<RelatedTest>,
+    pub recommended_next_step: Option<String>,
+    /// Source language the adapter that produced this finding identifies as.
+    /// Additive optional per RIPR-SPEC-0026; populated by the per-language
+    /// adapter (e.g. `RustAdapter` sets `Some(LanguageId::Rust)`).
+    pub language: Option<crate::domain::LanguageId>,
+    /// Adapter status for the source language. Omitted for `Rust` per the
+    /// spec; preview adapters (TypeScript, Python) will set
+    /// `Some(LanguageStatus::Preview)` when they land.
+    pub language_status: Option<crate::domain::LanguageStatus>,
+    /// Syntactic owner kind identified by preview language adapters.
+    /// Additive optional per RIPR-SPEC-0026; omitted when the adapter does
+    /// not yet have a bounded owner kind for the changed line.
+    pub owner_kind: Option<crate::domain::OwnerKind>,
+    /// Structured static limitation kind for preview evidence when the
+    /// adapter can name one. Omitted when no static limit is known.
+    pub static_limit_kind: Option<crate::domain::StaticLimitKind>,
+    /// Significant tokens of the changed line — the *changed sink* the change
+    /// touches. Additive optional per RIPR-SPEC-0028; populated by the Python
+    /// preview adapter so a consumer can see what an oracle would need to
+    /// observe. Omitted by adapters that do not compute it.
+    pub changed_sink: Option<String>,
+    /// Assertion text of the strongest related-test oracle the adapter
+    /// inspected when deciding sink alignment. Additive optional per
+    /// RIPR-SPEC-0028; omitted when no strong oracle was observed.
+    pub observed_sink: Option<String>,
+    /// Which token category the strongest oracle matched, surfacing *why* a
+    /// strong oracle did or did not credit `exposed`. One of
+    /// [`ORACLE_ALIGNMENT_VALUES`]. Additive optional per RIPR-SPEC-0028;
+    /// omitted by adapters that do not compute sink alignment.
+    pub oracle_alignment: Option<String>,
+    /// Stable snake_case reason token explaining the `oracle_alignment` value.
+    /// Additive optional per RIPR-SPEC-0028.
+    pub alignment_reason: Option<String>,
+    /// Producer-owned resolution of this finding's source against the
+    /// candidate (head-side) revision (#3212 / #3280). Set by the producer
+    /// that observed the diff evidence; `UnresolvedSubject` is the explicit
+    /// unknown for surfaces that do not resolve it and the
+    /// backward-compatibility default for artifacts written before the
+    /// field existed. A `BaseDeleted` finding is base-side evidence; a
+    /// `MovedOrRenamed` finding carries unresolved movement evidence.
+    /// Neither is a candidate edit target.
+    #[serde(default)]
+    pub source_currentness: SourceCurrentness,
+    /// Typed analysis scope of the run that produced this finding (#5531).
+    /// Required in every construction (no `Default` is applied by struct
+    /// literals), so a producer must state its scope; repo-mode producers
+    /// set it through [`Finding::mark_repo_scoped`]. Consumers read it via
+    /// `Finding::analysis_mode`, never from the free-text evidence line.
+    /// Omitted from serialized `Finding` when `diff`; a missing field in an
+    /// older artifact deserializes as `diff`, which `analysis_mode` still
+    /// refuses if the legacy evidence line says otherwise.
+    #[serde(default, skip_serializing_if = "AnalysisScope::is_diff")]
+    pub analysis_scope: AnalysisScope,
+}
+
+/// Analysis scope a [`Finding`] was produced under (#5531). Repo-mode
+/// capability cells are looked up from this, never defaulted from a neighbor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisScope {
+    /// Produced from a diff (the only scope Rust and the diff adapters use).
+    #[default]
+    Diff,
+    /// Produced by a repo-mode run (#9896 TypeScript/JavaScript, #9923 Python).
+    Repo,
+}
+
+impl AnalysisScope {
+    fn is_diff(&self) -> bool {
+        matches!(self, Self::Diff)
+    }
+}
+
+/// Typed source-currentness disposition for a [`Finding`] (#3212 / #3280).
+///
+/// The vocabulary is deliberately conservative: the producer states which
+/// revision owns the actionable source, or states that it could not tell.
+/// It never claims a deleted-side record is current.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceCurrentness {
+    /// The finding's source expression is present in the candidate source
+    /// at the recorded location; the location is a candidate edit target.
+    CandidateCurrent,
+    /// The expression was removed on the candidate side. The retained
+    /// evidence is base-side and is not a candidate edit target. In the C1
+    /// producer slice, the recorded probe coordinate remains the projected
+    /// new-side coordinate; consumer re-coordination is owned by #3281.
+    BaseDeleted,
+    /// Movement evidence exists (the same expression re-appears elsewhere
+    /// in the candidate file), but the producer cannot prove the candidate
+    /// identity of the exact source. Not a candidate edit target.
+    MovedOrRenamed,
+    /// The producing surface does not resolve source currentness; the
+    /// disposition is explicitly unknown, never fabricated. Also the
+    /// deserialize default for pre-#3280 artifacts.
+    #[default]
+    UnresolvedSubject,
+}
+
+impl SourceCurrentness {
+    /// Stable wire label (matches the serde form).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::CandidateCurrent => "candidate_current",
+            Self::BaseDeleted => "base_deleted",
+            Self::MovedOrRenamed => "moved_or_renamed",
+            Self::UnresolvedSubject => "unresolved_subject",
+        }
+    }
+
+    /// Delta-only resolution for producers that seed probes from head-side
+    /// lines and never produce removed-only probes (#3281). A probe whose
+    /// expression is candidate-side code (`after` present) is
+    /// `CandidateCurrent`; a producer with no delta evidence at all stays
+    /// the explicit unknown. Removed-only
+    /// probes need the diff-level resolver in
+    /// `analysis::probes` (movement evidence), not this helper.
+    pub fn from_probe_delta(before: Option<&str>, after: Option<&str>) -> Self {
+        match (before, after) {
+            (_, Some(_)) => Self::CandidateCurrent,
+            (None, None) => Self::UnresolvedSubject,
+            // A before-only probe from a delta-only producer carries no
+            // movement evidence; the diff-level resolver owns that case.
+            (Some(_), None) => Self::UnresolvedSubject,
+        }
+    }
+
+    /// Whether this disposition may drive current candidate-side
+    /// obligations (repair routes, gate candidates, diagnostics, agent
+    /// actions). Only established candidate currentness qualifies: base-side
+    /// evidence and the explicit unknown are never silently upgraded
+    /// because classification or severity suggests action (#3281).
+    pub fn permits_candidate_action(&self) -> bool {
+        matches!(self, Self::CandidateCurrent)
+    }
+
+    /// Whether the producer established that the source is base-side: the
+    /// expression was deleted or moved on the candidate side. Narrower than
+    /// `!permits_candidate_action()`, which also covers the explicit unknown
+    /// of legacy and packet-driven findings.
+    pub fn is_base_side(&self) -> bool {
+        matches!(self, Self::BaseDeleted | Self::MovedOrRenamed)
+    }
+}
+
+/// Controlled enum values for [`Finding::source_currentness`]. Registered in
+/// `policy/output_contracts.txt` and documented in `docs/OUTPUT_SCHEMA.md`.
+pub const SOURCE_CURRENTNESS_VALUES: [&str; 4] = [
+    "candidate_current",
+    "base_deleted",
+    "moved_or_renamed",
+    "unresolved_subject",
+];
+
+/// This producer reason requires a fresh physical source observation and cannot
+/// be safely reused from a check artifact's diff/config-only identity.
+pub const LIVE_PYTHON_TRUTHINESS_ALIGNMENT: &str = "strong_oracle_observes_dunder_truthiness";
+
+/// Controlled enum values for [`Finding::oracle_alignment`]. Registered in
+/// `policy/output_contracts.txt` and documented in `docs/OUTPUT_SCHEMA.md`.
+pub const ORACLE_ALIGNMENT_VALUES: [&str; 5] = [
+    "direct",
+    "alias",
+    "changed_sink_token",
+    "orthogonal",
+    "unknown",
+];
+
+/// The one gate for "a related test already reaches the boundary input and
+/// only its oracle is weak" (#10622), shared by the Next-step producer and the
+/// check advisory. It holds only when the finding's own evidence is a genuinely
+/// weak credited oracle on the boundary test: infection detected the boundary
+/// input, the discriminator stage is weak because the strongest oracle found is
+/// weak (not a pairing, refusal or unverified-observation limitation), no
+/// related row credits a strong or medium oracle (an exact assertion that is
+/// not paired with the boundary call is a different gap), and no stop reason
+/// says the call may not run.
+pub fn boundary_input_observed_with_weak_oracle(
+    class: &ExposureClass,
+    family: &ProbeFamily,
+    infect: &crate::domain::StageEvidence,
+    discriminate: &crate::domain::StageEvidence,
+    related_tests: &[RelatedTest],
+    stop_reasons: &[StopReason],
+) -> bool {
+    *class == ExposureClass::WeaklyExposed
+        && *family == ProbeFamily::Predicate
+        && infect.state == crate::domain::StageState::Yes
+        && infect.summary == crate::domain::BOUNDARY_INPUT_OBSERVED_SUMMARY
+        && discriminate.state == crate::domain::StageState::Weak
+        && discriminate.summary.starts_with("Only ")
+        && discriminate.summary.contains(" oracle found")
+        && stop_reasons.is_empty()
+        && related_tests
+            .iter()
+            .any(|test| test.oracle_strength == crate::domain::OracleStrength::Weak)
+        && !related_tests.iter().any(|test| {
+            matches!(
+                test.oracle_strength,
+                crate::domain::OracleStrength::Strong | crate::domain::OracleStrength::Medium
+            )
+        })
+}
+
+impl Finding {
+    /// The (file, line, expression) a finding speaks about. Probes of
+    /// different families can sit on one expression (#11554); they share this
+    /// key, so counts and selection can treat them as one verdict.
+    pub fn expression_key(&self) -> (&std::path::Path, usize, &str) {
+        (
+            self.probe.location.file.as_path(),
+            self.probe.location.line,
+            self.probe.expression.as_str(),
+        )
+    }
+
+    /// A weak predicate finding whose related tests already supply the changed
+    /// boundary input (infection `yes`): the remaining gap is the oracle, not
+    /// the input (#10622). Static evidence only. The finding must also carry
+    /// the boundary-observed Next step itself, so the advisory never claims
+    /// more than the Next step says: an assertion-shaped owner (which gets the
+    /// assertion-helper Next step) or an earlier Next-step branch never
+    /// qualifies.
+    pub fn boundary_input_observed_with_weak_oracle(&self) -> bool {
+        boundary_input_observed_with_weak_oracle(
+            &self.class,
+            &self.probe.family,
+            &self.ripr.infect,
+            &self.ripr.reveal.discriminate,
+            &self.related_tests,
+            &self.stop_reasons,
+        ) && self.recommended_next_step.as_deref()
+            == Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
+    }
+
+    /// Related tests that supplied an oracle row or a refusal, skipping tests
+    /// listed only as examined misses (see [`RelatedTest::is_examined_only`]).
+    /// Gates that predate #5344 asked whether this set was empty.
+    pub fn oracle_related_tests(&self) -> impl Iterator<Item = &RelatedTest> {
+        self.related_tests
+            .iter()
+            .filter(|test| test.is_contributing())
+    }
+
+    /// Public count projection without changing retained evidence or selection.
+    pub fn related_tests_total(&self) -> usize {
+        self.related_tests_matched_total
+            .unwrap_or(self.related_tests.len())
+            .max(self.related_tests.len())
+    }
+
+    pub fn unknown_has_stop_reason(&self) -> bool {
+        !self.class.requires_stop_reason() || !self.stop_reasons.is_empty()
+    }
+
+    pub fn effective_stop_reasons(&self) -> Vec<StopReason> {
+        if self.unknown_has_stop_reason() {
+            return self.stop_reasons.clone();
+        }
+        StopReason::for_unknown_class(&self.class)
+            .into_iter()
+            .collect()
+    }
+
+    /// The single candidate-actionable eligibility authority (#3281, C2 of
+    /// #3212): every count, gate candidate, repair route, diagnostic, and
+    /// agent action derived from a finding must flow through this
+    /// predicate. A finding qualifies only when its producer proved the
+    /// source is candidate-current; `base_deleted` and `moved_or_renamed`
+    /// are base-side evidence, and `unresolved_subject` (a Perl change the
+    /// diff does not add a line to or whose source is not on disk, and
+    /// pre-#3280 artifacts) is not established
+    /// current. Classifications, severity, and repair readiness never
+    /// upgrade a non-current finding.
+    pub fn is_candidate_actionable(&self) -> bool {
+        self.source_currentness.permits_candidate_action()
+    }
+
+    /// The one sentence every surface uses to say a finding is not a
+    /// candidate edit target (#11905). `None` for a candidate-current finding.
+    /// Human, hover and any later renderer take the wording from here so a
+    /// base-side finding reads the same on every surface.
+    pub fn source_currentness_disclosure(&self) -> Option<String> {
+        if self.is_candidate_actionable() {
+            return None;
+        }
+        // `unresolved_subject` means the producer could not tell, so it must
+        // not be called base-side evidence.
+        let reason = if self.source_currentness.is_base_side() {
+            "base-side evidence, not a candidate edit target"
+        } else {
+            "source currentness not established, not a candidate edit target"
+        };
+        Some(format!(
+            "{} \u{2014} {reason}",
+            self.source_currentness.as_str()
+        ))
+    }
+
+    /// Mark this finding as produced by a repo-mode run (#5531). The single
+    /// place that sets the typed scope and derives the compatibility
+    /// evidence line `analysis_scope: repo` (disclosed in
+    /// `docs/LANGUAGE_ADAPTER_PREVIEW.md`) from it; idempotent.
+    pub fn mark_repo_scoped(&mut self) {
+        use crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE;
+        self.analysis_scope = AnalysisScope::Repo;
+        if !self
+            .evidence
+            .iter()
+            .any(|line| line == REPO_SCOPE_EVIDENCE_LINE)
+        {
+            self.evidence.push(REPO_SCOPE_EVIDENCE_LINE.to_string());
+        }
+    }
+
+    /// Capability-table mode for this finding, fail closed (#5531): `None`
+    /// when the typed scope says `diff` but the legacy evidence line says
+    /// repo (a hand-stamped or pre-typed artifact finding), because the
+    /// scope is then contradictory and no capability cell may be borrowed.
+    pub fn analysis_mode(&self) -> Option<crate::domain::language_capability::AnalysisMode> {
+        use crate::domain::language_capability::{AnalysisMode, finding_is_repo_scoped};
+        match self.analysis_scope {
+            AnalysisScope::Repo => Some(AnalysisMode::Repo),
+            AnalysisScope::Diff if finding_is_repo_scoped(&self.evidence) => None,
+            AnalysisScope::Diff => Some(AnalysisMode::Diff),
+        }
+    }
+}
+
+#[cfg(kani)]
+#[path = "probe_kani.rs"]
+mod kani_proofs;
+
+#[cfg(test)]
+mod tests {
+    use super::{Probe, ProbeFamily};
+    use crate::domain::{DeltaKind, ProbeId, SourceLocation};
+    use std::path::PathBuf;
+
+    fn probe_over(family: ProbeFamily, expression: &str) -> Probe {
+        Probe {
+            id: ProbeId("probe:src_lib_rs:2:static_unknown".to_string()),
+            location: SourceLocation {
+                file: PathBuf::from("src/lib.rs"),
+                line: 2,
+                column: 1,
+            },
+            owner: None,
+            family,
+            delta: DeltaKind::Unknown,
+            before: None,
+            after: None,
+            expression: expression.to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn changed_const_name_reads_only_const_and_static_items() {
+        let name = |expression: &str| {
+            probe_over(ProbeFamily::StaticUnknown, expression)
+                .changed_const_name()
+                .map(str::to_string)
+        };
+        for (expression, expected) in [
+            ("const CAP: u64 = 5_000;", "CAP"),
+            ("pub const CAP: u64 = 5;", "CAP"),
+            ("pub(crate) const CAP_2: u64 = 5;", "CAP_2"),
+            ("static LIMIT: u32 = 3;", "LIMIT"),
+            ("pub static mut LIMIT: u32 = 3;", "LIMIT"),
+        ] {
+            assert_eq!(name(expression).as_deref(), Some(expected), "{expression}");
+        }
+        for expression in [
+            "const fn cap() -> u64 { 5 }",
+            "let const_limit = 3;",
+            "const _: () = ();",
+            "pub const",
+            "x = 1;",
+            "const N: usize,",
+        ] {
+            assert_eq!(name(expression), None, "{expression}");
+        }
+        assert_eq!(
+            probe_over(ProbeFamily::Predicate, "const CAP: u64 = 5;").changed_const_name(),
+            None,
+            "only a static_unknown probe names a changed constant"
+        );
+    }
+
+    #[test]
+    fn a_changed_constant_offers_a_stub_route_but_other_static_unknown_probes_do_not() {
+        assert!(probe_over(ProbeFamily::StaticUnknown, "const CAP: u64 = 5;").offers_stub_route());
+        assert!(!probe_over(ProbeFamily::StaticUnknown, "mystery!();").offers_stub_route());
+        assert!(probe_over(ProbeFamily::Predicate, "a > b").offers_stub_route());
+    }
+
+    /// #4323: every stop-reason gloss is one clean clause (no whitespace runs
+    /// from broken literal continuations) and differs from its token.
+    #[test]
+    fn stop_reason_glosses_are_clean_prose() {
+        for reason in [
+            StopReason::MaxDepthReached,
+            StopReason::ExternalCrateBoundary,
+            StopReason::DynamicDispatchUnresolved,
+            StopReason::ProcMacroOpaque,
+            StopReason::FixtureOpaque,
+            StopReason::FeatureUnknown,
+            StopReason::AsyncBoundaryOpaque,
+            StopReason::NoChangedRustLine,
+            StopReason::InfectionEvidenceUnknown,
+            StopReason::PropagationEvidenceUnknown,
+            StopReason::StaticProbeUnknown,
+            StopReason::TransitiveReachUnresolved,
+            StopReason::MacroReachUnresolved,
+            StopReason::GapEvidenceUnresolved,
+            StopReason::HelperIdentityUnresolved,
+            StopReason::CompileTimeInvariant,
+            StopReason::UnsafeObligation,
+        ] {
+            let gloss = reason.describe();
+            assert!(!gloss.contains("  "), "{}: {gloss}", reason.as_str());
+            assert!(!gloss.contains('_'), "{}: {gloss}", reason.as_str());
+            assert!(!gloss.ends_with('.'), "{}: {gloss}", reason.as_str());
+        }
+    }
+    use super::{FlowSinkKind, StopReason, ValueContext};
+    use crate::domain::ExposureClass;
+
+    #[test]
+    fn flow_sink_kind_labels_are_stable_contract_terms() {
+        let cases = [
+            (FlowSinkKind::ReturnValue, "return_value", "returned value"),
+            (FlowSinkKind::ErrorVariant, "error_variant", "error variant"),
+            (
+                FlowSinkKind::StructField,
+                "struct_field",
+                "constructed field",
+            ),
+            (
+                FlowSinkKind::EventCall,
+                "event_call",
+                "event or outbound call",
+            ),
+            (FlowSinkKind::StateWrite, "state_write", "state write"),
+            (
+                FlowSinkKind::Persistence,
+                "persistence",
+                "persistence write",
+            ),
+            (FlowSinkKind::LogMessage, "log_message", "log message"),
+            (
+                FlowSinkKind::ConfigChange,
+                "config_change",
+                "configuration change",
+            ),
+            (FlowSinkKind::CallEffect, "call_effect", "call effect"),
+            (FlowSinkKind::MatchArm, "match_arm", "match arm result"),
+            (FlowSinkKind::Unknown, "unknown", "unknown sink"),
+        ];
+
+        for (kind, value, label) in cases {
+            assert_eq!(kind.as_str(), value);
+            assert_eq!(kind.label(), label);
+        }
+    }
+
+    #[test]
+    fn stop_reason_for_unknown_class_matches_contract() {
+        assert_eq!(
+            StopReason::for_unknown_class(&ExposureClass::PropagationUnknown)
+                .map(|reason| reason.as_str()),
+            Some("propagation_evidence_unknown")
+        );
+        assert_eq!(StopReason::for_unknown_class(&ExposureClass::Exposed), None);
+    }
+
+    #[test]
+    fn value_context_labels_are_stable_contract_terms() {
+        let cases = [
+            (ValueContext::FunctionArgument, "function_argument"),
+            (ValueContext::AssertionArgument, "assertion_argument"),
+            (ValueContext::BuilderMethod, "builder_method"),
+            (ValueContext::TableRow, "table_row"),
+            (ValueContext::EnumVariant, "enum_variant"),
+            (ValueContext::Constant, "constant"),
+            (ValueContext::ReturnValue, "return_value"),
+            (ValueContext::Unknown, "unknown"),
+        ];
+
+        for (context, value) in cases {
+            assert_eq!(context.as_str(), value);
+        }
+    }
+}
+
+#[cfg(test)]
+mod source_currentness_tests {
+    use super::{SOURCE_CURRENTNESS_VALUES, SourceCurrentness};
+
+    #[test]
+    fn source_currentness_labels_are_the_controlled_vocabulary() {
+        // The wire form is pinned where JSON is allowed to be known
+        // (`app::check_artifact` tests); here the stable labels themselves
+        // are the contract.
+        for (value, label) in [
+            (SourceCurrentness::CandidateCurrent, "candidate_current"),
+            (SourceCurrentness::BaseDeleted, "base_deleted"),
+            (SourceCurrentness::MovedOrRenamed, "moved_or_renamed"),
+            (SourceCurrentness::UnresolvedSubject, "unresolved_subject"),
+        ] {
+            assert_eq!(value.as_str(), label);
+            assert!(SOURCE_CURRENTNESS_VALUES.contains(&label));
+        }
+    }
+}
+
+#[cfg(test)]
+mod candidate_actionable_predicate_tests {
+    use super::SourceCurrentness;
+
+    #[test]
+    fn only_proven_candidate_currentness_permits_action() {
+        // RIPR-SPEC-0152: the single eligibility authority. Class and
+        // severity never upgrade a non-current finding.
+        for (value, eligible) in [
+            (SourceCurrentness::CandidateCurrent, true),
+            (SourceCurrentness::BaseDeleted, false),
+            (SourceCurrentness::MovedOrRenamed, false),
+            (SourceCurrentness::UnresolvedSubject, false),
+        ] {
+            assert_eq!(value.permits_candidate_action(), eligible, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn delta_rule_resolves_head_side_probes_only() {
+        use SourceCurrentness::{BaseDeleted, CandidateCurrent, UnresolvedSubject};
+        assert_eq!(
+            SourceCurrentness::from_probe_delta(None, Some("head text")),
+            CandidateCurrent
+        );
+        assert_eq!(
+            SourceCurrentness::from_probe_delta(Some("base"), Some("head")),
+            CandidateCurrent
+        );
+        assert_eq!(
+            SourceCurrentness::from_probe_delta(None, None),
+            UnresolvedSubject
+        );
+        // The delta-only helper never claims base_deleted: removed-only
+        // probes need the diff-level resolver with movement evidence.
+        assert_eq!(
+            SourceCurrentness::from_probe_delta(Some("base"), None),
+            UnresolvedSubject
+        );
+        assert_ne!(
+            SourceCurrentness::from_probe_delta(Some("base"), None),
+            BaseDeleted
+        );
+    }
+}
