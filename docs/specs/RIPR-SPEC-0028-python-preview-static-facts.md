@@ -1718,9 +1718,11 @@ or `best = xs[0]` followed by `for x in xs[1:]`, both with conditional
 `best = x` and `return best`), an unresolved boundary is
 `infection_unknown` when each oracle-eligible test has one or more assertions
 and each has a strong direct comparison of the owner call on an integer list
-or tuple with an integer. The owner may have a second positional parameter
-that is unused by this closed body; a related call must bind it to an integer
-literal. Such a scalar does not resolve the loop's comparison operands. A
+or tuple with an integer. The owner may have a second parameter unused by this
+closed body, bound positionally, by name, or by an integer-literal default.
+When there are two parameters, every default must be an integer literal even
+when explicitly overridden, because defaults are evaluated at definition time. Such a scalar
+does not resolve the loop's comparison operands. A
 single line with multiple assertions or `and`
 conjuncts qualifies only when every statement and conjunct is such a direct
 pin. A test with exactly one direct owner-call assignment followed by one

@@ -2360,12 +2360,7 @@ pub(super) fn unresolved_loop_list_boundary(
     let Some(parameter) = owner.parameters.first() else {
         return false;
     };
-    if !(1..=2).contains(&owner.parameters.len())
-        || owner
-            .parameters
-            .iter()
-            .any(|parameter| parameter.keyword_only)
-    {
+    if !(1..=2).contains(&owner.parameters.len()) || parameter.keyword_only {
         return false;
     }
     if owner.owner_kind != Some(OwnerKind::Function) || left == right {
@@ -2549,16 +2544,53 @@ fn is_direct_integer_sequence_assertion(
         if !owner_module_callees(candidate.test, owner).contains(&callee)
             || bindings.assigns_attribute(&owner.name)
             || bindings.rebinds(root)
-            || !call.keywords.is_empty()
         {
             return false;
         }
-        let Some((argument, extra)) = call.args.split_first() else {
-            return false;
-        };
-        if call.args.len() != owner.parameters.len() || !extra.iter().all(integer) {
+        // Python evaluates defaults at definition time, even when the call
+        // supplies this argument. Do not bypass an effectful default.
+        if owner.parameters.len() == 2
+            && owner
+                .parameters
+                .iter()
+                .filter_map(|parameter| parameter.default.as_deref())
+                .any(|default| {
+                    super::approx_band::parse_expression(default)
+                        .is_none_or(|value| !integer(&value))
+                })
+        {
             return false;
         }
+        let argument = match (
+            owner.parameters.as_slice(),
+            call.args.as_slice(),
+            call.keywords.as_slice(),
+        ) {
+            ([_], [argument], []) => argument,
+            ([_, extra], [argument, value], []) if !extra.keyword_only && integer(value) => {
+                argument
+            }
+            ([_, extra], [argument], [keyword])
+                if !extra.positional_only
+                    && keyword
+                        .arg
+                        .as_ref()
+                        .is_some_and(|name| name.as_str() == extra.name)
+                    && integer(&keyword.value) =>
+            {
+                argument
+            }
+            ([_, extra], [argument], [])
+                if extra
+                    .default
+                    .as_deref()
+                    .and_then(super::approx_band::parse_expression)
+                    .is_some_and(|value| integer(&value)) =>
+            {
+                argument
+            }
+            _ => return false,
+        };
         let elements = match argument {
             Expr::List(list) => &list.elts,
             Expr::Tuple(tuple) => &tuple.elts,

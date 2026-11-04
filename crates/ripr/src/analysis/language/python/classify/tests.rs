@@ -4125,10 +4125,11 @@ fn loop_boundary_extra_argument_does_not_hide_identity_or_other_bodies() -> Resu
         ExposureClass::InfectionUnknown,
         "{finding:?}"
     );
-    let keyword_source = source.replace("def largest(xs, unused):", "def largest(xs, *, unused):");
+    let positional_source =
+        source.replace("def largest(xs, unused):", "def largest(xs, unused, /):");
     let keyword_input = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3], unused=0) == 5\n";
     let finding = classify_edit_case(
-        &keyword_source,
+        &positional_source,
         keyword_input,
         8,
         "        if x > best:",
@@ -4139,6 +4140,111 @@ fn loop_boundary_extra_argument_does_not_hide_identity_or_other_bodies() -> Resu
         ExposureClass::InfectionUnknown,
         "{finding:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_unused_default_or_keyword_is_unknown_only_when_literal() -> Result<(), String> {
+    let template = "def largest(xs, unused):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for (signature, call) in [
+        ("xs, unused=0", "largest([1, 5, 3])"),
+        ("xs, *, unused=0", "largest([1, 5, 3])"),
+        ("xs, *, unused", "largest([1, 5, 3], unused=0)"),
+        ("xs, unused", "largest([1, 5, 3], unused=-1)"),
+    ] {
+        let source = template.replace("xs, unused", signature);
+        let test = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert {call} == 5\n"
+        );
+        let finding = classify_edit_case(
+            &source,
+            &test,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{call}: {finding:?}"
+        );
+        assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    let source = template.replace("xs, unused", "xs, unused=side_effect()");
+    let test = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    let finding = classify_edit_case(
+        &source,
+        test,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    let explicit = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3], unused=0) == 5\n";
+    let finding = classify_edit_case(
+        &source,
+        explicit,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    let first_default = template.replace("xs, unused", "xs=side_effect(), unused=0");
+    let finding = classify_edit_case(
+        &first_default,
+        test,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    let tests = "import src.subject as subject\n\ndef test_largest():\n    subject.largest = lambda xs, unused=0: 5\n    assert subject.largest([1, 5, 3], unused=0) == 5\n";
+    let finding = classify_edit_case(
+        template,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    let equality = "def select(xs, unused=0):\n    best = 0\n    for x in xs:\n        if x >= best:\n            return 1\n    return 0\n";
+    let test =
+        "from src.subject import select\n\ndef test_select():\n    assert select([0]) == 1\n";
+    let finding = classify_edit_case(
+        equality,
+        test,
+        4,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    let default_source = template.replace("xs, unused", "xs, unused=0");
+    let identity = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key): self.key = key\n    def __gt__(self, other): return self.key > other.key\n    def __ge__(self, other): return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([1, 5, 3]) == 5\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(
+        &default_source,
+        identity,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
 
