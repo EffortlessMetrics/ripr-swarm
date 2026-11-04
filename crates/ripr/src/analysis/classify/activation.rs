@@ -7033,7 +7033,7 @@ fn first_visible_flow_sink(flow_sinks: &[FlowSinkFact]) -> Option<&FlowSinkFact>
         .find(|sink| sink.kind != FlowSinkKind::Unknown)
 }
 
-fn list_or_unknown(values: &[String]) -> String {
+pub(super) fn list_or_unknown<T: AsRef<str>>(values: &[T]) -> String {
     if values.is_empty() {
         return "unknown".to_string();
     }
@@ -7045,6 +7045,7 @@ fn list_or_unknown(values: &[String]) -> String {
     let mut result = String::new();
     let mut retained = 0;
     for value in values.iter().take(MAX_VALUES) {
+        let value = value.as_ref();
         let separator = if retained == 0 { "" } else { ", " };
         if result
             .len()
@@ -8048,8 +8049,8 @@ mod tests {
             super::list_or_unknown(&over_then_short),
             "(2 values elided)"
         );
-        assert_eq!(super::list_or_unknown(&["3".into(), "7".into()]), "3, 7");
-        assert_eq!(super::list_or_unknown(&[]), "unknown");
+        assert_eq!(super::list_or_unknown(&["3", "7"]), "3, 7");
+        assert_eq!(super::list_or_unknown(&[] as &[String]), "unknown");
     }
 
     #[test]
