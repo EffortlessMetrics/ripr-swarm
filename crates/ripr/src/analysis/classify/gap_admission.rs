@@ -443,6 +443,7 @@ pub(in crate::analysis) fn assertion_confirms_captured_log_exact_membership(
             FunctionContainer::TraitImpl {
                 trait_path,
                 self_ty,
+                ..
             } if matches!(trait_path.as_str(), "log::Log" | "Log") => Some(self_ty.as_str()),
             _ => None,
         })
