@@ -31,6 +31,7 @@ Start here:
     - 9 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/owner_name_collision_helper_keeps_credit/input --diff <cwd>/fixtures/owner_name_collision_helper_keeps_credit/diff.patch --mode fast probe:src_lib.rs:return_value:5d09647e
   ripr context --root <cwd>/fixtures/owner_name_collision_helper_keeps_credit/input --diff <cwd>/fixtures/owner_name_collision_helper_keeps_credit/diff.patch --mode fast --at probe:src_lib.rs:return_value:5d09647e
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)

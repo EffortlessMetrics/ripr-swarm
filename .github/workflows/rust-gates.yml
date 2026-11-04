@@ -3,6 +3,53 @@ name: Rust Gates
 on:
   workflow_call:
     inputs:
+      proof-profile:
+        type: string
+        required: false
+        default: legacy
+      head-sha:
+        type: string
+        required: false
+        default: ""
+      base-sha:
+        type: string
+        required: false
+        default: ""
+      subject-sha:
+        type: string
+        required: false
+        default: ""
+      subject-tree:
+        type: string
+        required: false
+        default: ""
+      workflow-generation:
+        type: string
+        required: false
+        default: ""
+      subject-json:
+        type: string
+        required: false
+        default: ""
+      subject-identity:
+        type: string
+        required: false
+        default: ""
+      constituent-pr-number:
+        description: Caller-supplied trusted PR number of the single admitted constituent (qualification profile only).
+        type: string
+        required: false
+        default: ""
+      constituent-pr-node-id:
+        description: Caller-supplied trusted PR node id of the single admitted constituent (qualification profile only).
+        type: string
+        required: false
+        default: ""
+      constituent-head-sha:
+        description: Caller-supplied trusted exact head H of the admitted constituent; must equal head-sha.
+        type: string
+        required: false
+        default: ""
       runner-config:
         description: JSON string or object accepted by jobs.<job_id>.runs-on.
         required: true
@@ -104,6 +151,51 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
+          ref: ${{ inputs.subject-sha || github.sha }}
+
+      - name: Verify admitted integration before proof
+        id: admitted
+        env:
+          PROFILE: ${{ inputs.proof-profile }}
+          SUBJECT_JSON: ${{ inputs.subject-json }}
+          ADMITTED_HEAD: ${{ inputs.head-sha }}
+          ADMITTED_BASE: ${{ inputs.base-sha }}
+          ADMITTED_MERGE: ${{ inputs.subject-sha }}
+          ADMITTED_TREE: ${{ inputs.subject-tree }}
+          GENERATION: ${{ inputs.workflow-generation }}
+          IDENTITY: ${{ inputs.subject-identity }}
+          REPOSITORY_ID: ${{ github.event.repository.node_id }}
+          PR_ID: ${{ inputs.constituent-pr-node-id }}
+          PR_NUMBER: ${{ inputs.constituent-pr-number }}
+          CONSTITUENT_HEAD: ${{ inputs.constituent-head-sha }}
+        run: |
+          set -euo pipefail
+          case "$PROFILE" in
+            legacy)
+              for value in "$SUBJECT_JSON" "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" "$GENERATION" "$IDENTITY" "$PR_ID" "$PR_NUMBER" "$CONSTITUENT_HEAD"; do
+                [[ -z "$value" ]] || { echo 'Partial qualification cannot use legacy profile' >&2; exit 1; }
+              done
+              # Legacy publishes no outputs: consumers fall back to the original event expressions.
+              ;;
+            qualification)
+              for value in "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" "$GENERATION"; do [[ "$value" =~ ^[0-9a-f]{40}$ ]]; done
+              [[ "$IDENTITY" =~ ^[0-9a-f]{64}$ && "$GENERATION" == "$GITHUB_WORKFLOW_SHA" ]]
+              # Constituent identity comes only from the caller's inputs: merge_group events carry no pull_request object.
+              [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,9}$ && -n "$PR_ID" && -n "$REPOSITORY_ID" && "$CONSTITUENT_HEAD" == "$ADMITTED_HEAD" ]]
+              jq -e --arg repo "$GITHUB_REPOSITORY" --arg repo_id "$REPOSITORY_ID" --arg pr_id "$PR_ID" --argjson number "$PR_NUMBER" --arg head "$ADMITTED_HEAD" --arg base "$ADMITTED_BASE" --arg merge "$ADMITTED_MERGE" --arg tree "$ADMITTED_TREE" --arg generation "$GENERATION" '
+                .version == 2 and .repository == $repo and .repository_id == $repo_id and .pr_id == $pr_id and .pr_number == $number and
+                .destination_repository_id == $repo_id and .destination_ref == "refs/heads/main" and
+                .head == $head and .base == $base and .merge == $merge and .tree == $tree and
+                .parents == [$base,$head] and .workflow_generation == $generation' <<< "$SUBJECT_JSON" >/dev/null
+              canonical=$(jq -cS . <<< "$SUBJECT_JSON")
+              [[ "$(printf '%s' "$canonical" | sha256sum | cut -d ' ' -f1)" == "$IDENTITY" ]]
+              [[ "$(git cat-file -t HEAD)" == commit && "$(git rev-parse HEAD)" == "$ADMITTED_MERGE" ]]
+              [[ "$(git rev-parse 'HEAD^{tree}')" == "$ADMITTED_TREE" ]]
+              [[ "$(git show -s --format=%P HEAD)" == "$ADMITTED_BASE $ADMITTED_HEAD" ]]
+              printf 'head=%s\nbase=%s\nmerge=%s\ntree=%s\n' "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo 'Unknown source profile' >&2; exit 1 ;;
+          esac
 
       # #3841: ownership and liveness of this job's per-run scratch trees come
       # from a kernel flock lease taken before any tree exists, never from a
@@ -221,23 +313,62 @@ jobs:
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
-      - name: User-text goldens judged by the merge-base matcher
-        # The PR's goldens are judged once more by the matcher the merge-base
-        # compiled, so a PR that weakens the user-text matcher cannot qualify its
-        # own change (#11385). A merge-base that predates `--tree` cannot do this
-        # yet and is skipped with a notice; any other failure fails the job.
+      - name: Prepare independent user-text base
+        # Prepares the exact first-parent base before running its policy matcher.
+        # These two short steps preserve the check-workflows per-block line bound.
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: |
           set -euo pipefail
           base_sha="$(git rev-parse HEAD^1)"
           base_tree="$RUNNER_TEMP/user-text-base"
           git worktree add --detach "$base_tree" "$base_sha"
+
+      - name: Recover pinned base compiler arity if needed
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        run: |
+          set -euo pipefail
+          base_tree="$RUNNER_TEMP/user-text-base"
+          base_sha="$(git -C "$base_tree" rev-parse HEAD)"
+          old_stub_blob="$(git -C "$base_tree" rev-parse "HEAD:crates/ripr/src/app/test_stub.rs")"
+          if test "$old_stub_blob" = "41ce81981802365b31e5182b7a7a51540ff8d7be"; then
+            python3 - "$base_tree/crates/ripr/src/app/test_stub.rs" <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path(sys.argv[1])
+          source = path.read_text(encoding="utf-8")
+          replacements = [
+              ("fn return_value_direct_at_probe_line(\n", "fn return_value_direct_at_probe_line(\n    root: &Path,\n"),
+              ("rust_test_stub(&seam, None, source);", "rust_test_stub(&seam, None, source, Some(root));"),
+              ("return_value_direct_at_probe_line(&in_file, file, line, &source)", "return_value_direct_at_probe_line(root, &in_file, file, line, &source)"),
+          ]
+          for before, after in replacements:
+              if source.count(before) != 1:
+                  raise SystemExit("pinned base compiler recovery has an unexpected source shape")
+              source = source.replace(before, after, 1)
+          path.write_text(source, encoding="utf-8")
+          PY
+            fixed_stub_blob="$(git -C "$base_tree" hash-object crates/ripr/src/app/test_stub.rs)"
+            test "$fixed_stub_blob" = "e934320980555de2d431b2aa8482a6059e9cf7f7"
+            test "$(git -C "$base_tree" diff --name-only)" = "crates/ripr/src/app/test_stub.rs"
+            echo "::notice::base $base_sha recovered only the exact #12466 compiler-arity blob ($old_stub_blob -> $fixed_stub_blob); original user-text matcher remains authoritative"
+          fi
+
+      - name: User-text goldens judged by the merge-base matcher
+        # The PR's goldens are judged by the original matcher at the merge base,
+        # so the PR cannot qualify a weakened version of its own gate (#11385).
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        run: |
+          set -euo pipefail
+          base_tree="$RUNNER_TEMP/user-text-base"
+          base_sha="$(git -C "$base_tree" rev-parse HEAD)"
           if ! grep -q -- '"--tree"' "$base_tree/xtask/src/policy/user_text.rs"; then
             echo "::notice::merge-base $base_sha cannot judge another tree yet; matcher pin only"
             exit 0
           fi
           cd "$base_tree"
           cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
 
       - name: Repository policy preflight
         id: precommit
@@ -418,8 +549,8 @@ jobs:
         id: pr_evidence
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          BASE_SHA: ${{ steps.admitted.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           GITHUB_PR_LABELS: ${{ inputs.pr-labels || join(github.event.pull_request.labels.*.name, ',') }}
           RIPR_REVIEW_COMMENTS_TIMEOUT_SECS: "60"
           # Raised from the 2000 default as the PR #3592 decision artifact, then
@@ -540,7 +671,9 @@ jobs:
         id: gate_summary
         if: always()
         env:
-          SUBJECT_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          SUBJECT_HEAD: ${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.sha }}
+          INTEGRATION_SUBJECT: ${{ inputs.subject-sha || github.sha }}
+          INTEGRATION_TREE: ${{ steps.admitted.outputs.tree }}
           EXECUTION_ROUTE: ${{ inputs.artifact-name }}
           FORMATTING_RESULT: ${{ steps.formatting.outcome }}
           PRECOMMIT_RESULT: ${{ steps.precommit.outcome }}
@@ -564,6 +697,7 @@ jobs:
         run: |
           {
             echo "## Rust gate outcomes"
+            [[ -z "$INTEGRATION_TREE" ]] || printf -- '- Integration subject: `%s`\n- Integration tree: `%s`\n' "$INTEGRATION_SUBJECT" "$INTEGRATION_TREE"
             echo ""
             printf -- '- Workflow commit: `%s`\n- Subject head: `%s`\n- Run / attempt: `%s` / `%s`\n- Route: `%s`\n' "$GITHUB_SHA" "$SUBJECT_HEAD" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$EXECUTION_ROUTE"
             echo ""

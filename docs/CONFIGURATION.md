@@ -240,6 +240,7 @@ that needs the tuning.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `RIPR_CACHE_DIR` | (none) | Relocate the entire cache base directory (the cache is disposable; see below). When set to a non-empty path, all cache reads and writes use that path instead of `{workspace_root}/target/ripr/cache`. Useful for read-only or immutable source checkouts and for redirecting the cache to a faster or larger volume. When unset or empty, default behaviour is unchanged, except that `ripr check` refuses to run when `target`, `target/ripr`, `target/ripr/cache` or `target/ripr/reports` under the workspace is a symlink resolving outside it (a checked-in link could otherwise redirect where ripr writes); set `RIPR_CACHE_DIR` to choose the location explicitly (#7781). `ripr doctor` reports whether `RIPR_CACHE_DIR` is active and shows the resolved location and total size. |
+| `RIPR_MAX_DIFF_CHANGED_LINES` | `100000` | Maximum added plus removed diff lines recorded while parsing a unified diff before `ripr check` fails closed with `diff_scope_oversized`. This is a language-neutral streaming guard: context, quarantined conflict lines, and scope-dropped sections do not count. Per-language adapter limits (`RIPR_MAX_DIFF_CHANGED_RUST_LINES`, Python, TypeScript) may still refuse earlier or with a tighter bound. With `--json`, the command still exits non-zero but emits a limited artifact with `analysis_scope.run_status = "diff_scope_oversized"` and `downstream_consumable = false`. Raise only for a single command on a machine with enough memory, or split the extraction PR. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_MAX_DIFF_CHANGED_RUST_LINES` | `2000` | Maximum added plus removed Rust diff lines that `ripr check` will expand into probes before failing closed with `diff_scope_oversized`. With `--json`, the command still exits non-zero but emits a limited artifact with `analysis_scope.run_status = "diff_scope_oversized"` and `downstream_consumable = false`. This protects constrained runners from large code-motion diffs that touch few files but produce thousands of probes. Raise only for a single command on a machine with enough memory, or split the extraction PR. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES` | `2000` | Maximum added plus removed Python diff lines that `ripr check` will hand to the Python adapter before failing closed with `diff_scope_oversized` — the same early, explainable refusal the Rust limit provides, so a large Python diff (for example a 167-file django extraction) is refused before the expensive per-language analysis instead of burning minutes or the whole timeout. Checked only when the Python adapter is enabled, before any preview adapter runs. With `--json`, the command still exits non-zero but emits a limited artifact. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES` | `2000` | Maximum added plus removed TypeScript diff lines that `ripr check` will hand to the TypeScript adapter before failing closed with `diff_scope_oversized`. Counts the whole routed TS/JS source family the one adapter reads (`.ts`/`.tsx`/`.mts`/`.cts` and `.js`/`.jsx`/`.mjs`/`.cjs`), and is checked when either the `typescript` or `javascript` language is enabled, before any preview adapter runs. Same repair route as the Rust limit: narrow the diff with `--path`/`--exclude` or raise the limit for a single command. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
@@ -258,7 +259,7 @@ that needs the tuning.
 | `RIPR_ALLOW_REPO_PERL_EXECUTABLE` | unset | Only the exact value `1` lets `[perl].executable` from `ripr.toml` run as the Perl facts exporter. Otherwise ripr ignores the key, says so, and runs the exporter from `PATH`, so a cloned repository cannot choose a program for ripr to run. |
 | `RIPR_MAX_REPO_INDEX_FILES` | `1200` | Maximum Rust files a repo-scoped analysis will load into the index before failing closed as `repo_scope_oversized`. The analysis is not run when the limit is exceeded, so the result is never a silently partial one. Scope the run with `ripr check --diff` or raise the limit. Must be a positive integer. |
 | `RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` | `1200` | Maximum unique files admitted by one `ripr review-comments` guidance dispatch: the analyzable workspace corpus plus present changed owner-attribution inputs, including generated/excluded changed files that attribution reads. Counted before either owner indexing or corpus materialization. Aligns with `RIPR_MAX_REPO_INDEX_FILES` and the diff narrowing threshold (#4972's measured self-repo growth beyond 800), not the `10000` diff memory guard, because guidance indexes the whole workspace, remaining below #3768's 1,600–1,700-file failure shapes. Over-limit dispatches fail as `review_guidance_oversized`; the run receipt stays `failed`, names the limitation and repair route, and no guidance artifacts are published. The xtask wrapper preserves the classification so consumers can distinguish incomplete instrumentation from a real gap. No silent truncation. Raise only on a measured, sufficiently resourced runner, or reduce workspace inputs; narrowing only the diff does not reduce the workspace file count. This is an input limit, not an RSS bound or a guarantee that admitted guidance completes. Positive integer required; invalid values fail closed, while `--help`/`-h` remain available. |
-| `RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES` | `268435456` (256 MiB) | Sum of changed diff bytes and the metadata source-byte total for the same unique input set. The shared generated-source classifier also inspects bounded headers/vendor markers, respecting handwritten-file declarations and stronger exclusions. The few-giant-files admission axis; a source-byte count is not the expanded index's memory usage. The same named failure and receipt contract applies before owner indexing or workspace loading. Raise only after runner measurement, or reduce corpus and/or diff bytes. Positive integer required; invalid values fail closed except for help. This preflight does not bound the earlier Git diff capture itself (#5000). |
+| `RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES` | `268435456` (256 MiB) | Sum of changed diff bytes and the metadata source-byte total for the same unique input set. The shared generated-source classifier also inspects bounded headers/vendor markers, respecting handwritten-file declarations and stronger exclusions. The few-giant-files admission axis; a source-byte count is not the expanded index's memory usage. The same named failure and receipt contract applies before owner indexing or workspace loading. For `ripr review-comments`, Git range diff stdout is also captured under this byte ceiling while the child runs (#5000), so an oversized diff is refused before unbounded ingress allocation. Raise only after runner measurement, or reduce corpus and/or diff bytes. Positive integer required; invalid values fail closed except for help. |
 | `RIPR_REPO_EXPOSURE_SEAM_LIMIT` | `10000` | Maximum seams a full-repo `repo-exposure` analysis classifies before capping. When the cap fires, the run reports `run_status = "seam_limit_applied"` with a `limitations[]` entry naming the analyzed and total seam counts, this variable, and a repair route. Set to `0` to analyze all seams; any other value that is not a positive integer exits `2` and names the variable. `ripr doctor` reports this cap under its known limitations. `ripr pilot` scopes this built-in default to its seam budget (`RIPR_PILOT_SEAM_BUDGET`, 2000) while the variable is unset, so it does not classify seams it would not rank; the cut is disclosed as the pilot budget. An explicit value, including `0`, applies as set. |
 | `RIPR_PILOT_PACKET_BUDGET` | `3` | Maximum packets written to the `ripr pilot` `agent-seam-packets.json` artifact (#11951). A repo-scope run can hold hundreds of packets (2-4 MB), nearly all `inspect_static_limitation`, which is more than an agent can read. The file keeps `write_targeted_test` packets first, then static-limitation packets, each in its existing order and byte-identical to the uncut packet. When the bound cuts, the file reports `run_status = "packet_bound_applied"` (unless a seam cap or declined files already own it) and a `limitations[]` entry `pilot_packet_bound_applied` with `packets_emitted` and `packets_eligible`, plus `actionable_packets_omitted` and a message when the cut drops `write_targeted_test` packets themselves (#12064). Set to `0` to write every packet; any other value that is not a positive integer exits `2` and names the variable. `ripr check --format agent-seam-packets-json` and the `next` block are unaffected. |
 | `RIPR_PILOT_REPO_EXPOSURE_BYTES` | `8000000` | Byte budget for the `seams[]` entries of the `ripr pilot` `repo-exposure.json` (#12108). `RIPR_PILOT_SEAM_BUDGET` bounds the seam count only: at the default 2000 seams the file measured 13.1 MB on this repository (about 6.6 KB per seam, mostly each seam's `evidence_record`). When the entries exceed the budget, the file keeps the current-change seams first, then the remaining seams in pilot ranking order, then the rest in inventory order (written in inventory order); a seam that does not fit is skipped (counted in `seams_skipped_over_budget` when a later seam of its group was kept), and a group that skipped a seam ends the selection. It sets `run_status = "limited_repo_exposure_bytes"` (a seam limit keeps `seam_limit_applied`), adds a `limitations[]` entry `pilot_repo_exposure_byte_bound_applied` with `seams_rendered`, `seams_total`, `seam_bytes_rendered`, `byte_budget`, `limit_source`, `control` and `repair_route`, drops the `artifact` identity, and `pilot-summary.json` carries `repo_exposure_byte_bound`. A bounded file is not a comparable snapshot: `ripr outcome` and `ripr agent verify` refuse it by name. `agent-seam-packets.json`, `repo-exposure.md` and the ranking still cover every seam. Set to `0` to write every seam; any other value that is not a positive integer exits `2` and names the variable. Agents should read `pilot-summary.json` and `agent-seam-packets.json` first, and treat `repo-exposure.json` as the bounded seam listing. The budget counts each kept entry's bytes plus the 2-byte `,\n` separator the writer adds between entries, so the written `seams[]` content never exceeds it; the document adds a few KB of metadata and array framing. Sizing renders every seam once before the cut (the same per-seam serialization the writer performs), so the control bounds output bytes, not analysis time. Because a bounded file is not a comparable baseline, `ripr pilot` then prints `before_snapshot_command` (`ripr check --format repo-exposure-json` to `before.repo-exposure.json`) and points `outcome_command` at that file; `ripr calibrate cargo-mutants` also refuses a bounded file. |
@@ -365,7 +366,10 @@ leaves no changed file fails with `scope_filter_matched_nothing` (exit 2). Rust
 files with a generator header (`@generated`, `Code generated ... DO NOT EDIT`,
 rust-bindgen), `cargo vendor` crates and a root `target/` directory are already
 skipped with a named limitation before the limits apply, without any flag.
-`--path` and `--exclude` do not apply to repo-scoped formats.
+`--path` and `--exclude` do not apply to repo-scoped formats. `ripr explain`
+and `ripr context` accept the same flags, and a scoped `ripr check` prints
+them on its explain, context, and `check --json` drill-in commands so a paste
+re-analyzes the same files instead of the full oversized diff.
 
 To reduce full-cache shard counts for a repo on a machine with enough headroom:
 
@@ -390,6 +394,7 @@ Renders a single finding in human format.
 
 ```text
 ripr explain [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
+             [--path GLOB] [--exclude GLOB]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH] [--quiet] <finding-id | file:line>
 ```
@@ -414,6 +419,7 @@ Emits a compact JSON context packet for one finding.
 
 ```text
 ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
+             [--path GLOB] [--exclude GLOB]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH]
              (--at | --finding) <finding-id | file:line>
@@ -1126,11 +1132,12 @@ finding-affecting config for artifact/receipt comparison. Rerun analysis after
 changing it; do not reuse an old excluded-source receipt as complete evidence.
 
 `[languages.python]` and `[languages.typescript]` configure the preview
-adapters. Each admits one override:
+adapters:
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `handwritten_files` | array of exact paths | `[]` | Repository-relative files to analyze even though a path component matches the adapter's built-in excluded-directory conventions (`.git`, `target`, `node_modules`, virtualenvs, `site-packages`, caches, and build-output names such as `build/`, `dist/` and, for TypeScript, `out/`). Python declarations must name `.py` files; TypeScript declarations must name one of the routed TypeScript/JavaScript extensions (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs`). Exact paths only — globs are rejected. Generated-name conventions still exclude a declared path. The override applies to diff checks; repo-scope exposure remains convention-scoped. |
+| `excluded_file_patterns` | array of strings | `[]` | Additional repository-relative globs omitted from preview-language indexing during diff checks (#5380). Uses the same `/`-separated glob dialect as `[languages.rust] generated_file_patterns`. Parse-budget refusals on paths that look like fixture or data files point here instead of advising a source rewrite. |
 
 For example, a project that keeps hand-written Python source under a `build/`
 package can admit it:
@@ -1138,6 +1145,13 @@ package can admit it:
 ```toml
 [languages.python]
 handwritten_files = ["build/lib/pipeline.py"]
+```
+
+To keep syntax-highlighted or other fixture trees out of Python preview indexing:
+
+```toml
+[languages.python]
+excluded_file_patterns = ["tests/syntax-tests/**"]
 ```
 
 When a changed file is still skipped by these conventions, the run's

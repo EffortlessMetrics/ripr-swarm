@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
@@ -72,12 +73,27 @@ GENERATED_DECLARATION_ALLOWED = (
     # (.json), sha256-pinned by the case rows, whose provenance and edits stay
     # in the counted cases/ files.
     re.compile(r"^fixtures/[a-z]+-verdict-corpus/packets/\*\*$"),
+    # Repo-exposure captures the evidence-promotion honesty gate regenerates
+    # from their Cargo subject and binds by `content_sha256`, so a hand edit
+    # fails that gate (RIPR-SPEC-0108). Only the two capture families, one glob
+    # each; the hand-written reports beside them stay counted (#12739).
+    re.compile(
+        r"^fixtures/evidence-promotion-honesty-corpus/reports/"
+        r"rust-(?:inherent|repo-exposure)-\*\.json$"
+    ),
 )
 # Families narrower than the global data extensions: only these file types in
 # the family are ever exempt, so a note or log dropped beside the packets stays
 # counted.
 GENERATED_FAMILY_EXTENSIONS = (
     (re.compile(r"^fixtures/[a-z]+-verdict-corpus/packets/"), {".json"}),
+    (
+        re.compile(
+            r"^fixtures/evidence-promotion-honesty-corpus/reports/"
+            r"rust-(?:inherent|repo-exposure)-"
+        ),
+        {".json"},
+    ),
 )
 DEFAULT_MAX_GENERATED_LINES = 40000
 # Bounds on the hand-written blobs read to cap count-less files.
@@ -103,6 +119,15 @@ HISTORY_SYNC_ROLES = {"admin", "maintain"}
 HISTORY_SYNC_SOURCE_LINE = "history-sync source:"
 HISTORY_SYNC_BASE_LINE = "history-sync destination base:"
 HISTORY_SYNC_SOURCE_RE = re.compile(r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([0-9a-f]{40})")
+# Ownership claims (#11736 Proposal B v1, observability-only). The machine
+# contract is only the casefolded line prefix `Converging this PR:`; the prose
+# timestamp after it is free text and is never parsed (#12404's malformed
+# `started2026-11-02` example). Liveness comes from the API-attested comment
+# `updated_at`, refreshed by the documented edit-at-transitions discipline.
+CLAIM_MARKER_PREFIX = "converging this pr:"
+CLAIM_WINDOW = timedelta(hours=4)
+# Bound on the free-text holder rendered into outputs and summaries.
+CLAIM_ACTOR_MAX_CHARS = 200
 
 
 def normalize(value: str) -> str:
@@ -123,6 +148,83 @@ def extract_fields(body: str) -> dict[str, str]:
                 if folded.startswith(prefix):
                     found[key] = line[len(prefix) :].strip()
                     break
+    return found
+
+
+def claim_carrier(body: str) -> str:
+    """The body line carrying the claim marker, or ""."""
+    for raw_line in (body or "").splitlines():
+        line = raw_line.strip()
+        if line.casefold().startswith(CLAIM_MARKER_PREFIX):
+            return line
+    return ""
+
+
+def claim_actor(body: str) -> str:
+    """Free text after the claim prefix on its line. The prose timestamp is
+    never interpreted (#12404): detection reads only the prefix, so any
+    framework's claim line is understood."""
+    carrier = claim_carrier(body)
+    if not carrier:
+        return ""
+    return carrier[len(CLAIM_MARKER_PREFIX) :].strip()[:CLAIM_ACTOR_MAX_CHARS]
+
+
+def claim_time(value: Any) -> datetime | None:
+    """API-attested instant of a comment timestamp, or None when missing or
+    malformed. GitHub emits `...Z`; normalize for older Pythons."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def live_claims(
+    comments: Any, now: datetime
+) -> list[dict[str, Any]]:
+    """Ownership claims still inside the 4-hour youth window, newest first.
+
+    Reads conversation (issue) comments only. A review-comment payload means
+    the fetch used the wrong endpoint (`pulls/{n}/comments`), which must
+    detect nothing rather than half of something, so entries carrying
+    review-comment-only keys are ignored. A comment without a usable
+    API-attested `updated_at` cannot prove youth and is ignored: this field
+    annotates, it never fabricates evidence."""
+    found: list[dict[str, Any]] = []
+    for comment in comments or []:
+        if not isinstance(comment, dict):
+            continue
+        if any(
+            comment.get(key) is not None
+            for key in ("pull_request_review_id", "diff_hunk", "path")
+        ):
+            continue
+        body = comment.get("body") or ""
+        if not claim_carrier(body):
+            continue
+        updated = claim_time(comment.get("updated_at"))
+        if updated is None:
+            continue
+        age = now - updated
+        if age < timedelta(0):
+            age = timedelta(0)  # clock skew: a future-dated edit is the youngest
+        if age >= CLAIM_WINDOW:
+            continue
+        found.append(
+            {
+                "actor": claim_actor(body),
+                "login": str((comment.get("user") or {}).get("login") or "unknown"),
+                "updated_at": str(comment.get("updated_at") or ""),
+                "age_minutes": int(age.total_seconds() // 60),
+            }
+        )
+    found.sort(key=lambda claim: (claim["updated_at"], claim["login"]), reverse=True)
     return found
 
 
@@ -304,7 +406,7 @@ def check_generated_declarations(text: str) -> list[str]:
             generated_state(attributes) is not False
         ) and not declaration_allowed(pattern):
             problems.append(
-                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/**, fixtures/<language>-verdict-corpus/packets/** and metrics/public-proof/** (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
+                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/**, fixtures/<language>-verdict-corpus/packets/**, metrics/public-proof/** and the rust-inherent-*.json and rust-repo-exposure-*.json captures under fixtures/evidence-promotion-honesty-corpus/reports/ (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
             )
     return problems
 
@@ -426,6 +528,7 @@ def refusal(
     detail: str = "",
     generated_files: int = 0,
     generated_lines: int = 0,
+    concurrent_claims: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     # Same reviewable totals as an admitted decision, so the published scope
     # fields mean one thing whatever the outcome.
@@ -443,6 +546,7 @@ def refusal(
         "claim": normalize(fields.get("claim", "")),
         "acceptance_delta": normalize(fields.get("delta", "")),
         "competing_prs": peers or [],
+        "concurrent_claims": list(concurrent_claims or []),
         "changed_files": changed_files,
         "changed_lines": changed_lines,
         "max_changed_files": max_files,
@@ -620,16 +724,18 @@ def decide(
     generated_files: int = 0,
     generated_lines: int = 0,
     max_generated_lines: int = DEFAULT_MAX_GENERATED_LINES,
+    concurrent_claims: list[dict[str, Any]] | None = None,
     history_sync: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     fields = effective_fields(current)
     actual_head = ((current.get("head") or {}).get("sha") or "")
     sync = history_sync or HISTORY_SYNC_NOT_REQUESTED
+    claims = list(concurrent_claims or [])
 
     def refuse(reason: str, peers: list[int] | None = None, detail: str = "") -> dict[str, Any]:
         result = refusal(
             reason, current, fields, max_files, max_lines, peers, detail,
-            generated_files, generated_lines,
+            generated_files, generated_lines, claims,
         )
         result["history_sync"] = sync
         return result
@@ -711,6 +817,7 @@ def decide(
         "claim": claim,
         "acceptance_delta": delta,
         "competing_prs": [],
+        "concurrent_claims": claims,
         "changed_files": changed_files,
         "changed_lines": changed_lines,
         "max_changed_files": max_files,
@@ -1077,6 +1184,8 @@ def self_test() -> None:
         "package-lock.json linguist-generated\nfixtures/**/expected/** linguist-generated\n"
         "metrics/public-proof/** linguist-generated\ncrates/x/*.rs -linguist-generated\n"
         "fixtures/perl-verdict-corpus/packets/** linguist-generated\n"
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*.json linguist-generated\n"
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-*.json linguist-generated\n"
     ) == []
     for bad in (
         "fixtures/notexpected/**", "fixtures/myexpected/**", "fixtures/a/xexpected/**",
@@ -1088,6 +1197,17 @@ def self_test() -> None:
         "fixtures/perl-corpus/packets/**", "fixtures/Perl-verdict-corpus/packets/**",
         "fixtures/a/b-verdict-corpus/packets/**", "fixtures/perl-verdict-corpus/packets/*.rs",
         "fixtures/perl-verdict-corpus/xpackets/**", "xtask/fixtures/perl-verdict-corpus/packets/**",
+        "fixtures/evidence-promotion-honesty-corpus/reports/**",
+        "fixtures/evidence-promotion-honesty-corpus/reports/*.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-*.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*.md",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-*.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/perl-*.json",
+        "fixtures/evidence-promotion-honesty-corpus/**",
+        "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+        "fixtures/other-corpus/reports/rust-inherent-*.json",
+        "xtask/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*.json",
     ):
         assert check_generated_declarations(f"{bad} linguist-generated\n"), bad
     corpus_rules = parse_generated_rules("fixtures/perl-verdict-corpus/packets/** linguist-generated\n")
@@ -1105,6 +1225,31 @@ def self_test() -> None:
         "fixtures/perl-verdict-corpus/subjects/s/lib/A.pm", "fixtures/python-verdict-corpus/packets/a.json",
     ):
         assert not is_generated(kept, corpus_rules), kept
+    honesty_rules = parse_generated_rules(
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*.json linguist-generated\n"
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-*.json linguist-generated\n"
+    )
+    reports = "fixtures/evidence-promotion-honesty-corpus/reports"
+    for captured in (
+        f"{reports}/rust-inherent-async-fn-entry.json",
+        f"{reports}/rust-repo-exposure-uncalled-sibling.json",
+    ):
+        assert is_generated(captured, honesty_rules), captured
+    # The exemption follows the capture families only: hand-written reports,
+    # the case file that carries the provenance, other types and other trees
+    # beside them stay counted.
+    for kept in (
+        f"{reports}/rust-closure-callback-benign-macro-operand.json",
+        f"{reports}/rust-matches-panic-message.json",
+        f"{reports}/perl_token_substring.json",
+        f"{reports}/rust-inherent-async-fn-entry.md",
+        f"{reports}/rust-inherent-async-fn-entry.jsonl",
+        f"{reports}/rust-inherent-x/y.json",
+        "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-x/src/lib.rs",
+        "fixtures/other/reports/rust-inherent-x.json",
+    ):
+        assert not is_generated(kept, honesty_rules), kept
     assert check_generated_declarations("src/lib.rs linguist-generated=false linguist-generated\n")
     assert run(current, [current], "b" * 40)["reason"] == "candidate_head_moved"
     assert (
@@ -1147,6 +1292,94 @@ def self_test() -> None:
     bot = fixture(number=10, body="", head=head, **bump)
     assert run(bot, [bot, matching])["reason"] == "competing_candidate"
     assert run(matching, [bot, matching], "c" * 40)["reason"] == "competing_candidate"
+
+    # Ownership claims (#11736 Proposal B v1): detection reads only the
+    # casefolded line prefix; youth comes from the API-attested updated_at,
+    # never the prose timestamp.
+    now = datetime(2026, 11, 2, 8, 0, 0, tzinfo=timezone.utc)
+
+    def claim(
+        body: str = "Converging this PR: rival lane",
+        login: str = "rival",
+        created: str = "2026-11-02T07:00:00Z",
+        updated: str = "2026-11-02T07:50:00Z",
+        **extra: Any,
+    ) -> dict[str, Any]:
+        entry = {
+            "body": body,
+            "user": {"login": login},
+            "created_at": created,
+            "updated_at": updated,
+        }
+        entry.update(extra)
+        return entry
+
+    # The #12404 real-world line: malformed prose timestamp, intact prefix.
+    malformed = claim(
+        "Converging this PR: root delivery session, started2026-11-02 03:25 UTC.",
+        login="EffortlessSteven",
+        updated="2026-11-02T07:50:00Z",
+    )
+    claims = live_claims([malformed], now)
+    assert len(claims) == 1, claims
+    assert claims[0]["actor"] == "root delivery session, started2026-11-02 03:25 UTC."
+    assert claims[0]["login"] == "EffortlessSteven"
+    assert claims[0]["age_minutes"] == 10
+    annotated = run(fixture(body=fixture_body(), head=head), [])
+    assert annotated["status"] == "admitted"
+    assert annotated["concurrent_claims"] == []
+    annotated = decide(fixture(body=fixture_body(), head=head), [], head, False, max_files, max_lines, 0, 0, DEFAULT_MAX_GENERATED_LINES, claims)
+    assert annotated["status"] == "admitted", "a live claim annotates, it never refuses"
+    assert annotated["concurrent_claims"] == claims
+    refused_annotated = run(
+        fixture(body="", head=head), [], head
+    )  # refusal result carries the same additive field
+    assert refused_annotated["concurrent_claims"] == []
+    # Youth is windowed: at and past 4 hours the claim is no longer live.
+    assert live_claims([claim(updated="2026-11-02T04:00:00Z")], now) == [], "at the boundary"
+    assert live_claims([claim(updated="2026-11-02T03:59:59Z")], now) == []
+    # The edit-at-transitions discipline refreshes youth: an old comment
+    # edited minutes ago is live.
+    refreshed = live_claims(
+        [claim(created="2026-10-27T07:00:00Z", updated="2026-11-02T07:58:00Z")], now
+    )
+    assert len(refreshed) == 1 and refreshed[0]["age_minutes"] == 2, refreshed
+    # Prose without the prefix is not a claim, even mid-line or near-miss.
+    for prose in (
+        "I plan on converging this PR: soon",
+        "see Converging this PR: above",
+        "Converging the PR: other work",
+        "",
+    ):
+        assert live_claims([claim(prose)], now) == [], prose
+    # The prefix is case-insensitive; the actor stays free text.
+    folded = live_claims([claim("converging this PR: lane B")], now)
+    assert len(folded) == 1 and folded[0]["actor"] == "lane B", folded
+    # A review-comment payload is the wrong endpoint and detects nothing,
+    # even when its body carries the prefix.
+    review_shaped = claim(
+        "Converging this PR: wrong endpoint",
+        pull_request_review_id=7,
+        diff_hunk="@@ -1 +1 @@",
+    )
+    assert live_claims([review_shaped], now) == []
+    assert live_claims([claim("Converging this PR: x", path="src/lib.rs")], now) == []
+    # A comment without a usable API-attested updated_at cannot prove youth.
+    assert live_claims([claim("Converging this PR: x", updated="")], now) == []
+    assert live_claims([claim("Converging this PR: x", updated="not-a-time")], now) == []
+    assert live_claims([{"user": {"login": "rival"}}], now) == []
+    assert live_claims([], now) == []
+    # Two live claims: both listed, newest first, each with its holder.
+    pair = live_claims(
+        [
+            claim("Converging this PR: lane A", login="actor-a", updated="2026-11-02T07:40:00Z"),
+            claim("Converging this PR: lane B", login="actor-b", updated="2026-11-02T07:55:00Z"),
+        ],
+        now,
+    )
+    assert [c["actor"] for c in pair] == ["lane B", "lane A"], pair
+    assert {c["login"] for c in pair} == {"actor-a", "actor-b"}
+
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -1248,6 +1481,22 @@ def history_sync_self_test(max_files: int, max_lines: int) -> None:
     assert admitted["status"] == "admitted" and admitted["reason"] == HISTORY_SYNC_REASON, admitted
     assert admitted["history_sync"]["source_sha"] == source and admitted["history_sync"]["destination_base"] == dest
     assert admitted["changed_files"] == 334 and admitted["changed_lines"] == 72000
+    # A live ownership claim is observability only, including on the privileged
+    # history-sync route. The two admission profiles must not overwrite each
+    # other's typed fields during source/main reconciliation.
+    sample_claims = [{"actor": "existing writer", "login": "maintainer", "age_minutes": 5}]
+    combined = decide(
+        sync_pr(), [sync_pr()], head, False, max_files, max_lines,
+        concurrent_claims=sample_claims, history_sync=validated,
+    )
+    assert combined["reason"] == HISTORY_SYNC_REASON and combined["history_sync"] == validated
+    assert combined["concurrent_claims"] == sample_claims, combined
+    refused_combined = decide(
+        sync_pr(draft=True), [], head, False, max_files, max_lines,
+        concurrent_claims=sample_claims, history_sync=validated,
+    )
+    assert refused_combined["reason"] == "candidate_not_open_ready"
+    assert refused_combined["history_sync"] == validated and refused_combined["concurrent_claims"] == sample_claims
     huge_generated = decide(sync_pr(), [sync_pr()], head, False, max_files, max_lines, 1, 50000, history_sync=validated)
     assert huge_generated["reason"] == HISTORY_SYNC_REASON, "the generated cap is a size cap too"
     maintainer = responses()
@@ -1488,6 +1737,11 @@ def main() -> int:
     parser.add_argument("--expected-head")
     parser.add_argument("--pr-files", type=Path)
     parser.add_argument(
+        "--comments",
+        type=Path,
+        help="PR conversation (issue) comments JSON; live ownership claims annotate the decision without refusing it",
+    )
+    parser.add_argument(
         "--generated-attributes",
         type=Path,
         help=".gitattributes text from the PR's base commit; the only source of generated paths",
@@ -1519,6 +1773,9 @@ def main() -> int:
         parser.error("qualification limits must be positive")
     current = load_json(args.current)
     repository = os.environ.get("ADMISSION_REPOSITORY", "")
+    claims = live_claims(
+        load_json(args.comments) if args.comments else [], datetime.now(timezone.utc)
+    )
     generated_files, generated_lines = generated_from_files(
         current,
         args.pr_files,
@@ -1547,7 +1804,8 @@ def main() -> int:
         generated_files,
         generated_lines,
         args.max_generated_lines,
-        sync,
+        concurrent_claims=claims,
+        history_sync=sync,
     )
     print(json.dumps(result, sort_keys=True))
     return 1 if result["status"] == "refused" else 0

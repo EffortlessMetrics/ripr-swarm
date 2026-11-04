@@ -35,6 +35,7 @@ Language
 
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `check_balance`
@@ -78,6 +79,7 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `call includes "msgs: 5"`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast probe:audit.py:python_preview:v1-f8599422
   ripr context --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast --at probe:audit.py:python_preview:v1-f8599422
 

@@ -23,6 +23,9 @@ pub struct RiprConfig {
     pub perl: PerlConfig,
     pub source_path: Option<PathBuf>,
     pub source_text: Option<String>,
+    /// Passive VP29A compile output when configuration is loaded from disk (#6428).
+    pub(crate) verification_contract_decision:
+        Option<super::verification_contract::RepositoryVerificationContractDecisionV1>,
 }
 
 impl RiprConfig {
@@ -480,6 +483,9 @@ pub struct PythonLanguageConfig {
     /// Exact normalized repository-relative Python paths admitted past the
     /// built-in excluded-directory conventions (#7386).
     pub handwritten_files: Vec<String>,
+    /// Additional repository-relative globs omitted from Python preview indexing
+    /// (#5380).
+    pub excluded_file_patterns: Vec<String>,
 }
 
 /// `[languages.typescript]` repository configuration.
@@ -488,6 +494,9 @@ pub struct TypescriptLanguageConfig {
     /// Exact normalized repository-relative TypeScript/JavaScript paths
     /// admitted past the built-in excluded-directory conventions (#7386).
     pub handwritten_files: Vec<String>,
+    /// Additional repository-relative globs omitted from TypeScript preview
+    /// indexing (#5380).
+    pub excluded_file_patterns: Vec<String>,
 }
 
 fn canonical_sorted_strings(patterns: &[String]) -> String {
@@ -507,29 +516,13 @@ fn canonical_sorted_strings(patterns: &[String]) -> String {
 /// Canonical identity encoding for test-harness registrations (#3532).
 /// Length-prefixed, NUL-joined, sorted — injective, so distinct
 /// registration sets never hash to the same artifact identity.
-fn canonical_test_harnesses_identity(registrations: &[TestHarnessRegistration]) -> String {
+/// Canonical identity for the full harness registration set (#3532 / #6428).
+pub(crate) fn canonical_test_harnesses_identity(
+    registrations: &[TestHarnessRegistration],
+) -> String {
     let mut ordered = registrations
         .iter()
-        .map(|registration| {
-            let mut encoded = String::new();
-            for field in [
-                registration.registration_id.as_str(),
-                registration
-                    .target
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .as_str(),
-                registration.kind.as_str(),
-                registration.adapter.as_str(),
-                registration.marker.as_str(),
-            ] {
-                encoded.push_str(&field.len().to_string());
-                encoded.push(':');
-                encoded.push_str(field);
-                encoded.push('\u{0}');
-            }
-            encoded
-        })
+        .map(test_harness_registration_canonical_identity)
         .collect::<Vec<_>>();
     ordered.sort();
 
@@ -539,6 +532,30 @@ fn canonical_test_harnesses_identity(registrations: &[TestHarnessRegistration]) 
         identity.push_str(&encoded);
     }
     identity
+}
+
+/// Canonical identity for one harness registration (#3532 / #6428).
+pub(crate) fn test_harness_registration_canonical_identity(
+    registration: &TestHarnessRegistration,
+) -> String {
+    let mut encoded = String::new();
+    for field in [
+        registration.registration_id.as_str(),
+        registration
+            .target
+            .to_string_lossy()
+            .replace('\\', "/")
+            .as_str(),
+        registration.kind.as_str(),
+        registration.adapter.as_str(),
+        registration.marker.as_str(),
+    ] {
+        encoded.push_str(&field.len().to_string());
+        encoded.push(':');
+        encoded.push_str(field);
+        encoded.push('\u{0}');
+    }
+    encoded
 }
 
 /// `[perl]` repository configuration (Campaign 31 Phase D, #1407).
@@ -849,6 +866,7 @@ impl RiprConfig {
             perl,
             source_path: _,
             source_text: _,
+            verification_contract_decision: _,
         } = self;
         let AnalysisConfig {
             mode: _,
@@ -903,10 +921,12 @@ impl RiprConfig {
             python:
                 PythonLanguageConfig {
                     handwritten_files: python_handwritten_files,
+                    excluded_file_patterns: python_excluded_file_patterns,
                 },
             typescript:
                 TypescriptLanguageConfig {
                     handwritten_files: typescript_handwritten_files,
+                    excluded_file_patterns: typescript_excluded_file_patterns,
                 },
         } = languages;
         let ProfilesConfig { bun_ub } = profiles;
@@ -934,11 +954,22 @@ impl RiprConfig {
         } else {
             String::new()
         };
+        let python_excluded_file_patterns_identity = if enabled.contains(&LanguageId::Python) {
+            canonical_sorted_strings(python_excluded_file_patterns)
+        } else {
+            String::new()
+        };
         let typescript_handwritten_files_identity = if enabled.contains(&LanguageId::TypeScript) {
             canonical_sorted_strings(typescript_handwritten_files)
         } else {
             String::new()
         };
+        let typescript_excluded_file_patterns_identity =
+            if enabled.contains(&LanguageId::TypeScript) {
+                canonical_sorted_strings(typescript_excluded_file_patterns)
+            } else {
+                String::new()
+            };
         let mut fields = vec![
             ConfigIdentityField {
                 name: "analysis.mode",
@@ -1073,10 +1104,22 @@ impl RiprConfig {
                 note: "explicit handwritten Python files change the analyzed source corpus (#7386)",
             },
             ConfigIdentityField {
+                name: "languages.python.excluded_file_patterns",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(python_excluded_file_patterns_identity),
+                note: "preview Python exclusion globs change which source files are indexed (#5380)",
+            },
+            ConfigIdentityField {
                 name: "languages.typescript.handwritten_files",
                 role: ConfigIdentityRole::FindingAffecting,
                 value: Some(typescript_handwritten_files_identity),
                 note: "explicit handwritten TypeScript files change the analyzed source corpus (#7386)",
+            },
+            ConfigIdentityField {
+                name: "languages.typescript.excluded_file_patterns",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(typescript_excluded_file_patterns_identity),
+                note: "preview TypeScript exclusion globs change which source files are indexed (#5380)",
             },
         ]);
         match bun_ub {
@@ -1163,6 +1206,12 @@ impl RiprConfig {
                 role: ConfigIdentityRole::Excluded,
                 value: None,
                 note: "loader container metadata, not a ripr.toml field",
+            },
+            ConfigIdentityField {
+                name: "verification_contract_decision",
+                role: ConfigIdentityRole::Excluded,
+                value: None,
+                note: "passive VP29A compile output derived at load time, not authored config",
             },
         ]);
         fields

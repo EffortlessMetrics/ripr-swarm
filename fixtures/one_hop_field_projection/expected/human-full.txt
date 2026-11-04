@@ -41,5 +41,6 @@ Evidence
   - source assertion argument value 19 at line 12
   - source assertion argument value 20 at line 12
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/one_hop_field_projection/input --diff <cwd>/fixtures/one_hop_field_projection/diff.patch --mode fast probe:src_lib.rs:field_construction:42ec5018
   ripr context --root <cwd>/fixtures/one_hop_field_projection/input --diff <cwd>/fixtures/one_hop_field_projection/diff.patch --mode fast --at probe:src_lib.rs:field_construction:42ec5018
