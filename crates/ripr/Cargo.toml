@@ -63,7 +63,7 @@ path = "src/main.rs"
 # ADR 0026 (#8382/#12726): internal contract crate, published in lockstep with
 # `ripr` (same workspace version, exact requirement). It owns the domain DTOs
 # re-exported at `ripr::domain`; it is not a separate public API.
-ripr-contract = { path = "../ripr-contract", version = "0.11.0", default-features = false }
+ripr-contract = { path = "../ripr-contract", version = "=0.11.0", default-features = false }
 # #5287: OS advisory file locks serialize concurrent after-phase manifest
 # commits. Only fs2's safe API is used (`FileExt::try_lock_exclusive` /
 # `unlock`); no `unsafe fn` surface reaches first-party code, keeping the
