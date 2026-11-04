@@ -264,8 +264,10 @@ each seam and publication. They provide cooperative cancellation, not a hard
 elapsed-time guarantee for an individual analysis operation.
 
 Prefill admits at most 20,000 indexed files, 128 MiB of indexed source,
-8 MiB of source and 65,536 probe shapes/functions per file, 1,000,000 probe
-shapes in total, 50,000 tests, 500,000 functions and 8 MiB of function names.
+8 MiB of source and 65,536 probe shapes/functions per file, 1,250,000 indexed
+probe shapes, 1,000,000 emitted unique seams, 50,000 tests, 500,000 functions
+and 8 MiB of function names. Indexed probe facts include test and non-emitted
+shapes, so their admission budget is separate from the output inventory cap.
 It retains at most 16 MiB of serialized seam payload for one sorted,
 deduplicated file and 16 MiB of classified payload for one output window.
 The window holds at most 64 records, or the configured compact record cap

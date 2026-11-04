@@ -152,12 +152,27 @@ fn compact_windows_full_cold_run_populates_complete_summary_cache() -> Result<()
 #[test]
 fn compact_windows_admission_and_payload_limits_preserve_prior_generation() -> Result<(), String> {
     let root = fixture("compact-windows-limits")?;
+    let indexed_only = format!(
+        "#[test] fn indexed_only() {{ let value = std::env::args().count(); {} }}\n",
+        "if value < 2 { std::hint::black_box(3); }\n".repeat(500)
+    );
+    write_file(&root.join("tests/indexed_only.rs"), &indexed_only)?;
     let config = RiprConfig::default();
     let state = collect_workspace_state(&root, &config)?;
     let mut cached = state.build_index(&config)?;
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let files = production_files_from_state_with_role(&state, &config);
     let total = inventory_seams_from_index(&files, &cached.index).len();
+    let indexed_shapes: usize = cached
+        .index
+        .files()
+        .values()
+        .map(|facts| facts.probe_shapes.len())
+        .sum();
+    assert!(
+        indexed_shapes > total,
+        "non-emitted test shapes must distinguish the two admission budgets"
+    );
     let fallback = rust_index::lexical_fallback_files(&cached.index);
     let pass = test_grip_evidence::EvidencePass::new(&cached.index);
     let key = state.cache_key();
@@ -189,8 +204,9 @@ fn compact_windows_admission_and_payload_limits_preserve_prior_generation() -> R
             file_shapes: 0,
             ..LIMITS
         },
+        Limits { seams: 0, ..LIMITS },
         Limits {
-            shapes: 0,
+            indexed_shapes: indexed_shapes - 1,
             ..LIMITS
         },
         Limits { tests: 0, ..LIMITS },
@@ -226,7 +242,11 @@ fn compact_windows_admission_and_payload_limits_preserve_prior_generation() -> R
             ));
         }
     }
-    session.limits = LIMITS;
+    session.limits = Limits {
+        seams: total,
+        indexed_shapes,
+        ..LIMITS
+    };
     assert!(session.run()?.label.starts_with("sharded_ok_"));
     assert!(session.retention.file_bytes <= LIMITS.retained_bytes);
     assert!(session.retention.window_bytes <= LIMITS.retained_bytes);

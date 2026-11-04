@@ -12,7 +12,8 @@ struct Limits {
     source_bytes: usize,
     file_source_bytes: usize,
     file_shapes: usize,
-    shapes: usize,
+    indexed_shapes: usize,
+    seams: usize,
     tests: usize,
     functions: usize,
     name_bytes: usize,
@@ -25,7 +26,8 @@ const LIMITS: Limits = Limits {
     source_bytes: 128 * 1024 * 1024,
     file_source_bytes: 8 * 1024 * 1024,
     file_shapes: 65_536,
-    shapes: 1_000_000,
+    indexed_shapes: 1_250_000,
+    seams: 1_000_000,
     tests: 50_000,
     functions: 500_000,
     name_bytes: 8 * 1024 * 1024,
@@ -112,7 +114,7 @@ impl Session<'_, '_> {
         if self.index.files().values().count() > self.limits.files
             || self.index.tests().len() > self.limits.tests
             || self.index.functions().len() > self.limits.functions
-            || self.total > self.limits.shapes
+            || self.total > self.limits.seams
             || self.files.len() > self.limits.files
         {
             return Ok(false);
@@ -135,7 +137,7 @@ impl Session<'_, '_> {
             }
             bytes = bytes.saturating_add(source_upper);
             shapes = shapes.saturating_add(facts.probe_shapes.len());
-            if bytes > self.limits.source_bytes || shapes > self.limits.shapes {
+            if bytes > self.limits.source_bytes || shapes > self.limits.indexed_shapes {
                 return Ok(false);
             }
         }
