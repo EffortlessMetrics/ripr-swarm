@@ -333,7 +333,7 @@ fn repair_refusal(
             }
         });
     }
-    if let Some(reason) = policy.omission_reason_for_class(entry.class) {
+    if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         return Some((RefusalKind::Other, reason));
     }
     // #12867: the start publishes an attempt and then renders the handoff

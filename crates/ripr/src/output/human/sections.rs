@@ -87,7 +87,9 @@ fn next_step_prefix(step: &str) -> &'static str {
 /// configured `warning` is shown as `note`; `off`, `info` and `note` are kept.
 /// Display only: counts, JSON and classification are unchanged.
 fn display_severity(finding: &Finding, config: &RiprConfig) -> &'static str {
-    let configured = config.severity().for_exposure(&finding.class);
+    let configured = config
+        .severity_for_file(&finding.probe.location.file)
+        .for_exposure(&finding.class);
     if finding.source_currentness.is_base_side()
         && configured == crate::config::ConfigSeverity::Warning
     {

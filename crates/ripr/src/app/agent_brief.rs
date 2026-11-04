@@ -263,12 +263,20 @@ impl<'a> AgentBriefPolicy<'a> {
         Self { config }
     }
 
-    fn severity_for(self, class: SeamGripClass) -> ConfigSeverity {
-        self.config.severity().for_seam(class)
+    fn severity_for(self, class: SeamGripClass, file: &Path) -> ConfigSeverity {
+        self.config.severity().for_seam_in(class, file)
     }
 
-    pub(crate) fn omission_reason_for_class(self, class: SeamGripClass) -> Option<String> {
-        if matches!(self.severity_for(class), ConfigSeverity::Off) {
+    pub(crate) fn omission_reason_for_class(
+        self,
+        class: SeamGripClass,
+        file: Option<&Path>,
+    ) -> Option<String> {
+        let configured_off = match file {
+            Some(path) => matches!(self.severity_for(class, path), ConfigSeverity::Off),
+            None => matches!(self.config.severity().for_seam(class), ConfigSeverity::Off),
+        };
+        if configured_off {
             return Some(format!(
                 "is configured off for {} seams and is not included in agent results",
                 class.as_str()
@@ -744,8 +752,9 @@ fn compare_selected_parts(
     why_now_sort_priority(left_why)
         .cmp(&why_now_sort_priority(right_why))
         .then_with(|| {
-            severity_priority(policy.severity_for(left.class))
-                .cmp(&severity_priority(policy.severity_for(right.class)))
+            severity_priority(policy.severity_for(left.class, left.seam.file())).cmp(
+                &severity_priority(policy.severity_for(right.class, right.seam.file())),
+            )
         })
         .then_with(|| grip_priority(left.class).cmp(&grip_priority(right.class)))
         .then_with(|| {
@@ -842,7 +851,10 @@ enum AgentBriefOmission {
 
 impl AgentBriefOmission {
     fn for_entry(entry: &ClassifiedSeam, policy: AgentBriefPolicy<'_>) -> Option<Self> {
-        if matches!(policy.severity_for(entry.class), ConfigSeverity::Off) {
+        if matches!(
+            policy.severity_for(entry.class, entry.seam.file()),
+            ConfigSeverity::Off
+        ) {
             return Some(Self::ConfiguredOff(entry.class));
         }
         if !is_agent_actionable(entry.class) {
