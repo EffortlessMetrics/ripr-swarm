@@ -130,3 +130,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — inherent_receiver_dormant_body (12)
+
+Reason:
+RIPR-SPEC-0122: describe unestablished test reach without claiming owner invocation (#7330)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_dormant_body --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -696,3 +696,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_fixture_name_relation (35)
+
+Reason:
+RIPR-SPEC-0122: describe unestablished test reach without claiming owner invocation (#7330)
+
+Command:
+`cargo xtask goldens bless python_fixture_name_relation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

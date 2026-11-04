@@ -18,7 +18,7 @@ Start here:
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
   Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Why weak: test reach to this change is not established
   Gap ID (for scripts): gap:python:src/pricing.py:apply_discount:return_value:return_value:amount-10
   Changed behavior: return amount - 10
   Missing check: Only heuristic Python test links were found for `apply_discount`; verify the
