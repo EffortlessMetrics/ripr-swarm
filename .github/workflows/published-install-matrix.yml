@@ -69,14 +69,16 @@ jobs:
           mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
           case "$CHANNEL" in
             cargo)
+              # macOS bash 3.2 rejects an empty array under set -u, so pass the
+              # version as a plain string that is empty when unpinned.
+              pin=""
               if [ -n "$CARGO_VERSION" ]; then
                 [[ $CARGO_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad cargo_version: $CARGO_VERSION"; exit 1; }
-                args=(--version "$CARGO_VERSION")
-              else
-                args=()
+                pin="--version=$CARGO_VERSION"
               fi
               start=$SECONDS
-              cargo install ripr --locked --root "$RUNNER_TEMP/ripr-root" "${args[@]}"
+              # shellcheck disable=SC2086
+              cargo install ripr --locked --root "$RUNNER_TEMP/ripr-root" $pin
               echo "install_seconds=$((SECONDS - start))" >> "$GITHUB_OUTPUT"
               echo "$RUNNER_TEMP/ripr-root/bin" >> "$GITHUB_PATH"
               ;;
