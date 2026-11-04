@@ -333,10 +333,28 @@ fn repair_refusal(
             }
         });
     }
-    policy
-        .omission_reason_for_class(entry.class)
-        .map(|reason| (RefusalKind::Other, reason))
+    if let Some(reason) = policy.omission_reason_for_class(entry.class) {
+        return Some((RefusalKind::Other, reason));
+    }
+    // #12867: the start publishes an attempt and then renders the handoff
+    // card, which cannot name the workspace without an admitted test target
+    // (a proposed new test file has none). A start whose card cannot be
+    // produced leaves an attempt with nothing to act on, so the gate refuses
+    // it up front, through the card's own identity rule.
+    super::repair_card_handoff::workspace_identity_for(entry, &eligibility.readiness)
+        .err()
+        .map(|_| {
+            (
+                RefusalKind::RouteNotReady,
+                NO_TEST_TARGET_REASON.to_string(),
+            )
+        })
 }
+
+/// Why a seam that is otherwise ready does not start: no existing test names
+/// where the repair would go, and a proposed new test file cannot be handed
+/// off as a card (#12867).
+const NO_TEST_TARGET_REASON: &str = "ripr found no existing test to extend for this code, and it cannot hand off a repair that would begin in a new test file, so it does not start an automatic repair here; write the test by hand";
 
 /// The refusal for an opaque seam with no candidate test to name: ripr could
 /// not see how any test reaches or observes the changed code, so it cannot say

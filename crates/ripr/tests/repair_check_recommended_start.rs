@@ -85,6 +85,11 @@ fn repo(
     Ok(repo)
 }
 
+/// The boundary change on a feature branch, for the contrast case.
+fn repo_with(label: &str, base: &str, changed: &str, test: &str) -> Result<Repo, String> {
+    repo(label, base, changed, test, true)
+}
+
 const BOUNDARY_BASE: &str = "pub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n";
 const BOUNDARY_NEW: &str = "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n";
 const BOUNDARY_TEST: &str =
@@ -291,4 +296,34 @@ fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String
         return Err(format!("unscoped refusal keeps the old route:\n{err}"));
     }
     Ok(())
+}
+
+/// #12867: a seam whose repair would begin in a proposed new test file has no
+/// admitted test target, so the handoff card cannot be produced. The start is
+/// refused up front (bare and by id) and leaves no attempt behind, instead of
+/// publishing an attempt and then saying the card is unavailable.
+#[test]
+fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), String> {
+    let repo = repo("nocard", BOUNDARY_BASE, BOUNDARY_NEW, "", false)?;
+    let root = &repo.root;
+    let repair = ripr(root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3)
+        || !err.contains("code=no_eligible_seam")
+        || !err.contains("found no existing test to extend")
+        || err.contains("handoff card is unavailable")
+    {
+        return Err(format!("bare repair must refuse up front:\n{err}"));
+    }
+    let by_id = ripr(root, &["repair", "ff4b3df9455ac6ce"])?;
+    let err = text(&by_id.stderr);
+    if by_id.status.code() == Some(0) || err.contains("handoff card is unavailable") {
+        return Err(format!("start by id must refuse up front:\n{err}"));
+    }
+    if attempts(root) != 0 {
+        return Err("no attempt may exist when the card cannot be produced".to_string());
+    }
+    // Contrast: with an existing test to extend, the same change starts.
+    let with_test = repo_with("hascard", BOUNDARY_BASE, BOUNDARY_NEW, BOUNDARY_TEST)?;
+    assert_starts_check_recommendation(&with_test, "existing test target")
 }

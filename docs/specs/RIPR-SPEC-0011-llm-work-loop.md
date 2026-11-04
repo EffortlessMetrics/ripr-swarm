@@ -779,6 +779,15 @@ naming `ripr check` for detail, instead of the repository-wide `ripr pilot`
 route. When every candidate was dropped as already noticed, the outcome is the nothing-to-do one instead. Without a diff scope the repository route is kept. Eligibility and the
 `no_eligible_seam` code are unchanged.
 
+## Amendment (#12867): no start whose handoff card cannot be produced
+
+A start publishes an attempt and then renders the handoff card, which names the
+workspace only through an admitted test target. A seam whose repair would begin
+in a proposed new test file has none, so the shared repair-admission gate
+refuses it up front ("found no existing test to extend ... write the test by
+hand") for bare repair, an explicit id and the check screen alike, and no
+attempt is created.
+
 ## Test Mapping
 
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
@@ -787,6 +796,7 @@ route. When every candidate was dropped as already noticed, the outcome is the n
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_change_check_reads_as_noticed_and_unknown_lists_no_start` (#12831)
 - `crates/ripr/tests/repair_check_recommended_start.rs::an_unscoped_change_keeps_the_selection` (#12831)
 - `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
+- `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
 - `crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed` (#12861)
 - `crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour` (#12861)
 - `crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run` (#12831)
