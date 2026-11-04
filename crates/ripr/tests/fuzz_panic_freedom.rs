@@ -401,35 +401,49 @@ impl Workspace {
 const DOCUMENTED_EXIT_CODES: [i32; 4] = [0, 2, 3, 130];
 
 /// Words that would claim a runtime mutation outcome. `ripr check` is static
-/// evidence only (CLAUDE.md product contract). The seeds and mutation tokens
-/// contain none of them, so a hit is ripr's own output, not echoed input.
-const RUNTIME_MUTATION_WORDS: [&str; 3] = ["killed", "survived", "mutant"];
+/// evidence only (CLAUDE.md product contract).
+const RUNTIME_MUTATION_WORDS: [&str; 3] = ["killed", "survived", "mutant"]; // ripr-allow: static-language: forbidden-term list the oracle rejects
 
-/// The class vocabulary comes from the domain owner. The exhaustive match
-/// makes a new `ExposureClass` variant a compile error here instead of a
-/// silently stale list.
-fn class_vocabulary() -> Vec<ExposureClass> {
-    let all = vec![
-        ExposureClass::Exposed,
-        ExposureClass::WeaklyExposed,
-        ExposureClass::ReachableUnrevealed,
-        ExposureClass::NoStaticPath,
-        ExposureClass::InfectionUnknown,
-        ExposureClass::PropagationUnknown,
-        ExposureClass::StaticUnknown,
-    ];
-    for class in &all {
-        match class {
-            ExposureClass::Exposed
-            | ExposureClass::WeaklyExposed
-            | ExposureClass::ReachableUnrevealed
-            | ExposureClass::NoStaticPath
-            | ExposureClass::InfectionUnknown
-            | ExposureClass::PropagationUnknown
-            | ExposureClass::StaticUnknown => {}
+/// Renderer-owned string values the boundary check reads, as JSON pointers
+/// (`*` walks an array). Echoed source, expressions, paths and ids are
+/// excluded on purpose: mutated input may legitimately spell these words.
+/// No seed or mutation token in this file contains them.
+const RENDERER_OWNED_VALUES: [&str; 11] = [
+    "/analysis_outcome/outcome/kind",
+    "/analysis_outcome/outcome/claim_boundary",
+    "/canonical_next_action/action_class",
+    "/canonical_next_action/non_claim",
+    "/findings/*/classification",
+    "/findings/*/severity",
+    "/findings/*/oracle_kind",
+    "/findings/*/oracle_strength",
+    "/findings/*/recommended_next_step",
+    "/findings/*/suggested_next_action",
+    "/findings/*/stop_reasons/*",
+];
+
+fn collect_strings<'a>(value: &'a serde_json::Value, path: &[&str], out: &mut Vec<&'a str>) {
+    let Some((head, rest)) = path.split_first() else {
+        if let Some(text) = value.as_str() {
+            out.push(text);
         }
+        return;
+    };
+    if *head == "*" {
+        if let Some(items) = value.as_array() {
+            for item in items {
+                collect_strings(item, rest, out);
+            }
+        }
+    } else if let Some(child) = value.get(*head) {
+        collect_strings(child, rest, out);
     }
-    all
+}
+
+/// The class vocabulary comes from the domain owner's `ExposureClass::ALL`
+/// (kept complete by an owner-side exhaustiveness test).
+fn class_vocabulary() -> Vec<ExposureClass> {
+    ExposureClass::ALL.to_vec()
 }
 
 /// Invariants on whatever a normally ending `ripr check --format json`
@@ -491,12 +505,19 @@ fn judge_output(code: Option<i32>, stdout: &[u8]) -> Result<(), String> {
             }
         }
     }
-    let lowered = text.to_ascii_lowercase();
-    for word in RUNTIME_MUTATION_WORDS {
-        if lowered.contains(word) {
-            return Err(format!(
-                "output contains runtime-mutation term `{word}` (static-language boundary)"
-            ));
+    for pointer in RENDERER_OWNED_VALUES {
+        let path: Vec<&str> = pointer.split('/').skip(1).collect();
+        let mut values = Vec::new();
+        collect_strings(&report, &path, &mut values);
+        for value in values {
+            let lowered = value.to_ascii_lowercase();
+            for word in RUNTIME_MUTATION_WORDS {
+                if lowered.contains(word) {
+                    return Err(format!(
+                        "`{pointer}` contains runtime-mutation term `{word}` (static-language boundary)"
+                    ));
+                }
+            }
         }
     }
     Ok(())
@@ -767,7 +788,7 @@ fn unmutated_seeds_reach_analysis() -> Result<(), String> {
 }
 
 fn good_report() -> String {
-    r#"{"schema_version":"0.1","tool":"ripr","mode":"ready","root":".","summary":{},"findings":[{"classification":"weakly_exposed","stop_reasons":[]},{"classification":"static_unknown","stop_reasons":["opaque"]}]}"#
+    r#"{"schema_version":"0.1","tool":"ripr","mode":"ready","root":".","summary":{},"findings":[{"classification":"weakly_exposed","stop_reasons":[],"recommended_next_step":"add an assertion","probe":{"expression":"echoed"}},{"classification":"static_unknown","stop_reasons":["opaque"]}]}"#
         .to_string()
 }
 
@@ -794,10 +815,7 @@ fn output_oracle_rejects_planted_faults() {
         (
             "runtime mutation word",
             Some(0),
-            good.replace(
-                "\"tool\":\"ripr\"",
-                "\"tool\":\"ripr\",\"note\":\"mutant survived\"",
-            ),
+            good.replace("add an assertion", "the mutant was killed"), // ripr-allow: static-language: planted fault
         ),
         ("undocumented exit code", Some(1), good.clone()),
         ("no exit code", None, good.clone()),
@@ -837,4 +855,12 @@ fn class_vocabulary_matches_domain_owner() {
         .filter(|class| class.requires_stop_reason())
         .count();
     assert_eq!(needing_reason, 3);
+}
+
+/// Echoed source may spell a runtime-mutation word; only renderer-owned
+/// values are judged.
+#[test]
+fn output_oracle_ignores_echoed_source() {
+    let echoed = good_report().replace("echoed", "survived"); // ripr-allow: static-language: echoed source fixture
+    assert_eq!(judge_output(Some(0), echoed.as_bytes()), Ok(()));
 }

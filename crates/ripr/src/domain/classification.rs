@@ -120,8 +120,10 @@ pub enum ExposureClass {
 
 impl ExposureClass {
     /// Every class in vocabulary order, for adapters that validate a class
-    /// wire token instead of re-spelling the vocabulary.
-    pub(crate) const ALL: [ExposureClass; 7] = [
+    /// wire token instead of re-spelling the vocabulary. Public so external
+    /// oracles (the fuzz lane, #12924) read the owner's list; the
+    /// `all_lists_every_variant` test keeps it complete.
+    pub const ALL: [ExposureClass; 7] = [
         ExposureClass::Exposed,
         ExposureClass::WeaklyExposed,
         ExposureClass::ReachableUnrevealed,
@@ -291,6 +293,26 @@ mod tests {
         for (class, expected) in cases {
             assert_eq!(class.as_str(), expected);
         }
+    }
+
+    /// Adding a variant fails to compile here until it is handled, and the
+    /// assertion then fails until `ALL` lists it.
+    #[test]
+    fn all_lists_every_variant() {
+        let mut seen = HashSet::new();
+        for class in ExposureClass::ALL.iter() {
+            let index = match class {
+                ExposureClass::Exposed => 0,
+                ExposureClass::WeaklyExposed => 1,
+                ExposureClass::ReachableUnrevealed => 2,
+                ExposureClass::NoStaticPath => 3,
+                ExposureClass::InfectionUnknown => 4,
+                ExposureClass::PropagationUnknown => 5,
+                ExposureClass::StaticUnknown => 6,
+            };
+            assert!(seen.insert(index), "duplicate class in ALL");
+        }
+        assert_eq!(seen.len(), 7);
     }
 
     #[test]
