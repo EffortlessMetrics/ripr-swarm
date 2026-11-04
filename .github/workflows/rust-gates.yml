@@ -128,6 +128,7 @@ jobs:
 
       - name: Verify admitted integration before proof
         id: admitted
+        if: inputs.proof-profile != 'merge-group'
         env:
           PROFILE: ${{ inputs.proof-profile }}
           SUBJECT_JSON: ${{ inputs.subject-json }}
@@ -169,6 +170,24 @@ jobs:
               ;;
             *) echo 'Unknown source profile' >&2; exit 1 ;;
           esac
+
+      - name: Verify actual native merge-group subject
+        id: admitted-group
+        if: inputs.proof-profile == 'merge-group'
+        uses: ./.github/actions/verify-merge-group-subject
+        with:
+          head-sha: ${{ inputs.head-sha }}
+          base-sha: ${{ inputs.base-sha }}
+          subject-sha: ${{ inputs.subject-sha }}
+          subject-tree: ${{ inputs.subject-tree }}
+          workflow-generation: ${{ inputs.workflow-generation }}
+          request-id: ${{ format('{0}-{1}', github.run_id, github.run_attempt) }}
+          expected-subject-json: ${{ inputs.subject-json }}
+          expected-subject-identity: ${{ inputs.subject-identity }}
+          require-caller-receipt: 'true'
+          constituent-pr-number: ${{ inputs.constituent-pr-number }}
+          constituent-pr-node-id: ${{ inputs.constituent-pr-node-id }}
+          constituent-head-sha: ${{ inputs.constituent-head-sha }}
 
       # #3841: ownership and liveness of this job's per-run scratch trees come
       # from a kernel flock lease taken before any tree exists, never from a
@@ -522,8 +541,8 @@ jobs:
         id: pr_evidence
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
-          BASE_SHA: ${{ steps.admitted.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD_SHA: ${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          BASE_SHA: ${{ steps.admitted-group.outputs.base || steps.admitted.outputs.base || github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ steps.admitted-group.outputs.merge || steps.admitted.outputs.head || github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           GITHUB_PR_LABELS: ${{ inputs.pr-labels || join(github.event.pull_request.labels.*.name, ',') }}
           RIPR_REVIEW_COMMENTS_TIMEOUT_SECS: "60"
           # Raised from the 2000 default as the PR #3592 decision artifact, then
@@ -617,9 +636,9 @@ jobs:
         id: gate_summary
         if: always()
         env:
-          SUBJECT_HEAD: ${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.sha }}
+          SUBJECT_HEAD: ${{ steps.admitted-group.outputs.head || steps.admitted.outputs.head || github.event.pull_request.head.sha || github.sha }}
           INTEGRATION_SUBJECT: ${{ inputs.subject-sha || github.sha }}
-          INTEGRATION_TREE: ${{ steps.admitted.outputs.tree }}
+          INTEGRATION_TREE: ${{ steps.admitted-group.outputs.tree || steps.admitted.outputs.tree }}
           EXECUTION_ROUTE: ${{ inputs.artifact-name }}
           FORMATTING_RESULT: ${{ steps.formatting.outcome }}
           PRECOMMIT_RESULT: ${{ steps.precommit.outcome }}

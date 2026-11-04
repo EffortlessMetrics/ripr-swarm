@@ -202,6 +202,34 @@ inventory. Inspect current source, exact head, review findings and native state
 before any consequential request. Do not infer readiness from a missing or
 skipped check, a quiet PR, or an earlier green result.
 
+### Actual-G callable source preparation (#8082)
+
+The existing Rust, Windows subset, Python wheel, feature/release/MSRV/VS Code
+and printed-command leaves accept an explicit `merge-group` proof profile.
+Their existing `qualification` profile still requires the PR test merge's
+`[B,H]` parents. The new profile uses the shared
+`.github/actions/verify-merge-group-subject` source verifier instead: it checks
+the native event/ref/repository, exact G checkout and tree, native B, workflow
+generation and run/attempt, then verifies that G's content is the admitted
+singleton H composed with B. It observes G's real parents rather than inventing
+PR-style parents for a squash group.
+
+The canonical version-3 subject records those identities and its digest. The
+Rust leaf additionally requires the complete caller receipt and frozen
+constituent binding to match its own observation. Wrong event, bare H, dirty
+tracked source, changed run/attempt, caller-receipt substitution or additional
+unadmitted composition fails before product setup. Existing qualification and
+diagnostic behavior and mandatory payloads remain available; no filtered
+nextest denominator or proof-result reuse is introduced.
+
+This is backwards-compatible source preparation. The caller has not selected
+the profile or connected #8082's complete leaf portfolio by this change.
+Native G execution, Windows runner behavior, H/App admission, cache continuity,
+required-context migration and protected M remain separate acceptance work.
+The initial singleton is a measured canary contract; multi-constituent support
+requires a reviewed constituent/composition model. Parent-shape acceptance in
+the verifier does not grant a per-PR native queue merge-method override.
+
 ## Verification Economics Policy
 
 CI is a product surface. A contributor should be able to tell what ran, why it

@@ -25,7 +25,7 @@ fn input_bindings(source: &str) -> bool {
     else {
         return false;
     };
-    let Some((step, _)) = tail.split_once("      - uses: dtolnay") else {
+    let Some((step, _)) = tail.split_once("\n      - ") else {
         return false;
     };
     source.contains("group: printed-command-paste-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha || ((github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run') }}")
@@ -178,9 +178,7 @@ mod execution {
         let (_, tail) = WORKFLOW
             .split_once("        run: |\n")
             .ok_or("missing guard")?;
-        let (body, _) = tail
-            .split_once("\n      - uses: dtolnay")
-            .ok_or("missing guard end")?;
+        let (body, _) = tail.split_once("\n      - ").ok_or("missing guard end")?;
         Ok(body
             .lines()
             .map(|line| line.strip_prefix("          ").unwrap_or(line))

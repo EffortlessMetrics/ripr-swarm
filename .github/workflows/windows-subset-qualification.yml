@@ -75,6 +75,12 @@ jobs:
             if ($tree -cne $env:ADMITTED_TREE) { throw 'Wrong integration tree' }
             $parents = git show -s --format=%P HEAD
             if ($LASTEXITCODE -ne 0 -or $parents -cne "$($env:ADMITTED_BASE) $($env:ADMITTED_HEAD)") { throw 'Wrong integration parents' }
+          } elseif ($env:PROOF_PROFILE -eq 'merge-group') {
+            foreach ($value in @($env:ADMITTED_BASE, $env:ADMITTED_TREE)) {
+              if ($value -cnotmatch '^[0-9a-f]{40}$') { throw 'Missing native group identity' }
+            }
+            if ($tree -cne $env:ADMITTED_TREE) { throw 'Wrong native group tree' }
+            # The required next step verifies native event, request and composition.
           } elseif ($env:PROOF_PROFILE -eq 'diagnostic') {
             if ($actual -cne $env:ADMITTED_HEAD) { throw 'Wrong diagnostic source' }
           } else { throw 'Unknown proof profile' }
@@ -84,6 +90,17 @@ jobs:
              producer_run = $env:GITHUB_RUN_ID; producer_attempt = $env:GITHUB_RUN_ATTEMPT;
              workflow_ref = $env:GITHUB_WORKFLOW_REF; workflow_sha = $env:GITHUB_WORKFLOW_SHA } |
              ConvertTo-Json | Set-Content -LiteralPath target/windows-subset-source.json
+
+      - name: Verify actual native merge-group subject
+        if: inputs.proof_profile == 'merge-group'
+        uses: ./.github/actions/verify-merge-group-subject
+        with:
+          head-sha: ${{ inputs.head_sha }}
+          base-sha: ${{ inputs.base_sha }}
+          subject-sha: ${{ inputs.subject_sha }}
+          subject-tree: ${{ inputs.subject_tree }}
+          workflow-generation: ${{ inputs.workflow_generation }}
+          request-id: ${{ inputs.request_id }}
 
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
 

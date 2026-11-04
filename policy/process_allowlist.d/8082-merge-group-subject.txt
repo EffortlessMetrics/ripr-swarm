@@ -1,0 +1,2 @@
+.github/actions/verify-merge-group-subject/action.yml|subprocess.run|1|ci/qualification|#8082: shared actual-G source verifier executes bounded read-only Git object, ancestry, diff and merge-tree observations with argv lists; no network, enqueue, credentials, status publication or mutation.
+tools/repo-policy/tests/merge_group_subject.rs|Command::new|1|ci/qualification-proof|#8082: GNU timeout bounds actual shipped verifier and private Git-DAG fixture setup; no product build, network or production GitHub operation.

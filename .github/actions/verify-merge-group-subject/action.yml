@@ -1,0 +1,172 @@
+name: Verify actual merge-group subject
+description: Bind a callable proof leaf to the native singleton queue composition without assuming PR-style parents.
+inputs:
+  head-sha:
+    description: Frozen constituent head H from the existing trusted admission owner.
+    required: true
+  base-sha:
+    description: Immutable native group base B.
+    required: true
+  subject-sha:
+    description: Actual native merge-group commit G.
+    required: true
+  subject-tree:
+    description: Frozen tree of G.
+    required: true
+  workflow-generation:
+    description: Caller workflow source commit.
+    required: true
+  request-id:
+    description: Exact native run-attempt identity.
+    required: true
+  expected-subject-json:
+    description: Optional complete canonical subject from the caller; must equal this observation.
+    required: false
+    default: ''
+  expected-subject-identity:
+    description: Required together with expected-subject-json; SHA-256 of the canonical subject.
+    required: false
+    default: ''
+  require-caller-receipt:
+    description: Require the full caller receipt and constituent identity instead of observing a new receipt.
+    required: false
+    default: 'false'
+  constituent-pr-number:
+    description: Optional trusted caller PR number; supplied together with node id and head.
+    required: false
+    default: ''
+  constituent-pr-node-id:
+    description: Optional trusted caller PR node id.
+    required: false
+    default: ''
+  constituent-head-sha:
+    description: Optional trusted caller constituent head; must equal head-sha.
+    required: false
+    default: ''
+outputs:
+  subject-json:
+    description: Canonical observed G receipt; no H authorization or protected landing claim.
+    value: ${{ steps.verify.outputs.subject_json }}
+  subject-identity:
+    description: SHA-256 of the canonical subject JSON.
+    value: ${{ steps.verify.outputs.subject_identity }}
+  head:
+    description: Verified frozen constituent head.
+    value: ${{ steps.verify.outputs.head }}
+  base:
+    description: Verified native base.
+    value: ${{ steps.verify.outputs.base }}
+  merge:
+    description: Verified actual G.
+    value: ${{ steps.verify.outputs.merge }}
+  tree:
+    description: Verified actual G tree.
+    value: ${{ steps.verify.outputs.tree }}
+runs:
+  using: composite
+  steps:
+    - name: Verify native G and frozen H composition
+      id: verify
+      shell: python {0}
+      env:
+        ADMITTED_HEAD: ${{ inputs.head-sha }}
+        ADMITTED_BASE: ${{ inputs.base-sha }}
+        ADMITTED_SUBJECT: ${{ inputs.subject-sha }}
+        ADMITTED_TREE: ${{ inputs.subject-tree }}
+        ADMITTED_GENERATION: ${{ inputs.workflow-generation }}
+        ADMITTED_REQUEST: ${{ inputs.request-id }}
+        EXPECTED_SUBJECT_JSON: ${{ inputs.expected-subject-json }}
+        EXPECTED_SUBJECT_IDENTITY: ${{ inputs.expected-subject-identity }}
+        REQUIRE_CALLER_RECEIPT: ${{ inputs.require-caller-receipt }}
+        CONSTITUENT_PR_NUMBER: ${{ inputs.constituent-pr-number }}
+        CONSTITUENT_PR_NODE_ID: ${{ inputs.constituent-pr-node-id }}
+        CONSTITUENT_HEAD: ${{ inputs.constituent-head-sha }}
+      run: |
+        import hashlib
+        import json
+        import os
+        from pathlib import Path
+        import re
+        import subprocess
+
+        def require(condition, message):
+            if not condition:
+                raise ValueError(message)
+
+        def git(*args):
+            result = subprocess.run(["git", *args], text=True, capture_output=True, timeout=30)
+            require(result.returncode == 0, "Git refused source observation: " + " ".join(args))
+            return result.stdout.strip()
+
+        def identity(name):
+            value = os.environ.get(name, "")
+            require(re.fullmatch(r"[0-9a-f]{40}", value), "Missing or malformed " + name)
+            return value
+
+        require(os.environ.get("GITHUB_EVENT_NAME") == "merge_group", "Actual G requires a native merge_group event")
+        event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+        require(isinstance(event, dict) and event.get("action") == "checks_requested", "Wrong native group action")
+        group = event.get("merge_group")
+        repository = event.get("repository")
+        require(isinstance(group, dict) and isinstance(repository, dict), "Missing native group/repository identity")
+        require(repository.get("full_name") == os.environ.get("GITHUB_REPOSITORY") == "EffortlessMetrics/ripr-swarm", "Foreign repository")
+        require(isinstance(repository.get("node_id"), str) and repository["node_id"], "Missing repository node identity")
+        require(group.get("base_ref") == "refs/heads/main", "Wrong destination ref")
+        ref = group.get("head_ref")
+        match = re.fullmatch(r"refs/heads/gh-readonly-queue/main/pr-([1-9][0-9]*)-([0-9a-f]{40})", ref or "")
+        require(match and ref == os.environ.get("GITHUB_REF"), "Wrong native queue ref")
+        head = identity("ADMITTED_HEAD")
+        base = identity("ADMITTED_BASE")
+        subject = identity("ADMITTED_SUBJECT")
+        tree = identity("ADMITTED_TREE")
+        generation = identity("ADMITTED_GENERATION")
+        require(match[2] in (head, base), "Queue ref does not bind the frozen head/base")
+        require(subject == group.get("head_sha") == os.environ.get("GITHUB_SHA"), "Frozen subject is not actual G")
+        require(base == group.get("base_sha") and base != subject and head != subject, "Wrong native base or bare-H substitution")
+        require(generation == os.environ.get("GITHUB_WORKFLOW_SHA"), "Wrong workflow source generation")
+        run = os.environ.get("GITHUB_RUN_ID", "")
+        attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
+        require(re.fullmatch(r"[1-9][0-9]*", run) and re.fullmatch(r"[1-9][0-9]*", attempt), "Missing native run/attempt")
+        request = os.environ.get("ADMITTED_REQUEST", "")
+        require(request == run + "-" + attempt, "Substituted or stale run-attempt request")
+        for commit in (head, base, subject):
+            require(git("rev-parse", "--verify", commit + "^{commit}") == commit, "Missing frozen commit")
+        require(git("rev-parse", "HEAD") == subject, "Wrong product checkout")
+        require(git("rev-parse", "HEAD^{tree}") == tree, "Wrong product tree")
+        git("diff", "--exit-code", "HEAD", "--")
+        git("merge-base", "--is-ancestor", base, subject)
+        # The initial queue contract has one admitted constituent. Compare
+        # content, not a presumed two-parent PR test merge: native squash G
+        # need not have H as a parent. Batches require a reviewed new contract.
+        merged = git("merge-tree", "--write-tree", base, head)
+        require(merged.splitlines()[0] == tree, "G is not the admitted singleton H composed with B")
+        receipt = {
+            "version": 3, "kind": "merge-group", "repository": repository["full_name"],
+            "repository_id": repository["node_id"], "destination_repository_id": repository["node_id"],
+            "destination_ref": group["base_ref"], "head_ref": ref, "pr_number": int(match[1]),
+            "head": head, "base": base, "merge": subject, "tree": tree,
+            "parents": git("show", "-s", "--format=%P", subject).split(),
+            "workflow_generation": generation, "request_id": request,
+            "run_id": run, "run_attempt": attempt,
+        }
+        required_receipt = os.environ.get("REQUIRE_CALLER_RECEIPT", "false")
+        require(required_receipt in ("true", "false"), "Unknown caller-receipt requirement")
+        number = os.environ.get("CONSTITUENT_PR_NUMBER", "")
+        node_id = os.environ.get("CONSTITUENT_PR_NODE_ID", "")
+        constituent = os.environ.get("CONSTITUENT_HEAD", "")
+        if required_receipt == "true" or number or node_id or constituent:
+            require(number == match[1] and node_id and constituent == head, "Missing or substituted caller constituent")
+            receipt["pr_id"] = node_id
+        canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        expected = os.environ.get("EXPECTED_SUBJECT_JSON", "")
+        expected_identity = os.environ.get("EXPECTED_SUBJECT_IDENTITY", "")
+        if required_receipt == "true" or expected or expected_identity:
+            require(expected and expected_identity, "Partial expected subject")
+            require(json.loads(expected) == receipt, "Caller subject differs from actual G observation")
+            require(expected_identity == digest, "Caller subject identity differs")
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+            output.write("subject_json=" + canonical + "\nsubject_identity=" + digest + "\n")
+            for key in ("head", "base", "merge", "tree"):
+                output.write(key + "=" + receipt[key] + "\n")
+        print("Observed actual G " + subject + "; H authorization, queue enforcement and M readback remain separate.")

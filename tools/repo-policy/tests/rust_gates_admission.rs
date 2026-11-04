@@ -91,12 +91,14 @@ fn admitted_subject_is_verified_before_any_proof_step() -> TestResult {
 #[test]
 fn pr_evidence_and_summary_prefer_admitted_identities() {
     assert!(WORKFLOW.contains(
-        "BASE_SHA: ${{ steps.admitted.outputs.base || github.event.pull_request.base.sha"
+        "BASE_SHA: ${{ steps.admitted-group.outputs.base || steps.admitted.outputs.base || github.event.pull_request.base.sha"
     ));
     assert!(WORKFLOW.contains(
-        "HEAD_SHA: ${{ steps.admitted.outputs.head || github.event.pull_request.head.sha"
+        "HEAD_SHA: ${{ steps.admitted-group.outputs.merge || steps.admitted.outputs.head || github.event.pull_request.head.sha"
     ));
-    assert!(WORKFLOW.contains("INTEGRATION_TREE: ${{ steps.admitted.outputs.tree }}"));
+    assert!(WORKFLOW.contains(
+        "INTEGRATION_TREE: ${{ steps.admitted-group.outputs.tree || steps.admitted.outputs.tree }}"
+    ));
 }
 
 #[test]
@@ -109,7 +111,7 @@ fn main_dropped_nextest_archive_measurement_stays_dropped() {
 #[test]
 fn legacy_profile_publishes_no_outputs_and_keeps_main_expressions() -> TestResult {
     // Main's expressions are the fallbacks after the admitted output.
-    assert!(WORKFLOW.contains("SUBJECT_HEAD: ${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.sha }}"));
+    assert!(WORKFLOW.contains("SUBJECT_HEAD: ${{ steps.admitted-group.outputs.head || steps.admitted.outputs.head || github.event.pull_request.head.sha || github.sha }}"));
     assert!(
         WORKFLOW.contains(
             "|| github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"

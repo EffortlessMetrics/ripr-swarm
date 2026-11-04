@@ -104,10 +104,26 @@ jobs:
               parents="$(git show -s --format=%P HEAD)"
               test "${parents}" = "${ADMITTED_BASE} ${ADMITTED_HEAD}"
               ;;
+            merge-group)
+              [[ "${ADMITTED_BASE}" =~ ^[0-9a-f]{40}$ && "${ADMITTED_TREE}" =~ ^[0-9a-f]{40}$ ]]
+              test "${tree}" = "${ADMITTED_TREE}"
+              # Native event/composition validation is the required next step.
+              ;;
             diagnostic) test "${actual}" = "${ADMITTED_HEAD}" ;;
             *) echo 'Unknown wheel proof profile' >&2; exit 1 ;;
           esac
           printf 'qualify=true\n' >> "${GITHUB_OUTPUT}"
+
+      - name: Verify actual native merge-group subject
+        if: inputs.proof_profile == 'merge-group'
+        uses: ./.github/actions/verify-merge-group-subject
+        with:
+          head-sha: ${{ inputs.head_sha }}
+          base-sha: ${{ inputs.base_sha }}
+          subject-sha: ${{ inputs.subject_sha }}
+          subject-tree: ${{ inputs.subject_tree }}
+          workflow-generation: ${{ inputs.workflow_generation }}
+          request-id: ${{ inputs.request_id }}
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:

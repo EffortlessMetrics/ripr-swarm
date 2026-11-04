@@ -693,6 +693,9 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
 
 fn binding_contract(source: &str) -> bool {
     let identity = job(source, "source-identity");
+    let original_guard = identity
+        .split_once("      - name: Verify actual native merge-group subject\n")
+        .map_or(identity, |(before, _)| before);
     let result = job(source, "ci-result");
     [
         "PROFILE: ${{ inputs.proof_profile }}",
@@ -706,7 +709,7 @@ fn binding_contract(source: &str) -> bool {
         "persist-credentials: false",
     ].iter().all(|binding| identity.contains(binding))
         && !identity.contains("continue-on-error:")
-        && !identity.contains("        if:")
+        && !original_guard.contains("        if:")
         && identity.contains("if: contains(toJSON(inputs), '\"subject_sha\"')")
         && source.contains("group: ${{ github.workflow }}-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha || ((github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run') }}")
         && source.contains("cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}")
