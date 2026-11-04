@@ -11,8 +11,7 @@ const SHARDED_TEST_COMMAND: &str =
     "cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/4";
 const SHARDED_LIST_COMMAND: &str = "cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt";
 const SHARDED_RECEIPT_COMMAND: &str = "printf 'profile=ci\\nshard=%s/4\\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/4\\n' \"${{ matrix.shard }}\" \"${{ matrix.shard }}\"";
-const COMBINED_PR_EVIDENCE_PRINTF: &str =
-    "printf '| pr_evidence | %s |\\n| pr_evidence scope | %s |\\n' \"${PR_EVIDENCE_RESULT:-not_reported}\" \"${PR_EVIDENCE_SCOPE:-not_reported}\"";
+const COMBINED_PR_EVIDENCE_PRINTF: &str = "printf '| pr_evidence | %s |\\n| pr_evidence scope | %s |\\n' \"${PR_EVIDENCE_RESULT:-not_reported}\" \"${PR_EVIDENCE_SCOPE:-not_reported}\"";
 const REQUIRED_GATES: &[(&str, &str)] = &[
     ("formatting", "cargo fmt --check"),
     ("agent_skills", "cargo policy preflight"),
@@ -128,10 +127,9 @@ fn contract_violations(workflow: &str) -> Vec<String> {
             findings.push(format!("summary: {id} must retain its actual outcome"));
         }
     }
-    if !summary
-        .lines()
-        .any(|line| line == "          PR_EVIDENCE_SCOPE: ${{ steps.pr_evidence.outputs.evidence }}")
-    {
+    if !summary.lines().any(|line| {
+        line == "          PR_EVIDENCE_SCOPE: ${{ steps.pr_evidence.outputs.evidence }}"
+    }) {
         findings.push("summary: pr_evidence scope must retain its actual output".to_owned());
     }
     findings
