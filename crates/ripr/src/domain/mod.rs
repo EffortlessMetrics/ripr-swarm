@@ -33,6 +33,7 @@ mod next_action;
 mod probe;
 mod project_facts;
 mod refusal_remedy;
+pub(crate) mod repair_attempt_id;
 mod repair_card;
 mod summary;
 mod support;

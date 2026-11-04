@@ -219,6 +219,10 @@ pub(crate) struct AttemptBaseline {
 }
 
 impl AttemptBaseline {
+    pub(crate) fn bind_artifact_store(&mut self, store: &str) {
+        self.policy.artifact_store = Some(store.to_owned());
+    }
+
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }
@@ -882,6 +886,18 @@ fn capture_repository_state(
         );
     }
 
+    #[cfg(unix)]
+    let tracked_paths: BTreeSet<&str> = nul_records(&tracked).collect::<Result<_, _>>()?;
+    #[cfg(unix)]
+    let authority = policy
+        .artifact_store
+        .as_deref()
+        .map(|store| ArtifactAuthority {
+            root: &root,
+            store,
+            policy: &policy,
+            tracked: &tracked_paths,
+        });
     let mut paths = BTreeMap::new();
     let mut remaining_file_bytes = MAX_CAPTURE_TOTAL_FILE_BYTES;
     let mut remaining_work_bytes = MAX_CAPTURE_TOTAL_WORK_BYTES;
@@ -917,7 +933,12 @@ fn capture_repository_state(
                 .forbidden_paths
                 .iter()
                 .any(|rule| rule.matches(&path));
-        if writable_surface && !writable_path_components_are_safe(&root, &path)? {
+        #[cfg(unix)]
+        let safe = !writable_surface
+            || writable_path_components_are_safe_with_authority(&root, &path, authority.as_ref())?;
+        #[cfg(not(unix))]
+        let safe = !writable_surface || writable_path_components_are_safe(&root, &path)?;
+        if !safe {
             ambiguous = true;
         }
         #[cfg(windows)]
@@ -1826,6 +1847,38 @@ fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
 }
 
 fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool, String> {
+    #[cfg(unix)]
+    {
+        writable_path_components_are_safe_with_authority(root, relative, None)
+    }
+    #[cfg(not(unix))]
+    {
+        writable_path_components_are_safe_impl(root, relative)
+    }
+}
+
+#[cfg(unix)]
+struct ArtifactAuthority<'a> {
+    root: &'a Path,
+    store: &'a str,
+    policy: &'a EditCagePolicy,
+    tracked: &'a BTreeSet<&'a str>,
+}
+
+#[cfg(unix)]
+fn writable_path_components_are_safe_with_authority(
+    root: &Path,
+    relative: &str,
+    authority: Option<&ArtifactAuthority<'_>>,
+) -> Result<bool, String> {
+    writable_path_components_are_safe_impl(root, relative, authority)
+}
+
+fn writable_path_components_are_safe_impl(
+    root: &Path,
+    relative: &str,
+    #[cfg(unix)] authority: Option<&ArtifactAuthority<'_>>,
+) -> Result<bool, String> {
     let mut current = root.to_path_buf();
     for component in relative.split('/') {
         current.push(component);
@@ -1845,7 +1898,12 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
         #[cfg(unix)]
         if metadata.is_file() {
             use std::os::unix::fs::MetadataExt as _;
-            if metadata.nlink() != 1 && !links_are_staged_publication_pair(&current, &metadata)? {
+            if metadata.nlink() != 1
+                && !authority.is_some_and(|authority| {
+                    links_are_staged_publication_pair(&current, &metadata, authority)
+                        .unwrap_or(false)
+                })
+            {
                 return Ok(false);
             }
         }
@@ -1860,11 +1918,32 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
 /// behind, and it aliases nothing outside the governed directory. Any other
 /// link (another directory, another name, an extra count) stays refused.
 #[cfg(unix)]
-fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Result<bool, String> {
+fn links_are_staged_publication_pair(
+    path: &Path,
+    metadata: &fs::Metadata,
+    authority: &ArtifactAuthority<'_>,
+) -> Result<bool, String> {
     use std::os::unix::fs::MetadataExt as _;
     let Some(parent) = path.parent() else {
         return Ok(false);
     };
+    let Ok(relative_parent) = parent.strip_prefix(authority.root.join(authority.store)) else {
+        return Ok(false);
+    };
+    let mut parts = relative_parent.components();
+    let (Some(Component::Normal(attempt)), Some(Component::Normal(artifacts)), None) =
+        (parts.next(), parts.next(), parts.next())
+    else {
+        return Ok(false);
+    };
+    let Some(attempt) = attempt.to_str() else {
+        return Ok(false);
+    };
+    if artifacts != "artifacts"
+        || crate::domain::repair_attempt_id::validate_repair_attempt_id(attempt).is_err()
+    {
+        return Ok(false);
+    }
     let mut names = Vec::new();
     let entries = match fs::read_dir(parent) {
         Ok(entries) => entries,
@@ -1885,6 +1964,22 @@ fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Re
             let Some(name) = entry.file_name().to_str().map(str::to_string) else {
                 return Ok(false);
             };
+            let relative = format!("{}/{}/artifacts/{name}", authority.store, attempt);
+            if authority.tracked.contains(relative.as_str())
+                || authority.policy.selected_target.matches(&relative)
+                || authority
+                    .policy
+                    .allowed_edit_surface
+                    .iter()
+                    .any(|rule| rule.matches(&relative))
+                || authority
+                    .policy
+                    .forbidden_paths
+                    .iter()
+                    .any(|rule| rule.matches(&relative))
+            {
+                return Ok(false);
+            }
             names.push(name);
         }
     }
@@ -2444,6 +2539,9 @@ impl CagePathRule {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct EditCagePolicy {
+    /// Runtime-only authority supplied by the resolved repair-attempt store.
+    #[serde(skip)]
+    pub(crate) artifact_store: Option<String>,
     pub(crate) selected_target: CagePathRule,
     pub(crate) allowed_edit_surface: Vec<CagePathRule>,
     pub(crate) forbidden_paths: Vec<CagePathRule>,
@@ -3411,6 +3509,7 @@ mod tests {
             expected_operational_writes: vec![CagePathRule::subtree("target/ripr")?],
             ignored_build_output: None,
             untracked_build_lockfile: None,
+            artifact_store: None,
             inline_test_module_target: false,
         })
     }
@@ -4038,6 +4137,7 @@ mod tests {
             expected_operational_writes: vec![CagePathRule::subtree("target/ripr")?],
             ignored_build_output: None,
             untracked_build_lockfile: None,
+            artifact_store: None,
             inline_test_module_target: false,
         };
         Ok((fixture, policy))
@@ -5090,26 +5190,111 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn artifact_pair_safe(
+        root: &Path,
+        path: &str,
+        store: &str,
+        policy: &EditCagePolicy,
+        tracked: &BTreeSet<&str>,
+    ) -> Result<bool, String> {
+        let authority = ArtifactAuthority {
+            root,
+            store,
+            policy,
+            tracked,
+        };
+        writable_path_components_are_safe_with_authority(root, path, Some(&authority))
+    }
+
+    #[cfg(unix)]
     #[test]
     fn staged_publication_pair_left_by_an_interrupted_writer_is_not_ambiguous() -> Result<(), String>
     {
         let fixture = git_fixture("staged-publication-pair")?;
         commit_target_ignore(&fixture)?;
-        let dir = fixture.root.join("target/ripr/artifacts");
+        let store = "target/ripr/repair-attempts";
+        let relative = format!("{store}/repair-attempt-0123456789abcdef01234567/artifacts");
+        let dir = fixture.root.join(&relative);
         fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
         let destination = dir.join("after.check-findings.json");
         fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
         fs::hard_link(&destination, dir.join("after.check-findings.tmp-441-3"))
             .map_err(|err| format!("link staging name: {err}"))?;
+        for name in [
+            "after.check-findings.json",
+            "after.check-findings.tmp-441-3",
+        ] {
+            assert!(artifact_pair_safe(
+                &fixture.root,
+                &format!("{relative}/{name}"),
+                store,
+                &policy()?,
+                &BTreeSet::new()
+            )?);
+        }
+        Ok(())
+    }
 
-        assert!(writable_path_components_are_safe(
-            &fixture.root,
-            "target/ripr/artifacts/after.check-findings.json"
-        )?);
-        assert!(writable_path_components_are_safe(
-            &fixture.root,
-            "target/ripr/artifacts/after.check-findings.tmp-441-3"
-        )?);
+    #[cfg(unix)]
+    #[test]
+    fn artifact_pair_rejects_wrong_location_and_authored_aliases() -> Result<(), String> {
+        let fixture = git_fixture("artifact-pair-boundary")?;
+        let store = "custom-store";
+        let valid = "repair-attempt-0123456789abcdef01234567";
+        let policy = policy()?;
+        for (subdir, accepted) in [
+            (format!("{store}/{valid}/artifacts"), true),
+            ("src".to_string(), false),
+            (format!("{store}-other/{valid}/artifacts"), false),
+            (format!("{store}/bad-id/artifacts"), false),
+            (
+                format!("{store}/repair-attempt-0123456789abcdef0123456A/artifacts"),
+                false,
+            ),
+            (format!("{store}/{valid}/artifacts/nested"), false),
+            (format!("{store}/{valid}/other"), false),
+        ] {
+            let dir = fixture.root.join(&subdir);
+            fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+            fs::write(dir.join("data.json"), b"x").map_err(|error| error.to_string())?;
+            fs::hard_link(dir.join("data.json"), dir.join("data.tmp-1-1"))
+                .map_err(|error| error.to_string())?;
+            for name in ["data.json", "data.tmp-1-1"] {
+                assert_eq!(
+                    artifact_pair_safe(
+                        &fixture.root,
+                        &format!("{subdir}/{name}"),
+                        store,
+                        &policy,
+                        &BTreeSet::new()
+                    )?,
+                    accepted,
+                    "{subdir}/{name}"
+                );
+            }
+            if accepted {
+                let protected = format!("{subdir}/data.tmp-1-1");
+                let tracked = BTreeSet::from([protected.as_str()]);
+                assert!(!artifact_pair_safe(
+                    &fixture.root,
+                    &format!("{subdir}/data.json"),
+                    store,
+                    &policy,
+                    &tracked
+                )?);
+                let mut protected_policy = policy.clone();
+                protected_policy
+                    .forbidden_paths
+                    .push(CagePathRule::exact(&protected)?);
+                assert!(!artifact_pair_safe(
+                    &fixture.root,
+                    &format!("{subdir}/data.json"),
+                    store,
+                    &protected_policy,
+                    &BTreeSet::new()
+                )?);
+            }
+        }
         Ok(())
     }
 
@@ -5141,7 +5326,13 @@ mod tests {
         let fixture = git_fixture("unstaged-hardlinks")?;
         let external = external_fixture("unstaged-hardlinks")?;
         commit_target_ignore(&fixture)?;
-        let dir = fixture.root.join("target/ripr/artifacts");
+        let store = "target/ripr/repair-attempts";
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/repair-attempt-0123456789abcdef01234567/artifacts");
+        let relative = "target/ripr/repair-attempts/repair-attempt-0123456789abcdef01234567/artifacts/after.check-findings.json";
+        let test_policy = policy()?;
+        let tracked = BTreeSet::new();
         fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
         let destination = dir.join("after.check-findings.json");
         fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
@@ -5156,10 +5347,7 @@ mod tests {
         ] {
             fs::hard_link(&destination, &extra).map_err(|err| format!("link {label}: {err}"))?;
             assert!(
-                !writable_path_components_are_safe(
-                    &fixture.root,
-                    "target/ripr/artifacts/after.check-findings.json"
-                )?,
+                !artifact_pair_safe(&fixture.root, relative, store, &test_policy, &tracked)?,
                 "{label} link must stay unsafe"
             );
             fs::remove_file(&extra).map_err(|err| format!("unlink {label}: {err}"))?;
@@ -5169,10 +5357,7 @@ mod tests {
         fs::hard_link(&destination, dir.join("after.check-findings.tmp-2-1"))
             .map_err(|err| format!("link second staging name: {err}"))?;
         assert!(
-            !writable_path_components_are_safe(
-                &fixture.root,
-                "target/ripr/artifacts/after.check-findings.json"
-            )?,
+            !artifact_pair_safe(&fixture.root, relative, store, &test_policy, &tracked)?,
             "a third link must stay unsafe"
         );
         Ok(())
@@ -5773,6 +5958,7 @@ mod tests {
             expected_operational_writes: Vec::new(),
             ignored_build_output: None,
             untracked_build_lockfile: None,
+            artifact_store: None,
             inline_test_module_target: false,
         };
         let verdict = evaluate_edit_cage(

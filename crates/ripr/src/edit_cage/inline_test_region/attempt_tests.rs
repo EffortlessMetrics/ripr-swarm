@@ -82,6 +82,7 @@ fn inline_policy() -> Result<EditCagePolicy, String> {
         expected_operational_writes: vec![CagePathRule::subtree("target/ripr")?],
         ignored_build_output: None,
         untracked_build_lockfile: None,
+        artifact_store: None,
         inline_test_module_target: true,
     })
 }

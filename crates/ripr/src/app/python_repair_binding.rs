@@ -1841,6 +1841,7 @@ mod tests {
             expected_operational_writes: Vec::new(),
             ignored_build_output: None,
             untracked_build_lockfile: None,
+            artifact_store: None,
             inline_test_module_target: false,
         };
         render_record(
@@ -1982,6 +1983,7 @@ mod tests {
             )?],
             ignored_build_output: None,
             untracked_build_lockfile: None,
+            artifact_store: None,
             inline_test_module_target: false,
         };
         // Positive control: with intact values the bounded value stage passes
@@ -2280,6 +2282,7 @@ mod tests {
             expected_operational_writes: Vec::new(),
             ignored_build_output: None,
             untracked_build_lockfile: None,
+            artifact_store: None,
             inline_test_module_target: false,
         })
     }

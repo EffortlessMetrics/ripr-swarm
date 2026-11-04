@@ -31,6 +31,7 @@ fn sample_policy(inline_test_module_target: bool) -> Result<EditCagePolicy, Stri
         expected_operational_writes: Vec::new(),
         ignored_build_output: None,
         untracked_build_lockfile: None,
+        artifact_store: None,
         inline_test_module_target,
     })
 }

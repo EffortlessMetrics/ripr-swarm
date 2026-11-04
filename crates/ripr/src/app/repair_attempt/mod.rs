@@ -27,8 +27,9 @@ pub(crate) const REPAIR_ATTEMPT_DIRECTORY: &str = "target/ripr/repair-attempts";
 const REPAIR_ATTEMPT_MANIFEST: &str = "attempt.json";
 const REPAIR_ATTEMPT_COMMITMENT: &str = "before-commitment.sha256";
 const REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY: &str = "artifacts";
-const REPAIR_ATTEMPT_ID_PREFIX: &str = "repair-attempt-";
-const REPAIR_ATTEMPT_ID_HEX_LEN: usize = 24;
+use crate::domain::repair_attempt_id::{
+    REPAIR_ATTEMPT_ID_HEX_LEN, REPAIR_ATTEMPT_ID_PREFIX, validate_repair_attempt_id,
+};
 /// Role of the attempt-local agent receipt retained at finish. The
 /// repository-global `target/ripr/reports/agent-receipt.json` file is a
 /// one-slot compatibility projection of the latest finish, not the
@@ -59,20 +60,7 @@ pub(crate) struct RepairAttemptId(String);
 impl RepairAttemptId {
     pub(crate) fn parse(value: impl Into<String>) -> Result<Self, String> {
         let value = value.into();
-        let Some(suffix) = value.strip_prefix(REPAIR_ATTEMPT_ID_PREFIX) else {
-            return Err(format!(
-                "repair attempt ID must start with `{REPAIR_ATTEMPT_ID_PREFIX}`; copy the ID that `ripr agent repair` printed or `ripr agent status` lists"
-            ));
-        };
-        if suffix.len() != REPAIR_ATTEMPT_ID_HEX_LEN
-            || !suffix
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        {
-            return Err(format!(
-                "repair attempt ID suffix must contain {REPAIR_ATTEMPT_ID_HEX_LEN} lowercase hexadecimal characters; copy the ID that `ripr agent repair` printed or `ripr agent status` lists"
-            ));
-        }
+        validate_repair_attempt_id(&value)?;
         Ok(Self(value))
     }
 
@@ -663,8 +651,23 @@ fn recompute_after_verdict_binding_of_delta(
     if sha256_bytes(&baseline_bytes) != baseline_artifact.sha256 {
         return Err("repair attempt edit-cage baseline binding is tampered".to_string());
     }
-    let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
+    let mut baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
         .map_err(|error| format!("decode edit-cage baseline failed: {error}; the staged baseline is damaged, so start a new attempt with `ripr agent repair`"))?;
+    let locator = manifest
+        .store
+        .as_ref()
+        .map(|store| Path::new(&store.locator));
+    let (resolved, _, verified_manifest) =
+        open_attempt(root, locator, &manifest.repair_attempt_id)?;
+    if manifest_before_bytes(&verified_manifest)? != manifest_before_bytes(manifest)? {
+        return Err(
+            "repair attempt before commitment changed during verdict recomputation".to_string(),
+        );
+    }
+    if baseline.root() != resolved.canonical_root() {
+        return Err("edit-cage baseline root does not match selected repository".to_string());
+    }
+    baseline.bind_artifact_store(resolved.locator());
     // Recomputed under the admitting rule: for an attempt whose head did not
     // move it is identical to the exact-head rule, and an attempt whose finish
     // required the exact head and saw it move is already refused as stale.
@@ -2769,8 +2772,13 @@ pub(crate) fn load_edit_cage_baseline_from(
     {
         return Err("repair attempt edit-cage baseline binding failed".to_string());
     }
-    serde_json::from_slice(&bytes)
-        .map_err(|error| format!("decode edit-cage baseline failed: {error}; the staged baseline is damaged, so start a new attempt with `ripr agent repair`"))
+    let mut baseline: AttemptBaseline = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode edit-cage baseline failed: {error}; the staged baseline is damaged, so start a new attempt with `ripr agent repair`"))?;
+    if baseline.root() != store.canonical_root() {
+        return Err("edit-cage baseline root does not match selected repository".to_string());
+    }
+    baseline.bind_artifact_store(store.locator());
+    Ok(baseline)
 }
 
 /// Reserve the attempt transaction exclusively. Creating the directory with
@@ -3041,6 +3049,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         expected_operational_writes: vec![crate::edit_cage::CagePathRule::subtree("target/ripr")?],
         ignored_build_output,
         untracked_build_lockfile,
+        artifact_store: None,
         inline_test_module_target,
     })
 }
@@ -3089,10 +3098,13 @@ pub(crate) fn include_resolved_explicit_store_operational_write(
 ) -> Result<(), String> {
     let (canonical_root, locator) = match resolve_store(root, store, RepairAttemptStoreAccess::Open)
     {
-        Ok(resolved) => (
-            resolved.canonical_root().to_path_buf(),
-            resolved.locator().to_string(),
-        ),
+        Ok(resolved) => {
+            policy.artifact_store = Some(resolved.locator().to_string());
+            (
+                resolved.canonical_root().to_path_buf(),
+                resolved.locator().to_string(),
+            )
+        }
         Err(_) if store.is_some() => {
             let store = store.ok_or_else(|| {
                 "explicit repair attempt store path missing after guard; report this as a ripr bug"
@@ -3462,8 +3474,9 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     {
         return Err("repair attempt edit-cage baseline binding failed".to_string());
     }
-    let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
+    let mut baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
         .map_err(|error| format!("decode edit-cage baseline failed: {error}; the staged baseline is damaged, so start a new attempt with `ripr agent repair`"))?;
+    baseline.bind_artifact_store(store.locator());
     if baseline.root() != root {
         return Err("edit-cage baseline root does not match selected repository".to_string());
     }
@@ -4031,8 +4044,12 @@ pub(crate) fn analysis_input_changes_from(
     if sha256_bytes(&baseline_bytes) != baseline_artifact.sha256 {
         return Err("repair attempt edit-cage baseline binding failed".to_string());
     }
-    let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
+    let mut baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
         .map_err(|error| format!("decode edit-cage baseline failed: {error}; the staged baseline is damaged, so start a new attempt with `ripr agent repair`"))?;
+    if baseline.root() != store.canonical_root() {
+        return Err("edit-cage baseline root does not match selected repository".to_string());
+    }
+    baseline.bind_artifact_store(store.locator());
     let (_, verdict) = evaluate_repository_edit_cage_with_head_movement(
         &baseline,
         HeadMovement::AdmitDescendantCommits,
@@ -5071,6 +5088,46 @@ mod tests {
             .map_err(|error| format!("create {} failed: {error}", root.display()))?;
         root.canonicalize()
             .map_err(|error| format!("canonicalize {} failed: {error}", root.display()))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_store_publication_pair_is_captured_with_resolved_authority() -> Result<(), String> {
+        let root = test_root("custom-store-pair")?;
+        run_git(&root, &["init", "-q"]).map_err(|error| error.to_string())?;
+        run_git(&root, &["config", "user.email", "ripr@example.invalid"])
+            .map_err(|error| error.to_string())?;
+        run_git(&root, &["config", "user.name", "RIPR Test"]).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("tests/target.rs"), b"test").map_err(|error| error.to_string())?;
+        run_git(&root, &["add", "."]).map_err(|error| error.to_string())?;
+        run_git(
+            &root,
+            &["-c", "commit.gpgSign=false", "commit", "-qm", "base"],
+        )
+        .map_err(|error| error.to_string())?;
+        let id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")?;
+        let store = Path::new("custom-attempts");
+        let dir = root.join(store).join(id.as_str()).join("artifacts");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let destination = dir.join("after.json");
+        write_bytes_atomic(&destination, b"{}")?;
+        // Recreate the writer's interrupted link-before-unlink window.
+        std::fs::hard_link(&destination, dir.join("after.tmp-1-1"))
+            .map_err(|error| error.to_string())?;
+        let packet = r#"{"seam_id":"seam:sample","allowed_edit_surface":["tests/target.rs"],"forbidden_files":[]}"#;
+        let mut policy = edit_cage_policy_from_packet(packet, "seam:sample")?;
+        include_resolved_explicit_store_operational_write(
+            &mut policy,
+            &root,
+            Some(store),
+            Some(&id),
+            RepairAttemptStoreAccess::Open,
+        )?;
+        assert!(!crate::edit_cage::capture_attempt_baseline(&root, &policy)?.is_ambiguous());
+        policy.artifact_store = None;
+        assert!(crate::edit_cage::capture_attempt_baseline(&root, &policy)?.is_ambiguous());
+        Ok(())
     }
 
     fn sample_manifest(root: &Path) -> Result<RepairAttemptManifest, String> {
