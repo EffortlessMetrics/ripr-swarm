@@ -1285,21 +1285,21 @@ impl CurrentChangeLabel {
         // drawn from the analyzed seams alone must say it may not be all.
         let unseen = unanalyzed.map(|(analyzed, total)| {
             format!(
-                "the seam limit left {} of {total} seams unanalyzed, so the change may have seams pilot did not see",
+                "pilot's limit left {} of {total} spots unchecked, so your change may touch spots pilot did not see",
                 total.saturating_sub(analyzed)
             )
         });
         let gripped = touched.saturating_sub(withheld);
         let mut reason = if withheld > 0 {
             let which = match (withheld, touched) {
-                (1, 1) => format!("the analyzed seam on {}", lines(1)),
-                (w, t) if w == t => format!("the {t} analyzed seams on {}", lines(t)),
-                (w, t) => format!("{w} of the {t} analyzed seams on {}", lines(t)),
+                (1, 1) => format!("the checked spot on {}", lines(1)),
+                (w, t) if w == t => format!("the {t} checked spots on {}", lines(t)),
+                (w, t) => format!("{w} of the {t} checked spots on {}", lines(t)),
             };
             let what = if withheld == 1 {
-                "its static evidence is unknown or opaque, so it is a static limitation, not a gap"
+                "ripr cannot tell from the code whether a test would notice a change there, so it is not listed as a gap"
             } else {
-                "their static evidence is unknown or opaque, so they are static limitations, not gaps"
+                "ripr cannot tell from the code whether a test would notice a change there, so they are not listed as gaps"
             };
             let rest = match gripped {
                 0 => String::new(),
@@ -1310,11 +1310,11 @@ impl CurrentChangeLabel {
         } else if touched > 0 {
             match touched {
                 1 => format!(
-                    "The analyzed seam on {} has no gap to rank: it is already gripped, intentional or suppressed",
+                    "The checked spot on {} has no gap to rank: it is already gripped, intentional or suppressed",
                     lines(1)
                 ),
                 t => format!(
-                    "The {t} analyzed seams on {} have no gap to rank: they are already gripped, intentional or suppressed",
+                    "The {t} checked spots on {} have no gap to rank: they are already gripped, intentional or suppressed",
                     lines(t)
                 ),
             }
@@ -1322,14 +1322,14 @@ impl CurrentChangeLabel {
             // #6944: `ripr check` analyzes these files, so "no seam" alone
             // would contradict it; say why pilot did not look.
             format!(
-                "No seam pilot analyzed is on {}: {}",
+                "Pilot checked no spot on {}: {}",
                 lines(1),
                 note.reason(code)
             )
         } else if unseen.is_some() {
-            format!("No analyzed seam is on {}", lines(1))
+            format!("Pilot checked no spot on {}", lines(1))
         } else {
-            return format!("No seam pilot analyzed is on {}.", lines(1));
+            return format!("Pilot checked no spot on {}.", lines(1));
         };
         if touched > 0
             && let Some(note) = diff_only
@@ -1358,7 +1358,7 @@ impl CurrentChangeLabel {
                 seams,
                 diff_only,
             } => format!(
-                "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run: {check}",
+                "this gap is not on a line you changed. {} For the change itself, run: {check}",
                 Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), false)
             ),
         }
@@ -1367,7 +1367,7 @@ impl CurrentChangeLabel {
     fn markdown(&self) -> String {
         match self {
             Self::PartOfChange { base } => format!(
-                "part of it (this seam is on {})",
+                "part of it (this gap is on {})",
                 Self::changed_line(base.as_ref(), true)
             ),
             Self::Elsewhere {
@@ -1376,7 +1376,7 @@ impl CurrentChangeLabel {
                 seams,
                 diff_only,
             } => format!(
-                "not part of it. {} This recommendation is elsewhere in the repo. For the change itself, run `{check}`.",
+                "this gap is not on a line you changed. {} For the change itself, run `{check}`.",
                 Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), true)
             ),
         }
@@ -1476,15 +1476,14 @@ const UNANALYZED_ONLY_VERDICT: &str = "this repository's source is in languages 
 /// Why pilot withheld seams from its ranking (#5497): their class is
 /// `opaque` or an `*_unknown` class, so ripr's static evidence could not
 /// establish whether a test discriminates them.
-const WITHHELD_REASON: &str =
-    "static evidence is unknown or opaque, so they are static limitations, not gaps";
+const WITHHELD_REASON: &str = "ripr cannot tell from the code whether a test would notice a change there, so nothing here is listed as a gap";
 
 /// Why an empty ranking with withheld seams is not a clean result.
-const WITHHELD_ONLY_VERDICT: &str = "were withheld because their static evidence is unknown or opaque. ripr cannot tell whether a test discriminates them, so this is not a clean result.";
+const WITHHELD_ONLY_VERDICT: &str = "were withheld because ripr cannot tell from the code whether a test would notice a change there, so this is not a clean result.";
 
 /// Closing line for [`WITHHELD_ONLY_VERDICT`]: no gap to test, no snapshot
 /// pair to compare.
-const WITHHELD_ONLY_NEXT: &str = "No gap to test: each withheld seam's evidence in the repo exposure report names the stage ripr could not resolve.";
+const WITHHELD_ONLY_NEXT: &str = "Nothing to act on yet: the repo exposure report says, for each withheld spot, which step ripr could not work out.";
 
 /// [`WITHHELD_ONLY_NEXT`], unless a seam limit cut seams pilot never
 /// classified: those may hold gaps, so "no gap to test" would claim an
@@ -1492,7 +1491,7 @@ const WITHHELD_ONLY_NEXT: &str = "No gap to test: each withheld seam's evidence 
 fn withheld_only_next(seam_limit: Option<&crate::analysis::SeamLimitInfo>) -> String {
     match seam_limit {
         Some(limit) => format!(
-            "No gap ranked among the {} seams pilot analyzed, but the seam limit left {} of {} seams unanalyzed and they may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. Each withheld seam's evidence in the repo exposure report names the stage ripr could not resolve.",
+            "No gap ranked among the {} spots pilot checked, but its limit left {} of {} spots unchecked and they may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. The repo exposure report says, for each withheld spot, which step ripr could not work out.",
             limit.analyzed,
             limit.total.saturating_sub(limit.analyzed),
             limit.total
@@ -1502,7 +1501,7 @@ fn withheld_only_next(seam_limit: Option<&crate::analysis::SeamLimitInfo>) -> St
 }
 
 fn seam_count_label(count: usize) -> String {
-    format!("{count} {}", if count == 1 { "seam" } else { "seams" })
+    format!("{count} {}", if count == 1 { "spot" } else { "spots" })
 }
 
 /// Withheld seams counted over the kept seams only are a lower bound once a
@@ -2156,7 +2155,7 @@ fn json_string_array_field_refs(
 
 fn push_python_first_use_md(out: &mut String, first_use: &PilotPythonFirstUse) {
     out.push_str("## Python Preview First Use\n\n");
-    out.push_str(&format!("- Status: `{}`\n", first_use.status.as_str()));
+    out.push_str(&format!("- Result: {}\n", first_use.status.plain_label()));
     out.push_str("- Language: `python` (`preview`)\n");
     out.push_str("- Boundary: `preview_advisory_only`\n");
     out.push_str(&format!(
@@ -2226,7 +2225,7 @@ fn push_python_repair_card_md(out: &mut String, card: &PythonRepairCard) {
 
 fn push_python_first_use_terminal(out: &mut String, first_use: &PilotPythonFirstUse) {
     out.push_str("Python preview:\n");
-    out.push_str(&format!("  status: {}\n", first_use.status.as_str()));
+    out.push_str(&format!("  result: {}\n", first_use.status.plain_label()));
     out.push_str("  language: python (preview)\n");
     out.push_str(&format!("  findings: {}\n", first_use.findings_total));
     out.push_str(&format!(
