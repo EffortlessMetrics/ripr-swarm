@@ -3558,9 +3558,26 @@ fn blanket_impl_bound_traits(header: &str, param: &str) -> Vec<String> {
 
 /// Whether a captured call is `self.method(..)` rather than another receiver.
 fn self_method_call(text: &str, method: &str) -> bool {
-    text.match_indices(method).any(|(start, _)| {
-        let before = text.get(..start).unwrap_or("");
-        before.trim_end().ends_with("self.") || before.trim_end().ends_with("self .")
+    text.match_indices("self").any(|(start, keyword)| {
+        // `self` must be a whole identifier: not `myself` or `itself`.
+        let starts_identifier = text
+            .as_bytes()
+            .get(..start)
+            .and_then(|before| before.last())
+            .is_none_or(|byte| !is_ascii_ident_byte(*byte));
+        let Some(rest) = text.get(start + keyword.len()..) else {
+            return false;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('.') else {
+            return false;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix(method) else {
+            return false;
+        };
+        // The method name is a whole identifier followed by a call (or a
+        // turbofish call), not a longer name or a field read.
+        let rest = rest.trim_start();
+        starts_identifier && (rest.starts_with('(') || rest.starts_with("::"))
     })
 }
 
@@ -6451,6 +6468,24 @@ fn real() {}
             receivers.is_some_and(|types| types.by_identifier.contains("Num")),
             "concrete self type must be kept"
         );
+    }
+
+    #[test]
+    fn self_method_call_requires_a_whole_self_receiver_and_a_call() {
+        assert!(self_method_call("self.render()", "render"));
+        assert!(self_method_call("x = self.render(1)", "render"));
+        assert!(self_method_call("let y = (self . render ())", "render"));
+        assert!(!self_method_call("itself.render()", "render"));
+        assert!(!self_method_call("myself.render()", "render"));
+        assert!(!self_method_call("other.render()", "render"));
+        // A longer method name or a field read is not the call.
+        assert!(!self_method_call("self.render_all()", "render"));
+        assert!(!self_method_call("self.render", "render"));
+        // A later genuine `self.render()` still counts after a false match.
+        assert!(self_method_call(
+            "myself.render() + self.render()",
+            "render"
+        ));
     }
 
     #[test]
