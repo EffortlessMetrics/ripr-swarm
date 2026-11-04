@@ -395,12 +395,12 @@ pub(super) fn render_markdown(receipt: &Value) -> String {
             item["reason"].as_str().unwrap_or("")
         ));
     }
-    if let Some(reasons) = receipt["r0_install"]["reasons"].as_array() {
-        if !reasons.is_empty() {
-            out.push_str("\nWhy not met:\n\n");
-            for reason in reasons {
-                out.push_str(&format!("- {}\n", reason.as_str().unwrap_or("")));
-            }
+    if let Some(reasons) = receipt["r0_install"]["reasons"].as_array()
+        && !reasons.is_empty()
+    {
+        out.push_str("\nWhy not met:\n\n");
+        for reason in reasons {
+            out.push_str(&format!("- {}\n", reason.as_str().unwrap_or("")));
         }
     }
     out

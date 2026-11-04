@@ -172,10 +172,14 @@ fn dispositions_need_a_known_status_and_a_reason() -> Result<(), String> {
         r#"{"channels":[{"channel":"homebrew","status":"not_shipped","reason":"no tap yet"}]}"#;
     assert_eq!(parse_dispositions(good, "d.json")?.len(), 1);
     let bad = good.replace("not_shipped", "maybe");
-    assert!(parse_dispositions(&bad, "d.json").is_err());
+    assert!(parse_dispositions(&bad, "d.json").err().is_some());
     let empty = good.replace("no tap yet", "  ");
-    assert!(parse_dispositions(&empty, "d.json").is_err());
-    assert!(parse_dispositions(r#"{"channels":[]}"#, "d.json").is_err());
+    assert!(parse_dispositions(&empty, "d.json").err().is_some());
+    assert!(
+        parse_dispositions(r#"{"channels":[]}"#, "d.json")
+            .err()
+            .is_some()
+    );
     Ok(())
 }
 
@@ -207,7 +211,15 @@ fn arguments_select_check_or_build_and_reject_the_rest() {
         parse_args(&strings(&["--cells", "d", "--run-id", "12", "--write"])),
         Ok(Mode::Build { write: true, .. })
     ));
-    assert!(parse_args(&strings(&["--write"])).is_err());
-    assert!(parse_args(&strings(&["--cells", "d", "--run-id", "x"])).is_err());
-    assert!(parse_args(&strings(&["--cells", "d", "--bogus"])).is_err());
+    assert!(parse_args(&strings(&["--write"])).err().is_some());
+    assert!(
+        parse_args(&strings(&["--cells", "d", "--run-id", "x"]))
+            .err()
+            .is_some()
+    );
+    assert!(
+        parse_args(&strings(&["--cells", "d", "--bogus"]))
+            .err()
+            .is_some()
+    );
 }
