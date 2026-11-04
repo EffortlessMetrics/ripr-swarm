@@ -46,7 +46,7 @@
         {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":17}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(CalcError::Negative)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach compute: negative_input_returns_some_error"],
-      "missing": ["Missing discriminator value: CalcError::Negative", "No exact error variant discriminator was detected"],
+      "missing": ["Missing check value: CalcError::Negative", "No exact error variant discriminator was detected"],
       "assertion_texts": {
         "7": "let err = compute(-1).unwrap_err();",
         "8": "assert!(err.to_string().contains(\"error\"));"
@@ -151,7 +151,7 @@
         {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":17}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(CalcError::Negative)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach compute: negative_input_returns_some_error"],
-      "missing": ["Missing discriminator value: CalcError::Negative", "No strong discriminator was detected"],
+      "missing": ["Missing check value: CalcError::Negative", "No strong discriminator was detected"],
       "assertion_texts": {
         "7": "let err = compute(-1).unwrap_err();",
         "8": "assert!(err.to_string().contains(\"error\"));"

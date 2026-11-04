@@ -1,0 +1,7 @@
+import { test, expect } from 'vitest';
+import { logLine } from '../src/log';
+test('log', () => {
+  const b: string[] = [];
+  logLine(b, 'hi');
+  expect(b.length).toBe(1);
+});

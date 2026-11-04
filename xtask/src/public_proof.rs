@@ -3447,9 +3447,17 @@ mod tests {
             "corpus lane revision missing: {}",
             page.0
         );
+        // Read the revision from the committed baseline so a baseline re-pin
+        // does not also need a literal edited here.
+        let baseline = read_json(&workspace_root().join(RANKING_BASELINE))?;
+        let ranking_revision = lane_revision(&baseline);
         assert!(
-            page.0.contains("ac01337"),
-            "ranking lane revision missing: {}",
+            ranking_revision.len() == 7 && ranking_revision.chars().all(|c| c.is_ascii_hexdigit()),
+            "ranking baseline records no revision: {ranking_revision}"
+        );
+        assert!(
+            page.0.contains(&ranking_revision),
+            "ranking lane revision {ranking_revision} missing: {}",
             page.0
         );
         Ok(())

@@ -43,7 +43,7 @@ Policy impact:
   `.ripr/traceability.toml`.
 - No schema version bump. The missing discriminator reuses the existing
   `MissingDiscriminatorFact` (`value`, `reason`) and the existing
-  `Missing discriminator value:` entry in `Finding.missing`.
+  `Missing check value:` entry in `Finding.missing`.
 
 ## Problem
 

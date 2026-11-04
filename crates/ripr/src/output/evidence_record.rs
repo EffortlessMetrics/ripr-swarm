@@ -992,7 +992,38 @@ fn alignment_confidence_for(
     }
 }
 
+/// Activation cannot be established for a seam no test reaches. That
+/// `activate: unknown` follows from `reach: no`; it is the missing-test gap
+/// itself, not evidence the analyzer failed to establish, so it must not read
+/// as a static limitation (#5497: the pilot answer key confirms these
+/// `ungripped` seams by mutation).
+///
+/// Only the producer's generic "no value / no owner call observed" summary
+/// follows from absent reach. It is matched on the summary's leading words,
+/// not on keywords anywhere in it, because the summary quotes the seam
+/// expression (an expression naming `snapshot_count` is not a snapshot
+/// limitation). A producer-named activation limit (unresolved boundary
+/// constant or operand, ambiguous constructor owner, unresolved field
+/// assignment, withheld activation credit) stays a limitation even when no
+/// test reaches the seam. Eligibility and the limitation projection share
+/// this one decision.
+fn activation_follows_absent_reach(entry: &ClassifiedSeam) -> bool {
+    matches!(entry.evidence.reach.state, StageState::No)
+        && matches!(entry.evidence.activate.state, StageState::Unknown)
+        && (entry
+            .evidence
+            .activate
+            .summary
+            .starts_with("No concrete activation values observed for seam")
+            || entry
+                .evidence
+                .activate
+                .summary
+                .starts_with("No direct owner call observed for value-insensitive seam"))
+}
+
 pub(crate) fn is_static_limited(entry: &ClassifiedSeam) -> bool {
+    let activation_follows_absent_reach = activation_follows_absent_reach(entry);
     cross_language_oracle_visibility_unresolved(entry)
         || cross_language_test_target_unresolved(entry)
         || matches!(entry.class, SeamGripClass::Opaque)
@@ -1004,7 +1035,11 @@ pub(crate) fn is_static_limited(entry: &ClassifiedSeam) -> bool {
             &entry.evidence.discriminate,
         ]
         .iter()
-        .any(|stage| matches!(stage.state, StageState::Opaque | StageState::Unknown))
+        .enumerate()
+        .any(|(index, stage)| {
+            let skipped = activation_follows_absent_reach && index == 1;
+            !skipped && matches!(stage.state, StageState::Opaque | StageState::Unknown)
+        })
 }
 
 fn weak_related_oracle(entry: &ClassifiedSeam) -> bool {
@@ -1223,12 +1258,14 @@ pub(crate) fn static_limitations_for(
         });
     }
     push_stage_limitation(&mut limitations, "reach", &entry.evidence.reach, entry);
-    push_stage_limitation(
-        &mut limitations,
-        "activate",
-        &entry.evidence.activate,
-        entry,
-    );
+    if !activation_follows_absent_reach(entry) {
+        push_stage_limitation(
+            &mut limitations,
+            "activate",
+            &entry.evidence.activate,
+            entry,
+        );
+    }
     push_stage_limitation(
         &mut limitations,
         "propagate",
