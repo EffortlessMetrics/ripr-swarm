@@ -30,7 +30,7 @@ permissions:
 
 concurrency:
   group: published-install-matrix-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   install:
@@ -113,6 +113,9 @@ jobs:
           SECONDS_TO_INSTALL: ${{ steps.install.outputs.install_seconds }}
         run: |
           if [ "$INSTALL" = success ] && [ "$SMOKE" = success ]; then verdict="works"
+          elif [ "$GAP" = true ] && [ "$INSTALL" = success ]; then
+            verdict="INSTALLED BUT FAILED TO START (known-gap cell hiding a broken package)"
+            echo "::warning::$CELL installed but did not start; this is not the documented gap."
           elif [ "$GAP" = true ]; then verdict="known gap (unavailable, as documented)"
           else verdict="FAILED (install=$INSTALL, start=$SMOKE)"; fi
           line="| $CELL | $verdict | ${VERSION:-} | ${SECONDS_TO_INSTALL:-} |"
