@@ -25,6 +25,10 @@ the buyer-readable map over those artifacts.
 | `blocked` | The surface is intentionally waiting on a named upstream capability. |
 | `deferred` | Valid product direction, but not part of the current safe adoption path. |
 
+Promotion between tiers is judged per language against the numeric
+[release ladder](../METRICS.md#release-ladder): `preview` holds R0, `usable alpha`
+holds R0 and R1, and `usable` holds R0 through R2.
+
 All tiers are static evidence tiers. None of them means runtime mutation
 adequacy, coverage adequacy, or general correctness.
 
