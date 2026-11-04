@@ -998,8 +998,18 @@ pub(crate) fn is_static_limited(entry: &ClassifiedSeam) -> bool {
     // gap itself, not evidence the analyzer failed to establish, so it must
     // not read as a static limitation (#5497: the pilot answer key confirms
     // these `ungripped` seams by mutation).
+    //
+    // Only the generic "no value / no owner call observed" wording follows
+    // from absent reach. A producer-named activation limit (unresolved
+    // boundary constant or operand, ambiguous constructor owner, unresolved
+    // field assignment, withheld activation credit) stays a limitation even
+    // when no test reaches the seam.
     let activation_follows_absent_reach = matches!(entry.evidence.reach.state, StageState::No)
-        && matches!(entry.evidence.activate.state, StageState::Unknown);
+        && matches!(entry.evidence.activate.state, StageState::Unknown)
+        && matches!(
+            static_limitation_category("activate", "unknown", &entry.evidence.activate.summary),
+            "activation_value_unresolved" | "activation_owner_call_absent"
+        );
     cross_language_oracle_visibility_unresolved(entry)
         || cross_language_test_target_unresolved(entry)
         || matches!(entry.class, SeamGripClass::Opaque)

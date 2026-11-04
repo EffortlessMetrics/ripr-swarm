@@ -976,14 +976,23 @@ fn pilot_ranks_an_unreached_ungripped_seam_whose_activation_is_unknown() {
     let mut unreached = classified_in_owner(SeamGripClass::Ungripped, "src/a.rs", "a::f", 10);
     unreached.evidence.reach = stage(StageState::No);
     unreached.evidence.activate = stage(StageState::Unknown);
+    unreached.evidence.activate.summary =
+        "No concrete activation values observed for seam `x > 1`".to_string();
     let mut limited = classified_in_owner(SeamGripClass::Ungripped, "src/b.rs", "b::g", 11);
     limited.evidence.reach = stage(StageState::Yes);
     limited.evidence.activate = stage(StageState::Unknown);
-    let entries = [unreached, limited];
+    // A producer-named operand limit survives absent reach: the activation
+    // is unknown because ripr cannot resolve the boundary, not because no
+    // test calls the seam.
+    let mut unresolved = classified_in_owner(SeamGripClass::Ungripped, "src/c.rs", "c::h", 12);
+    unresolved.evidence.reach = stage(StageState::No);
+    unresolved.evidence.activate = stage(StageState::Unknown);
+    unresolved.evidence.activate.summary = "Boundary activation operand is a local computed value for seam `x > limit`; add analyzer support before emitting an actionable repair packet".to_string();
+    let entries = [unreached, limited, unresolved];
     let ranked = top_actionable_seams(&entries, 5, None);
     assert_eq!(ranked.len(), 1);
     assert_eq!(display_path(ranked[0].seam.file()), "src/a.rs");
-    assert_eq!(withheld_static_limitations(&entries), 1);
+    assert_eq!(withheld_static_limitations(&entries), 2);
 }
 
 #[test]
