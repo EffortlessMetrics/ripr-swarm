@@ -1687,6 +1687,11 @@ assertion or unknown effect; only inert literal bindings and modeled owner
 calls are admitted around that assertion. A preceding failing assertion,
 exceptional argument or destructuring failure cannot lend a witness.
 
+Calls must bind every declared parameter with a known scalar value or literal
+default. Excess, duplicate, unknown or positional-only keyword arguments,
+missing required parameters and unsupported argument forms withhold credit.
+Computed defaults or annotations are outside the closed owner model.
+
 The old-body witness is the existing `sole_line_replacement` fact: the
 production file contains exactly one added line replacing one removed line at
 the same coordinate. Other production edits keep the header unresolved.
