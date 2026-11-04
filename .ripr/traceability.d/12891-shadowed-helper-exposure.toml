@@ -1,0 +1,10 @@
+[[extend]]
+id = "RIPR-SPEC-0005"
+code = [
+  "crates/ripr/src/analysis/classify/call_identity.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+]
+tests = [
+  "crates/ripr/tests/inherent_receiver_parsing_cost.rs::generic_module_shadow_keeps_full_and_compact_exposure_honest",
+]
