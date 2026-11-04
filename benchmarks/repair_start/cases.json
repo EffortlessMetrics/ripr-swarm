@@ -514,7 +514,7 @@
     "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
     "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
     "src/fx/__init__.py": "",
-    "src/fx/core.py": "class EmptyError(Exception):\n    pass\n\n\nclass TooLongError(Exception):\n    pass\n\n\ndef parse(s):\n    if not s:\n        raise EmptyError()\n    if len(s) > 10:\n        raise EmptyError()\n    return len(s)\n",
+    "src/fx/core.py": "class EmptyError(Exception):\n    pass\n\n\nclass TooLongError(Exception):\n    pass\n\n\ndef parse(text):\n    if not text:\n        raise EmptyError()\n    if len(text) > 10:\n        raise EmptyError()\n    return len(text)\n",
     "tests/test_t.py": "import pytest\nfrom fx.core import parse\n\n\ndef test_long_input_is_error():\n    with pytest.raises(Exception):\n        parse('abcdefghijklmnop')\n"
    },
    "change": {
@@ -522,7 +522,7 @@
     "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
     "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
     "src/fx/__init__.py": "",
-    "src/fx/core.py": "class EmptyError(Exception):\n    pass\n\n\nclass TooLongError(Exception):\n    pass\n\n\ndef parse(s):\n    if not s:\n        raise EmptyError()\n    if len(s) > 10:\n        raise TooLongError()\n    return len(s)\n",
+    "src/fx/core.py": "class EmptyError(Exception):\n    pass\n\n\nclass TooLongError(Exception):\n    pass\n\n\ndef parse(text):\n    if not text:\n        raise EmptyError()\n    if len(text) > 10:\n        raise TooLongError()\n    return len(text)\n",
     "tests/test_t.py": "import pytest\nfrom fx.core import parse\n\n\ndef test_long_input_is_error():\n    with pytest.raises(Exception):\n        parse('abcdefghijklmnop')\n"
    },
    "id": "python/error-variant-weak",
@@ -534,7 +534,7 @@
     "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
     "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
     "src/fx/__init__.py": "",
-    "src/fx/core.py": "class EmptyError(Exception):\n    pass\n\n\nclass TooLongError(Exception):\n    pass\n\n\ndef parse(s):\n    if not s:\n        raise EmptyError()\n    if len(s) > 10:\n        raise EmptyError()\n    return len(s)\n",
+    "src/fx/core.py": "class EmptyError(Exception):\n    pass\n\n\nclass TooLongError(Exception):\n    pass\n\n\ndef parse(text):\n    if not text:\n        raise EmptyError()\n    if len(text) > 10:\n        raise EmptyError()\n    return len(text)\n",
     "tests/test_t.py": "import pytest\nfrom fx.core import parse, TooLongError\n\n\ndef test_long_input_is_too_long():\n    with pytest.raises(TooLongError):\n        parse('abcdefghijklmnop')\n"
    },
    "change": {
@@ -542,7 +542,7 @@
     "pyproject.toml": "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n",
     "ripr.toml": "[languages]\nenabled = [\"python\"]\n",
     "src/fx/__init__.py": "",
-    "src/fx/core.py": "class EmptyError(Exception):\n    pass\n\n\nclass TooLongError(Exception):\n    pass\n\n\ndef parse(s):\n    if not s:\n        raise EmptyError()\n    if len(s) > 10:\n        raise TooLongError()\n    return len(s)\n",
+    "src/fx/core.py": "class EmptyError(Exception):\n    pass\n\n\nclass TooLongError(Exception):\n    pass\n\n\ndef parse(text):\n    if not text:\n        raise EmptyError()\n    if len(text) > 10:\n        raise TooLongError()\n    return len(text)\n",
     "tests/test_t.py": "import pytest\nfrom fx.core import parse, TooLongError\n\n\ndef test_long_input_is_too_long():\n    with pytest.raises(TooLongError):\n        parse('abcdefghijklmnop')\n"
    },
    "id": "python/error-variant-strong",

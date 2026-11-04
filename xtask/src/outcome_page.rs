@@ -1021,7 +1021,9 @@ mod tests {
             );
         }
         let bars = read_json(&root.join(BARS_PATH));
-        assert!(matches!(bars, Ok(b) if b["repair_start_rate"]["by_language"]["typescript"]["floor_starts"].is_u64()));
+        assert!(
+            matches!(bars, Ok(b) if b["repair_start_rate"]["by_language"]["typescript"]["floor_starts"].is_u64())
+        );
         Ok(())
     }
 }

@@ -50,7 +50,7 @@ jobs:
       - name: Fetch previous receipts
         run: |
           mkdir -p target/ripr/outcome-history
-          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow outcome-nightly.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow outcome-nightly.yml --branch main --status completed --limit 1 --json databaseId --jq '.[0].databaseId // empty')
           if [ -n "$run_id" ]; then gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name outcome-receipts --dir target/ripr/outcome-history || echo "::warning::previous receipts unavailable"; fi
 
       - name: Fetch the latest scoreboard report
