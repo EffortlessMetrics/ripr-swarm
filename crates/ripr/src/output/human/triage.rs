@@ -1008,9 +1008,6 @@ pub(crate) fn canonical_next_action_for_triage(
     select_canonical_next_action(&input)
 }
 
-/// True when `HEAD` is the symbolic ref of local branch `base` (a detached
-/// HEAD or any other branch is not), so the empty comparison is the base
-/// compared with itself.
 /// True when `HEAD~1` resolves, so `--base HEAD~1` names a real range.
 fn head_has_parent(root: &std::path::Path) -> bool {
     crate::git::run_git_output_with_deadline(
@@ -1022,6 +1019,9 @@ fn head_has_parent(root: &std::path::Path) -> bool {
     .is_some_and(|output| output.status.success())
 }
 
+/// True when `HEAD` is the symbolic ref of local branch `base` (a detached
+/// HEAD or any other branch is not), so the empty comparison is the base
+/// compared with itself.
 fn head_is_on_branch(root: &std::path::Path, base: &str) -> bool {
     crate::git::run_git_output_with_deadline(
         root,

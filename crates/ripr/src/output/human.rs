@@ -277,17 +277,17 @@ fn no_source_examined(output: &CheckOutput) -> bool {
     }
 }
 
-/// The empty-findings headline. An incomplete analysis checked less than it
-/// was asked to, so claiming it "checked no changed behavior" would contradict
-/// the `Analysis outcome` disclosure printed just above it.
 /// True when a base was compared and the range contained no changed files at
 /// all, as opposed to files that no language adapter analyzes.
 fn no_changed_files_in_range(output: &CheckOutput) -> bool {
-    output.base.is_some()
-        && output
-            .analysis_outcome
-            .as_ref()
-            .is_some_and(|outcome| outcome.counts.changed_file_count == 0)
+    // Producer-backed: a Git range whose base commit is HEAD itself is empty by
+    // construction. Deleted-only, submodule-only and `--diff <file>` runs do not
+    // establish that, so they keep the language wording.
+    output.analyzed_revisions.as_ref().is_some_and(|revisions| {
+        !crate::output::analyzed_revisions::is_working_tree_read(output)
+            && revisions.base_commit.is_some()
+            && revisions.base_commit == revisions.head_commit
+    })
 }
 
 /// #13036: a range with changed files but no checkable behavior is usually a
@@ -298,6 +298,11 @@ fn no_behavior_base_hint(output: &CheckOutput) -> String {
     let Some(base) = output.base.as_deref() else {
         return String::new();
     };
+    // Only for a real Git range that changed at least one analyzable file;
+    // docs-only diffs already say no analyzable language.
+    if output.analyzed_revisions.is_none() || no_source_examined(output) {
+        return String::new();
+    }
     let applies = output.analysis_outcome.as_ref().is_some_and(|outcome| {
         outcome.kind == NoBehavioralCandidates && outcome.counts.changed_file_count > 0
     });
@@ -309,6 +314,9 @@ fn no_behavior_base_hint(output: &CheckOutput) -> String {
     )
 }
 
+/// The empty-findings headline. An incomplete analysis checked less than it
+/// was asked to, so claiming it "checked no changed behavior" would contradict
+/// the `Analysis outcome` disclosure printed just above it.
 fn no_findings_line(output: &CheckOutput) -> &'static str {
     match &output.analysis_outcome {
         Some(outcome) if !outcome.kind.is_complete() => {
