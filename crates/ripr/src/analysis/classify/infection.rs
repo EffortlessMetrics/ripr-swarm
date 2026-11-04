@@ -725,9 +725,19 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     // discriminator reads the predicate lens's gap, never a better reading:
     // Weak or unresolved boundary evidence also applies to the returned
     // comparison (#9094, #10046).
-    if let Some(mut predicate) = returned_comparison_view(probe)
-        && (!activation.missing_discriminators.is_empty() || unresolved_boundary.is_some())
-    {
+    // #13040: an unseen input (a plain identifier bound to an env var or a
+    // local helper call) yields neither a missing discriminator nor an
+    // unresolved boundary, because the argument is not a computed
+    // expression ripr flags as unreadable. The predicate lens still reads
+    // `Unknown` there (no comparable literal input), so an `Unknown`
+    // predicate reading applies when no owner input is readable at all
+    // (`owner_input_values` empty: a visible input, even one the literal
+    // reading cannot compare, keeps the return-value reading); a `Weak`
+    // reading (a visible input that merely misses the boundary, including
+    // an intermediate input that separates a multi-value move) keeps the
+    // existing resolved-gap gate, so the return-value lens can still
+    // credit separation the literal reading cannot see.
+    if let Some(mut predicate) = returned_comparison_view(probe) {
         predicate.family = ProbeFamily::Predicate;
         let evidence = infection_evidence_for_owner(
             &predicate,
@@ -738,7 +748,13 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             owner_has_other_callers,
             assertion_macros_rebound,
         );
-        if matches!(evidence.state, StageState::Weak | StageState::Unknown) {
+        if (evidence.state == StageState::Unknown
+            && (owner_input_values(activation).is_empty()
+                || !activation.missing_discriminators.is_empty()
+                || unresolved_boundary.is_some()))
+            || (matches!(evidence.state, StageState::Weak)
+                && (!activation.missing_discriminators.is_empty() || unresolved_boundary.is_some()))
+        {
             return evidence;
         }
     }
