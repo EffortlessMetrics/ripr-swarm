@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The `rust-repo-exposure-uncalled-sibling` honesty report carried no `content_sha256` and was in neither the required nor the exempt digest list. It is recaptured with `ripr check --mode draft --format repo-exposure-json` at the current cache generation, now carries its digest and is in `report_digest_required`, so a hand edit fails the digest check as well as the regeneration guard. Seams, grip classes and related tests are unchanged from the earlier capture (#12890).
