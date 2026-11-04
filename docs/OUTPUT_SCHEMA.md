@@ -930,8 +930,10 @@ next=COMMAND
   every test-side gap (candidate-current, `weakly_exposed` or
   `reachable_unrevealed`, not static-limited, not preview-only), and the class
   counts cover every non-suppressed finding in the run.
-- At most 5 gap lines are printed, top triage gap first, then the remaining gaps
-  in finding order; `+M more gaps not shown` states the exact remainder.
+- 5 gap lines are printed, plus one more per 8 gaps, up to 10 (#13081): top
+  triage gap first, then the remaining gaps in finding order; `+M more gaps not
+  shown` states the exact remainder. The `open=` form (unconfirmed findings)
+  stays at 5 lines with `+M more open findings not shown`.
   Fields are whitespace-collapsed, the changed expression and oracle text are
   clipped to 80 characters, and a literal `|` inside a field is written `\|`.
   `missing=` is the first missing discriminator value, or `-`.
