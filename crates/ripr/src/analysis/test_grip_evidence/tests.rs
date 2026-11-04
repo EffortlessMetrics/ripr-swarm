@@ -13982,6 +13982,57 @@ fn exact_error_pin_is_not_published_as_an_oracle_on_the_ok_value_seam() -> Resul
     Ok(())
 }
 
+/// #12836: on an `error_variant` seam, an exact error-variant pin that names a
+/// sibling variant is not a discriminator for this seam. The classify stage
+/// already grades it weak (`kind-match false`); the related-test record must
+/// not publish the same assertion at strong, so both views agree. The seam the
+/// pin does name keeps its strong credit.
+#[test]
+fn sibling_variant_pin_reads_weak_in_the_stage_and_the_related_test_record() -> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Zero,\n    One,\n}\n\
+         pub fn classify(n: u8) -> Result<u8, Fault> {\n    \
+         if n == 0 { return Err(Fault::Zero); }\n    \
+         if n == 1 { return Err(Fault::One); }\n    Ok(n)\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn zero_is_fault_zero() { assert_eq!(classify(0).unwrap_err(), Fault::Zero); }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let evidence = |expression: &str| -> Result<TestGripEvidence, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ErrorVariant && s.expression() == expression)
+            .ok_or_else(|| format!("error_variant seam {expression} present"))?;
+        Ok(evidence_for_seam(seam, &index))
+    };
+
+    let one = evidence("Err(Fault::One)")?;
+    let [grip] = one.related_tests.as_slice() else {
+        return Err(format!("one related test expected: {:?}", one.related_tests));
+    };
+    assert_eq!(grip.oracle_kind, OracleKind::ExactErrorVariant);
+    assert_eq!(
+        grip.oracle_strength,
+        OracleStrength::Weak,
+        "a sibling-variant pin must not read strong on this seam"
+    );
+    assert_eq!(
+        one.discriminate.state,
+        StageState::Weak,
+        "stage and record agree: {}",
+        one.discriminate.summary
+    );
+
+    let zero = evidence("Err(Fault::Zero)")?;
+    assert_eq!(
+        zero.related_tests[0].oracle_strength,
+        OracleStrength::Strong,
+        "the pin still credits the variant it names"
+    );
+    assert_eq!(zero.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
 /// #12733 / #12734: the skipped error-variant pin must read the same in every
 /// view of the `Ok(n)` seam. The classify stage's discriminate evidence agrees
 /// with the related-test record (no oracle credited), and the record says the

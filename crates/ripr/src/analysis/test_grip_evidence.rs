@@ -5409,6 +5409,18 @@ fn best_oracle(
         }
         let (strength, contradiction) =
             effective_oracle_strength(owner_fn, oracle, test, boolean_pin, index, pin_syntax);
+        // #12836: the classify stage grades a strong or medium oracle weak when
+        // it does not pin this error-variant seam's own variant (`kind-match
+        // false`). An exact pin on a sibling variant gets the same grade here,
+        // so the record and the stage cannot disagree about one assertion.
+        let strength = if seam.kind() == SeamKind::ErrorVariant
+            && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
+            && !oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
+        {
+            OracleStrength::Weak
+        } else {
+            strength
+        };
         if strength.rank() > best_strength.rank() {
             best_strength = strength.clone();
             best_kind = oracle.kind.clone();
