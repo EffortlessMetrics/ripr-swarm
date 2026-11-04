@@ -103,7 +103,6 @@ use std::cell::{Cell, OnceCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 /// The owner-side half of the pin, established once per probe.
@@ -169,7 +168,7 @@ pub(in crate::analysis) struct OwnerReturnPin {
     closed_owner: Option<super::owner_value::ClosedChange>,
     /// #13005: set only while [`Self::literal_check_withholds`] asks whether
     /// the current-owner literal check is the one gate refusing an assertion.
-    skip_current_literal_check: AtomicBool,
+    skip_current_literal_check: Cell<bool>,
 }
 
 /// A file's `std`/`core`-rooted `assert_eq!` paths and, for each of the four
@@ -4744,7 +4743,7 @@ impl OwnerReturnPin {
             trait_scope_by_file: SyncMemo::default(),
             identity,
             closed_owner,
-            skip_current_literal_check: AtomicBool::new(false),
+            skip_current_literal_check: Cell::new(false),
         })
     }
 
@@ -4869,7 +4868,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
-            skip_current_literal_check: AtomicBool::new(false),
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -4981,7 +4980,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
-            skip_current_literal_check: AtomicBool::new(false),
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5085,7 +5084,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
-            skip_current_literal_check: AtomicBool::new(false),
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5292,9 +5291,9 @@ impl OwnerReturnPin {
         {
             return false;
         }
-        self.skip_current_literal_check.store(true, Ordering::Relaxed);
+        self.skip_current_literal_check.set(true);
         let admitted_without = self.admits(test, assertion, index, imports_foreign, syntax);
-        self.skip_current_literal_check.store(false, Ordering::Relaxed);
+        self.skip_current_literal_check.set(false);
         admitted_without
     }
 
@@ -6014,7 +6013,7 @@ impl OwnerReturnPin {
         // above.
         if helper.is_none()
             && substituted.is_none()
-            && !self.skip_current_literal_check.load(Ordering::Relaxed)
+            && !self.skip_current_literal_check.get()
             && let Some(closed) = &self.closed_owner
             && let Some(call) = call_text
                 .map(str::to_string)
