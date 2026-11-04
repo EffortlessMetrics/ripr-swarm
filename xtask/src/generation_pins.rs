@@ -29,6 +29,14 @@
 //! correct by design) and never the contract schema versions, whose collision
 //! semantics differ (#11736 Proposal C non-goals; a later registry extension
 //! is a row addition, not part of this claim).
+//!
+//! On an ordinary checkout the claim surface is the working tree and the fork
+//! is `git merge-base <base> HEAD`. On GitHub's synthetic PR merge ref
+//! (`refs/pull/<n>/merge`) HEAD is a merge commit whose first parent is the
+//! base tip; evaluating HEAD there would alias fork and base tip and hide the
+//! sibling-collision class, so the gate detects that shape and evaluates the
+//! PR head tree (the merge commit's second parent) against its true fork
+//! instead.
 
 use std::cmp::Ordering;
 use std::path::Path;
@@ -136,17 +144,21 @@ const CONSUMER_CHECKLIST: &[&str] = &[
 pub(crate) fn generations_next(args: &[String]) -> Result<(), String> {
     let base_override = parse_generations_next_args(args)?;
     let root = repo_root()?;
-    let (base_ref, merge_base_sha) = resolve_base(&root, base_override.as_deref())?;
+    let base = resolve_base(&root, base_override.as_deref())?;
     let reader = production_blob_reader(&root);
-    let mut lines = vec![format!("base: {base_ref} @ {merge_base_sha}")];
+    let mut lines = vec![format!(
+        "base: {} @ {}",
+        base.base_ref, base.base_tip_commit
+    )];
     for pin in GENERATION_PINS {
-        let current = read_generation(&reader, Some(&base_ref), pin).map_err(|error| {
-            format!(
-                "cannot allocate the next `{}` generation ({fallback})",
-                pin.family,
-                fallback = fail_closed_detail(&error)
-            )
-        })?;
+        let current =
+            read_generation(&reader, Some(base.base_ref.as_str()), pin).map_err(|error| {
+                format!(
+                    "cannot allocate the next `{}` generation ({fallback})",
+                    pin.family,
+                    fallback = fail_closed_detail(&error)
+                )
+            })?;
         let next = next_free(&current).map_err(|error| {
             format!(
                 "cannot allocate the next `{}` generation from `{current}`: {error}",
@@ -174,9 +186,15 @@ pub(crate) fn check_generation_pins() -> Result<(), String> {
 }
 
 fn check_generation_pins_in(root: &Path) -> Result<(), String> {
-    let (base_ref, merge_base_sha) = resolve_base(root, None)?;
+    let base = resolve_base(root, None)?;
+    let points = resolve_evaluation_points(root, &base)?;
     let reader = production_blob_reader(root);
-    let violations = claimed_generation_violations(&reader, &base_ref, &merge_base_sha);
+    let violations = claimed_generation_violations(
+        &reader,
+        &base.base_ref,
+        &points.fork_commit,
+        points.head_ref.as_deref(),
+    );
     finish_policy_report(
         PolicyReportSpec {
             report_file: "generation-pins.md",
@@ -216,6 +234,56 @@ fn parse_generations_next_args(args: &[String]) -> Result<Option<String>, String
         }
     }
     Ok(base)
+}
+
+/// The accepted base for one evaluation: the ref used for tip reads, its tip
+/// commit, and the merge-base between that ref and HEAD.
+struct ResolvedBase {
+    base_ref: String,
+    base_tip_commit: String,
+    head_merge_base: String,
+}
+
+/// Where to read the claim surface and the fork for one gate run. On an
+/// ordinary checkout the claim surface is the working tree and the fork is
+/// the merge-base of the base ref and HEAD. On GitHub's synthetic PR merge
+/// ref (`refs/pull/<n>/merge`), HEAD is a merge commit whose first parent is
+/// the base tip: evaluating HEAD directly would alias fork and base tip and
+/// hide the sibling-collision class — a sibling that merged generation `X`
+/// plus this PR claiming the same `X` produces a clean merge with
+/// `head == fork == base_tip == X`, which must still fail. In that mode the
+/// claim surface is the PR head tree (the merge commit's second parent) and
+/// the fork is that head's true merge-base with the first parent.
+struct EvaluationPoints {
+    /// `None` reads the working tree; `Some(sha)` reads blobs at that commit.
+    head_ref: Option<String>,
+    fork_commit: String,
+}
+
+fn resolve_evaluation_points(root: &Path, base: &ResolvedBase) -> Result<EvaluationPoints, String> {
+    let second_parent = git_rev_parse(root, "HEAD^2")?;
+    let Some(second_parent) = second_parent else {
+        return Ok(EvaluationPoints {
+            head_ref: None,
+            fork_commit: base.head_merge_base.clone(),
+        });
+    };
+    let first_parent = git_rev_parse(root, "HEAD^1")?
+        .ok_or_else(|| "HEAD has a second parent but no first parent".to_string())?;
+    if first_parent == base.base_tip_commit {
+        let fork_commit = git_merge_base_commit(root, &second_parent, &first_parent)?;
+        Ok(EvaluationPoints {
+            head_ref: Some(second_parent),
+            fork_commit,
+        })
+    } else {
+        // An ordinary merge commit on a branch (for example a lane merging
+        // main into its own branch): the branch head stays the claim surface.
+        Ok(EvaluationPoints {
+            head_ref: None,
+            fork_commit: base.head_merge_base.clone(),
+        })
+    }
 }
 
 /// The verdict for one family. `Collision` is the #10326/#10845 class (the
@@ -353,18 +421,19 @@ fn fail_closed_detail(error: &str) -> String {
 fn claimed_generation_violations(
     reader: &BlobReader<'_>,
     base_ref: &str,
-    merge_base_sha: &str,
+    fork_commit: &str,
+    head_ref: Option<&str>,
 ) -> Vec<String> {
     let mut violations = Vec::new();
     for pin in GENERATION_PINS {
-        let head = match read_generation(reader, None, pin) {
+        let head = match read_generation(reader, head_ref, pin) {
             Ok(value) => value,
             Err(error) => {
                 violations.push(row_failure(pin, &error));
                 continue;
             }
         };
-        let fork = match read_generation(reader, Some(merge_base_sha), pin) {
+        let fork = match read_generation(reader, Some(fork_commit), pin) {
             Ok(value) => value,
             Err(error) => {
                 violations.push(row_failure(pin, &error));
@@ -447,32 +516,62 @@ fn git_show_text(root: &Path, reference: &str, path: &str) -> Result<String, Str
 /// override for the helper. Returns the base ref (for tip reads) and the
 /// merge-base SHA (for fork reads). Unresolvable is an actionable
 /// fail-closed failure, never a silent pass.
-fn resolve_base(root: &Path, explicit: Option<&str>) -> Result<(String, String), String> {
+fn resolve_base(root: &Path, explicit: Option<&str>) -> Result<ResolvedBase, String> {
     let candidates: Vec<String> = match explicit {
         Some(value) => vec![value.to_string()],
         None => vec!["origin/main".to_string(), "main".to_string()],
     };
     let candidate_refs: Vec<&str> = candidates.iter().map(String::as_str).collect();
     let merge_base = |candidate: &str| -> Result<String, String> {
-        let output = std::process::Command::new("git")
-            .current_dir(root)
-            .args(["merge-base", candidate, "HEAD"])
-            .output()
-            .map_err(|error| format!("git merge-base {candidate} HEAD failed to spawn: {error}"))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            let detail = if stderr.is_empty() {
-                format!("exit status {}", output.status)
-            } else {
-                stderr
-            };
-            return Err(detail);
-        }
-        String::from_utf8(output.stdout)
-            .map(|text| text.trim().to_string())
-            .map_err(|error| format!("non-UTF-8 merge-base output: {error}"))
+        git_merge_base_commit(root, candidate, "HEAD")
     };
-    resolve_base_with(&candidate_refs, &merge_base)
+    let (base_ref, head_merge_base) = resolve_base_with(&candidate_refs, &merge_base)?;
+    let base_tip_commit = git_rev_parse(root, &base_ref)?.ok_or_else(|| {
+        format!("base ref `{base_ref}` resolved for merge-base but not rev-parse")
+    })?;
+    Ok(ResolvedBase {
+        base_ref,
+        base_tip_commit,
+        head_merge_base,
+    })
+}
+
+/// `git rev-parse <object>`: `Ok(None)` when the object does not resolve
+/// (non-zero exit), `Err` on spawn or decode failure.
+fn git_rev_parse(root: &Path, object: &str) -> Result<Option<String>, String> {
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .args(["rev-parse", object])
+        .output()
+        .map_err(|error| format!("git rev-parse {object} failed to spawn: {error}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let text = String::from_utf8(output.stdout)
+        .map_err(|error| format!("git rev-parse {object} returned non-UTF-8 bytes: {error}"))?;
+    Ok(Some(text.trim().to_string()))
+}
+
+/// `git merge-base <left> <right>`, trimmed; a non-zero exit becomes the
+/// trimmed stderr (or the exit status) as the error detail.
+fn git_merge_base_commit(root: &Path, left: &str, right: &str) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .args(["merge-base", left, right])
+        .output()
+        .map_err(|error| format!("git merge-base {left} {right} failed to spawn: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("exit status {}", output.status)
+        } else {
+            stderr
+        };
+        return Err(detail);
+    }
+    String::from_utf8(output.stdout)
+        .map(|text| text.trim().to_string())
+        .map_err(|error| format!("non-UTF-8 merge-base output: {error}"))
 }
 
 fn resolve_base_with(
@@ -690,7 +789,7 @@ mod tests {
         let fork = synthetic_texts(|_family| "5.5".to_string());
         let tip = synthetic_texts(|_family| "5.5".to_string());
         let reader = three_ref_reader(&head, &fork, &tip);
-        let violations = claimed_generation_violations(&reader, "origin/main", "FORKSHA");
+        let violations = claimed_generation_violations(&reader, "origin/main", "FORKSHA", None);
         assert!(
             violations.is_empty(),
             "an untouched tree must pass: {violations:?}"
@@ -710,7 +809,7 @@ mod tests {
             Some("origin/main") => Err(format!("fixture base tip has no {path}")),
             other => inner(other, path),
         };
-        let violations = claimed_generation_violations(&reader, "origin/main", "FORKSHA");
+        let violations = claimed_generation_violations(&reader, "origin/main", "FORKSHA", None);
         assert!(
             violations.is_empty(),
             "an untouched constant must pass without a base-tip read: {violations:?}"
@@ -744,7 +843,7 @@ mod tests {
             }
         });
         let reader = three_ref_reader(&head, &fork, &tip);
-        let violations = claimed_generation_violations(&reader, "origin/main", "FORKSHA");
+        let violations = claimed_generation_violations(&reader, "origin/main", "FORKSHA", None);
         let violation = violations
             .first()
             .ok_or("a claimed == base-tip value must violate")?;
@@ -780,7 +879,7 @@ mod tests {
             }
         });
         let reader = three_ref_reader(&head, &fork, &tip);
-        let violations = claimed_generation_violations(&reader, "origin/main", "FORKSHA");
+        let violations = claimed_generation_violations(&reader, "origin/main", "FORKSHA", None);
         assert!(
             violations.is_empty(),
             "a fresh claim strictly above main's tip must pass: {violations:?}"
@@ -794,7 +893,7 @@ mod tests {
         let fork = synthetic_texts(|_family| "5.4".to_string());
         let tip = synthetic_texts(|_family| "9.9".to_string());
         let reader = three_ref_reader(&head, &fork, &tip);
-        let violations = claimed_generation_violations(&reader, "origin/main", "FORKSHA");
+        let violations = claimed_generation_violations(&reader, "origin/main", "FORKSHA", None);
         let violation = violations
             .first()
             .ok_or("a claim older than main's tip must violate")?;
@@ -815,7 +914,7 @@ mod tests {
         let fork = synthetic_texts(|_family| "5.5".to_string());
         let tip = synthetic_texts(|_family| "5.5".to_string());
         let reader = three_ref_reader(&texts, &fork, &tip);
-        let violations = claimed_generation_violations(&reader, "origin/main", "FORKSHA");
+        let violations = claimed_generation_violations(&reader, "origin/main", "FORKSHA", None);
         let violation = violations
             .first()
             .ok_or("a stale registry row must fail closed")?;
@@ -823,6 +922,189 @@ mod tests {
             violation.contains("python_file_fact_store") && violation.contains("failed closed"),
             "staleness must name the family and stay fail-closed: {violation}"
         );
+        Ok(())
+    }
+
+    /// The GitHub synthetic PR merge ref aliases fork and base tip when
+    /// evaluated at HEAD: a sibling that merged generation X plus this PR
+    /// claiming the same X merges cleanly to `head == fork == base_tip == X`,
+    /// and a HEAD-based evaluation reads that as NoClaim (review thread
+    /// PRRT_kwDOSiSx0c6zB6Ce). Merge-ref mode reads the claim from the PR
+    /// head tree instead, so the same values still fail as a collision.
+    #[test]
+    fn merge_ref_evaluation_keeps_the_sibling_collision_red() -> Result<(), String> {
+        let pr_head = synthetic_texts(|family| {
+            if family == "classified_seam_cache" {
+                "9.9".to_string()
+            } else {
+                "5.5".to_string()
+            }
+        });
+        let fork = synthetic_texts(|_family| "5.5".to_string());
+        let tip = synthetic_texts(|_family| "9.9".to_string());
+        let reader = |reference: Option<&str>, path: &str| -> Result<String, String> {
+            let texts = match reference {
+                None => {
+                    return Err(
+                        "merge-ref mode must read the PR head tree, not the worktree".to_string(),
+                    );
+                }
+                Some("PRHEADSHA") => &pr_head,
+                Some("FORKSHA") => &fork,
+                Some(_) => &tip,
+            };
+            texts
+                .get(path)
+                .cloned()
+                .ok_or_else(|| format!("fixture has no text for {path}"))
+        };
+        // head_ref = the PR head commit (the merge commit's second parent).
+        let violations =
+            claimed_generation_violations(&reader, "origin/main", "FORKSHA", Some("PRHEADSHA"));
+        let violation = violations
+            .first()
+            .ok_or("a sibling-claimed generation must stay red in merge-ref mode")?;
+        assert_eq!(
+            violations.len(),
+            1,
+            "exactly the claimed family: {violations:?}"
+        );
+        assert!(
+            violation.contains("classified_seam_cache") && violation.contains("collision class"),
+            "merge-ref mode must surface the collision: {violation}"
+        );
+        // Control: the aliased shape (head == fork == base_tip) is a NoClaim —
+        // exactly why merge-ref mode must not evaluate HEAD's own tree.
+        let aliased = synthetic_texts(|_family| "9.9".to_string());
+        let reader_aliased = three_ref_reader(&aliased, &aliased, &aliased);
+        let violations =
+            claimed_generation_violations(&reader_aliased, "origin/main", "FORKSHA", None);
+        assert!(
+            violations.is_empty(),
+            "the aliased shape documents the miss (NoClaim): {violations:?}"
+        );
+        Ok(())
+    }
+
+    /// End-to-end merge-ref regression over a real git fixture: build the
+    /// GitHub-shaped merge commit (first parent = base tip, second parent =
+    /// PR head), point `refs/remotes/origin/main` at the base tip, and run
+    /// the real resolution path. A sibling that merged 7.7 plus this PR
+    /// claiming the same 7.7 must fail as a collision, not pass as NoClaim.
+    #[test]
+    fn merge_ref_resolution_surfaces_sibling_collision_in_a_real_repo() -> Result<(), String> {
+        use super::{
+            EvaluationPoints, ResolvedBase, git_show_text, production_blob_reader, resolve_base,
+            resolve_evaluation_points,
+        };
+        let root = crate::tests::temp_dir("generation-pins-merge-ref");
+        let run = |args: &[&str]| -> Result<String, String> {
+            let output = std::process::Command::new("git")
+                .current_dir(&root)
+                .args(args)
+                .output()
+                .map_err(|error| format!("git {args:?} failed to spawn: {error}"))?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                return Err(format!("git {args:?} failed: {stderr}"));
+            }
+            String::from_utf8(output.stdout)
+                .map(|text| text.trim().to_string())
+                .map_err(|error| format!("git {args:?} returned non-UTF-8 bytes: {error}"))
+        };
+        let commit_with = |value: &str, message: &str| -> Result<String, String> {
+            // Rewrite the classified constant; every other row stays at 5.5.
+            for pin in GENERATION_PINS {
+                let path = root.join(pin.defining_file);
+                std::fs::create_dir_all(path.parent().ok_or("fixture path has no parent")?)
+                    .map_err(|error| format!("create {}: {error}", path.display()))?;
+                let value_for_row = if pin.family == "classified_seam_cache" {
+                    value
+                } else {
+                    "5.5"
+                };
+                std::fs::write(
+                    &path,
+                    format!(
+                        "pub(crate) const {}: &str = \"{value_for_row}\";\n",
+                        pin.constant
+                    ),
+                )
+                .map_err(|error| format!("write {}: {error}", path.display()))?;
+            }
+            run(&["add", "-A"])?;
+            run(&[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-m",
+                message,
+            ])?;
+            run(&["rev-parse", "HEAD"])
+        };
+        run(&["init"])?;
+        let base = commit_with("5.5", "base")?;
+        let _ = base;
+        run(&["checkout", "-b", "pr"])?;
+        let pr_head = commit_with("7.7", "pr claims 7.7")?;
+        run(&["checkout", "-"])?;
+        let main_tip = commit_with("7.7", "sibling merged 7.7")?;
+        run(&["update-ref", "refs/remotes/origin/main", &main_tip])?;
+        // GitHub's synthetic merge: first parent = base tip, second parent =
+        // PR head. Both sides made the identical change, so the merge tree is
+        // the base tip's tree.
+        let tree = run(&["rev-parse", &format!("{main_tip}^{{tree}}")])?;
+        let merge_commit = run(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit-tree",
+            &tree,
+            "-p",
+            &main_tip,
+            "-p",
+            &pr_head,
+            "-m",
+            "synthetic PR merge ref",
+        ])?;
+        run(&["reset", "--hard", &merge_commit])?;
+
+        let resolved: ResolvedBase = resolve_base(&root, None)?;
+        let points: EvaluationPoints = resolve_evaluation_points(&root, &resolved)?;
+        let head_ref = points
+            .head_ref
+            .clone()
+            .ok_or("the synthetic merge ref must select merge-ref mode")?;
+        let reader = production_blob_reader(&root);
+        let violations = claimed_generation_violations(
+            &reader,
+            &resolved.base_ref,
+            &points.fork_commit,
+            Some(&head_ref),
+        );
+        let violation = violations
+            .first()
+            .ok_or("the sibling collision must stay red on a synthetic merge ref")?;
+        assert_eq!(
+            violations.len(),
+            1,
+            "exactly the claimed family: {violations:?}"
+        );
+        assert!(
+            violation.contains("collision class") && violation.contains("7.7"),
+            "the collision must name the claimed value and class: {violation}"
+        );
+        // The fork is the PR's true fork (value 5.5), not the aliased base tip.
+        let fork_value =
+            git_show_text(&root, &points.fork_commit, GENERATION_PINS[0].defining_file)?;
+        assert!(
+            fork_value.contains("5.5"),
+            "fork must be the PR's original fork, not the aliased base tip: {fork_value}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 
