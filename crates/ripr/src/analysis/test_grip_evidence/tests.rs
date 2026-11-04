@@ -22717,6 +22717,33 @@ fn a_weak_read_of_a_written_field_is_the_missing_discriminator_only_when_placed(
             "",
         ),
         (
+            "an inline format capture {c}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c}\"), \"2\");"),
+            "",
+        ),
+        (
+            "an inline format capture {c:?}",
+            weak(
+                "assert!(c.count > 0);\n    assert_eq!(format!(\"{c:?}\"), \"Counter { count: 2, other: 0 }\");",
+            ),
+            "",
+        ),
+        (
+            "an inline format capture {c:#?}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c:#?}\"), \"x\");"),
+            "",
+        ),
+        (
+            "a reference alias of the binding",
+            weak("assert!(c.count > 0);\n    let r = &c;\n    assert_eq!(r.count, 2);"),
+            "",
+        ),
+        (
+            "a spaced field access",
+            weak("assert!(c.count > 0);\n    let n = c\n        . count;\n    assert_eq!(n, 2);"),
+            "",
+        ),
+        (
             "a move of the binding",
             weak("assert!(c.count > 0);\n    let moved = c;\n    drop(moved);"),
             "",

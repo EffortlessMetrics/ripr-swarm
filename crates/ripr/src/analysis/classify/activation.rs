@@ -4343,9 +4343,10 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
             }
             let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
             if names_field_access(&masked, path)
-                || weak_reads
-                    .iter()
-                    .any(|(_, binding)| names_whole_ident(&masked, binding))
+                || weak_reads.iter().any(|(_, binding)| {
+                    names_whole_ident(&masked, binding)
+                        || names_format_capture(&assertion.text, binding)
+                })
             {
                 return false;
             }
@@ -4408,7 +4409,7 @@ fn test_body_may_check_field_elsewhere(
                 }
             }
         }
-        names_whole_ident(&rest, binding)
+        names_whole_ident(&rest, binding) || names_format_capture(test.body.as_ref(), binding)
     })
 }
 
@@ -4425,15 +4426,28 @@ fn names_whole_ident(masked: &str, ident: &str) -> bool {
 }
 
 /// Whether `masked` accesses a field named `path` (`<expr>.path`, not a
-/// longer name).
+/// longer name); whitespace after the dot (`c. count`, a line break) counts.
 fn names_field_access(masked: &str, path: &str) -> bool {
     let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
-    let needle = format!(".{path}");
-    masked.match_indices(&needle).any(|(at, name)| {
-        !masked[at + name.len()..]
+    masked.match_indices('.').any(|(at, _)| {
+        let after = masked[at + 1..].trim_start();
+        after
+            .strip_prefix(path)
+            .is_some_and(|tail| !tail.chars().next().is_some_and(is_ident))
+    })
+}
+
+/// Whether the unmasked `raw` text captures `ident` inline in a format
+/// string (`{c}`, `{c:?}`, `{c:#?}`, `{c.field}`), which masking removes.
+/// Any `{` + `ident` + one of `}` `:` `.` counts, comments included (fail
+/// closed).
+fn names_format_capture(raw: &str, ident: &str) -> bool {
+    let needle = format!("{{{ident}");
+    raw.match_indices(&needle).any(|(at, name)| {
+        raw[at + name.len()..]
             .chars()
             .next()
-            .is_some_and(is_ident)
+            .is_some_and(|ch| matches!(ch, '}' | ':' | '.'))
     })
 }
 

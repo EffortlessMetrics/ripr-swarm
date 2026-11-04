@@ -578,6 +578,16 @@ fn a_weak_read_of_a_written_field_starts_the_repair_check_recommends() -> Result
             "",
         ),
         (
+            "writeformat",
+            "    assert!(c.count > 0);\n    assert_eq!(format!(\"{c:?}\"), \"Counter { count: 2, other: 0 }\");",
+            "",
+        ),
+        (
+            "writeformatplain",
+            "    assert!(c.count > 0);\n    assert_eq!(format!(\"{c:#?}\"), \"x\");",
+            "",
+        ),
+        (
             "writeifpanic",
             "    assert!(c.count > 0);\n    if c.count != 2 {\n        panic!(\"bad\");\n    }",
             "",
