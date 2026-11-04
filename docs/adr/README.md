@@ -31,3 +31,4 @@ PR. They should be short, dated, and focused on consequences.
 | [0022](0022-mcp-is-a-bounded-projection.md) | accepted | Keep MCP as a bounded projection over shared RIPR authority. |
 | [0023](0023-consumer-evidence-state.md) | accepted | Keep consumer gap state typed and separate from producer analysis outcome. |
 | [0024](0024-windows-probe-job-helper.md) | proposed | Replace the Windows PowerShell probe wrapper with a small native Job-object helper built on safe `process-wrap` (no `unsafe` exception). |
+| [0025](0025-go-parser-substrate.md) | proposed | Use `tree-sitter` with `tree-sitter-go` as the Go syntax substrate (exact spans, local error recovery). |
