@@ -199,9 +199,7 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
         for call in test.body_calls().filter(|call| call.name == owner.name) {
             let arguments = super::activation::call_arguments(&call.text, &call.name)?;
             let argument = arguments.get(slice_position)?.trim();
-            let Some(length) = slice_argument_byte_length(argument) else {
-                return None;
-            };
+            let length = slice_argument_byte_length(argument)?;
             if length == 0 {
                 return None;
             }
@@ -226,9 +224,7 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
         reference_files.insert(row.test_file.clone());
     }
     let references = reference_files.iter().try_fold(0usize, |count, path| {
-        let Some(facts) = context.index.files().get(path) else {
-            return None;
-        };
+        let facts = context.index.files().get(path)?;
         count.checked_add(owner_reference_count(&facts.source, &owner.name)?)
     });
     if let (Some(references), Some(expected)) = (references, admitted_calls.checked_add(1))
