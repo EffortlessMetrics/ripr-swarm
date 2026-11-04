@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Harden the review-disposition verifier before it is wired into admission: the readiness marker line admits only a closed vocabulary of real review-of-record tails (anything else refuses), retraction or blocker text refuses even inside fenced blocks, a trusted reviewer's negative comment refuses despite another reviewer's ready comment, any submitted review without `submitted_at` refuses, malformed review pages refuse with a refusal line, and 18 full real review bodies are fixtures (#8157, #12814).

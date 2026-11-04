@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0413"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0413-history-sync-exact-composition-qualification.md"
+status = "proposed"
+owner = "ci-admission"
+standalone_reason = "Issue #12437 adds an interim source-history import route with exact S/B/H/G qualification, privileged label authorization and mandatory product proof even for docs-only net diffs."

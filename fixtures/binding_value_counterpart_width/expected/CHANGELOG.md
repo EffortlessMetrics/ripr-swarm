@@ -74,3 +74,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — binding_value_counterpart_width (7)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless binding_value_counterpart_width --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

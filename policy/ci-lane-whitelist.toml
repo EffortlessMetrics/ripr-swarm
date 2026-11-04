@@ -360,6 +360,16 @@ artifact_families = []
 description = "Advisory Windows lane (#2393): runs the suite twice on windows-latest and summarizes per-test verdicts. Since #4938 a merge-ready subset job (windows-advisory-subset) also runs a fast gap_artifacts/Cargo-home-identity/cache-warning/VS Code install-lock (#9498)/Windows-clippy filter when `merge-ready` is applied to a PR (the explicit labeled event), advisory under the same contract. Test outcomes are advisory; missing or zero-subject evidence fails the job. Promotion to required is gated on #2430 and on stability across repeated runs."
 
 [[lane]]
+id = "windows-gate"
+posture = "advisory"
+workflow = ".github/workflows/windows-gate.yml"
+jobs = ["Ripr Windows Gate Result"]
+commands = ["cargo test -p ripr --lib lsp::gap_artifacts", "cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build", "cargo clippy -p ripr --all-targets -- -D warnings"]
+estimated_lem = 12
+artifact_families = []
+description = "Diff-scoped always-reporting Windows gate (#5088): ubuntu detection plus optional windows-latest subset for cfg(windows)-touching diffs. Posts Ripr Windows Gate Result on every PR push/sync; pass-as-skips when irrelevant. Command verdicts fail the Result when the subset runs; missing evidence fails the run job. Not yet a branch-protection required check."
+
+[[lane]]
 id = "macos-advisory"
 posture = "advisory"
 workflow = ".github/workflows/macos-advisory.yml"

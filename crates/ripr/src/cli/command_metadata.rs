@@ -211,6 +211,8 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         "cmd:agent.verify" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
         // An unknown `--seam-id` exits 3 with prose on stderr and empty stdout.
         "cmd:agent.start" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        // #12417: the unanchored discovery refusal is a typed decision here too.
+        "cmd:agent.status" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
         // Unknown-seam and the other named refusals exit 3; under `--json`
         // the refusal document is on stdout, prose on stderr. If that
         // document cannot be rendered or written, the exit is 2, not 3.
@@ -219,7 +221,9 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         }
         // #6305: the façade's selection/setup/limitation outcomes exit 3
         // with prose on stderr and an empty stdout, like the card family.
-        "cmd:repair" | "cmd:continue" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        // #12417: the unanchored discovery refusal joins both, and status
+        // spells it too instead of reporting state for a non-project.
+        "cmd:repair" | "cmd:continue" | "cmd:status" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
         "cmd:agent.verify-execute" => Some(EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT),
         "cmd:agent.repair" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:receipt.check" => Some(EXIT_RECEIPT_CHECK),
@@ -436,12 +440,13 @@ const METADATA: &[CommandMetadata] = &[
             default: Some("ripr.toml"),
             optional: &[
                 ".github/workflows/ripr.yml with --ci github",
+                ".gitlab-ci.yml with --ci gitlab",
                 ".mcp.json with --mcp",
                 "CLAUDE.md, AGENTS.md and .cursor/rules/ripr.mdc (marked ripr section) with --agents; .cursor/mcp.json with --agents cursor --mcp",
             ],
         },
         state_target: Some(
-            "ripr.toml, plus the repository's GitHub Actions workflow set with --ci, .mcp.json with --mcp, and a marked ripr section in the agent instruction files with --agents",
+            "ripr.toml, plus the repository's advisory CI preset with --ci, .mcp.json with --mcp, and a marked ripr section in the agent instruction files with --agents",
         ),
         accepts_json_flag: JsonFlag::None,
         writes_json_artifacts: true,
@@ -452,7 +457,7 @@ const METADATA: &[CommandMetadata] = &[
             "existing workflow kept when writing cannot finish",
         ],
         exit: EXIT_COMPLETED_OR_FAILED,
-        limitations: "writes ripr.toml by default and an advisory, non-blocking workflow only with --ci github; never edits source, gates merges, or contacts the network.",
+        limitations: "writes ripr.toml by default and an advisory, non-blocking CI preset only with --ci github or --ci gitlab; never edits source, gates merges, or contacts the network.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -1868,8 +1873,10 @@ const METADATA: &[CommandMetadata] = &[
         writes_json_artifacts: false,
         example: "ripr agent status --root .",
         next_routes: &["agent repair", "agent review-summary"],
-        stop_states: &[],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        stop_states: &[
+            "no workspace, package or Git repository anchors the current directory (unanchored_root): state is not reported for a non-project; run from inside the project or pass `--root <dir>`",
+        ],
+        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
         limitations: "reads workflow state; it does not resume or mutate the loop.",
         not_applicable_reason: None,
     },
@@ -1900,6 +1907,7 @@ const METADATA: &[CommandMetadata] = &[
             "an explicit item that names no seam (item_names_no_seam), several seams (item_names_several_seams), or a seam that is not repair-eligible (seam_not_repair_eligible) starts nothing",
             "a start held by an uncommitted focused test file (start_refused_uncommitted_target) or with no test route (no_test_route) starts nothing",
             "a bare `ripr repair` whose selector needs an explicit item (repair_needs_item) starts nothing",
+            "no workspace, package or Git repository anchors the current directory (unanchored_root) starts nothing; run from inside the project or pass `--root <dir>`",
         ],
         exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
         limitations: "records the before snapshot and packet for one subject; ripr never edits source files and never runs project verification from this command.",
@@ -1928,6 +1936,7 @@ const METADATA: &[CommandMetadata] = &[
             "an attempt still awaiting the focused test edit refuses with exit 3 and code awaiting_edit; retry the same attempt after editing",
             "an attempt that spent its after-phase retry budget refuses with exit 3 and code retry_budget_exhausted (terminal): start a fresh `ripr repair`",
             "no current attempt (no_current_attempt) or several (ambiguous_attempts) starts nothing",
+            "no workspace, package or Git repository anchors the current directory (unanchored_root) starts nothing; run from inside the project or pass `--root <dir>`",
             "an edit-cage violation exits 2 with code edit_cage_violation (attempt_stale or attempt_incomparable when HEAD moved or files cannot be compared): the attempt is terminal, start a fresh `ripr repair`",
         ],
         exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
@@ -1952,8 +1961,10 @@ const METADATA: &[CommandMetadata] = &[
         writes_json_artifacts: false,
         example: "ripr status --root .",
         next_routes: &["repair", "continue"],
-        stop_states: &[],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        stop_states: &[
+            "no workspace, package or Git repository anchors the current directory (unanchored_root): state is not reported for a non-project; run from inside the project or pass `--root <dir>`",
+        ],
+        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
         limitations: "reads workflow state; it does not resume or mutate the loop.",
         not_applicable_reason: None,
     },

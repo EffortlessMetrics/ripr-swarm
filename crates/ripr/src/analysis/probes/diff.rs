@@ -100,6 +100,16 @@ pub(crate) fn probes_for_file_with_relations(
         .map(|facts| prose_lines(&facts.source))
         .unwrap_or_default();
     let removed_prose = old_source.map(prose_lines).unwrap_or_default();
+    let added_position = find_file_facts(index, &changed.path)
+        .map(|facts| position_macro_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_position = old_source.map(position_macro_lines).unwrap_or_default();
+    let added_string_continuations = find_file_facts(index, &changed.path)
+        .map(|facts| crate::analysis::syntax::string_literal_continuation_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_string_continuations = old_source
+        .map(crate::analysis::syntax::string_literal_continuation_lines)
+        .unwrap_or_default();
     // RIPR-SPEC-0368: contract attributes and ghost/logic items are read by a
     // verifier, never by a test; the run discloses them as a typed limitation
     // instead of probing them.
@@ -133,10 +143,21 @@ pub(crate) fn probes_for_file_with_relations(
         else {
             continue;
         };
-        if !added_prose.contains(&new_side_line)
+        let added_text = &changed.added_lines[added_index].text;
+        let removed_text = &removed.text;
+        let respelling = !added_prose.contains(&new_side_line)
             && !removed_prose.contains(&removed.line)
-            && is_behavior_neutral_respelling(&changed.added_lines[added_index].text, &removed.text)
-        {
+            && is_behavior_neutral_respelling(added_text, removed_text);
+        // #9166: trailing `//` and char literals sit in `prose_lines`, but
+        // rustfmt spacing there is still behavior-neutral when normalization
+        // agrees.
+        let whitespace_only =
+            is_whitespace_or_comment_spacing_only_change(added_text, removed_text)
+                && !added_position.contains(&new_side_line)
+                && !removed_position.contains(&removed.line)
+                && !added_string_continuations.contains(&new_side_line)
+                && !removed_string_continuations.contains(&removed.line);
+        if respelling || whitespace_only {
             skip_added[added_index] = true;
             skip_removed[removed_index] = true;
         }
@@ -194,12 +215,6 @@ pub(crate) fn probes_for_file_with_relations(
         .unwrap_or_default();
     let removed_block_comments = old_source
         .map(crate::analysis::syntax::block_comment_only_lines)
-        .unwrap_or_default();
-    let added_string_continuations = find_file_facts(index, &changed.path)
-        .map(|facts| crate::analysis::syntax::string_literal_continuation_lines(&facts.source))
-        .unwrap_or_default();
-    let removed_string_continuations = old_source
-        .map(crate::analysis::syntax::string_literal_continuation_lines)
         .unwrap_or_default();
     // #10089: the entries of a multi-line `#![allow(..)]`/`#[derive(..)]` sit
     // on lines that do not start with `#`, but they are attribute text, like
@@ -1038,6 +1053,23 @@ fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
         && neutral_spelling(after) == neutral_spelling(before)
 }
 
+/// Whether `after` differs from `before` only in runs of formatting whitespace
+/// or in spacing before a trailing line comment, so the active tokens are
+/// unchanged (#9166). Uses the same Rust expression normalization as finding
+/// ids. Fails closed when indentation changes, the texts are identical, or
+/// either side sits on a position-observing macro line or a multi-line string
+/// literal continuation (the caller's guards).
+fn is_whitespace_or_comment_spacing_only_change(after: &str, before: &str) -> bool {
+    if after == before {
+        return false;
+    }
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    if after.get(..indent(after)) != before.get(..indent(before)) {
+        return false;
+    }
+    normalize_rust_expression(after) == normalize_rust_expression(before)
+}
+
 /// Whether `after` is `before` with integer literals respelled to the same
 /// value (`Some(0x15)` for `Some(21)`, `1_000` for `1000`), the literals'
 /// suffixes unchanged and everything around them the same. Text holding a
@@ -1234,7 +1266,9 @@ fn is_item_level_closing_brace(index: &RustIndex, path: &Path, line: usize, text
     let masked = mask_comments_and_strings(text);
     let body = masked.trim().trim_end_matches([';', ',']).trim_end();
     !body.is_empty()
-        && body.chars().all(|ch| ch == '}' || ch.is_whitespace())
+        && body
+            .chars()
+            .all(|ch| matches!(ch, '}' | ')' | ']') || ch.is_whitespace())
         && find_file_facts(index, path).is_some_and(|facts| !facts.functions.is_empty())
         && find_owner_function(index, path, line).is_none()
 }
@@ -1769,6 +1803,10 @@ fn changed_line_is_test_evidence(
     test_module_ranges: &[InlineModuleRange],
 ) -> bool {
     if let Some(function) = find_owner_function(index, path, line) {
+        // Stimulus changes must remain visible as unknown findings (#11545).
+        if function.source_role == crate::analysis::facts::FunctionSourceRole::TestInputGenerator {
+            return false;
+        }
         // Ownership is line-granular: a production fn and a `#[test]` fn
         // opening on one physical line both own it, and the later-listed
         // one wins `find_owner_function`. Without columns the line cannot be
@@ -1794,6 +1832,8 @@ fn changed_line_is_test_evidence(
             && find_file_facts(index, path).is_some_and(|facts| {
                 facts.functions.iter().any(|outer| {
                     outer.source_role.is_evidence_role()
+                        && outer.source_role
+                            != crate::analysis::facts::FunctionSourceRole::TestInputGenerator
                         && function.start_line < outer.end_line
                         && function.end_line <= outer.end_line
                         && (outer.start_line < function.start_line
@@ -2098,6 +2138,18 @@ fn build_probe(
     after: Option<String>,
 ) -> Probe {
     let text = changed_line.text.trim();
+    // Only candidate-side generator subjects have established role identity.
+    // A deleted production body must not borrow its replacement's role.
+    let family = if after.is_some()
+        && crate::analysis::facts::is_generator_subject(
+            context.index,
+            &context.changed.path,
+            changed_line.new_side_line,
+        ) {
+        ProbeFamily::StaticUnknown
+    } else {
+        family
+    };
     // #9080: no value or effect assertion observes a memory-ordering swap, so
     // a call whose only edit is an atomic `Ordering` variant has no honest
     // value/effect family; it stays an explicit unknown.
@@ -3017,10 +3069,13 @@ mod tests {
             "control: the body line stays: {lines:?}"
         );
         assert!(!lines.contains(&9), "{lines:?}");
-        for closer in ["}", "};", "},", "} // end"] {
+        for closer in ["}", "};", "},", "} // end", "})", "],", "];"] {
             let lines = probe_lines(&trait_index, &[(9, closer)]);
             assert!(lines.is_empty(), "`{closer}`: {lines:?}");
         }
+        // A closer that is part of a changed expression line is not delimiter-only.
+        let lines = probe_lines(&trait_index, &[(9, "    foo(x) }")]);
+        assert!(lines.contains(&9), "expression closer: {lines:?}");
 
         // The same closer inside a function body keeps its probe (#4216): it
         // can end a branch that moves existing code.
@@ -3913,6 +3968,58 @@ mod tests {
             "",
         );
         assert!(!changed.is_empty());
+    }
+
+    /// #9166: rustfmt spacing and trailing-comment spacing seed no probes; token
+    /// merges and literal whitespace stay probed.
+    #[test]
+    fn whitespace_only_line_edits_seed_no_probe() {
+        for (added, removed) in [
+            (
+                "self.0 as usize  ==  filter_as_usize(other.0)",
+                "self.0 as usize == filter_as_usize(other.0)",
+            ),
+            (
+                "'\\x1b' => self.inner.write_str(\"\\\\x1b\")?, // ESC",
+                "'\\x1b' => self.inner.write_str(\"\\\\x1b\")?,  // ESC",
+            ),
+        ] {
+            assert!(
+                is_whitespace_or_comment_spacing_only_change(added, removed),
+                "{added} vs {removed}"
+            );
+        }
+        assert!(!is_whitespace_or_comment_spacing_only_change(
+            "let x = a && b;",
+            "let x = a & & b;",
+        ));
+        assert!(!is_whitespace_or_comment_spacing_only_change(
+            r#"let x = "a b";"#,
+            r#"let x = "a  b";"#,
+        ));
+        let source = "match c {\n    'a' => f()?, // ESC\n    _ => {}\n}\n";
+        let probes = block_probes(
+            source,
+            &[(2, "    'a' => f()?, // ESC")],
+            &[(2, 2, "    'a' => f()?,  // ESC")],
+        );
+        assert!(probes.is_empty(), "{probes:?}");
+        let column_shift = block_probes(
+            "fn f() {\n    let c = column!();\n}\n",
+            &[(2, "    let c = column!();")],
+            &[(2, 2, "    let c  = column!();")],
+        );
+        assert!(
+            !column_shift.is_empty(),
+            "column!() column move keeps its probe: {column_shift:?}"
+        );
+        let multiline = "fn f() -> String {\n    format!(\"a\n        b c\n        end\")\n}\n";
+        let string_interior =
+            block_probes(multiline, &[(3, "        b c")], &[(3, 3, "        b  c")]);
+        assert!(
+            !string_interior.is_empty(),
+            "multiline literal interior whitespace keeps its probe: {string_interior:?}"
+        );
     }
 
     #[test]

@@ -87,6 +87,9 @@ labels:
   - name: status/needs-work
     color: "FBCA04"
     description: Actionable and not started. Do not use for partially landed work.
+  - name: status/needs-reverify
+    color: "FBCA04"
+    description: Cited repo paths changed on main since filing; re-verify path:line evidence.
   - name: status/mis-scoped
     color: "5319E7"
     description: Re-scope, close, or supersede — wrong scope or stale.

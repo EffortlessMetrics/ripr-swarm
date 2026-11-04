@@ -165,6 +165,13 @@ pub struct RustIndex {
     /// Complete-source syntax and lexical answers, owned by immutable source
     /// snapshots rather than by individual owners or probe computations.
     pub(crate) source_syntax: crate::analysis::syntax::SourceSyntaxMemos,
+    /// The committed `.snap` files under the workspace root, read on first
+    /// use (#12189). Not serialized: a rebuilt or deserialized index reads
+    /// the listing again.
+    pub(crate) snapshot_listing: crate::analysis::rust_snapshot_files::SnapshotListingCell,
+    /// `assert_*snapshot` macros any workspace file defines, read on first
+    /// use (#12720). Not serialized, like the listing.
+    pub(crate) local_snapshot_macros: crate::analysis::rust_snapshot_files::LocalSnapshotMacrosCell,
     /// The display name and synthetic source of each registered doc
     /// example test, keyed by (file, start line) (#6648). A doctest is its
     /// own crate: its scopes come from this text, not from the file that
@@ -178,6 +185,7 @@ pub struct RustIndex {
         BTreeMap<(PathBuf, usize, String), super::proptest::ProptestMetadataFailure>,
     /// Transient VP3R resource edges; rebuilt during index construction (#5171).
     pub(crate) resource_dependencies: super::resource_dependencies::ResourceDependencyFacts,
+    pub(super) bolero_receipts: BTreeMap<(PathBuf, usize, String), super::bolero::BoleroReceipt>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -733,6 +741,8 @@ impl RustIndex {
         self.proptest_receipts
             .retain(|(file, _, _), _| file.as_path() != path);
         self.proptest_metadata_failures
+            .retain(|(file, _, _), _| file.as_path() != path);
+        self.bolero_receipts
             .retain(|(file, _, _), _| file.as_path() != path);
         // Positions follow the retained orders; rebuild them now so slot
         // lookups never answer from the pre-removal layout.

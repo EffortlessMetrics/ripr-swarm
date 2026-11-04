@@ -8,7 +8,7 @@ use super::model::{RustIndex, WorkspaceRootAuthority};
 use crate::analysis::cancellation::{self, WorkerError};
 use crate::analysis::seam_cache::{
     CacheLoad, FileFactCacheStats, FilesContentHashBuilder, KnownFilePaths, RepoFileFactCache,
-    RepoFileFactCacheKey,
+    RepoFileFactCacheKey, claim_base_untrusted_reason_emission,
 };
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -163,12 +163,22 @@ pub(crate) fn build_index_from_paths_with_cache(
     paths: &[PathBuf],
     attribution: MissAttribution,
 ) -> Result<CachedRustIndex, String> {
+    build_index_from_paths_with_cache_and_consumed(root, paths, attribution, None)
+}
+
+pub(crate) fn build_index_from_paths_with_cache_and_consumed(
+    root: &Path,
+    paths: &[PathBuf],
+    attribution: MissAttribution,
+    consumed: Option<&mut crate::analysis::consumed_source::ConsumedRustSources>,
+) -> Result<CachedRustIndex, String> {
     build_index_from_paths_with_cache_and_adapters(
         root,
         paths,
         &RaRustSyntaxAdapter,
         &LexicalRustSyntaxAdapter,
         attribution,
+        consumed,
     )
 }
 
@@ -178,13 +188,14 @@ fn build_index_from_paths_with_cache_and_adapters(
     adapter: &(dyn RustSyntaxAdapter + Send + Sync),
     fallback: &(dyn RustSyntaxAdapter + Send + Sync),
     attribution: MissAttribution,
+    mut consumed: Option<&mut crate::analysis::consumed_source::ConsumedRustSources>,
 ) -> Result<CachedRustIndex, String> {
     let cache = RepoFileFactCache::at(root);
     // Each batch is read only when the shared loop asks for it, so the
     // previous batch's bytes are dropped before the next read.
     let batches = paths
         .chunks(PARSE_BATCH_FILES)
-        .map(|chunk| StreamedBatch::read(root, chunk));
+        .map(|chunk| StreamedBatch::read(root, chunk, consumed.as_deref_mut()));
     build_index_with_file_fact_cache_batches(root, batches, adapter, fallback, &cache, || {
         match attribution {
             MissAttribution::Named => cache.known_file_paths(),
@@ -222,7 +233,11 @@ struct StreamedBatch {
 }
 
 impl StreamedBatch {
-    fn read(root: &Path, chunk: &[PathBuf]) -> Result<Self, String> {
+    fn read(
+        root: &Path,
+        chunk: &[PathBuf],
+        mut consumed: Option<&mut crate::analysis::consumed_source::ConsumedRustSources>,
+    ) -> Result<Self, String> {
         let mut files = Vec::with_capacity(chunk.len());
         #[cfg(test)]
         let mut charge = streamed_source_bytes::Charge::default();
@@ -230,6 +245,9 @@ impl StreamedBatch {
             cancellation::checkpoint()?;
             let bytes = std::fs::read(root.join(file))
                 .map_err(|err| format!("read {} failed: {err}", file.display()))?;
+            if let Some(consumed) = consumed.as_mut() {
+                consumed.record(file, Some(&bytes));
+            }
             #[cfg(test)]
             charge.add(bytes.len());
             files.push((file.clone(), bytes));
@@ -323,6 +341,13 @@ struct CacheAccounting {
     // directory makes every lookup fail the same way, and a line per file
     // buried the analysis output under hundreds of repeats (#4888).
     first_corrupt_reason: Option<String>,
+}
+
+fn batch_end_error(stats: &FileFactCacheStats, error: String) -> String {
+    stats
+        .store_failure_diagnostic()
+        .map(|store| format!("{store}; batch ended with: {error}"))
+        .unwrap_or(error)
 }
 
 /// Admit, parse, store, and insert one `PARSE_BATCH_FILES` slice at a time
@@ -468,7 +493,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
                         }
                     }
                 }
-                return Err(error);
+                return Err(batch_end_error(stats, error));
             }
             for (position, result) in results {
                 parsed[position] = Some(result.map_err(WorkerError::into_message)?);
@@ -523,7 +548,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
             }
         }
         if let Some(error) = abort {
-            return Err(error);
+            return Err(batch_end_error(stats, error));
         }
     }
     Ok((index, content_hash.finish()))
@@ -619,7 +644,14 @@ pub(crate) mod streamed_source_bytes {
 
 fn emit_corrupt_entries_warning(count: usize, first_reason: Option<&str>) {
     if let Some(reason) = first_reason {
-        eprintln!("{}", corrupt_entries_warning(count, reason));
+        // #12432: the run-stable base-class reasons (tracked cache dir, base
+        // Git could not confirm) are byte-identical in every build of a run,
+        // so each distinct base reports once instead of once per build;
+        // ordinary per-entry reasons never reach the guard and keep the
+        // per-build count+first-reason line.
+        if claim_base_untrusted_reason_emission(reason) {
+            eprintln!("{}", corrupt_entries_warning(count, reason));
+        }
     }
 }
 
@@ -964,6 +996,22 @@ mod tests {
             many.ends_with("first: (read failed: Not a directory)"),
             "{many}"
         );
+    }
+
+    #[test]
+    fn batch_end_error_prefers_store_failure_detail() {
+        use crate::analysis::seam_cache::{FileFactStoreError, FileFactStoreStage};
+        let mut stats = FileFactCacheStats::default();
+        stats.record_store_failure(
+            PathBuf::from("src/a.rs"),
+            FileFactStoreError {
+                stage: FileFactStoreStage::Write,
+                message: "disk full".to_string(),
+            },
+        );
+        let message = super::batch_end_error(&stats, "analysis cancelled: Cancelled".to_string());
+        assert!(message.contains("disk full"), "{message}");
+        assert!(message.contains("analysis cancelled"), "{message}");
     }
 
     use super::*;

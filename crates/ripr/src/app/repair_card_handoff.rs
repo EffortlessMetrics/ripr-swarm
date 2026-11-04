@@ -24,12 +24,14 @@ use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::RepoSeam;
 use crate::analysis::repair_route::{
-    RepairRouteReadiness, RepairTargetSelection, repair_packet_eligibility,
+    RepairRouteReadiness, RepairTargetSelection, collection_contents_check_suggestion,
+    repair_packet_eligibility,
 };
 use crate::config::RiprConfig;
 use crate::domain::{
-    AgentCardRefusalKind, CardCurrentnessGoal, CommandSpec, DiagnosticWitness, EditCageGoal,
-    FindingCanonicalGap, FixInstructionSummary, FocusedExecutionGoal, MutationConfirmationGoal,
+    AgentCardRefusalKind, CanonicalItemId, CardCurrentnessGoal, CommandSpec, DiagnosticWitness,
+    EditCageGoal, FindingCanonicalGap, FixInstructionIdentityContext, FixInstructionSummary,
+    FocusedExecutionGoal, InstructionSnapshotCurrentness, MutationConfirmationGoal,
     RepairCardBudget, RepairCardDetailFamily, RepairCardDetailState, RepairCardDoneWhen,
     RepairCardSnapshot, RepairCardSnapshotCurrentness, RepairCardSubject, RepairCardV1,
     StaticMovementGoal, repair_card_route_exposable,
@@ -463,11 +465,16 @@ pub(crate) fn assemble_repair_card(
     // the shared seam producer. The card reads that same producer so a repair
     // that prints an assertion shape never also says there is none.
     let seam_assertion = suggested_assertion_for_classified_seam(entry);
+    // #12711: a route that proposes a pushed collection's contents check
+    // names that check, the one the stub writes, instead of "none".
+    let seam_assertion =
+        seam_assertion.or_else(|| collection_contents_check_suggestion(entry, readiness));
     let mut instruction = facts
         .witness
         .map(FixInstructionSummary::from_witness)
         .unwrap_or_else(FixInstructionSummary::unavailable);
     instruction.has_suggested_assertion |= seam_assertion.is_some();
+    attach_fix_instruction_identities(&mut instruction, facts);
 
     // Edit cage: the exact derivation the seam packet states (#4330), so the
     // card cannot promise a different edit surface than the attempt enforces.
@@ -624,6 +631,29 @@ pub(crate) fn assemble_repair_card(
         budget: RepairCardBudget::default(),
     })
     .map_err(AgentCardError::budget_overflow)
+}
+
+fn attach_fix_instruction_identities(
+    instruction: &mut FixInstructionSummary,
+    facts: &SeamCardFacts<'_>,
+) {
+    let canonical_item = facts
+        .finding_gap_id
+        .and_then(|gap_id| CanonicalItemId::from_canonical_gap_id(gap_id).ok());
+    let snapshot_currentness = match facts.currentness {
+        RepairCardSnapshotCurrentness::Current => InstructionSnapshotCurrentness::Current,
+        RepairCardSnapshotCurrentness::AcceptedDirtyDraft => {
+            InstructionSnapshotCurrentness::AcceptedDirtyDraft
+        }
+    };
+    let context = FixInstructionIdentityContext {
+        canonical_item: canonical_item.as_ref(),
+        workspace_identity: Some(facts.workspace_identity),
+        repository_head: Some(facts.repository_head),
+        snapshot_currentness: Some(snapshot_currentness),
+        witness: facts.witness,
+    };
+    instruction.attach_identities(&context);
 }
 
 /// Whether the rendered packet envelope actually surfaces this seam. The
@@ -1509,6 +1539,34 @@ mod tests {
     }
 
     #[test]
+    fn card_names_the_contents_check_only_for_a_ready_headline_push() -> Result<(), String> {
+        // #12711: the card (the repair brief and hover read it) suggests the
+        // contents check for a ready push, and not once the class parks it.
+        const SUGGESTION: &str = "an exact check of the full contents of `buf`";
+        for (class, wanted) in [
+            (SeamGripClass::WeaklyGripped, true),
+            (SeamGripClass::Suppressed, false),
+            (SeamGripClass::Intentional, false),
+            (SeamGripClass::StronglyGripped, false),
+        ] {
+            let entry = crate::analysis::repair_route::marked_push_seam_for_tests(class);
+            let packet = packet_for(&entry);
+            let card = assemble_repair_card(&facts_for(&entry, &packet))?;
+            let named = card
+                .assertion_goal_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains(SUGGESTION));
+            if named != wanted {
+                return Err(format!(
+                    "{class:?}: card names the contents check {named}, want {wanted}: {:?}",
+                    card.assertion_goal_detail
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn card_assertion_matches_the_seam_producer_when_the_witness_has_none() -> Result<(), String> {
         let entry = own_file_inline_entry();
         let packet = packet_for(&entry);
@@ -1794,7 +1852,7 @@ mod tests {
             },
             confidence: 0.5,
             evidence: Vec::new(),
-            missing: vec!["Missing discriminator value: amount == discount_threshold".to_string()],
+            missing: vec!["Missing check value: amount == discount_threshold".to_string()],
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: Vec::new(),
