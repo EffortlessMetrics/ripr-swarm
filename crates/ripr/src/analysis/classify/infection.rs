@@ -1039,16 +1039,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     }
 }
 
-/// The literals that can be the changed predicate's boundary value. A
-/// comparison operand that computes its value (`CURRENT - 2`, `2 + 2`)
-/// does not compare against the literal it contains, so its literals are
-/// not the boundary: `CURRENT - 2 > version` never compares against `2`
-/// (#6671). Such an operand contributes nothing and the boundary stays
-/// unknown unless another operand spells it. A compound predicate
-/// (`&&`/`||`) is cut into its top-level conditions and each comparison
-/// is read the same way; a condition that is not a comparison keeps its
-/// literals. A predicate with no computed comparison operand anywhere
-/// keeps every literal it contains.
+/// Resolve literal boundaries from live, non-computed local initializers.
 fn local_initializer_boundary_literals(
     probe: &Probe,
     owner: Option<&FunctionSummary>,
@@ -1059,6 +1050,7 @@ fn local_initializer_boundary_literals(
     for operand in [left, right] {
         if let Some(initializer) =
             super::activation::live_local_initializer(owner, operand.trim(), probe.location.line)
+            && !is_computed_value_expression(&initializer)
         {
             literals.extend(boundary_literals(&initializer));
         }
@@ -1068,6 +1060,16 @@ fn local_initializer_boundary_literals(
     (!literals.is_empty()).then_some(literals)
 }
 
+/// The literals that can be the changed predicate's boundary value. A
+/// comparison operand that computes its value (`CURRENT - 2`, `2 + 2`)
+/// does not compare against the literal it contains, so its literals are
+/// not the boundary: `CURRENT - 2 > version` never compares against `2`
+/// (#6671). Such an operand contributes nothing and the boundary stays
+/// unknown unless another operand spells it. A compound predicate
+/// (`&&`/`||`) is cut into its top-level conditions and each comparison
+/// is read the same way; a condition that is not a comparison keeps its
+/// literals. A predicate with no computed comparison operand anywhere
+/// keeps every literal it contains.
 fn boundary_literals(expression: &str) -> Vec<String> {
     let mut any_computed = false;
     let mut literals = Vec::new();
@@ -1604,6 +1606,28 @@ mod tests {
         let owner = "fn pick(val: u32) -> bool {\n    let surrogate_start = 0xd800u32;\n    surrogate_start < val\n}\n";
         let evidence = local_predicate_evidence(owner, "surrogate_start < val", 3, "0xd800u32");
         assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+    }
+
+    #[test]
+    fn computed_local_does_not_contribute_its_operand_literals_as_boundaries() {
+        let owner = "fn pick(low: u32, range: u32) -> bool {\n    let val = draw(0..=range) + low;\n    let surrogate_start = 0xd800u32;\n    val > surrogate_start\n}\n";
+        let evidence = local_predicate_evidence(owner, "val > surrogate_start", 4, "0");
+        assert_ne!(evidence.state, StageState::Yes, "{}", evidence.summary);
+        assert!(evidence.summary.contains("0xd800"), "{}", evidence.summary);
+        assert!(
+            !evidence.summary.contains("boundary [0]"),
+            "{}",
+            evidence.summary
+        );
+        let reversed = local_predicate_evidence(owner, "surrogate_start < val", 4, "0");
+        assert_ne!(reversed.state, StageState::Yes, "{}", reversed.summary);
+        assert!(reversed.summary.contains("0xd800"), "{}", reversed.summary);
+        let positive = local_predicate_evidence(owner, "val > surrogate_start", 4, "0xd800u32");
+        assert_eq!(positive.state, StageState::Yes, "{}", positive.summary);
+        let only_computed =
+            "fn pick(low: u32) -> bool {\n    let val = low + 1;\n    val > other\n}\n";
+        let unknown = local_predicate_evidence(only_computed, "val > other", 3, "1");
+        assert_eq!(unknown.state, StageState::Unknown, "{}", unknown.summary);
     }
 
     #[test]
