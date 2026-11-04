@@ -176,6 +176,10 @@ pub(super) fn err_constructor_feeds_value_adapter(line: &str) -> bool {
 /// True when an `Err(..)` on the line must not count as an exact error-variant
 /// pin: disallowed enclosing calls, a test-built `Some`/`Ok` wrapper followed by
 /// a method call, or an `Err(..)` read through `.unwrap_err()` / `.expect_err`.
+///
+/// Any `Err(` on the line decides: `assert_eq!(parse("a").or(Err(X)), Err(Y))`
+/// loses the right-hand pin because of the left-hand wrapper. That is the
+/// conservative direction and matches the earlier denylist.
 fn err_constructor_is_not_directly_credited(line: &str) -> bool {
     let masked = strip_turbofish(&mask_comments_and_strings(line));
     masked.match_indices("Err").any(|(index, _)| {
@@ -212,12 +216,23 @@ fn err_constructor_enclosing_chain_is_allowed(masked: &str, err_index: usize) ->
             if is_matches_family(callee) && has_top_level_comma(&masked[open_paren + 1..scan_end]) {
                 return true;
             }
+            // The assertion macro is where the walk ends: calls that wrap the
+            // whole assertion (`for_each(|c| assert_eq!(..))`, `block_on(async {
+            // assert_eq!(..) })`) never touch the `Err(..)` value, so only the
+            // frames between the `Err` and this macro are judged (#12474).
+            if is_assertion_macro(callee) {
+                return true;
+            }
         } else if !is_allowed_err_enclosing_callee(callee) {
             return false;
         }
         scan_end = open_paren;
     }
     true
+}
+
+fn is_assertion_macro(callee: &str) -> bool {
+    matches!(callee, "assert_eq" | "assert" | "assert_matches")
 }
 
 fn is_matches_family(callee: &str) -> bool {
@@ -2921,6 +2936,34 @@ mod issue_12359_tests {
             r#"assert_eq!(Result::eq(&r, &Err(E::Bad)), true);"#,
         ] {
             assert!(is_exact_error_variant_assertion(line), "{line}");
+        }
+    }
+
+    /// Calls that wrap the whole assertion never touch the `Err(..)` value, so
+    /// the walk ends at the assertion macro (#12474 review R1).
+    #[test]
+    fn a_call_wrapping_the_whole_assertion_keeps_credit() {
+        for line in [
+            r#"cases.iter().for_each(|c| assert_eq!(parse(c), Err(E::Bad)));"#,
+            r#"rt.block_on(async { assert_eq!(parse("x").await, Err(E::Bad)); });"#,
+            r#"with_ctx(|ctx| assert_eq!(parse(ctx), Err(E::Bad)));"#,
+            r#"std::thread::spawn(|| assert_eq!(parse("x"), Err(E::Bad)));"#,
+            r#"check(|| { assert_eq!(parse("x"), Err(E::Bad)) });"#,
+            r#"Box::new(|| assert_eq!(parse("x"), Err(E::Bad)))();"#,
+        ] {
+            assert!(is_exact_error_variant_assertion(line), "{line}");
+        }
+    }
+
+    /// A wrapper between the `Err(..)` and the macro still refuses, even when
+    /// the assertion itself sits inside another call.
+    #[test]
+    fn a_wrapper_inside_the_assertion_still_refuses_when_the_assertion_is_wrapped() {
+        for line in [
+            r#"cases.iter().for_each(|c| assert_eq!(id(Err(E::Bad)).unwrap_err(), E::Bad));"#,
+            r#"check(|| assert_eq!(parse("x").or(Err(E::Bad)).unwrap_err(), E::Bad));"#,
+        ] {
+            assert!(!is_exact_error_variant_assertion(line), "{line}");
         }
     }
 
