@@ -1,0 +1,93 @@
+# Retained, checked-in snapshot of the GitHub issues that describe intermittent or
+# load-dependent tests. The flake-ledger gate joins it against policy/flaky-tests.toml
+# without the network: every open `flaky = true` issue needs a ledger row naming it, and
+# a ledger row naming an issue must agree with the issue state recorded here.
+# Refresh by hand when an issue is opened or closed; the gate checks the ledger against
+# this file, not against live GitHub. `flaky = true` is required whenever the title
+# contains "flak".
+
+captured = "2026-11-04"
+
+[[issue]]
+number = 12791
+state = "open"
+flaky = true
+title = "ci: workflow_publish_interruption after_terminated_at_terminal_retention_stays_unknown failed"
+
+[[issue]]
+number = 11299
+state = "open"
+flaky = true
+title = "ci: unrelated failures seen on PR #11291 (vscode hover timeouts, SIGINT chaos test, TS partial-summary)"
+
+[[issue]]
+number = 11238
+state = "open"
+flaky = true
+title = "Flaky scale test: twin_check_stays_fast_on_deep_chains_that_share_a_start exceeds 3x growth on hosted runner"
+
+[[issue]]
+number = 11623
+state = "open"
+flaky = true
+title = "Flaky growth guard: added_run_start_on_a_long_run_is_bounded"
+
+[[issue]]
+number = 10483
+state = "open"
+flaky = true
+title = "typescript: binding_names_skip_defaults_and_keys uses a 2 s wall-clock bound and fails unrelated PRs"
+
+[[issue]]
+number = 10593
+state = "open"
+flaky = true
+title = "repo-policy rust_only_routing: timeout_terminates_shell_descendants gates on elapsed windows"
+
+[[issue]]
+number = 12245
+state = "open"
+flaky = true
+title = "Windows policy_checker_facade test has ~110 s margin under its 300 s child cap"
+
+[[issue]]
+number = 10318
+state = "open"
+flaky = true
+title = "test(cli): in-process SIGINT raise in cli::interrupt tests can kill the whole lib test binary"
+
+[[issue]]
+number = 10865
+state = "open"
+flaky = true
+title = "Windows: help_workspace_still_rejects_changed_contents fails with \"help callback did not run\""
+
+[[issue]]
+number = 12045
+state = "open"
+flaky = true
+title = "Windows: policy_all leaf-error comparison fails intermittently (check-executable-files)"
+
+[[issue]]
+number = 3096
+state = "open"
+flaky = true
+title = "test(xtask): capture_output_with_timeout_terminates_pipe_inheriting_descendants fails reproducibly on Windows"
+
+[[issue]]
+number = 3742
+state = "open"
+flaky = true
+title = "test(ripr): de-flake the parallel-build test family"
+
+[[issue]]
+number = 12805
+state = "open"
+flaky = true
+title = "Windows flake: issued_history tests intermittently fail with ERROR_ALREADY_EXISTS (os error 183)"
+
+[[issue]]
+number = 12421
+state = "open"
+flaky = true
+title = "Windows: cache export test fails with \"workspace inputs changed during export\""

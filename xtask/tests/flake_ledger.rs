@@ -3,8 +3,11 @@
 //! The project rule is to fix the root cause, never to retry. This gate makes
 //! that rule structural: nextest may not retry, every ledger entry is complete,
 //! a `fixed` entry still has the guard test that pins its cause, and an `open`
-//! entry names the issue that owns it.
-use std::collections::BTreeSet;
+//! entry names the issue that owns it. A checked-in issue snapshot
+//! (`policy/flaky-issue-snapshot.toml`) is joined to the ledger offline, so
+//! known intermittent issues cannot be missing from it and a row cannot
+//! disagree with its issue's state.
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -94,6 +97,11 @@ fn ledger_violations(ledger: &str, sources: &str) -> Vec<String> {
         {
             violations.push(format!("{at}: duplicate id"));
         }
+        if let Some(flag) = entry.get("timing_dependent")
+            && flag.as_bool().is_none()
+        {
+            violations.push(format!("{at}: `timing_dependent` must be a boolean"));
+        }
         let evidence_rows = entry
             .get("evidence")
             .and_then(toml::Value::as_array)
@@ -125,6 +133,82 @@ fn ledger_violations(ledger: &str, sources: &str) -> Vec<String> {
                 "{at}: status must be `fixed` or `open`, got `{other}`"
             )),
             None => {}
+        }
+    }
+    violations
+}
+
+/// Violations joining the ledger to the retained issue snapshot (no network).
+fn join_violations(ledger: &str, snapshot: &str) -> Vec<String> {
+    let (Ok(ledger), Ok(snapshot)) = (
+        toml::from_str::<toml::Table>(ledger),
+        toml::from_str::<toml::Table>(snapshot),
+    ) else {
+        return vec!["ledger or issue snapshot is not valid TOML".to_string()];
+    };
+    let table = |value: &toml::Table, key: &str| {
+        value
+            .get(key)
+            .and_then(toml::Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let mut issues = BTreeMap::new();
+    let mut violations = Vec::new();
+    for entry in table(&snapshot, "issue") {
+        let number = entry.get("number").and_then(toml::Value::as_integer);
+        let state = entry.get("state").and_then(toml::Value::as_str);
+        let flaky = entry.get("flaky").and_then(toml::Value::as_bool);
+        let title = entry.get("title").and_then(toml::Value::as_str);
+        let (Some(number), Some(state), Some(flaky), Some(title)) = (number, state, flaky, title)
+        else {
+            violations.push(format!(
+                "snapshot issue needs number, state, flaky and title: {entry}"
+            ));
+            continue;
+        };
+        if state != "open" && state != "closed" {
+            violations.push(format!("snapshot #{number}: state must be open or closed"));
+        }
+        if title.to_lowercase().contains("flak") && !flaky {
+            violations.push(format!(
+                "snapshot #{number}: title mentions a flake but `flaky` is false"
+            ));
+        }
+        issues.insert(number, (state.to_string(), flaky));
+    }
+    let rows = table(&ledger, "flake");
+    let named: BTreeSet<i64> = rows
+        .iter()
+        .filter_map(|row| row.get("issue").and_then(toml::Value::as_integer))
+        .collect();
+    for (number, (state, flaky)) in &issues {
+        if *flaky && state == "open" && !named.contains(number) {
+            violations.push(format!(
+                "open flaky issue #{number} has no ledger row naming it (`issue = {number}`)"
+            ));
+        }
+    }
+    for row in &rows {
+        let id = row
+            .get("id")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("<missing id>");
+        let status = row.get("status").and_then(toml::Value::as_str);
+        let Some(number) = row.get("issue").and_then(toml::Value::as_integer) else {
+            continue;
+        };
+        match (status, issues.get(&number).map(|(state, _)| state.as_str())) {
+            (Some("fixed"), Some("open")) => violations.push(format!(
+                "flake `{id}` is fixed but #{number} is still open in the snapshot"
+            )),
+            (Some("open"), Some("closed")) => violations.push(format!(
+                "flake `{id}` is open but #{number} is closed in the snapshot"
+            )),
+            (_, None) => violations.push(format!(
+                "flake `{id}` names #{number}, which is not in the issue snapshot"
+            )),
+            _ => {}
         }
     }
     violations
@@ -170,6 +254,23 @@ fn committed_flake_ledger_is_complete_and_its_guards_exist() -> Result<(), Strin
     let ledger = fs::read_to_string(repo_root().join("policy/flaky-tests.toml"))
         .map_err(|error| format!("read policy/flaky-tests.toml: {error}"))?;
     let violations = ledger_violations(&ledger, &workspace_source_text());
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(violations.join("\n"))
+    }
+}
+
+#[test]
+fn committed_ledger_agrees_with_the_issue_snapshot() -> Result<(), String> {
+    let root = repo_root();
+    let read = |path: &str| {
+        fs::read_to_string(root.join(path)).map_err(|error| format!("read {path}: {error}"))
+    };
+    let violations = join_violations(
+        &read("policy/flaky-tests.toml")?,
+        &read("policy/flaky-issue-snapshot.toml")?,
+    );
     if violations.is_empty() {
         Ok(())
     } else {
@@ -261,4 +362,88 @@ fn any_nonzero_retry_setting_fails_the_gate() {
     ] {
         assert!(!retry_violations(config).is_empty(), "{config}");
     }
+}
+
+const SNAPSHOT: &str = r#"
+[[issue]]
+number = 7
+state = "open"
+flaky = true
+title = "Flaky: t"
+"#;
+
+const OPEN_ROW: &str = r#"
+[[flake]]
+id = "a"
+issue = 7
+status = "open"
+"#;
+
+#[test]
+fn a_ledger_row_naming_each_open_flaky_issue_joins_cleanly() {
+    assert_eq!(join_violations(OPEN_ROW, SNAPSHOT), Vec::<String>::new());
+}
+
+#[test]
+fn an_open_flaky_issue_without_a_row_fails_the_join() {
+    let other = OPEN_ROW.replace("issue = 7", "issue = 8");
+    let violations = join_violations(&other, SNAPSHOT);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("#7 has no ledger row")),
+        "{violations:?}"
+    );
+    // The row naming the absent issue is also reported, not silently accepted.
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("not in the issue snapshot"))
+    );
+}
+
+#[test]
+fn rows_that_disagree_with_their_issue_state_fail_the_join() {
+    let fixed = OPEN_ROW.replace("open", "fixed");
+    let violations = join_violations(&fixed, SNAPSHOT);
+    assert!(
+        violations.iter().any(|v| v.contains("still open")),
+        "{violations:?}"
+    );
+    let closed = SNAPSHOT.replace("\"open\"", "\"closed\"");
+    let violations = join_violations(OPEN_ROW, &closed);
+    assert!(
+        violations.iter().any(|v| v.contains("is closed")),
+        "{violations:?}"
+    );
+    assert_eq!(
+        join_violations(&fixed, &closed),
+        Vec::<String>::new(),
+        "a fixed row for a closed issue is consistent"
+    );
+}
+
+#[test]
+fn a_flake_titled_issue_cannot_opt_out_of_the_join() {
+    let hidden = SNAPSHOT.replace("flaky = true", "flaky = false");
+    let violations = join_violations(OPEN_ROW, &hidden);
+    assert!(
+        violations.iter().any(|v| v.contains("`flaky` is false")),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn timing_dependent_must_be_a_boolean() {
+    let bad = format!("{GOOD}timing_dependent = \"yes\"\n");
+    assert!(
+        ledger_violations(&bad, "fn guard_exists() {}")
+            .iter()
+            .any(|v| v.contains("timing_dependent"))
+    );
+    let good = format!("{GOOD}timing_dependent = true\n");
+    assert_eq!(
+        ledger_violations(&good, "fn guard_exists() {}"),
+        Vec::<String>::new()
+    );
 }
