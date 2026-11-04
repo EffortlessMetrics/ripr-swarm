@@ -36,6 +36,30 @@ Required for every fixture:
 - `## Then`
 - `## Must Not`
 
+A SPEC can declare the exact finding classes independently of generated output:
+
+````markdown
+```expected-classes
+[["probe:src_lib.rs:predicate:c80557eb", "weakly_exposed"]]
+```
+````
+
+Each pair is `[finding.id, classification]`; copy the anchor from the finding,
+then choose the class from the reviewed fixture intent. The block covers the
+entire finding set (use `[]` for no findings). Duplicate anchors, unknown classes,
+missing/extra findings and class mismatches fail `check-fixture-contracts` and
+`goldens check`. `goldens bless` validates fresh output before replacing any
+expected files; change the authored expectation explicitly when the reviewed
+behavior changes. Never generate a new expectation as part of reblessing.
+
+Declarations are mandatory for `python_adversarial_*`, `*_negative*` and
+`*_control*` fixtures. Other fixtures can opt in. `goldens check` prints the
+with/without ledger per language; `policy/fixture_expected_classes.json` sets
+minimum declared counts. Raise these floors as coverage grows. These declarations
+pin reviewed classes; they do not independently establish analyzer correctness.
+The hosted rebless workflow additionally refuses all `check.json` byte changes,
+including class changes even when a SPEC is edited.
+
 Optional expected outputs become required when the fixture claims that surface:
 
 - human output: `expected/human.txt`

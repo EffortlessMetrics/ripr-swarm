@@ -21,3 +21,14 @@ shape of the comparison.
 ## Must Not
 
 Treat an unrelated pattern binding as a rebinding of `n`.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:predicate:e1aa58e8",
+    "exposed"
+  ]
+]
+```

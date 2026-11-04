@@ -21,3 +21,14 @@ two predicates, so the exact-value oracle notices the change.
 
 Downgrade the finding when a strong related call places an input on which the
 old and the new predicate disagree.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.py:python_preview:fc6faa73",
+    "exposed"
+  ]
+]
+```

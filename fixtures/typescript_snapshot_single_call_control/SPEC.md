@@ -29,3 +29,14 @@ call, not because the fixture can never promote (#8895).
 ## Must Not
 
 - Refuse the honest single call.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.ts:typescript_preview:c712a282",
+    "exposed"
+  ]
+]
+```

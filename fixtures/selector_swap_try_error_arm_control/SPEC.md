@@ -23,3 +23,14 @@ does not apply because no selector name changed.
 ## Must Not
 
 - Let the #9866 abstention hide a real changed error arm.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:error_path:d4885999",
+    "weakly_exposed"
+  ]
+]
+```

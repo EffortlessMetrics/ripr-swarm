@@ -19,3 +19,18 @@ Related to the changed helper through the entry the relative import resolves to 
 ## Must Not
 
 - Lose the relation on the control.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:predicate:41e056ec",
+    "exposed"
+  ],
+  [
+    "probe:src_lib.rs:return_value:cc17bcd3",
+    "exposed"
+  ]
+]
+```

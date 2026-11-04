@@ -46,3 +46,14 @@ companion unit test pins the inverse: the same change with a call that omits
 - Block on anything other than a pure default-value change (an added/removed
   default, a renamed parameter, or a method/classmethod owner all fail open).
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_render.py:python_preview:bc1138cb",
+    "weakly_exposed"
+  ]
+]
+```

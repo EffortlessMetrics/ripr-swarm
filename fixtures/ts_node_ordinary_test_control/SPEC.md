@@ -30,3 +30,14 @@ finding is `exposed`, advisory-only and not packet-ready.
 - Withhold credit from an ordinary active test because a sibling fixture uses
   `expectFailure`.
 - Emit a repair packet for an already observed preview finding.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_score.ts:typescript_preview:e9473a29",
+    "exposed"
+  ]
+]
+```

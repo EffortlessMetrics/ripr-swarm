@@ -19,3 +19,18 @@ Related to the changed helper through the entry (control for the refusals).
 ## Must Not
 
 - Promote the finding on a counterexample, or lose the relation on the controls.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_inner.rs:predicate:25dc8b63",
+    "exposed"
+  ],
+  [
+    "probe:src_inner.rs:return_value:438cae72",
+    "weakly_exposed"
+  ]
+]
+```

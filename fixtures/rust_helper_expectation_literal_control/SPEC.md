@@ -17,3 +17,18 @@ The finding stays `exposed`: the helper does not depend on the owner.
 ## Must Not
 
 Demote a helper-spelled expectation that never reaches the owner.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:return_value:543b6d50",
+    "exposed"
+  ],
+  [
+    "probe:src_lib.rs:static_unknown:788c0b42",
+    "static_unknown"
+  ]
+]
+```

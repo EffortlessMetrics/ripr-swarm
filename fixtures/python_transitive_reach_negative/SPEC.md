@@ -42,3 +42,14 @@ The Python preview adapter:
 
 - Name a limitation from token coincidence on the class name.
 - Relate the other-module test as covering the owner.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_table.py:python_preview:6c6d80d7",
+    "no_static_path"
+  ]
+]
+```

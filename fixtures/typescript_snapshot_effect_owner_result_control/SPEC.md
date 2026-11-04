@@ -31,3 +31,14 @@ the weak fixtures `typescript_snapshot_effect_unrelated_subject`,
 ## Must Not
 
 - Refuse a snapshot whose subject is the owner call result.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.ts:typescript_preview:1066bfb8",
+    "exposed"
+  ]
+]
+```

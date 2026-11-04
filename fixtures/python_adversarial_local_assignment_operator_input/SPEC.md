@@ -54,3 +54,14 @@ observes the owner's call result (`assert compute(10, 3) == 7`) still classifies
 - Regress `python_cross_file_construct_call` (#1228), `python_field_assignment_shape`,
   or `python_adversarial_operator_delta_input_operand` (#1278).
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_calc.py:python_preview:3ddbe784",
+    "weakly_exposed"
+  ]
+]
+```

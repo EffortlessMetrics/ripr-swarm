@@ -18,6 +18,7 @@ use sha2::{Digest, Sha256};
 
 mod benchmark_oracles;
 mod editor_validators;
+pub(crate) mod expected_classes;
 mod gap_validators;
 mod general_validators;
 mod installed_journey;
@@ -60,6 +61,9 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     }
 
     let mut violations = Vec::new();
+    if let Err(error) = expected_classes::inventory(Path::new(".")) {
+        violations.push(error);
+    }
     validate_evidence_record_contract_fixture_corpus(&mut violations)?;
     validate_lane1_evidence_quality_failure_fixture_corpus(&mut violations)?;
     let benchmark_disclosure = validate_evidence_quality_benchmark_fixture_corpus(&mut violations)?;

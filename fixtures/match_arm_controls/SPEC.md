@@ -40,3 +40,26 @@ Rust verdict corpus; they stay gaps.
 - Resolve a helper through argument binding instead of the match
   grammar (the arguments stay exact literals or the owner's bound
   parameter).
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:predicate:659cd128",
+    "exposed"
+  ],
+  [
+    "probe:src_lib.rs:predicate:2d6b188b",
+    "exposed"
+  ],
+  [
+    "probe:src_lib.rs:predicate:845a474d",
+    "exposed"
+  ],
+  [
+    "probe:src_lib.rs:predicate:0a147037",
+    "exposed"
+  ]
+]
+```

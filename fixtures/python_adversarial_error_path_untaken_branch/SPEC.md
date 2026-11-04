@@ -45,3 +45,14 @@ oracle stays `exposed`.
 - Regress error-path fixtures whose oracle is an exception assertion
   (`python_cross_file_construct_call` and others stay exposed).
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_parseint.py:python_preview:0f645328",
+    "weakly_exposed"
+  ]
+]
+```

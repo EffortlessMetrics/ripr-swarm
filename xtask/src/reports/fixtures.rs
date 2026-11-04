@@ -143,6 +143,11 @@ enum GoldenCheckRun {
 }
 
 fn golden_check_run() -> Result<GoldenCheckRun, String> {
+    for (language, [with, without]) in
+        crate::fixture_contracts::expected_classes::inventory(Path::new("."))?
+    {
+        println!("expected-classes {language}: {with} with / {without} without");
+    }
     if let Err(err) = preparation::ensure_ready() {
         let violations = vec![err];
         let provenance = golden_drift_provenance();
@@ -980,6 +985,10 @@ pub(crate) fn run_fixture(path: &Path) -> Result<FixtureRun, String> {
 /// Refuses to copy files that are malformed, empty, or show a suspicious
 /// finding-count collapse — the classic regression signature.
 fn validate_bless_output(run: &FixtureRun, fixture: &Path) -> Result<(), String> {
+    crate::fixture_contracts::expected_classes::validate_output(
+        fixture,
+        &read_text_lossy(&run.check_json)?,
+    )?;
     // 1. check.json must be valid JSON with expected top-level fields.
     let json_text = read_text_lossy(&run.check_json)?;
     let parsed: serde_json::Value = serde_json::from_str(&json_text).map_err(|err| {

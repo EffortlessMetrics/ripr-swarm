@@ -54,3 +54,14 @@ inverse: when the oracle observes the changed VALUE (the actual delta, e.g.
 - Credit `exposed` from a `changed_sink_token` match on an unchanged operand of
   the changed line (a token present in both the old and new line).
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_account.py:python_preview:c7d70a2d",
+    "static_unknown"
+  ]
+]
+```

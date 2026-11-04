@@ -30,3 +30,13 @@ This confirms the limitation only fires when a candidate path exists, not on eve
 
 - Emit `static_limit_kind` when no candidate transitive path exists.
 - Change classification from `no_static_path`.
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:predicate:908b0e30",
+    "no_static_path"
+  ]
+]
+```

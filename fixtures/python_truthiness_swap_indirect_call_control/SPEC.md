@@ -23,3 +23,14 @@ existing verdict.
 
 Demote the finding to `weakly_exposed` while a strong test reaches the owner
 through a callback, alias or local helper the rule cannot read.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.py:python_preview:fc6faa73",
+    "exposed"
+  ]
+]
+```

@@ -54,3 +54,14 @@ variant.
 - Credit `exposed` from value+attribute token matches on a receiver not bound
   to the changed owner.
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_session.py:python_preview:a8af27c6",
+    "weakly_exposed"
+  ]
+]
+```

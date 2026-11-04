@@ -40,3 +40,14 @@ sibling index or an aggregate like `len(...)`. A companion unit test pins the in
 - Credit `exposed` when the only strong oracle observes a sibling list index.
 - Regress dict behavior (#1297) or the f-string-is-not-a-dict fix (#1298).
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_routes.py:python_preview:fa537c61",
+    "weakly_exposed"
+  ]
+]
+```

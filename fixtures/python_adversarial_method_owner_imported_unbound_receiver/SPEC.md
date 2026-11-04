@@ -59,3 +59,14 @@ the inverse positives: `method_name_inline_construct_call_credits_exposed`,
   asserted receiver is not statically bound to the owner class — even if the owner
   class is imported and constructed elsewhere in the test.
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_auth.py:python_preview:d982555b",
+    "weakly_exposed"
+  ]
+]
+```
