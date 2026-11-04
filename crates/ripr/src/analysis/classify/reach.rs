@@ -707,6 +707,30 @@ fn count_namings_for_owner(source: &str, owner: &FunctionSummary) -> usize {
         .count()
 }
 
+/// Whether a mention of `ident` at byte `at` inside a comment or string reads
+/// as a reference to a function rather than prose: it is followed by `(`, `)`,
+/// `,`, `;`, `}`, `]`, `:` or `as` (a doctest call, fn pointer or
+/// `use .. as` alias), or it is the whole path of a quoted string
+/// (`#[serde(default = "kb")]`, `"defaults::kb"`), which names a function by
+/// string. `"4.1 kb"` is prose: it has a space before the name.
+fn reference_shaped_outside_code(source: &str, at: usize, ident: &str) -> bool {
+    let after = &source[at + ident.len()..];
+    let trimmed = after.trim_start();
+    if trimmed.starts_with(['(', ')', ',', ';', '}', ']', ':']) {
+        return true;
+    }
+    if trimmed
+        .strip_prefix("as")
+        .is_some_and(|rest| rest.chars().next().is_some_and(|c| c.is_whitespace()))
+    {
+        return true;
+    }
+    let path_start = source[..at]
+        .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_' || c == ':')
+        .len();
+    after.starts_with('"') && source[..path_start].ends_with('"')
+}
+
 /// The identifiers of `source` (see [`identifiers_outside_fn_definition`])
 /// spelled so that they can denote a module-level free function.
 ///
@@ -716,8 +740,8 @@ fn count_namings_for_owner(source: &str, owner: &FunctionSummary) -> usize {
 /// (#13080). Code is judged by [`name_may_denote_free_function_at`] on the
 /// masked source. A mention inside a comment or string (a doctest, a stringly
 /// dispatch) stays a naming only when it is spelled like a reference rather
-/// than prose: the name is followed by `(`, `)`, `,`, `;`, `}`, `]` or `:`
-/// (`"4.1 kb"` is not), and the same qualifier rule holds.
+/// than prose (see [`reference_shaped_outside_code`]), and the same qualifier
+/// rule holds, evaluated on the raw text.
 fn free_function_namings(source: &str) -> impl Iterator<Item = &str> {
     let masked = mask_comments_and_strings(source);
     identifiers_outside_fn_definition(source).filter(move |ident| {
@@ -728,10 +752,7 @@ fn free_function_namings(source: &str) -> impl Iterator<Item = &str> {
         let in_code = masked
             .get(at..at + ident.len())
             .is_some_and(|slice| slice == *ident);
-        in_code
-            || source[at + ident.len()..]
-                .trim_start()
-                .starts_with(['(', ')', ',', ';', '}', ']', ':'])
+        in_code || reference_shaped_outside_code(source, at, ident)
     })
 }
 
@@ -1708,6 +1729,20 @@ mod tests {
         assert!(verdict(&format!("{free}use bytesize::kb as k;\n"), true));
         assert!(verdict(
             &format!("{free}//! let n = bytesize::kb(4u64);\n"),
+            true
+        ));
+        // Review findings: a function named by string path (serde attributes)
+        // and a doctest alias still count; quoted prose does not.
+        assert!(verdict(
+            &format!("{free}#[derive(D)] struct S {{ #[serde(default = \"kb\")] a: u64 }}\n"),
+            true
+        ));
+        assert!(verdict(
+            &format!("{free}#[serde(default = \"defaults::kb\")]\nstruct S;\n"),
+            true
+        ));
+        assert!(verdict(
+            &format!("{free}/// use bytesize::kb as k;\n/// assert_eq!(k(4), 4000);\n"),
             true
         ));
         // The same `Type::kb` mention keeps a non-free (or unestablished) owner

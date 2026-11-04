@@ -7241,8 +7241,9 @@ pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name:
     }
 }
 
-/// Whether the occurrence of `name` starting at byte `at` of already-masked
-/// `text` is spelled so that it can denote a module-level free function:
+/// Whether the occurrence of `name` starting at byte `at` of `text` (masked
+/// source, or raw source when the caller also admits doctest and string
+/// mentions) is spelled so that it can denote a module-level free function:
 /// the name at an identifier boundary, not a `fn name` declaration, not a
 /// receiver-dot selection (`x.name`, which picks a method or field), and not
 /// qualified by a type (`Type::name`, `u64::name`, `<T as Tr>::name`). A bare
