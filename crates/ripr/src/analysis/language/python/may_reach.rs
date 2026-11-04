@@ -817,11 +817,12 @@ impl<'a> Index<'a> {
                 self.attribute_type(&receiver, attribute.attr.as_str(), 0)
             }
             Expr::Call(call) => {
-                if root_is_local(&call.func, scope) {
-                    return None;
-                }
+                // A bare name bound inside the callable shadows the module's
+                // class or function; `resolve_call` refuses it. A parameter
+                // used as a receiver (`ctx.make_formatter()`) is not shadowing.
+                let shadowed = root_is_local(&call.func, scope);
                 // `Class(...)`: an instance of the class.
-                if let Some(class) = self.class_of_expr(scope.module, &call.func) {
+                if !shadowed && let Some(class) = self.class_of_expr(scope.module, &call.func) {
                     return (!self.class(&class)?.opaque).then_some(class);
                 }
                 let (candidates, _) = self.resolve_call(scope, &call.func).ok()?;

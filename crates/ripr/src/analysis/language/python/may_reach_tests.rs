@@ -279,6 +279,39 @@ fn an_unannotated_return_does_not_type_the_local() -> Check {
 }
 
 #[test]
+fn an_annotated_return_types_a_local_bound_from_a_parameter_receiver_call() -> Check {
+    let graph = graph(&[
+        ("src/pkg/fmt.py", FMT),
+        (
+            "src/pkg/core.py",
+            "from .fmt import HelpFormatter\n\n\nclass Context:\n    def make_formatter(self) -> HelpFormatter:\n        return HelpFormatter()\n\n    def formatter(self) -> HelpFormatter:\n        return self.make_formatter()\n\n    def write(self):\n        f = self.make_formatter()\n        return f.write_dl([])\n\n\ndef help_of(ctx: Context):\n    formatter = ctx.make_formatter()\n    formatter.write_dl([])\n",
+        ),
+    ]);
+    // `ctx` is a parameter, not a shadowed class: its annotated return types
+    // the local.
+    has(
+        &graph,
+        "src/pkg/core.py::help_of",
+        "src/pkg/fmt.py::HelpFormatter.write_dl",
+    )?;
+    // The same through `self.method()`.
+    has(
+        &graph,
+        "src/pkg/core.py::Context.write",
+        "src/pkg/fmt.py::HelpFormatter.write_dl",
+    )
+}
+
+#[test]
+fn a_shadowed_bare_name_constructor_does_not_type_the_local() -> Check {
+    let graph = graph(&[(
+        "src/pkg/a.py",
+        "class Engine:\n    def start(self):\n        return 1\n\n\ndef run(Engine):\n    engine = Engine()\n    return engine.start()\n",
+    )]);
+    lacks(&graph, "src/pkg/a.py::run", "src/pkg/a.py::Engine.start")
+}
+
+#[test]
 fn a_local_bound_twice_is_untyped() -> Check {
     let graph = graph(&[(
         "src/pkg/a.py",
