@@ -34,9 +34,10 @@ pub(super) fn missing_field_value_facts(
         return Vec::new();
     }
     // #11398: a field write names the written field, not an owner-result
-    // field; no start is offered from a weak read of it.
+    // field. #11870: it starts a repair only through the one weak-read policy
+    // that `check` also asks, over the related tests.
     if crate::analysis::classify::field_assignment_target(seam.expression()).is_some() {
-        return Vec::new();
+        return assigned_field_weak_read_fact(seam, related, context, owner_fn);
     }
     let Some(owner_fn) = owner_fn else {
         return Vec::new();
@@ -79,6 +80,41 @@ pub(super) fn missing_field_value_facts(
         value: field.clone(),
         reason: format!(
             "owner-result field `{field_name}` is observed only by a weak oracle; an exact field-value discriminator is missing"
+        ),
+        flow_sink: None,
+    }]
+}
+
+/// #11870: the missing-discriminator fact for a changed `self.f = ..` write
+/// that a related test reads with a relational or `assert_ne!` check only.
+/// Fail-closed: the policy is [`assigned_field_weak_read_start`]; a non-plain
+/// `Drop` owner type (a failed assertion may exit while unwinding) and an
+/// owner the seam cannot place withhold it.
+fn assigned_field_weak_read_fact(
+    seam: &RepoSeam,
+    related: &[&CompactTest<'_>],
+    context: &CompactGripContext<'_>,
+    owner_fn: Option<&FunctionSummary>,
+) -> Vec<MissingDiscriminatorFact> {
+    let (Some(owner), Some(field)) = (owner_fn, super::written_field(seam)) else {
+        return Vec::new();
+    };
+    let tests: Vec<&crate::analysis::rust_index::TestSummary> =
+        related.iter().map(|indexed| indexed.test).collect();
+    if super::names_non_plain_drop_type(owner, seam.expression(), context.index)
+        || !crate::analysis::classify::assigned_field_weak_read_start(
+            owner,
+            field,
+            &tests,
+            context.index,
+        )
+    {
+        return Vec::new();
+    }
+    vec![MissingDiscriminatorFact {
+        value: field.to_string(),
+        reason: format!(
+            "written field `{field}` is read only by a weak check; an exact field-value discriminator is missing"
         ),
         flow_sink: None,
     }]

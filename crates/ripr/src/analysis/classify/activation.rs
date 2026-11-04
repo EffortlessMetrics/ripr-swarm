@@ -4265,6 +4265,194 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
         && pushed_collection_compared_whole(owner, path, test, assertion, index)
 }
 
+/// #11870: the one start policy for a changed field write that a related test
+/// reads but does not check exactly. True only when, over `tests` (the
+/// owner's related tests):
+/// - the owner borrows its receiver (a by-value `self` writes a moved copy,
+///   so no read of the test's binding can see the write);
+/// - no test is `#[ignore]`d or `#[should_panic]` (a strengthened one would
+///   not run, or would pass by panicking before its read);
+/// - no assertion confirms the write ([`assigned_field_read_confirms`]); a
+///   confirmed write is already checked and has nothing to repair; and
+/// - a test that calls the owner directly has an assertion that reads the
+///   written field from the binding it ran the owner on, as one side of a
+///   relational check (`>`, `<`, `>=`, `<=`, `!=`) or `assert_ne!`, under
+///   the confirming rule's binding guards ([`weak_assigned_field_read`]).
+///
+/// `check` (the finding's class) and the seam's missing-discriminator fact
+/// both ask this, so `ripr check` and `ripr repair` start the same gap. A
+/// read the policy cannot place (a sibling field, another binding, a later
+/// write, a getter, an equality or a bare boolean) starts nothing.
+pub(in crate::analysis) fn assigned_field_weak_read_start(
+    owner: &FunctionSummary,
+    path: &str,
+    tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    if !owner_borrows_receiver(&owner.body)
+        || path.is_empty()
+        || tests.iter().any(|test| {
+            super::gap_admission::is_ignored(test)
+                || test.attrs.iter().any(|attr| attr.contains("should_panic"))
+        })
+        || macro_names_rebound(index, &["assert", "assert_ne"])
+    {
+        return false;
+    }
+    let mut weak = false;
+    for test in tests {
+        let direct = super::related_tests::owner_call_is_direct(test, owner, index);
+        // Pass one: the weak reads, as (assertion index, binding).
+        let mut weak_reads: Vec<(usize, String)> = Vec::new();
+        for (at, assertion) in test.assertions.iter().enumerate() {
+            if assigned_field_read_confirms(owner, path, test, assertion, index) {
+                return false;
+            }
+            if direct && let Some(binding) = weak_assigned_field_read(owner, path, test, assertion)
+            {
+                weak_reads.push((at, binding));
+            }
+        }
+        // Pass two: any other assertion that reads the written field or names
+        // a binding it was weakly read from may be the exact check the rules
+        // above do not place (`assert_eq!(c.count, 2)` after a relational
+        // read, a getter, a compound condition), so it withholds the start.
+        for (at, assertion) in test.assertions.iter().enumerate() {
+            if weak_reads.iter().any(|(weak_at, _)| *weak_at == at) {
+                continue;
+            }
+            let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+            if names_field_access(&masked, path)
+                || weak_reads
+                    .iter()
+                    .any(|(_, binding)| names_whole_ident(&masked, binding))
+            {
+                return false;
+            }
+        }
+        weak = weak || !weak_reads.is_empty();
+    }
+    weak
+}
+
+/// Whether `masked` names `ident` as a whole identifier.
+fn names_whole_ident(masked: &str, ident: &str) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices(ident).any(|(at, name)| {
+        !masked[..at].chars().next_back().is_some_and(is_ident)
+            && !masked[at + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_ident)
+    })
+}
+
+/// Whether `masked` accesses a field named `path` (`<expr>.path`, not a
+/// longer name).
+fn names_field_access(masked: &str, path: &str) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let needle = format!(".{path}");
+    masked.match_indices(&needle).any(|(at, name)| {
+        !masked[at + name.len()..]
+            .chars()
+            .next()
+            .is_some_and(is_ident)
+    })
+}
+
+/// The binding `assertion` reads `<binding>.<path>` from as one whole side of a
+/// relational check or an `assert_ne!`, against a side that does not name the
+/// binding, after the test ran the owner on that binding and under the same
+/// binding guards the confirming read uses.
+fn weak_assigned_field_read(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+) -> Option<String> {
+    let call = super::builder_override::OwnerCall::from_symbol(&owner.id.0)?;
+    let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+    let (binding, other) = weak_read_sides(masked.trim(), path)?;
+    (!names_whole_ident(other, &binding)
+        && !super::reveal::owner_called_on_other_receiver(&test.body, &binding, call.name())
+        && super::reveal::owner_call_precedes_read(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+        )
+        && super::reveal::binding_untouched_after_owner_call(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+        ))
+    .then_some(binding)
+}
+
+/// The binding whose field `path` the masked assertion reads as one whole
+/// side of a relational check, and the other side's text.
+fn weak_read_sides<'a>(masked: &'a str, path: &str) -> Option<(String, &'a str)> {
+    let side_binding = |side: &str| -> Option<String> {
+        let (binding, field) = side.trim().split_once('.')?;
+        let bare = !binding.is_empty()
+            && binding
+                .chars()
+                .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+            && !binding.starts_with(|ch: char| ch.is_ascii_digit());
+        (bare && field == path).then(|| binding.to_string())
+    };
+    let (name, rest) = masked.split_once('!')?;
+    let call = rest.trim();
+    let call = call.strip_suffix(';').unwrap_or(call);
+    let args = super::reveal::macro_arguments(call);
+    match name.trim() {
+        "assert_ne" => {
+            let [left, right, ..] = args.as_slice() else {
+                return None;
+            };
+            side_binding(left)
+                .map(|binding| (binding, *right))
+                .or_else(|| side_binding(right).map(|binding| (binding, *left)))
+        }
+        "assert" => {
+            let subject = *args.first()?;
+            if ["&&", "||", "==", "=>", "->", "::<", "|", "?", "{", "["]
+                .iter()
+                .any(|token| subject.contains(token))
+            {
+                return None;
+            }
+            let mut operator = None;
+            let bytes = subject.as_bytes();
+            let mut at = 0;
+            while at < bytes.len() {
+                let two = subject.get(at..at + 2);
+                let (len, found) = match (two, bytes[at]) {
+                    (Some(">=" | "<=" | "!="), _) => (2, true),
+                    (_, b'>' | b'<') => (1, true),
+                    _ => (1, false),
+                };
+                if found {
+                    if operator.is_some() {
+                        return None;
+                    }
+                    operator = Some((at, len));
+                }
+                at += len;
+            }
+            let (at, len) = operator?;
+            let (left, right) = (&subject[..at], &subject[at + len..]);
+            side_binding(left)
+                .map(|binding| (binding, right))
+                .or_else(|| side_binding(right).map(|binding| (binding, left)))
+        }
+        _ => None,
+    }
+}
+
 /// Whether the method whose source starts `body` takes its receiver by
 /// reference: `&self`, `&mut self`, `&'a mut self`, `self: &Self` or
 /// `self: &mut Self`. Anything else, including a signature that cannot be

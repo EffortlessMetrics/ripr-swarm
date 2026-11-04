@@ -464,6 +464,106 @@ fn a_refused_field_seam_names_the_stub_or_why_there_is_none() -> Result<(), Stri
     Ok(())
 }
 
+const WRITE_BASE: &str = "pub struct Counter {\n    pub count: u32,\n    pub other: u32,\n}\n\nimpl Counter {\n    pub fn new() -> Self {\n        Counter { count: 0, other: 0 }\n    }\n\n    pub fn bump(&mut self) {\n        self.count = 1;\n    }\n}\n";
+
+fn write_test(body: &str) -> String {
+    format!("use fx::Counter;\n\n#[test]\nfn t() {{\n{body}\n}}\n")
+}
+
+/// No start anywhere: check offers none, bare repair is refused and starts no
+/// attempt. Returns what repair printed.
+fn assert_no_write_start(
+    label: &str,
+    base: &str,
+    changed: &str,
+    test: &str,
+) -> Result<String, String> {
+    let repo = repo(label, base, changed, test, true)?;
+    if let Some(id) = check_start_id(&repo.root)? {
+        return Err(format!("{label}: check must offer no start, offered {id}"));
+    }
+    let repair = ripr(&repo.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3) || attempts(&repo.root) != 0 {
+        return Err(format!("{label}: repair must start nothing:\n{err}"));
+    }
+    Ok(err)
+}
+
+/// #11870: a changed `self.f = ..` write whose related test calls the owner
+/// directly and reads the written field only with a relational check starts a
+/// repair, and `ripr check` names the same start. Shared policy: the strong
+/// read stays "nothing to do", and a read the policy cannot place (no read, a
+/// sibling field, another binding, a later write, a by-value owner, an
+/// equality, a skipped test) starts nothing in either command.
+#[test]
+fn a_weak_read_of_a_written_field_starts_the_repair_check_recommends() -> Result<(), String> {
+    let changed = WRITE_BASE.replace("self.count = 1;", "self.count = 2;");
+    let run = "    let mut c = Counter::new();\n    c.bump();\n";
+    let weak = write_test(&format!("{run}    assert!(c.count > 0);"));
+    let repo = repo("writeweak", WRITE_BASE, &changed, &weak, true)?;
+    assert_starts_check_recommendation(&repo, "written-field-weak-read")?;
+    // The started packet asks for the written field, not a sibling.
+    let packet = std::fs::read_to_string(repo.root.join("target/ripr/workflow/agent-packet.json"))
+        .map_err(|e| e.to_string())?;
+    if !packet.contains("count") {
+        return Err(format!("the packet must name the written field:\n{packet}"));
+    }
+    // Strong read: already checked, repair says so.
+    let strong = write_test(&format!("{run}    assert_eq!(c.count, 2);"));
+    let err = assert_no_write_start("writestrong", WRITE_BASE, &changed, &strong)?;
+    if !err.contains("Nothing to do") {
+        return Err(format!("a strong read is nothing to do:\n{err}"));
+    }
+    for (label, base, new, body) in [
+        // The field is written and never read: nothing weak to strengthen.
+        ("writeonly", WRITE_BASE, changed.clone(), format!("{run}    assert!(c.other == 0);")),
+        ("writesibling", WRITE_BASE, changed.clone(), format!("{run}    assert!(c.other > 0);")),
+        (
+            "writeotherbinding",
+            WRITE_BASE,
+            changed.clone(),
+            "    let mut c = Counter::new();\n    let d = Counter::new();\n    c.bump();\n    assert!(d.count > 0);".to_string(),
+        ),
+        (
+            "writelate",
+            WRITE_BASE,
+            changed.clone(),
+            format!("{run}    c.count = 9;\n    assert!(c.count > 0);"),
+        ),
+        (
+            "writeeq",
+            WRITE_BASE,
+            changed.clone(),
+            format!("{run}    assert!(c.count == 2);"),
+        ),
+        (
+            "writecompound",
+            WRITE_BASE,
+            changed.clone(),
+            format!("{run}    assert!(c.count > 0);\n    assert_eq!(c.count, 2);"),
+        ),
+    ] {
+        assert_no_write_start(label, base, &new, &write_test(&body))?;
+    }
+    // A by-value owner writes a moved copy: a read of the binding sees nothing.
+    let by_value_base = WRITE_BASE.replace(
+        "pub fn bump(&mut self) {\n        self.count = 1;\n    }",
+        "pub fn bump(mut self) -> Self {\n        self.count = 1;\n        self\n    }",
+    );
+    let by_value_new = by_value_base.replace("self.count = 1;", "self.count = 2;");
+    assert_no_write_start("writebyvalue", &by_value_base, &by_value_new, &weak)?;
+    // Skipped tests never run the read.
+    for (label, attr) in [
+        ("writeignored", "#[ignore]"),
+        ("writepanics", "#[should_panic]"),
+    ] {
+        let skipped = weak.replace("#[test]", &format!("#[test]\n{attr}"));
+        assert_no_write_start(label, WRITE_BASE, &changed, &skipped)?;
+    }
+    Ok(())
+}
+
 /// Splits a command line the way the bound-root quoting writes it: single
 /// quotes group, `'\''` is a literal quote, whitespace separates.
 fn shell_split(command: &str) -> Result<Vec<String>, String> {
