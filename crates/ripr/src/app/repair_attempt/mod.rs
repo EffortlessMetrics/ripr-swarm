@@ -535,9 +535,12 @@ pub(crate) fn receipt_binding_from(
                 .as_ref()
                 .map(|binding| binding.base.as_str()),
         );
+        // A staging name an interrupted writer left beside a retained artifact
+        // is the one cause with a one-step fix, so name it first.
+        let residue = staged_residue_cause(&root, &manifest);
         return Err(format!(
             "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt.\n\
-             Causes: command output redirected into a repository file during the run (stdout or stderr, including under `target/ripr`), or a path outside `target/ripr` that changed after the after phase bound it.\n\
+             {residue}Causes: command output redirected into a repository file during the run (stdout or stderr, including under `target/ripr`), or a path outside `target/ripr` that changed after the after phase bound it.\n\
              Next: `{status}` reads the attempt's state.\n\
              From `ripr agent receipt`: remove the stray file or the later edit (keep a copy first, so you do not revert your bound repair edit) and rerun.\n\
              From the after phase: the verdict is already recorded, so a rerun reports the attempt as already finished and only a new attempt recovers it.\n\
@@ -595,6 +598,33 @@ pub(crate) fn attempt_gap_binding_from(
 /// receipt issuance and the read-only currentness reading so `status` cannot
 /// call an attempt current that `receipt` would refuse (#9501). The error is
 /// an unreadable or tampered baseline; `false` is drift from the bound verdict.
+/// The leading refusal line naming staged publication residue in the attempt's
+/// artifacts directory, or nothing when there is none. The residue is what an
+/// interrupted writer leaves between linking a retained artifact into place
+/// and removing its staging name; removing the staging name restores
+/// currentness without any other change to the attempt.
+fn staged_residue_cause(root: &Path, manifest: &RepairAttemptManifest) -> String {
+    let Some(artifacts) = root
+        .join(manifest_relative_path(manifest))
+        .parent()
+        .map(|attempt| attempt.join("artifacts"))
+    else {
+        return String::new();
+    };
+    let names = crate::edit_cage::staged_publication_residue_names(&artifacts);
+    if names.is_empty() {
+        return String::new();
+    }
+    let listed = names
+        .iter()
+        .map(|name| format!("`{}`", artifacts.join(name).display()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Cause found: an interrupted publication left a staging file beside a retained artifact: {listed}. Remove it (it is the leftover of an interrupted publication, not part of the attempt's evidence) and rerun; no other change to the attempt is needed.\n"
+    )
+}
+
 fn recompute_after_verdict_binding(
     root: &Path,
     manifest: &RepairAttemptManifest,

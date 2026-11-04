@@ -1926,6 +1926,30 @@ pub(crate) fn directory_has_staged_publication_residue(directory: &Path) -> bool
     }
 }
 
+/// The `<name>.tmp-<pid>-<nonce>` staging names in `directory`, sorted, so a
+/// refusal can name the file whose removal restores currentness. A directory
+/// that cannot be read yields none: the caller already failed closed on it.
+pub(crate) fn staged_publication_residue_names(directory: &Path) -> Vec<String> {
+    #[cfg(unix)]
+    {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+            .filter(|name| is_staging_name(name))
+            .collect();
+        names.sort();
+        names
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        Vec::new()
+    }
+}
+
 #[cfg(unix)]
 fn is_staging_name(name: &str) -> bool {
     name.rsplit_once(".tmp-")
@@ -5104,6 +5128,10 @@ mod tests {
         fs::hard_link(&destination, dir.join("after.check-findings.tmp-441-3"))
             .map_err(|err| format!("link staging name: {err}"))?;
         assert!(directory_has_staged_publication_residue(&dir));
+        assert_eq!(
+            staged_publication_residue_names(&dir),
+            vec!["after.check-findings.tmp-441-3".to_string()]
+        );
         Ok(())
     }
 
