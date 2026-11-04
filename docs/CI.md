@@ -41,6 +41,16 @@ workflow shell with the production policy binary and real Git histories, and
 exercise the checked-in job predicates and dependency wiring; they do not claim
 hosted Actions or wheel qualification.
 
+The staged `queue_qualification` callable profile accepts a single-parent
+merge-group squash only after binding the event's base and head, checked-out
+commit and tree, run/attempt and workflow generation, and reconstructing the
+tree from the admitted PR head and queue base. A missing head fetch fails
+closed. The existing qualification and diagnostic profiles remain unchanged.
+The routed merge-group candidate calls this profile after admission and requires
+its success in the same run’s Result. Local guard replay does not establish
+hosted execution or queue activation; the legacy PR trigger remains until the
+qualified cutover.
+
 The wheel's package source-contract step selects the complete
 `policy::distribution::` test namespace, including sibling guidance, wheelhouse,
 version and archive-contract modules. The compiled-inventory regression compares

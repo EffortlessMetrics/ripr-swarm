@@ -367,6 +367,15 @@ fn queued_squash_of_the_live_head_is_accepted_whether_the_ref_names_head_or_base
             "honest queue entry refused: {}",
             outcome.log
         );
+        let expected_tree = git(
+            &world.work,
+            &["rev-parse", &format!("{}^{{tree}}", run.queued)],
+        )?;
+        assert_eq!(
+            outcome.outputs.get("tree"),
+            Some(&expected_tree),
+            "caller must pass the verified queue tree"
+        );
         assert_eq!(outcome.outputs.get("pr").map(String::as_str), Some(PR));
         assert_eq!(
             outcome.outputs.get("head"),

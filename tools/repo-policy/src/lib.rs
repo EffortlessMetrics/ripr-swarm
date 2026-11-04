@@ -1376,7 +1376,7 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
         ),
         (
             "make the Result depend on the extension selection and e2e jobs (#12252)",
-            "docs-gate, vscode-select, vscode-e2e]",
+            "docs-gate, vscode-select, vscode-e2e, wheel-queue]",
         ),
         (
             "require the extension e2e result for the admitted head before summarizing (#12122)",

@@ -835,6 +835,26 @@ fn routed_result_with_vscode(
     heavy: &str,
     (admission_result, admission_status, vscode): (&str, &str, &str),
 ) -> TestResult<bool> {
+    routed_result_with_proofs(
+        fixture,
+        event,
+        detector,
+        docs,
+        docs_gate,
+        heavy,
+        (admission_result, admission_status, vscode, "success"),
+    )
+}
+
+fn routed_result_with_proofs(
+    fixture: &Fixture,
+    event: &str,
+    detector: &str,
+    docs: &str,
+    docs_gate: &str,
+    heavy: &str,
+    (admission_result, admission_status, vscode, wheel): (&str, &str, &str, &str),
+) -> TestResult<bool> {
     let source = result_step()?;
     let (setup, _) = source.split_once("        run: |\n").ok_or("result step")?;
     let (_, bindings) = setup.split_once("        env:\n").ok_or("result env")?;
@@ -889,6 +909,7 @@ fn routed_result_with_vscode(
             },
         ),
         ("VSCODE_CHECK_RESULT", vscode),
+        ("WHEEL_RESULT", wheel),
         ("ADMISSION_RESULT", admission_result),
         ("ADMISSION_STATUS", admission_status),
     ]);
@@ -1006,6 +1027,57 @@ fn merge_group_result_requires_its_extension_verdict() -> TestResult {
         "success",
         "skipped",
         ("success", "admitted", "success"),
+    )?);
+    Ok(())
+}
+
+#[test]
+fn merge_group_result_requires_wheel_qualification() -> TestResult {
+    let wheel = job("wheel-queue")?;
+    for required in [
+        "if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'",
+        "uses: ./.github/workflows/python-wheel-qualification.yml",
+        "proof_profile: queue_qualification",
+        "request_id: ${{ needs.admission.outputs.request }}",
+        "head_sha: ${{ needs.admission.outputs.head }}",
+        "base_sha: ${{ github.event.merge_group.base_sha }}",
+        "subject_sha: ${{ github.event.merge_group.head_sha }}",
+        "subject_tree: ${{ needs.admission.outputs.tree }}",
+        "workflow_generation: ${{ github.workflow_sha }}",
+    ] {
+        assert!(
+            wheel.contains(required),
+            "missing wheel binding: {required}"
+        );
+    }
+    assert!(
+        job("result")?.contains("wheel-queue]"),
+        "result must depend on the wheel job"
+    );
+    assert!(job("admission")?.contains("tree: ${{ steps.entry.outputs.tree }}"));
+    let fixture = Fixture::new()?;
+    for outcome in ["failure", "cancelled", "skipped", ""] {
+        assert!(
+            !routed_result_with_proofs(
+                &fixture,
+                "merge_group",
+                "success",
+                "true",
+                "success",
+                "skipped",
+                ("success", "admitted", "success", outcome)
+            )?,
+            "wheel {outcome:?} must fail the queue result"
+        );
+    }
+    assert!(routed_result_with_proofs(
+        &fixture,
+        "merge_group",
+        "success",
+        "true",
+        "success",
+        "skipped",
+        ("success", "admitted", "success", "success")
     )?);
     Ok(())
 }

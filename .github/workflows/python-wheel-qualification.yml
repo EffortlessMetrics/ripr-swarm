@@ -96,6 +96,8 @@ jobs:
           ADMITTED_SUBJECT: ${{ inputs.subject_sha }}
           ADMITTED_TREE: ${{ inputs.subject_tree }}
           ADMITTED_GENERATION: ${{ inputs.workflow_generation }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
           # workflow_call inherits the caller event; never detect it by event_name.
@@ -121,6 +123,19 @@ jobs:
               test "${tree}" = "${ADMITTED_TREE}"
               parents="$(git show -s --format=%P HEAD)"
               test "${parents}" = "${ADMITTED_BASE} ${ADMITTED_HEAD}"
+              ;;
+            queue_qualification)
+              test "${GITHUB_EVENT_NAME}" = merge_group
+              [[ "${ADMITTED_BASE}" =~ ^[0-9a-f]{40}$ ]]
+              [[ "${ADMITTED_TREE}" =~ ^[0-9a-f]{40}$ ]]
+              test "${QUEUE_BASE}" = "${ADMITTED_BASE}"
+              test "${QUEUE_HEAD}" = "${ADMITTED_SUBJECT}"
+              test "${GITHUB_SHA}" = "${ADMITTED_SUBJECT}"
+              test "${tree}" = "${ADMITTED_TREE}"
+              test "$(git show -s --format=%P HEAD)" = "${ADMITTED_BASE}"
+              git cat-file -e "${ADMITTED_HEAD}^{commit}" 2>/dev/null || git fetch --no-tags origin "${ADMITTED_HEAD}"
+              merged="$(git merge-tree --write-tree "${ADMITTED_BASE}" "${ADMITTED_HEAD}")"
+              test "${merged%%$'\n'*}" = "${tree}"
               ;;
             diagnostic) test "${actual}" = "${ADMITTED_HEAD}" ;;
             *) echo 'Unknown wheel proof profile' >&2; exit 1 ;;

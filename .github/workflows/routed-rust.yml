@@ -213,6 +213,7 @@ jobs:
       head: ${{ steps.entry.outputs.head }}
       queue_entry: ${{ steps.entry.outputs.queue_entry }}
       request: ${{ steps.entry.outputs.request }}
+      tree: ${{ steps.entry.outputs.tree }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Select trusted admission source
@@ -281,7 +282,7 @@ jobs:
           GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          pr="$PR_NUMBER" head="$PR_HEAD_SHA" labels="$PR_LABELS" queue_entry=""
+          pr="$PR_NUMBER" head="$PR_HEAD_SHA" labels="$PR_LABELS" queue_entry="" queue_tree=""
           if [ "$EVENT_NAME" = "merge_group" ]; then
             # The queue branch is named .../pr-<number>-<sha>. The PR comes from
             # the name; the exact head is the PR's live head, which must match
@@ -311,11 +312,12 @@ jobs:
             { [ "$(git rev-parse --is-shallow-repository)" = false ] || git fetch --no-tags --unshallow origin; } || { echo "::error::cannot complete history to bind the queued commit to PR #${pr}"; exit 1; }
             fetched="$(git fetch --no-tags origin "refs/pull/${pr}/head" && git rev-parse FETCH_HEAD)" && [ "$fetched" = "$head" ] || { echo "::error::refs/pull/${pr}/head (${fetched:-unfetched}) is not the live head $head of PR #${pr}"; exit 1; }
             merged="$(git merge-tree --write-tree "$GROUP_BASE_SHA" "$head")" && [ "${merged%%$'\n'*}" = "$(git rev-parse "${GROUP_HEAD_SHA}^{tree}")" ] || { echo "::error::queued commit ${GROUP_HEAD_SHA} is not PR #${pr} head $head merged onto base $GROUP_BASE_SHA"; exit 1; }
+            queue_tree="$(git rev-parse "${GROUP_HEAD_SHA}^{tree}")"
             queue=$(gh api graphql -f query='query($number:Int!){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid mergeQueueEntry{id}}}}' -F number="$pr")
             queue_entry=$(jq -er --arg head "$head" 'select(.errors == null) | .data.repository.pullRequest | select(.headRefOid == $head) | .mergeQueueEntry.id | select(type == "string" and length > 0)' <<<"$queue")
             labels="$(jq -r '[.labels[].name] | join(",")' <<<"$current")"
           fi
-          { echo "pr=$pr"; echo "head=$head"; echo "labels=$labels"; echo "queue_entry=$queue_entry"; echo "request=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"; } >> "$GITHUB_OUTPUT"
+          { echo "pr=$pr"; echo "head=$head"; echo "labels=$labels"; echo "queue_entry=$queue_entry"; echo "request=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"; echo "tree=$queue_tree"; } >> "$GITHUB_OUTPUT"
       - name: Admit exact candidate
         id: candidate
         uses: ./.admission-trusted/.github/actions/pr-candidate-admission
@@ -549,6 +551,20 @@ jobs:
     if: ${{ !cancelled() && needs.vscode-select.result == 'success' && needs.vscode-select.outputs.selected == 'true' }}
     uses: ./.github/workflows/vscode-e2e.yml
 
+  wheel-queue:
+    name: Python wheel queue qualification
+    needs: [admission]
+    if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
+    uses: ./.github/workflows/python-wheel-qualification.yml
+    with:
+      proof_profile: queue_qualification
+      request_id: ${{ needs.admission.outputs.request }}
+      head_sha: ${{ needs.admission.outputs.head }}
+      base_sha: ${{ github.event.merge_group.base_sha }}
+      subject_sha: ${{ github.event.merge_group.head_sha }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
   docs-gate:
     name: Ripr Docs Gate
     needs: [admission, detect-docs-only]
@@ -616,7 +632,7 @@ jobs:
     # merge-ready request. Any other pull_request label event is a nonrequest
     # under a different name so the required context is never satisfied by it.
     name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
-    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate, vscode-select, vscode-e2e]
+    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate, vscode-select, vscode-e2e, wheel-queue]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -818,6 +834,7 @@ jobs:
           WORKFLOW_REF: ${{ github.ref }}
           ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}
           VSCODE_CHECK_RESULT: ${{ steps.vscode.outcome }}
+          WHEEL_RESULT: ${{ needs.wheel-queue.result }}
         run: |
           status=pass message="selected implementation job succeeded"
           if [ "$EVENT_NAME" = "pull_request" ] && [ "${LABEL_NAME,,}" != "merge-ready" ]; then message="not a merge-ready request; named Merge-ready Nonrequest, never the required context"
@@ -829,6 +846,7 @@ jobs:
           elif [ "$ADMISSION_STATUS" != "admitted" ] && [ "$ADMISSION_STATUS" != "not_applicable" ]; then status=fail; message="candidate admission status was ${ADMISSION_STATUS:-missing}: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$ELIGIBILITY_RESULT" != success ]; then status=fail; message="live eligibility no longer established for the initially admitted head/request"
           elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$VSCODE_CHECK_RESULT" != success ]; then status=fail; message="the selected VS Code extension e2e did not succeed for the admitted head (see the vscode check step)"
+          elif [ "$EVENT_NAME" = merge_group ] && [ "$WHEEL_RESULT" != success ]; then status=fail; message="the queued Python wheel qualification did not succeed (result: $WHEEL_RESULT)"
           elif [ "$DOCS_DETECT_RESULT" != "success" ]; then
             status=fail
             message="docs-surface detection result was $DOCS_DETECT_RESULT"

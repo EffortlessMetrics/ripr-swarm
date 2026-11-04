@@ -1096,6 +1096,25 @@ fn exact_subject_from(
         .env("GITHUB_WORKFLOW_SHA", "a".repeat(40))
         .env("GITHUB_RUN_ID", "123")
         .env("GITHUB_RUN_ATTEMPT", "2")
+        .env(
+            "GITHUB_EVENT_NAME",
+            inputs["test_event"].as_str().unwrap_or("pull_request"),
+        )
+        .env(
+            "QUEUE_BASE",
+            inputs["test_queue_base"].as_str().unwrap_or(""),
+        )
+        .env(
+            "QUEUE_HEAD",
+            inputs["test_queue_head"].as_str().unwrap_or(""),
+        )
+        .env(
+            "GITHUB_SHA",
+            inputs["test_github_sha"]
+                .as_str()
+                .or_else(|| inputs["test_queue_head"].as_str())
+                .unwrap_or(""),
+        )
         .env("GITHUB_OUTPUT", &path);
     for (field, variable) in [
         ("proof_profile", "PROOF_PROFILE"),
@@ -1132,6 +1151,81 @@ fn integration_inputs(fixture: &Fixture) -> TestResult<serde_json::Value> {
         "base_sha":base, "head_sha":head, "subject_sha":subject, "subject_tree":tree,
         "workflow_generation":"a".repeat(40)}),
     )
+}
+
+#[test]
+fn wheel_callable_binds_squash_queue_tree_to_live_head() -> TestResult {
+    assert!(WORKFLOW.contains("QUEUE_BASE: ${{ github.event.merge_group.base_sha }}"));
+    assert!(WORKFLOW.contains("QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}"));
+    let fixture = Fixture::new()?;
+    let mut input = integration_inputs(&fixture)?;
+    let base = input["base_sha"].as_str().ok_or("base")?.to_owned();
+    let head = input["head_sha"].as_str().ok_or("head")?.to_owned();
+    let tree = input["subject_tree"].as_str().ok_or("tree")?.to_owned();
+    let group = fixture.git(&["commit-tree", &tree, "-p", &base, "-m", "queued squash"])?;
+    fixture.git(&["checkout", "--detach", &group])?;
+    input["proof_profile"] = "queue_qualification".into();
+    input["subject_sha"] = group.clone().into();
+    input["test_event"] = "merge_group".into();
+    input["test_queue_base"] = base.clone().into();
+    input["test_queue_head"] = group.clone().into();
+    let (result, output) = exact_subject(&fixture, &input)?;
+    assert!(result.status.success(), "valid queue: {result:?}");
+    assert_eq!(output, "qualify=true\n");
+    let mut wrong_head = input.clone();
+    wrong_head["head_sha"] = base.clone().into();
+    let removed = WORKFLOW.replace(
+        "              test \"${merged%%$'\\n'*}\" = \"${tree}\"\n",
+        "",
+    );
+    assert_ne!(removed, WORKFLOW, "the queue tree guard must exist");
+    assert!(
+        exact_subject_from(&fixture, &wrong_head, &removed)?
+            .0
+            .status
+            .success(),
+        "removing the tree binding must expose the wrong-head false success"
+    );
+    let extra_parent = fixture.git(&[
+        "commit-tree",
+        &tree,
+        "-p",
+        &base,
+        "-p",
+        &head,
+        "-m",
+        "not a squash",
+    ])?;
+    fixture.git(&["checkout", "--detach", &extra_parent])?;
+    let mut wrong_shape = input.clone();
+    wrong_shape["subject_sha"] = extra_parent.clone().into();
+    wrong_shape["test_queue_head"] = extra_parent.into();
+    let (result, output) = exact_subject(&fixture, &wrong_shape)?;
+    assert!(
+        !result.status.success(),
+        "two-parent queue object must be refused"
+    );
+    assert!(output.is_empty());
+    fixture.git(&["checkout", "--detach", &group])?;
+    for (field, bad) in [
+        ("head_sha", base.as_str()),
+        ("base_sha", head.as_str()),
+        ("test_queue_base", head.as_str()),
+        ("test_queue_head", head.as_str()),
+        ("test_event", "pull_request"),
+        ("test_github_sha", head.as_str()),
+        ("subject_tree", "0000000000000000000000000000000000000000"),
+    ] {
+        let mut wrong = input.clone();
+        wrong[field] = bad.into();
+        let (result, output) = exact_subject(&fixture, &wrong)?;
+        assert!(
+            !result.status.success(),
+            "accepted wrong {field}: {result:?}"
+        );
+        assert!(output.is_empty());
+    }
+    Ok(())
 }
 
 #[test]
