@@ -5300,6 +5300,28 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn artifact_pair_refuses_symlinked_store_ancestor() -> Result<(), String> {
+        use std::os::unix::fs::symlink;
+        let fixture = git_fixture("artifact-symlink")?;
+        let id = "repair-attempt-0123456789abcdef01234567";
+        let actual = fixture.root.join("actual").join(id).join("artifacts");
+        fs::create_dir_all(&actual).map_err(|error| error.to_string())?;
+        fs::write(actual.join("data.json"), b"x").map_err(|error| error.to_string())?;
+        fs::hard_link(actual.join("data.json"), actual.join("data.tmp-1-1"))
+            .map_err(|error| error.to_string())?;
+        symlink("actual", fixture.root.join("alias")).map_err(|error| error.to_string())?;
+        assert!(!artifact_pair_safe(
+            &fixture.root,
+            &format!("alias/{id}/artifacts/data.json"),
+            "alias",
+            &policy()?,
+            &BTreeSet::new()
+        )?);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn staged_publication_residue_is_reported_for_currentness() -> Result<(), String> {
         let fixture = git_fixture("staged-publication-residue")?;
         let dir = fixture.root.join("target/ripr/artifacts");

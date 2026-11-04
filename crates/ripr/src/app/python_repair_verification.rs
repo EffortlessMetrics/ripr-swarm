@@ -297,7 +297,7 @@ fn revalidate_for_verification(
     // the cage (the driver's own target/ripr workflow artifacts, which the
     // phases keep writing between finish and verification) are not the edit
     // and are excluded from the identity on both sides.
-    let baseline = load_baseline(root, &manifest, attempt_id)?;
+    let baseline = load_baseline(root, store, &manifest, attempt_id)?;
     let policy = load_edit_cage_policy_from(root, store, attempt_id)?;
     let (_, verdict) = crate::edit_cage::evaluate_repository_edit_cage_with_delta(&baseline)?;
     if verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant {
@@ -522,6 +522,7 @@ fn revalidate_for_verification(
 /// artifact the finish authority used).
 fn load_baseline(
     root: &Path,
+    store: Option<&Path>,
     manifest: &crate::app::repair_attempt::RepairAttemptManifest,
     attempt_id: &RepairAttemptId,
 ) -> Result<crate::edit_cage::AttemptBaseline, String> {
@@ -542,10 +543,9 @@ fn load_baseline(
                 .to_string(),
         );
     }
-    serde_json::from_slice(&bytes)
-        .map_err(|error| {
-            format!("decode edit-cage baseline failed: {error}; the digest-verified baseline does not parse, which is a ripr bug; report it with the command you ran")
-        })
+    // Reload through the store-bound authority so reevaluation receives the
+    // same verified runtime store boundary as the finish path.
+    crate::app::repair_attempt::load_edit_cage_baseline_from(root, store, attempt_id)
 }
 
 /// The pinned identities the apply record must restate, sliced out of the
@@ -1650,6 +1650,7 @@ pub(crate) fn run_verification_phase(options: VerificationOptions<'_>) -> Result
     let rollback = if options.rollback {
         let baseline = load_baseline(
             &root,
+            options.store,
             &load_repair_attempt_manifest_from(&root, options.store, &attempt_id)?,
             &attempt_id,
         )?;
@@ -3698,6 +3699,91 @@ mod python_repair_verification_semantics {
                 Err(error)
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verified_baseline_loader_retains_store_authority_for_rollback() -> Result<(), String> {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeginRepairAttemptOptions, begin_repair_attempt_with,
+            edit_cage_policy_from_packet, write_edit_cage_baseline,
+        };
+        let fixture = rollback_fixture("loaded-store")?;
+        let root = &fixture.root;
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow).map_err(|error| error.to_string())?;
+        let before = workflow.join("before.json");
+        let packet = workflow.join("packet.json");
+        let baseline_path = workflow.join("baseline.json");
+        let snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            root,
+            json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:sample",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "weakly_gripped"
+            )]),
+        )?;
+        std::fs::write(&before, snapshot).map_err(|error| error.to_string())?;
+        let packet_text = json!({"seam_id":"seam:sample", "allowed_edit_surface":["tests/pricing.rs"], "forbidden_files":[]}).to_string();
+        std::fs::write(&packet, &packet_text).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&packet_text, "seam:sample")?;
+        write_edit_cage_baseline(root, &baseline_path, &policy)?;
+        let prepared = begin_repair_attempt_with(BeginRepairAttemptOptions {
+            root,
+            root_argument: root,
+            seam_id: "seam:sample",
+            sources: &[
+                BeforeArtifactSource {
+                    role: "before_snapshot",
+                    path: &before,
+                },
+                BeforeArtifactSource {
+                    role: "agent_packet",
+                    path: &packet,
+                },
+                BeforeArtifactSource {
+                    role: "edit_cage_baseline",
+                    path: &baseline_path,
+                },
+            ],
+            expected_repository_head: None,
+            next_command_suffix: None,
+            store: None,
+        })?;
+        let dir = root
+            .join("target/ripr/repair-attempts/repair-attempt-0123456789abcdef01234567/artifacts");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        std::fs::write(dir.join("after.json"), b"{}").map_err(|error| error.to_string())?;
+        std::fs::hard_link(dir.join("after.json"), dir.join("after.tmp-1-1"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("tests/pricing.rs"),
+            "fn boundary() { assert!(true); }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let baseline = load_baseline(
+            root,
+            None,
+            &prepared.manifest,
+            &prepared.manifest.repair_attempt_id,
+        )?;
+        assert!(
+            crate::edit_cage::evaluate_repository_edit_cage_with_delta(&baseline)?
+                .0
+                .comparable
+        );
+        let head = crate::agent::artifact::current_git_head(root)?;
+        let rollback = run_rollback(
+            root,
+            &["tests/pricing.rs".to_string()],
+            &rollback_allowed(),
+            &baseline,
+            &head,
+        );
+        assert_eq!(rollback.state, "proved", "{rollback:?}");
+        Ok(())
     }
 
     fn granted() -> VerifyAuthorization {

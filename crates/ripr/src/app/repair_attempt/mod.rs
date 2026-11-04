@@ -5124,6 +5124,64 @@ mod tests {
             Some(&id),
             RepairAttemptStoreAccess::Open,
         )?;
+        let baseline = crate::edit_cage::capture_attempt_baseline(&root, &policy)?;
+        assert!(!baseline.is_ambiguous());
+        let bytes = serde_json::to_vec(&baseline).map_err(|error| error.to_string())?;
+        let mut old_baseline: AttemptBaseline =
+            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        assert!(old_baseline.policy().artifact_store.is_none());
+        let resolved = resolve_store(&root, Some(store), RepairAttemptStoreAccess::Open)?;
+        old_baseline.bind_artifact_store(resolved.locator());
+        assert_eq!(old_baseline.policy(), &policy);
+        assert!(
+            crate::edit_cage::evaluate_repository_edit_cage_with_delta(&old_baseline)?
+                .0
+                .comparable
+        );
+        policy.artifact_store = None;
+        assert!(crate::edit_cage::capture_attempt_baseline(&root, &policy)?.is_ambiguous());
+        policy.artifact_store = Some(resolved.locator().to_string());
+        let staged = format!("custom-attempts/{}/artifacts/after.tmp-1-1", id.as_str());
+        run_git(&root, &["add", "--", &staged]).map_err(|error| error.to_string())?;
+        assert!(crate::edit_cage::capture_attempt_baseline(&root, &policy)?.is_ambiguous());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prior_attempt_pair_under_explicit_target_store_is_admitted() -> Result<(), String> {
+        let root = test_root("prior-store-pair")?;
+        run_git(&root, &["init", "-q"]).map_err(|error| error.to_string())?;
+        run_git(&root, &["config", "user.email", "ripr@example.invalid"])
+            .map_err(|error| error.to_string())?;
+        run_git(&root, &["config", "user.name", "RIPR Test"]).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("tests/target.rs"), b"test").map_err(|error| error.to_string())?;
+        std::fs::write(root.join(".gitignore"), b"target/\n").map_err(|error| error.to_string())?;
+        run_git(&root, &["add", "."]).map_err(|error| error.to_string())?;
+        run_git(
+            &root,
+            &["-c", "commit.gpgSign=false", "commit", "-qm", "base"],
+        )
+        .map_err(|error| error.to_string())?;
+        let old_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")?;
+        let new_id = RepairAttemptId::parse("repair-attempt-fedcba9876543210fedcba98")?;
+        let store = Path::new("target/ripr/custom-attempts");
+        let dir = root.join(store).join(old_id.as_str()).join("artifacts");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let destination = dir.join("after.json");
+        write_bytes_atomic(&destination, b"{}")?;
+        std::fs::hard_link(&destination, dir.join("after.tmp-1-1"))
+            .map_err(|error| error.to_string())?;
+        let packet = r#"{"seam_id":"seam:sample","allowed_edit_surface":["tests/target.rs"],"forbidden_files":[]}"#;
+        let mut policy = edit_cage_policy_from_packet(packet, "seam:sample")?;
+        include_resolved_explicit_store_operational_write(
+            &mut policy,
+            &root,
+            Some(store),
+            Some(&new_id),
+            RepairAttemptStoreAccess::Open,
+        )?;
         assert!(!crate::edit_cage::capture_attempt_baseline(&root, &policy)?.is_ambiguous());
         policy.artifact_store = None;
         assert!(crate::edit_cage::capture_attempt_baseline(&root, &policy)?.is_ambiguous());
