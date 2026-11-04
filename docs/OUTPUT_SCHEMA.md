@@ -5206,6 +5206,14 @@ Field contract:
   `activation_overlap` is a static tie-breaker from already observed call
   values, such as a predicate-boundary equality call. `related_tests_total` is
   unaffected by ranking.
+- A related test whose only assertion on a returned-value seam is an exact
+  error-variant pin that does not name the `Err(..)` that seam constructs (this
+  includes a seam that constructs no `Err` at all, such as an `Ok(n)` arm
+  paired with an `Err(Fault::Even)` pin) is
+  published as `oracle_kind: exact_error_variant`, `oracle_strength: none`,
+  with a summary saying it pins a different arm; the same assertion is skipped
+  by the seam's discriminate stage and is not offered as the nearest test to
+  imitate (#12733, #12734).
 - `seams[].observed_values` — statically resolved scalar values seen in
   owner-call arguments across related tests. In addition to direct literals,
   Rust predicate boundaries may carry exact values from source-ordered direct
@@ -20399,7 +20407,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.57",
+    "schema_version": "1.56",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
