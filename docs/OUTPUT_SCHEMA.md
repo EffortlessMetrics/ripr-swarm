@@ -2098,11 +2098,13 @@ The evidence-first fields are additive in schema `0.2`:
 - `flow_sinks`, `observed_values`, and `missing_discriminators` promote the
   nested activation evidence for consumers that want direct finding-level
   access.
-- Rust equality-boundary `missing_discriminators[].reason` lists at most 16
-  complete observed values and 1,024 UTF-8 bytes of value text and separators.
-  When this preview omits values, it states the omitted count. Classification
-  and the missing-discriminator decision still read the complete inputs; this
-  preview does not bound other evidence or the size of the finding.
+- Each observed-operand list in a Rust equality-boundary
+  `missing_discriminators[].reason` retains at most 16 complete values and
+  1,024 UTF-8 bytes of value text and separators. A reason comparing two
+  parameters can contain two such lists. When a list omits values, it states
+  the omitted count. Classification and the missing-discriminator decision
+  still read the complete inputs; these previews do not bound other evidence
+  or the size of the finding.
 - `observed_values_total` — (optional, additive, no `schema_version` bump)
   present only when the finding carries more observed values than
   `MAX_OBSERVED_VALUES_PER_FINDING` (currently 32), and then set to the pre-cap
