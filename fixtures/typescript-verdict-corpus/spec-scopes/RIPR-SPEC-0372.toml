@@ -1,3 +1,3 @@
 id = "RIPR-SPEC-0372"
-scope = "out"
-reason = "Scoped structured gate acknowledgements are gate-policy law over canonical gap identity with no runtime-mutant truth for a verdict corpus case; covered by gate unit tests and the acknowledged-waiver and gate-adoption fixtures"
+unmeasured = true
+reason = "Scoped structured gate acknowledgements are gate-policy law over canonical gap identity with no runtime-mutant truth for a verdict corpus case; acceptance examples are prose, not numbered; covered by gate unit tests and the acknowledged-waiver and gate-adoption fixtures (#1966)"
