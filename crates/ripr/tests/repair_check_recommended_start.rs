@@ -380,7 +380,7 @@ const BUILDER_TEST: &str = "use fx::Req;\n\n#[test]\nfn builder_sets_url() {\n  
 /// starts, and a refusal with other missing facts keeps the bare label.
 #[test]
 fn a_refused_field_seam_names_the_stub_or_why_there_is_none() -> Result<(), String> {
-    let field = repo("fieldhint", FIELD_BASE, FIELD_NEW, FIELD_TEST, true)?;
+    let field = repo("field hint", FIELD_BASE, FIELD_NEW, FIELD_TEST, true)?;
     let repair = ripr(&field.root, &["repair"])?;
     let err = text(&repair.stderr);
     let stub_line = err
@@ -390,12 +390,17 @@ fn a_refused_field_seam_names_the_stub_or_why_there_is_none() -> Result<(), Stri
     if repair.status.code() != Some(3) || !err.contains("code=no_eligible_seam") {
         return Err(format!("still a refusal, no start:\n{err}"));
     }
-    // The named command works.
+    // The named command works. It is split like a shell would (the root may
+    // hold spaces, so the bound root arrives quoted).
     let command = stub_line
         .split('`')
         .find(|part| part.starts_with("ripr agent stub"))
         .ok_or_else(|| format!("no stub command in: {stub_line}"))?;
-    let args: Vec<&str> = command.split_whitespace().skip(1).collect();
+    let words = shell_split(command)?;
+    let args: Vec<&str> = words.iter().skip(1).map(String::as_str).collect();
+    if !args.iter().any(|arg| arg.contains("field hint")) {
+        return Err(format!("the root must keep its space: {args:?}"));
+    }
     let stub = ripr(&field.root, &args)?;
     if stub.status.code() != Some(0) || !text(&stub.stdout).contains("default_config") {
         return Err(format!(
@@ -414,6 +419,22 @@ fn a_refused_field_seam_names_the_stub_or_why_there_is_none() -> Result<(), Stri
     {
         return Err(format!("builder must say why there is no stub:\n{err}"));
     }
+    // Negative: a field seam with more missing than the field value (no
+    // tests at all) keeps the bare label and names no field stub.
+    let bare = repo("fieldbare", FIELD_BASE, FIELD_NEW, "", true)?;
+    // No test file at all (the helper writes an empty one): no test home.
+    std::fs::remove_file(bare.root.join("tests/t.rs")).map_err(|e| e.to_string())?;
+    git(&bare.root, &["add", "-A"])?;
+    git(
+        &bare.root,
+        &["commit", "-q", "-m", "drop the empty test file"],
+    )?;
+    let err = text(&ripr(&bare.root, &["repair"])?.stderr);
+    if !err.contains("`retries: 5`: repair route not ready (missing evidence: a test assertion that checks the changed field value; safe test target")
+        || err.contains("--kind field_construction")
+    {
+        return Err(format!("extra missing facts keep the bare label:\n{err}"));
+    }
     // Negative: a refusal about something else keeps its own label.
     let notest = repo("fieldneg", BOUNDARY_BASE, BOUNDARY_NEW, "", true)?;
     let err = text(&ripr(&notest.root, &["repair"])?.stderr);
@@ -423,4 +444,38 @@ fn a_refused_field_seam_names_the_stub_or_why_there_is_none() -> Result<(), Stri
         ));
     }
     Ok(())
+}
+
+/// Splits a command line the way the bound-root quoting writes it: single
+/// quotes group, `'\''` is a literal quote, whitespace separates.
+fn shell_split(command: &str) -> Result<Vec<String>, String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut started = false;
+    let mut quoted = false;
+    for ch in command.chars() {
+        match (ch, quoted) {
+            ('\'', _) => {
+                quoted = !quoted;
+                started = true;
+            }
+            (c, false) if c.is_whitespace() => {
+                if started {
+                    words.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            (c, _) => {
+                current.push(c);
+                started = true;
+            }
+        }
+    }
+    if quoted {
+        return Err(format!("unbalanced quote in: {command}"));
+    }
+    if started {
+        words.push(current);
+    }
+    Ok(words)
 }
