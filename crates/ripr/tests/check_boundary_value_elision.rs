@@ -48,7 +48,7 @@ fn report(late_match: bool) -> Result<serde_json::Value, String> {
         include_unchanged_tests: true,
         ..CheckInput::default()
     })?;
-    let raw = render_check(&output, &OutputFormat::CheckFindingsJson)?;
+    let raw = render_check(&output, &OutputFormat::Json)?;
     serde_json::from_str(&raw).map_err(|error| error.to_string())
 }
 
