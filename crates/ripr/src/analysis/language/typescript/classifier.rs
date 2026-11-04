@@ -6459,6 +6459,25 @@ fn mask_comments_and_strings(body: &str) -> String {
 /// [`crate::domain::ts_oracle_kind_matches_seam`].
 pub(crate) use crate::domain::ts_oracle_kind_matches_seam;
 
+/// A raw exact assertion is still present when the bounded push witness
+/// withdraws its change-specific credit. Only an eligible owner path may
+/// supply that fact to the confidence explanation.
+pub(crate) fn ts_push_raw_eligible(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    push_facts: &super::push_argument_guard::PushArgumentFacts,
+    family: &ProbeFamily,
+) -> bool {
+    candidates.iter().any(|candidate| {
+        candidate.relation.uses_oracle()
+            && candidate_observes_owner_call(candidate)
+            && candidate.test.assertions.iter().any(|assertion| {
+                push_facts.withhold(candidate.test, assertion)
+                    && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                    && ts_oracle_kind_matches_seam(&assertion.oracle_kind, family)
+            })
+    })
+}
+
 /// Compute the strongest oracle kind and strength that MATCHES the changed
 /// seam's probe family, by iterating assertions at the assertion level across
 /// oracle-eligible candidates (RIPR-SPEC-0104).
@@ -7513,6 +7532,8 @@ pub(crate) fn classify_resolved_owner(
     } else {
         super::push_argument_guard::PushArgumentFacts::default()
     };
+    let push_raw_eligible =
+        ts_push_raw_eligible(related_candidates, &push_facts, &probe_shape.family);
     let (strongest_strength, strongest_kind) = strongest_family_matching_oracle(
         &probe_shape.family,
         related_candidates,
@@ -7844,7 +7865,7 @@ pub(crate) fn classify_resolved_owner(
             StageState::Yes,
             StageState::Weak,
             StageState::Weak,
-            vec![if !push_facts.is_empty() {
+            vec![if push_raw_eligible {
                 "The available evidence does not establish discrimination of the changed appended value; use an input changed by the edit and assert the appended element.".to_string()
             } else {
                 weak_oracle_missing_summary(
@@ -8139,8 +8160,7 @@ pub(crate) fn classify_resolved_owner(
         Confidence::Low,
         "TypeScript preview adapter does not yet model propagation.",
     );
-    let observe_summary = if !push_facts.is_empty()
-        && strongest_strength < OracleStrength::Strong.rank()
+    let observe_summary = if push_raw_eligible && strongest_strength < OracleStrength::Strong.rank()
     {
         "An exact assertion was extracted, but this evidence does not establish discrimination of the changed appended value."
             .to_string()
@@ -8217,7 +8237,7 @@ pub(crate) fn classify_resolved_owner(
     } else if strongest_strength >= OracleStrength::Strong.rank() {
         // RIPR-SPEC-0098: strong oracle exists but observation guard failed.
         "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.".to_string()
-    } else if !push_facts.is_empty() && strongest_strength < OracleStrength::Strong.rank() {
+    } else if push_raw_eligible && strongest_strength < OracleStrength::Strong.rank() {
         "TypeScript preview: this evidence does not establish discrimination of the changed appended value; use an input changed by the edit and assert the appended element.".to_string()
     } else if let Some(discriminator) = missing_discriminators.first() {
         format!(
@@ -8269,7 +8289,7 @@ pub(crate) fn classify_resolved_owner(
             Some(gap) => gap.no_static_path_recommendation(),
             None => no_static_path_recommendation(owner),
         },
-        _ if !push_facts.is_empty() && strongest_strength < OracleStrength::Strong.rank() => {
+        _ if push_raw_eligible && strongest_strength < OracleStrength::Strong.rank() => {
             "TypeScript preview advisory: use an input changed by the edit and assert the appended element; no actionable repair packet is emitted.".to_string()
         }
         // Owner-call evidence with a named missing discriminator takes
@@ -8316,7 +8336,11 @@ pub(crate) fn classify_resolved_owner(
         &class,
         &crate::domain::ConfidenceBasisInputs {
             has_related_test: has_oracle_eligible_relation,
-            strong_oracle_present: strongest_strength >= OracleStrength::Strong.rank(),
+            // The push witness starts from a raw exact assertion. Its
+            // change-specific credit is weak because observation is not
+            // established, not because the test has no exact assertion.
+            strong_oracle_present: strongest_strength >= OracleStrength::Strong.rank()
+                || push_raw_eligible,
             boundary_input_matched: boundary_witnessed,
         },
     );

@@ -217,6 +217,16 @@ fn count_only_report_names_the_missing_element() -> Result<(), String> {
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert!(
         finding
+            .confidence_basis
+            .contains(&crate::domain::ConfidenceCap::ObservationNotConfirmed)
+    );
+    assert!(
+        !finding
+            .confidence_basis
+            .contains(&crate::domain::ConfidenceCap::OracleBelowStrong)
+    );
+    assert!(
+        finding
             .missing
             .iter()
             .any(|text| text.contains("appended element"))
@@ -321,4 +331,48 @@ fn array_types_do_not_masquerade_as_index_writes() {
             "{source}"
         );
     }
+}
+
+#[test]
+fn confidence_does_not_borrow_a_rejected_owner_path() -> Result<(), String> {
+    let source = "export function logLine(buf: string[], msg: string): void {\n  buf.push(msg.toUpperCase());\n}\n";
+    let test_source = "import { test, expect } from 'vitest';\nimport { logLine } from '../src/log';\ntest('log', () => {\nconst b: string[] = [];\nlogLine(b, 'hi');\nexpect(b.length).toBe(1);\n});\n";
+    let weak_source = "import { test, expect } from 'vitest';\nimport { logLine } from '../src/log';\ntest('weak', () => { logLine([], 'hi'); expect(true).toBeTruthy(); });\n";
+    let owners = extract_owners(Path::new("src/log.ts"), source);
+    let tests = extract_tests(Path::new("tests/log.test.ts"), test_source);
+    let weak_tests = extract_tests(Path::new("tests/weak.test.ts"), weak_source);
+    let owner = owners.first().ok_or("missing owner")?;
+    let test = tests.first().ok_or("missing witness test")?;
+    let weak = weak_tests.first().ok_or("missing weak test")?;
+    let trusted = TypeScriptRelatedCandidate::with_owner_path(
+        test,
+        TypeScriptRelationKind::DirectOwnerCall,
+        TypeScriptOwnerPathDisposition::TrustedOwnerPath,
+    );
+    let rejected = TypeScriptRelatedCandidate::with_owner_path(
+        test,
+        TypeScriptRelationKind::DirectOwnerCall,
+        TypeScriptOwnerPathDisposition::RejectedOwnerModuleMock,
+    );
+    let eligible_weak = TypeScriptRelatedCandidate::with_owner_path(
+        weak,
+        TypeScriptRelationKind::DirectOwnerCall,
+        TypeScriptOwnerPathDisposition::TrustedOwnerPath,
+    );
+    let facts = super::super::push_argument_guard::PushArgumentFacts::read(
+        Some("buf.push(msg);"),
+        owner,
+        &[trusted],
+    );
+    assert!(ts_push_raw_eligible(
+        &[trusted],
+        &facts,
+        &ProbeFamily::SideEffect
+    ));
+    assert!(!ts_push_raw_eligible(
+        &[rejected, eligible_weak],
+        &facts,
+        &ProbeFamily::SideEffect
+    ));
+    Ok(())
 }

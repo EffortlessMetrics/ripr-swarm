@@ -134,10 +134,6 @@ impl PushArgumentFacts {
         Self { tests }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.tests.is_empty()
-    }
-
     /// Return true when this bounded witness cannot attribute the assertion to
     /// the appended value. Both rank and sink observation use this decision.
     pub(crate) fn withhold(&self, test: &TypeScriptTest, assertion: &TypeScriptAssertion) -> bool {
