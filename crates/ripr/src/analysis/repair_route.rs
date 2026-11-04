@@ -404,8 +404,7 @@ fn apply_unknown_activation_stage(
     // Only `reachable_unrevealed` lost its activation item to the ceiling. A
     // `weakly_gripped` seam with an unknown activation stage keeps the
     // #10622 stub-route wording, so it must not pick this item up.
-    if class != SeamGripClass::ReachableUnrevealed
-        || evidence.activate.state != StageState::Unknown
+    if class != SeamGripClass::ReachableUnrevealed || evidence.activate.state != StageState::Unknown
     {
         return;
     }
