@@ -34,6 +34,114 @@ use std::path::Path;
 const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
 const SARIF_VERSION: &str = "2.1.0";
 const RIPR_SARIF_SCHEMA_VERSION: &str = "0.1";
+/// Environment variable overriding the SARIF results-array byte budget.
+/// Set to `0` to remove the cap (unbounded); any positive integer sets the
+/// budget explicitly. When unset, [`DEFAULT_SARIF_RESULTS_BYTES`] applies.
+/// Mirrors `RIPR_CHECK_FINDINGS_BYTES` (#5203): an unparseable value fails
+/// the run, never the opt-out.
+pub(crate) const SARIF_RESULTS_BYTES_ENV: &str = "RIPR_SARIF_RESULTS_BYTES";
+/// Default cap on rendered results-array bytes in SARIF output. SARIF
+/// results are pretty-printed and carry full evidence properties, so an
+/// unbounded run can exceed code-scanning and agent-context limits with no
+/// self-declared truncation. The budget keeps large runs consumable while
+/// leaving ordinary runs untouched; operators can raise or remove the cap
+/// via [`SARIF_RESULTS_BYTES_ENV`].
+pub(crate) const DEFAULT_SARIF_RESULTS_BYTES: usize = 1_000_000;
+
+/// Disclosed SARIF results truncation: `rendered + omitted == total`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SarifResultsBound {
+    pub(crate) rendered: usize,
+    pub(crate) total: usize,
+    pub(crate) budget: usize,
+}
+
+/// Effective SARIF results-array byte budget: `None` is the unbounded
+/// opt-out. Fails closed on unparseable values.
+pub(crate) fn sarif_results_byte_budget() -> Result<Option<usize>, String> {
+    sarif_results_byte_budget_from_env(std::env::var(SARIF_RESULTS_BYTES_ENV))
+}
+
+pub(crate) fn sarif_results_byte_budget_from_env(
+    value: Result<String, std::env::VarError>,
+) -> Result<Option<usize>, String> {
+    match value {
+        Ok(raw) => parse_sarif_results_bytes(&raw),
+        Err(std::env::VarError::NotPresent) => Ok(Some(DEFAULT_SARIF_RESULTS_BYTES)),
+        Err(std::env::VarError::NotUnicode(value)) => Err(format!(
+            "{SARIF_RESULTS_BYTES_ENV} is not valid UTF-8 (got {value:?}): set a positive byte budget, or 0 to \
+             remove the cap"
+        )),
+    }
+}
+
+fn parse_sarif_results_bytes(value: &str) -> Result<Option<usize>, String> {
+    let trimmed = value.trim();
+    let invalid = |value: &str| {
+        format!(
+            "{SARIF_RESULTS_BYTES_ENV} `{value}` is not a byte budget: set a positive integer, or 0 to remove \
+             the cap"
+        )
+    };
+    match trimmed.parse::<usize>() {
+        // Only the exact spelling `0` is the opt-out, mirroring
+        // `RIPR_CHECK_FINDINGS_BYTES` (#4606 review).
+        Ok(0) if trimmed == "0" => Ok(None),
+        Ok(0) => Err(invalid(value)),
+        Ok(limit) => Ok(Some(limit)),
+        Err(_) => Err(invalid(value)),
+    }
+}
+
+/// Keep the leading results that fit `budget` pretty-printed bytes (plus
+/// separators), always keeping the first result so a nonempty analysis
+/// never yields an empty bounded subset. Returns the kept results and the
+/// disclosed bound when results were omitted; `None` budget renders all.
+fn bound_sarif_results(
+    results: Vec<Value>,
+    budget: Option<usize>,
+) -> (Vec<Value>, Option<SarifResultsBound>) {
+    let Some(budget) = budget else {
+        return (results, None);
+    };
+    let total = results.len();
+    let mut kept: Vec<Value> = Vec::new();
+    let mut array_bytes = 0usize;
+    for result in results {
+        let payload_bytes = serde_json::to_string_pretty(&result)
+            .map(|rendered| rendered.len())
+            .unwrap_or(usize::MAX);
+        array_bytes = array_bytes
+            .saturating_add(payload_bytes)
+            .saturating_add(if kept.is_empty() { 0 } else { 2 });
+        kept.push(result);
+        if array_bytes > budget {
+            break;
+        }
+    }
+    if kept.len() < total {
+        let bound = SarifResultsBound {
+            rendered: kept.len(),
+            total,
+            budget,
+        };
+        (kept, Some(bound))
+    } else {
+        (kept, None)
+    }
+}
+
+fn insert_sarif_bound_properties(properties: &mut Map<String, Value>, bound: &SarifResultsBound) {
+    properties.insert("results_rendered".to_string(), json!(bound.rendered));
+    properties.insert("results_total".to_string(), json!(bound.total));
+    properties.insert(
+        "results_omitted".to_string(),
+        json!(bound.total - bound.rendered),
+    );
+    properties.insert("results_byte_budget".to_string(), json!(bound.budget));
+    properties.insert("limited_results_bound".to_string(), json!(true));
+    properties.insert("document_complete".to_string(), json!(false));
+}
 /// Match the producers' Unicode scalar-value columns. SARIF 2.1.0 §3.14.27
 /// requires this declaration for nonempty text results; empty runs may carry it.
 const SARIF_COLUMN_KIND: &str = "unicodeCodePoints";
@@ -49,11 +157,40 @@ const STATIC_EXPOSURE_MODEL_URI: &str = "https://github.com/EffortlessMetrics/ri
 const SEAM_GRIP_SPEC_URI: &str = "https://github.com/EffortlessMetrics/ripr-swarm/blob/main/docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md";
 const PYTHON_PREVIEW_AUTHORITY_BOUNDARY: &str = "preview_advisory_only";
 
-/// Render diff-scoped Findings as SARIF.
+/// Run-level result disclosures carried into the SARIF property bag.
+struct SarifRunDisclosures<'a> {
+    omitted_not_current: usize,
+    folded_same_line: usize,
+    results_bound: Option<&'a SarifResultsBound>,
+}
+
+/// Render diff-scoped Findings as SARIF with the default results budget.
+/// The CLI resolves [`SARIF_RESULTS_BYTES_ENV`] before rendering (see the
+/// `Sarif` arm in `output::render`); direct callers needing another budget
+/// use [`render_findings_sarif_with_budget`]. Test-only: production renders
+/// through the explicit-budget entry point.
+#[cfg(test)]
 pub(crate) fn render_findings_sarif(
     output: &CheckOutput,
     config: &RiprConfig,
     suppressions: &[SuppressionEntry],
+) -> String {
+    render_findings_sarif_with_budget(
+        output,
+        config,
+        suppressions,
+        Some(DEFAULT_SARIF_RESULTS_BYTES),
+    )
+}
+
+/// Render diff-scoped Findings as SARIF, keeping only the leading results
+/// that fit `results_budget` pretty-printed bytes (`None` renders all).
+/// Omitted results are disclosed in the run properties, never silently.
+pub(crate) fn render_findings_sarif_with_budget(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+    results_budget: Option<usize>,
 ) -> String {
     let today = current_iso_date();
     let rules = finding_rules();
@@ -76,14 +213,18 @@ pub(crate) fn render_findings_sarif(
         .filter_map(|finding| finding_result(&output.root, finding, config, suppressions, &today))
         .collect::<Vec<_>>();
     let (results, folded_same_line) = fold_same_line_results(results);
+    let (results, results_bound) = bound_sarif_results(results, results_budget);
     sarif_document(
         "finding",
         rules,
         results,
         output.analysis_outcome.as_ref(),
         output.analyzed_revisions.as_ref(),
-        omitted_not_current,
-        folded_same_line,
+        SarifRunDisclosures {
+            omitted_not_current,
+            folded_same_line,
+            results_bound: results_bound.as_ref(),
+        },
     )
 }
 
@@ -165,11 +306,32 @@ fn fold_same_line_results(results: Vec<Value>) -> (Vec<Value>, usize) {
     (kept, folded)
 }
 
-/// Render repo-scoped classified seams as SARIF.
+/// Render repo-scoped classified seams as SARIF with the default results
+/// budget. Direct callers needing another budget use
+/// [`render_repo_seams_sarif_with_budget`]. Test-only: production renders
+/// through the explicit-budget entry point.
+#[cfg(test)]
 pub(crate) fn render_repo_seams_sarif(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
     config: &RiprConfig,
+) -> String {
+    render_repo_seams_sarif_with_budget(
+        classified,
+        limit_info,
+        config,
+        Some(DEFAULT_SARIF_RESULTS_BYTES),
+    )
+}
+
+/// Render repo-scoped classified seams as SARIF, keeping only the leading
+/// results that fit `results_budget` pretty-printed bytes (`None` renders
+/// all). Omitted results are disclosed in the run properties.
+pub(crate) fn render_repo_seams_sarif_with_budget(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    config: &RiprConfig,
+    results_budget: Option<usize>,
 ) -> String {
     let rules = seam_rules();
     // Ordinals are assigned over every classified seam, before the severity
@@ -180,13 +342,15 @@ pub(crate) fn render_repo_seams_sarif(
         .zip(ordinals)
         .filter_map(|(entry, ordinal)| seam_result(entry, ordinal, config))
         .collect::<Vec<_>>();
-    sarif_document_repo_seam(rules, results, limit_info)
+    let (results, results_bound) = bound_sarif_results(results, results_budget);
+    sarif_document_repo_seam(rules, results, limit_info, results_bound.as_ref())
 }
 
 fn sarif_document_repo_seam(
     rules: Vec<Value>,
     results: Vec<Value>,
     limit_info: Option<&SeamLimitInfo>,
+    results_bound: Option<&SarifResultsBound>,
 ) -> String {
     let mut props = Map::new();
     props.insert("tool".to_string(), json!("ripr"));
@@ -210,6 +374,9 @@ fn sarif_document_repo_seam(
             });
             props.insert("limitations".to_string(), json!([limitation]));
         }
+    }
+    if let Some(bound) = results_bound {
+        insert_sarif_bound_properties(&mut props, bound);
     }
     let document = json!({
         "$schema": SARIF_SCHEMA,
@@ -239,8 +406,7 @@ fn sarif_document(
     results: Vec<Value>,
     analysis_outcome: Option<&AnalysisOutcome>,
     revisions: Option<&crate::analysis::AnalyzedRevisions>,
-    omitted_not_current: usize,
-    folded_same_line: usize,
+    disclosures: SarifRunDisclosures<'_>,
 ) -> String {
     let mut properties = Map::new();
     properties.insert("tool".to_string(), json!("ripr"));
@@ -293,17 +459,20 @@ fn sarif_document(
     // Additive and absent when nothing was omitted, so ordinary clean runs
     // do not grow a zero-valued property. The omitted findings stay out of
     // `results`; this count only discloses the filter (#5091).
-    if omitted_not_current > 0 {
+    if disclosures.omitted_not_current > 0 {
         properties.insert(
             "omitted_not_current".to_string(),
-            json!(omitted_not_current),
+            json!(disclosures.omitted_not_current),
         );
     }
-    if folded_same_line > 0 {
+    if disclosures.folded_same_line > 0 {
         properties.insert(
             "folded_same_line_results".to_string(),
-            json!(folded_same_line),
+            json!(disclosures.folded_same_line),
         );
+    }
+    if let Some(bound) = disclosures.results_bound {
+        insert_sarif_bound_properties(&mut properties, bound);
     }
     let document = json!({
         "$schema": SARIF_SCHEMA,
@@ -1549,6 +1718,79 @@ mod tests {
         let run = &sarif["runs"][0];
         assert_eq!(run["results"].as_array().map(Vec::len), Some(1));
         assert_eq!(run["columnKind"], "unicodeCodePoints");
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_results_budget_truncates_and_discloses() -> Result<(), String> {
+        // Token-efficient feedback: a tiny budget keeps the first result and
+        // discloses the omission; rendered + omitted == total.
+        let mut output = sample_output();
+        let template = output.findings[0].clone();
+        output.findings = (0..5)
+            .map(|index| {
+                let mut finding = template.clone();
+                finding.id = format!("finding:case-{index}");
+                finding.probe.id = ProbeId(format!("probe:src/case-{index}.rs:1:predicate"));
+                finding.probe.location =
+                    SourceLocation::new(format!("src/case-{index}.rs"), 10 + index, 1);
+                finding
+            })
+            .collect();
+        let sarif = parse_json(&render_findings_sarif_with_budget(
+            &output,
+            &RiprConfig::default(),
+            &[],
+            Some(1),
+        ))?;
+        let run = &sarif["runs"][0];
+        assert_eq!(run["results"].as_array().map(Vec::len), Some(1));
+        let props = &run["properties"];
+        assert_eq!(props["results_rendered"], 1);
+        assert_eq!(props["results_total"], 5);
+        assert_eq!(props["results_omitted"], 4);
+        assert_eq!(props["results_byte_budget"], 1);
+        assert_eq!(props["limited_results_bound"], true);
+        assert_eq!(props["document_complete"], false);
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_results_budget_unbounded_renders_all_without_bound_properties() -> Result<(), String> {
+        let sarif = parse_json(&render_findings_sarif_with_budget(
+            &sample_output(),
+            &RiprConfig::default(),
+            &[],
+            None,
+        ))?;
+        let run = &sarif["runs"][0];
+        assert_eq!(run["results"].as_array().map(Vec::len), Some(1));
+        assert!(run["properties"].get("limited_results_bound").is_none());
+        assert!(run["properties"].get("results_omitted").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_results_budget_env_parsing() -> Result<(), String> {
+        use std::env::VarError;
+        assert_eq!(
+            sarif_results_byte_budget_from_env(Err(VarError::NotPresent)),
+            Ok(Some(DEFAULT_SARIF_RESULTS_BYTES))
+        );
+        assert_eq!(
+            sarif_results_byte_budget_from_env(Ok("0".to_string())),
+            Ok(None)
+        );
+        assert_eq!(
+            sarif_results_byte_budget_from_env(Ok("2048".to_string())),
+            Ok(Some(2048))
+        );
+        for invalid in ["00", "+0", "lots"] {
+            match sarif_results_byte_budget_from_env(Ok(invalid.to_string())) {
+                Ok(_) => return Err(format!("budget `{invalid}` must fail closed")),
+                Err(error) => assert!(error.contains("RIPR_SARIF_RESULTS_BYTES"), "{error}"),
+            }
+        }
         Ok(())
     }
 
