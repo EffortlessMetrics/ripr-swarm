@@ -174,16 +174,25 @@ mod tests {
     use super::*;
     const SPEC: &str = "```expected-classes\n[[\"a\",\"weakly_exposed\"]]\n```";
     const GOOD: &str = r#"{"findings":[{"id":"a","classification":"weakly_exposed"}]}"#;
+    fn require_rejection(spec: &str, output: &str, mandatory: bool) -> Result<(), String> {
+        match validate(spec, output, mandatory) {
+            Err(_) => Ok(()),
+            Ok(actual) => Err(format!(
+                "expected a class-contract refusal, got {actual} for {spec:?} and {output}"
+            )),
+        }
+    }
+
     #[test]
     fn declared_classes_reject_wrong_rebless_and_accept_valid_output() -> Result<(), String> {
         assert!(validate(SPEC, GOOD, true)?);
-        assert!(validate(SPEC, &GOOD.replace("weakly_exposed", "exposed"), true).is_err());
-        assert!(validate(SPEC, r#"{"findings":[]}"#, true).is_err());
-        assert!(validate(SPEC, &GOOD.replace("\"a\"", "\"b\""), true).is_err());
+        require_rejection(SPEC, &GOOD.replace("weakly_exposed", "exposed"), true)?;
+        require_rejection(SPEC, r#"{"findings":[]}"#, true)?;
+        require_rejection(SPEC, &GOOD.replace("\"a\"", "\"b\""), true)?;
         Ok(())
     }
     #[test]
-    fn declarations_fail_closed_on_invalid_or_ambiguous_input() {
+    fn declarations_fail_closed_on_invalid_or_ambiguous_input() -> Result<(), String> {
         for spec in [
             SPEC.replace("weakly_exposed", "bogus"),
             format!("{SPEC}\n{SPEC}"),
@@ -193,11 +202,12 @@ mod tests {
             ),
             SPEC.trim_end_matches('`').to_string(),
         ] {
-            assert!(validate(&spec, GOOD, true).is_err(), "{spec}");
+            require_rejection(&spec, GOOD, true)?;
         }
-        assert!(validate("", GOOD, true).is_err());
-        assert_eq!(validate("", GOOD, false), Ok(false));
-        assert!(validate("```expected-classes\n[]\n```", GOOD, true).is_err());
+        require_rejection("", GOOD, true)?;
+        assert!(!validate("", GOOD, false)?);
+        require_rejection("```expected-classes\n[]\n```", GOOD, true)?;
+        Ok(())
     }
     #[test]
     fn expected_classes_inventory_counts_declarations_and_enforces_floor() -> Result<(), String> {
