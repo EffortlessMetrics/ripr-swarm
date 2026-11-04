@@ -3,4 +3,5 @@
   discarded calls, assertions that fail on both versions, test-side range
   replacements or unsupported iterator forms. Ambiguous old bodies and test
   execution remain unknown; combined header/body edits also withhold sibling
-  accumulator and return credit without opening a repair route (#12948).
+  accumulator and return credit. Integral floats cannot supply integer range
+  witnesses through offset normalization, without opening a repair route (#12948).

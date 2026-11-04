@@ -49,6 +49,17 @@ pub(super) fn changed_range_limit(
                         return false;
                     };
                     let read = |header: &RangeHeader, row: &CallRow| {
+                        // The comparison resolver canonicalizes integral floats
+                        // while shifting bounds. Python range rejects those
+                        // values, so establish integer inputs before shifting.
+                        if !header.argument_exprs.iter().all(|expr| {
+                            integer_range_input(expr, &|name| {
+                                resolve_operand(name, row, &constants)
+                                    .is_some_and(|value| value.parse::<i128>().is_ok())
+                            })
+                        }) {
+                            return None;
+                        }
                         let values: Option<Vec<i128>> = header
                             .args
                             .iter()
@@ -572,7 +583,33 @@ impl rustpython_parser::ast::Fold<rustpython_parser::text_size::TextRange> for H
 struct RangeHeader {
     target: String,
     args: Vec<String>,
+    argument_exprs: Vec<rustpython_parser::ast::Expr>,
     readable: bool,
+}
+
+/// Keep the native integer type of every input, before the shared resolver's
+/// decimal canonicalization. The final existing resolver still restricts which
+/// expressions are supported; this check only withholds credit.
+fn integer_range_input(
+    expression: &rustpython_parser::ast::Expr,
+    integer_name: &impl Fn(&str) -> bool,
+) -> bool {
+    use rustpython_parser::ast::{self, Expr};
+    match expression {
+        Expr::Constant(value) => matches!(value.value, ast::Constant::Int(_)),
+        Expr::Name(name) => integer_name(name.id.as_str()),
+        Expr::Attribute(_) => {
+            super::expr_full_name(expression).is_some_and(|name| integer_name(&name))
+        }
+        Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::UAdd | ast::UnaryOp::USub) => {
+            integer_range_input(&unary.operand, integer_name)
+        }
+        Expr::BinOp(binary) if matches!(binary.op, ast::Operator::Add | ast::Operator::Sub) => {
+            integer_range_input(&binary.left, integer_name)
+                && integer_range_input(&binary.right, integer_name)
+        }
+        _ => false,
+    }
 }
 
 fn loop_header(line: &str) -> Option<(String, rustpython_parser::ast::Stmt)> {
@@ -617,6 +654,7 @@ fn range_header(line: &str) -> Option<RangeHeader> {
             .iter()
             .map(|arg| super::source_utils::text_for_range(&source, arg.range()).to_string())
             .collect(),
+        argument_exprs: call.args.clone(),
         readable: call.keywords.is_empty()
             && (1..=3).contains(&call.args.len())
             && matches!(header.body.as_slice(), [Stmt::Pass(_)]),

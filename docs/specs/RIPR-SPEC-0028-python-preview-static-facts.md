@@ -1692,6 +1692,13 @@ default. Excess, duplicate, unknown or positional-only keyword arguments,
 missing required parameters and unsupported argument forms withhold credit.
 Computed defaults or annotations are outside the closed owner model.
 
+Every range-bound input must retain its integer type before offset
+normalization. Integral-valued floats such as `3.0` still raise `TypeError`
+in Python range; decimal equality normalization cannot turn them into integer
+witnesses. This check covers all arguments of both headers and every modeled
+call, including prior calls in the selected test. Unused scalar parameters
+need not be integers, and the existing supported-expression boundary remains.
+
 The old-body witness is the existing `sole_line_replacement` fact: the
 production file contains exactly one added line replacing one removed line at
 the same coordinate. Other production edits keep the header unresolved.

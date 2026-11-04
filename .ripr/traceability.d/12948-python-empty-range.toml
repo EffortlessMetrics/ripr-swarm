@@ -3,6 +3,7 @@ id = "RIPR-SPEC-0028"
 name = "changed Python range headers require distinct returned sums for an exact pin"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_preserves_integer_types_before_offset_normalization",
   "crates/ripr/src/analysis/language/python/range_activation_tests.rs::changed_range_combined_body_edits_withhold_every_finding",
   "crates/ripr/src/analysis/language/python/range_activation_tests.rs::changed_range_compound_context_withholds_removed_only_evidence",
   "crates/ripr/src/analysis/language/python/range_activation_tests.rs::changed_range_compound_context_preserves_independent_owner_credit",

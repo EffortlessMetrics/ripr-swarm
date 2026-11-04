@@ -4426,3 +4426,77 @@ fn changed_range_requires_an_unchanged_old_body_and_catches_old_wrappers() -> Re
     );
     Ok(())
 }
+
+#[test]
+fn changed_range_preserves_integer_types_before_offset_normalization() -> Result<(), String> {
+    for (prefix, signature, bound, call, setup, expected, exposed) in [
+        ("", "n", "n", "3.0", "", 6, false),
+        ("", "n", "n", "n=3.0", "", 6, false),
+        ("", "n", "n", "n=3", "", 6, true),
+        ("", "n", "n", "3.5", "", 6, false),
+        ("", "n", "n", "3", "", 6, true),
+        ("", "n", "n", "value", "    value = 3.0\n", 6, false),
+        ("", "n=3.0", "n", "", "", 6, false),
+        ("", "n=3", "n", "", "", 6, true),
+        ("VALUE = 3.0\n", "n", "n", "VALUE", "", 6, false),
+        ("VALUE = 3\n", "n", "n", "VALUE", "", 6, true),
+        ("LIMIT = 3.0\n", "n", "LIMIT", "3", "", 6, false),
+        ("LIMIT = 3\n", "n", "LIMIT", "3", "", 6, true),
+        ("", "n", "3.0", "3", "", 6, false),
+        ("", "n", "3", "3", "", 6, true),
+        ("", "n", "n", "3", "    sum_to(3.0)\n", 6, false),
+        ("", "n", "n", "3", "    sum_to(3)\n", 6, true),
+        ("", "n, unused=3.0", "n", "3", "", 6, true),
+        ("", "n, unused", "n", "3, 3.0", "", 6, true),
+    ] {
+        let before = format!("    for i in range({bound} + 1):");
+        let after = format!("    for i in range({bound} + 2):");
+        let source = format!(
+            "{prefix}def sum_to({signature}):\n    acc = 0\n{after}\n        acc += i\n    return acc\n"
+        );
+        let tests = format!(
+            "from src.subject import sum_to{}\n\ndef test_sum():\n{setup}    assert sum_to({call}) == {expected}\n",
+            if prefix.starts_with("VALUE") {
+                ", VALUE"
+            } else {
+                ""
+            }
+        );
+        let finding =
+            classify_range_case(&source, &tests, prefix.lines().count() + 3, &before, &after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{source}\n{tests}: {finding:?}"
+        );
+        if !exposed {
+            assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+            assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
+        }
+    }
+    // Integer input types are required in every position and on both sides.
+    for (before, after, argument, expected, exposed) in [
+        ("range(n + 0, 5)", "range(n + 1, 5)", "3.0", 7, false),
+        ("range(n + 0, 5)", "range(n + 1, 5)", "3", 7, true),
+        ("range(0, 5, n + 0)", "range(0, 5, n + 1)", "3.0", 3, false),
+        ("range(0, 5, n + 0)", "range(0, 5, n + 1)", "3", 3, true),
+        ("range(3.0 + 1)", "range(n + 2)", "3", 6, false),
+        ("range(n + 1)", "range(3.0 + 2)", "3", 6, false),
+        ("range(n * 1 + 1)", "range(n * 1 + 2)", "3", 6, false),
+    ] {
+        let before = format!("    for i in {before}:");
+        let after = format!("    for i in {after}:");
+        let source =
+            format!("def sum_to(n):\n    acc = 0\n{after}\n        acc += i\n    return acc\n");
+        let tests = format!(
+            "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to({argument}) == {expected}\n"
+        );
+        let finding = classify_range_case(&source, &tests, 3, &before, &after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{source}\n{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
