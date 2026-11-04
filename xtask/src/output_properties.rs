@@ -15,6 +15,12 @@
 //!    (no SARIF schema is committed; the subset is checked by the same
 //!    repository validator).
 //!
+//! Coverage is per renderer: JSON and SARIF get the word scan, the class
+//! vocabulary check and a schema check; human, full human, GitHub and the
+//! context packet get only the forbidden-word scan (no schema is asserted for
+//! them). The SARIF subset does not set `additionalProperties: false`, so
+//! unexpected extra SARIF fields are not rejected.
+//!
 //! The forbidden-word list and word matcher are the gate's own
 //! (`forbidden_static_terms`, `no_panic::contains_word`), not a copy.
 
@@ -25,7 +31,7 @@ use ripr::config::RiprConfig;
 use ripr::domain::ExposureClass;
 use ripr::{CheckInput, Mode, OutputFormat, check_workspace, render_check};
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -285,10 +291,19 @@ fn check_vocabulary(rendered: &Rendered, forbidden: &[String]) -> Result<(), Str
 
 /// Property 2: ids are unique within the run, in the domain findings and in
 /// the JSON render.
-fn check_unique_ids(rendered: &Rendered) -> Result<BTreeSet<String>, String> {
-    let mut seen = BTreeSet::new();
+fn check_unique_ids(rendered: &Rendered) -> Result<BTreeMap<String, String>, String> {
+    // id -> location-independent payload (class, family, delta, expression),
+    // so stability compares what each id means, not only the id set.
+    let mut seen = BTreeMap::new();
     for finding in &rendered.output.findings {
-        if !seen.insert(finding.id.clone()) {
+        let payload = format!(
+            "{}|{:?}|{:?}|{}",
+            finding.class.as_str(),
+            finding.probe.family,
+            finding.probe.delta,
+            finding.probe.expression
+        );
+        if seen.insert(finding.id.clone(), payload).is_some() {
             return Err(format!("duplicate finding id `{}`", finding.id));
         }
     }
@@ -418,11 +433,11 @@ proptest! {
         prop_assert!(!base.is_empty(), "generator produced no findings");
         let reordered = check_unique_ids(&analyze(&workspace, &reversed).map_err(TestCaseError::fail)?)
             .map_err(TestCaseError::fail)?;
-        prop_assert_eq!(&base, &reordered, "diff section order changed finding ids");
+        prop_assert_eq!(&base, &reordered, "diff section order changed the finding id to payload mapping");
         let shifted_workspace = build_workspace(&specs, lead);
         let shifted = check_unique_ids(&analyze(&shifted_workspace, &forward).map_err(TestCaseError::fail)?)
             .map_err(TestCaseError::fail)?;
-        prop_assert_eq!(&base, &shifted, "unrelated line shift changed finding ids");
+        prop_assert_eq!(&base, &shifted, "unrelated line shift changed the finding id to payload mapping");
     }
 }
 
@@ -484,6 +499,26 @@ mod negative {
     }
 
     #[test]
+    fn injected_foreign_sarif_rule_fails_the_vocabulary_check() -> Result<(), String> {
+        let mut rendered = one_fn_sample()?;
+        let mut changed = false;
+        for (name, text) in &mut rendered.by_format {
+            if *name == "sarif" {
+                let edited = text.replace("ripr.finding.", "ripr.finding.sound_");
+                changed = edited != *text;
+                *text = edited;
+            }
+        }
+        if !changed {
+            return Err("fixture did not carry a SARIF rule to corrupt".to_string());
+        }
+        if check_vocabulary(&rendered, &crate::forbidden_static_terms()).is_ok() {
+            return Err("foreign SARIF rule class was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn injected_duplicate_id_fails_the_uniqueness_check() -> Result<(), String> {
         let specs = vec![FileSpec {
             fns: vec![
@@ -518,19 +553,31 @@ mod negative {
     fn schema_check_rejects_drifted_json_and_sarif() -> Result<(), String> {
         let mut rendered = one_fn_sample()?;
         check_schemas(&rendered)?;
+        let mut json_changed = false;
         for (name, text) in &mut rendered.by_format {
             if *name == "json" {
-                *text = text.replace("\"tool\": \"ripr\"", "\"tool\": \"other\"");
+                let edited = text.replace("\"tool\": \"ripr\"", "\"tool\": \"other\"");
+                json_changed = edited != *text;
+                *text = edited;
             }
+        }
+        if !json_changed {
+            return Err("JSON mutation did not change the rendered text".to_string());
         }
         if check_schemas(&rendered).is_ok() {
             return Err("drifted JSON was accepted".to_string());
         }
         let mut rendered = one_fn_sample()?;
+        let mut sarif_changed = false;
         for (name, text) in &mut rendered.by_format {
             if *name == "sarif" {
-                *text = text.replace("\"2.1.0\"", "\"2.0.0\"");
+                let edited = text.replace("\"2.1.0\"", "\"2.0.0\"");
+                sarif_changed = edited != *text;
+                *text = edited;
             }
+        }
+        if !sarif_changed {
+            return Err("SARIF mutation did not change the rendered text".to_string());
         }
         if check_schemas(&rendered).is_ok() {
             return Err("drifted SARIF was accepted".to_string());
