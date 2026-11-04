@@ -87,12 +87,12 @@ fn a_documented_gap_or_an_untested_channel_is_not_established_never_met() -> Res
     let receipt = build_receipt(&cells, &tested(), None)?;
     assert_eq!(verdict(&receipt), "not_established");
 
-    let untested = vec![Disposition {
+    let unprobed = vec![Disposition {
         channel: "vscode_extension".to_string(),
         status: "not_tested".to_string(),
         reason: "needs a desktop host".to_string(),
     }];
-    let receipt = build_receipt(&full_matrix(10.0), &untested, None)?;
+    let receipt = build_receipt(&full_matrix(10.0), &unprobed, None)?;
     assert_eq!(verdict(&receipt), "not_established");
     Ok(())
 }
@@ -181,12 +181,12 @@ fn dispositions_need_a_known_status_and_a_reason() -> Result<(), String> {
 
 #[test]
 fn markdown_names_the_verdict_the_run_and_each_untested_channel() -> Result<(), String> {
-    let untested = vec![Disposition {
+    let unprobed = vec![Disposition {
         channel: "binstall".to_string(),
         status: "not_tested".to_string(),
         reason: "falls back to source".to_string(),
     }];
-    let receipt = build_receipt(&full_matrix(30.0), &untested, Some("777"))?;
+    let receipt = build_receipt(&full_matrix(30.0), &unprobed, Some("777"))?;
     let md = render_markdown(&receipt);
     assert!(md.contains("**not_established**"), "{md}");
     assert!(md.contains("matrix run 777"), "{md}");

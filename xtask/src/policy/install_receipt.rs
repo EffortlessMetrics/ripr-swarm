@@ -10,7 +10,7 @@
 //! missing a cell or carries an unknown status. `--check` re-validates the
 //! checked-in receipt without a network or a run. The R0 verdict is derived, never
 //! typed: `met` only when every cell works within the threshold and no channel
-//! disposition is left untested.
+//! disposition is left unprobed.
 
 use std::collections::BTreeMap;
 use std::fs;

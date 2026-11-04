@@ -42,7 +42,7 @@ owner under [the release transaction](RELEASE_TRANSACTION.md) and
 
 | Level | Meaning | Criterion (working default) | Instrument |
 | --- | --- | --- | --- |
-| R0 installable and honest | A new user installs it, gets a first result, and is not misled. | False verdict rate at most 1% (stricter than the 5% public-proof ceiling in [PUBLIC_PROOF](PUBLIC_PROOF.md)). | Verdict corpus (`cargo xtask verdict-corpus check`). |
+| R0 installable and honest | A new user installs it, gets a first result, and is not misled. | False verdict rate at most 1% (stricter than the 5% public-proof ceiling in [PUBLIC_PROOF](PUBLIC_PROOF.md)). | Verdict corpus (`cargo xtask verdict-corpus check`); install time and channel coverage: `cargo xtask install-receipt --check` over `metrics/install/receipt.json`. |
 | | | Install to first useful result at most 300 s on Linux, macOS and Windows, every shipped channel, verified against the published version. | `first_run` board; weekly published-install matrix ([#12938](https://github.com/EffortlessMetrics/ripr-swarm/pull/12938)). |
 | | | No crash, hang or silent clean result on messy repositories. | Robustness corpus ([#11524](https://github.com/EffortlessMetrics/ripr-swarm/issues/11524), [#12924](https://github.com/EffortlessMetrics/ripr-swarm/issues/12924)). |
 | R1 reliable | Same answer on every surface, fast and small enough to leave on. | Warm `ripr check` p50 under 1 s and p95 under 3 s up to about 1,000 Rust files. | `cargo xtask dx-scoreboard`. |
@@ -88,7 +88,7 @@ reproduced by a checked-in instrument. Refresh with each new baseline.
 | --- | --- | --- | --- |
 | False verdict rate | 0 of 846 (38% abstain) | 1% | yes |
 | Robustness | 75 cases, no crash, hang or silent clean | hold | yes |
-| First value, all channels | Linux passes; first-run nightly red since 10-28; other OS and channels untested | 300 s everywhere | no |
+| First value, all channels | Receipt `metrics/install/receipt.json` (matrix run 41902877159, 2026-11-04): cargo works on 5 platforms but macos-15-intel took 729 s; PyPI and npm work on Linux x86-64 only; binstall, VS Code and CI init untested | 300 s everywhere | no |
 | Warm check latency | 36 to 60 s on 3,280-file ripr-swarm ([#12947](https://github.com/EffortlessMetrics/ripr-swarm/issues/12947)) | p50 under 1 s | no |
 | Peak memory | 1.3 GB on ripr-swarm; 125 to 376 MB on pilots | 150 to 512 MB | no |
 | Cross-surface contradictions | Manual matrix only; [#10712](https://github.com/EffortlessMetrics/ripr-swarm/issues/10712), #10718, #10720 open | 0 | no |

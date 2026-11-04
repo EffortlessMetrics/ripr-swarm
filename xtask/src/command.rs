@@ -2429,7 +2429,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "metrics/install/receipt.json and metrics/install/receipt.md (only with --write)",
             false,
             false,
-            "Merges the per-cell JSON files uploaded by published-install-matrix.yml with metrics/install/dispositions.json into the checked-in install receipt behind the R0 install row in docs/METRICS.md. Refuses a set with a missing, duplicate or unknown cell. The R0 verdict is derived: met only when every cell works within 300 s and no channel is untested. --check (default) re-validates the checked-in receipt offline. Not part of precommit; refresh after a matrix run.",
+            "Merges the per-cell JSON files uploaded by published-install-matrix.yml with metrics/install/dispositions.json into the checked-in install receipt behind the R0 install row in docs/METRICS.md. Refuses a set with a missing, duplicate or unknown cell. The R0 verdict is derived: met only when every cell works within 300 s and no channel is unprobed. --check (default) re-validates the checked-in receipt offline. Not part of precommit; refresh after a matrix run.",
         ),
         command_entry(
             "check-readme-state",
