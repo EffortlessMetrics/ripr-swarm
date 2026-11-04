@@ -1,2 +1,3 @@
 id = "RIPR-SPEC-0422"
+scope = "out"
 reason = "Adapter substrate qualification validation is provider-contract schema law with no runtime-mutant truth for a verdict corpus case; covered by qualification unit tests and fixtures/adapter-substrate-qualification-corpus"
