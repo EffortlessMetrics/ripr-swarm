@@ -192,13 +192,14 @@ pub(in crate::analysis::test_grip_evidence) struct CompactTest<'a> {
     /// The subset of `helper_owner_call_names` whose helper-body call
     /// spells a bare or module-qualified free-function call; a free owner
     /// is credited only through these (#6713 review).
+    #[cfg(test)]
     pub(in crate::analysis::test_grip_evidence) free_spelling_helper_owner_call_names:
         BTreeSet<String>,
     pub(in crate::analysis::test_grip_evidence) target_affinity_owner_call_names: BTreeSet<String>,
-    /// The free-spelling projection of `target_affinity_owner_call_names`
-    /// (#6713 review).
-    pub(in crate::analysis::test_grip_evidence) free_spelling_target_affinity_owner_call_names:
-        BTreeSet<String>,
+    /// Exact final owners reached through bound test entries and helper edges.
+    /// Names above are candidate indexes, never the attribution authority.
+    free_helper_owners: BTreeMap<String, BTreeSet<usize>>,
+    free_affinity_owners: BTreeMap<String, BTreeSet<usize>>,
     pub(in crate::analysis::test_grip_evidence) ambiguous_target_affinity_owner_call_names:
         BTreeSet<String>,
     /// Only stripped lines relevant to import-affinity and owner-import readers.
@@ -212,6 +213,24 @@ pub(in crate::analysis::test_grip_evidence) struct CompactTest<'a> {
 }
 
 impl CompactTest<'_> {
+    pub(in crate::analysis::test_grip_evidence) fn has_free_helper_owner(
+        &self,
+        owner: &FunctionSummary,
+    ) -> bool {
+        self.free_helper_owners
+            .get(&owner.id.0)
+            .is_some_and(|lines| lines.contains(&owner.start_line))
+    }
+
+    pub(in crate::analysis::test_grip_evidence) fn has_free_affinity_owner(
+        &self,
+        owner: &FunctionSummary,
+    ) -> bool {
+        self.free_affinity_owners
+            .get(&owner.id.0)
+            .is_some_and(|lines| lines.contains(&owner.start_line))
+    }
+
     /// Per-test value-resolution facts, built on first use. The whole-file
     /// part is built once per file and shared across that file's tests.
     pub(in crate::analysis::test_grip_evidence) fn value_facts(
@@ -342,10 +361,12 @@ impl<'a> CompactGripContext<'a> {
             same_file_helper_owner_call_pairs.any_spelling,
             same_file_helper_owner_call_pairs.free_spelling,
         );
+        let same_file_bound_targets = same_file_helper_owner_call_pairs.bound_free_targets;
         let (helper_owner_calls_by_file, free_helper_owner_calls_by_file) = (
             helper_owner_call_pairs.any_spelling,
             helper_owner_call_pairs.free_spelling,
         );
+        let bound_targets = helper_owner_call_pairs.bound_free_targets;
         checkpoint()?;
         // The free variants are computed before the same-named locals bind,
         // so the builder functions stay callable (a local would shadow them).
@@ -390,6 +411,7 @@ impl<'a> CompactGripContext<'a> {
             by_module_path: target_affinity_production_owner_calls_by_module_path,
             free_by_package: free_target_affinity_production_owner_calls_by_package,
             free_by_module_path: free_target_affinity_production_owner_calls_by_module_path,
+            bound_free_targets: affinity_bound_targets,
         } = context_build_phase("target_affinity_owner_calls", || {
             TargetAffinityOwnerCalls::build(index, &shared)
         });
@@ -399,7 +421,7 @@ impl<'a> CompactGripContext<'a> {
             module_import_aliases_by_file,
             unambiguous_production_owner_names_by_package,
             ..
-        } = shared;
+        } = &shared;
         let test_scoped_function_names_by_file =
             context_build_phase("test_scoped_function_names_by_file", || {
                 test_scoped_function_names_by_file(index)
@@ -428,7 +450,7 @@ impl<'a> CompactGripContext<'a> {
             free_qualified_helpers: &free_helper_owner_calls_by_module_path,
             free_qualified_helper_modules: &free_qualified_helper_modules,
             free_production_helpers: &free_production_helper_owner_calls_by_package,
-            local_function_names_by_file: &function_names_by_file,
+            local_function_names_by_file: function_names_by_file,
             direct_helper_import_aliases_by_file: &direct_helper_import_aliases_by_file,
         };
         let mut file_value_scans: BTreeMap<&Path, Arc<OnceLock<FileValueScan>>> = BTreeMap::new();
@@ -519,7 +541,7 @@ impl<'a> CompactGripContext<'a> {
                         local_function_names,
                     ),
                 );
-                let free_spelling_target_affinity_owner_call_names =
+                let mut free_spelling_target_affinity_owner_call_names =
                     free_spelling_target_affinity_owner_call_names_for_test(
                         test,
                         &call_names,
@@ -543,6 +565,25 @@ impl<'a> CompactGripContext<'a> {
                         production_owner_names,
                     ),
                 );
+                let (helper_owners, affinity_owners) = shared.test_free_helper_owners(
+                    test,
+                    index,
+                    &bound_targets,
+                    &same_file_bound_targets,
+                    &affinity_bound_targets,
+                );
+                let free_helper_owners = helper_owners.owners;
+                let free_affinity_owners = affinity_owners.owners;
+                let helper_names = helper_owners.names;
+                let affinity_names = affinity_owners.names;
+                free_spelling_helper_owner_call_names.retain(|name| helper_names.contains(name));
+                free_spelling_helper_owner_call_names.extend(helper_names.iter().cloned());
+                free_spelling_target_affinity_owner_call_names
+                    .retain(|name| affinity_names.contains(name));
+                free_spelling_target_affinity_owner_call_names
+                    .extend(affinity_names.iter().cloned());
+                helper_owner_call_names.extend(helper_names);
+                target_affinity_owner_call_names.extend(affinity_names);
                 for call_name in &call_names {
                     tests_by_call_name
                         .entry(call_name.clone())
@@ -601,9 +642,11 @@ impl<'a> CompactGripContext<'a> {
                     call_names,
                     assertion_tokens,
                     helper_owner_call_names,
+                    #[cfg(test)]
                     free_spelling_helper_owner_call_names,
                     target_affinity_owner_call_names,
-                    free_spelling_target_affinity_owner_call_names,
+                    free_helper_owners,
+                    free_affinity_owners,
                     ambiguous_target_affinity_owner_call_names,
                     code_lines,
                     value_facts: OnceLock::new(),
@@ -1568,8 +1611,8 @@ pub(in crate::analysis::test_grip_evidence) struct SharedIndexTables {
     owner_names_by_module_path: OwnerNamesByModulePath,
     owner_names_by_package_and_module_path: OwnerNamesByPackageAndModulePath,
     production_owner_names: BTreeSet<String>,
-    free_functions_by_name: BTreeMap<String, Vec<usize>>,
-    free_edge_bindings: Mutex<BTreeMap<(String, usize, String), bool>>,
+    functions_by_name: BTreeMap<String, Vec<usize>>,
+    helper_edge_bindings: Mutex<BTreeMap<(String, usize, usize), bool>>,
 }
 
 impl SharedIndexTables {
@@ -1599,18 +1642,16 @@ impl SharedIndexTables {
             owner_names_by_package_and_module_path,
             production_owner_names,
         ) = rest;
-        let mut free_functions_by_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut functions_by_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for (position, function) in index.functions().iter().enumerate() {
-            if function.item.container == FunctionContainer::Free {
-                free_functions_by_name
-                    .entry(function.name.clone())
-                    .or_default()
-                    .push(position);
-            }
+            functions_by_name
+                .entry(function.name.clone())
+                .or_default()
+                .push(position);
         }
         Self {
-            free_functions_by_name,
-            free_edge_bindings: Mutex::new(BTreeMap::new()),
+            functions_by_name,
+            helper_edge_bindings: Mutex::new(BTreeMap::new()),
             function_names_by_file,
             module_import_aliases_by_file,
             direct_function_import_aliases_by_file,
@@ -1621,34 +1662,226 @@ impl SharedIndexTables {
         }
     }
 
-    /// A spelling is only a candidate edge. Resolve free calls in the caller's
-    /// lexical scope before either graph can propagate them or score activation.
-    /// Renamed imports are admitted separately by the scoped import authority.
-    fn retain_bound_free_edges(
+    /// Names nominate direct edges; only a resolved declaration can supply an
+    /// intermediate body's edges. A receiver-bound method and a same-named free
+    /// function remain distinct until the final, conservative name projection.
+    fn bound_helper_edges(
         &self,
-        calls: &mut BTreeSet<String>,
+        any_names: BTreeSet<String>,
+        free_names: BTreeSet<String>,
         caller: &FunctionSummary,
         index: &RustIndex,
-    ) {
+    ) -> BoundHelperEdges {
         let body = helper_call_view(caller);
-        calls.retain(|name| {
-            let Some(candidates) = self.free_functions_by_name.get(name) else {
-                return true;
+        let mut edges = BoundHelperEdges {
+            any_names,
+            free_names,
+            free_targets: BTreeSet::new(),
+            next: BTreeSet::new(),
+        };
+        for name in edges.any_names.clone() {
+            let Some(candidates) = self.functions_by_name.get(&name) else {
+                continue;
             };
-            if !caller.calls.iter().any(|call| call.name == *name) {
-                return true;
+            let mut bound_free = false;
+            let mut bound_method = false;
+            let mut has_free = false;
+            for position in candidates {
+                let target = &index.functions()[*position];
+                let free = target.item.container == FunctionContainer::Free;
+                has_free |= free;
+                let key = (caller.id.0.clone(), caller.start_line, *position);
+                let known = memo(&self.helper_edge_bindings).get(&key).copied();
+                let bound = known.unwrap_or_else(|| {
+                    let answer = if free {
+                        free_helper_call_resolves(&body, target, index)
+                    } else {
+                        inherent_helper_call_resolves(&body, target, index)
+                    };
+                    memo(&self.helper_edge_bindings).insert(key, answer);
+                    answer
+                });
+                if !bound {
+                    continue;
+                }
+                bound_free |= free;
+                bound_method |= !free;
+                // Constructing a future does not execute its helper body.
+                if crate::analysis::classify::function_declaration_is_async(target, index)
+                    == Some(false)
+                {
+                    edges.next.insert(*position);
+                    if free {
+                        edges.free_targets.insert(*position);
+                    }
+                }
             }
-            let key = (caller.id.0.clone(), caller.start_line, name.clone());
-            if let Some(answer) = memo(&self.free_edge_bindings).get(&key) {
-                return *answer;
+            if !bound_free {
+                edges.free_names.remove(&name);
             }
-            let answer = candidates.iter().any(|position| {
-                free_helper_call_resolves(&body, &index.functions()[*position], index)
-            });
-            memo(&self.free_edge_bindings).insert(key, answer);
-            answer
-        });
+            if has_free && !bound_free && !bound_method {
+                edges.any_names.remove(&name);
+            }
+        }
+        edges
     }
+
+    fn test_free_helper_owners(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+        ordinary: &BoundFreeTargets,
+        same_file: &BoundFreeTargets,
+        affinity: &BoundFreeTargets,
+    ) -> (ExactFreeOwners, ExactFreeOwners) {
+        let mut names: BTreeSet<String> = test.calls.iter().map(|call| call.name.clone()).collect();
+        // Import leaves only nominate candidates. The executed-call resolver
+        // below must establish the actual alias binding in this test's scope.
+        let scopes = index.proptest_name_scopes(test).or_else(|| {
+            index
+                .source_syntax
+                .get(index, &test.file)?
+                .name_scopes(test)
+        });
+        if let Some(scopes) = scopes {
+            for scope in &scopes.scopes {
+                for import in &scope.imports {
+                    if !test.calls.iter().any(|call| call.name == import.bound) {
+                        continue;
+                    }
+                    if let crate::analysis::syntax::UseBinding::Path(path)
+                    | crate::analysis::syntax::UseBinding::Renamed(path) = &import.binding
+                        && let Some(name) = path.last()
+                    {
+                        names.insert(name.clone());
+                    }
+                }
+            }
+        }
+        let candidates: BTreeSet<usize> = names
+            .iter()
+            .filter_map(|name| self.functions_by_name.get(name))
+            .flatten()
+            .copied()
+            .collect();
+        let mut helper_owners = ExactFreeOwners::default();
+        let mut affinity_owners = ExactFreeOwners::default();
+        for entry in candidates {
+            let function = &index.functions()[entry];
+            let helper_targets =
+                if function.file == test.file && !rust_index::is_test_file(&test.file) {
+                    same_file.get(&entry)
+                } else {
+                    ordinary.get(&entry)
+                };
+            let affinity_targets = affinity.get(&entry);
+            if helper_targets.is_none_or(BTreeSet::is_empty)
+                && affinity_targets.is_none_or(BTreeSet::is_empty)
+            {
+                continue;
+            }
+            if crate::analysis::classify::function_declaration_is_async(function, index)
+                != Some(false)
+                || !(free_helper_call_resolves(test, function, index)
+                    || inherent_helper_call_resolves(test, function, index))
+            {
+                continue;
+            }
+            helper_owners.extend(helper_targets, index);
+            affinity_owners.extend(affinity_targets, index);
+        }
+        (helper_owners, affinity_owners)
+    }
+}
+
+type BoundFreeTargets = BTreeMap<usize, BTreeSet<usize>>;
+
+#[derive(Default)]
+struct ExactFreeOwners {
+    owners: BTreeMap<String, BTreeSet<usize>>,
+    names: BTreeSet<String>,
+}
+
+impl ExactFreeOwners {
+    fn extend(&mut self, targets: Option<&BTreeSet<usize>>, index: &RustIndex) {
+        for position in targets.into_iter().flatten() {
+            let owner = &index.functions()[*position];
+            self.owners
+                .entry(owner.id.0.clone())
+                .or_default()
+                .insert(owner.start_line);
+            self.names.insert(owner.name.clone());
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct BoundHelperEdges {
+    any_names: BTreeSet<String>,
+    free_names: BTreeSet<String>,
+    free_targets: BTreeSet<usize>,
+    next: BTreeSet<usize>,
+}
+
+/// One round adds one exact declaration hop. Never expand the adjacency itself:
+/// doing so would both exceed the bound and let same-named functions exchange
+/// bodies before the final projection.
+fn expand_bound_helper_edges(rows: &mut BTreeMap<usize, BoundHelperEdges>, index: &RustIndex) {
+    for _ in 1..HELPER_OWNER_CALL_GRAPH_MAX_HOPS {
+        let previous = rows.clone();
+        let mut changed = false;
+        for (position, row) in rows.iter_mut() {
+            let caller_name = &index.functions()[*position].name;
+            for target in &row.next {
+                let Some(next) = previous.get(target) else {
+                    continue;
+                };
+                let before = (
+                    row.any_names.len(),
+                    row.free_names.len(),
+                    row.free_targets.len(),
+                );
+                row.any_names.extend(
+                    next.any_names
+                        .iter()
+                        .filter(|name| *name != caller_name)
+                        .cloned(),
+                );
+                row.free_names.extend(
+                    next.free_names
+                        .iter()
+                        .filter(|name| *name != caller_name)
+                        .cloned(),
+                );
+                row.free_targets.extend(
+                    next.free_targets
+                        .iter()
+                        .filter(|target| *target != position)
+                        .copied(),
+                );
+                changed |= before
+                    != (
+                        row.any_names.len(),
+                        row.free_names.len(),
+                        row.free_targets.len(),
+                    );
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+fn intersect_helper_projection(
+    helpers: &mut HelperOwnerCallsByName,
+    name: &str,
+    owners: BTreeSet<String>,
+) {
+    helpers
+        .entry(name.to_string())
+        .and_modify(|known| known.retain(|owner| owners.contains(owner)))
+        .or_insert(owners);
 }
 
 fn helper_call_view(caller: &FunctionSummary) -> TestSummary {
@@ -1678,6 +1911,7 @@ fn helper_call_view(caller: &FunctionSummary) -> TestSummary {
 pub(in crate::analysis::test_grip_evidence) struct HelperOwnerCallsByFilePair {
     pub(in crate::analysis::test_grip_evidence) any_spelling: HelperOwnerCallsByFile,
     pub(in crate::analysis::test_grip_evidence) free_spelling: HelperOwnerCallsByFile,
+    bound_free_targets: BoundFreeTargets,
 }
 
 pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_fanout(
@@ -1685,8 +1919,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
     shared: &SharedIndexTables,
     allow_fanout_wrappers: bool,
 ) -> HelperOwnerCallsByFilePair {
-    let mut helpers: HelperOwnerCallsByFile = BTreeMap::new();
-    let mut free_helpers: HelperOwnerCallsByFile = BTreeMap::new();
+    let mut rows = BTreeMap::new();
     let SharedIndexTables {
         function_names_by_file,
         direct_function_import_aliases_by_file,
@@ -1696,13 +1929,18 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
         ..
     } = shared;
     let actual_tests = actual_test_keys(index);
-    for function in index.functions().iter().filter(|function| {
-        !actual_tests.contains(&ActualTestKey {
-            file: &function.file,
-            name: &function.name,
-            start_line: function.start_line,
+    for (position, function) in index
+        .functions()
+        .iter()
+        .enumerate()
+        .filter(|(_, function)| {
+            !actual_tests.contains(&ActualTestKey {
+                file: &function.file,
+                name: &function.name,
+                start_line: function.start_line,
+            })
         })
-    }) {
+    {
         let helper_name_lower = function.name.to_ascii_lowercase();
         let local_function_names = function_names_by_file.get(&function.file);
         let external_owner_names =
@@ -1737,90 +1975,47 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
             .intersection(&free_spelled_names)
             .cloned()
             .collect();
-        if let Some(package) = package_scope(&function.file) {
-            let imported_owner_calls = strict_direct_imported_owner_calls_for_helper(
+        let imported_owner_calls = if let Some(package) = package_scope(&function.file) {
+            strict_direct_imported_owner_calls_for_helper(
                 function,
                 direct_function_import_aliases_by_file.get(&function.file),
                 unambiguous_production_owner_names_by_package.get(&package),
                 owner_names_by_module_path,
-            );
-            owner_calls.extend(imported_owner_calls.iter().cloned());
-            // A direct-imported edge is callee-identity-resolved: the
-            // scoped import binding pins `module_path::name`, so the
-            // alias's bare call site is that owner's call — free-spelling
-            // evidence the call text itself cannot show (#6713 review).
-            free_owner_calls.extend(imported_owner_calls);
-        }
-        shared.retain_bound_free_edges(&mut owner_calls, function, index);
-        free_owner_calls.retain(|name| owner_calls.contains(name));
-        if owner_calls.is_empty() {
-            continue;
-        }
-        helpers
-            .entry(function.file.clone())
-            .or_default()
-            .insert(function.name.clone(), owner_calls);
-        if !free_owner_calls.is_empty() {
-            free_helpers
-                .entry(function.file.clone())
-                .or_default()
-                .insert(function.name.clone(), free_owner_calls);
-        }
+            )
+        } else {
+            BTreeSet::new()
+        };
+        owner_calls.extend(imported_owner_calls.iter().cloned());
+        free_owner_calls.extend(imported_owner_calls.iter().cloned());
+        rows.insert(
+            position,
+            shared.bound_helper_edges(owner_calls, free_owner_calls, function, index),
+        );
     }
-    extend_helper_owner_calls_through_bounded_graph(&mut helpers);
-    extend_free_helper_owner_calls_through_bounded_graph(&mut free_helpers, &helpers);
+    expand_bound_helper_edges(&mut rows, index);
+    let mut helpers: HelperOwnerCallsByFile = BTreeMap::new();
+    let mut free_helpers: HelperOwnerCallsByFile = BTreeMap::new();
+    let mut bound_free_targets = BTreeMap::new();
+    for (position, row) in rows {
+        let function = &index.functions()[position];
+        // Empty rows matter: a same-named declaration with no route must not
+        // borrow another declaration's route, regardless of source order.
+        intersect_helper_projection(
+            helpers.entry(function.file.clone()).or_default(),
+            &function.name,
+            row.any_names,
+        );
+        intersect_helper_projection(
+            free_helpers.entry(function.file.clone()).or_default(),
+            &function.name,
+            row.free_names,
+        );
+        bound_free_targets.insert(position, row.free_targets);
+    }
     HelperOwnerCallsByFilePair {
         any_spelling: helpers,
         free_spelling: free_helpers,
-    }
-}
-
-/// Extends free-spelling edges through the bounded helper graph with
-/// last-hop semantics: helper `A` freely reaches `O` when `A` directly
-/// does, or when some intermediate `B` in `A`'s owner calls (any spelling)
-/// freely reaches `O` — executing the chain runs `B`, whose free call of
-/// `O` the test therefore reaches (#6713 review).
-pub(in crate::analysis::test_grip_evidence) fn extend_free_helper_owner_calls_through_bounded_graph(
-    free: &mut HelperOwnerCallsByFile,
-    any: &HelperOwnerCallsByFile,
-) {
-    for _ in 1..HELPER_OWNER_CALL_GRAPH_MAX_HOPS {
-        let snapshot = free.clone();
-        let mut changed = false;
-        for (file, file_helpers) in free.iter_mut() {
-            let Some(snapshot_helpers) = snapshot.get(file) else {
-                continue;
-            };
-            let Some(any_helpers) = any.get(file) else {
-                continue;
-            };
-            for helper_name in file_helpers.keys().cloned().collect::<Vec<_>>() {
-                let Some(owner_calls) = file_helpers.get(&helper_name).cloned() else {
-                    continue;
-                };
-                let mut expanded_owner_calls = owner_calls;
-                // Every helper `B` this helper reaches through any spelling
-                // executes when the chain runs, so `B`'s free edges carry
-                // over; the free spelling of the hop to `B` itself does not
-                // matter for whether `B`'s body runs.
-                for intermediate in any_helpers.get(&helper_name).into_iter().flatten() {
-                    let Some(free_calls) = snapshot_helpers.get(intermediate) else {
-                        continue;
-                    };
-                    for transitive_owner_call in free_calls {
-                        if transitive_owner_call != &helper_name
-                            && expanded_owner_calls.insert(transitive_owner_call.clone())
-                        {
-                            changed = true;
-                        }
-                    }
-                }
-                file_helpers.insert(helper_name, expanded_owner_calls);
-            }
-        }
-        if !changed {
-            break;
-        }
+        bound_free_targets,
     }
 }
 
@@ -1840,109 +2035,6 @@ pub(in crate::analysis::test_grip_evidence) fn strict_direct_imported_owner_call
         owner_calls
     } else {
         BTreeSet::new()
-    }
-}
-
-pub(in crate::analysis::test_grip_evidence) fn extend_helper_owner_calls_through_bounded_graph(
-    helpers: &mut HelperOwnerCallsByFile,
-) {
-    for _ in 1..HELPER_OWNER_CALL_GRAPH_MAX_HOPS {
-        let snapshot = helpers.clone();
-        let mut changed = false;
-        for (file, file_helpers) in helpers.iter_mut() {
-            let Some(snapshot_helpers) = snapshot.get(file) else {
-                continue;
-            };
-            for helper_name in file_helpers.keys().cloned().collect::<Vec<_>>() {
-                let Some(owner_calls) = file_helpers.get(&helper_name).cloned() else {
-                    continue;
-                };
-                let mut expanded_owner_calls = owner_calls.clone();
-                for owner_call in owner_calls {
-                    let Some(transitive_owner_calls) = snapshot_helpers.get(&owner_call) else {
-                        continue;
-                    };
-                    for transitive_owner_call in transitive_owner_calls {
-                        if transitive_owner_call != &helper_name
-                            && expanded_owner_calls.insert(transitive_owner_call.clone())
-                        {
-                            changed = true;
-                        }
-                    }
-                }
-                file_helpers.insert(helper_name, expanded_owner_calls);
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-}
-
-pub(in crate::analysis::test_grip_evidence) fn extend_helper_owner_calls_through_bounded_name_graph(
-    helpers: &mut HelperOwnerCallsByName,
-) {
-    for _ in 1..HELPER_OWNER_CALL_GRAPH_MAX_HOPS {
-        let snapshot = helpers.clone();
-        let mut changed = false;
-        for helper_name in helpers.keys().cloned().collect::<Vec<_>>() {
-            let Some(owner_calls) = helpers.get(&helper_name).cloned() else {
-                continue;
-            };
-            let mut expanded_owner_calls = owner_calls.clone();
-            for owner_call in owner_calls {
-                let Some(transitive_owner_calls) = snapshot.get(&owner_call) else {
-                    continue;
-                };
-                for transitive_owner_call in transitive_owner_calls {
-                    if transitive_owner_call != &helper_name
-                        && expanded_owner_calls.insert(transitive_owner_call.clone())
-                    {
-                        changed = true;
-                    }
-                }
-            }
-            helpers.insert(helper_name, expanded_owner_calls);
-        }
-        if !changed {
-            break;
-        }
-    }
-}
-
-/// Free-spelling counterpart of
-/// [`extend_helper_owner_calls_through_bounded_name_graph`] with last-hop
-/// semantics: intermediates come from `any` (a hop's own spelling does not
-/// change whether its body runs), edges only from `free` (#6713 review).
-pub(in crate::analysis::test_grip_evidence) fn extend_free_helper_owner_calls_through_bounded_name_graph(
-    free: &mut HelperOwnerCallsByName,
-    any: &HelperOwnerCallsByName,
-) {
-    for _ in 1..HELPER_OWNER_CALL_GRAPH_MAX_HOPS {
-        let snapshot = free.clone();
-        let mut changed = false;
-        for helper_name in free.keys().cloned().collect::<Vec<_>>() {
-            let Some(owner_calls) = free.get(&helper_name).cloned() else {
-                continue;
-            };
-            let mut expanded_owner_calls = owner_calls;
-            for intermediate in any.get(&helper_name).into_iter().flatten() {
-                let Some(free_calls) = snapshot.get(intermediate) else {
-                    continue;
-                };
-                for transitive_owner_call in free_calls {
-                    if transitive_owner_call != &helper_name
-                        && expanded_owner_calls.insert(transitive_owner_call.clone())
-                    {
-                        changed = true;
-                    }
-                }
-            }
-            free.insert(helper_name, expanded_owner_calls);
-        }
-        if !changed {
-            break;
-        }
     }
 }
 
@@ -1990,54 +2082,28 @@ pub(in crate::analysis::test_grip_evidence) fn production_helper_owner_calls_by_
     by_package
         .into_iter()
         .filter_map(|(package, helper_sets)| {
-            let mut helpers = helper_sets
+            let helpers = helper_sets
                 .into_iter()
                 .filter_map(|(helper_name, owner_sets)| {
                     common_helper_owner_calls(helper_name, owner_sets)
                 })
                 .collect::<HelperOwnerCallsByName>();
-            extend_helper_owner_calls_through_bounded_name_graph(&mut helpers);
             (!helpers.is_empty()).then_some((package, helpers))
         })
         .collect()
 }
 
-/// The free-spelling counterpart of
-/// [`production_helper_owner_calls_by_package`]: owner names every
-/// same-named production helper reaches through a free-function call
-/// spelling, with the bounded name-graph extension reading intermediate
-/// hops from `any` (#6713 review).
+/// Project the already-expanded exact-declaration graph to package names.
+/// Re-expanding names here would reconnect declarations that never call each other.
 pub(in crate::analysis::test_grip_evidence) fn free_production_helper_owner_calls_by_package(
-    any: &HelperOwnerCallsByFile,
+    _any: &HelperOwnerCallsByFile,
     free: &HelperOwnerCallsByFile,
 ) -> HelperOwnerCallsByPackage {
-    let by_package = helper_owner_calls_grouped_by_package(free);
-    let any_by_package = helper_owner_calls_grouped_by_package(any);
-    by_package
-        .into_iter()
-        .filter_map(|(package, helper_sets)| {
-            let mut helpers = helper_sets
-                .into_iter()
-                .filter_map(|(helper_name, owner_sets)| {
-                    common_helper_owner_calls(helper_name, owner_sets)
-                })
-                .collect::<HelperOwnerCallsByName>();
-            let any_helpers = any_by_package
-                .get(&package)
-                .into_iter()
-                .flatten()
-                .filter_map(|(helper_name, owner_sets)| {
-                    common_helper_owner_calls(helper_name.clone(), owner_sets.clone())
-                })
-                .collect::<HelperOwnerCallsByName>();
-            extend_free_helper_owner_calls_through_bounded_name_graph(&mut helpers, &any_helpers);
-            (!helpers.is_empty()).then_some((package, helpers))
-        })
-        .collect()
+    production_helper_owner_calls_by_package(free)
 }
 
 /// Production helpers' raw owner-call sets grouped by package, before the
-/// per-package intersection and bounded-graph extension.
+/// per-package intersection. Exact-declaration expansion is already complete.
 fn helper_owner_calls_grouped_by_package(
     helpers: &HelperOwnerCallsByFile,
 ) -> BTreeMap<String, BTreeMap<String, Vec<BTreeSet<String>>>> {
@@ -2072,6 +2138,7 @@ pub(in crate::analysis::test_grip_evidence) struct TargetAffinityOwnerCalls {
     pub(in crate::analysis::test_grip_evidence) by_module_path: HelperOwnerCallsByModulePath,
     pub(in crate::analysis::test_grip_evidence) free_by_package: HelperOwnerCallsByPackage,
     pub(in crate::analysis::test_grip_evidence) free_by_module_path: HelperOwnerCallsByModulePath,
+    bound_free_targets: BoundFreeTargets,
 }
 
 impl TargetAffinityOwnerCalls {
@@ -2085,9 +2152,16 @@ impl TargetAffinityOwnerCalls {
         let mut free_sets_by_package: BTreeMap<String, BTreeMap<String, Vec<BTreeSet<String>>>> =
             BTreeMap::new();
         let mut free_by_module_path: HelperOwnerCallsByModulePath = BTreeMap::new();
-        for function in index.functions().iter().filter(|function| {
-            !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
-        }) {
+        let mut bound_free_targets = BTreeMap::new();
+        for (position, function) in index
+            .functions()
+            .iter()
+            .enumerate()
+            .filter(|(_, function)| {
+                !function.source_role.is_evidence_role()
+                    && !rust_index::is_test_file(&function.file)
+            })
+        {
             let Some(package) = package_scope(&function.file) else {
                 continue;
             };
@@ -2095,7 +2169,7 @@ impl TargetAffinityOwnerCalls {
             else {
                 continue;
             };
-            let mut owner_calls = target_affinity_direct_owner_calls_for_function(
+            let owner_calls = target_affinity_direct_owner_calls_for_function(
                 function,
                 local_function_names,
                 shared.module_import_aliases_by_file.get(&function.file),
@@ -2108,10 +2182,6 @@ impl TargetAffinityOwnerCalls {
                 &shared.owner_names_by_module_path,
                 shared.owner_names_by_package_and_module_path.get(&package),
             );
-            shared.retain_bound_free_edges(&mut owner_calls, function, index);
-            if owner_calls.is_empty() {
-                continue;
-            }
             let free_spelled_names: BTreeSet<String> = function
                 .calls
                 .iter()
@@ -2122,32 +2192,37 @@ impl TargetAffinityOwnerCalls {
             // edges are callee-identity-resolved by the scoped import
             // binding, so they join regardless of the alias spelling
             // (#6713 review).
+            let imported_owner_calls = direct_imported_owner_calls_for_function(
+                function,
+                shared
+                    .direct_function_import_aliases_by_file
+                    .get(&function.file),
+                shared
+                    .unambiguous_production_owner_names_by_package
+                    .get(&package),
+                &shared.owner_names_by_module_path,
+            );
             let free_owner_calls: BTreeSet<String> = owner_calls
                 .intersection(&free_spelled_names)
                 .cloned()
-                .chain(direct_imported_owner_calls_for_function(
-                    function,
-                    shared
-                        .direct_function_import_aliases_by_file
-                        .get(&function.file),
-                    shared
-                        .unambiguous_production_owner_names_by_package
-                        .get(&package),
-                    &shared.owner_names_by_module_path,
-                ))
+                .chain(imported_owner_calls.iter().cloned())
                 .collect();
+            let bound = shared.bound_helper_edges(owner_calls, free_owner_calls, function, index);
+            let owner_calls = bound.any_names;
+            let free_owner_calls = bound.free_names;
+            bound_free_targets.insert(position, bound.free_targets);
             if let Some(module_path) = module_path_for_index(index, &function.file) {
                 let module_path = module_path.replace('/', "::");
-                by_module_path
-                    .entry(module_path.clone())
-                    .or_default()
-                    .insert(function.name.clone(), owner_calls.clone());
-                if !free_owner_calls.is_empty() {
-                    free_by_module_path
-                        .entry(module_path)
-                        .or_default()
-                        .insert(function.name.clone(), free_owner_calls.clone());
-                }
+                intersect_helper_projection(
+                    by_module_path.entry(module_path.clone()).or_default(),
+                    &function.name,
+                    owner_calls.clone(),
+                );
+                intersect_helper_projection(
+                    free_by_module_path.entry(module_path).or_default(),
+                    &function.name,
+                    free_owner_calls.clone(),
+                );
             }
             sets_by_package
                 .entry(package.clone())
@@ -2155,14 +2230,12 @@ impl TargetAffinityOwnerCalls {
                 .entry(function.name.clone())
                 .or_default()
                 .push(owner_calls);
-            if !free_owner_calls.is_empty() {
-                free_sets_by_package
-                    .entry(package)
-                    .or_default()
-                    .entry(function.name.clone())
-                    .or_default()
-                    .push(free_owner_calls);
-            }
+            free_sets_by_package
+                .entry(package)
+                .or_default()
+                .entry(function.name.clone())
+                .or_default()
+                .push(free_owner_calls);
         }
         let mut by_package = HelperOwnerCallsByPackage::new();
         let mut ambiguous_by_package = HelperOwnerCallsByPackage::new();
@@ -2204,6 +2277,7 @@ impl TargetAffinityOwnerCalls {
             by_module_path,
             free_by_package,
             free_by_module_path,
+            bound_free_targets,
         }
     }
 }
@@ -4304,7 +4378,7 @@ pub(in crate::analysis::test_grip_evidence) fn inherent_helper_path_reaches_owne
             continue;
         }
         let entry_resolves = if requires_inherent_receiver_identity(helper) {
-            inherent_owner_call_resolves(caller, helper, index)
+            inherent_helper_call_resolves(caller, helper, index)
         } else {
             free_helper_call_resolves(caller, helper, index)
         };

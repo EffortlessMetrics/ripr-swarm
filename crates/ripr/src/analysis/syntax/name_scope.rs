@@ -63,6 +63,11 @@ pub(crate) struct NameScope {
     /// Names of non-module items declared directly in this scope (`fn`,
     /// `const`, `static`, types, traits).
     pub(crate) defines: BTreeSet<String>,
+    /// Namespace facts for parsed declarations; `defines` remains the coarse view.
+    item_namespaces: BTreeMap<String, BindingNamespaces>,
+    block_item_namespaces: BTreeMap<String, BindingNamespaces>,
+    /// Generic type parameters bind path prefixes, not bare value calls.
+    pub(crate) type_parameters: BTreeSet<String>,
     /// Names of `mod` items declared directly in this scope.
     pub(crate) child_modules: BTreeSet<String>,
     /// Names an item inside a nested block of this function body binds.
@@ -76,7 +81,64 @@ pub(crate) struct NameScope {
     pub(crate) block_rename_targets: BTreeSet<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct BindingNamespaces {
+    value: bool,
+    ty: bool,
+}
+
+impl BindingNamespaces {
+    const BOTH: Self = Self {
+        value: true,
+        ty: true,
+    };
+
+    fn merge(&mut self, other: Self) {
+        self.value |= other.value;
+        self.ty |= other.ty;
+    }
+}
+
 impl NameScope {
+    fn namespace_for(
+        names: &BTreeSet<String>,
+        namespaces: &BTreeMap<String, BindingNamespaces>,
+        name: &str,
+    ) -> BindingNamespaces {
+        let canonical = name.trim_start_matches("r#");
+        names
+            .iter()
+            .filter(|bound| bound.trim_start_matches("r#") == canonical)
+            .fold(BindingNamespaces::default(), |mut result, bound| {
+                result.merge(
+                    namespaces
+                        .get(bound)
+                        .copied()
+                        .unwrap_or(BindingNamespaces::BOTH),
+                );
+                result
+            })
+    }
+
+    pub(crate) fn defines_value(&self, name: &str) -> bool {
+        Self::namespace_for(&self.defines, &self.item_namespaces, name).value
+    }
+
+    pub(crate) fn defines_type(&self, name: &str) -> bool {
+        self.type_parameters.contains(name.trim_start_matches("r#"))
+            || Self::namespace_for(&self.defines, &self.item_namespaces, name).ty
+    }
+
+    pub(crate) fn block_binds_value(&self, name: &str) -> bool {
+        self.block_globs
+            || Self::namespace_for(&self.block_bindings, &self.block_item_namespaces, name).value
+    }
+
+    pub(crate) fn block_binds_type(&self, name: &str) -> bool {
+        self.block_globs
+            || Self::namespace_for(&self.block_bindings, &self.block_item_namespaces, name).ty
+    }
+
     /// The `use` bindings of `name` in this scope.
     pub(crate) fn imports_of<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a UseBinding> {
         self.imports
@@ -162,7 +224,10 @@ pub(crate) fn fn_call_has_local_binding(source: &str, offset: usize, name: &str)
     Some(
         !scope.globs.is_empty()
             || scope.imports.iter().any(|import| same_name(&import.bound))
-            || scope.defines.iter().any(|defined| same_name(defined)),
+            || scope
+                .defines
+                .iter()
+                .any(|defined| same_name(defined) && scope.defines_value(defined)),
     )
 }
 
@@ -233,7 +298,7 @@ pub(super) fn name_scopes_in_tree(
             let mut scope = NameScope {
                 modules: modules_of(&ancestor),
                 fn_body: true,
-                defines: function_type_param_names(&enclosing_fn),
+                type_parameters: function_type_param_names(&enclosing_fn),
                 ..NameScope::default()
             };
             for pattern in enclosing_fn
@@ -292,14 +357,14 @@ pub(super) fn name_scopes_in_tree(
             scopes.push(NameScope {
                 modules: modules_of(&ancestor),
                 fn_body: true,
-                defines: type_param_names(&item),
+                type_parameters: type_param_names(&item),
                 ..NameScope::default()
             });
         } else if let Some(item) = ast::Trait::cast(ancestor.clone()) {
             scopes.push(NameScope {
                 modules: modules_of(&ancestor),
                 fn_body: true,
-                defines: type_param_names(&item),
+                type_parameters: type_param_names(&item),
                 ..NameScope::default()
             });
         } else if let Some(module) = ast::Module::cast(ancestor.clone()) {
@@ -563,10 +628,37 @@ fn record_block_item(item: &ast::Item, scope: &mut NameScope) {
         {
             scope.block_rename_targets.insert(original.clone());
         }
+        scope
+            .block_item_namespaces
+            .entry(import.bound.clone())
+            .or_default()
+            .merge(BindingNamespaces::BOTH);
         scope.block_bindings.insert(import.bound);
     }
-    scope.block_bindings.extend(block.defines);
-    scope.block_bindings.extend(block.child_modules);
+    for name in block.defines {
+        let namespaces = block
+            .item_namespaces
+            .get(&name)
+            .copied()
+            .unwrap_or(BindingNamespaces::BOTH);
+        scope
+            .block_item_namespaces
+            .entry(name.clone())
+            .or_default()
+            .merge(namespaces);
+        scope.block_bindings.insert(name);
+    }
+    for name in block.child_modules {
+        scope
+            .block_item_namespaces
+            .entry(name.clone())
+            .or_default()
+            .merge(BindingNamespaces {
+                value: false,
+                ty: true,
+            });
+        scope.block_bindings.insert(name);
+    }
 }
 
 /// The nearest enclosing fn or module of `node`, excluding `node` itself.
@@ -577,9 +669,15 @@ fn nearest_item_scope(node: &SyntaxNode) -> Option<SyntaxNode> {
 }
 
 fn record_item(item: &ast::Item, scope: &mut NameScope) {
-    let mut define = |name: Option<ast::Name>| {
+    let mut define = |name: Option<ast::Name>, ty: bool, value: bool| {
         if let Some(name) = name {
-            scope.defines.insert(name.text().to_string());
+            let name = name.text().to_string();
+            scope
+                .item_namespaces
+                .entry(name.clone())
+                .or_default()
+                .merge(BindingNamespaces { ty, value });
+            scope.defines.insert(name);
         }
     };
     match item {
@@ -605,14 +703,18 @@ fn record_item(item: &ast::Item, scope: &mut NameScope) {
                 scope.child_modules.insert(name.text().to_string());
             }
         }
-        ast::Item::Fn(item) => define(item.name()),
-        ast::Item::Const(item) => define(item.name()),
-        ast::Item::Static(item) => define(item.name()),
-        ast::Item::Struct(item) => define(item.name()),
-        ast::Item::Enum(item) => define(item.name()),
-        ast::Item::Union(item) => define(item.name()),
-        ast::Item::Trait(item) => define(item.name()),
-        ast::Item::TypeAlias(item) => define(item.name()),
+        ast::Item::Fn(item) => define(item.name(), false, true),
+        ast::Item::Const(item) => define(item.name(), false, true),
+        ast::Item::Static(item) => define(item.name(), false, true),
+        ast::Item::Struct(item) => define(
+            item.name(),
+            true,
+            !matches!(item.field_list(), Some(ast::FieldList::RecordFieldList(_))),
+        ),
+        ast::Item::Enum(item) => define(item.name(), true, false),
+        ast::Item::Union(item) => define(item.name(), true, false),
+        ast::Item::Trait(item) => define(item.name(), true, false),
+        ast::Item::TypeAlias(item) => define(item.name(), true, false),
         ast::Item::MacroRules(_) | ast::Item::MacroCall(_) => {
             // A macro may expand to an item of any name; the caller sees
             // only spelled bindings. Item-producing macros are a documented
@@ -623,8 +725,7 @@ fn record_item(item: &ast::Item, scope: &mut NameScope) {
 }
 
 /// Reuse the scope producer for a consumer's already-selected item scope.
-/// Definitions retain their existing coarse namespace; consumers needing a
-/// type binding must inspect the declaration kind separately.
+/// The coarse definition set is retained alongside type/value namespace facts.
 pub(crate) fn name_scope_for_items(items: &[ast::Item]) -> NameScope {
     let mut scope = NameScope::default();
     for item in items {
@@ -1057,12 +1158,13 @@ mod a { child_table!(case); } mod b { use demo::owner; #[test] fn case() { owner
         let source = "fn check<'a, helpers, const N: usize>() {}";
         let scopes = name_scopes_for_fn(source, 1, "check");
         assert!(
-            scopes.as_ref().is_some_and(|scopes| scopes
-                .scopes
-                .first()
-                .is_some_and(
-                    |scope| scope.defines.contains("helpers") && !scope.defines.contains("N")
-                ))
+            scopes
+                .as_ref()
+                .is_some_and(|scopes| scopes.scopes.first().is_some_and(|scope| scope
+                    .type_parameters
+                    .contains("helpers")
+                    && !scope.type_parameters.contains("N")
+                    && !scope.defines.contains("helpers")))
         );
     }
 }

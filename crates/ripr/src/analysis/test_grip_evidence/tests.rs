@@ -1,4 +1,5 @@
 mod boolean_owner_pin;
+mod helper_namespace;
 mod helper_scope;
 mod module_extraction;
 mod shared_execution_context;
@@ -89,7 +90,7 @@ fn index_from_files_at_stamp(
     let fixture_root = claim_index_fixture_root(stamp)?;
     fs::write(
         fixture_root.join("Cargo.toml"),
-        "[package]\nname = \"memory-fixture\"\nversion = \"0.1.0\"\n",
+        "[package]\nname = \"memory-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
     )
     .map_err(|error| error.to_string())?;
     for (path, source) in files {
@@ -4328,11 +4329,13 @@ impl Widget {
     }
 }
 "#;
-            let support = PathBuf::from("tests/support.rs");
-            let support_src =
-                format!("pub fn check_render_unit() -> u64 {{\n    {helper_body}\n}}\n");
+            let support = PathBuf::from("tests/support/mod.rs");
+            let support_src = format!(
+                "use memory_fixture::widget::{{render_unit, Widget}};\n\npub fn check_render_unit() -> u64 {{\n    {helper_body}\n}}\n"
+            );
             let tests = PathBuf::from("tests/widget_tests.rs");
             let tests_src = r#"
+mod support;
 use support::check_render_unit;
 
 #[test]
@@ -4341,6 +4344,7 @@ fn renders_through_helper() {
 }
 "#;
             let index = index_from_files(&[
+                (PathBuf::from("src/lib.rs"), "pub mod widget;"),
                 (PathBuf::from("src/widget.rs"), prod_src),
                 (support, support_src.as_str()),
                 (tests, tests_src),
@@ -5475,7 +5479,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> String {
     render_pipeline("alpha")
@@ -5487,7 +5491,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -5542,7 +5550,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn note() {}
 
@@ -5558,7 +5566,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -6842,7 +6854,7 @@ pub fn gather(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/classifier_evidence_tests.rs");
     let tests_src = r#"
-use analysis::classifier::evidence::gather;
+use memory_fixture::analysis::classifier::evidence::gather;
 
 #[test]
 fn direct_imported_wrapper_observes_format_marker_target() {
@@ -6851,6 +6863,15 @@ fn direct_imported_wrapper_observes_format_marker_target() {
 }
 "#;
     let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod analysis;"),
+        (
+            PathBuf::from("src/analysis/mod.rs"),
+            "pub mod classify; pub mod classifier;",
+        ),
+        (
+            PathBuf::from("src/analysis/classifier/mod.rs"),
+            "pub mod evidence;",
+        ),
         (classify, classify_src),
         (evidence, evidence_src),
         (tests, tests_src),
@@ -7699,9 +7720,9 @@ fn format_output(input: &str) -> String {
     input.to_string()
 }
 "#;
-    let support = PathBuf::from("tests/support.rs");
+    let support = PathBuf::from("tests/support/mod.rs");
     let support_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 pub fn exercise_pipeline() -> String {
     render_pipeline("alpha")
@@ -7709,6 +7730,7 @@ pub fn exercise_pipeline() -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
+mod support;
 use support::exercise_pipeline;
 
 #[test]
@@ -7717,7 +7739,12 @@ fn pipeline_from_support_helper() {
     assert_eq!(rendered, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (support, support_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (support, support_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -7770,17 +7797,17 @@ fn format_output(input: &str) -> String {
     input.to_string()
 }
 "#;
-    let support_a = PathBuf::from("tests/support_a.rs");
+    let support_a = PathBuf::from("tests/support_a/mod.rs");
     let support_a_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 pub fn exercise_pipeline() -> String {
     render_pipeline("alpha")
 }
 "#;
-    let support_b = PathBuf::from("tests/support_b.rs");
+    let support_b = PathBuf::from("tests/support_b/mod.rs");
     let support_b_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 pub fn exercise_pipeline() -> String {
     render_pipeline("beta")
@@ -7788,6 +7815,8 @@ pub fn exercise_pipeline() -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
+mod support_a;
+mod support_b;
 use support_a::exercise_pipeline;
 
 #[test]
@@ -7797,6 +7826,7 @@ fn pipeline_from_support_helper() {
 }
 "#;
     let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
         (prod, prod_src),
         (support_a, support_a_src),
         (support_b, support_b_src),
@@ -7939,17 +7969,17 @@ fn format_report(input: &str) -> String {
     input.to_string()
 }
 "#;
-    let support_a = PathBuf::from("tests/support_a.rs");
+    let support_a = PathBuf::from("tests/support_a/mod.rs");
     let support_a_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 pub fn exercise_pipeline() -> String {
     render_pipeline("alpha")
 }
 "#;
-    let support_b = PathBuf::from("tests/support_b.rs");
+    let support_b = PathBuf::from("tests/support_b/mod.rs");
     let support_b_src = r#"
-use report::render_report;
+use memory_fixture::report::render_report;
 
 pub fn exercise_pipeline() -> String {
     render_report("beta")
@@ -7957,6 +7987,8 @@ pub fn exercise_pipeline() -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
+mod support_a;
+mod support_b;
 use support_a::exercise_pipeline;
 
 #[test]
@@ -7966,6 +7998,10 @@ fn direct_imported_support_helper_reaches_pipeline() {
 }
 "#;
     let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub mod pipeline; pub mod report;",
+        ),
         (pipeline, pipeline_src),
         (report, report_src),
         (support_a, support_a_src),
@@ -8600,17 +8636,17 @@ fn format_report(input: &str) -> String {
     input.to_string()
 }
 "#;
-    let support_a = PathBuf::from("tests/support_a.rs");
+    let support_a = PathBuf::from("tests/support_a/mod.rs");
     let support_a_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 pub fn exercise_pipeline() -> String {
     render_pipeline("alpha")
 }
 "#;
-    let support_b = PathBuf::from("tests/support_b.rs");
+    let support_b = PathBuf::from("tests/support_b/mod.rs");
     let support_b_src = r#"
-use report::render_report;
+use memory_fixture::report::render_report;
 
 pub fn exercise_pipeline() -> String {
     render_report("beta")
@@ -8618,6 +8654,8 @@ pub fn exercise_pipeline() -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
+mod support_a;
+mod support_b;
 #[test]
 fn qualified_support_helper_reaches_pipeline() {
     let rendered = support_a::exercise_pipeline();
@@ -8625,6 +8663,10 @@ fn qualified_support_helper_reaches_pipeline() {
 }
 "#;
     let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub mod pipeline; pub mod report;",
+        ),
         (pipeline, pipeline_src),
         (report, report_src),
         (support_a.clone(), support_a_src),
@@ -8768,17 +8810,17 @@ fn format_report(input: &str) -> String {
     input.to_string()
 }
 "#;
-    let support_a = PathBuf::from("tests/support_a.rs");
+    let support_a = PathBuf::from("tests/support_a/mod.rs");
     let support_a_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 pub fn exercise_pipeline() -> String {
     render_pipeline("alpha")
 }
 "#;
-    let support_b = PathBuf::from("tests/support_b.rs");
+    let support_b = PathBuf::from("tests/support_b/mod.rs");
     let support_b_src = r#"
-use report::render_report;
+use memory_fixture::report::render_report;
 
 pub fn exercise_pipeline() -> String {
     render_report("beta")
@@ -8786,6 +8828,8 @@ pub fn exercise_pipeline() -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
+mod support_a;
+mod support_b;
 #[test]
 fn crate_qualified_support_helper_reaches_pipeline() {
     let rendered = crate::support_a::exercise_pipeline();
@@ -8793,6 +8837,10 @@ fn crate_qualified_support_helper_reaches_pipeline() {
 }
 "#;
     let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub mod pipeline; pub mod report;",
+        ),
         (pipeline, pipeline_src),
         (report, report_src),
         (support_a.clone(), support_a_src),
@@ -8853,17 +8901,17 @@ fn format_report(input: &str) -> String {
     input.to_string()
 }
 "#;
-    let support_a = PathBuf::from("tests/support_a.rs");
+    let support_a = PathBuf::from("tests/support_a/mod.rs");
     let support_a_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 pub fn exercise_pipeline() -> String {
     render_pipeline("alpha")
 }
 "#;
-    let support_b = PathBuf::from("tests/support_b.rs");
+    let support_b = PathBuf::from("tests/support_b/mod.rs");
     let support_b_src = r#"
-use report::render_report;
+use memory_fixture::report::render_report;
 
 pub fn exercise_pipeline() -> String {
     render_report("beta")
@@ -8871,6 +8919,8 @@ pub fn exercise_pipeline() -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
+mod support_a;
+mod support_b;
 mod nested {
     #[test]
     fn super_qualified_support_helper_reaches_pipeline() {
@@ -8880,6 +8930,10 @@ mod nested {
 }
 "#;
     let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub mod pipeline; pub mod report;",
+        ),
         (pipeline, pipeline_src),
         (report, report_src),
         (support_a.clone(), support_a_src),
@@ -9020,7 +9074,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> Option<String> {
     Some(render_pipeline("alpha"))
@@ -9032,7 +9086,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -9083,7 +9141,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> Result<String, ()> {
     Ok(render_pipeline("alpha"))
@@ -9095,7 +9153,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -9146,7 +9208,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> Result<String, ()> {
     Ok::<String, ()>(render_pipeline("alpha"))
@@ -9158,7 +9220,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -9209,7 +9275,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> Result<(), String> {
     Err(render_pipeline("alpha"))
@@ -9221,7 +9287,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(format_output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -9272,7 +9342,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> String {
     render_pipeline("alpha").unwrap()
@@ -9284,7 +9354,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -9335,7 +9409,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> String {
     render_pipeline("alpha").expect("pipeline should render")
@@ -9347,7 +9421,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -9398,7 +9476,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> String {
     render_pipeline("alpha").as_ref().unwrap().clone()
@@ -9410,7 +9488,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -9461,7 +9543,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> String {
     render_pipeline(" alpha ").trim().to_string()
@@ -9473,7 +9555,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -9583,7 +9669,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn assert_pipeline_output() {
     assert_eq!(render_pipeline("alpha"), "alpha");
@@ -9594,7 +9680,11 @@ fn helper_asserts_pipeline_output() {
     assert_pipeline_output();
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -9645,7 +9735,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn assert_pipeline_output(expected: &str) {
     assert_eq!(expected, render_pipeline("alpha"));
@@ -9656,7 +9746,11 @@ fn helper_asserts_pipeline_output() {
     assert_pipeline_output("alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -9769,7 +9863,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn assert_pipeline_output() {
     assert!(render_pipeline("alpha") == "alpha");
@@ -9780,7 +9874,11 @@ fn helper_asserts_pipeline_output() {
     assert_pipeline_output();
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -9893,7 +9991,7 @@ fn is_alpha(input: &str) -> bool {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> bool {
     matches!(render_pipeline("alpha"), true)
@@ -9904,7 +10002,11 @@ fn helper_exercises_pipeline() {
     assert!(exercise_pipeline());
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -10013,7 +10115,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> String {
     dbg!(render_pipeline("alpha"))
@@ -10025,7 +10127,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -10134,7 +10240,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> String {
     format!("pipeline={}", render_pipeline("alpha"))
@@ -10146,7 +10252,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output, "pipeline=alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -10193,7 +10303,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> String {
     std::fmt::format(format_args!("pipeline={}", render_pipeline("alpha")))
@@ -10205,7 +10315,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output, "pipeline=alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -10315,7 +10429,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> String {
     { render_pipeline("alpha") }
@@ -10327,7 +10441,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -10437,7 +10555,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> Vec<String> {
     vec![render_pipeline("alpha")]
@@ -10449,7 +10567,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output[0], "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -10496,7 +10618,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> [String; 1] {
     [render_pipeline("alpha")]
@@ -10508,7 +10630,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output[0], "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -10555,7 +10681,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> (String, bool) {
     (render_pipeline("alpha"), true)
@@ -10567,7 +10693,11 @@ fn helper_exercises_pipeline() {
     assert_eq!(output.0, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -10756,7 +10886,7 @@ fn format_output(input: &str) -> String {
 "#;
         let tests = PathBuf::from("tests/pipeline_tests.rs");
         let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> String {
     IDENTITY_PATH(render_pipeline("alpha"))
@@ -10769,7 +10899,11 @@ fn helper_exercises_pipeline() {
 }
 "#
         .replace("IDENTITY_PATH", identity_path);
-        let index = index_from_files(&[(prod, prod_src), (tests, tests_src.as_str())])?;
+        let index = index_from_files(&[
+            (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+            (prod, prod_src),
+            (tests, tests_src.as_str()),
+        ])?;
         let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
         let call_presence = seams
             .iter()
@@ -10886,7 +11020,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::render_pipeline;
+use memory_fixture::pipeline::render_pipeline;
 
 fn exercise_pipeline() -> String {
     render_pipeline("alpha")
@@ -10902,7 +11036,11 @@ fn outer_helper_reaches_pipeline_indirectly() {
     assert_eq!(output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()

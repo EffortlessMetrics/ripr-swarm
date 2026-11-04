@@ -243,10 +243,11 @@ fn standard_import_from(
     index: &RustIndex,
 ) -> bool {
     for (at, scope) in scopes.scopes.iter().enumerate().skip(start) {
-        if scope
-            .defines
-            .iter()
-            .any(|bound| bound.trim_start_matches("r#") == name)
+        if (name != "pin" && scope.type_parameters.contains(name))
+            || scope
+                .defines
+                .iter()
+                .any(|bound| bound.trim_start_matches("r#") == name)
             || scope
                 .child_modules
                 .iter()
@@ -357,10 +358,11 @@ fn standard_root(
     index: &RustIndex,
 ) -> bool {
     if scopes.scopes.iter().any(|scope| {
-        scope
-            .defines
-            .iter()
-            .any(|bound| bound.trim_start_matches("r#") == root)
+        scope.type_parameters.contains(root)
+            || scope
+                .defines
+                .iter()
+                .any(|bound| bound.trim_start_matches("r#") == root)
             || scope
                 .child_modules
                 .iter()

@@ -392,7 +392,16 @@ only supplies candidates. Caller-scope memos distinguish function names even
 when declarations share a line; an ambiguous same-name/same-line lookup refuses.
 Function, enclosing impl and trait type-parameter names refuse borrowing a
 same-spelled module or nominal receiver type, without resolving any type argument
-or value flow. Free-owner graph edges share lexical binding and value-shadow
+or value flow. A type parameter does not shadow a bare imported function in
+the value namespace. Intermediate traversal follows resolved declaration indices;
+same-named methods and free functions cannot exchange their downstream edges.
+Resolved entry and terminal owner identities remain attached through ordinary and
+target-affinity relations and through full and compact activation. Plain nominal
+associated-function paths use the same module/type scope authority; generic
+instantiation and type aliases remain outside that bounded path reader.
+Type-only declarations do not intercept bare value calls, and value-only
+declarations do not intercept module/type path prefixes.
+Free-owner graph edges share lexical binding and value-shadow
 refusals before propagation, including imported and cross-file calls. A rejected
 intermediate edge cannot regain free-owner credit through the any-spelling graph;
 explicit crate/module paths and genuinely bound helper calls remain eligible.

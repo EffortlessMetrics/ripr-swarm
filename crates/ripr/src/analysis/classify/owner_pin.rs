@@ -11630,9 +11630,40 @@ pub(in crate::analysis) fn free_helper_name_is_unshadowed(
     name: &str,
 ) -> bool {
     let masked_body = mask_comments_and_strings(&caller.body);
-    !test_body_shadows_owner(caller, name)
+    if !test_body_shadows_owner(caller, name)
         && !binds_outside_let(&masked_body, name)
         && !bound_by_macro(&masked_body, name)
+    {
+        return true;
+    }
+    // A binding begins after its initializer: `let read = read(input)`
+    // still executes the imported function. Reuse the bounded call-site
+    // authority; other local scopes and opaque expansions remain refused.
+    crate::analysis::syntax::parse_clean_source_file(&caller.body).is_some_and(|parse| {
+        parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::CallExpr::cast)
+            .any(|call| {
+                let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                    return false;
+                };
+                let Some(path) = callee.path() else {
+                    return false;
+                };
+                path.qualifier().is_none()
+                    && path
+                        .segment()
+                        .and_then(|segment| segment.name_ref())
+                        .is_some_and(|called| called.text().trim_start_matches("r#") == name)
+                    && crate::analysis::syntax::fn_call_has_local_binding(
+                        &caller.body,
+                        usize::from(call.syntax().text_range().start()),
+                        name,
+                    ) == Some(false)
+            })
+    })
 }
 
 /// Whether the file declares a type alias `type name`.

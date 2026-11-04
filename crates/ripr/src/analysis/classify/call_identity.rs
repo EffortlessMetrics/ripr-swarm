@@ -115,6 +115,7 @@ pub(crate) struct CallIdentityMemos {
     /// #9218: the same per owner, built even when the owner has no
     /// same-named rival, for resolving a qualified call's spelled path.
     solo_identities: Mutex<SoloIdentities>,
+    nominal_helper_identities: Mutex<SoloIdentities>,
     /// RIPR-SPEC-0035: every workspace `const`/`static` by name with its
     /// file and masked initializer, built once per index on first use by
     /// the owner-return pin's self-computed expected-value check.
@@ -375,6 +376,67 @@ fn call_identity_shape(
         })
 }
 
+/// Resolve a non-generic inherent helper's nominal type through the same
+/// module/import scope authority as free calls. The owner must actually declare
+/// that type beside its impl; aliases and inferred generic instantiations are
+/// outside this bounded relation.
+pub(super) fn inherent_helper_type_resolves(
+    caller: &TestSummary,
+    owner: &FunctionSummary,
+    called_type: &str,
+    qualifier: &[String],
+    index: &RustIndex,
+) -> bool {
+    let self_qualifier;
+    let qualifier = if called_type == "Self" {
+        if !qualifier.is_empty() || caller.file != owner.file {
+            return false;
+        }
+        let mut callers = index.functions().iter().filter(|function| {
+            function.file == caller.file
+                && function.name == caller.name
+                && function.start_line == caller.start_line
+        });
+        let Some(declaration) = callers.next() else {
+            return false;
+        };
+        if callers.next().is_some()
+            || declaration.item.container != owner.item.container
+            || module_path_of(declaration, true) != module_path_of(owner, true)
+        {
+            return false;
+        }
+        self_qualifier = vec!["self".to_string()];
+        self_qualifier.as_slice()
+    } else {
+        qualifier
+    };
+    let key = owner.id.0.clone();
+    let known = index
+        .call_identity_memos
+        .nominal_helper_identities
+        .lock()
+        .ok()
+        .and_then(|memo| memo.get(&key).cloned());
+    let identity = known.unwrap_or_else(|| {
+        let built = OwnerCallIdentity::nominal_helper(owner, index).map(Arc::new);
+        if let Ok(mut memo) = index.call_identity_memos.nominal_helper_identities.lock() {
+            return memo.entry(key).or_insert(built).clone();
+        }
+        built
+    });
+    identity.is_some_and(|identity| {
+        let target = if caller.file == owner.file {
+            identity.resolve_same_file_call(caller, index, qualifier)
+        } else if identity.owner_crate.is_some() {
+            identity.resolve_call(caller, index, qualifier)
+        } else {
+            CallTarget::Unsettled
+        };
+        target == CallTarget::Owner
+    })
+}
+
 /// The owner's call identity for this analysis run, shared by every caller:
 /// the related-test relation, the owner-return pin and the dependent-scope
 /// pin-scope check all ask for the same (owner, index) answer, and the
@@ -458,6 +520,7 @@ pub(super) fn shared_solo_owner_call_identity(
 /// The owner and its same-named, same-package module-level rivals.
 pub(in crate::analysis) struct OwnerCallIdentity {
     name: String,
+    type_namespace: bool,
     /// The owner's crate within its package (`CrateLayout::class`).
     owner_crate: Option<String>,
     /// How the owner's package splits `src/` between its crates.
@@ -508,6 +571,97 @@ struct TestScope {
 }
 
 impl OwnerCallIdentity {
+    fn nominal_helper(owner: &FunctionSummary, index: &RustIndex) -> Option<Self> {
+        use ra_ap_syntax::{
+            AstNode,
+            ast::{self, HasAttrs, HasName},
+        };
+        let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
+            return None;
+        };
+        if owner.item.has_self_param
+            || !owner.item.has_body
+            || self_ty.is_empty()
+            || !self_ty.chars().all(|c| c.is_alphanumeric() || c == '_')
+            || !super::owner_pin::inherent_factory_declaration_is_authoritative(
+                owner, self_ty, index,
+            )
+        {
+            return None;
+        }
+        let owner_path = module_path_of(owner, true)?;
+        let file_path = file_module_segments(&owner.file)?;
+        let tree = index.source_syntax.get(index, &owner.file)?.tree()?;
+        let source = &index.files().get(&owner.file)?.source;
+        if source_may_splice_items(source, true) || !entry_attributes_preserve_items(tree.syntax())
+        {
+            return None;
+        }
+        let mut declarations = 0;
+        for item in tree.syntax().descendants().filter_map(ast::Item::cast) {
+            let (name, node, attrs) = match &item {
+                ast::Item::Struct(i) => (i.name(), i.syntax(), i.attrs().collect::<Vec<_>>()),
+                ast::Item::Enum(i) => (i.name(), i.syntax(), i.attrs().collect::<Vec<_>>()),
+                ast::Item::Union(i) => (i.name(), i.syntax(), i.attrs().collect::<Vec<_>>()),
+                _ => continue,
+            };
+            if name.is_none_or(|name| name.text().trim_start_matches("r#") != self_ty)
+                || node
+                    .ancestors()
+                    .skip(1)
+                    .any(|node| ast::Fn::can_cast(node.kind()))
+            {
+                continue;
+            }
+            let mut modules: Vec<String> = node
+                .ancestors()
+                .filter_map(ast::Module::cast)
+                .filter_map(|module| {
+                    module
+                        .name()
+                        .map(|name| name.text().trim_start_matches("r#").to_string())
+                })
+                .collect();
+            modules.reverse();
+            let module = join(&file_path, &modules);
+            if module != owner_path {
+                continue;
+            }
+            if attrs.iter().any(|attr| {
+                let text: String = attr
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .collect();
+                (text.starts_with("#[cfg(") || text.starts_with("#[cfg_attr("))
+                    && text != "#[cfg(test)]"
+            }) {
+                return None;
+            }
+            declarations += 1;
+        }
+        if declarations != 1 {
+            return None;
+        }
+        let owner_package = package_key(&owner.file);
+        if package_remaps_module_paths(index, owner_package.as_deref()) {
+            return None;
+        }
+        let layout = CrateLayout::new(index, owner_package.as_deref());
+        let owner_crate = layout.class(&owner.file);
+        Some(Self {
+            name: self_ty.clone(),
+            type_namespace: true,
+            owner_crate,
+            layout,
+            owner_file: owner.file.clone(),
+            owner_package,
+            definitions: vec![Some(owner_path)],
+            memo: Mutex::new(BTreeMap::new()),
+        })
+    }
+
     /// One source file's module/function namespace, using the same scope and
     /// path resolver as repository owner identity. This grants no crate/target
     /// provenance and does not change the production-owner constructor.
@@ -529,6 +683,7 @@ impl OwnerCallIdentity {
         }
         Some(Self {
             name: helper.name.clone(),
+            type_namespace: false,
             owner_crate: None,
             layout: CrateLayout::default(),
             owner_file: helper.file.clone(),
@@ -649,6 +804,7 @@ impl OwnerCallIdentity {
         }
         Some(Self {
             name: owner.name.clone(),
+            type_namespace: false,
             owner_crate: Some(owner_crate),
             layout,
             owner_file: owner.file.clone(),
@@ -870,7 +1026,11 @@ impl OwnerCallIdentity {
         for scope in &scopes.scopes {
             let base = file_segments.map(|file| join(file, &scope.modules));
             let base = base.as_deref();
-            if scope.block_binds(name) {
+            if if self.type_namespace {
+                scope.block_binds_type(name)
+            } else {
+                scope.block_binds_value(name)
+            } {
                 return Matches::Any;
             }
             let imports: Vec<&UseBinding> = scope.imports_of(name).collect();
@@ -901,7 +1061,15 @@ impl OwnerCallIdentity {
                 }
                 return from_globs.union(matches);
             }
-            if scope.defines.contains(name) {
+            if self.type_namespace && scope.fn_body && scope.defines_type(name) {
+                // A local type declaration or parameter cannot be the module-level nominal type.
+                return Matches::Any;
+            }
+            if if self.type_namespace {
+                scope.defines_type(name)
+            } else {
+                scope.defines_value(name)
+            } {
                 return from_globs.union(self.matches_module(base.map(<[String]>::to_vec)));
             }
             if scope.fn_body {
@@ -972,7 +1140,7 @@ impl OwnerCallIdentity {
         for scope in &scopes.scopes {
             let base = file_segments.map(|file| join(file, &scope.modules));
             let base = base.as_deref();
-            if scope.block_binds(first) {
+            if scope.block_binds_type(first) {
                 return Matches::Any;
             }
             let imports: Vec<&UseBinding> = scope.imports_of(first).collect();
@@ -996,7 +1164,7 @@ impl OwnerCallIdentity {
             if scope.child_modules.contains(first) {
                 return self.matches_module(base.map(|base| join(base, segments)));
             }
-            if scope.defines.contains(first) {
+            if scope.defines_type(first) {
                 return Matches::Any;
             }
             if scope.fn_body {
@@ -1107,8 +1275,8 @@ fn use_target(
 /// than the crate itself (`use other_dep as globs;`), so a path starting with
 /// it no longer names the owner's crate.
 fn crate_name_rebound(scope: &NameScope, name: &str) -> bool {
-    scope.block_binds(name)
-        || scope.defines.contains(name)
+    scope.block_binds_type(name)
+        || scope.defines_type(name)
         || scope
             .imports_of(name)
             .any(|binding| !matches!(binding, UseBinding::Path(path) if path.len() == 1))
@@ -1452,6 +1620,7 @@ pub(super) fn inherent_entry_type_identity(
     }
     Some(OwnerCallIdentity {
         name: self_ty.clone(),
+        type_namespace: true,
         owner_crate: Some("lib".to_string()),
         layout: CrateLayout::new(index, None),
         owner_file: owner.file.clone(),

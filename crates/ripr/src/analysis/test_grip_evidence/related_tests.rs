@@ -1,8 +1,9 @@
 use super::*;
 use crate::analysis::classify::{
     CallTarget, call_text_may_call_free_function, free_helper_call_resolves, impl_self_type_name,
-    inherent_owner_call_resolves, method_call_resolves_to_impl, module_stem, owner_dispatch_trait,
-    owner_impl_identity_shadowed, requires_inherent_receiver_identity, test_calls_free_function,
+    inherent_helper_call_resolves, inherent_owner_call_resolves, method_call_resolves_to_impl,
+    module_stem, owner_dispatch_trait, owner_impl_identity_shadowed,
+    requires_inherent_receiver_identity, test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
@@ -401,6 +402,16 @@ pub(super) fn match_helper_owner_call(
         return;
     };
     for test_index in indices {
+        if owner.free_function
+            && !owner.function.is_some_and(|function| {
+                context
+                    .tests
+                    .get(*test_index)
+                    .is_some_and(|test| test.has_free_helper_owner(function))
+            })
+        {
+            continue;
+        }
         if owner.inherent_receiver
             && !owner.inherent_owner.is_some_and(|function| {
                 context.inherent_helper_reaches_owner(*test_index, function)
@@ -448,6 +459,10 @@ pub(super) fn match_target_affinity_owner_call(
             continue;
         };
         if !test_assertion_mentions_any_target_token(test, target_tokens)
+            || (owner.free_function
+                && !owner
+                    .function
+                    .is_some_and(|function| test.has_free_affinity_owner(function)))
             || (owner.inherent_receiver
                 && !owner.inherent_owner.is_some_and(|function| {
                     context.inherent_helper_reaches_owner(*test_index, function)

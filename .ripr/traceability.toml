@@ -566,6 +566,16 @@ name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::free_helper_graph_honors_lexical_path_bindings",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/helper_namespace.rs::helper_scope_type_only_items_preserve_imported_value_calls",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/helper_namespace.rs::helper_scope_value_only_items_preserve_module_paths",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/helper_namespace.rs::helper_scope_value_declarations_still_intercept_bare_calls",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::helper_credit_keeps_exact_same_named_terminal_owner",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::qualified_and_imported_entries_select_the_exact_duplicate_helper",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::nominal_associated_helpers_keep_bound_entries_and_hops",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::associated_helper_type_paths_keep_real_modules_and_imports",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/helper_namespace.rs::helper_scope_type_parameters_preserve_bare_imported_function_calls",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::receiver_bound_helper_keeps_its_own_leaf_despite_free_name_collision",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::same_named_helper_declarations_do_not_exchange_leaf_payloads",
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::enclosing_type_parameters_shadow_helper_modules",
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::bound_cross_file_helpers_keep_their_edges",
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::shadowed_intermediate_cannot_reintroduce_a_free_leaf",

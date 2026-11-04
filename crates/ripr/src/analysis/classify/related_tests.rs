@@ -5593,19 +5593,29 @@ pub(in crate::analysis) fn free_helper_call_resolves(
         let Some(segment) = path.segment() else {
             return false;
         };
-        if segment
-            .name_ref()
-            .is_none_or(|name| name.text() != helper.name)
-        {
+        let Some(called) = segment.name_ref() else {
             return false;
-        }
-        let prefix = path.qualifier().map(|path| {
-            path.syntax()
-                .text()
-                .to_string()
-                .split_whitespace()
-                .collect::<String>()
-        });
+        };
+        let called = called.text().trim_start_matches("r#").to_string();
+        let prefix = if called == helper.name.trim_start_matches("r#") {
+            path.qualifier().map(|path| {
+                path.syntax()
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .collect::<String>()
+            })
+        } else {
+            if path.qualifier().is_some()
+                || !super::owner_pin::free_helper_name_is_unshadowed(caller, &called)
+            {
+                return false;
+            }
+            let Some(prefix) = imported_helper_prefix(caller, &called, &helper.name, index) else {
+                return false;
+            };
+            Some(prefix)
+        };
         super::owner_pin::free_helper_call_reaches_definition(
             caller,
             helper,
@@ -5614,6 +5624,79 @@ pub(in crate::analysis) fn free_helper_call_resolves(
             syntax,
         )
     })
+}
+
+/// Resolve a bare imported alias at its declaration scope, then let the shared
+/// free-call authority bind the resulting path to the exact helper. Imports are
+/// facts about the source; a same-spelled call or file stem is not an import.
+fn imported_helper_prefix(
+    caller: &TestSummary,
+    alias: &str,
+    helper: &str,
+    index: &RustIndex,
+) -> Option<String> {
+    use crate::analysis::syntax::UseBinding;
+    let scopes = index.proptest_name_scopes(caller).or_else(|| {
+        index
+            .source_syntax
+            .get(index, &caller.file)?
+            .name_scopes(caller)
+    })?;
+    let caller_modules = &scopes.scopes.first()?.modules;
+    for scope in &scopes.scopes {
+        if scope.block_binds_value(alias) {
+            return None;
+        }
+        let imports: Vec<_> = scope.imports_of(alias).collect();
+        if !imports.is_empty() {
+            let [UseBinding::Path(path) | UseBinding::Renamed(path)] = imports.as_slice() else {
+                return None;
+            };
+            let (leaf, prefix) = path.split_last()?;
+            if leaf != helper || prefix.is_empty() || !caller_modules.starts_with(&scope.modules) {
+                return None;
+            }
+            let upwards = caller_modules.len() - scope.modules.len();
+            let mut resolved = Vec::new();
+            match prefix.first()?.as_str() {
+                "self" => {
+                    resolved.extend(std::iter::repeat_n("super".to_string(), upwards));
+                    if upwards == 0 {
+                        resolved.push("self".to_string());
+                    }
+                    resolved.extend(prefix[1..].iter().cloned());
+                }
+                "super" => {
+                    resolved.extend(std::iter::repeat_n("super".to_string(), upwards));
+                    resolved.extend(prefix.iter().cloned());
+                }
+                head if scope.child_modules.contains(head) => {
+                    resolved.extend(std::iter::repeat_n("super".to_string(), upwards));
+                    if upwards == 0 {
+                        resolved.push("self".to_string());
+                    }
+                    resolved.extend(prefix.iter().cloned());
+                }
+                _ => resolved.extend(prefix.iter().cloned()),
+            }
+            return Some(resolved.join("::"));
+        }
+        if scope.defines_value(alias) {
+            return None;
+        }
+        if !scope.globs.is_empty()
+            && !scope.globs.iter().all(|glob| {
+                glob.as_ref()
+                    .is_some_and(|path| path.as_slice() == ["super"])
+            })
+        {
+            return None;
+        }
+        if !scope.fn_body && scope.globs.is_empty() {
+            return None;
+        }
+    }
+    None
 }
 
 /// Walk only syntax executed by the outer function. Item declarations,
@@ -6313,6 +6396,60 @@ fn type_derives_default_in_file(index: &RustIndex, ty: &str, test_file: &Path) -
         found.push(at_root && ast::HasAttrs::attrs(&adt).any(attr_derives_default));
     }
     matches!(found.as_slice(), [true])
+}
+
+/// Executable inherent helper calls include receiver methods and explicit
+/// nominal associated-function paths. Both reuse shared declaration/scope
+/// authority; an unrelated or generic type path cannot borrow a helper body.
+pub(in crate::analysis) fn inherent_helper_call_resolves(
+    caller: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    if owner.item.has_self_param {
+        return inherent_owner_call_resolves(caller, owner, index);
+    }
+    let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
+        return false;
+    };
+    let syntax = &index.call_identity_memos.receiver_pin_syntax;
+    executable_call_resolves(caller, Some(index), syntax, false, &|node, _| {
+        let Some(call) = ast::CallExpr::cast(node) else {
+            return false;
+        };
+        let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+            return false;
+        };
+        let Some(path) = callee.path() else {
+            return false;
+        };
+        if path
+            .segment()
+            .and_then(|segment| segment.name_ref())
+            .is_none_or(|name| name.text().trim_start_matches("r#") != owner.name)
+        {
+            return false;
+        }
+        let Some(prefix) = path.qualifier() else {
+            return false;
+        };
+        let Some(mut segments) = crate::analysis::syntax::path_segments(&prefix) else {
+            return false;
+        };
+        let Some(called_type) = segments.pop() else {
+            return false;
+        };
+        if called_type != *self_ty && called_type != "Self" {
+            return false;
+        }
+        super::call_identity::inherent_helper_type_resolves(
+            caller,
+            owner,
+            &called_type,
+            &segments,
+            index,
+        )
+    })
 }
 
 /// Helper last hops borrow the direct owner's complete receiver refusal,

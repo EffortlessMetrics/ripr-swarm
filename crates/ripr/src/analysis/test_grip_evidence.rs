@@ -2748,12 +2748,8 @@ fn activate_evidence(
             let free_owner = owner_fn.impl_context == FunctionImplContext::Free;
             activation_credited.iter().any(|indexed| {
                 if free_owner {
-                    indexed
-                        .free_spelling_helper_owner_call_names
-                        .contains(owner_name)
-                        || (indexed
-                            .free_spelling_target_affinity_owner_call_names
-                            .contains(owner_name)
+                    indexed.has_free_helper_owner(owner_fn)
+                        || (indexed.has_free_affinity_owner(owner_fn)
                             && has_owner_call_via_target_affinity(
                                 indexed,
                                 owner_name,
@@ -3629,12 +3625,8 @@ fn compact_activate_evidence(
             if free_owner {
                 (indexed.call_names.contains(owner_name)
                     && test_calls_free_function(indexed.test, owner_name))
-                    || indexed
-                        .free_spelling_helper_owner_call_names
-                        .contains(owner_name)
-                    || (indexed
-                        .free_spelling_target_affinity_owner_call_names
-                        .contains(owner_name)
+                    || owner_fn.is_some_and(|owner| indexed.has_free_helper_owner(owner))
+                    || (owner_fn.is_some_and(|owner| indexed.has_free_affinity_owner(owner))
                         && has_owner_call_via_target_affinity(
                             indexed,
                             owner_name,

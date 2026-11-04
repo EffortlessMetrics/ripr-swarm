@@ -3589,3 +3589,11 @@ target-declaration refusals when extending lexical resolution across files, and
 do not let import fallback or an uppercase intermediate path restore a refused
 edge. The honesty corpus pairs `helper-type-shadow-transitive` with
 `helper-type-shadow-qualified-control`; the latter retains real helper credit.
+
+The final owner identity must survive name projection too: a helper calling
+`real::leaf_value` must never credit `decoy::leaf_value`. Bind actual test entries
+and retain terminal identities through both relation and activation consumers.
+Rust type and value namespaces are distinct: type parameters, aliases and braced
+structs do not hide bare value calls, while functions/constants do not hide
+module prefixes. Native original/mutant controls distinguish these positive
+bindings from the shadowing decoys.
