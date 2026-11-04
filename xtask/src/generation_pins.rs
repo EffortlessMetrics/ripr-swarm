@@ -493,11 +493,26 @@ fn production_blob_reader(
 
 fn git_show_text(root: &Path, reference: &str, path: &str) -> Result<String, String> {
     let object = format!("{reference}:{path}");
-    let output = std::process::Command::new("git")
+    git_capture(root, &["show", &object], &format!("git show {object}"))
+}
+
+/// Spawn `git` with `args` in `root`, returning the raw process output. One
+/// spawning site for the whole module keeps the per-file `Command::new`
+/// process budget (check-process-policy) at a single site for all git
+/// plumbing.
+fn git_spawn(root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    std::process::Command::new("git")
         .current_dir(root)
-        .args(["show", &object])
+        .args(args)
         .output()
-        .map_err(|error| format!("git show {object} failed to spawn: {error}"))?;
+        .map_err(|error| format!("git {} failed to spawn: {error}", args.join(" ")))
+}
+
+/// Run `git` with `args` in `root` and return trimmed-on-request stdout
+/// (callers trim); a non-zero exit becomes `{label} failed: {stderr}` (or
+/// the exit status when git wrote nothing).
+fn git_capture(root: &Path, args: &[&str], label: &str) -> Result<String, String> {
+    let output = git_spawn(root, args)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let detail = if stderr.is_empty() {
@@ -505,10 +520,10 @@ fn git_show_text(root: &Path, reference: &str, path: &str) -> Result<String, Str
         } else {
             stderr
         };
-        return Err(format!("git show {object} failed: {detail}"));
+        return Err(format!("{label} failed: {detail}"));
     }
     String::from_utf8(output.stdout)
-        .map_err(|error| format!("git show {object} returned non-UTF-8 bytes: {error}"))
+        .map_err(|error| format!("{label} returned non-UTF-8 bytes: {error}"))
 }
 
 /// Resolve the accepted base exactly as `resolve_merge_base` does
@@ -539,39 +554,27 @@ fn resolve_base(root: &Path, explicit: Option<&str>) -> Result<ResolvedBase, Str
 /// `git rev-parse <object>`: `Ok(None)` when the object does not resolve
 /// (non-zero exit), `Err` on spawn or decode failure.
 fn git_rev_parse(root: &Path, object: &str) -> Result<Option<String>, String> {
-    let output = std::process::Command::new("git")
-        .current_dir(root)
-        .args(["rev-parse", object])
-        .output()
-        .map_err(|error| format!("git rev-parse {object} failed to spawn: {error}"))?;
-    if !output.status.success() {
-        return Ok(None);
+    let label = format!("git rev-parse {object}");
+    match git_capture(root, &["rev-parse", object], &label) {
+        Ok(text) => Ok(Some(text.trim().to_string())),
+        // A non-resolving object exits non-zero. A spawn failure is kept
+        // loud: by the time this probes `HEAD^2`, the merge-base resolution
+        // has already required a working git, so `Err` here means git broke
+        // mid-run and the caller must fail closed.
+        Err(error) if !error.contains("failed to spawn") => Ok(None),
+        Err(error) => Err(error),
     }
-    let text = String::from_utf8(output.stdout)
-        .map_err(|error| format!("git rev-parse {object} returned non-UTF-8 bytes: {error}"))?;
-    Ok(Some(text.trim().to_string()))
 }
 
 /// `git merge-base <left> <right>`, trimmed; a non-zero exit becomes the
 /// trimmed stderr (or the exit status) as the error detail.
 fn git_merge_base_commit(root: &Path, left: &str, right: &str) -> Result<String, String> {
-    let output = std::process::Command::new("git")
-        .current_dir(root)
-        .args(["merge-base", left, right])
-        .output()
-        .map_err(|error| format!("git merge-base {left} {right} failed to spawn: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let detail = if stderr.is_empty() {
-            format!("exit status {}", output.status)
-        } else {
-            stderr
-        };
-        return Err(detail);
-    }
-    String::from_utf8(output.stdout)
-        .map(|text| text.trim().to_string())
-        .map_err(|error| format!("non-UTF-8 merge-base output: {error}"))
+    git_capture(
+        root,
+        &["merge-base", left, right],
+        &format!("git merge-base {left} {right}"),
+    )
+    .map(|text| text.trim().to_string())
 }
 
 fn resolve_base_with(
@@ -999,18 +1002,8 @@ mod tests {
         };
         let root = crate::tests::temp_dir("generation-pins-merge-ref");
         let run = |args: &[&str]| -> Result<String, String> {
-            let output = std::process::Command::new("git")
-                .current_dir(&root)
-                .args(args)
-                .output()
-                .map_err(|error| format!("git {args:?} failed to spawn: {error}"))?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                return Err(format!("git {args:?} failed: {stderr}"));
-            }
-            String::from_utf8(output.stdout)
+            super::git_capture(&root, args, &format!("git {args:?}"))
                 .map(|text| text.trim().to_string())
-                .map_err(|error| format!("git {args:?} returned non-UTF-8 bytes: {error}"))
         };
         let commit_with = |value: &str, message: &str| -> Result<String, String> {
             // Rewrite the classified constant; every other row stays at 5.5.
