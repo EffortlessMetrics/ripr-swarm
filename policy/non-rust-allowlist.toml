@@ -189,6 +189,24 @@ classification = "config"
 reason = "PEP 517/621 and Maturin authoring manifest for the wheel-only ripr-rs adapter (#4490)."
 covered_by = ["cargo xtask check-release-targets"]
 
+[[allow]]
+glob = "dist/muse/**/*.json"
+kind = "muse_plugin_manifest"
+owner = "agent/plugin"
+surface = "config"
+classification = "config"
+reason = "Native Muse plugin manifest for the RIPR package (#13106); Muse requires JSON, validated by the installed muse validator."
+covered_by = ["muse plugins validate dist/muse --json"]
+
+[[allow]]
+glob = "dist/muse/**/*.md"
+kind = "muse_plugin_docs"
+owner = "agent/plugin"
+surface = "docs"
+classification = "docs"
+reason = "Muse plugin skill, command templates, README, and evaluation contract are Markdown by host contract (#13106)."
+covered_by = ["muse plugins validate dist/muse --json", "muse skills validate dist/muse/skills/ripr-repair-workflow --json"]
+
 # ---------------------------------------------------------------------------
 # CI / GitHub workflows
 # ---------------------------------------------------------------------------

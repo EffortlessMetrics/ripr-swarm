@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "name": "ripr",
+  "displayName": "RIPR",
+  "version": "0.1.0",
+  "description": "Static mutation-exposure analysis and a bounded repair workflow for Muse, over the read-only RIPR MCP server.",
+  "compat": {
+    "source": "native",
+    "manifestDir": ".muse-plugin"
+  },
+  "capabilities": {
+    "skills": [
+      {
+        "id": "ripr-repair-workflow",
+        "path": "skills/ripr-repair-workflow/SKILL.md",
+        "enabledDefault": true
+      }
+    ],
+    "commands": [
+      {
+        "id": "ripr-setup",
+        "path": "commands/ripr-setup.md",
+        "enabledDefault": true
+      },
+      {
+        "id": "ripr-repair",
+        "path": "commands/ripr-repair.md",
+        "enabledDefault": true
+      }
+    ],
+    "hooks": [],
+    "mcpServers": [
+      {
+        "id": "ripr",
+        "transport": "stdio",
+        "command": ["ripr", "mcp", "--stdio"]
+      }
+    ],
+    "reminders": []
+  }
+}
