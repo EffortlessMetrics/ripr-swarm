@@ -2780,17 +2780,30 @@ fn activate_evidence(
             let free_owner = owner_fn.impl_context == FunctionImplContext::Free;
             activation_credited.iter().any(|indexed| {
                 if free_owner {
-                    indexed
-                        .free_spelling_helper_owner_call_names
-                        .contains(owner_name)
-                        || (indexed
-                            .free_spelling_target_affinity_owner_call_names
+                    let shadowed = crate::analysis::classify::shared_owner_call_identity(
+                        context.index,
+                        owner_fn,
+                    )
+                    .is_some_and(|identity| {
+                        related_tests::context::mixed_generic_shadow_blocks_owner(
+                            indexed.test,
+                            owner_fn,
+                            &identity,
+                            context.index,
+                        )
+                    });
+                    !shadowed
+                        && (indexed
+                            .free_spelling_helper_owner_call_names
                             .contains(owner_name)
-                            && has_owner_call_via_target_affinity(
-                                indexed,
-                                owner_name,
-                                target_affinity_tokens.as_ref(),
-                            ))
+                            || (indexed
+                                .free_spelling_target_affinity_owner_call_names
+                                .contains(owner_name)
+                                && has_owner_call_via_target_affinity(
+                                    indexed,
+                                    owner_name,
+                                    target_affinity_tokens.as_ref(),
+                                )))
                 } else {
                     has_owner_call_via_one_hop_helper(indexed, owner_name)
                         || has_owner_call_via_target_affinity(
@@ -3661,17 +3674,27 @@ fn compact_activate_evidence(
             if free_owner {
                 (indexed.call_names.contains(owner_name)
                     && test_calls_free_function(indexed.test, owner_name))
-                    || indexed
+                    || (owner_fn.is_none_or(|owner| {
+                        !crate::analysis::classify::shared_owner_call_identity(context.index, owner)
+                            .is_some_and(|identity| {
+                                related_tests::context::mixed_generic_shadow_blocks_owner(
+                                    indexed.test,
+                                    owner,
+                                    &identity,
+                                    context.index,
+                                )
+                            })
+                    }) && (indexed
                         .free_spelling_helper_owner_call_names
                         .contains(owner_name)
-                    || (indexed
-                        .free_spelling_target_affinity_owner_call_names
-                        .contains(owner_name)
-                        && has_owner_call_via_target_affinity(
-                            indexed,
-                            owner_name,
-                            target_affinity_tokens.as_ref(),
-                        ))
+                        || (indexed
+                            .free_spelling_target_affinity_owner_call_names
+                            .contains(owner_name)
+                            && has_owner_call_via_target_affinity(
+                                indexed,
+                                owner_name,
+                                target_affinity_tokens.as_ref(),
+                            ))))
             } else {
                 indexed.call_names.contains(owner_name)
                     || indexed.helper_owner_call_names.contains(owner_name)

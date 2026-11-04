@@ -401,6 +401,23 @@ pub(super) fn match_helper_owner_call(
         return;
     };
     for test_index in indices {
+        if owner.free_function
+            && owner
+                .function
+                .zip(owner.identity.as_deref())
+                .is_some_and(|(function, identity)| {
+                    context.tests.get(*test_index).is_some_and(|test| {
+                        context::mixed_generic_shadow_blocks_owner(
+                            test.test,
+                            function,
+                            identity,
+                            context.index,
+                        )
+                    })
+                })
+        {
+            continue;
+        }
         if owner.inherent_receiver
             && !owner.inherent_owner.is_some_and(|function| {
                 context.inherent_helper_reaches_owner(*test_index, function)
@@ -447,7 +464,19 @@ pub(super) fn match_target_affinity_owner_call(
         let Some(test) = context.tests.get(*test_index) else {
             continue;
         };
-        if !test_assertion_mentions_any_target_token(test, target_tokens)
+        if (owner.free_function
+            && owner
+                .function
+                .zip(owner.identity.as_deref())
+                .is_some_and(|(function, identity)| {
+                    context::mixed_generic_shadow_blocks_owner(
+                        test.test,
+                        function,
+                        identity,
+                        context.index,
+                    )
+                }))
+            || !test_assertion_mentions_any_target_token(test, target_tokens)
             || (owner.inherent_receiver
                 && !owner.inherent_owner.is_some_and(|function| {
                     context.inherent_helper_reaches_owner(*test_index, function)

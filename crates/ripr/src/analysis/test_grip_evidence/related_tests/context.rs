@@ -1,8 +1,10 @@
 use super::*;
 use crate::analysis::syntax::parse_clean_source_file;
+use crate::analysis::facts::FunctionContainer;
 use crate::analysis::test_grip_evidence::owner_result_binding::ParsedTestFile;
 use crate::analysis::test_grip_evidence::shared_grips::SharedGrips;
 use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
+use ra_ap_syntax::{AstNode, ast};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 /// Precomputed per-test facts for repo seam evidence consumers. This
@@ -345,6 +347,7 @@ impl<'a> CompactGripContext<'a> {
             helper_owner_call_pairs.any_spelling,
             helper_owner_call_pairs.free_spelling,
         );
+        let free_intermediate_calls_by_file = helper_owner_call_pairs.free_intermediate;
         checkpoint()?;
         // The free variants are computed before the same-named locals bind,
         // so the builder functions stay callable (a local would shadow them).
@@ -378,7 +381,7 @@ impl<'a> CompactGripContext<'a> {
         let free_production_helper_owner_calls_by_package =
             context_build_phase("free_production_helper_owner_calls_by_package", || {
                 free_production_helper_owner_calls_by_package(
-                    &helper_owner_calls_by_file,
+                    &free_intermediate_calls_by_file,
                     &free_helper_owner_calls_by_file,
                 )
             });
@@ -1618,6 +1621,197 @@ impl SharedIndexTables {
 pub(in crate::analysis::test_grip_evidence) struct HelperOwnerCallsByFilePair {
     pub(in crate::analysis::test_grip_evidence) any_spelling: HelperOwnerCallsByFile,
     pub(in crate::analysis::test_grip_evidence) free_spelling: HelperOwnerCallsByFile,
+    free_intermediate: HelperOwnerCallsByFile,
+}
+
+/// Refuse a mixed same-file helper only when each call of this owner's name
+/// is either rooted at a type parameter or resolves to a different owner.
+/// Restrict the check to a unique direct helper; other graph paths retain
+/// their existing candidate semantics.
+pub(in crate::analysis::test_grip_evidence) fn mixed_generic_shadow_blocks_owner(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    identity: &crate::analysis::classify::OwnerCallIdentity,
+    index: &RustIndex,
+) -> bool {
+    if test.file != owner.file {
+        return false;
+    }
+    let candidates: Vec<_> = index
+        .functions()
+        .iter()
+        .filter(|helper| {
+            helper.file == test.file
+                && helper.id != owner.id
+                && helper.item.container == FunctionContainer::Free
+                && test.calls.iter().any(|call| call.name == helper.name)
+        })
+        .collect();
+    let [helper] = candidates.as_slice() else {
+        return false;
+    };
+    if !free_helper_call_resolves(test, helper, index)
+        || index
+            .files()
+            .get(&helper.file)
+            .is_none_or(|facts| facts.source.contains(" as "))
+        || helper.calls.iter().any(|call| {
+            call.name != owner.name
+                && index
+                    .functions()
+                    .iter()
+                    .any(|other| other.id != helper.id && other.name == call.name)
+        })
+    {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(&helper.body) else {
+        return false;
+    };
+    let Some(item) = parse.tree().syntax().children().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let params = crate::analysis::syntax::function_type_param_names(&item);
+    if params.is_empty() {
+        return false;
+    }
+    let caller = TestSummary {
+        name: helper.name.clone(),
+        file: helper.file.clone(),
+        start_line: helper.start_line,
+        end_line: helper.end_line,
+        body: helper.body.clone(),
+        calls: helper.calls.clone(),
+        assertions: Vec::new(),
+        literals: helper.literals.clone(),
+        attrs: helper.attrs.clone(),
+        nested_fn_names: helper.nested_fn_names.clone(),
+        let_bindings: helper.let_bindings.clone(),
+        generated: None,
+    };
+    let mut shadowed = false;
+    for call in item.syntax().descendants().filter_map(ast::CallExpr::cast) {
+        let Some(ast::Expr::PathExpr(expr)) = call.expr() else {
+            continue;
+        };
+        let Some(path) = expr.path() else { continue };
+        let Some(name) = path.segment().and_then(|segment| segment.name_ref()) else {
+            continue;
+        };
+        if name.text().trim_start_matches("r#") != owner.name {
+            continue;
+        }
+        let prefix = path
+            .qualifier()
+            .map(|part| part.syntax().text().to_string());
+        let segments: Vec<String> = prefix
+            .as_deref()
+            .unwrap_or("")
+            .split("::")
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(|part| part.trim_start_matches("r#").to_string())
+            .collect();
+        if segments.first().is_some_and(|root| params.contains(root)) {
+            shadowed = true;
+        } else if identity.resolve_call(&caller, index, &segments) != CallTarget::Other {
+            return false;
+        }
+    }
+    shadowed
+}
+
+// A renamed direct import can reach an owner even when an unrelated generic
+// associated call has that owner's original name.
+fn has_bare_renamed_owner_call(
+    function: &FunctionSummary,
+    imports: Option<&BTreeMap<String, ScopedImportedFunctionAlias>>,
+    owner_name: &str,
+) -> bool {
+    let Some(imports) = imports else { return false };
+    let Some(parse) = parse_clean_source_file(&function.body) else {
+        return false;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::CallExpr::cast)
+        .any(|call| {
+            let Some(ast::Expr::PathExpr(expr)) = call.expr() else {
+                return false;
+            };
+            let Some(path) = expr.path() else {
+                return false;
+            };
+            if path.qualifier().is_some() {
+                return false;
+            }
+            let Some(name) = path.segment().and_then(|segment| segment.name_ref()) else {
+                return false;
+            };
+            let alias = name.text().trim_start_matches("r#").to_string();
+            alias != owner_name
+                && function
+                    .calls
+                    .iter()
+                    .filter(|call| call.name == alias)
+                    .any(|call| {
+                        imports
+                            .get(&alias)
+                            .and_then(|imported| imported.binding_at(call.line))
+                            .is_some_and(|imported| imported.name == owner_name)
+                    })
+        })
+}
+
+/// Names for which every visible call is rooted at a function type parameter.
+/// Call facts retain only a name and source line, so inspect individual syntax
+/// calls before reducing them to names; a real call on the same line wins.
+fn type_parameter_only_call_names(function: &FunctionSummary) -> BTreeSet<String> {
+    if !function.body.contains("::") || !function.body.contains('<') {
+        return BTreeSet::new();
+    }
+    let Some(parse) = parse_clean_source_file(&function.body) else {
+        return BTreeSet::new();
+    };
+    let Some(item) = parse.tree().syntax().children().find_map(ast::Fn::cast) else {
+        return BTreeSet::new();
+    };
+    let params = crate::analysis::syntax::function_type_param_names(&item);
+    if params.is_empty() {
+        return BTreeSet::new();
+    }
+    let mut shadowed = BTreeSet::new();
+    let mut other = BTreeSet::new();
+    for call in item.syntax().descendants().filter_map(ast::CallExpr::cast) {
+        let Some(ast::Expr::PathExpr(expr)) = call.expr() else {
+            continue;
+        };
+        let Some(path) = expr.path() else { continue };
+        let Some(name) = path.segment().and_then(|segment| segment.name_ref()) else {
+            continue;
+        };
+        let name = name.text().trim_start_matches("r#").to_string();
+        let prefix = path
+            .qualifier()
+            .map(|part| part.syntax().text().to_string());
+        let rooted_in_parameter = prefix.as_deref().is_some_and(|prefix| {
+            let root = prefix
+                .split("::")
+                .next()
+                .unwrap_or("")
+                .trim()
+                .trim_start_matches("r#");
+            params.contains(root)
+        });
+        if rooted_in_parameter {
+            shadowed.insert(name);
+        } else {
+            other.insert(name);
+        }
+    }
+    shadowed.difference(&other).cloned().collect()
 }
 
 pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_fanout(
@@ -1627,6 +1821,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
 ) -> HelperOwnerCallsByFilePair {
     let mut helpers: HelperOwnerCallsByFile = BTreeMap::new();
     let mut free_helpers: HelperOwnerCallsByFile = BTreeMap::new();
+    let mut free_intermediate: HelperOwnerCallsByFile = BTreeMap::new();
     let SharedIndexTables {
         function_names_by_file,
         direct_function_import_aliases_by_file,
@@ -1644,6 +1839,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
         })
     }) {
         let helper_name_lower = function.name.to_ascii_lowercase();
+        let shadowed = type_parameter_only_call_names(function);
         let local_function_names = function_names_by_file.get(&function.file);
         let external_owner_names =
             rust_index::is_test_file(&function.file).then_some(production_owner_names);
@@ -1675,6 +1871,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
             .collect::<BTreeSet<_>>();
         let mut free_owner_calls: BTreeSet<String> = owner_calls
             .intersection(&free_spelled_names)
+            .filter(|name| !shadowed.contains(*name))
             .cloned()
             .collect();
         if let Some(package) = package_scope(&function.file) {
@@ -1689,11 +1886,24 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
             // scoped import binding pins `module_path::name`, so the
             // alias's bare call site is that owner's call — free-spelling
             // evidence the call text itself cannot show (#6713 review).
-            free_owner_calls.extend(imported_owner_calls);
+            free_owner_calls.extend(imported_owner_calls.into_iter().filter(|name| {
+                !shadowed.contains(name)
+                    || has_bare_renamed_owner_call(
+                        function,
+                        direct_function_import_aliases_by_file.get(&function.file),
+                        name,
+                    )
+            }));
         }
         if owner_calls.is_empty() {
             continue;
         }
+        let mut intermediate: BTreeSet<_> = owner_calls.difference(&shadowed).cloned().collect();
+        intermediate.extend(free_owner_calls.iter().cloned());
+        free_intermediate
+            .entry(function.file.clone())
+            .or_default()
+            .insert(function.name.clone(), intermediate);
         helpers
             .entry(function.file.clone())
             .or_default()
@@ -1706,10 +1916,12 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
         }
     }
     extend_helper_owner_calls_through_bounded_graph(&mut helpers);
-    extend_free_helper_owner_calls_through_bounded_graph(&mut free_helpers, &helpers);
+    extend_helper_owner_calls_through_bounded_graph(&mut free_intermediate);
+    extend_free_helper_owner_calls_through_bounded_graph(&mut free_helpers, &free_intermediate);
     HelperOwnerCallsByFilePair {
         any_spelling: helpers,
         free_spelling: free_helpers,
+        free_intermediate,
     }
 }
 
@@ -2055,23 +2267,38 @@ impl TargetAffinityOwnerCalls {
                 .filter(|call| call_text_may_call_free_function(&call.text, &call.name))
                 .map(|call| call.name.clone())
                 .collect();
+            let shadowed = type_parameter_only_call_names(function);
             // Text-visible edges keep their free spelling; direct-imported
             // edges are callee-identity-resolved by the scoped import
             // binding, so they join regardless of the alias spelling
             // (#6713 review).
             let free_owner_calls: BTreeSet<String> = owner_calls
                 .intersection(&free_spelled_names)
+                .filter(|name| !shadowed.contains(*name))
                 .cloned()
-                .chain(direct_imported_owner_calls_for_function(
-                    function,
-                    shared
-                        .direct_function_import_aliases_by_file
-                        .get(&function.file),
-                    shared
-                        .unambiguous_production_owner_names_by_package
-                        .get(&package),
-                    &shared.owner_names_by_module_path,
-                ))
+                .chain(
+                    direct_imported_owner_calls_for_function(
+                        function,
+                        shared
+                            .direct_function_import_aliases_by_file
+                            .get(&function.file),
+                        shared
+                            .unambiguous_production_owner_names_by_package
+                            .get(&package),
+                        &shared.owner_names_by_module_path,
+                    )
+                    .into_iter()
+                    .filter(|name| {
+                        !shadowed.contains(name)
+                            || has_bare_renamed_owner_call(
+                                function,
+                                shared
+                                    .direct_function_import_aliases_by_file
+                                    .get(&function.file),
+                                name,
+                            )
+                    }),
+                )
                 .collect();
             if let Some(module_path) = module_path_for_index(index, &function.file) {
                 let module_path = module_path.replace('/', "::");
