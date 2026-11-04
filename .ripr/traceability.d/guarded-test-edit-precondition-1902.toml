@@ -1,0 +1,32 @@
+# Registers the guarded test-only assertion edit precondition (#1902).
+[[behavior]]
+id = "RIPR-SPEC-0320"
+name = "guarded test-only assertion edit precondition"
+spec = "docs/specs/RIPR-SPEC-0320-guarded-test-edit-precondition.md"
+tests = [
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_builds_broad_error_precondition",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_boundary_value_fixture",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_fail_closed_reason_fixture",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_corpus_cases",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_rejects_stale_and_production_targets",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_document_and_source_checks",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_id_binds_every_governed_input",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_requires_passed_validation_evidence",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_decoded_dto_is_validated_like_the_builder",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_test_path_must_be_a_contained_rust_test_source",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_digest_only_representation_verifies_against_the_digest",
+]
+fixtures = [
+  "fixtures/boundary_gap/expected/guarded-edit-precondition/corpus.json",
+]
+code = [
+  "crates/ripr/src/domain/guarded_edit.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0320-guarded-test-edit-precondition.md",
+  "docs/adr/0026-guarded-test-only-edit-boundary.md",
+]
+metrics = [
+  "exact_test_edit_precondition_schema_version",
+  "guarded_edit_unavailable_reasons",
+]

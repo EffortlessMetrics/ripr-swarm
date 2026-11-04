@@ -215,6 +215,11 @@ pub(crate) fn collect_test_arrow_expression_assertions(
     };
     let mut out = Vec::new();
     collect_assertions_in_expression(&statement.expression, true, source, &context, &mut out);
+    if let Some(assertion) =
+        super::fast_check::assertions_from_expression(&statement.expression, source, bindings, true)
+    {
+        out.push(assertion);
+    }
     Some(out)
 }
 
@@ -257,6 +262,13 @@ pub(crate) fn collect_callback_assertions(
             break;
         }
     }
+    super::fast_check::append_fast_check_assertions(
+        statements,
+        source,
+        bindings,
+        returns_to_runner,
+        &mut out,
+    );
     out
 }
 
@@ -1846,6 +1858,14 @@ pub(crate) struct TypeScriptAssertionBindings {
     /// Custom matchers the file registers with `expect.extend` that pass
     /// only on strict equality (RIPR-SPEC-0262).
     strict_matchers: Vec<String>,
+    /// Namespace binding for audited `fast-check` (`import * as fc` / default).
+    pub(crate) fast_check_namespace: Option<String>,
+    /// Named `assert` imports from `fast-check`.
+    pub(crate) fast_check_assert_locals: Vec<String>,
+    /// Named `property` imports from `fast-check`.
+    pub(crate) fast_check_property_locals: Vec<String>,
+    /// Named `asyncProperty` imports from `fast-check`.
+    pub(crate) fast_check_async_property_locals: Vec<String>,
     /// Whether the file is a module or a strict script, so a block-level
     /// function declaration stays inside its block. A sloppy script (`.cjs`)
     /// hoists it to the enclosing function scope (Annex B).
@@ -1998,6 +2018,17 @@ impl TypeScriptAssertionBindings {
                 Some("expect") => self.chai_expects.push(local),
                 Some(_) => {}
             }
+        } else if module == "fast-check" {
+            match imported {
+                None if namespace => self.fast_check_namespace = Some(local),
+                Some("default") if !namespace => self.fast_check_namespace = Some(local),
+                Some("assert") if !namespace => self.fast_check_assert_locals.push(local),
+                Some("property") if !namespace => self.fast_check_property_locals.push(local),
+                Some("asyncProperty") if !namespace => {
+                    self.fast_check_async_property_locals.push(local);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -2064,6 +2095,29 @@ impl TypeScriptAssertionBindings {
                 .collect(),
             ava_runner: self.ava_runner,
             strict_matchers: self.strict_matchers.clone(),
+            fast_check_namespace: self
+                .fast_check_namespace
+                .as_ref()
+                .filter(|local| !is_shadowed(local))
+                .cloned(),
+            fast_check_assert_locals: self
+                .fast_check_assert_locals
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
+            fast_check_property_locals: self
+                .fast_check_property_locals
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
+            fast_check_async_property_locals: self
+                .fast_check_async_property_locals
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
             block_functions_are_lexical: self.block_functions_are_lexical,
         }
     }

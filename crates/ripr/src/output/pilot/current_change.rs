@@ -123,7 +123,7 @@ impl PilotCurrentChange {
         };
         for entry in classified.iter().filter(|entry| self.touches(entry)) {
             counted.touched = counted.touched.saturating_add(1);
-            if entry.class.is_static_limitation() {
+            if super::ranking::counts_as_withheld_static_limitation(entry) {
                 counted.withheld = counted.withheld.saturating_add(1);
             }
         }

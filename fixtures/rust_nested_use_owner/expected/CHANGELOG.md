@@ -167,3 +167,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_owner (14)
+
+Reason:
+RIPR-SPEC-0122: the digest drops the generic Why unknown hint when the rust_indirect_owner_call_unresolved Analyzer limit and Next step already name the reason, keeping the first-view check on fastrand-2.3.0 within the 60-line read budget (#11519)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -46,7 +46,7 @@
         {"kind":"struct_field","text":"retries: retries + 1","line":8}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: retries: retries + 1", "Only weak oracle found, such as a broad relational assertion or non-empty check", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach build: build_is_not_nine_retries"],
-      "missing": ["Missing discriminator value: retries: retries + 1", "No strong discriminator was detected"],
+      "missing": ["Missing check value: retries: retries + 1", "No strong discriminator was detected"],
       "assertion_texts": {
         "18": "assert_ne!(build(3), Config { retries: 9 });"
       },

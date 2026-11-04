@@ -730,6 +730,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                 name,
                 "active-goal-authority-audit"
                     | "actionable-gap-outcomes-corpus"
+                    | "admission_incident_route"
                     | "blind_journey_contract"
                     | "cache-payload-tamper-recovery"
                     | "blind_journey_execute"
@@ -4505,9 +4506,9 @@ mod tests {
         let gripped = line(&format!("{} but", transitional::SEAM_GRIPPED));
         let untied_list = transitional::NO_SEAM_UNTIED_SURFACES;
         let gripped_list = transitional::NO_SEAM_GRIPPED_SURFACES;
-        if untied_list.len() != 44 || gripped_list.len() != 92 {
+        if untied_list.len() != 44 || gripped_list.len() != 94 {
             return Err(format!(
-                "expected 44 untied and 92 gripped surfaces, got {} and {}",
+                "expected 44 untied and 94 gripped surfaces, got {} and {}",
                 untied_list.len(),
                 gripped_list.len()
             ));

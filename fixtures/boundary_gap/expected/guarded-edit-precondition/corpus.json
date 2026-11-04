@@ -1,0 +1,760 @@
+{
+  "kind": "guarded_edit_precondition_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0320",
+  "cases": [
+    {
+      "id": "broad_error_is_err_to_exact_variant",
+      "expect": "precondition",
+      "input": {
+        "identity": {
+          "workspace_identity": "ws:demo",
+          "repository_head": "abc123",
+          "input_identity": "input:1",
+          "snapshot_identity": "snap:1",
+          "config_identity": "cfg:1",
+          "base_revision": "base:1"
+        },
+        "canonical_item": "gap:67f9714ba37b3967",
+        "seam_id": "seam:broad-error",
+        "test_selector": "tests/standings.rs::rejects_self_game",
+        "test_file": "tests/standings.rs",
+        "assertion_range": {
+          "start_line": 12,
+          "start_character": 4,
+          "end_line": 12,
+          "end_character": 29
+        },
+        "original_source_text": "assert!(result.is_err());",
+        "document_version": 3,
+        "exact_replacement_text": "assert_eq!(result, Err(StandingsError::SelfGame));",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/standings.rs"
+        ],
+        "must_not_change": [
+          "src/standings.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      },
+      "precondition": {
+        "schema_version": "exact_test_edit_precondition.v1",
+        "test_selector": "tests/standings.rs::rejects_self_game",
+        "test_file": "tests/standings.rs",
+        "exact_replacement_text": "assert_eq!(result, Err(StandingsError::SelfGame));",
+        "edit_instruction_id": "edit-instruction:99aa357ba1136b76",
+        "original_source_digest": "sha256:bf98ee362ba027c8b120eebee62cb44319a9d6bfc2a46c5b3491d9a779f552f9"
+      }
+    },
+    {
+      "id": "boundary_value_equality_replacement",
+      "expect": "precondition",
+      "input": {
+        "identity": {
+          "workspace_identity": "ws:demo",
+          "repository_head": "abc123"
+        },
+        "test_selector": "tests/pricing.rs::boundary_equality",
+        "test_file": "tests/pricing.rs",
+        "assertion_range": {
+          "start_line": 18,
+          "start_character": 4,
+          "end_line": 18,
+          "end_character": 26
+        },
+        "original_source_text": "assert_eq!(total, 50);",
+        "document_version": 3,
+        "exact_replacement_text": "assert_eq!(total, discount_threshold);",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/pricing.rs"
+        ],
+        "must_not_change": [
+          "src/pricing.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      },
+      "precondition": {
+        "schema_version": "exact_test_edit_precondition.v1",
+        "test_selector": "tests/pricing.rs::boundary_equality",
+        "test_file": "tests/pricing.rs",
+        "exact_replacement_text": "assert_eq!(total, discount_threshold);",
+        "edit_instruction_id": "edit-instruction:b0a4059c46d8c6ec",
+        "original_source_digest": "sha256:9cfb7c3b1b3931522e0c4cd3afb97d74fc3a5a850adba6fec1421a9ab21da141"
+      }
+    },
+    {
+      "id": "ambiguous_fix_site",
+      "expect": "unavailable",
+      "reason": "ambiguous_fix_site",
+      "input": {
+        "identity": {},
+        "test_selector": "tests/demo.rs::ambiguous",
+        "test_file": "tests/demo.rs",
+        "assertion_range": {
+          "start_line": 1,
+          "start_character": 0,
+          "end_line": 1,
+          "end_character": 14
+        },
+        "original_source_text": "assert!(flag);",
+        "exact_replacement_text": "assert!(other);",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/demo.rs"
+        ],
+        "must_not_change": [
+          "src/lib.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": true,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "required_import",
+      "expect": "unavailable",
+      "reason": "required_import",
+      "input": {
+        "identity": {},
+        "test_selector": "tests/demo.rs::needs_import",
+        "test_file": "tests/demo.rs",
+        "assertion_range": {
+          "start_line": 2,
+          "start_character": 0,
+          "end_line": 2,
+          "end_character": 25
+        },
+        "original_source_text": "assert!(result.is_err());",
+        "exact_replacement_text": "assert_eq!(result, Err(ForeignError));",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/demo.rs"
+        ],
+        "must_not_change": [
+          "src/lib.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": true,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "stale_snapshot",
+      "expect": "unavailable",
+      "reason": "stale_snapshot",
+      "input": {
+        "identity": {},
+        "test_selector": "tests/demo.rs::stale",
+        "test_file": "tests/demo.rs",
+        "assertion_range": {
+          "start_line": 3,
+          "start_character": 0,
+          "end_line": 3,
+          "end_character": 25
+        },
+        "original_source_text": "assert!(result.is_err());",
+        "exact_replacement_text": "assert_eq!(result, Err(E));",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/demo.rs"
+        ],
+        "must_not_change": [
+          "src/lib.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": true,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "production_file_target",
+      "expect": "unavailable",
+      "reason": "production_file_target",
+      "input": {
+        "identity": {},
+        "test_selector": "src/lib.rs::inline",
+        "test_file": "src/lib.rs",
+        "assertion_range": {
+          "start_line": 4,
+          "start_character": 0,
+          "end_line": 4,
+          "end_character": 14
+        },
+        "original_source_text": "assert!(flag);",
+        "exact_replacement_text": "assert!(other);",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "src/lib.rs"
+        ],
+        "must_not_change": [
+          "src/other.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": true,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "multi_file_edit_surface",
+      "expect": "unavailable",
+      "reason": "outside_allowed_edit_surface",
+      "input": {
+        "identity": {},
+        "test_selector": "tests/demo.rs::multi",
+        "test_file": "tests/demo.rs",
+        "assertion_range": {
+          "start_line": 5,
+          "start_character": 0,
+          "end_line": 5,
+          "end_character": 14
+        },
+        "original_source_text": "assert!(flag);",
+        "exact_replacement_text": "assert!(other);",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/demo.rs",
+          "tests/other.rs"
+        ],
+        "must_not_change": [
+          "src/lib.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": true
+      }
+    },
+    {
+      "id": "preview_limitation",
+      "expect": "unavailable",
+      "reason": "preview_or_static_limitation",
+      "input": {
+        "identity": {},
+        "test_selector": "tests/demo.rs::preview",
+        "test_file": "tests/demo.rs",
+        "assertion_range": {
+          "start_line": 6,
+          "start_character": 0,
+          "end_line": 6,
+          "end_character": 14
+        },
+        "original_source_text": "assert!(flag);",
+        "exact_replacement_text": "assert!(other);",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/demo.rs"
+        ],
+        "must_not_change": [
+          "src/lib.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": true,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "parse_validation_failed",
+      "expect": "unavailable",
+      "reason": "parse_validation_failed",
+      "input": {
+        "identity": {},
+        "test_selector": "tests/demo.rs::parse",
+        "test_file": "tests/demo.rs",
+        "assertion_range": {
+          "start_line": 7,
+          "start_character": 0,
+          "end_line": 7,
+          "end_character": 14
+        },
+        "original_source_text": "assert!(flag);",
+        "exact_replacement_text": "assert!(!!!",
+        "parse_validation_status": "failed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/demo.rs"
+        ],
+        "must_not_change": [
+          "src/lib.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "parse_validation_not_run",
+      "expect": "unavailable",
+      "reason": "source_precondition_missing",
+      "input": {
+        "identity": {
+          "workspace_identity": "ws:demo",
+          "repository_head": "abc123",
+          "input_identity": "input:1",
+          "snapshot_identity": "snap:1",
+          "config_identity": "cfg:1",
+          "base_revision": "base:1"
+        },
+        "canonical_item": "gap:67f9714ba37b3967",
+        "seam_id": "seam:broad-error",
+        "test_selector": "tests/standings.rs::rejects_self_game",
+        "test_file": "tests/standings.rs",
+        "assertion_range": {
+          "start_line": 12,
+          "start_character": 4,
+          "end_line": 12,
+          "end_character": 29
+        },
+        "original_source_text": "assert!(result.is_err());",
+        "document_version": 3,
+        "exact_replacement_text": "assert_eq!(result, Err(StandingsError::SelfGame));",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/standings.rs"
+        ],
+        "must_not_change": [
+          "src/standings.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "format_validation_not_run",
+      "expect": "unavailable",
+      "reason": "source_precondition_missing",
+      "input": {
+        "identity": {
+          "workspace_identity": "ws:demo",
+          "repository_head": "abc123",
+          "input_identity": "input:1",
+          "snapshot_identity": "snap:1",
+          "config_identity": "cfg:1",
+          "base_revision": "base:1"
+        },
+        "canonical_item": "gap:67f9714ba37b3967",
+        "seam_id": "seam:broad-error",
+        "test_selector": "tests/standings.rs::rejects_self_game",
+        "test_file": "tests/standings.rs",
+        "assertion_range": {
+          "start_line": 12,
+          "start_character": 4,
+          "end_line": 12,
+          "end_character": 29
+        },
+        "original_source_text": "assert!(result.is_err());",
+        "document_version": 3,
+        "exact_replacement_text": "assert_eq!(result, Err(StandingsError::SelfGame));",
+        "parse_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/standings.rs"
+        ],
+        "must_not_change": [
+          "src/standings.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "format_validation_failed",
+      "expect": "unavailable",
+      "reason": "format_validation_failed",
+      "input": {
+        "identity": {
+          "workspace_identity": "ws:demo",
+          "repository_head": "abc123",
+          "input_identity": "input:1",
+          "snapshot_identity": "snap:1",
+          "config_identity": "cfg:1",
+          "base_revision": "base:1"
+        },
+        "canonical_item": "gap:67f9714ba37b3967",
+        "seam_id": "seam:broad-error",
+        "test_selector": "tests/standings.rs::rejects_self_game",
+        "test_file": "tests/standings.rs",
+        "assertion_range": {
+          "start_line": 12,
+          "start_character": 4,
+          "end_line": 12,
+          "end_character": 29
+        },
+        "original_source_text": "assert!(result.is_err());",
+        "document_version": 3,
+        "exact_replacement_text": "assert_eq!(result, Err(StandingsError::SelfGame));",
+        "parse_validation_status": "passed",
+        "format_validation_status": "failed",
+        "allowed_edit_surface": [
+          "tests/standings.rs"
+        ],
+        "must_not_change": [
+          "src/standings.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "test_path_traversal",
+      "expect": "unavailable",
+      "reason": "outside_allowed_edit_surface",
+      "input": {
+        "identity": {
+          "workspace_identity": "ws:demo",
+          "repository_head": "abc123",
+          "input_identity": "input:1",
+          "snapshot_identity": "snap:1",
+          "config_identity": "cfg:1",
+          "base_revision": "base:1"
+        },
+        "canonical_item": "gap:67f9714ba37b3967",
+        "seam_id": "seam:broad-error",
+        "test_selector": "tests/standings.rs::rejects_self_game",
+        "test_file": "tests/../src/lib.rs",
+        "assertion_range": {
+          "start_line": 12,
+          "start_character": 4,
+          "end_line": 12,
+          "end_character": 29
+        },
+        "original_source_text": "assert!(result.is_err());",
+        "document_version": 3,
+        "exact_replacement_text": "assert_eq!(result, Err(StandingsError::SelfGame));",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/../src/lib.rs"
+        ],
+        "must_not_change": [
+          "src/standings.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "test_path_not_rust",
+      "expect": "unavailable",
+      "reason": "outside_allowed_edit_surface",
+      "input": {
+        "identity": {
+          "workspace_identity": "ws:demo",
+          "repository_head": "abc123",
+          "input_identity": "input:1",
+          "snapshot_identity": "snap:1",
+          "config_identity": "cfg:1",
+          "base_revision": "base:1"
+        },
+        "canonical_item": "gap:67f9714ba37b3967",
+        "seam_id": "seam:broad-error",
+        "test_selector": "tests/standings.rs::rejects_self_game",
+        "test_file": "tests/readme.md",
+        "assertion_range": {
+          "start_line": 12,
+          "start_character": 4,
+          "end_line": 12,
+          "end_character": 29
+        },
+        "original_source_text": "assert!(result.is_err());",
+        "document_version": 3,
+        "exact_replacement_text": "assert_eq!(result, Err(StandingsError::SelfGame));",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/readme.md"
+        ],
+        "must_not_change": [
+          "src/standings.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "test_path_outside_root",
+      "expect": "unavailable",
+      "reason": "outside_allowed_edit_surface",
+      "input": {
+        "identity": {
+          "workspace_identity": "ws:demo",
+          "repository_head": "abc123",
+          "input_identity": "input:1",
+          "snapshot_identity": "snap:1",
+          "config_identity": "cfg:1",
+          "base_revision": "base:1"
+        },
+        "canonical_item": "gap:67f9714ba37b3967",
+        "seam_id": "seam:broad-error",
+        "test_selector": "tests/standings.rs::rejects_self_game",
+        "test_file": "../other/tests/demo.rs",
+        "assertion_range": {
+          "start_line": 12,
+          "start_character": 4,
+          "end_line": 12,
+          "end_character": 29
+        },
+        "original_source_text": "assert!(result.is_err());",
+        "document_version": 3,
+        "exact_replacement_text": "assert_eq!(result, Err(StandingsError::SelfGame));",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "../other/tests/demo.rs"
+        ],
+        "must_not_change": [
+          "src/standings.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "range_one_short_of_text",
+      "expect": "unavailable",
+      "reason": "source_text_mismatch",
+      "input": {
+        "identity": {
+          "workspace_identity": "ws:demo",
+          "repository_head": "abc123",
+          "input_identity": "input:1",
+          "snapshot_identity": "snap:1",
+          "config_identity": "cfg:1",
+          "base_revision": "base:1"
+        },
+        "canonical_item": "gap:67f9714ba37b3967",
+        "seam_id": "seam:broad-error",
+        "test_selector": "tests/standings.rs::rejects_self_game",
+        "test_file": "tests/standings.rs",
+        "assertion_range": {
+          "start_line": 12,
+          "start_character": 4,
+          "end_line": 12,
+          "end_character": 28
+        },
+        "original_source_text": "assert!(result.is_err());",
+        "document_version": 3,
+        "exact_replacement_text": "assert_eq!(result, Err(StandingsError::SelfGame));",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/standings.rs"
+        ],
+        "must_not_change": [
+          "src/standings.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "range_one_long_of_text",
+      "expect": "unavailable",
+      "reason": "source_text_mismatch",
+      "input": {
+        "identity": {
+          "workspace_identity": "ws:demo",
+          "repository_head": "abc123",
+          "input_identity": "input:1",
+          "snapshot_identity": "snap:1",
+          "config_identity": "cfg:1",
+          "base_revision": "base:1"
+        },
+        "canonical_item": "gap:67f9714ba37b3967",
+        "seam_id": "seam:broad-error",
+        "test_selector": "tests/standings.rs::rejects_self_game",
+        "test_file": "tests/standings.rs",
+        "assertion_range": {
+          "start_line": 12,
+          "start_character": 4,
+          "end_line": 12,
+          "end_character": 30
+        },
+        "original_source_text": "assert!(result.is_err());",
+        "document_version": 3,
+        "exact_replacement_text": "assert_eq!(result, Err(StandingsError::SelfGame));",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/standings.rs"
+        ],
+        "must_not_change": [
+          "src/standings.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    }
+  ]
+}

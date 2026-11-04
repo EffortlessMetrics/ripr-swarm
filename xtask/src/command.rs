@@ -120,12 +120,14 @@ pub(crate) enum XtaskCommand {
     Receipts(Vec<String>),
     Worktree(Vec<String>),
     Specs(Vec<String>),
+    Generations(Vec<String>),
     GoldenDrift,
     CiFast,
     CiFull,
     CheckPolicyAll,
     CheckStaticLanguage,
     CheckAgentSkills,
+    CheckAdmissionIncidentRoute,
     CheckNoPanicFamily(Vec<String>),
     CheckAllowAttributes,
     CheckLocalContext,
@@ -139,6 +141,7 @@ pub(crate) enum XtaskCommand {
     CheckDroidReviewConfig,
     CheckSpecFormat,
     CheckSpecNumbering,
+    CheckGenerationPins,
     CheckFixtureContracts,
     CheckTraceability,
     CheckCapabilities,
@@ -344,12 +347,14 @@ impl XtaskCommand {
             "doctor" => Self::Worktree(vec!["doctor".to_string()]),
             "worktree" => Self::Worktree(rest),
             "specs" => Self::Specs(rest),
+            "generations" => Self::Generations(rest),
             "golden-drift" => Self::GoldenDrift,
             "ci-fast" => Self::CiFast,
             "ci-full" => Self::CiFull,
             "check-policy-all" => Self::CheckPolicyAll,
             "check-static-language" => Self::CheckStaticLanguage,
             "check-agent-skills" => Self::CheckAgentSkills,
+            "check-admission-incident-route" => Self::CheckAdmissionIncidentRoute,
             "check-no-panic-family" => Self::CheckNoPanicFamily(rest),
             "check-allow-attributes" => Self::CheckAllowAttributes,
             "check-local-context" => Self::CheckLocalContext,
@@ -363,6 +368,7 @@ impl XtaskCommand {
             "check-droid-review-config" => Self::CheckDroidReviewConfig,
             "check-spec-format" => Self::CheckSpecFormat,
             "check-spec-numbering" => Self::CheckSpecNumbering,
+            "check-generation-pins" => Self::CheckGenerationPins,
             "check-fixture-contracts" => Self::CheckFixtureContracts,
             "check-evidence-promotion-honesty" => Self::CheckEvidencePromotionHonesty(rest),
             "check-traceability" | "check-spec-ids" | "check-behavior-manifest" => {
@@ -698,6 +704,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "doctor",
         "worktree doctor",
         "specs next",
+        "generations next [--base <ref>]",
         "specs maintenance --as-of YYYY-MM-DD [--json] [--receipts <dir>]",
         "specs digest --as-of YYYY-MM-DD [--json] [--receipts <dir>]",
         "specs close --spec RIPR-SPEC-NNNN --disposition <label> --as-of YYYY-MM-DD --reviewed-by <identity>",
@@ -706,6 +713,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-policy-all",
         "check-static-language",
         "check-agent-skills",
+        "check-admission-incident-route",
         "check-no-panic-family [--propose]",
         "check-allow-attributes",
         "check-local-context",
@@ -719,6 +727,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-droid-review-config",
         "check-spec-format",
         "check-spec-numbering",
+        "check-generation-pins",
         "check-fixture-contracts",
         "perl-migration-refresh --producer-bin <path> [--case <id>]",
         "first-run [--ripr <path>] [--out <dir>] [--install-published | --install-archive <version>]",
@@ -1028,8 +1037,8 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "mutating",
             "fixtures/**/expected/**",
             true,
-            false,
-            "Updates golden expected outputs and requires explicit review reason.",
+            true,
+            "Updates golden expected outputs and requires explicit review reason. CI invokes it only from the dispatch-only goldens-rebless route (#11736), after its judge approves.",
         ),
         command_entry(
             "golden-drift",
@@ -2016,6 +2025,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Prints the next available RIPR-SPEC ID.",
         ),
         command_entry(
+            "generations next [--base <ref>]",
+            "report_only",
+            "stdout",
+            false,
+            false,
+            "Prints, per cache-invalidation generation family, the current value at the accepted base (origin/main, then main, or --base override) and the next free value, plus the consumer refresh checklist (#11736 Proposal C). Allocation is a pure read; nothing is claimed or reserved.",
+        ),
+        command_entry(
             "specs maintenance --as-of YYYY-MM-DD [--json] [--receipts <dir>]",
             "report_only",
             "target/ripr/reports/spec-maintenance.{json,md}",
@@ -2078,6 +2095,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             true,
             "Checks Codex, Claude, and ZCode instruction roots and their seven canonical skills for structural validity, provider separation, retired orchestration drift, sibling references, required yielding states, and required architecture-map module tokens in AGENTS.md, CLAUDE.md, and docs/ARCHITECTURE.md; it does not enforce prose symmetry or model choices.",
+        ),
+        command_entry(
+            "check-admission-incident-route",
+            "non_mutating_check",
+            "none",
+            false,
+            false,
+            "Runs the committed admission_incident.v1 continuation-route corpus (#5076): every scenario must route current packets to the expected bounded repair, retry, handoff, or blocker plan without compiling incidents (#5075).",
         ),
         command_entry(
             "check-no-panic-family [--propose]",
@@ -2182,6 +2207,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             true,
             "Checks spec ID uniqueness and references.",
+        ),
+        command_entry(
+            "check-generation-pins",
+            "non_mutating_check",
+            "target/ripr/reports/generation-pins.md",
+            false,
+            true,
+            "Checks that each cache-invalidation generation a PR claims (changed relative to its merge base) is strictly greater than the accepted base's current value (#11736 Proposal C); unresolvable base, stale registry row, or non-numeric value fails closed.",
         ),
         command_entry(
             "check-fixture-contracts",
@@ -2916,7 +2949,7 @@ mod tests {
         assert!(help.contains("check-static-language [CI]"));
         assert!(help.contains("goldens check [CI]"));
         assert!(!help.contains("check-supply-chain [CI]"));
-        assert!(!help.contains("goldens bless <name> --reason <reason> [CI]"));
+        assert!(help.contains("goldens bless <name> --reason <reason> [CI]"));
         assert!(help.contains("advisory or local-only"));
         Ok(())
     }

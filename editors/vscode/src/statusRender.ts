@@ -39,7 +39,17 @@ export interface RiprStatusState {
   summary: string;
   detail?: string;
   enabledLanguages?: string[];
+  /** Typed unavailable-language rows from the latest `ripr/analysisStatus` (#2962). */
+  unavailableLanguages?: RiprUnavailableLanguageStatus[];
   nextStep?: string;
+}
+
+export interface RiprUnavailableLanguageStatus {
+  language: string;
+  file_count?: number;
+  recovery?: string | null;
+  availability_state?: string | null;
+  remediation?: string[];
 }
 
 export interface FirstUsefulActionStatus {
