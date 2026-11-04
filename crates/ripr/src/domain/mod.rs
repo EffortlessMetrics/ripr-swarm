@@ -18,6 +18,8 @@ mod finding_test_evidence;
 mod fix_instruction;
 mod git_candidate;
 mod guard_refusal;
+#[doc(hidden)]
+pub mod guarded_edit;
 mod identity;
 mod intervention_study;
 mod language;
